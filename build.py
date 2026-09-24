@@ -8141,6 +8141,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4049 agent-reply payload/BP linter failed — run python3 scripts/check_agent_reply_payload_4049.py")
         return r
+    # Issue #4050: orch:supervise-batch :watch-scope #t returned while the
+    # child scope still held live/done agents (quota reservation + directory
+    # rows survived to ~Evaluator), and RestartN cancelled a closure longer
+    # than the #2585 coop window because the supervise body never stamped
+    # keepalive/agent_poll. Gate pins: the watch path closes the child on the
+    # existing budgets (reported through ScopeWatchResult), the supervise
+    # spec is a one-shot fiber-clock body, RestartN + keepalive==0 no longer
+    # reuses restart_skipped_no_spec when a spec exists, and the supervise
+    # hash carries the supervision keys with ok=false when a still-live body
+    # was cancelled, skipped or deferred.
+    scj4050_script = ROOT / "scripts" / "check_supervise_join_4050.py"
+    if not scj4050_script.exists():
+        fail(f"missing {scj4050_script}")
+        return 1
+    r = run([sys.executable, str(scj4050_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4050 supervise-batch child-join linter failed — run python3 scripts/check_supervise_join_4050.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

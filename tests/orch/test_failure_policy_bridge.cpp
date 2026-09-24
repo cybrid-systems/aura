@@ -32,6 +32,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -94,6 +95,9 @@ static void ac3726_run_added_tests();
 static void ac3926_supervise_batch_isolation_honest();
 static void ac3969_run_added_tests();
 static void ac4000_run_added_tests();
+// Issue #4050: supervise-batch watch path joins the child; one-shot
+// supervise bodies are not cancelled for a missing agent_poll.
+static void ac4050_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -407,6 +411,8 @@ int run_test_failure_policy_bridge() {
               "AC6: no registry / conduct_parallel callables");
     }
 
+    // Issue #4050: watch-scope child join + one-shot body clock (extend-in-place).
+    ac4050_run_added_tests();
     // Issue #2852: supervised-batch apply sugar (per #81967 extend-in-place).
     // Calls ac2852_* AC1-AC6 below — see function bodies for details.
     ac2852_run_added_tests(); // forward-declared below (defined at file end).
@@ -1812,6 +1818,382 @@ static void ac4000_run_added_tests() {
     ac4000_3_skip_mu_matches_3840();
     ac4000_4_soft_keys_stay_serialized();
     ac4000_5_source_cite();
+}
+
+// Issue #4050: production face for a scheduler-bearing AC. The raw
+// production counter alone leaves the #3490 hot-contract cache disarmed
+// (the batch driver's apply_dev_audit_defaults stores it false), so
+// Scheduler::run() trips the #3866/#3899 production ABI self-check
+// (fail bit 9 = unarmed hot contracts). Same pairing as test_agent_scope's
+// #2946 set_prod helper.
+static void ac4050_set_prod(bool on) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        on ? 1u : 0u, std::memory_order_relaxed);
+    aura::core::cpp26::note_hot_contract_harden_armed(on);
+}
+
+// ── Issue #4050: supervise-batch watch path joins the child scope and
+//    one-shot supervise bodies are not killed for a missing agent_poll ──
+
+// #2585 coop window available to the spawn path (sandbox not "off", no
+// operator opt-out). Restores the previous environment on scope exit.
+struct Ac4050CoopEnv {
+    bool had_sandbox = false;
+    std::string sandbox;
+    bool had_no_yield = false;
+    std::string no_yield;
+    Ac4050CoopEnv() {
+        if (const char* v = std::getenv("AURA_SANDBOX")) {
+            had_sandbox = true;
+            sandbox = v;
+        }
+        if (const char* v = std::getenv("AURA_AGENT_MAX_NO_YIELD_MS")) {
+            had_no_yield = true;
+            no_yield = v;
+        }
+        ::setenv("AURA_SANDBOX", "", 1);
+        ::unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
+    }
+    ~Ac4050CoopEnv() {
+        if (had_sandbox)
+            ::setenv("AURA_SANDBOX", sandbox.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        if (had_no_yield)
+            ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", no_yield.c_str(), 1);
+        else
+            ::unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
+    }
+};
+
+// Soft face for the same ACs: AURA_SANDBOX=off keeps a multi-worker
+// Scheduler::run() legal without the production bootstrap (#3586) and makes
+// the spawn path skip the #2585 coop default. Restores the previous value.
+struct Ac4050SoftEnv {
+    bool had_sandbox = false;
+    std::string sandbox;
+    Ac4050SoftEnv() {
+        if (const char* v = std::getenv("AURA_SANDBOX")) {
+            had_sandbox = true;
+            sandbox = v;
+        }
+        ::setenv("AURA_SANDBOX", "off", 1);
+    }
+    ~Ac4050SoftEnv() {
+        if (had_sandbox)
+            ::setenv("AURA_SANDBOX", sandbox.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+};
+
+// Last child scope of the session root (the #3726 population split).
+static aura::orch::AgentScope* ac4050_last_child(aura::orch::AgentScope* root) {
+    if (!root || root->child_count() == 0)
+        return nullptr;
+    return &root->child_at(root->child_count() - 1);
+}
+
+// Rows + reservation bytes still owned by a child scope.
+static void ac4050_child_rows(aura::orch::AgentScope* child, bool& row_present,
+                              std::uint64_t& reserved, std::size_t& rows) {
+    row_present = false;
+    reserved = 0;
+    rows = 0;
+    if (!child)
+        return;
+    for (const auto& h : child->handles()) {
+        ++rows;
+        if (h.name.find("supervise-batch-") == 0)
+            row_present = true;
+        reserved += h.reserved_memory_bytes;
+    }
+}
+
+static void ac4050_1_watch_path_joins_child() {
+    std::println("\n--- #4050 AC1: watch-scope path closes the child before return ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    CHECK(aura::orch::kSuperviseBatchScopeJoinIssue == 4050, "4050 AC1: issue stamp");
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    Ac4050CoopEnv coop_env;
+    CompilerService cs;
+    // #3586: the first multi-worker Scheduler::run() in this process needs
+    // production latched (or AURA_SANDBOX=off) before it starts.
+    ac4050_set_prod(true);
+    Ac3726KeepaliveS s;
+    CHECK(ac3726_arm_s(cs, s), "4050 AC1: session-root S armed");
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (and (= (hash-ref h "schema-4050") 4050)
+                     (= (hash-ref h "scope-stalled") 0)
+                     (hash-ref h "ok"))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4050 AC1: watch path returns schema-4050, clean (no stall, ok)");
+    auto* child = ac4050_last_child(s.root);
+    bool row_present = false;
+    std::uint64_t reserved = 0;
+    std::size_t rows = 0;
+    ac4050_child_rows(child, row_present, reserved, rows);
+    CHECK(child != nullptr, "4050 AC1: supervise-batch used a child scope (#3726)");
+    CHECK(!row_present, "4050 AC1: no live/done supervise-batch-0 row after return");
+    CHECK(reserved == 0, "4050 AC1: child reservation released (reserved_memory_bytes 0)");
+    CHECK(s.fiber && !s.fiber->is_cancel_requested(), "4050 AC1: session-root S untouched (#3726)");
+    ac3726_disarm(s);
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4050_2_long_closure_defers_not_cancels() {
+    std::println("\n--- #4050 AC2: long one-shot body → deferred replace (no cancel) + ok=#f ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::AgentFailureAction;
+    using aura::orch::AgentFailurePolicy;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    using aura::serve::Scheduler;
+    // (a) prim-level clean retry-n path: the supervision keys exist and a
+    //     completed run reports no stall / no restart / no skip.
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    Ac4050CoopEnv coop_env;
+    CompilerService cs;
+    ac4050_set_prod(true);
+    const auto cancel0 = g_orch_module_stats.keepalive_cancels_total.load();
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'retry-n :max-retries 2))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (and (= (hash-ref h "scope-stalled") 0)
+                     (= (hash-ref h "restart-deferred-body-live") 0)
+                     (= (hash-ref h "restart-skipped-no-spec") 0)
+                     (hash-ref h "ok"))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4050 AC2: clean retry-n watch path → no stall / no restart / ok");
+    CHECK(g_orch_module_stats.keepalive_cancels_total.load() == cancel0,
+          "4050 AC2: clean path issues no cancel");
+    reset_all_agent_scopes_for_test();
+    // (b) scope-level deterministic: a one-shot body that outlives the #2585
+    //     coop window is reported Stalled but NOT cancelled (it has no
+    //     agent_poll contract), and production RetryN defers the replace
+    //     instead of killing/replacing the live body.
+    Scheduler sched(2);
+    Ac3969SchedRunner runner(sched);
+    AgentScope scope(sched);
+    AgentSpec spec;
+    spec.name = "supervise-batch-0";
+    spec.attach_mailbox = true;
+    spec.mutation_boundary = false;
+    spec.body_clock_from_fiber = true; // same bit orch:supervise-batch sets
+    spec.body = [] {
+        const auto t0 = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(900)) {
+            if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+                break;
+        }
+    };
+    auto& h = scope.spawn(std::move(spec));
+    CHECK(h.ok, "4050 AC2: one-shot spec spawned");
+    CHECK(h.coop != nullptr, "4050 AC2: #2585 coop window present");
+    // Let the injected coop clock age past 2x the window while the body is
+    // still running - the body never calls agent_poll, so the watch must
+    // read silence as a stall (not as a kill).
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    const auto cancel1 = g_orch_module_stats.keepalive_cancels_total.load();
+    AgentFailurePolicy pol;
+    pol.on_stall = AgentFailureAction::RestartN;
+    pol.max_restarts = 2;
+    auto wr = scope.watch_all(/*stall_timeout_ms=*/0, pol);
+    CHECK(wr.stalled >= 1, "4050 AC2: body past the coop window is reported Stalled");
+    CHECK(wr.body_stalled >= 1, "4050 AC2: body_stalled surfaced (#3954)");
+    CHECK(wr.cancelled == 0, "4050 AC2: not cancelled solely for a missing agent_poll");
+    CHECK(g_orch_module_stats.keepalive_cancels_total.load() == cancel1,
+          "4050 AC2: no keepalive cancel atomic");
+    CHECK(h.fiber && !h.fiber->is_cancel_requested(), "4050 AC2: fiber not cancel-requested");
+    CHECK(wr.restart_attempted >= 1, "4050 AC2: RetryN arm reached the one-shot slot");
+    CHECK(wr.restart_deferred_body_live >= 1,
+          "4050 AC2: production defers the replace of the live body (ok=#f upstream)");
+    CHECK(wr.restart_ok == 0, "4050 AC2: no live body was replaced");
+    CHECK(scope.handles().size() == 1, "4050 AC2: no same-name twin spawned");
+    (void)scope.join_all(std::optional<std::uint64_t>{1000});
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4050_3_coop_off_no_skip() {
+    std::println("\n--- #4050 AC3: AURA_AGENT_MAX_NO_YIELD_MS=0 + retry-n + stored spec ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    const char* prev_opt = std::getenv("AURA_AGENT_MAX_NO_YIELD_MS");
+    const std::string prev_opt_s = prev_opt ? prev_opt : "";
+    ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
+    CompilerService cs;
+    ac4050_set_prod(true);
+    Ac3726KeepaliveS s;
+    CHECK(ac3726_arm_s(cs, s), "4050 AC3: session-root S armed");
+    const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load();
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'retry-n :max-retries 2))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (= (hash-ref h "restart-skipped-no-spec") 0) 1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4050 AC3: coop-off supervise slot is not a restart-skipped-no-spec");
+    CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load() == skip0,
+          "4050 AC3: no restart-skipped-no-spec atomic despite a stored spec");
+    auto* child = ac4050_last_child(s.root);
+    bool row_present = false;
+    std::uint64_t reserved = 0;
+    std::size_t rows = 0;
+    ac4050_child_rows(child, row_present, reserved, rows);
+    CHECK(!row_present, "4050 AC3: no live/done supervise-batch-0 row (reservation released)");
+    CHECK(reserved == 0, "4050 AC3: reservation not held");
+    ac3726_disarm(s);
+    ac4050_set_prod(false);
+    if (prev_opt)
+        ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", prev_opt_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4050_4_soft_no_extra_wait() {
+    std::println("\n--- #4050 AC4: Soft keeps the child (no extra join) + #2585 intact ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    Ac4050SoftEnv soft_env;
+    CompilerService cs;
+    auto probe = cs.eval(R"((orch:scope-spawn "probe-4050"))");
+    (void)probe;
+    auto* root = aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator()));
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (= (hash-ref h "schema-4050") 4050)))
+    )");
+    CHECK(r && is_bool(*r) && as_bool(*r),
+          "4050 AC4: Soft watch path still returns the supervise hash");
+    auto* child = ac4050_last_child(root);
+    bool row_present = false;
+    std::uint64_t reserved = 0;
+    std::size_t rows = 0;
+    ac4050_child_rows(child, row_present, reserved, rows);
+    CHECK(child != nullptr && rows >= 1, "4050 AC4: Soft left the child rows in place");
+    CHECK(row_present, "4050 AC4: Soft adds no extra join (supervise-batch-0 row kept)");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(spawn.find("return 50;    // production default") != std::string::npos,
+          "4050 AC4: #2585 coop default still 50ms");
+    CHECK(spawn.find("AURA_AGENT_MAX_NO_YIELD_MS") != std::string::npos,
+          "4050 AC4: #2585 operator opt-out intact");
+    const auto sup = agent.find("add(\"orch:supervise-batch\"");
+    CHECK(sup != std::string::npos, "4050 AC4: supervise-batch prim present");
+    const auto slice = agent.substr(sup, 32000);
+    CHECK(slice.find("spec.max_no_yield_ms") == std::string::npos,
+          "4050 AC4: #4050 does not touch the #2585 window on the supervise spec");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4050_5_keys_and_no_invent() {
+    std::println("\n--- #4050 AC5: supervision keys projected; no query key / registry / docs ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    Ac4050CoopEnv coop_env;
+    CompilerService cs;
+    ac4050_set_prod(true);
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (+ (* 1000 (hash-ref h "scope-stalled"))
+               (* 100 (hash-ref h "restart-ok"))
+               (* 10 (hash-ref h "restart-denied"))
+               (hash-ref h "restart-skipped-no-spec")
+               (* 1000 (hash-ref h "restart-deferred-body-live"))
+               (hash-ref h "schema-4050"))))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 4050,
+          "4050 AC5: five supervision keys present on the hash (clean run)");
+    ac4050_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto scope = read_file("src/orch/agent_scope.h");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    CHECK(spawn.find("kSuperviseBatchScopeJoinIssue = 4050") != std::string::npos,
+          "4050 AC5: issue stamp");
+    CHECK(agent.find("Issue #4050") != std::string::npos, "4050 AC5: prim cites #4050");
+    CHECK(agent.find("child.join_all(join_policy, join_observe)") != std::string::npos,
+          "4050 AC5: watch path joins the child (drain SSOT)");
+    CHECK(agent.find("kResidualJoinDrainMs") != std::string::npos,
+          "4050 AC5: join uses the residual drain budget SSOT");
+    CHECK(agent.find("body_clock_from_fiber = true") != std::string::npos,
+          "4050 AC5: supervise spec is a fiber-clock body");
+    CHECK(spawn.find("bool body_clock_from_fiber = false") != std::string::npos,
+          "4050 AC5: AgentSpec flag");
+    CHECK(spawn.find("if (body_clock_from_fiber && h.fiber && h.fiber->is_done())") !=
+              std::string::npos,
+          "4050 AC5: finished one-shot closure is Done");
+    CHECK(scope.find("body_clock_from_fiber") != std::string::npos,
+          "4050 AC5: watch_all / restart arm read the spec flag");
+    CHECK(agent.find("query:4050") == std::string::npos, "4050 AC5: no query:4050");
+    CHECK(agent.find("query:supervise-batch") == std::string::npos, "4050 AC5: no new query key");
+    CHECK(spawn.find("class AgentRegistry") == std::string::npos, "4050 AC5: no AgentRegistry");
+    CHECK(build.find("check_supervise_join_4050") != std::string::npos,
+          "4050 AC5: linter registered in build.py");
+    CHECK(allow.find("check_supervise_join_4050.py") != std::string::npos,
+          "4050 AC5: linter allowlisted for the coverage policy gate");
+    CHECK(t.find("ac4050_2_long_closure_defers_not_cancels") != std::string::npos,
+          "4050 AC5: soak lives in this file (#81967)");
+    CHECK(read_file("tests/orch/test_issue_4050.cpp").empty(), "4050 AC5: no test_issue_4050.cpp");
+    CHECK(read_file("docs/design/4050-supervise-join.md").empty(),
+          "4050 AC5: no docs/design/4050-*");
+}
+
+static void ac4050_run_added_tests() {
+    ac4050_1_watch_path_joins_child();
+    ac4050_2_long_closure_defers_not_cancels();
+    ac4050_3_coop_off_no_skip();
+    ac4050_4_soft_no_extra_wait();
+    ac4050_5_keys_and_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
