@@ -122,6 +122,151 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(id);
     });
 
+    // Issue #4055: native encoding prims. The EDSL folds in
+    // lib/std/encoding.aura appended each chunk to an immutable accumulator
+    // string — O(n²) copy where every intermediate became a string_heap_
+    // entry; a 64 KB http-post response under Soft --serve-async denseness
+    // retained ~42.8 GB RSS and wedged/OOM-killed Soft mid-batch (third
+    // concurrent MiniMax batch → serve_session_timeout). These allocate ONE
+    // heap entry per call; lib/std/encoding.aura delegates to them.
+    add("encoding:base64-encode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        const auto idx = types::as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        static const char kAlphabet[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const std::string& data = ev.string_heap_[idx];
+        std::string out;
+        out.reserve((data.size() + 2) / 3 * 4);
+        std::size_t i = 0;
+        while (i + 2 < data.size()) {
+            const auto b0 = static_cast<unsigned char>(data[i]);
+            const auto b1 = static_cast<unsigned char>(data[i + 1]);
+            const auto b2 = static_cast<unsigned char>(data[i + 2]);
+            out.push_back(kAlphabet[b0 >> 2]);
+            out.push_back(kAlphabet[((b0 & 0x3) << 4) | (b1 >> 4)]);
+            out.push_back(kAlphabet[((b1 & 0xF) << 2) | (b2 >> 6)]);
+            out.push_back(kAlphabet[b2 & 0x3F]);
+            i += 3;
+        }
+        const std::size_t rem = data.size() - i;
+        if (rem == 1) {
+            const auto b0 = static_cast<unsigned char>(data[i]);
+            out.push_back(kAlphabet[b0 >> 2]);
+            out.push_back(kAlphabet[(b0 & 0x3) << 4]);
+            out.push_back('=');
+            out.push_back('=');
+        } else if (rem == 2) {
+            const auto b0 = static_cast<unsigned char>(data[i]);
+            const auto b1 = static_cast<unsigned char>(data[i + 1]);
+            out.push_back(kAlphabet[b0 >> 2]);
+            out.push_back(kAlphabet[((b0 & 0x3) << 4) | (b1 >> 4)]);
+            out.push_back(kAlphabet[(b1 & 0xF) << 2]);
+            out.push_back('=');
+        }
+        auto sid = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(out));
+        return make_string(sid);
+    });
+
+    add("encoding:base64-decode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        const auto idx = types::as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        const std::string& in = ev.string_heap_[idx];
+        auto b64val = [](unsigned char c) -> int {
+            if (c >= 'A' && c <= 'Z')
+                return c - 'A';
+            if (c >= 'a' && c <= 'z')
+                return c - 'a' + 26;
+            if (c >= '0' && c <= '9')
+                return c - '0' + 52;
+            if (c == '+')
+                return 62;
+            if (c == '/')
+                return 63;
+            return -1;
+        };
+        std::string out;
+        out.reserve(in.size() / 4 * 3);
+        unsigned int acc = 0;
+        int bits = 0;
+        for (unsigned char c : in) {
+            if (c == '=')
+                break;
+            const int v = b64val(c);
+            if (v < 0)
+                break;
+            acc = (acc << 6) | static_cast<unsigned int>(v);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.push_back(static_cast<char>((acc >> bits) & 0xFF));
+            }
+        }
+        auto sid = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(out));
+        return make_string(sid);
+    });
+
+    add("encoding:hex-encode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        const auto idx = types::as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        static const char kHex[] = "0123456789abcdef";
+        const std::string& data = ev.string_heap_[idx];
+        std::string out;
+        out.reserve(data.size() * 2);
+        for (unsigned char c : data) {
+            out.push_back(kHex[c >> 4]);
+            out.push_back(kHex[c & 0xF]);
+        }
+        auto sid = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(out));
+        return make_string(sid);
+    });
+
+    add("encoding:hex-decode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        const auto idx = types::as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        const std::string& in = ev.string_heap_[idx];
+        auto hexval = [](unsigned char c) -> int {
+            if (c >= '0' && c <= '9')
+                return c - '0';
+            if (c >= 'a' && c <= 'f')
+                return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F')
+                return c - 'A' + 10;
+            return -1;
+        };
+        std::string out;
+        out.reserve(in.size() / 2);
+        int hi = -1;
+        for (unsigned char c : in) {
+            const int v = hexval(c);
+            if (v < 0)
+                break;
+            if (hi < 0) {
+                hi = v;
+            } else {
+                out.push_back(static_cast<char>((hi << 4) | v));
+                hi = -1;
+            }
+        }
+        auto sid = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(out));
+        return make_string(sid);
+    });
+
     add("eof-object?", [](const auto& a) {
         if (a.empty())
             return make_bool(false);

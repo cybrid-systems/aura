@@ -123,3 +123,8 @@ src/compiler/evaluator_primitives_obs_eval.cpp
 # invariant tests through the full typecheck + post-mutation flow.
 tests/compiler/test_adt_exhaustiveness_production_hard.cpp
 src/compiler/evaluator_eval_flat.cpp
+# Issue #4055: native encoding prims (encoding:base64/hex encode/decode)
+# added to evaluator_primitives_char.cpp — the behavioral coverage is the
+# EDSL stdlib suite + scripts/check_soft_ready_http_post_three_batch_4055.py
+# (live serve round-trip); C++ unit pairing not applicable to the delegation.
+src/compiler/evaluator_primitives_char.cpp

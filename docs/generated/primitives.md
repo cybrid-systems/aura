@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**424** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**428** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 54 primitives (13%)
-- **core**: 338 primitives (80%)
+- **core**: 342 primitives (80%)
 - **internal-observable**: 31 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -412,6 +412,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 - `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
+## Encoding: (4)
+
+- `encoding:base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `encoding:base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `encoding:hex-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `encoding:hex-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+
 ## Engine: (2)
 
 - `engine:metrics` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -629,7 +636,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (338)
+### Core builtins (must remain primitive) (342)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -709,6 +716,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `encoding:base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
+- `encoding:base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
+- `encoding:hex-decode` — `src/compiler/evaluator_primitives_char.cpp`
+- `encoding:hex-encode` — `src/compiler/evaluator_primitives_char.cpp`
 - `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`
