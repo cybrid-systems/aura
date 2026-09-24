@@ -148,3 +148,4 @@ check_soft_ready_http_post_three_batch_4055.py
 check_agent_reply_payload_4049.py
 check_supervise_join_4050.py
 check_occupancy_torn_read_4051.py
+check_isolation_deny_epoch_4052.py

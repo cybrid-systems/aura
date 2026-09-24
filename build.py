@@ -8144,6 +8144,26 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4051 occupancy torn-read linter failed — run python3 scripts/check_occupancy_torn_read_4051.py")
         return r
+    # Issue #4052 (security residual): WorkspaceIsolationPolicy::record_audit
+    # wrote the same TypedMid into BOTH the SecurityEvent.mutation_id and
+    # epoch columns, so IsolationDeny rows could not be replayed by Mutation
+    # epoch (query:security-audit printed the TypedMid as epoch=). The
+    # mutation_id staying TypedMid is correct (#3801) — only the epoch
+    # argument was wrong. Gate pins: record_audit emits (mid, epoch); the
+    # Evaluator Typed correlated rows (require_effect_on_ref stale-ref,
+    # check_workspace_isolation, check_tenant_host_path) pass the Mutation
+    # epoch; the resume / fiber-principal-mismatch rows pass epoch while
+    # their SE keeps (mid, epoch); Effect paths keep prov.epoch; the #3801
+    # AC1 host block asserts SE epoch == 42 alongside mid == 777 plus the
+    # typed before/after epoch == 42.
+    ide4052_script = ROOT / "scripts" / "check_isolation_deny_epoch_4052.py"
+    if not ide4052_script.exists():
+        fail(f"missing {ide4052_script}")
+        return 1
+    r = run([sys.executable, str(ide4052_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4052 IsolationDeny epoch linter failed — run python3 scripts/check_isolation_deny_epoch_4052.py")
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the

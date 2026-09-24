@@ -3475,8 +3475,9 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
                                             /*reason=*/"isolation-deny:fiber-principal-mismatch",
                                             /*denied=*/true,
                                             /*fiber_id=*/static_cast<std::int64_t>(f->id()));
+                // Issue #4052: correlated row epoch = Mutation epoch.
                 typed_audit::capture_security_correlated_audit(
-                    mid, "fiber-principal-mismatch", mid, /*denied=*/true,
+                    mid, "fiber-principal-mismatch", epoch, /*denied=*/true,
                     /*target_node=*/0, static_cast<std::int64_t>(f->id()),
                     ev->capability_tenant_id()); // Issue #3903
             }
@@ -3529,8 +3530,9 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
                                         /*denied=*/true,
                                         /*fiber_id=*/static_cast<std::int64_t>(f->id()));
             // Correlated TypedMutationAudit trail join (same mid).
+            // Issue #4052: correlated row epoch = Mutation epoch.
             typed_audit::capture_security_correlated_audit(
-                mid, "fiber-principal-mismatch", mid, /*denied=*/true,
+                mid, "fiber-principal-mismatch", epoch, /*denied=*/true,
                 /*target_node=*/0, static_cast<std::int64_t>(f->id()),
                 assigned); // Issue #3903
         }
