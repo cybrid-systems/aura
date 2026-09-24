@@ -144,7 +144,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"c-func",
                  {"missing-require", "add-require", "std/ffi",
                   "Add (require \"std/ffi\" all:) to use c-func"}},
-            };
+        };
 
         // Detect "unbound variable: X" and match against known symbols
         std::string prefix = "unbound variable: ";
