@@ -391,6 +391,10 @@ void run_serve_async(int num_workers) {
     // same path as bench. Soft denseness bodies take this via
     // evaluator_primitives_io.cpp; DensenessBodyLockWaitGuard unlocks the
     // #4048 body mutex across the yield so N denseness HTTP can overlap.
+    // Issue #4054: park with Waiting, then consume a completion that raced
+    // ahead of yield (EPOLLET: write-before-park loses the edge). Always
+    // drain eventfd after wake so a leftover counter cannot confuse the next
+    // wait on this denseness fiber / recycled wake path.
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                             const std::string& auth) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
@@ -409,7 +413,15 @@ void run_serve_async(int num_workers) {
         t.detach();
 
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        aura::serve::Fiber::yield();
+        uint64_t primed = 0;
+        const ssize_t early = ::read(evfd, &primed, sizeof(primed));
+        if (early != static_cast<ssize_t>(sizeof(primed))) {
+            aura::serve::Fiber::yield();
+            uint64_t val = 0;
+            while (::read(evfd, &val, sizeof(val)) > 0) {
+            }
+        }
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
         return std::move(*result);
     };
 
@@ -1100,6 +1112,10 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
 
     // Issue #956 / #4053: same in-process libcurl path as run_serve_async
     // (no fork/exec curl; auth never on cmdline; shared_ptr result).
+    // Issue #4054: park with Waiting, then consume a completion that raced
+    // ahead of yield (EPOLLET: write-before-park loses the edge). Always
+    // drain eventfd after wake so a leftover counter cannot confuse the next
+    // wait on this denseness fiber / recycled wake path.
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                             const std::string& auth) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
@@ -1118,7 +1134,15 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
         t.detach();
 
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        aura::serve::Fiber::yield();
+        uint64_t primed = 0;
+        const ssize_t early = ::read(evfd, &primed, sizeof(primed));
+        if (early != static_cast<ssize_t>(sizeof(primed))) {
+            aura::serve::Fiber::yield();
+            uint64_t val = 0;
+            while (::read(evfd, &val, sizeof(val)) > 0) {
+            }
+        }
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
         return std::move(*result);
     };
 

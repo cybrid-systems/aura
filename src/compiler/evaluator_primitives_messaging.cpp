@@ -101,6 +101,22 @@ namespace {
     thread_local std::unique_lock<std::mutex>* s_tls_cli_body_lock = nullptr;
 
     // RAII: temporarily release denseness body mutex around wait/yield.
+    //
+    // Issue #4054: Soft Ready workers=1 runs denseness fibers as cooperative
+    // fibers on ONE OS thread, so they share this thread_local. The old
+    // TlsBodyLockScope prev-chain + unlock-without-clearing-TLS was wrong:
+    // fiber A completing while sibling B was mid http-post/join wait restored
+    // TLS to null (wiping B) or left a dangling pointer to A's destroyed
+    // unique_lock. The next batch's fiber:join then UAF'd s_tls_cli_body_lock
+    // (owns_lock on garbage) and Soft stopped answering stdin — classic
+    // "first denseness MiniMax batch OK, second wedges session" (#4054).
+    //
+    // Protocol (mutex still serializes Evaluator touch; unlock only across wait):
+    //   hold  → TLS points at our unique_lock
+    //   wait  → unlock mutex AND clear TLS (sibling may install its own)
+    //   resume→ re-lock mutex AND republish TLS
+    //   end   → clear TLS only if it still points at us (never restore a
+    //           yielded sibling's prev — that is the #4054 dangling chain)
     struct CliBodyLockJoinGuard {
         std::unique_lock<std::mutex>* lock = nullptr;
         bool unlocked = false;
@@ -108,12 +124,17 @@ namespace {
             if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock()) {
                 lock = s_tls_cli_body_lock;
                 lock->unlock();
+                // Clear TLS while unlocked so a sibling denseness fiber on
+                // this OS thread does not observe our unlocked lock.
+                s_tls_cli_body_lock = nullptr;
                 unlocked = true;
             }
         }
         ~CliBodyLockJoinGuard() {
-            if (unlocked && lock && !lock->owns_lock())
+            if (unlocked && lock && !lock->owns_lock()) {
                 lock->lock();
+                s_tls_cli_body_lock = lock;
+            }
         }
         CliBodyLockJoinGuard(const CliBodyLockJoinGuard&) = delete;
         CliBodyLockJoinGuard& operator=(const CliBodyLockJoinGuard&) = delete;
@@ -125,6 +146,7 @@ namespace {
         if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock()) {
             *lock_out = s_tls_cli_body_lock;
             s_tls_cli_body_lock->unlock();
+            s_tls_cli_body_lock = nullptr; // #4054: sibling-safe across yield
             *unlocked_out = true;
         }
     }
@@ -132,8 +154,10 @@ namespace {
     void denseness_body_relock_hook(void* lock, bool unlocked) {
         if (unlocked && lock) {
             auto* l = static_cast<std::unique_lock<std::mutex>*>(lock);
-            if (l && !l->owns_lock())
+            if (l && !l->owns_lock()) {
                 l->lock();
+                s_tls_cli_body_lock = l; // republish after wait
+            }
         }
     }
 
@@ -819,13 +843,21 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // fiber:join / async http-post DensenessBodyLockWaitGuard unlocks
             // across the wait so siblings can overlap (#2869 / #4053).
             body_lock.lock();
+            // Issue #4054: do NOT save/restore a prev TLS pointer across the
+            // denseness body. Cooperative Soft fibers share one OS thread;
+            // restoring prev after a sibling has published (or after wait
+            // cleared TLS) either wipes the sibling or reinstalls a dangling
+            // unique_lock*. Clear only if we still own the slot.
             struct TlsBodyLockScope {
-                std::unique_lock<std::mutex>* prev;
-                explicit TlsBodyLockScope(std::unique_lock<std::mutex>* cur) noexcept
-                    : prev(s_tls_cli_body_lock) {
-                    s_tls_cli_body_lock = cur;
+                std::unique_lock<std::mutex>* cur;
+                explicit TlsBodyLockScope(std::unique_lock<std::mutex>* c) noexcept : cur(c) {
+                    if (cur)
+                        s_tls_cli_body_lock = cur;
                 }
-                ~TlsBodyLockScope() noexcept { s_tls_cli_body_lock = prev; }
+                ~TlsBodyLockScope() noexcept {
+                    if (cur && s_tls_cli_body_lock == cur)
+                        s_tls_cli_body_lock = nullptr;
+                }
                 TlsBodyLockScope(const TlsBodyLockScope&) = delete;
                 TlsBodyLockScope& operator=(const TlsBodyLockScope&) = delete;
             } tls_scope(body_lock.owns_lock() ? &body_lock : nullptr);
