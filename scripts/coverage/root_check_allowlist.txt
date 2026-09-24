@@ -149,3 +149,4 @@ check_agent_reply_payload_4049.py
 check_supervise_join_4050.py
 check_occupancy_torn_read_4051.py
 check_isolation_deny_epoch_4052.py
+check_soft_ready_http_post_after_probe_4056.py
