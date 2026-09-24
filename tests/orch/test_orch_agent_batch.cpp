@@ -13,6 +13,8 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <execinfo.h>
 #include <print>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -50,7 +52,52 @@ extern int run_test_bare_bp_resolve_3179();
 extern int run_test_security_schedule_gate();
 extern int run_test_scope_join_tree_visibility();
 
+// orch batch death diagnostic (2026-09-24): test_orch_obs_facade dies by
+// SIGSEGV in the #3673 typed-deny eval (CI x86_64 + perturbed arm64 local)
+// with no stdout/stderr output. Install handlers that dump a backtrace to
+// fd 2 so the next run pins the crash site instead of dying silently
+// (same pattern as test_concurrent's ew_fatal_handler).
+static void orch_fatal_handler(int sig) {
+    const char head[] = "\n[test_orch_agent_batch] fatal signal ";
+    (void)!::write(2, head, sizeof(head) - 1);
+    char buf[32];
+    int len = 0;
+    if (sig == SIGSEGV) {
+        const char s[] = "SIGSEGV";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else if (sig == SIGABRT) {
+        const char s[] = "SIGABRT";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else if (sig == SIGBUS) {
+        const char s[] = "SIGBUS";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else if (sig == SIGILL) {
+        const char s[] = "SIGILL";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else {
+        len = ::snprintf(buf, sizeof(buf), "%d", sig);
+    }
+    (void)!::write(2, buf, (size_t)len);
+    (void)!::write(2, "\n", 1);
+    void* bt[64];
+    int n = ::backtrace(bt, 64);
+    ::backtrace_symbols_fd(bt, n, 2);
+    ::_exit(128 + sig);
+}
+
+static void orch_install_fatal_handlers() {
+    ::signal(SIGSEGV, orch_fatal_handler);
+    ::signal(SIGABRT, orch_fatal_handler);
+    ::signal(SIGBUS, orch_fatal_handler);
+    ::signal(SIGILL, orch_fatal_handler);
+}
+
 int main() {
+    orch_install_fatal_handlers();
     using aura::test::g_failed;
     using aura::test::g_passed;
     int members_failed = 0;
