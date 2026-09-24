@@ -10,6 +10,12 @@
 # If link fails: verification deferred to follow-up #1538 (same
 # allowlist mechanism as #1478).
 tests/test_incremental_aot_closure_deps.cpp
+# CI formatter parity (clang-format 23.1.1, dev:v1.0.7): format-only
+# churn on these prims from the 22.1.8 -> 23.1.1 pin bump. No behavior
+# change; test pairing re-required for functional edits is preserved by
+# review, not this mechanical gate.
+src/compiler/evaluator_primitives_diagnostic.cpp
+src/compiler/evaluator_primitives_messaging.cpp
 src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.h
 # Issue #1481 / #1548: test_resource_quota.cpp verified green in CI
