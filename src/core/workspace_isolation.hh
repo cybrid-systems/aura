@@ -561,8 +561,13 @@ struct WorkspaceIsolationPolicy {
         // Issue #3669: SE tenant keyed by the caller principal (target
         // fallback when unset) so query:security-audit joins deny rows by
         // caller tenant — SE.tenant_id == target hid the blame.
+        // Issue #4052: mutation_id stays TypedMid (#3801) but the epoch
+        // column is the emit-time Mutation epoch (SecurityEvent.epoch
+        // contract) — not the same TypedMid #2156/#3594. Matches the
+        // EffectDeny / grant.bound_mutation_id / mutation-audit ring epoch
+        // so IsolationDeny rows replay by Mutation epoch.
         emit_security_event_durable(SecurityEventKind::IsolationDeny, caller != 0 ? caller : target,
-                                    mid, mid, required_effects, op, reason, /*denied=*/true,
+                                    mid, epoch, required_effects, op, reason, /*denied=*/true,
                                     entry.fiber_id);
     }
 

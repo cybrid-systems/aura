@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <mutex>
 #include <print>
 #include <string>
 #include <thread>
@@ -4742,9 +4743,30 @@ int main() {
             found = true;
             CHECK(e.mutation_id == 777,
                   "3801 AC1: IsolationDeny SE mid == TypedMid 777 (not epoch 42)");
+            // Issue #4052: the epoch column is the emit-time Mutation epoch
+            // — not the same TypedMid the mutation_id column legitimately
+            // carries (#3801). IsolationDeny rows must replay by Mutation
+            // epoch alongside grant.grant_epoch / the mutation-audit ring.
+            CHECK(e.epoch == 42,
+                  "4052: IsolationDeny SE epoch == Mutation epoch 42 (not TypedMid 777)");
             CHECK(aura::core::current_mutation_epoch() == 42, "3801 AC1 pre: epoch still 42");
         }
         CHECK(found, "3801 AC1: IsolationDeny SE in ring");
+        // Issue #4052: the Typed correlated row for the same deny carries the
+        // Mutation epoch in both the before- and after-epoch fields, so the
+        // typed trail joins the SE by epoch (mutation_id stays TypedMid).
+        bool trail_found = false;
+        {
+            std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+            for (const auto& te : aura::compiler::typed_audit::g_trail().ring) {
+                if (te.mutation_id != 777)
+                    continue;
+                trail_found = true;
+                CHECK(te.before_epoch == 42, "4052: typed correlated before_epoch == 42");
+                CHECK(te.after_epoch == 42, "4052: typed correlated after_epoch == 42");
+            }
+        }
+        CHECK(trail_found, "4052: typed correlated row for TypedMid 777 reachable");
         ev.clear_boundary_audit_mid_for_test();
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }

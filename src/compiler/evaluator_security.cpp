@@ -815,7 +815,9 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
             emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch, req_bits,
                                         op, "stale-ref",
                                         /*denied=*/true, fiber);
-            typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
+            // Issue #4052: Typed correlated row epoch = Mutation epoch
+            // (mid stays the TypedMid join key).
+            typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
                                                            /*target_node=*/ref.id, fiber,
                                                            tenant); // Issue #3903
             bump_capability_denial();
@@ -2071,7 +2073,8 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
         const auto epoch = ::aura::core::current_mutation_epoch();
         const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
-        typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
+        // Issue #4052: Typed correlated row epoch = Mutation epoch.
+        typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
                                                        /*target_node=*/0, fiber,
                                                        capability_tenant_id()); // Issue #3903
     }
@@ -2127,7 +2130,8 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
                                 kTenantPathEscapeReason, /*denied=*/true, fiber);
     // Issue #3994 / #3903: Typed correlate tenant matches the IsolationDeny
     // SE (capability_tenant_id_). Default 0 omitted the filter axis.
-    typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
+    // Issue #4052: Typed correlated row epoch = Mutation epoch.
+    typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
                                                    /*target_node=*/0, fiber, capability_tenant_id_);
     return false;
 }
