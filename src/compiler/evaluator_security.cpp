@@ -874,9 +874,22 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
     const bool mt = ::aura::core::provenance::hard_capture_tenant_active() ||
                     ::aura::core::provenance::multi_tenant_env_active();
     const bool consult = strict || (restricted && mt);
+    const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
+    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
     std::uint64_t existing = 0;
     bool collision_borrow = false; // #4039: slot occupant is a different node
     if (consult) {
+        // Issue #4051: odd-seq / torn seqlock read is Uncertain, not
+        // Empty — the collapsed 0 from both readers must not be claimed;
+        // fail closed through the same IsolationDeny face (#3641/#4039).
+        if (::aura::core::provenance::occupancy_read_state_for_node(static_cast<std::uint32_t>(
+                node_id)) == ::aura::core::provenance::NodeOccupancyRead::Uncertain) {
+            (void)check_workspace_isolation(caller, /*ref_tenant=*/0, req_bits, op);
+            using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+            g_tenant_isolation_metrics().nodeid_only_entry_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return false;
+        }
         existing =
             ::aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(node_id));
         if (existing == 0) {
@@ -906,8 +919,6 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
             }
         }
     }
-    const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
-    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
     // Issue #4039: borrowed same-tenant (or untenanted) occupant — a
     // collision must not read as ownership. Deny through the shared
     // unstamped-ref face (check_boundary_ex ref_tenant==0 under the

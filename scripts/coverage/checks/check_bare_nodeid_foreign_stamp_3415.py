@@ -73,7 +73,10 @@ def main() -> int:
     # Issue #4039: the borrow is tracked (collision_borrow) and a
     # same-tenant/untenanted occupant collision denies via the shared
     # unstamped-ref face before any caller-stamp — window extended again.
-    fn_body = sec[fn : fn + 5000] if fn >= 0 else ""
+    # Issue #4051: the consult now opens with the seqlock Uncertain
+    # fail-closed arm (odd-seq / torn read is not an empty slot) — window
+    # extended to span the whole function body again.
+    fn_body = sec[fn : fn + 8000] if fn >= 0 else ""
     must("existing_stamp_for_node", "AC1 for_node_id", fn_body)
     must("require_effect_on_ref", "AC1 for_node_id", fn_body)
     must("make_stamped_ref", "AC1 for_node_id same-tenant", fn_body)

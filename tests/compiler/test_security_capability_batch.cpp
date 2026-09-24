@@ -52,7 +52,8 @@ extern int run_test_hard_fiber_isolation();
 extern int run_test_isolation_audit_mid();
 extern int run_test_hard_fiber_restricted();
 extern int run_test_require_effect_auto_isolation();
-extern int run_test_nodeid_collision_4039(); // #4039: collision borrow + principal-0 gate
+extern int run_test_nodeid_collision_4039();    // #4039: collision borrow + principal-0 gate
+extern int run_test_occupancy_torn_read_4051(); // #4051: torn read is Uncertain
 extern int run_test_occupancy_deny_path_3724();
 extern int run_test_require_effect_on_ref_stale_3773();
 extern int run_test_mse_session_live_grants_3774_member();
@@ -266,6 +267,19 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_require_effect_auto_isolation 4039 ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_require_effect_auto_isolation (#4051 occupancy torn read) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_occupancy_torn_read_4051() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_require_effect_auto_isolation 4051 ({}/{})", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_require_effect_auto_isolation 4051 ({} checks)", g_passed);
     }
 
     std::println("\n──── test_require_effect_on_ref_stale (#3773) ────");

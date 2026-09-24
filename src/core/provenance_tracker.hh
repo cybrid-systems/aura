@@ -1037,6 +1037,38 @@ struct NodeOccupancyView {
         return {};
     return {n, tn};
 }
+
+// Issue #4051: third read state for the occupancy ring. The seqlock window
+// (odd seq = writer in flight) and a torn read (seq changed across the two
+// acquire loads) are NOT an empty slot — they are Uncertain. Both
+// existing_stamp_for_node() and occupying_stamp_for_node() collapse that
+// window to "no stamp" (0 / {}), which is correct for their read-path
+// callers but must never be read as "nobody owns this NodeId" by the write
+// path: the read path restamp_read_ref already denies the same window.
+// require_effect_for_node_id consults this predicate under the consult
+// regime and fail-closes through the existing IsolationDeny face rather
+// than caller-stamping a possibly foreign-owned NodeId mid-write.
+enum class NodeOccupancyRead {
+    Stable,    // even seq, unchanged across the load pair
+    Uncertain, // odd seq (writer in flight) or torn (seq moved between loads)
+};
+
+[[nodiscard]] inline NodeOccupancyRead
+occupancy_read_state_for_node(std::uint32_t node_id) noexcept {
+    if (node_id == 0)
+        return NodeOccupancyRead::Stable;
+    const auto& t = g_provenance_tracker();
+    const auto& slot = t.node_occupancy_ring[node_id & (kNodeOccupancyRingSlots - 1)];
+    const auto s1 = slot.seq.load(std::memory_order_acquire);
+    if ((s1 & 1u) != 0)
+        return NodeOccupancyRead::Uncertain; // writer in flight
+    (void)slot.node_id.load(std::memory_order_relaxed);
+    (void)slot.tenant_id.load(std::memory_order_relaxed);
+    if (slot.seq.load(std::memory_order_acquire) != s1)
+        return NodeOccupancyRead::Uncertain; // torn read — not an empty slot
+    return NodeOccupancyRead::Stable;
+}
+
 inline void clear_last_stamped_node_for_test() noexcept {
     auto& t = g_provenance_tracker();
     for (auto& slot : t.node_occupancy_ring) {
