@@ -9,6 +9,7 @@
 //   AC6: source-cite; no docs/design
 
 #include "test_harness.hpp"
+#include "core/provenance_tracker.hh"
 #include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
@@ -25,8 +26,10 @@
 #include <vector>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.ast;
 
 namespace {
 
@@ -429,6 +432,293 @@ int run_test_agent_ask_typed_corr() {
         CHECK(md.find("2538") != std::string::npos || md.find("typed") != std::string::npos,
               "AC6: README documents typed corr");
         CHECK(spawn_src.find("class AgentRegistry") == std::string::npos, "AC6: no AgentRegistry");
+    }
+
+    // ── Issue #4049: agent-reply non-scalar payload + scope BP + stale ask ──
+    // AC1: packed (id . gen) reply auto-runs stamp_stable_ref + handoff_ref;
+    //      the per-ask mailbox receives the post-handoff stable-ref body
+    //      (never the literal "payload"), message stamped handoff_completed;
+    //      string reply unchanged (zero-cost path)
+    // AC2: handoff-fail reply → structured export-stale / handoff-required,
+    //      ok=false, NO push (production stamp-authority deny)
+    // AC3: tenant-scoped replier BP charges that scope's gauge; process
+    //      bucket unchanged; producer throttle arm runs and Ok heals it
+    // AC4: production no-handle BP lands on the overflow gauge (process
+    //      bucket stays clean); Soft empty scope still charges the bucket
+    // AC5: agent_ask honors stale_handoff as handoff-required (no spin to
+    //      timeout)
+    // AC6: source-cite; no docs/design; extend-only
+    {
+        using aura::ast::NodeId;
+        using aura::ast::NULL_NODE;
+        using aura::orch::load_mailbox_bp_recent;
+        using aura::orch::stamp_mail_message_handoff_completed;
+
+        std::println("\n=== Issue #4049: agent-reply non-scalar payload + BP scope ===");
+
+        std::println("\n--- #4049 AC1: stable-ref reply + string zero-cost ---");
+        CompilerService cs4049;
+        CHECK(
+            cs4049.eval(R"ach((set-code "(define a 1) (define b 2) (define c 3)"))ach").has_value(),
+            "4049 setup: set-code");
+        CHECK(cs4049.eval("(eval-current)").has_value(), "4049 setup: eval-current");
+        auto& ev4049 = cs4049.evaluator();
+        auto* ws4049 = ev4049.workspace_flat();
+        CHECK(ws4049 != nullptr, "4049 setup: flat workspace");
+        NodeId nid4049 = NULL_NODE;
+        for (NodeId id = 1; id < ws4049->size(); ++id) {
+            if (ws4049->is_live_node(id) && !ws4049->is_free_slot(id)) {
+                nid4049 = id;
+                break;
+            }
+        }
+        CHECK(nid4049 != NULL_NODE, "4049 setup: live node");
+
+        // Register a pending ask so the prim reply has a dest (same shape
+        // as the #2538 AC1 injection block above).
+        auto reply_mb4049 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
+        const std::uint64_t corr4049 = 4049001;
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks[corr4049] = reply_mb4049;
+        }
+        auto ok4049 = cs4049.eval(std::format(
+            R"((let ((h (orch:agent-reply {} (query:stable-ref {})))) (hash-ref h "ok")))",
+            corr4049, nid4049));
+        CHECK(ok4049 && is_bool(*ok4049) && as_bool(*ok4049),
+              "4049 AC1: stable-ref reply ok (auto handoff ran)");
+        auto wired4049 = cs4049.eval(std::format(
+            R"((let ((h (orch:agent-reply {} (query:stable-ref {})))) (hash-ref h "agent-reply-auto-handoff-wired")))",
+            corr4049, nid4049));
+        CHECK(wired4049 && is_int(*wired4049) && as_int(*wired4049) == 1,
+              "4049 AC1: auto-handoff wired sentinel");
+        // String reply unchanged (zero-cost path — no handoff work).
+        auto str4049 = cs4049.eval(std::format(
+            R"((let ((h (orch:agent-reply {} "plain"))) (hash-ref h "ok")))", corr4049));
+        CHECK(str4049 && is_bool(*str4049) && as_bool(*str4049),
+              "4049 AC1: string reply unchanged");
+        CHECK(reply_mb4049->size() == 3, "4049 AC1: three replies pushed");
+        for (int i = 0; i < 3; ++i) {
+            auto m = reply_mb4049->recv(/*wait=*/true, /*timeout_ms=*/100, /*fiber_id=*/0);
+            CHECK(m.has_value(), "4049 AC1: reply delivered");
+            if (!m)
+                break;
+            const bool stable_body =
+                m->payload.find("stable-ref:") != std::string::npos &&
+                m->payload.find(std::format("reply:{}:payload", corr4049)) == std::string::npos;
+            CHECK(i == 2 || (stable_body && m->handoff_completed && m->held_ref_token.has_value()),
+                  "4049 AC1: stable-ref body post-handoff + stamped message");
+            CHECK(i != 2 || m->payload.ends_with(":plain"),
+                  "4049 AC1: string reply body unchanged");
+        }
+
+        std::println("\n--- #4049 AC2: handoff-fail reply → structured fail, no push ---");
+        const auto sz_before4049 = reply_mb4049->size();
+        // Production hard face + hard-capture tenant with NO capability
+        // tenant bound: stamp_stable_ref_fields writes tenant_id 0, and
+        // finalize_agent_export's #3204 stamp-authority gate denies the
+        // tenant-0 ref (hard_capture_tenant_active) — handoff fails
+        // closed. The prim must return the structured status and NOT
+        // push. (A gen-mismatched pair on a LIVE node is refreshed by
+        // #2404 validate_or_refresh — not a failure case; the compact
+        // workspace has no free slots to race either.)
+        aura::core::provenance::set_stable_ref_export_hard_reject(true);
+        aura::core::provenance::set_hard_capture_tenant(true);
+        auto fail_ok4049 = cs4049.eval(
+            std::format(R"((let ((h (orch:agent-reply {} (cons {} 1)))) (hash-ref h "ok")))",
+                        corr4049, nid4049));
+        CHECK(fail_ok4049 && is_bool(*fail_ok4049) && !as_bool(*fail_ok4049),
+              "4049 AC2: handoff-fail reply not ok");
+        auto fail_st4049 = cs4049.eval(std::format(
+            R"((let ((h (orch:agent-reply {} (cons {} 1)))) (equal? (hash-ref h "status") "export-stale")))",
+            corr4049, nid4049));
+        auto fail_st24049 = cs4049.eval(std::format(
+            R"((let ((h (orch:agent-reply {} (cons {} 1)))) (equal? (hash-ref h "status") "handoff-required")))",
+            corr4049, nid4049));
+        CHECK((fail_st4049 && is_bool(*fail_st4049) && as_bool(*fail_st4049)) ||
+                  (fail_st24049 && is_bool(*fail_st24049) && as_bool(*fail_st24049)),
+              "4049 AC2: structured export-stale / handoff-required status");
+        CHECK(reply_mb4049->size() == sz_before4049, "4049 AC2: failed reply NOT pushed");
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_stable_ref_export_hard_reject(false);
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks.erase(corr4049);
+        }
+
+        std::println("\n--- #4049 AC3: replying scope gauge + producer throttle arm ---");
+        std::println("\n--- #4049 AC4: overflow gauge (prod) vs process bucket (soft) ---");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        const auto scope_before4049 = load_mailbox_bp_recent("t:reply4049");
+        const auto proc_before4049 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto thr_before4049 =
+            g_orch_module_stats.agent_producer_throttle_enter_total.load(std::memory_order_relaxed);
+        AgentHandle from4049{};
+        from4049.ok = true;
+        from4049.id = 4049042;
+        from4049.name = "reply4049-agent";
+        from4049.bp_scope_id = "t:reply4049";
+        from4049.producer_bp_budget = 1;
+        auto bp_mb4049 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        // #3566: production reply mailboxes carry the agent scope so the
+        // mailbox's own BP hook notes the named gauge — the process bucket
+        // must stay out of the reply path entirely.
+        bp_mb4049->set_bp_scope_id("t:reply4049");
+        MailMessage fill4049;
+        fill4049.payload = "fill";
+        CHECK(bp_mb4049->push(std::move(fill4049)) == PushStatus::Ok, "4049 AC3: fill reply mb");
+        auto bp4049 = agent_reply(corr4049, "bp", bp_mb4049.get(), &from4049);
+        CHECK(!bp4049.ok && bp4049.status == "backpressure", "4049 AC3: reply backpressure");
+        CHECK(load_mailbox_bp_recent("t:reply4049") > scope_before4049,
+              "4049 AC3: tenant scope gauge bumped");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc_before4049,
+              "4049 AC3: process bucket unchanged (scope charge)");
+        CHECK(from4049.producer_throttled && from4049.consecutive_bp_count == 1,
+              "4049 AC3: producer throttle armed on reply BP");
+        CHECK(g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                  std::memory_order_relaxed) > thr_before4049,
+              "4049 AC3: throttle enter counter bumped");
+        // Ok heals the arm (same semantics as agent_send).
+        (void)bp_mb4049->recv(/*wait=*/false, /*timeout_ms=*/0, /*fiber_id=*/0);
+        auto heal4049 = agent_reply(corr4049, "heal", bp_mb4049.get(), &from4049);
+        CHECK(heal4049.ok && heal4049.status == "ok", "4049 AC3: reply ok after drain");
+        CHECK(!from4049.producer_throttled && from4049.consecutive_bp_count == 0,
+              "4049 AC3: Ok clears throttle arm");
+
+        // AC4a: production, no replying handle — agent_reply's own event
+        // lands on the at-cap overflow observability gauge (never the
+        // process bucket); the #3566 named-scope mailbox note keeps the
+        // bucket clean as well.
+        const auto ovf_before4049 =
+            aura::orch::g_scope_bp_overflow.recent.load(std::memory_order_relaxed);
+        const auto proc4_before4049 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto bp_mb44049 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        bp_mb44049->set_bp_scope_id("t:reply4049");
+        MailMessage fill44049;
+        fill44049.payload = "fill";
+        CHECK(bp_mb44049->push(std::move(fill44049)) == PushStatus::Ok, "4049 AC4: fill reply mb");
+        auto bp44049 = agent_reply(corr4049, "bp", bp_mb44049.get(), /*from=*/nullptr);
+        CHECK(!bp44049.ok && bp44049.status == "backpressure", "4049 AC4: reply backpressure");
+        CHECK(aura::orch::g_scope_bp_overflow.recent.load(std::memory_order_relaxed) >
+                  ovf_before4049,
+              "4049 AC4: overflow gauge bumped (production)");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc4_before4049,
+              "4049 AC4: process bucket NOT bumped under production");
+        // AC4b: Soft empty scope keeps the process bucket contract — the
+        // +1 is agent_reply's own note (the #3566 mailbox note routes to
+        // the named gauge).
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        const auto proc4b_before4049 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto bp54049 = agent_reply(corr4049, "bp", bp_mb44049.get(), /*from=*/nullptr);
+        CHECK(!bp54049.ok && bp54049.status == "backpressure", "4049 AC4: soft backpressure");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc4b_before4049 + 1,
+              "4049 AC4: soft empty scope charges process bucket");
+
+        std::println("\n--- #4049 AC5: ask honors stale_handoff (no timeout spin) ---");
+        Scheduler sched4049(1);
+        SchedRunner runner4049(sched4049);
+        AgentHandle b4049{};
+        AgentSpec spec4049;
+        spec4049.name = "reply4049-B";
+        spec4049.attach_mailbox = true;
+        spec4049.mailbox_high_water = 16;
+        spec4049.keepalive_interval_ms = 0;
+        spec4049.body = [] {};
+        b4049 = spawn_agent_with_mailbox(sched4049, std::move(spec4049));
+        CHECK(b4049.ok && b4049.mailbox != nullptr, "4049 AC5: B spawned");
+
+        std::atomic<bool> running4049{true};
+        aura::serve::Fiber dummy4049([] {});
+        std::thread worker4049([&] {
+            while (running4049.load(std::memory_order_relaxed)) {
+                auto m = b4049.mailbox->recv(/*wait=*/true, /*timeout_ms=*/50, b4049.id);
+                if (!m)
+                    continue;
+                auto ask = try_parse_ask(*m);
+                if (!ask)
+                    continue;
+                std::shared_ptr<MultiFiberMailbox> dest;
+                {
+                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    auto it = aura::orch::g_pending_asks.find(ask->correlation_id);
+                    if (it != aura::orch::g_pending_asks.end())
+                        dest = it->second;
+                }
+                if (!dest)
+                    continue;
+                // Stamped reply passes the push gate, then the in-queue stamp
+                // is cleared (#3642 steal-complete simulation) so the recv
+                // gate must consume it stale.
+                MailMessage rep;
+                rep.kind = MailKind::Reply;
+                rep.correlation_id = ask->correlation_id;
+                rep.payload = format_reply_payload(ask->correlation_id, "stable-ref:9:9");
+                stamp_mail_message_handoff_completed(rep, 9);
+                if (dest->push(std::move(rep)) != PushStatus::Ok)
+                    continue;
+                dest->for_each_pending_held_ref_for_fiber(&dummy4049, [](auto& msg) {
+                    if (msg.handoff_completed) {
+                        msg.handoff_completed = false;
+                        aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+                    }
+                });
+            }
+        });
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        AskResult r4049;
+        bool stale_seen4049 = false;
+        // Bounded retry: if the asker pops the reply inside the sub-µs
+        // push→clear window (race lost), this attempt delivers Ok; a fresh
+        // ask gets a properly cleared stale message.
+        for (int attempt = 0; attempt < 3 && !stale_seen4049; ++attempt) {
+            r4049 = agent_ask(b4049, "stale-ping-4049", /*timeout_ms=*/10000);
+            stale_seen4049 = std::string_view(r4049.status) == "handoff-required";
+        }
+        CHECK(stale_seen4049 && !r4049.ok,
+              std::format("4049 AC5: stale held_ref reply → handoff-required (status={})",
+                          r4049.status));
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        running4049.store(false, std::memory_order_relaxed);
+        worker4049.join();
+        cleanup_handle(b4049);
+
+        std::println("\n--- #4049 AC6: source-cite ---");
+        const auto prim_src4049 = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto spawn_src4049 = read_file("src/orch/agent_spawn.h");
+        const auto table_src4049 = read_file("src/compiler/agent_name_table.h");
+        const auto scope_src4049 = read_file("src/orch/agent_scope.h");
+        CHECK(prim_src4049.find("agent-reply-auto-handoff-wired") != std::string::npos,
+              "4049 AC6: reply prim auto-handoff sentinel");
+        CHECK(prim_src4049.find("find_by_fiber") != std::string::npos,
+              "4049 AC6: reply prim resolves the replying handle");
+        CHECK(prim_src4049.find("agent_reply(corr_id, payload, /*reply_dest=*/nullptr") !=
+                  std::string::npos,
+              "4049 AC6: reply passes handle + held token");
+        CHECK(spawn_src4049.find("stamp_mail_message_handoff_completed(msg, *held_token)") !=
+                  std::string::npos,
+              "4049 AC6: agent_reply stamps held token");
+        CHECK(spawn_src4049.find("note_mailbox_bp_recent_event(from->bp_scope_id, from->id)") !=
+                  std::string::npos,
+              "4049 AC6: reply BP charges the replying scope");
+        CHECK(spawn_src4049.find("process bucket stays clean") != std::string::npos,
+              "4049 AC6: production no-handle BP avoids the process bucket");
+        CHECK(spawn_src4049.find("handoff-required beats continue-until-timeout") !=
+                  std::string::npos,
+              "4049 AC6: ask loop honors stale_handoff");
+        CHECK(table_src4049.find("find_by_fiber") != std::string::npos,
+              "4049 AC6: name-table fiber lookup");
+        CHECK(scope_src4049.find("find_by_fiber") != std::string::npos,
+              "4049 AC6: scope fiber lookup");
+        CHECK(spawn_src4049.find("class AgentRegistry") == std::string::npos,
+              "4049 AC6: no AgentRegistry");
+        CHECK(read_file("docs/design/4049-agent-reply-payload.md").empty(),
+              "4049 AC6: no docs/design file");
     }
 
     std::println("\n=== #2538 results: {} passed, {} failed ===", g_passed, g_failed);
