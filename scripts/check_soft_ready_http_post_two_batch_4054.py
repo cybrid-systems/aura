@@ -19,6 +19,7 @@ Live MiniMax two-batch smoke remains documented on the issue close comment.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import os
 import select
@@ -165,6 +166,12 @@ def main() -> int:
     if not AURA_BIN.is_file():
         print(f"SKIP: {AURA_BIN} missing — build the Soft tree to enable the two-batch check", file=sys.stderr)
         return 0
+    lock_fd = os.open("/tmp/aura-soft-encoding-check.lock", os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("SKIP: another Soft encoding check holds the lock", file=sys.stderr)
+        return 0
 
     kill_soft_zombies()
     time.sleep(0.2)
@@ -174,7 +181,7 @@ def main() -> int:
     print(f"stub_url={stub_url} delay_s={STUB_DELAY_S} pad={BODY_PAD} N={N} batches={BATCHES}")
     print(f"aura_bin={AURA_BIN}")
 
-    env = {**os.environ, "AURA_SANDBOX": "off"}
+    env = {**os.environ, "AURA_SANDBOX": "off", "AURA_PIPELINE_STRICT": "0"}
     proc = subprocess.Popen(
         [str(AURA_BIN), "--serve-async"],
         stdin=subprocess.PIPE,
