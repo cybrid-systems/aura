@@ -1240,6 +1240,14 @@ private:
         for (auto& h : handles_) {
             h.fiber = nullptr;
             h.keepalive_helper = nullptr;
+            // Issue #2782 follow-up: Scheduler death freed every Fiber —
+            // the mailbox's attachers_ still hold raw Fiber* into that
+            // freed storage, and a later close()/notify_all_unlocked()
+            // reads AND writes through them (heap-use-after-free →
+            // intermittent downstream SIGSEGV). Detach the dead fibers
+            // now; the mailbox shared_ptr itself stays (heap-owned).
+            if (h.mailbox)
+                h.mailbox->on_scheduler_invalidated();
             // Keep mailbox / liveness shared_ptrs (heap-owned, safe).
         }
         // Children registered independently; ~Scheduler notifies each.

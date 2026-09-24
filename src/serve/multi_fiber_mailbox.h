@@ -1383,6 +1383,21 @@ public:
         return inflight_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] bool closed() const noexcept { return closed_.load(std::memory_order_acquire); }
+    // Issue #2782 follow-up: the Scheduler owns every Fiber; when it
+    // dies, attachers_ would hold raw pointers into freed storage and a
+    // later close()/notify_all_unlocked() would read AND write through
+    // them (ASAN: heap-use-after-free in Fiber::eventfd()/set_state —
+    // observed as intermittent downstream SIGSEGV). Called by the
+    // AgentScope scheduler-death observer; the mailbox shared_ptr stays
+    // valid (heap-owned).
+    void on_scheduler_invalidated() noexcept {
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
+        std::lock_guard lock(mu_);
+        scheduler_gone_.store(true, std::memory_order_relaxed);
+        attachers_.clear();
+    }
+
     void close() noexcept {
         // Issue #2972 AC2: drop queued messages and zero inflight so
         // close cannot leave a permanent credit-full mailbox.
@@ -1968,6 +1983,8 @@ private:
     }
 
     void notify_all_unlocked() {
+        if (scheduler_gone_.load(std::memory_order_relaxed))
+            return; // Scheduler freed its Fibers; attachers_ were detached.
         for (auto* f : attachers_) {
             if (!f)
                 continue;
@@ -2021,6 +2038,10 @@ private:
     std::uint32_t credit_limit_ = 0; // 0 → high_water (#2972)
     std::atomic<std::uint64_t> inflight_{0};
     std::atomic<bool> closed_{false};
+    // Scheduler died → its Fibers are freed (Scheduler owns them via
+    // unique_ptr). on_scheduler_invalidated() detaches every attacher
+    // so close()/notify never deref dead Fiber* (#2782 follow-up).
+    std::atomic<bool> scheduler_gone_{false};
     MultiFiberMailboxStats local_stats_{};
 };
 
