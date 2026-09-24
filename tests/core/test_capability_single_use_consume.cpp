@@ -2394,14 +2394,33 @@ static void ac3964_1_dual_eval_distinct_session_mids() {
     std::atomic<std::uint64_t> mid_b{0};
     std::atomic<int> phase{0};
     std::atomic<int> b_after_a{0};
+    // Issue #3964 CI follow-up (2026-09-24): mint both session grants only
+    // AFTER both outermost boundaries are live. The #3279 production orphan
+    // sweep runs at outermost enter when capability_live_session_grants > 0;
+    // on a fiberless host thread (g_current_fiber == nullptr) its live mid
+    // set is only {own enter mid, process hold scalar}, so a peer Evaluator's
+    // in-flight session row is invisible there and a grant minted before the
+    // peer's enter is swept as an orphan; this AC row flipped on exactly
+    // that ordering (reproduced deterministically with a 150ms delay ahead
+    // of A's enter: "both session mids published" + both isolation rows
+    // FAIL). Deferring the grants past both enters keeps the sweep window
+    // empty, so this AC measures what it names: per-Evaluator session mids
+    // plus exit-only revoke isolation. The peer-visible live mid set for
+    // fiberless boundaries stays a #3279 residual (the fail-closed sweep has
+    // no cross-thread live-mid registry to consult).
+    std::atomic<int> grant_go{0};
+    std::atomic<int> granted{0};
     std::thread ta([&] {
         ev_a.clear_boundary_audit_mid_for_test();
         bool ok = true;
         Evaluator::MutationBoundaryGuard g(ev_a, &ok);
         const auto m = aura::compiler::typed_audit::current_boundary_audit_mid();
         mid_a.store(m, std::memory_order_release);
+        while (grant_go.load(std::memory_order_acquire) == 0)
+            std::this_thread::yield();
         if (m != 0)
             ac3241_grant(tenant_a, "mut-3964-a", m, 0);
+        granted.fetch_add(1, std::memory_order_acq_rel);
         while (phase.load(std::memory_order_acquire) < 1)
             std::this_thread::yield();
     });
@@ -2411,8 +2430,11 @@ static void ac3964_1_dual_eval_distinct_session_mids() {
         Evaluator::MutationBoundaryGuard g(ev_b, &ok);
         const auto m = aura::compiler::typed_audit::current_boundary_audit_mid();
         mid_b.store(m, std::memory_order_release);
+        while (grant_go.load(std::memory_order_acquire) == 0)
+            std::this_thread::yield();
         if (m != 0)
             ac3241_grant(tenant_b, "mut-3964-b", m, 0);
+        granted.fetch_add(1, std::memory_order_acq_rel);
         while (phase.load(std::memory_order_acquire) < 1)
             std::this_thread::yield();
         while (phase.load(std::memory_order_acquire) < 2)
@@ -2428,6 +2450,10 @@ static void ac3964_1_dual_eval_distinct_session_mids() {
     CHECK(ma != 0 && mb != 0, "3964: both session mids published");
     CHECK(ma != mb, "3964: Evaluators do not share session mid");
     CHECK(ma != epoch && mb != epoch, "3964: session mid is not the process Mutation epoch");
+    grant_go.store(1, std::memory_order_release);
+    for (int i = 0; i < 100000 && granted.load() < 2; ++i)
+        std::this_thread::yield();
+    CHECK(granted.load() == 2, "3964: both session grants minted under live boundaries");
     phase.store(1, std::memory_order_release);
     ta.join();
     CHECK(g_capability_registry().session_bound_entries_alive(tenant_b) == 1,
