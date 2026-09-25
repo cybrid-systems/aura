@@ -5555,6 +5555,141 @@ static void ac4066_soft_and_source() {
     aura::ast::reset_temporary_moving_live_ptrs_for_test();
 }
 
+static void ac4067_reset_face() {
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::core::envframe_lifetime::reset_envframe_lifetime_stats();
+    aura::core::lifetime::reset_linear_roots_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::set_moving_compact_enabled(0);
+}
+
+static void ac4067_admit_clean_retry_clears_throttle() {
+    std::println("\n--- #4067: next admit runs recover; clean retry clears throttle ---");
+    ac4067_reset_face();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::envframe_lifetime::reset_envframe_lifetime_stats();
+    aura::core::lifetime::reset_linear_roots_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    auto& ev = cs.evaluator();
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    aura::core::moving_densify_health::note_agent_throttle_for_moving_densify();
+    CHECK(aura::core::moving_densify_health::agent_throttle_for_moving_densify(),
+          "4067: throttle armed before admit");
+    const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+    const auto hs = aura::core::moving_densify_health::snapshot();
+    CHECK(rec.densify_retried, "4067: retry densify ran");
+    if (rec.success) {
+        CHECK(!aura::core::moving_densify_health::agent_throttle_for_moving_densify(),
+              "4067: successful retry cleared throttle");
+        CHECK(hs.would_allow_mutate, "4067: successful retry allows mutate");
+    } else {
+        CHECK(aura::core::moving_densify_health::agent_throttle_for_moving_densify(),
+              "4067: failed retry keeps throttle");
+        CHECK(!hs.would_allow_mutate, "4067: failed retry window is closed");
+    }
+    // Healthy publish (the same function the retry arm calls) clears throttle
+    // so the next admit is not stuck on densify-throttle.
+    aura::core::moving_densify_health::note_agent_throttle_for_moving_densify();
+    aura::core::moving_densify_health::publish_last_moving_densify_window(
+        /*had_moving_densify=*/true, /*pin_contract_held=*/true,
+        /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
+        /*root_remap_fail_total=*/0);
+    CHECK(!aura::core::moving_densify_health::agent_throttle_for_moving_densify(),
+          "4067: healthy publish clears throttle");
+    CHECK(aura::core::moving_densify_health::snapshot().would_allow_mutate,
+          "4067: healthy publish allows mutate");
+    bool ok = true;
+    auto g = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    if (!g.has_value()) {
+        CHECK(g.error().message.find("densify-throttle") == std::string::npos,
+              "4067: admit is not stuck on densify-throttle");
+    } else {
+        CHECK(true, "4067: admit entered the guard after recover");
+        g.value().reset();
+    }
+    ac4067_reset_face();
+}
+
+static void ac4067_lcp_deny_keeps_closed_window() {
+    std::println("\n--- #4067: recover failure keeps a closed window and sticky ---");
+    ac4067_reset_face();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    auto& ev = cs.evaluator();
+    {
+        auto p = aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof();
+        p.would_allow_commit = false;
+        aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(&ev, p);
+    }
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    aura::core::moving_densify_health::note_agent_throttle_for_moving_densify();
+    const auto seq0 =
+        aura::core::moving_densify_health::g_last_window_seq.load(std::memory_order_relaxed);
+    bool ok = true;
+    auto g = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(!g.has_value(), "4067: failed recover still refuses admit");
+    if (!g.has_value()) {
+        CHECK(g.error().message.find("densify-throttle") != std::string::npos,
+              "4067: refuse reason stays densify-throttle");
+    }
+    const auto hs = aura::core::moving_densify_health::snapshot();
+    CHECK(!hs.would_allow_mutate, "4067: failed recover window_would_allow_mutate==false");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "4067: sticky still armed");
+    CHECK(aura::core::moving_densify_health::g_last_window_seq.load(std::memory_order_relaxed) >
+              seq0,
+          "4067: failed recover advances g_last_window_seq");
+    ac4067_reset_face();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+}
+
+static void ac4067_source_cite() {
+    std::println("\n--- #4067: admit calls recover; retry publish is on the compact arm ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #4067") != std::string::npos, "4067: cites");
+    CHECK(mb.find("densify_throttle_still_blocks_admit") != std::string::npos,
+          "4067: admit helper");
+    const auto helper = mb.find("densify_throttle_still_blocks_admit(Evaluator& ev)");
+    CHECK(helper != std::string::npos, "4067: helper defined");
+    if (helper != std::string::npos) {
+        const auto body = mb.substr(helper, 700);
+        CHECK(body.find("recover_moving_sticky_densify_off(true)") != std::string::npos,
+              "4067: helper calls the existing recover entry");
+        CHECK(body.find("agent_throttle_for_moving_densify()") != std::string::npos,
+              "4067: helper re-samples throttle after recover");
+    }
+    const auto recover_fn = mb.find("Evaluator::recover_moving_sticky_densify_off");
+    CHECK(recover_fn != std::string::npos, "4067: recover function");
+    const auto compact = recover_fn == std::string::npos
+                             ? std::string::npos
+                             : mb.find("compact_all_moving_pinned()", recover_fn);
+    CHECK(compact != std::string::npos, "4067: retry compact");
+    if (compact != std::string::npos) {
+        const auto arm = mb.substr(compact, 1400);
+        CHECK(arm.find("publish_last_moving_densify_window(") != std::string::npos,
+              "4067: compact arm publishes the retry window");
+        CHECK(arm.find("Issue #4067") != std::string::npos,
+              "4067: publish cite on the compact arm");
+    }
+    CHECK(read_file("docs/design/4067-densify-throttle.md").empty(), "4067: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4067.cpp").empty(), "4067: no test_issue_4067.cpp");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -6354,6 +6489,11 @@ int run_test_moving_densify_fail_closed() {
     ac4066_peer_sees_unrecycled_or_remapped();
     ac4066_noted_before_recycle_does_not_move();
     ac4066_soft_and_source();
+
+    std::println("\n=== Issue #4067: densify-throttle admit runs recover ===");
+    ac4067_admit_clean_retry_clears_throttle();
+    ac4067_lcp_deny_keeps_closed_window();
+    ac4067_source_cite();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
