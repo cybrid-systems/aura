@@ -1216,6 +1216,20 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool nested_boundary = stack.size() > 1;
     auto cp = stack.back();
     stack.pop_back();
+    // Issue #4089: soft-only-below — only orch soft checkpoint frames
+    // remain, so this exit IS the type-authority outermost. A failed audit
+    // must take the real restore path below (never the nested-success skip
+    // that would leave a type-failed tree committed on the agent fiber).
+    // Host outermost (stack empty) and real Guard nesting are unchanged:
+    // empty reads true but nested_boundary is already false there; any
+    // non-soft frame below reads false and keeps the skip.
+    bool soft_only_below = true;
+    for (const auto& c4089 : stack) {
+        if (!c4089.orch_soft_frame) {
+            soft_only_below = false;
+            break;
+        }
+    }
     // Issue #3322: production/Full force-close the pre-proof observation
     // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
     // Does not stamp TypeLinearCommitProof or persist occurrence.
@@ -2159,7 +2173,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // Nested success must not dual-restore here: that
                             // undoes mutate:rebind after it returned #t.
                             // Outermost owns commit / Full fail-closed restore.
-                            if (nested_boundary && success)
+                            // Issue #4089: only real Guard nesting keeps the
+                            // nested-success skip. When only orch soft frames
+                            // remain below, this boundary is the type-authority
+                            // outermost — restore + flip Guard success (via
+                            // note_outermost_audit_rollback_needs_fail, consumed
+                            // by the dtor) so the existing abort path runs
+                            // instead of committing a type-failed tree.
+                            if (nested_boundary && success && !soft_only_below)
                                 goto skip_nested_success_composite_restore;
                             auto& ac = typed_audit::g_typed_mutation_audit_counters;
                             const bool linear_forced = force_linear_rollback(
@@ -3298,6 +3319,26 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         prev = ++(*slot);
     }
     bool outermost = (prev == 1);
+    // Issue #4089: orch soft checkpoint frames (agent-body window) are not
+    // real Guard nesting. When every frame below this Guard is an orch soft
+    // frame, this Guard IS the type-authority outermost: it must run the
+    // type belt (occurrence persist / deferred green proof commit / linear
+    // fast-path revalidate) and own the abort restore, exactly like a
+    // host-side outermost Guard with an empty fiber stack (that host face
+    // is unchanged — the flip is gated on on_fiber). Soft/Off stays
+    // observe-only inside the belt helpers. Real Guard nesting (any
+    // non-soft frame below) keeps the nested determination.
+    if (!outermost && on_fiber) {
+        bool soft_only_below = true;
+        for (const auto& c4089 : Evaluator::active_mutation_stack_static()) {
+            if (!c4089.orch_soft_frame) {
+                soft_only_below = false;
+                break;
+            }
+        }
+        if (soft_only_below)
+            outermost = true;
+    }
     is_outermost_ = outermost;
     // Issue #3440: persist-reject TLS must not leak across outermost
     // boundaries. A prior production persist-reject that was not

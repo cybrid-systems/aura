@@ -14181,6 +14181,12 @@ public:
         // Issue #1355: render hot-path lightweight checkpoint (no full
         // children snapshot; field mutations use FlatAST side log).
         bool lightweight = false;
+        // Issue #4089: orch soft checkpoint frame (agent-body window pushed
+        // by orch_soft_boundary_enter). Not real Guard nesting: when every
+        // frame below a Guard is an orch soft frame, that Guard IS the
+        // type-authority outermost (type belt + abort restore) even though
+        // fiber stack depth > 1.
+        bool orch_soft_frame = false;
         // Issue #3016: audit join mid resolved at enter (resolve_audit_
         // mutation_id). Trail / SE / grant / occurrence use this — not
         // total_mutations_ (volume only). 0 = production refuse, no stamp.
