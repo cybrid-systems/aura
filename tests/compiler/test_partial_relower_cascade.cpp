@@ -14,6 +14,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
@@ -841,6 +842,114 @@ static void ac3892_3_fail_closed_full_unchanged() {
     CHECK(href(cs, "full-fallbacks") >= 0, "3892 AC3: existing full-fallbacks key retained");
 }
 
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+extern "C" std::int64_t aura_lookup_fn_by_name(const char* name, std::int64_t* out_local_count,
+                                               std::int64_t* out_arg_count,
+                                               std::int64_t* out_env_count);
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
+extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
+extern "C" void aura_free_closure(std::int64_t closure_id);
+extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name);
+extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
+extern "C" void aura_closure_set_env_gen(std::int64_t closure_id, std::uint64_t gen);
+extern "C" std::uint64_t aura_get_aot_live_env_frame_version(void);
+extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
+                                          std::int64_t argc);
+
+static std::atomic<int> g_ac4083_hits{0};
+static std::int64_t ac4083_scalar(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    g_ac4083_hits.fetch_add(1, std::memory_order_relaxed);
+    return 41;
+}
+static std::int64_t ac4083_keep(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    return 7;
+}
+
+// Issue #4083: partial relower success must not leave the pre-relower
+// ScalarFn callable. The success arm erases jit_cache_ under jit_cache_mtx_
+// and drops the installed native beside partial_recompile. #2476 still
+// forbids a second invalidate(name) inside partial_recompile.
+static void ac4083_drop_native_after_partial_relower() {
+    std::println("\n--- #4083: drop jit cache and closure native after partial relower ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto cite = svc.find("Issue #4083: partial_recompile only removes");
+    CHECK(cite != std::string::npos, "4083: success arm cites the drop");
+    if (cite != std::string::npos) {
+        const auto win = svc.substr(cite, 1400);
+        CHECK(win.find("jit_cache_.erase") != std::string::npos, "4083: erase jit_cache_");
+        CHECK(win.find("jit_cache_mtx_") != std::string::npos, "4083: erase under jit_cache_mtx_");
+        CHECK(win.find("aura_drop_jit_fn_native_for_define") != std::string::npos,
+              "4083: drop installed native");
+        CHECK(win.find("jit_.partial_recompile") != std::string::npos,
+              "4083: still calls partial_recompile");
+        const auto drop_at = win.find("aura_drop_jit_fn_native_for_define(");
+        const auto re_at = win.find("jit_.partial_recompile");
+        CHECK(drop_at != std::string::npos && re_at != std::string::npos && drop_at < re_at,
+              "4083: drop runs before ORC remove");
+        CHECK(win.find("jit_.invalidate(") == std::string::npos,
+              "4083: no second invalidate on the success arm");
+        CHECK(win.find("production_defaults") == std::string::npos,
+              "4083: teardown is not a second production gate");
+    }
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto body_at = jit.find("bool AuraJIT::partial_recompile");
+    CHECK(body_at != std::string::npos, "4083: partial_recompile located");
+    if (body_at != std::string::npos) {
+        const auto body_end = jit.find("\nvoid AuraJIT::invalidate_prefix", body_at);
+        const auto body =
+            jit.substr(body_at, body_end == std::string::npos ? 900 : body_end - body_at);
+        CHECK(body.find("invalidate(") == std::string::npos,
+              "4083: partial_recompile stays a single invalidate_prefix pass");
+        CHECK(body.find("aura_drop_jit_fn_native_for_define") == std::string::npos,
+              "4083: drop stays outside partial_recompile");
+    }
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_drop_jit_fn_native_for_define") != std::string::npos, "4083: runtime drop");
+    CHECK(rt.find("is_held") != std::string::npos, "4083: skip workspace re-lock when held");
+    CHECK(read_file("tests/compiler/test_issue_4083.cpp").empty(), "4083: no test_issue file");
+    CHECK(read_file("docs/design/4083-partial-relower-native.md").empty(), "4083: no docs/design");
+
+    g_ac4083_hits.store(0, std::memory_order_relaxed);
+    aura_register_fn_named("ac4083f", 500, ac4083_scalar, 4, 1, 0);
+    aura_register_fn_named("ac4083f#0", 501, ac4083_scalar, 4, 1, 0);
+    aura_register_fn_named("ac4083keep", 502, ac4083_keep, 4, 0, 0);
+    aura_register_fn_named("ac4083fextra", 503, ac4083_keep, 4, 0, 0);
+    CHECK(aura_lookup_fn_by_name("ac4083f", nullptr, nullptr, nullptr) != 0,
+          "4083: named fn installed");
+    CHECK(aura_lookup_fn_by_name("ac4083f#0", nullptr, nullptr, nullptr) != 0,
+          "4083: name# fn installed");
+
+    const auto cid = aura_alloc_closure(500);
+    CHECK(cid >= 0, "4083: closure alloc");
+    aura_closure_set_name(cid, "ac4083f");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_closure_set_env_gen(cid, aura_get_aot_live_env_frame_version());
+    std::int64_t args[1] = {1};
+    const auto slow = aura_closure_call(cid, args, 1);
+    const auto fast = aura_closure_call(cid, args, 1);
+    CHECK(slow == 41 && fast == 41, "4083: pre-drop closure runs the ScalarFn (slow then cache)");
+    CHECK(g_ac4083_hits.load(std::memory_order_relaxed) == 2, "4083: two pre-drop native calls");
+
+    aura_drop_jit_fn_native_for_define("ac4083f");
+    CHECK(aura_lookup_fn_by_name("ac4083f", nullptr, nullptr, nullptr) == 0,
+          "4083: named row dropped");
+    CHECK(aura_lookup_fn_by_name("ac4083f#0", nullptr, nullptr, nullptr) == 0,
+          "4083: name# row dropped");
+    CHECK(aura_lookup_fn_by_name("ac4083keep", nullptr, nullptr, nullptr) != 0,
+          "4083: unrelated define stays");
+    CHECK(aura_lookup_fn_by_name("ac4083fextra", nullptr, nullptr, nullptr) != 0,
+          "4083: prefix without hash stays");
+    const auto hits_after = g_ac4083_hits.load(std::memory_order_relaxed);
+    const auto after = aura_closure_call(cid, args, 1);
+    CHECK(after == 0, "4083: post-drop closure does not return the old native result");
+    CHECK(g_ac4083_hits.load(std::memory_order_relaxed) == hits_after,
+          "4083: post-drop closure does not execute the pre-relower ScalarFn");
+    aura_free_closure(cid);
+}
+
 static void ac3892_4_no_invent() {
     std::println("\n--- #3892 AC4: no invent / no old key rename ---");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
@@ -884,9 +993,10 @@ int run_test_partial_relower_cascade() {
     ac3892_2_skip_does_not_bump();
     ac3892_3_fail_closed_full_unchanged();
     ac3892_4_no_invent();
+    ac4083_drop_native_after_partial_relower();
     if (g_failed)
         return 1;
-    std::println("partial re-lower cascade (#2041/#3550/#3584/#3656/#3892): OK ({} passed)",
+    std::println("partial re-lower cascade (#2041/#3550/#3584/#3656/#3892/#4083): OK ({} passed)",
                  g_passed);
     return 0;
 }
