@@ -3339,9 +3339,22 @@ extern "C" int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t curren
     return g_batch_deopt_jit->is_fn_epoch_stale(name, current_bridge_epoch) ? 1 : 0;
 }
 
+// Issue #4084: prologue deopt returns fixnum 0. The calling thread
+// records that this 0 is a sentinel so try_jit_execute / exec_jit do
+// not publish it as a successful EvalValue. Not a query key.
+static thread_local int g_jit_prologue_deopt_sentinel = 0;
+
+extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
+    const int v = g_jit_prologue_deopt_sentinel;
+    g_jit_prologue_deopt_sentinel = 0;
+    return v;
+}
+
 extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
     // Stale Apply entry: record dual-reader metrics + soft-deopt the tracker
     // so subsequent get_function_ptr refuses native. Return fixnum 0 sentinel.
+    // Issue #4084: mark the 0 so the host does not decode it as success.
+    g_jit_prologue_deopt_sentinel = 1;
     if (g_batch_deopt_jit) {
         g_batch_deopt_jit->mutable_metrics().prologue_epoch_stale_deopt_total.fetch_add(
             1, std::memory_order_relaxed);

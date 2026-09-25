@@ -843,6 +843,93 @@ static void ac3852_3_source_and_linter() {
           "3852 AC4: no docs/design/");
 }
 
+// Issue #4084: production abort fence must erase jit_cache_ (define and
+// name#) and invalidate native, same gate as the #3852 AOT bump. The
+// prologue's fixnum 0 is a deopt sentinel, not a successful EvalValue.
+extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
+extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+
+static void ac4084_1_production_abort_erases_jit_cache() {
+    std::println("\n--- #4084 AC1: production abort erases jit_cache_ name and name# ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f4084 (lambda (x) (+ x 1))) (f4084 1)\")").has_value(),
+          "4084 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4084 AC1: eval");
+    if (!cs.get_define_v2("f4084"))
+        (void)cs.eval("(compile:cache-define \"f4084\")");
+    CHECK(cs.get_define_v2("f4084") != nullptr, "4084 AC1: cached");
+    cs.public_jit_cache_insert_dummy_for_test("f4084");
+    cs.public_jit_cache_insert_dummy_for_test("f4084#0");
+    cs.public_jit_cache_insert_dummy_for_test("keep4084");
+    CHECK(cs.public_jit_cache_contains("f4084"), "4084 AC1: bare cache planted");
+    CHECK(cs.public_jit_cache_contains("f4084#0"), "4084 AC1: name# cache planted");
+    CHECK(cs.public_jit_cache_contains("keep4084"), "4084 AC1: unrelated cache planted");
+    cs.public_force_ir_cache_dirty_after_abort();
+    CHECK(!cs.public_jit_cache_contains("f4084"), "4084 AC1: bare jit_cache_ erased");
+    CHECK(!cs.public_jit_cache_contains("f4084#0"), "4084 AC1: name# jit_cache_ erased");
+    CHECK(cs.public_jit_cache_contains("keep4084"), "4084 AC1: unrelated jit_cache_ stays");
+    apply_dev_audit_defaults();
+}
+
+static void ac4084_2_soft_abort_keeps_jit_cache() {
+    std::println("\n--- #4084 AC2: Soft abort does not erase jit_cache_ ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s4084 (lambda (x) x)) (s4084 1)\")").has_value(),
+          "4084 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4084 AC2: eval");
+    if (!cs.get_define_v2("s4084"))
+        (void)cs.eval("(compile:cache-define \"s4084\")");
+    CHECK(cs.get_define_v2("s4084") != nullptr, "4084 AC2: cached");
+    cs.public_jit_cache_insert_dummy_for_test("s4084");
+    cs.public_jit_cache_insert_dummy_for_test("s4084#0");
+    cs.public_force_ir_cache_dirty_after_abort();
+    CHECK(cs.public_jit_cache_contains("s4084"), "4084 AC2: Soft keeps bare jit_cache_");
+    CHECK(cs.public_jit_cache_contains("s4084#0"), "4084 AC2: Soft keeps name# jit_cache_");
+}
+
+static void ac4084_3_prologue_zero_is_not_success() {
+    std::println("\n--- #4084 AC3: prologue 0 is a deopt sentinel, not EvalValue ---");
+    CHECK(aura_jit_take_prologue_deopt_sentinel() == 0, "4084 AC3: sentinel clear");
+    CHECK(aura_jit_deopt_to_interpreter("f4084") == 0, "4084 AC3: deopt still returns fixnum 0");
+    CHECK(aura_jit_take_prologue_deopt_sentinel() == 1, "4084 AC3: take sees the prologue deopt");
+    CHECK(aura_jit_take_prologue_deopt_sentinel() == 0, "4084 AC3: take clears the sentinel");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto fence = svc.find("Issue #4084: abort does not bump the mutation epoch");
+    CHECK(fence != std::string::npos, "4084 AC3: abort fence cites the cache erase");
+    if (fence != std::string::npos) {
+        const auto win = svc.substr(fence, 2200);
+        CHECK(win.find("jit_cache_mtx_") != std::string::npos,
+              "4084 AC3: erase under jit_cache_mtx_");
+        CHECK(win.find("jit_cache_.erase") != std::string::npos, "4084 AC3: erases jit_cache_");
+        CHECK(win.find("jit_.invalidate(") != std::string::npos, "4084 AC3: jit_.invalidate");
+        CHECK(win.find("jit_.invalidate_prefix") != std::string::npos,
+              "4084 AC3: invalidate_prefix");
+        CHECK(win.find("aura_drop_jit_fn_native_for_define") != std::string::npos,
+              "4084 AC3: drops installed native");
+        const auto gate = svc.rfind("production_defaults_active()", fence);
+        CHECK(gate != std::string::npos && fence > gate,
+              "4084 AC3: erase sits inside the production gate");
+    }
+    const auto jit = svc.find("Issue #4084: prologue deopt's fixnum 0 is not a successful value.\n"
+                              "        // nullopt");
+    CHECK(jit != std::string::npos, "4084 AC3: try_jit cites the sentinel");
+    if (jit != std::string::npos) {
+        const auto win = svc.substr(jit, 500);
+        const auto ret = win.find("return std::nullopt");
+        const auto dec = win.find("result_type");
+        CHECK(ret != std::string::npos && dec != std::string::npos && ret < dec,
+              "4084 AC3: nullopt precedes result decode");
+    }
+    CHECK(svc.find("schema-4084") == std::string::npos, "4084 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4084.cpp").empty(), "4084 AC3: no test_issue file");
+    CHECK(read_file("docs/design/4084-abort-jit-cache.md").empty(), "4084 AC3: no docs/design");
+}
+
 } // namespace
 
 static void ac3864_prod_bypass_source_cite();
@@ -890,8 +977,12 @@ int run_test_abort_ir_cache_fence_first() {
     ac3852_1_production_abort_probe_rejects_until_reemit();
     ac3852_2_soft_abort_aot_untouched();
     ac3852_3_source_and_linter();
+    std::println("\n=== Issue #4084: abort fence drops jit cache; prologue 0 is not success ===");
+    ac4084_1_production_abort_erases_jit_cache();
+    ac4084_2_soft_abort_keeps_jit_cache();
+    ac4084_3_prologue_zero_is_not_success();
 
-    std::println("\n=== #3159+#3258+#3324+#3551+#3821+#3852 result: passed={} failed={} ===",
+    std::println("\n=== #3159+#3258+#3324+#3551+#3821+#3852+#4084 result: passed={} failed={} ===",
                  aura::test::g_passed, aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
