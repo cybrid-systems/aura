@@ -970,12 +970,16 @@ std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes,
     if (restamp_eager_.size() < size())
         restamp_eager_.resize(size(), 0);
     std::size_t restamped = 0;
-    auto restamp_one = [&](NodeId id, bool allow_free) {
+    auto restamp_one = [&](NodeId id) {
         if (restamped >= max_nodes)
             return;
         if (id == NULL_NODE || id >= size())
             return;
-        if (!allow_free && is_free_slot(id))
+        // Issue #4071: free-list slots (node_gen_==0) stay free. The nested
+        // path used to skip this check, write generation_ plus the eager
+        // bit, and leave the id on the free list. query:*-stable then
+        // exported that id as a fresh generation.
+        if (is_free_slot(id))
             return;
         if (id >= node_gen_.size())
             return;
@@ -991,7 +995,7 @@ std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes,
         std::size_t hops = 0;
         const auto hop_cap = size() + 1;
         while (cur != NULL_NODE && restamped < max_nodes && hops < hop_cap) {
-            restamp_one(cur, /*allow_free=*/mutation_log_from != ~std::size_t{0});
+            restamp_one(cur);
             const NodeId p = cur < parent_.size() ? parent_[cur] : NULL_NODE;
             if (p == cur)
                 break;
@@ -1000,17 +1004,23 @@ std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes,
         }
     };
     // Issue #3312: nested Guard success seeds from the nested mutation-log
-    // delta only (new child is rec.new_value; parent is rec.target_node).
-    // Dirty/touched scan would restamp historical set-code nodes first and
-    // starve the nested-touched cone under the hot-cone cap.
+    // delta only. A rollback record's new child is rec.new_value; the
+    // structural parent is rec.target_node / rec.parent_id. Dirty/touched
+    // scan would restamp historical set-code nodes first and starve the
+    // nested-touched cone under the hot-cone cap.
+    // Issue #4071: add_mutation stores old_value/new_value 0 with
+    // has_rollback_data false. 0 is a real NodeId (NULL_NODE is ~0u),
+    // so those zeros must not be walked.
     if (mutation_log_from != ~std::size_t{0}) {
         for (std::size_t i = mutation_log_from; i < mutation_log_.size() && restamped < max_nodes;
              ++i) {
             const auto& rec = mutation_log_[i];
             walk_seed(rec.target_node);
             walk_seed(rec.parent_id);
-            walk_seed(static_cast<NodeId>(rec.new_value));
-            walk_seed(static_cast<NodeId>(rec.old_value));
+            if (rec.has_rollback_data) {
+                walk_seed(static_cast<NodeId>(rec.new_value));
+                walk_seed(static_cast<NodeId>(rec.old_value));
+            }
         }
     } else {
         for (NodeId id = 0; id < size() && restamped < max_nodes; ++id) {

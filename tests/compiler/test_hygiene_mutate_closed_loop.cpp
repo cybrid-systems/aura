@@ -3161,6 +3161,64 @@ static void ac3312_5_source_and_linter() {
     CHECK(read_file("tests/compiler/test_issue_3312.cpp").empty(), "3312 AC5: no invent compiler");
 }
 
+// Issue #4071: nested hot-cone must not treat add_mutation's 0/0 payload
+// as NodeId 0, and must not stamp a free-list slot's generation or eager bit.
+static void ac4071_nested_zero_payload_not_node() {
+    std::println("\n--- #4071: nested hot-cone does not eager-export node 0 ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto alloc = cs.arena().allocator();
+    aura::ast::FlatAST flat(alloc);
+    // Node 0 is allocated first, then parked on the free list. The nested
+    // record targets the other literal, whose parent is NULL_NODE, with
+    // add_mutation's 0/0 payload and no rollback.
+    const auto slot0 = flat.add_literal(0);
+    const auto target = flat.add_literal(4071);
+    CHECK(slot0 == 0, "4071: first slot is node 0");
+    CHECK(target != 0 && target != aura::ast::NULL_NODE, "4071: target is not node 0");
+    CHECK(flat.parent_of(target) == aura::ast::NULL_NODE, "4071: target has no parent");
+    flat.root = target;
+    (void)flat.recycle_dead_nodes();
+    CHECK(flat.is_free_slot(0), "4071: node 0 is on the free list");
+    CHECK(flat.is_live_node(target) && !flat.is_free_slot(target), "4071: target stays live");
+    auto& ev = cs.evaluator();
+    ev.set_workspace_flat(&flat);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "4071: outer");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            CHECK(ok, "4071: inner");
+            const auto before = flat.mutation_log_size();
+            flat.add_mutation(target, "note-4071", "", "", "4071");
+            CHECK(flat.mutation_log_size() == before + 1, "4071: one add_mutation");
+            const auto& rec = flat.all_mutations().back();
+            CHECK(!rec.has_rollback_data, "4071: no rollback payload");
+            CHECK(rec.old_value == 0 && rec.new_value == 0, "4071: old/new are 0");
+            CHECK(rec.target_node == target, "4071: target is the live literal");
+            CHECK(rec.parent_id != 0, "4071: parent_id is not node 0");
+            CHECK(rec.target_node != 0, "4071: target_node is not node 0");
+        }
+        CHECK(flat.nested_authority_gap(), "4071: nested gap still open");
+        CHECK(flat.is_free_slot(0), "4071: free-list node 0 stays free");
+        CHECK(!flat.node_eagerly_restamped(0), "4071: node 0 eager bit clear");
+        CHECK(!ev.allow_query_stable_ref_export(0), "4071: query-stable refuses node 0");
+        CHECK(flat.node_eagerly_restamped(target), "4071: real target is the eager cone");
+        CHECK(ev.allow_query_stable_ref_export(target), "4071: real target still exports");
+    }
+    ev.set_workspace_flat(nullptr);
+    const auto impl = read_file("src/core/ast_impl.cpp");
+    CHECK(impl.find("Issue #4071") != std::string::npos, "4071: ast_impl cites");
+    CHECK(impl.find("rec.has_rollback_data") != std::string::npos,
+          "4071: rollback payload gates old/new seeds");
+    CHECK(read_file("docs/design/4071-nested-hot-cone-zero.md").empty(), "4071: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_4071.cpp").empty(), "4071: no test_issue file");
+    apply_dev_audit_defaults();
+}
+
 static aura::core::QueryResult make_pre_nested_schema2_qr(const aura::ast::FlatAST& flat,
                                                           aura::ast::NodeId live) {
     aura::core::QueryResult qr{};
@@ -6303,6 +6361,8 @@ int main() {
     ac3312_3_outermost_and_abort_unchanged();
     ac3312_4_never_green_pre_mutate();
     ac3312_5_source_and_linter();
+    std::println("\n=== Issue #4071: nested hot-cone must not treat payload 0 as NodeId ===");
+    ac4071_nested_zero_payload_not_node();
     std::println("\n=== Issue #3451: nested gap poisons QueryEpoch / held QueryResult ===");
     ac3451_1_nested_held_query_result_stale();
     ac3451_2_nested_touched_export_unchanged();
