@@ -319,15 +319,15 @@ def main() -> int:
         fails.append("AC3865: caller does not pass the dirty snapshot")
     if "Issue #3865" not in t3865:
         fails.append("AC3865 test cite: missing Issue #3865")
-    # Issue #3897: all four abort_restore_dual_topology call sites pass the
-    # enter dirty snapshot (persist-reject already did; inbody / force-
-    # rollback / Strict reflect-validate omitted it).
+    # Issue #3897: every abort_restore_dual_topology call site passes the
+    # enter dirty snapshot (persist-reject, inbody, force-rollback, Strict
+    # reflect-validate, and the synth-hard-fail success arm).
     n_call = mb3865.count("workspace_flat_->abort_restore_dual_topology(")
     n_move = mb3865.count("std::move(cp.dirty_soa_snapshot)")
-    if n_call != 4:
-        fails.append(f"AC3897: expected 4 abort_restore_dual_topology call sites, got {n_call}")
-    if n_move != 4:
-        fails.append(f"AC3897: expected 4 std::move(cp.dirty_soa_snapshot), got {n_move}")
+    if n_call != 5:
+        fails.append(f"AC3897: expected 5 abort_restore_dual_topology call sites, got {n_call}")
+    if n_move != 5:
+        fails.append(f"AC3897: expected 5 std::move(cp.dirty_soa_snapshot), got {n_move}")
     if "Issue #3897" not in mb3865:
         fails.append("AC3897: mutation_boundary.cpp missing Issue #3897 cite")
     if "Issue #3897" not in t3865:

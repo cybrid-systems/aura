@@ -73,8 +73,8 @@ def main() -> int:
     if "abort_restore_dual_topology_persist_reject" in emb:
         fails.append("AC3: second persist-reject restore helper invented")
     occ_n = emb.count("restore_or_clear_occurrence_to_entry(")
-    if occ_n != 4:
-        fails.append(f"AC3: #3158 sites count={occ_n}, expected 4 (3 abort + persist-reject #3687)")
+    if occ_n != 5:
+        fails.append(f"AC3: #3158 sites count={occ_n}, expected 5 (4 abort + persist-reject #3687)")
     must("3440 AC3", "AC3 test", t_abort)
     must("abort_restore_dual_topology", "AC3 cone test", t_cone)
 

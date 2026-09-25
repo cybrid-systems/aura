@@ -23,6 +23,7 @@
 //   #2911 AC6: decision table + linter; no docs/design/*
 
 #include "compiler/coercion_provenance_policy.hh"
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/type_linear_commit_health.hh"
 #include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
@@ -1625,7 +1626,7 @@ static void ac3472_2_persist_reject_unchanged() {
     for (auto p = emb.find("restore_or_clear_occurrence_to_entry("); p != std::string::npos;
          p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
         ++occ_n;
-    CHECK(occ_n == 4, "3472 AC2: 3 abort sites + persist-reject #3687 #3158 reuse");
+    CHECK(occ_n == 5, "3472 AC2: 4 abort sites + persist-reject #3687 #3158 reuse");
     // Issue #3818: post-persist belt undoes CoercionMap journal (#3545).
     {
         const auto issue = emb.find("Issue #3472");
@@ -2133,6 +2134,133 @@ static void ac3984_4_soft_unchanged() {
     reset_for_test();
 }
 
+// Issue #4082: success-exit force_linear_rollback must not live-stamp green
+// after it clears the synth sticky.
+
+static void ac4082_1_nested_synth_stays_reject() {
+    std::println("\n--- #4082 AC1: nested synth force does not publish green ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    // Earlier members in this batch latch densify-fail. set-code's
+    // try_acquire then refuses and never installs a workspace, so the
+    // nested success arm cannot run. Pin a clean admit snapshot.
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test({});
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4082 AC1: warm");
+    CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "4082 AC1: workspace");
+    CHECK(cs.evaluator().workspace_flat() != nullptr, "4082 AC1: workspace flat");
+    CHECK(cs.eval("(eval-current)").has_value(), "4082 AC1: eval");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "4082 AC1: typecheck");
+    cs.evaluator().stage_composite_required_unbound_var_for_test();
+    bool outer_ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &outer_ok);
+        auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle());
+        CHECK(tc != nullptr, "4082 AC1: commit TC");
+        const auto nested_enter =
+            tc ? tc->constraint_system().occurrence_goals_size() : static_cast<std::size_t>(0);
+        bool inner_ok = true;
+        {
+            Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &inner_ok);
+            if (tc) {
+                auto& goals = tc->constraint_system();
+                const auto var = goals.fresh_var();
+                goals.note_occurrence_goal(var, var, /*predicate_cond_node=*/1,
+                                           /*source_mutation_id=*/1, /*epoch=*/1);
+                CHECK(goals.occurrence_goals_size() == nested_enter + 1, "4082 AC1: goal added");
+            }
+            cs.evaluator().note_linear_synth_hard_fail_pending();
+        }
+        CHECK(inner_ok, "4082 AC1: primitive success flag stays true");
+        CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+              "4082 AC1: would_allow_commit is 0");
+        const auto outcome_4082 = last_type_linear_proof_outcome_v_read();
+        CHECK(outcome_4082 == kTypeLinearProofOutcomeReject,
+              std::format("4082 AC1: outcome Reject got {}", outcome_4082));
+        CHECK(!linear_move_drop_elision_ok(), "4082 AC1: elision false");
+        if (tc) {
+            CHECK(tc->constraint_system().occurrence_goals_size() == nested_enter,
+                  "4082 AC1: occurrence restored");
+        }
+        CHECK(cs.evaluator().linear_synth_hard_fail_pending(),
+              "4082 AC1: nested re-arms synth for the outer belt");
+    }
+    CHECK(!outer_ok, "4082 AC2: outer success flipped");
+    CHECK(!cs.evaluator().type_export_authoritative(),
+          "4082 AC2: outer persist does not grant query:type");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "4082 AC2: would_allow stays 0");
+    cs.evaluator().clear_linear_synth_hard_fail_pending();
+    aura::compiler::clear_mutation_concurrency_health_admit_snapshot_for_test();
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4082_3_clean_nested_skips_force() {
+    std::println("\n--- #4082 AC3: clean nested mutate does not take the force arm ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4082 AC3: warm");
+    const auto fr0 =
+        typed_audit::g_typed_mutation_audit_counters.linear_synth_boundary_force_rollback_total
+            .load(std::memory_order_relaxed);
+    bool outer_ok = true;
+    bool inner_ok = false;
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &outer_ok);
+        inner_ok = true;
+        {
+            Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &inner_ok);
+        }
+        CHECK(inner_ok, "4082 AC3: nested returns success");
+    }
+    (void)outer_ok;
+    CHECK(typed_audit::g_typed_mutation_audit_counters.linear_synth_boundary_force_rollback_total
+                  .load(std::memory_order_relaxed) == fr0,
+          "4082 AC3: force arm not taken");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4082_4_soft_warning_does_not_force() {
+    std::println("\n--- #4082 AC4: Soft Warning does not enter force_linear_rollback ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4082 AC4: warm");
+    cs.evaluator().clear_linear_synth_hard_fail_pending();
+    const auto fr0 =
+        typed_audit::g_typed_mutation_audit_counters.linear_synth_boundary_force_rollback_total
+            .load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+        Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "4082 AC4: Soft nested success stays");
+    CHECK(typed_audit::g_typed_mutation_audit_counters.linear_synth_boundary_force_rollback_total
+                  .load(std::memory_order_relaxed) == fr0,
+          "4082 AC4: Soft does not enter force_linear_rollback");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(etc.find("Soft Warning never sets the sticky") != std::string::npos,
+          "4082 AC4: classify cites Soft Warning");
+    CHECK(impl.find("Soft Warning does not set the flag") != std::string::npos,
+          "4082 AC4: synth hard-fail flag is production/strict only");
+    CHECK(read_file("tests/compiler/test_issue_4082.cpp").empty() &&
+              read_file("tests/issues/test_issue_4082.cpp").empty(),
+          "4082 AC4: no test_issue_4082.cpp");
+    CHECK(read_file("docs/design/4082-synth-force-green-stamp.md").empty(),
+          "4082 AC4: no docs/design/4082-*");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("schema-4082") == std::string::npos, "4082 AC4: no new query key");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
 
 // ── Issue #4030: grant_type_export aligns with deferred-green commit ──
 //   AC1: Prod/Full persist — grant only after commit_deferred (or skip when
@@ -2432,7 +2560,7 @@ static void ac3653_2_source_order_audit_before_persist() {
     for (auto p = emb.find("restore_or_clear_occurrence_to_entry("); p != std::string::npos;
          p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
         ++occ_n;
-    CHECK(occ_n == 4, "3653 AC2: 3 abort sites + persist-reject #3687 #3158 reuse");
+    CHECK(occ_n == 5, "3653 AC2: 4 abort sites + persist-reject #3687 #3158 reuse");
     CHECK(emb.find("Issue #3687") != std::string::npos, "3687: persist-reject topology txn");
     CHECK(emb.find("restore_checkpoint_topology_for_persist_reject") != std::string::npos,
           "3687: topology restore in persist helper");
@@ -3104,6 +3232,10 @@ int run_test_type_linear_commit_health() {
     ac3984_2_source_cite_defer_then_commit();
     ac3984_3_happy_commits_green();
     ac3984_4_soft_unchanged();
+    std::println("\n=== Issue #4082: nested synth force must not live-stamp green ===");
+    ac4082_1_nested_synth_stays_reject();
+    ac4082_3_clean_nested_skips_force();
+    ac4082_4_soft_warning_does_not_force();
     std::println("\n=== Issue #4044: post-persist deny amends the precommitted audit ===");
     ac4044_post_persist_deny_amends_audit();
     std::println("\n=== Issue #4063: post-persist deny WAL reason ===");

@@ -57,9 +57,9 @@ def main() -> int:
         must("Issue #3821", "AC1 cite", win)
         must("abort_ir_cache_begin_force_fn_", "AC1 begin fence", win)
         must("abort_ir_cache_force_dirty_fn_", "AC1 force_dirty", win)
-        must("rollback_to_size", "AC1 topology restore", win)
+        must("abort_restore_dual_topology", "AC1 topology restore", win)
         bpos = win.find("abort_ir_cache_begin_force_fn_")
-        rpos = win.find("rollback_to_size")
+        rpos = win.find("abort_restore_dual_topology")
         dpos = win.find("abort_ir_cache_force_dirty_fn_")
         if not (bpos >= 0 and rpos >= 0 and dpos >= 0 and bpos < rpos < dpos):
             fails.append("AC1: expected begin < restore < force_dirty order on synth arm")

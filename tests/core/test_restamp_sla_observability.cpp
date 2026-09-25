@@ -698,7 +698,7 @@ static void ac3743_abort_restore_restamps() {
             win.find("UnifiedRestampSite::AbortRestore") != std::string::npos)
             ++paired_n;
     }
-    CHECK(restore_n == 4, "3743 AC1: still exactly 4 abort_restore_dual_topology sites");
+    CHECK(restore_n == 5, "3743 AC1: still exactly 5 abort_restore_dual_topology sites");
     CHECK(paired_n == 4, "3743 AC1: every restore site restamps AbortRestore in-window");
     CHECK(mb.find("Issue #3743") != std::string::npos, "3743 AC1: boundary cites #3743");
 

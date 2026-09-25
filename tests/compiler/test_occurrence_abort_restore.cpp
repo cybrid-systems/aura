@@ -124,7 +124,7 @@ static void ac3_all_three_abort_sites() {
         ++count;
         p = boundary_cpp.find("restore_or_clear_occurrence_to_entry(", p + 1);
     }
-    CHECK(count == 4, "AC3: restore_or_clear_occurrence_to_entry called from 3 abort sites + "
+    CHECK(count == 5, "AC3: restore_or_clear_occurrence_to_entry called from 4 abort sites + "
                       "persist-reject #3687 (reuse, not a second Occurrence log)");
 
     // Count the number of times note_3158_occurrence_abort_observe is called.
@@ -135,8 +135,8 @@ static void ac3_all_three_abort_sites() {
         ++obs_count;
         op = boundary_cpp.find("note_3158_occurrence_abort_observe(", op + 1);
     }
-    CHECK(obs_count == 3,
-          "AC3: note_3158_occurrence_abort_observe called from exactly 3 abort sites "
+    CHECK(obs_count == 4,
+          "AC3: note_3158_occurrence_abort_observe called from exactly 4 abort sites "
           "(Soft / Off path)");
 
     // Count the number of times note_3158_occurrence_abort_restore is called.
@@ -147,7 +147,7 @@ static void ac3_all_three_abort_sites() {
         ++restore_count;
         rp = boundary_cpp.find("note_3158_occurrence_abort_restore(", rp + 1);
     }
-    CHECK(restore_count == 4, "AC3: note_3158_occurrence_abort_restore called from 3 abort sites + "
+    CHECK(restore_count == 5, "AC3: note_3158_occurrence_abort_restore called from 4 abort sites + "
                               "persist-reject #3687 (production/Full path)");
 }
 
@@ -285,7 +285,7 @@ static void ac3440_persist_reject_flips_success_into_abort_restore() {
         ++occ_n;
         op = boundary_cpp.find("restore_or_clear_occurrence_to_entry(", op + 1);
     }
-    CHECK(occ_n == 4, "3440 AC3: 3 abort sites + persist-reject #3687 reuse of #3158 "
+    CHECK(occ_n == 5, "3440 AC3: 4 abort sites + persist-reject #3687 reuse of #3158 "
                       "(not a second Occurrence log)");
 
     std::println("\n--- #3440 AC4: Soft/Off note is a no-op ---");
