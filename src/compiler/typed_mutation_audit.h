@@ -3462,9 +3462,14 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // Issue #4011: a live outermost stamp is the green rebind that
     // retires remount-last-zero strip. Latch means "do not ride OLD
     // green"; a new live proof is not that ride.
-    if (g_remount_last_zero_strip_face.load(std::memory_order_relaxed) != 0)
-        g_remount_last_zero_strip_face.store(0, std::memory_order_release);
+    // Issue #4080: commit_readiness_live_policy must observe the latch.
+    // Retire only after that read. Clearing first lets a SOLVED commit
+    // TC republish would_allow=1 on the hygiene-save Quiet stamp.
+    const bool retire_remount_last_zero =
+        g_remount_last_zero_strip_face.load(std::memory_order_relaxed) != 0;
     const auto ready = commit_readiness_live_policy();
+    if (retire_remount_last_zero)
+        g_remount_last_zero_strip_face.store(0, std::memory_order_release);
     const auto live_r = commit_readiness(ready);
     p.readiness_bp = live_r.readiness_bp;
     p.force_reason_code = static_cast<std::uint32_t>(live_r.force_reason_code);
@@ -3675,6 +3680,9 @@ inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
         g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
         g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet,
                                                std::memory_order_relaxed);
+        // Issue #4080: arm remount-last-zero latch (force_reason 17).
+        // Soft returned above. Do not publish Reject.
+        g_remount_last_zero_strip_face.store(1, std::memory_order_release);
         return true;
     }
     const bool mismatch = note_arena_compact_linear_root_consistency();
