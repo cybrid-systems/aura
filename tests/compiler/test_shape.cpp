@@ -5,9 +5,12 @@
 //
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
+#include "../src/core/cpp26_contract_stats.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <new>
 #include <print>
 #include <string>
 using namespace aura::compiler::shape;
@@ -45,7 +48,52 @@ static constexpr std::int64_t kFloatBias = -10000000000000000LL;
 // the inline_shape_of checks fall into the wrong branch.
 static constexpr std::int64_t kStringBias = -9000000000000000000LL + 2;
 
+// ── Issue #4090: allocation counter around hot-path profiler calls ──
+// Scoped counting allocator override — the measured regions run only
+// profiler calls, so any counted allocation is profiler-caused.
+static bool g_count_allocations = false;
+static std::uint64_t g_allocations = 0;
+
+void* operator new(std::size_t n) {
+    if (g_count_allocations)
+        ++g_allocations;
+    if (void* p = std::malloc(n))
+        return p;
+    throw std::bad_alloc{};
+}
+void* operator new[](std::size_t n) {
+    if (g_count_allocations)
+        ++g_allocations;
+    if (void* p = std::malloc(n))
+        return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept {
+    std::free(p);
+}
+void operator delete[](void* p) noexcept {
+    std::free(p);
+}
+void operator delete(void* p, std::size_t) noexcept {
+    std::free(p);
+}
+void operator delete[](void* p, std::size_t) noexcept {
+    std::free(p);
+}
+
+// Issue #4090 AC4: deopt-hook capture (file-static — captureless lambda).
+static FnKey g_hook_fn = 0;
+static std::uint32_t g_hook_scope = 0;
+static int g_hook_fires = 0;
+
 int main() {
+    // Baseline repair (surface of the #4090 ship): the ShapeProfiler ctor
+    // auto-applies the #2433/#1468 HighMutation preset (ratio 0.95, window
+    // 2000) when the env is unset, but sections 4-6 pin the kDefaultPreset
+    // knobs (ratio 0.90, window 1000). Pin the unit-test face explicitly —
+    // the harness convention from shape_profiler.h is env=0 in main().
+    ::setenv("AURA_SHAPE_HIGH_MUTATION", "0", 1);
+
     // ═══════════════════════════════════════════════════════════
     // Section 1: ShapeID constants
     // ═══════════════════════════════════════════════════════════
@@ -320,14 +368,18 @@ int main() {
         TEST("99 calls: not stable", !profiler.is_stable(fn));
     }
 
-    // ── 4d: Exactly 100 calls (at threshold) ────────────────
+    // ── 4d: Threshold crossing under TLS merge batching (#3357/#4090) ──
     {
         ShapeProfiler profiler;
         FnKey fn = make_fn_key("test", "threshold");
         bool last_stable = false;
-        for (int i = 0; i < 100; i++)
+        // #3357 TLS merge batches 8 observations per apply, so stability
+        // becomes observable (kStableThreshold=100 applied) at the merge
+        // that crosses it — obs 105 applies 105. #4090 keeps the
+        // record_shape return semantics (last batch result) unchanged.
+        for (int i = 0; i < 107; i++)
             last_stable = profiler.record_shape(fn, SHAPE_INT);
-        TEST("100 identical: stable at 100th", last_stable);
+        TEST("identical calls: stable once the crossing batch merges", last_stable);
         TEST("100 identical: is_stable", profiler.is_stable(fn));
         TEST("100 identical: dominant == Int", profiler.dominant_shape(fn) == SHAPE_INT);
     }
@@ -772,6 +824,103 @@ int main() {
                  snap.version > prev);
             prev = snap.version;
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Section 12: Issue #4090 — hot-path stability reads (no per-result
+    // flush / unique lock / heap / process-wide atomic)
+    // ═══════════════════════════════════════════════════════════
+
+    // ── 12a: AC1 — record_shape's hotpath tick is sampled, not per-call ──
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("issue4090", "sampled_tick");
+        const auto before =
+            aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+        // 64 identical observations below kStableThreshold: no merge-path
+        // stability bumps can fire, so the counter delta isolates the
+        // record_shape per-call tick. Pre-#4090: 64 (unconditional
+        // fetch_add per call). Post-#4090: ≤1 (1/256 thread-local sample;
+        // the shared thread-local phase may tick once in-window).
+        for (int i = 0; i < 64; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+        const auto delta =
+            aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed) -
+            before;
+        TEST("#4090 AC1: record_shape hotpath tick sampled (64 calls, delta <= 2)", delta <= 2);
+    }
+
+    // ── 12b: AC2 — hot pairs take the unique lock O(N / merge batch) times ──
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("issue4090", "merge_amortized");
+        for (int i = 0; i < 200; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+        TEST("#4090 AC2 warmup: stable", profiler.is_stable(fn));
+        const auto batches_before = profiler.tls_merge_batches_total();
+        constexpr int kPairs = 64;
+        bool stable_through = true;
+        for (int i = 0; i < kPairs; ++i) {
+            profiler.record_shape(fn, SHAPE_INT);
+            stable_through = stable_through && profiler.is_stable(fn);
+        }
+        const auto batches = profiler.tls_merge_batches_total() - batches_before;
+        // record_shape merges every kShapeTlsMergeBatch (8) → 8 batches.
+        // Pre-#4090 every is_stable flushed a 1-observation slot → ~64
+        // extra unique-lock batches.
+        TEST("#4090 AC2: 64 hot pairs merge O(N/kShapeTlsMergeBatch) times",
+             batches <= kPairs / 8 + 2);
+        TEST("#4090 AC2: is_stable stays true through the hot pairs", stable_through);
+    }
+
+    // ── 12c: AC3 — compute_dominant / hot reads do not allocate ──
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("issue4090", "dominant_no_heap");
+        for (int i = 0; i < 200; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+        TEST("#4090 AC3 warmup: stable", profiler.is_stable(fn));
+        g_allocations = 0;
+        g_count_allocations = true;
+        for (int i = 0; i < 64; ++i) {
+            profiler.record_shape(fn, SHAPE_INT);
+            (void)profiler.is_stable(fn);
+            (void)profiler.dominant_shape(fn);
+        }
+        g_count_allocations = false;
+        // Pre-#4090: compute_dominant's unordered_map heap walk allocated
+        // under the shard lock on every flushed read.
+        TEST("#4090 AC3: 64 hot record/read triples allocate nothing", g_allocations == 0);
+    }
+
+    // ── 12d: AC4 — shape change still drops stability + fires the deopt hook ──
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("issue4090", "shape_change_deopt");
+        for (int i = 0; i < 200; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+        TEST("#4090 AC4 warmup: stable", profiler.is_stable(fn));
+        g_hook_fn = 0;
+        g_hook_scope = 0;
+        g_hook_fires = 0;
+        set_shape_deopt_hook([](FnKey f, std::uint64_t, std::uint32_t scope) {
+            g_hook_fn = f;
+            g_hook_scope = scope;
+            g_hook_fires++;
+        });
+        // The stability loss fires at the FLOAT merge whose apply drops the
+        // dominant INT ratio below the stability ratio (200 INT + 24 FLOAT
+        // → 200/224 < 0.90) — 512 observations is generous.
+        for (int i = 0; i < 512 && g_hook_fires == 0; ++i)
+            (void)profiler.record_shape(fn, SHAPE_FLOAT);
+        TEST("#4090 AC4: shape change drops stability (deopt hook fired)", g_hook_fires >= 1);
+        TEST("#4090 AC4: hook scope == stability loss",
+             g_hook_scope == kShapeDirtyScopeStabilityLoss);
+        TEST("#4090 AC4: hook fn == flipped fn", g_hook_fn == fn);
+        TEST("#4090 AC4: is_stable false after the change", !profiler.is_stable(fn));
+        TEST("#4090 AC4: dominant left the flipped fn unknown",
+             profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
+        set_shape_deopt_hook(nullptr);
     }
 
     // ═══════════════════════════════════════════════════════════

@@ -82,6 +82,12 @@ inline constexpr int kShapeDirtyHookNoStdFunctionIssue = 3271;
 inline constexpr int kShapeTlsRecordMergeIssue = 3357;
 inline constexpr std::size_t kShapeTlsRecordSlots = 8;
 inline constexpr std::uint32_t kShapeTlsMergeBatch = 8;
+// Issue #4090: hot reads (is_stable / dominant_shape / current_snapshot)
+// answer from the shard when fn's TLS slot holds pending same-shape
+// observations on an already-stable profile — no flush (unique_lock +
+// compute_dominant heap walk) per eval result. record_shape's hotpath
+// tick is sampled instead of a process-wide fetch_add per call.
+inline constexpr int kShapeHotReadNoFlushIssue = 4090;
 // Fixed shard count — power-of-two friendly; FnKey hash selects shard.
 inline constexpr std::size_t kShapeProfilerShardCount = 16;
 // Production IR/cascade callback. Unset (nullptr) is zero extra (#3271).
@@ -483,6 +489,12 @@ private:
     void tls_drop_owner_() noexcept;
     void tls_drop_fn_(FnKey fn) noexcept;
     bool tls_record_(FnKey fn, ShapeID shape_id, bool& out_stable);
+    // Issue #4090: caller holds the shared_lock on shard si. True when fn's
+    // TLS slot has pending same-shape observations and the shard profile is
+    // already stable on that shape — pending observations cannot change
+    // stability, so the hot reads answer from the profile without
+    // flush_tls_records() (no unique_lock, no compute_dominant heap walk).
+    [[nodiscard]] bool tls_pending_stable_read_(FnKey fn, std::size_t si) const;
     struct ShapeRecord {
         ShapeID shape_id;
         std::uint64_t timestamp;
