@@ -74,6 +74,7 @@ extern int run_test_mailbox_bp_admit_default();
 extern int run_test_chaos_mutate_steal_gc_mailbox();
 extern int run_test_fiber_migration_refresh();
 extern int run_test_fiber_reclaim_orphan_release();
+extern int run_test_ac4069_reclaimed_linear_keep();
 extern int run_test_is_stealable_snapshot_gate();
 extern int run_test_join_drain_timeout();
 extern int run_test_mailbox_hold_exit_drain();
@@ -150,6 +151,22 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_mailbox_bp_admit_default ({} checks)", g_passed);
+    }
+
+    // Issue #4069: Reclaimed live body must not unpin linear roots.
+    // The rest of test_fiber_reclaim_orphan_release stays in the skipped
+    // block below; this entry is the live check.
+    std::println("\n──── test_ac4069_reclaimed_linear_keep ────");
+    reset_member_face();
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_ac4069_reclaimed_linear_keep() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_ac4069_reclaimed_linear_keep ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_ac4069_reclaimed_linear_keep ({} checks)", g_passed);
     }
 
     // Extra steal/chaos Scheduler leftover (SIGSEGV after #3092/#3093
