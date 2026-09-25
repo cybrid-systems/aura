@@ -180,7 +180,10 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
                     break;
             }
         }
-        // Push capability context
+        // Push capability context. Issue #4058: lexical scope only — this
+        // layer serves the check-capability / capability-stack readouts; it
+        // is NOT a grant and never satisfies has_capability (with-capability
+        // intentionally does not write the registry).
         ev.capability_stack_.push_back(caps);
         // Evaluate body expression (the last arg)
         auto body = a[1];
