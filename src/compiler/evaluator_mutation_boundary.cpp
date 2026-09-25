@@ -106,6 +106,7 @@ import aura.compiler.dirty_propagation;
 #include <shared_mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -2706,9 +2707,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 //     - Disjoint top-level Define Agents MUST use try_acquire_for_region
 //       (or orch host soft region key) so two fibers do not both hold
 //       global exclusive for the full body.
-//     - Host orch agent body prefers try_acquire_for_region when region
-//       concurrency is enabled (thread-keyed soft region); falls back to
-//       GlobalExclusive when policy OFF / atomic-batch.
+//     - Host orch agent body uses try_acquire_for_region only for a
+//       caller-declared parallel-task region key (#4086). A thread-id
+//       hash is not a region. No declared key → GlobalExclusive.
+//       Policy OFF / atomic-batch still fall back to GlobalExclusive.
 //     - Cross-region / atomic-batch / topology still take GlobalExclusive
 //       (no silent data race).
 //     - Agents self-throttle via query:workspace-mtx-contention-stats
@@ -2999,6 +3001,217 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
                                   /*quota_prechecked=*/true, /*region_key=*/std::nullopt));
 }
 
+// ── Issue #4086: process-level region occupancy (not caller TLS) ─────────
+// The shard set is the authority for "who holds a cone right now".
+// Historical last-admit stays per face (production vs Soft) so a released
+// same-thread overlap still hard-rejects (#3039) without Soft observe
+// poisoning production. Live slots are the eight region shards; publish
+// happens after the shard mutex is held and clears before it drops.
+// Seqlock is a spin around those atomics — not a new lock_order rank.
+namespace {
+
+    constexpr std::size_t kRegionAdmitShards = 8;
+
+    struct RegionAdmitState {
+        std::atomic<std::uint64_t> seq{0};
+        std::atomic<std::uint64_t> prod_last_key{0};
+        std::atomic<std::uint64_t> prod_last_mask{0};
+        std::atomic<std::uint64_t> soft_last_key{0};
+        std::atomic<std::uint64_t> soft_last_mask{0};
+        std::atomic<std::uint64_t> live_key[kRegionAdmitShards]{};
+        std::atomic<std::uint64_t> live_mask[kRegionAdmitShards]{};
+        std::atomic<std::uint64_t> live_owner[kRegionAdmitShards]{};
+        std::atomic<std::uint32_t> live_occ[kRegionAdmitShards]{};
+    };
+
+    // Per-thread owner token so a nested admit does not wait on its own
+    // outer shard (that would deadlock). Not a region key.
+    std::uint64_t region_admit_self_id() noexcept {
+        thread_local std::uint64_t id = 0;
+        if (id == 0) {
+            static std::atomic<std::uint64_t> next{1};
+            id = next.fetch_add(1, std::memory_order_relaxed);
+        }
+        return id;
+    }
+
+    // Shard published by try_acquire before the Guard ctor adopts it.
+    // -1 = none. Ctor sets g_region_occ_adopted when it keeps the slot.
+    thread_local int g_region_published_shard = -1;
+    thread_local bool g_region_occ_adopted = false;
+
+    RegionAdmitState& region_admit_state() noexcept {
+        static RegionAdmitState state;
+        return state;
+    }
+
+    template <class Fn> void region_admit_exclusive(Fn&& fn) noexcept {
+        auto& st = region_admit_state();
+        for (;;) {
+            auto s = st.seq.load(std::memory_order_acquire);
+            if ((s & 1ull) != 0)
+                continue;
+            if (!st.seq.compare_exchange_weak(s, s + 1, std::memory_order_acq_rel,
+                                              std::memory_order_acquire))
+                continue;
+            fn(st);
+            st.seq.store(s + 2, std::memory_order_release);
+            return;
+        }
+    }
+
+    struct RegionAdmitSnap {
+        std::uint64_t key = 0;
+        std::uint64_t mask = 0;
+        bool have_prior = false;
+    };
+
+    enum class RegionAdmitKind : std::uint8_t { Admitted, Overlap, Busy };
+
+    struct RegionAdmitStep {
+        RegionAdmitKind kind = RegionAdmitKind::Admitted;
+        RegionAdmitSnap snap{};
+    };
+
+    bool region_live_overlaps(RegionAdmitState& st, std::uint64_t region_key,
+                              std::uint64_t cone_mask, std::uint64_t& out_key,
+                              std::uint64_t& out_mask) noexcept {
+        for (std::size_t i = 0; i < kRegionAdmitShards; ++i) {
+            if (st.live_occ[i].load(std::memory_order_relaxed) == 0)
+                continue;
+            const auto k = st.live_key[i].load(std::memory_order_relaxed);
+            const auto m = st.live_mask[i].load(std::memory_order_relaxed);
+            // Occupied shard with no key and no mask is an unknown cone.
+            if ((k == 0 && m == 0) || !regions_disjoint(region_key, k, cone_mask, m)) {
+                out_key = k;
+                out_mask = m;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // One critical section: read last + live, and on a free shard publish
+    // the cone before any peer can observe a hole. Same-thread owner of the
+    // shard is the outer Guard — do not wait on it. Another thread's shard
+    // returns Busy so the caller yields without holding this section.
+    RegionAdmitStep region_admit_try(bool production, std::uint64_t region_key,
+                                     std::uint64_t cone_mask) noexcept {
+        RegionAdmitStep step;
+        const auto self = region_admit_self_id();
+        const auto shard = static_cast<std::uint32_t>(region_key % kRegionAdmitShards);
+        region_admit_exclusive([&](RegionAdmitState& st) noexcept {
+            auto& lk = production ? st.prod_last_key : st.soft_last_key;
+            auto& lm = production ? st.prod_last_mask : st.soft_last_mask;
+            const auto pk = lk.load(std::memory_order_relaxed);
+            const auto pm = lm.load(std::memory_order_relaxed);
+            step.snap.key = pk;
+            step.snap.mask = pm;
+            step.snap.have_prior = (pk != 0) || (pm != 0);
+            const bool last_overlap =
+                step.snap.have_prior && !regions_disjoint(region_key, pk, cone_mask, pm);
+            std::uint64_t live_k = 0;
+            std::uint64_t live_m = 0;
+            const bool live_overlap =
+                region_live_overlaps(st, region_key, cone_mask, live_k, live_m);
+            if (live_overlap) {
+                step.snap.key = live_k;
+                step.snap.mask = live_m;
+                step.snap.have_prior = true;
+            }
+            const bool overlap = last_overlap || live_overlap;
+            const bool occ = st.live_occ[shard].load(std::memory_order_relaxed) != 0;
+            const auto owner = st.live_owner[shard].load(std::memory_order_relaxed);
+            const bool owned_by_self = occ && owner == self;
+            if (production && overlap) {
+                step.kind = RegionAdmitKind::Overlap;
+                return;
+            }
+            if (occ && !owned_by_self && !overlap) {
+                // Disjoint cone, same shard: the shard mutex will serialize.
+                // Stay out of the slot until the holder clears it.
+                step.kind = RegionAdmitKind::Busy;
+                return;
+            }
+            if (occ && !owned_by_self && overlap && !production) {
+                // Soft still admits, but must not erase the holder's cone.
+                step.kind = RegionAdmitKind::Busy;
+                return;
+            }
+            if (!occ) {
+                st.live_key[shard].store(region_key, std::memory_order_relaxed);
+                st.live_mask[shard].store(cone_mask, std::memory_order_relaxed);
+                st.live_owner[shard].store(self, std::memory_order_relaxed);
+                st.live_occ[shard].store(1, std::memory_order_relaxed);
+                g_region_published_shard = static_cast<int>(shard);
+            }
+            // Production notes only on the admit path. Soft always notes.
+            if (!production || !overlap) {
+                lk.store(region_key, std::memory_order_relaxed);
+                lm.store(cone_mask, std::memory_order_relaxed);
+            }
+            step.kind = RegionAdmitKind::Admitted;
+        });
+        return step;
+    }
+
+    void region_shard_occ_publish(std::uint32_t shard, std::uint64_t key,
+                                  std::uint64_t mask) noexcept {
+        if (shard >= kRegionAdmitShards)
+            return;
+        const auto self = region_admit_self_id();
+        region_admit_exclusive([&](RegionAdmitState& st) noexcept {
+            st.live_key[shard].store(key, std::memory_order_relaxed);
+            st.live_mask[shard].store(mask, std::memory_order_relaxed);
+            st.live_owner[shard].store(self, std::memory_order_relaxed);
+            st.live_occ[shard].store(1, std::memory_order_relaxed);
+        });
+    }
+
+    void region_shard_occ_clear(std::uint32_t shard) noexcept {
+        if (shard >= kRegionAdmitShards)
+            return;
+        region_admit_exclusive([&](RegionAdmitState& st) noexcept {
+            st.live_occ[shard].store(0, std::memory_order_relaxed);
+            st.live_owner[shard].store(0, std::memory_order_relaxed);
+            st.live_key[shard].store(0, std::memory_order_relaxed);
+            st.live_mask[shard].store(0, std::memory_order_relaxed);
+        });
+    }
+
+    void region_occ_note_adopted() noexcept {
+        g_region_occ_adopted = true;
+        g_region_published_shard = -1;
+    }
+
+    // Guard ctor did not keep the pre-published slot (nested, fallback to
+    // GlobalExclusive, or early inert). Drop it so the shard is not stuck.
+    void region_occ_drop_unadopted() noexcept {
+        if (g_region_published_shard >= 0)
+            region_shard_occ_clear(static_cast<std::uint32_t>(g_region_published_shard));
+        g_region_published_shard = -1;
+        g_region_occ_adopted = false;
+    }
+
+} // namespace
+
+extern "C" void aura_test_reset_region_admit_state() noexcept {
+    region_admit_exclusive([](RegionAdmitState& st) noexcept {
+        st.prod_last_key.store(0, std::memory_order_relaxed);
+        st.prod_last_mask.store(0, std::memory_order_relaxed);
+        st.soft_last_key.store(0, std::memory_order_relaxed);
+        st.soft_last_mask.store(0, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < kRegionAdmitShards; ++i) {
+            st.live_occ[i].store(0, std::memory_order_relaxed);
+            st.live_owner[i].store(0, std::memory_order_relaxed);
+            st.live_key[i].store(0, std::memory_order_relaxed);
+            st.live_mask[i].store(0, std::memory_order_relaxed);
+        }
+        g_region_published_shard = -1;
+        g_region_occ_adopted = false;
+    });
+}
+
 // ── try_acquire_for_region (#2121) ───────────────────────────────────────
 aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
 Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uint64_t region_key,
@@ -3139,10 +3352,11 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
             aura::core::resource_quota::Dimension::Mutations, pending_count, qtid);
     }
-    // Issue #2724 + #2754 + #2757 + #2760 + #2761: region/subtree-scoped
-    // concurrent admit. Check if the requested region_key (+ cone/
-    // ImpactScope mask) is disjoint from the most-recently-admitted
-    // key/mask on this thread (AC4: single source of truth).
+    // Issue #2724 + #2754 + #2757 + #2760 + #2761 + #4086: region/subtree
+    // concurrent admit. Disjointness is against the process-level shard
+    // occupancy set (live holders) plus that face's last admit — not the
+    // calling thread's TLS (#4086). Another worker's empty TLS must not
+    // admit an intersecting cone.
     //
     // #2724 first ship: region_key equality (a != b).
     // #2754/#2757: cone/ImpactScope mask-AND for equal/zero keys.
@@ -3157,6 +3371,7 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     // region-overlap (mask) → quota (already consumed above).
     // Cone mask: TLS stamped by parallel-intend / host orch via
     // note_parallel_task_cone_mask (#2754 / #2746 / #2760 pattern).
+    // Same key still serializes on workspace_region_mtx_[key % 8].
     const std::uint64_t tls_cone = Evaluator::parallel_task_cone_mask();
     const std::uint64_t cone_mask = effective_region_cone_mask(tls_cone, region_key);
     bool scoped_parallel_overlap_fallback = false;
@@ -3164,10 +3379,21 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     // Quiet zero-key + zero-mask path skips entirely (#2724 identical).
     const bool region_or_mask = (region_key != 0) || (cone_mask != 0);
     if (region_or_mask && typed_audit::production_defaults_active()) {
-        thread_local std::uint64_t g_last_admitted_region_key = 0;
-        thread_local std::uint64_t g_last_admitted_cone_mask = 0;
-        const bool have_prior =
-            (g_last_admitted_region_key != 0) || (g_last_admitted_cone_mask != 0);
+        // Issue #4086: snap is the process shard set + production last admit.
+        // Busy = same shard, disjoint cone, another thread holds it.
+        RegionAdmitSnap admitted;
+        for (;;) {
+            const auto step = region_admit_try(/*production=*/true, region_key, cone_mask);
+            if (step.kind == RegionAdmitKind::Busy) {
+                std::this_thread::yield();
+                continue;
+            }
+            admitted = step.snap;
+            break;
+        }
+        const std::uint64_t g_last_admitted_region_key = admitted.key;
+        const std::uint64_t g_last_admitted_cone_mask = admitted.mask;
+        const bool have_prior = admitted.have_prior;
         if (have_prior && !regions_disjoint(region_key, g_last_admitted_region_key, cone_mask,
                                             g_last_admitted_cone_mask)) {
             // Overlap — bump counter. #2761 AC1/AC5: attribute mask-strength
@@ -3188,6 +3414,9 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             }
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
                 m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            // Overlap does not keep a pre-published shard. Drop is a no-op
+            // when this attempt did not publish (the production path).
+            region_occ_drop_unadopted();
             return std::unexpected(
                 aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
                                       std::string("AdmissionRejected: region-overlap")));
@@ -3207,17 +3436,26 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
         }
         if (cone_mask != 0)
             g_mutation_region_impact_mask_admit_total.fetch_add(1, std::memory_order_relaxed);
-        g_last_admitted_region_key = region_key;
-        g_last_admitted_cone_mask = cone_mask;
         g_mutation_region_concurrent_admit_total.fetch_add(1, std::memory_order_relaxed);
     } else if (region_or_mask) {
         // Soft / sandbox=off — metric-only observation (count the admit,
         // no production lock regression). Overlap check still bumps the
         // counter (observability surface) but does NOT reject.
-        thread_local std::uint64_t g_last_admitted_region_key_soft = 0;
-        thread_local std::uint64_t g_last_admitted_cone_mask_soft = 0;
-        const bool have_prior_soft =
-            (g_last_admitted_region_key_soft != 0) || (g_last_admitted_cone_mask_soft != 0);
+        // Issue #4086: same process shard set as production; Soft last
+        // admit is a separate slot so observe does not hard-reject.
+        RegionAdmitSnap admitted;
+        for (;;) {
+            const auto step = region_admit_try(/*production=*/false, region_key, cone_mask);
+            if (step.kind == RegionAdmitKind::Busy) {
+                std::this_thread::yield();
+                continue;
+            }
+            admitted = step.snap;
+            break;
+        }
+        const std::uint64_t g_last_admitted_region_key_soft = admitted.key;
+        const std::uint64_t g_last_admitted_cone_mask_soft = admitted.mask;
+        const bool have_prior_soft = admitted.have_prior;
         if (have_prior_soft && !regions_disjoint(region_key, g_last_admitted_region_key_soft,
                                                  cone_mask, g_last_admitted_cone_mask_soft)) {
             g_mutation_region_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
@@ -3243,8 +3481,6 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             if (cone_mask != 0)
                 g_mutation_region_impact_mask_admit_total.fetch_add(1, std::memory_order_relaxed);
         }
-        g_last_admitted_region_key_soft = region_key;
-        g_last_admitted_cone_mask_soft = cone_mask;
         g_mutation_region_concurrent_admit_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Atomic-batch / topology-sensitive paths must not use region mode.
@@ -3266,9 +3502,16 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     } else if (ev.scoped_parallel_enabled() && key.has_value()) {
         ev.bump_scoped_parallel_admit();
     }
-    return std::unique_ptr<MutationBoundaryGuard>(
+    // Issue #4086: pre-published cone is only kept when this Guard actually
+    // takes the region lock. Nested / GlobalExclusive fallback drops it.
+    g_region_occ_adopted = false;
+    auto guard = std::unique_ptr<MutationBoundaryGuard>(
         new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},
                                   /*quota_prechecked=*/true, key));
+    if (!g_region_occ_adopted)
+        region_occ_drop_unadopted();
+    g_region_occ_adopted = false;
+    return guard;
 }
 
 // ── legacy ctor (#1547 / #1556 / #1590) ──────────────────────────────────
@@ -3574,6 +3817,10 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             }
             region_lock_ = std::unique_lock<std::mutex>(ev_->workspace_region_mtx_[region_shard_]);
             ev_->workspace_region_holders_[region_shard_].fetch_add(1, std::memory_order_relaxed);
+            // Issue #4086: adopt the pre-published cone (or publish if this
+            // ctor is the first writer). Unlock clears the slot.
+            region_shard_occ_publish(region_shard_, admitted_region_key_, admitted_cone_mask_);
+            region_occ_note_adopted();
             if (m) {
                 m->workspace_region_acquire_total.fetch_add(1, std::memory_order_relaxed);
                 m->workspace_region_hold_samples.fetch_add(1, std::memory_order_relaxed);
@@ -3733,6 +3980,7 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     aura::gc_hooks::release_mutation_hold_defer();
     if (region_mode_) {
         if (region_lock_.owns_lock()) {
+            region_shard_occ_clear(region_shard_);
             region_lock_.unlock();
             ev_->workspace_region_holders_[region_shard_].fetch_sub(1, std::memory_order_relaxed);
         }
@@ -5384,6 +5632,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Issue #2121: unlock matching acquire mode.
             if (region_mode_) {
                 if (region_lock_.owns_lock()) {
+                    region_shard_occ_clear(region_shard_);
                     region_lock_.unlock();
                     ev_->workspace_region_holders_[region_shard_].fetch_sub(
                         1, std::memory_order_relaxed);
