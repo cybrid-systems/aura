@@ -622,6 +622,14 @@ int run_test_agent_ask_typed_corr() {
               "4049 AC4: soft empty scope charges process bucket");
 
         std::println("\n--- #4049 AC5: ask honors stale_handoff (no timeout spin) ---");
+        // AC4's soft-BP probe charged the process BP bucket + the scope
+        // gauge map seconds ago; the #2398/#2465 quiet window (30s) heals
+        // slower than CI's attempt pacing, so the admit preflight
+        // soft-rejects all three asks as backpressure before the
+        // stale-handoff path is ever reached. AC5's contract is
+        // stale_handoff, not BP — zero the gauges here.
+        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+        (void)aura::orch::reset_scope_bp_map_for_test();
         Scheduler sched4049(1);
         SchedRunner runner4049(sched4049);
         AgentHandle b4049{};
