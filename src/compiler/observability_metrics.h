@@ -9557,6 +9557,17 @@ struct CompilerMetrics {
     // never-cached full lower. Fail-closed full still uses
     // partial_forced_full_by_impact_total. Additive, struct-end (#2906).
     std::atomic<std::uint64_t> incremental_relower_cold_miss_total{0};
+    // Issue #4065: last incremental reemit face. Appended at END (#2906).
+    // mid is join_audit_and_se_mid (Mutation), never Bridge/JIT epoch.
+    // 0 stays 0. reason: 1 reemit-ok, 2 reemit-fail, 3 reemit-storm-skip.
+    // Soft/Off does not store (query publishes 0 / empty).
+    static constexpr std::uint8_t kAotLastReemitReasonOk = 1;
+    static constexpr std::uint8_t kAotLastReemitReasonFail = 2;
+    static constexpr std::uint8_t kAotLastReemitReasonStormSkip = 3;
+    std::atomic<std::uint64_t> aot_last_reemit_mid{0};
+    std::atomic<std::uint64_t> aot_last_reemit_tenant{0};
+    std::atomic<std::int64_t> aot_last_reemit_fiber{0};
+    std::atomic<std::uint8_t> aot_last_reemit_reason{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header
