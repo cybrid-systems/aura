@@ -856,8 +856,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     if (!aura::ast::opaque_heap_element_cover_or_required_fail(
                             reinterpret_cast<void*>(result_i), slot, "ffi-return-external")) {
                         opaque_heap_.pop_back();
-                        auto es = string_heap_.size();
-                        string_heap_.push_back("opaque-heap-pin-required");
+                        auto es = push_string_heap("opaque-heap-pin-required");
                         auto eidx = error_values_.size();
                         error_values_.push_back(types::make_string(es));
                         return types::make_error(eidx);
@@ -1388,8 +1387,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         // Issue #1397: size() read + push_back() + index return must be
         // atomic (fiber:spawn shares Evaluator across threads).
         std::lock_guard lock(alloc_storage_lock_);
-        auto fi = string_heap_.size();
-        string_heap_.push_back(fn);
+        auto fi = push_string_heap(fn);
         auto pi = pairs_.size();
         pairs_.push_back({types::make_string(fi), args});
         return types::make_pair(pi);
@@ -1408,8 +1406,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             if (const auto* e = string_intern_by_sym_.get(v.sym_id))
                 return *e;
             auto name = std::string(pool.resolve(v.sym_id));
-            auto idx = string_heap_.size();
-            string_heap_.push_back(std::move(name));
+            auto idx = push_string_heap(std::move(name));
             auto val = make_string(idx);
             string_intern_by_sym_.set(v.sym_id, val);
             return val;
@@ -1424,6 +1421,12 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // name *after* std::move into string_heap_ (empty key "") —
             // every short symbol missed the cache. Key/insert before move.
             // Short path (≤6): O(1) cache. Longer: linear heap scan.
+            // #2651: scan + append under alloc_storage_lock_. A fiber
+            // apply and a host eval both intern here; an unlocked
+            // size()/push_back pair corrupts the monotonic resource
+            // and shows up later as a SIGSEGV in an unrelated
+            // hashtable walk.
+            std::lock_guard lock(alloc_storage_lock_);
             if (name.size() <= 6) {
                 auto it = short_str_cache_.find(name);
                 if (it != short_str_cache_.end())
@@ -1434,9 +1437,8 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                         return make_string(static_cast<std::int64_t>(i));
                 }
             }
-            auto idx = string_heap_.size();
             // Cache key must use name before move (empty-key bug #2568).
-            // Index is consumed after push so dead-heap audit (#1668) sees it.
+            const auto idx = static_cast<std::int32_t>(string_heap_.size());
             if (name.size() <= 6)
                 short_str_cache_[name] = make_string(static_cast<std::int64_t>(idx));
             string_heap_.push_back(std::move(name));
@@ -1496,8 +1498,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             EvalValue params_tail = make_void();
             for (auto it = v.params.rbegin(); it != v.params.rend(); ++it) {
                 auto pname = std::string(pool.resolve(*it));
-                auto pidx = string_heap_.size();
-                string_heap_.push_back(pname);
+                auto pidx = push_string_heap(pname);
                 auto pair_idx = pairs_.size();
                 pairs_.push_back({make_string(pidx), params_tail});
                 params_tail = make_pair(pair_idx);
@@ -1512,8 +1513,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // Issue #1397: size() + push_back for both string_heap_ and pairs_
             // must be atomic so the symbol / value pair has stable indices.
             std::lock_guard lock(alloc_storage_lock_);
-            auto nidx = string_heap_.size();
-            string_heap_.push_back(name_str);
+            auto nidx = push_string_heap(name_str);
             auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({make_string(nidx), val});
@@ -1521,13 +1521,11 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::DefineType: {
             auto type_name = pool.resolve(v.sym_id);
-            auto tnidx = string_heap_.size();
-            string_heap_.push_back(std::string(type_name));
+            auto tnidx = push_string_heap(std::string(type_name));
             EvalValue params_tail = make_void();
             for (auto it = v.params.rbegin(); it != v.params.rend(); ++it) {
                 auto pname = std::string(pool.resolve(*it));
-                auto pidx = string_heap_.size();
-                string_heap_.push_back(pname);
+                auto pidx = push_string_heap(pname);
                 auto pp = pairs_.size();
                 pairs_.push_back({make_string(pidx), params_tail});
                 params_tail = make_pair(pp);
@@ -1547,8 +1545,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Set: {
             auto name_str = std::string(pool.resolve(v.sym_id));
-            auto nidx = string_heap_.size();
-            string_heap_.push_back(name_str);
+            auto nidx = push_string_heap(name_str);
             auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({make_string(nidx), val});
@@ -1563,8 +1560,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
             auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
             auto bname = std::string(pool.resolve(v.sym_id));
-            auto bni = string_heap_.size();
-            string_heap_.push_back(bname);
+            auto bni = push_string_heap(bname);
             auto bv =
                 val_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, val_id) : make_void();
             auto body =
@@ -4619,8 +4615,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return *e;
                     std::string_view raw_sv = p->resolve(v.sym_id);
                     std::string raw(raw_sv);
-                    auto sid = string_heap_.size();
-                    string_heap_.push_back(std::move(raw));
+                    auto sid = push_string_heap(std::move(raw));
                     auto val = make_string(sid);
                     string_intern_by_sym_.set(v.sym_id, val);
                     if (raw_sv.size() <= 6)
@@ -5398,8 +5393,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 err_val = *result; // non-error truthy failure edge
                             } else {
                                 // unexpected Diagnostic → string message (first-class)
-                                auto sidx = string_heap_.size();
-                                string_heap_.push_back(result.error().format());
+                                auto sidx = push_string_heap(result.error().format());
                                 err_val = make_string(sidx);
                             }
                             for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
@@ -5712,8 +5706,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     if (arg_v.tag == aura::ast::NodeTag::Variable) {
                                         // 类型参数：存为字符串（类型名）
                                         auto type_name = std::string(p->resolve(arg_v.sym_id));
-                                        auto sidx = string_heap_.size();
-                                        string_heap_.push_back(type_name);
+                                        auto sidx = push_string_heap(type_name);
                                         mod_env.bind(pname, make_string(sidx));
                                     } else {
                                         // 值参数：正常 eval
@@ -5774,8 +5767,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                                 err += ", ";
                                             err += missing[mi];
                                         }
-                                        auto es = string_heap_.size();
-                                        string_heap_.push_back(err);
+                                        auto es = push_string_heap(err);
                                         auto ev = error_values_.size();
                                         error_values_.push_back(make_string(es));
                                         return make_error(ev);
@@ -6300,8 +6292,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
                         // Register constructor as a primitive that creates tagged lists:
                         // (Ctor arg1 arg2 ...) → (cons 'Ctor (cons arg1 (cons arg2 ...)))
-                        auto tag_slot = string_heap_.size();
-                        string_heap_.push_back(ctor_name);
+                        auto tag_slot = push_string_heap(ctor_name);
                         auto tag_str = make_string(tag_slot);
 
                         // Count fields to determine if zero-arg constructor
@@ -6844,8 +6835,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     Env& me = const_cast<Env&>(eval_env);
 
                     auto ci = alloc_cell(make_void());
-                    auto sidx = string_heap_.size();
-                    string_heap_.push_back("%functor");
+                    auto sidx = push_string_heap("%functor");
                     me.bind(mod_name, make_cell(ci));
                     cells_[ci] = make_string(sidx);
                     return make_string(sidx);
