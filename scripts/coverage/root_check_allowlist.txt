@@ -155,3 +155,4 @@ check_pair_slot_tenant_4057.py
 check_capability_stack_authorization_4058.py
 check_load_tenant_mutate_4059.py
 check_shape_hotpath_4090.py
+check_shape_dirty_cone_4091.py
