@@ -379,7 +379,32 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (aura::compiler::security::path_is_denied(path))
             return make_void();
 
-        std::ifstream f(path);
+        // Issue #4059: load is a workspace swap, not a pure read. Run the
+        // same tenant host-path gate read-file / write-file already use
+        // (#3802 / #3835) BEFORE reading anything, then pay Mutate for the
+        // install (dispatch never stamps Mutate for "load" — infer maps the
+        // name to none — so this body choke is the sole effect gate and
+        // cannot double-consume a single-use grant). The op travels as a
+        // variable and the ref_tenant is the CALLER (a path-level swap has
+        // no NodeId, so the stamped-caller 4-arg form is the #2942
+        // no-target shape — "load" stays out of EXEMPT_2ARG_OPS, and the
+        // Restricted+MT consult sees a stamped same-tenant ref instead of
+        // failing closed on ref_tenant=0). Deny leaves the workspace
+        // pointers untouched; the read uses the RESOLVED path.
+        std::string resolved_path;
+        if (!ev.check_tenant_host_path(path, resolved_path, "load"))
+            return make_void();
+        const std::string_view load_mutate_op = "load";
+        if (!ev.require_effect(aura::compiler::security::kEffectMutate, load_mutate_op, 0,
+                               ev.capability_tenant_id())) {
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                aura::compiler::security::format_deny_reason(
+                    aura::compiler::security::kEffectMutate, ev.capability_tenant_id(), "load"),
+                ev.primitive_error_counter_ptr());
+        }
+
+        std::ifstream f(resolved_path);
         if (!f)
             return make_void();
         std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());

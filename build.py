@@ -8108,6 +8108,26 @@ def cmd_lint():
             "Issue #4058 capability stack authorization linter failed — run python3 scripts/check_capability_stack_authorization_4058.py"
         )
         return r
+    # Issue #4059 (security): load read any host path behind a bare io-read
+    # string gate and swapped the workspace with zero IsolationDeny /
+    # EffectDeny. Gate pins: the load body runs check_tenant_host_path
+    # BEFORE any read or install (deny = silent void, workspace untouched),
+    # pays require_effect(Mutate) for the swap after the host-path gate and
+    # before the workspace_flat_/pool_ install (the op travels as a
+    # variable — no EXEMPT_2ARG_OPS entry, frozen at 7), the ifstream opens
+    # the RESOLVED path, the deny uses the existing format_deny_reason
+    # builder, the io-read string gate stays as the second layer, and the
+    # runtime ACs extend the #2485 host test file.
+    load4059_script = ROOT / "scripts" / "check_load_tenant_mutate_4059.py"
+    if not load4059_script.exists():
+        fail(f"missing {load4059_script}")
+        return 1
+    r = run([sys.executable, str(load4059_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4059 load tenant host-path + Mutate linter failed — run python3 scripts/check_load_tenant_mutate_4059.py"
+        )
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed
