@@ -98,6 +98,11 @@ extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 // after ORC prefix removal. Strong def in aura_jit_runtime.cpp.
 extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
 
+// Issue #4084: prologue deopt returns fixnum 0. Take-and-clear the
+// thread-local sentinel so try_jit_execute does not publish that 0.
+// Strong def in aura_jit_bridge.cpp; weak 0 in the light stub.
+extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
+
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
     const char* why = aura_macro_hygiene_last_limit_reason_string();
     return aura::diag::Diagnostic{
@@ -4045,8 +4050,14 @@ public:
                                                           "JIT entry function lookup failed"});
         }
 
+        (void)aura_jit_take_prologue_deopt_sentinel();
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
+        // Issue #4084: prologue deopt's fixnum 0 is not a successful value.
+        if (aura_jit_take_prologue_deopt_sentinel() != 0) {
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "jit prologue deopt"});
+        }
 
         // ── Convert JIT result to proper EvalValue type ──
         types::EvalValue ev_result;
@@ -5989,6 +6000,39 @@ public:
                 aura::compiler::typed_audit::AuditStrategy::Full) {
             aura_aot_note_cross_eval_epoch_force_bump();
             aura_aot_bump_func_table_epoch();
+            // Issue #4084: abort does not bump the mutation epoch, so
+            // try_jit_execute still cache-hits. The epoch prologue then
+            // returns fixnum 0 and eval published that as success.
+            // Same jit_cache_mtx_ window as invalidate_function: erase
+            // the define and name# rows and invalidate native so the
+            // next eval misses and the interpreter runs restored IR.
+            // Soft/Off stays outside this gate (AOT bump contract).
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                std::uint64_t n_inv = 0;
+                for (const auto& [name, entry] : ir_cache_v2_) {
+                    (void)entry;
+                    const std::string prefix = name + "#";
+                    for (auto it = jit_cache_.begin(); it != jit_cache_.end();) {
+                        if (it->first == name || it->first.rfind(prefix, 0) == 0) {
+                            it = jit_cache_.erase(it);
+                            metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+                        } else {
+                            ++it;
+                        }
+                    }
+                    jit_.invalidate(name.c_str());
+                    jit_.invalidate_prefix(name.c_str());
+                    ++n_inv;
+                }
+                if (n_inv != 0)
+                    metrics_.jit_hotswap_invalidate_total.fetch_add(n_inv,
+                                                                    std::memory_order_relaxed);
+            }
+            for (const auto& [name, entry] : ir_cache_v2_) {
+                (void)entry;
+                aura_drop_jit_fn_native_for_define(name.c_str());
+            }
         }
         abort_force_in_progress_.store(0, std::memory_order_release);
         aura::util::thread_fence(std::memory_order_release);
@@ -15526,8 +15570,13 @@ public:
         if (!fn_ptr)
             return std::nullopt;
 
+        (void)aura_jit_take_prologue_deopt_sentinel();
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
+        // Issue #4084: prologue deopt's fixnum 0 is not a successful value.
+        // nullopt → interpreter runs the restored IR.
+        if (aura_jit_take_prologue_deopt_sentinel() != 0)
+            return std::nullopt;
 
         // ── Convert JIT result to proper EvalValue type ──
         types::EvalValue result_type;

@@ -391,6 +391,9 @@ aura_jit_is_fn_epoch_stale(const char* /*name*/, std::uint64_t /*current_bridge_
 extern "C" __attribute__((weak)) std::int64_t aura_jit_deopt_to_interpreter(const char* /*name*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
+    return 0;
+}
 extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
     return 0;
 }
