@@ -1,6 +1,6 @@
 // CompilerMetrics scalar atomics for engine:metrics grouped dump.
 // Sync with observability_metrics.h CompilerMetrics (append-only; arrays excluded).
-// 2346 scalar fields. Linter: check_compiler_metrics_fields_3737.py
+// 2350 scalar fields. Linter: check_compiler_metrics_fields_3737.py
 #ifndef AURA_COMPILER_METRICS_FIELD
 #error "define AURA_COMPILER_METRICS_FIELD(name) before including"
 #endif
@@ -2453,4 +2453,7 @@ AURA_COMPILER_METRICS_FIELD(solve_delta_soft_timeout_quarantine_total)
 AURA_COMPILER_METRICS_FIELD(deopt_pending_invoke_fallbacks)
 AURA_COMPILER_METRICS_FIELD(mutation_boundary_macro_hygiene_backstop_total)
 AURA_COMPILER_METRICS_FIELD(incremental_relower_cold_miss_total)
+AURA_COMPILER_METRICS_FIELD(aot_last_reemit_mid)
+AURA_COMPILER_METRICS_FIELD(aot_last_reemit_tenant)
+AURA_COMPILER_METRICS_FIELD(aot_last_reemit_reason)
 #undef AURA_COMPILER_METRICS_FIELD
