@@ -371,6 +371,72 @@ int run_test_agent_apply_mutex() {
               "3728 AC4: no docs/design/3728-*");
     }
 
+    // Issue #4062: same region key must not overlap apply_closure.
+    {
+        std::println("\n--- #4062: same region key takes agent_apply_mu_ ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        std::atomic<int> in_apply{0};
+        std::atomic<int> max_in{0};
+        std::atomic<int> locks{0};
+        auto body = [&] {
+            const int now = in_apply.fetch_add(1, std::memory_order_acq_rel) + 1;
+            int prev = max_in.load(std::memory_order_relaxed);
+            while (now > prev &&
+                   !max_in.compare_exchange_weak(prev, now, std::memory_order_relaxed)) {
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            in_apply.fetch_sub(1, std::memory_order_acq_rel);
+        };
+        auto on_lock = [&](std::uint64_t) { locks.fetch_add(1, std::memory_order_relaxed); };
+        std::thread t1([&] { ev.gate_spawn_apply_region(7, true, body, on_lock); });
+        std::thread t2([&] { ev.gate_spawn_apply_region(7, true, body, on_lock); });
+        t1.join();
+        t2.join();
+        CHECK(max_in.load() == 1, "4062: same key bodies did not overlap");
+        CHECK(locks.load() == 1, "4062: the colliding body took agent_apply_mu_");
+        CHECK(ev.spawn_region_inflight_size_for_test() == 0, "4062: inflight set drained");
+
+        std::atomic<int> in2{0};
+        std::atomic<int> max2{0};
+        std::atomic<int> locks2{0};
+        auto body2 = [&] {
+            const int now = in2.fetch_add(1, std::memory_order_acq_rel) + 1;
+            int prev = max2.load(std::memory_order_relaxed);
+            while (now > prev &&
+                   !max2.compare_exchange_weak(prev, now, std::memory_order_relaxed)) {
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            in2.fetch_sub(1, std::memory_order_acq_rel);
+        };
+        auto on_lock2 = [&](std::uint64_t) { locks2.fetch_add(1, std::memory_order_relaxed); };
+        std::thread d1([&] { ev.gate_spawn_apply_region(11, true, body2, on_lock2); });
+        std::thread d2([&] { ev.gate_spawn_apply_region(22, true, body2, on_lock2); });
+        d1.join();
+        d2.join();
+        CHECK(max2.load() == 2, "4062: distinct keys overlapped");
+        CHECK(locks2.load() == 0, "4062: distinct keys skipped agent_apply_mu_");
+
+        std::atomic<int> locks0{0};
+        auto on_lock0 = [&](std::uint64_t) { locks0.fetch_add(1, std::memory_order_relaxed); };
+        ev.gate_spawn_apply_region(0, false, [] {}, on_lock0);
+        ev.gate_spawn_apply_region(7, false, [] {}, on_lock0);
+        CHECK(locks0.load() == 2, "4062: key 0 and Soft always take the lock");
+        CHECK(ev.spawn_region_inflight_size_for_test() == 0,
+              "4062: Soft/Off did not touch the inflight set");
+
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto par = agent_src.find("region_concurrent_skip_eval_mu =");
+        CHECK(par != std::string::npos, "4062: parallel-intend skip site");
+        CHECK(agent_src.find("IsolationLevel::RegionConcurrent", par) != std::string::npos ||
+                  agent_src.rfind("IsolationLevel::RegionConcurrent", par) != std::string::npos,
+              "4062: parallel-intend still gates skip on RegionConcurrent");
+        CHECK(agent_src.find("Issue #4062") != std::string::npos, "4062: spawn cite");
+        CHECK(agent_src.find("class AgentRegistry") == std::string::npos, "4062: no AgentRegistry");
+        CHECK(read_file("docs/design/4062-same-region-apply-mu.md").empty(),
+              "4062: no docs/design");
+    }
+
     std::println("\n=== #2158/#3728 agent apply per-eval mutex: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;

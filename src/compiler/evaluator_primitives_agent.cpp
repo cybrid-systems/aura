@@ -237,10 +237,11 @@ namespace {
 
     // Issue #3728: Aura spawn apply. Serialized default (region_key==0 /
     // Soft/Off / region concurrency off) still takes per-Evaluator
-    // agent_apply_mu_. Production + region concurrency + non-zero key:
-    // skip the mutex so disjoint-region bodies are not 1-wide. Does not
-    // call decide_isolation (spawn is not a batch). Quota try_acquire
-    // reject never reaches here (#2158 AC5).
+    // agent_apply_mu_. Production + region concurrency + non-zero key
+    // skips that mutex only when this Evaluator has no live body on the
+    // same key (#4062). Does not call decide_isolation (spawn is not a
+    // batch). parallel-intend RegionConcurrent is unchanged. Quota
+    // try_acquire reject never reaches here (#2158 AC5).
     // Placed after WorkspaceSwapGuard so #3442 AC3 (resolve_aura_agent
     // window has no extra atomic) stays a pointer walk.
     void apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
@@ -253,8 +254,10 @@ namespace {
         const bool stamped = region_key != 0 && region_key != prev_tls;
         if (stamped)
             Evaluator::note_parallel_task_region_key(region_key);
-        const bool skip_mu = aura::compiler::typed_audit::production_defaults_active() &&
-                             ev.workspace_region_concurrency_enabled() && region_key != 0;
+        // Issue #4062: Soft/Off passes region_fast=false and does not
+        // touch the inflight set. Same key collides into agent_apply_mu_.
+        const bool region_fast = aura::compiler::typed_audit::production_defaults_active() &&
+                                 ev.workspace_region_concurrency_enabled() && region_key != 0;
         auto run = [&ev, cid]() {
             if (!agent_cid_live(ev, cid)) {
                 agent_note_closure_freed_call(ev);
@@ -262,21 +265,12 @@ namespace {
             }
             (void)ev.apply_closure(cid, {});
         };
-        if (skip_mu) {
-            run();
-        } else {
-            const auto t0 = std::chrono::steady_clock::now();
-            std::lock_guard lock(ev.agent_apply_mu_);
-            const auto wait_us =
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now() - t0)
-                                               .count());
+        ev.gate_spawn_apply_region(region_key, region_fast, run, [](std::uint64_t wait_us) {
             aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
                 1, std::memory_order_relaxed);
             aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
                 wait_us, std::memory_order_relaxed);
-            run();
-        }
+        });
         if (stamped) {
             if (prev_tls != 0)
                 Evaluator::note_parallel_task_region_key(prev_tls);
