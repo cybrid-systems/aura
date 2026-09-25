@@ -2473,6 +2473,251 @@ void test_ac3862_2_soft_and_source() {
     }
 }
 
+// ── #4088: bare NodeId list exits / reflect members / dirty-subtree root ──
+// The five list exits (query:calls / query:defines / query:node-type /
+// query:defines-by-marker / query:calls-by-marker) previously returned a
+// bare int-linked-list of NodeIds — occupancy, not identity — so an Agent
+// holding them across rounds reads the NEW occupant after slot reuse.
+// They now finish via end_query_epoch_maybe_result (Production auto-
+// upgrades to the schema-2 stamped hash whose matches carry
+// reserved == kQueryResultMatchSchema2Prod; Soft keeps the bare list).
+// query:reflect-node-members body/init members export the as-stable-ref
+// spine instead of bare ints, and query:dirty-subtree resolves its root
+// through resolve_query_node_arg under production (bare int → stale-ref).
+void test_ac4088_1_prod_list_exits_schema2() {
+    std::print("AC4088/AC1 -- production list exits auto-upgrade to schema-2 hash\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    // Each production probe gets its own fresh CompilerService (the
+    // pre-existing cumulative production-eval fragility in this binary —
+    // same rationale as the #3862 AC1 skip comment in main()).
+    auto prod_hash = [](const char* prim, const char* label) {
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        expect_true(
+            std::string(label) + ": set-code",
+            cs.eval("(set-code \"(begin (define f4088 (lambda (x) x)) (f4088 1))\")").has_value());
+        expect_true(std::string(label) + ": eval", cs.eval("(eval-current)").has_value());
+        apply_production_audit_defaults();
+        auto qr = cs.eval(prim);
+        expect_true(std::string(label) + ": returns", qr.has_value());
+        expect_true(std::string(label) + ": is schema-2 hash", qr && is_hash(*qr));
+        apply_dev_audit_defaults();
+    };
+    prod_hash("(query:calls)", "4088 AC1: query:calls");
+    prod_hash("(query:defines)", "4088 AC1: query:defines");
+    prod_hash("(query:node-type \"Define\")", "4088 AC1: query:node-type");
+    prod_hash("(query:defines-by-marker \"User\")", "4088 AC1: query:defines-by-marker");
+    prod_hash("(query:calls-by-marker \"User\")", "4088 AC1: query:calls-by-marker");
+}
+
+void test_ac4088_2_prod_dirty_subtree_stale_ref() {
+    std::print("AC4088/AC2 -- production dirty-subtree rejects the bare int root\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4088 AC2: set-code",
+        cs.eval("(set-code \"(begin (define g4088 (lambda (x) x)) (g4088 1))\")").has_value());
+    expect_true("4088 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    // A NodeId held across rounds is occupancy, not identity: under
+    // production the root resolves through resolve_query_node_arg (the
+    // #3395 gate) — bare int → stale-ref error, never the new occupant's
+    // dirty count.
+    auto res = cs.eval("(query:dirty-subtree 1)");
+    expect_true("4088 AC2: production dirty-subtree returns", res.has_value());
+    expect_true("4088 AC2: bare int root is NOT a count (stale-ref reject)", res && !is_int(*res));
+    apply_dev_audit_defaults();
+}
+
+void test_ac4088_3_soft_list_exits_bare() {
+    std::print("AC4088/AC3 -- Soft list exits stay bare lists (zero-cost)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4088 AC3: set-code",
+        cs.eval("(set-code \"(begin (define h4088 (lambda (x) x)) (h4088 2))\")").has_value());
+    expect_true("4088 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto calls = cs.eval("(query:calls)");
+    expect_true("4088 AC3: Soft query:calls NOT a hash", calls && !is_hash(*calls));
+    auto defines = cs.eval("(query:defines)");
+    expect_true("4088 AC3: Soft query:defines NOT a hash", defines && !is_hash(*defines));
+    auto ntype = cs.eval("(query:node-type \"Define\")");
+    expect_true("4088 AC3: Soft query:node-type NOT a hash", ntype && !is_hash(*ntype));
+    auto dbm = cs.eval("(query:defines-by-marker \"User\")");
+    expect_true("4088 AC3: Soft query:defines-by-marker NOT a hash", dbm && !is_hash(*dbm));
+    auto cbm = cs.eval("(query:calls-by-marker \"User\")");
+    expect_true("4088 AC3: Soft query:calls-by-marker NOT a hash", cbm && !is_hash(*cbm));
+}
+
+void test_ac4088_4_soft_dirty_subtree_int_ok() {
+    std::print("AC4088/AC4 -- Soft dirty-subtree keeps the bare-int count path\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4088 AC4: set-code",
+        cs.eval("(set-code \"(begin (define i4088 (lambda (x) x)) (i4088 3))\")").has_value());
+    expect_true("4088 AC4: eval", cs.eval("(eval-current)").has_value());
+    auto res = cs.eval("(query:dirty-subtree 1)");
+    expect_true("4088 AC4: Soft dirty-subtree returns", res.has_value());
+    expect_true("4088 AC4: Soft bare int root still counts (int)", res && is_int(*res));
+}
+
+void test_ac4088_5_soft_reflect_member_pair() {
+    std::print("AC4088/AC5 -- reflect members spine: soft export parity + source-cite\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4088 AC5: set-code",
+                cs.eval("(set-code \"(begin (define j4088 (lambda (x) x)))\")").has_value());
+    expect_true("4088 AC5: eval", cs.eval("(eval-current)").has_value());
+    // The member EXPORT machinery pack_member_ref calls (budget gate +
+    // export_ref + Soft v1 pair pack) is the query:as-stable-ref Soft
+    // path — runtime-proven on the same workspace: the child stable-ref
+    // is a stable-ref pair, never a bare NodeId int.
+    auto kid = cs.eval("(query:as-stable-ref 2)");
+    expect_true("4088 AC5: child stable-ref export is a v1 pair", kid && is_pair(*kid));
+    // Pre-existing dispatch orphan (documented, NOT introduced by #4088):
+    // the prim registers via ObservabilityPrims::register_stats_impl,
+    // whose map Primitives::lookup never consults (hot_map_/table_ only),
+    // so the direct cs.eval has always returned nullopt at HEAD — the
+    // existing task6 tests void-discard the call and assert
+    // engine:metrics reachability for the same reason, and engine:metrics
+    // cannot forward the node-id arg (multi-arg legacy names are supposed
+    // to stay public per is_legacy_stats_name). The spine pack itself is
+    // pinned in source below (and in AC6c); runtime arm flagged for the
+    // registration fix follow-up.
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("4088 AC5: query_workspace readable", !qws.empty());
+    const auto b = qws.find("query:reflect-node-members");
+    expect_true("4088 AC5: reflect present", b != std::string::npos);
+    const auto e = qws.find("query:ref-counts", b);
+    const auto body = qws.substr(b, (e == std::string::npos ? 4200 : e - b));
+    expect_true("4088 AC5: reflect cites #4088", body.find("Issue #4088") != std::string::npos);
+    expect_true("4088 AC5: reflect packs via pack_member_ref",
+                body.find("pack_member_ref") != std::string::npos);
+    expect_true("4088 AC5: reflect gates the export budget",
+                body.find("allow_query_stable_ref_export(child)") != std::string::npos);
+    expect_true("4088 AC5: reflect production v2 spine gate",
+                body.find("production_defaults_active()") != std::string::npos);
+    expect_true("4088 AC5: bare-int body-node export gone",
+                body.find("append_field(\"body-node\", make_int") == std::string::npos);
+    expect_true("4088 AC5: bare-int init-node export gone",
+                body.find("append_field(\"init-node\", make_int") == std::string::npos);
+}
+
+void test_ac4088_6_source_cite() {
+    std::print("AC4088/AC6 -- source-cite: 5 exits / reflect spine / dirty-subtree gate\n");
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("4088 AC6: query_workspace readable", !qws.empty());
+    auto window = [&](const char* begin_anchor, const char* end_anchor,
+                      const char* label) -> std::string {
+        const auto b = qws.find(begin_anchor);
+        expect_true(std::string(label) + ": present", b != std::string::npos);
+        if (b == std::string::npos)
+            return "";
+        const auto e = qws.find(end_anchor, b);
+        return qws.substr(b, (e == std::string::npos ? 4200 : e - b));
+    };
+    // AC6a: each list exit finishes via end_query_epoch_maybe_result and
+    // cites the issue (bounded windows, per the 3895/3896 pattern).
+    const auto calls_body =
+        window("add(\"query:calls\"", "add(\"query:defines\"", "4088 AC6a: query:calls window");
+    expect_true("4088 AC6a: query:calls finishes maybe_result",
+                calls_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("4088 AC6a: query:calls cites #4088",
+                calls_body.find("Issue #4088") != std::string::npos);
+    const auto defines_body =
+        window("add(\"query:defines\"", "[\"query:parent\"]", "4088 AC6a: query:defines window");
+    expect_true("4088 AC6a: query:defines finishes maybe_result",
+                defines_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("4088 AC6a: query:defines cites #4088",
+                defines_body.find("Issue #4088") != std::string::npos);
+    expect_true("4088 AC6a: query:defines bare end_query_epoch finish gone",
+                defines_body.find("return end_query_epoch(qe, &flat, result);") ==
+                    std::string::npos);
+    const auto ntype_body = window("add(\"query:node-type\"", "add(\"query:node-marker\"",
+                                   "4088 AC6a: query:node-type window");
+    expect_true("4088 AC6a: query:node-type finishes maybe_result",
+                ntype_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("4088 AC6a: query:node-type cites #4088",
+                ntype_body.find("Issue #4088") != std::string::npos);
+    const auto dbm_body = window("add(\"query:defines-by-marker\"", "add(\"query:calls-by-marker\"",
+                                 "4088 AC6a: query:defines-by-marker window");
+    expect_true("4088 AC6a: query:defines-by-marker finishes maybe_result",
+                dbm_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("4088 AC6a: query:defines-by-marker cites #4088",
+                dbm_body.find("Issue #4088") != std::string::npos);
+    const auto cbm_body = window("add(\"query:calls-by-marker\"", "[\"query:by-marker\"]",
+                                 "4088 AC6a: query:calls-by-marker window");
+    expect_true("4088 AC6a: query:calls-by-marker finishes maybe_result",
+                cbm_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("4088 AC6a: query:calls-by-marker cites #4088",
+                cbm_body.find("Issue #4088") != std::string::npos);
+    // AC6b: the auto-upgrade SSOT keeps the Soft bare-list early return.
+    const auto upgrade = qws.find("as_query_result = true; // auto-upgrade");
+    expect_true("4088 AC6b: production auto-upgrade SSOT present", upgrade != std::string::npos);
+    const auto soft_early = qws.find("return finished;", upgrade);
+    expect_true("4088 AC6b: Soft bare-list early return retained",
+                soft_early != std::string::npos && soft_early - upgrade < 400);
+    // AC6c: reflect-node-members exports the as-stable-ref spine.
+    const auto reflect_body =
+        window("query:reflect-node-members", "query:ref-counts", "4088 AC6c: reflect window");
+    expect_true("4088 AC6c: reflect cites #4088",
+                reflect_body.find("Issue #4088") != std::string::npos);
+    expect_true("4088 AC6c: reflect packs via pack_member_ref",
+                reflect_body.find("pack_member_ref") != std::string::npos);
+    expect_true("4088 AC6c: reflect gates the export budget",
+                reflect_body.find("allow_query_stable_ref_export(child)") != std::string::npos);
+    expect_true("4088 AC6c: reflect production v2 spine gate",
+                reflect_body.find("production_defaults_active()") != std::string::npos);
+    expect_true("4088 AC6c: reflect bare-int body-node export gone",
+                reflect_body.find("append_field(\"body-node\", make_int") == std::string::npos);
+    expect_true("4088 AC6c: reflect bare-int init-node export gone",
+                reflect_body.find("append_field(\"init-node\", make_int") == std::string::npos);
+    // AC6d: dirty-subtree production face re-registration.
+    const auto dirty_body = window("add(\"query:dirty-subtree\"", "\"query:defines-by-marker\"",
+                                   "4088 AC6d: dirty-subtree window");
+    expect_true("4088 AC6d: dirty-subtree cites #4088",
+                dirty_body.find("Issue #4088") != std::string::npos);
+    expect_true("4088 AC6d: dirty-subtree resolves the root",
+                dirty_body.find("resolve_query_node_arg(a, \"query:dirty-subtree\"") !=
+                    std::string::npos);
+    expect_true("4088 AC6d: dirty-subtree takes the workspace shared lock",
+                dirty_body.find("rlock(ws.workspace_mtx)") != std::string::npos);
+    expect_true("4088 AC6d: dirty-subtree walks children_columnar",
+                dirty_body.find("children_columnar") != std::string::npos);
+    expect_true("4088 AC6d: dirty-subtree production gate",
+                dirty_body.find("production_defaults_active()") != std::string::npos);
+    expect_true("4088 AC6d: Soft keeps the historical borrowed-children walk",
+                dirty_body.find("ws_flat->children(cur)") != std::string::npos);
+    {
+        std::ifstream reg("src/compiler/evaluator_primitives_registry.cpp");
+        std::string reg_src((std::istreambuf_iterator<char>(reg)),
+                            std::istreambuf_iterator<char>());
+        expect_true("4088 AC6d: registry readable", !reg_src.empty());
+        const auto bare_reg = reg_src.find("register_query_primitives(");
+        const auto ws_reg = reg_src.find("register_workspace_query_primitives(");
+        expect_true("4088 AC6d: override order — workspace registration runs last",
+                    bare_reg != std::string::npos && ws_reg != std::string::npos &&
+                        bare_reg < ws_reg);
+    }
+    {
+        std::ifstream f2("tests/issues/test_issue_4088.cpp");
+        expect_true("4088 AC6: no test_issue_4088.cpp", !f2.good());
+    }
+    {
+        std::ifstream f3("docs/design/4088-query-bare-nodeid-schema2.md");
+        expect_true("4088 AC6: no docs/design/", !f3.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -2522,6 +2767,12 @@ int main() {
     test_ac3311_live_soft_canary_then_prod_requery();
     test_ac3286_production_bare_list_auto_upgraded();
     test_ac3286_soft_bare_list_unchanged();
+    // Issue #4088: production runtime probes live in the proven-green
+    // production-eval zone (same placement rationale as the #3395-before-
+    // #3389 reorder comment below — later production evals hit the
+    // pre-existing cumulative CompilerService fragility).
+    test_ac4088_1_prod_list_exits_schema2();
+    test_ac4088_2_prod_dirty_subtree_stale_ref();
     test_ac3660_1_unrelated_mutate_keeps_unmodified_match();
     test_ac3660_2_query_epoch_in_flight();
     test_ac3660_3_tenant_fiber_cow_reserved();
@@ -2588,8 +2839,13 @@ int main() {
     test_ac3993_2_incomplete_gen_still_denies();
     test_ac3993_3_soft_unchanged();
     test_ac3993_4_source_cite();
+    // Issue #4088: Soft-face + source-cite deliverables.
+    test_ac4088_3_soft_list_exits_bare();
+    test_ac4088_4_soft_dirty_subtree_int_ok();
+    test_ac4088_5_soft_reflect_member_pair();
+    test_ac4088_6_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
-               "#3990 + #3991 + #3993 AC tests PASSED\n");
+               "#3990 + #3991 + #3993 + #4088 AC tests PASSED\n");
     return 0;
 }

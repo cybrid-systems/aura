@@ -1382,82 +1382,97 @@ void register_workspace_query_primitives(
     });
 
     // (query:calls name) — Find all call sites of a named function
-    add("query:calls", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        // Issue #278 follow-up: 0-arg call returns ALL
-        // call sites in the workspace (regardless of
-        // callee). 1-arg call (legacy) still filters by
-        // the named function — preserves pre-#278 caller
-        // contracts.
-        if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
-            return mev("bad-arg", "usage: (query:calls) or (query:calls name)");
-        if (!ws.workspace_flat || !ws.workspace_pool)
-            return mev("no-workspace", "no workspace AST loaded");
-        aura::ast::SymId sym = aura::ast::INVALID_SYM;
-        if (a.size() == 1) {
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ws.string_heap.size())
-                return mev("bad-arg", "name string index out of range");
-            auto& flat = *ws.workspace_flat;
-            (void)flat;
-            auto name = ws.string_heap[idx];
-            // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
-            sym = ws.canonical_pool()->intern(name);
-        }
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
-                continue;
-            if (sym != aura::ast::INVALID_SYM) {
-                auto callee = flat.get(v.child(0));
-                if (callee.tag != aura::ast::NodeTag::Variable || callee.sym_id != sym)
-                    continue;
+    // Issue #4088: the bare NodeId list exit now finishes via
+    // end_query_epoch_maybe_result — Production auto-upgrades the list to
+    // the schema-2 stamped hash (an Agent holding bare NodeIds across
+    // rounds reads the occupant after slot reuse, never the node it
+    // captured); Soft keeps the historical bare list (zero-cost).
+    add("query:calls",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            // Issue #278 follow-up: 0-arg call returns ALL
+            // call sites in the workspace (regardless of
+            // callee). 1-arg call (legacy) still filters by
+            // the named function — preserves pre-#278 caller
+            // contracts.
+            if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
+                return mev("bad-arg", "usage: (query:calls) or (query:calls name)");
+            if (!ws.workspace_flat || !ws.workspace_pool)
+                return mev("no-workspace", "no workspace AST loaded");
+            aura::ast::SymId sym = aura::ast::INVALID_SYM;
+            if (a.size() == 1) {
+                auto idx = as_string_idx(a[0]);
+                if (idx >= ws.string_heap.size())
+                    return mev("bad-arg", "name string index out of range");
+                auto& flat = *ws.workspace_flat;
+                (void)flat;
+                auto name = ws.string_heap[idx];
+                // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
+                sym = ws.canonical_pool()->intern(name);
             }
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
+                    continue;
+                if (sym != aura::ast::INVALID_SYM) {
+                    auto callee = flat.get(v.child(0));
+                    if (callee.tag != aura::ast::NodeTag::Variable || callee.sym_id != sym)
+                        continue;
+                }
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+            // Issue #4088: Production auto-upgrades to the schema-2 stamped
+            // hash inside end_query_epoch_maybe_result; Soft keeps the bare list.
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
 
     // Issue #278: (query:defines) — return all define
     // sites in the workspace. 0-arg returns every
     // (define ...) node regardless of name. 1-arg
     // filters by name (preserves the (query:calls name)
     // symmetry for AI agent workflows).
-    add("query:defines", [ws, mev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
-            return mev("bad-arg", "usage: (query:defines) or (query:defines name)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        aura::ast::SymId sym = aura::ast::INVALID_SYM;
-        if (a.size() == 1 && ws.workspace_pool) {
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ws.string_heap.size())
-                return mev("bad-arg", "name string index out of range");
-            sym = ws.canonical_pool()->intern(ws.string_heap[idx]);
-        }
-        auto& flat = *ws.workspace_flat;
-        const auto qe = begin_query_epoch(&flat); // Issue #2192
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
-            if (flat.is_free_slot(id))
-                continue;
-            auto v = flat.get(id);
-            if (v.tag != aura::ast::NodeTag::Define)
-                continue;
-            if (sym != aura::ast::INVALID_SYM && v.sym_id != sym)
-                continue;
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-            result = make_pair(pid);
-        }
-        return end_query_epoch(qe, &flat, result);
-    });
+    // Issue #4088: finish via end_query_epoch_maybe_result (was the bare
+    // end_query_epoch) — Production auto-upgrades to the schema-2 stamped
+    // hash; Soft keeps the historical bare list.
+    add("query:defines",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
+                return mev("bad-arg", "usage: (query:defines) or (query:defines name)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            aura::ast::SymId sym = aura::ast::INVALID_SYM;
+            if (a.size() == 1 && ws.workspace_pool) {
+                auto idx = as_string_idx(a[0]);
+                if (idx >= ws.string_heap.size())
+                    return mev("bad-arg", "name string index out of range");
+                sym = ws.canonical_pool()->intern(ws.string_heap[idx]);
+            }
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+                if (flat.is_free_slot(id))
+                    continue;
+                auto v = flat.get(id);
+                if (v.tag != aura::ast::NodeTag::Define)
+                    continue;
+                if (sym != aura::ast::INVALID_SYM && v.sym_id != sym)
+                    continue;
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+            // Issue #4088: Production auto-upgrade inside end_query_epoch_maybe_result
+            // (was the bare end_query_epoch — schema-1 list leak).
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
 
     // ═══════════════════════════════════════════════════════════════
     // P1: Query/Transform EDSL 扩展
@@ -1960,41 +1975,47 @@ void register_workspace_query_primitives(
     // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
     //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
     //            Coercion, LiteralFloat, MacroDef
-    add("query:node-type", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:node-type tag-name)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "tag name string index out of range");
-        auto target_name = ws.string_heap[idx];
-        auto& flat = *ws.workspace_flat;
+    // Issue #4088: bare NodeId list exit — Production auto-upgrades the
+    // list to the schema-2 stamped hash; Soft keeps the bare list.
+    add("query:node-type",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !is_string(a[0]))
+                return mev("bad-arg", "usage: (query:node-type tag-name)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "tag name string index out of range");
+            auto target_name = ws.string_heap[idx];
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
 
-        // Convert tag name to NodeTag enum
-        aura::ast::NodeTag target_tag = static_cast<aura::ast::NodeTag>(-1);
-        bool found_tag = false;
-        for (auto& m : aura::ast::kNodeMeta) {
-            if (m.name == target_name && m.name != "<gap>") {
-                target_tag = m.tag;
-                found_tag = true;
-                break;
+            // Convert tag name to NodeTag enum
+            aura::ast::NodeTag target_tag = static_cast<aura::ast::NodeTag>(-1);
+            bool found_tag = false;
+            for (auto& m : aura::ast::kNodeMeta) {
+                if (m.name == target_name && m.name != "<gap>") {
+                    target_tag = m.tag;
+                    found_tag = true;
+                    break;
+                }
             }
-        }
-        if (!found_tag)
-            return mev("unknown-tag", std::string("unknown node type \"") + target_name + "\"");
+            if (!found_tag)
+                return mev("unknown-tag", std::string("unknown node type \"") + target_name + "\"");
 
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.get(id).tag == target_tag) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                if (flat.get(id).tag == target_tag) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
             }
-        }
-        return result;
-    });
+            // Issue #4088: Production auto-upgrades to the schema-2 stamped
+            // hash inside end_query_epoch_maybe_result; Soft keeps the bare list.
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
 
     // Issue #278: (query:node-marker node-id|stable-ref) — return
     // the SyntaxMarker name for a node as a string.
@@ -2042,7 +2063,7 @@ void register_workspace_query_primitives(
     // Issue #2186: resolve via ensure_valid_or_refresh.
     ObservabilityPrims::register_stats_impl(
         "query:reflect-node-members",
-        [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
+        [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty())
                 return mev("bad-arg", "usage: (query:reflect-node-members node-id|stable-ref)");
@@ -2079,6 +2100,66 @@ void register_workspace_query_primitives(
                 ws.pairs.push_back({make_pair(entry), result});
                 result = make_pair(cons);
             };
+            // Issue #4088: body-node / init-node members are Agent memory —
+            // a bare NodeId int is occupancy, not identity (the entry side
+            // already rejects bare ints under production via
+            // resolve_query_node_arg, #3395). Export children through the
+            // same stable-ref spine as query:as-stable-ref: Soft keeps the
+            // v1 (id . gen) pair; production packs the v2 spine
+            // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary))))))
+            // — same field order as pack_v2 in evaluator_primitives_mutate.
+            // cpp. No new primitive.
+            auto pack_member_ref = [&](aura::ast::NodeId child) -> EvalValue {
+                const auto torn = mev("restamp-lag",
+                                      "budget-exceeded: query:reflect-node-members: restamp budget "
+                                      "exceeded; generation torn for export (Issue #3121 / #3230)");
+                if (!ev.allow_query_stable_ref_export(child))
+                    return torn;
+                const auto ref = ev.export_ref(child);
+                if (ref.id == aura::ast::NULL_NODE)
+                    return torn;
+                if (!aura::compiler::typed_audit::production_defaults_active()) {
+                    // Soft: historical v1 (id . gen) pair (as-stable-ref parity).
+                    const auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)),
+                                        make_int(static_cast<std::int64_t>(ref.gen))});
+                    return make_pair(pid);
+                }
+                // Production: v2 spine, same shape as query:as-stable-ref.
+                const auto p_id = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_void()});
+                const auto p_gen = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
+                const auto p_wrap = ws.pairs.size();
+                ws.pairs.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.wrap_epoch)), make_void()});
+                const auto p_tenant = ws.pairs.size();
+                ws.pairs.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.tenant_id)), make_void()});
+                const auto p_cow = ws.pairs.size();
+                ws.pairs.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.cow_epoch_at_capture)), make_void()});
+                if (ref.fiber_id != 0) {
+                    const auto p_fiber = ws.pairs.size();
+                    ws.pairs.push_back(
+                        {make_int(static_cast<std::int64_t>(ref.fiber_id)), make_void()});
+                    if (ref.boundary_pinned) {
+                        const auto p_boundary = ws.pairs.size();
+                        ws.pairs.push_back({make_bool(ref.boundary_pinned), make_void()});
+                        ws.pairs[p_fiber].cdr = make_pair(p_boundary);
+                    }
+                    ws.pairs[p_cow].cdr = make_pair(p_fiber);
+                } else if (ref.boundary_pinned) {
+                    const auto p_boundary = ws.pairs.size();
+                    ws.pairs.push_back({make_bool(ref.boundary_pinned), make_void()});
+                    ws.pairs[p_cow].cdr = make_pair(p_boundary);
+                }
+                ws.pairs[p_tenant].cdr = make_pair(p_cow);
+                ws.pairs[p_wrap].cdr = make_pair(p_tenant);
+                ws.pairs[p_gen].cdr = make_pair(p_wrap);
+                ws.pairs[p_id].cdr = make_pair(p_gen);
+                return make_pair(p_id);
+            };
 
             append_field("tag-name", [&]() {
                 auto tidx = ws.string_heap.size();
@@ -2105,12 +2186,21 @@ void register_workspace_query_primitives(
                 append_field("int-value", make_int(v.int_value));
             }
             if (v.tag == aura::ast::NodeTag::Define && !v.children.empty()) {
-                append_field("body-node", make_int(static_cast<std::int64_t>(v.child(0))));
+                auto body_ref = pack_member_ref(v.child(0));
+                if (is_error(body_ref))
+                    return body_ref;
+                append_field("body-node", body_ref);
             }
             if ((v.tag == aura::ast::NodeTag::Let || v.tag == aura::ast::NodeTag::LetRec) &&
                 v.children.size() >= 2) {
-                append_field("init-node", make_int(static_cast<std::int64_t>(v.child(0))));
-                append_field("body-node", make_int(static_cast<std::int64_t>(v.child(1))));
+                auto init_ref = pack_member_ref(v.child(0));
+                if (is_error(init_ref))
+                    return init_ref;
+                append_field("init-node", init_ref);
+                auto body_ref2 = pack_member_ref(v.child(1));
+                if (is_error(body_ref2))
+                    return body_ref2;
+                append_field("body-node", body_ref2);
             }
 
             return result;
@@ -2147,6 +2237,91 @@ void register_workspace_query_primitives(
             return make_int(count);
         });
 
+    // Issue #4088: query:dirty-subtree production-face re-registration.
+    // The bare registration in evaluator_primitives_query.cpp
+    // (register_query_primitives, which runs first) accepts a bare NodeId
+    // int root with no workspace_mtx lock and walks the borrowed
+    // FlatAST::children span — the int is occupancy, not identity, so a
+    // NodeId held across rounds reads the NEW occupant's dirty count, and
+    // a concurrent COW can UAF the borrowed span. Primitives::add
+    // overrides by name and register_workspace_query_primitives runs
+    // later (evaluator_primitives_registry.cpp order), so production
+    // dispatches here: the root resolves through resolve_query_node_arg
+    // (bare int → stale-ref, the #3395 gate), the walk takes the
+    // workspace shared lock, and children come from children_columnar
+    // (never the borrowed span). Soft/Off keeps the historical lock-free
+    // bare-int body (zero-cost AC).
+    add("query:dirty-subtree", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (!ws.workspace_flat)
+                return make_int(0);
+            auto& flat = *ws.workspace_flat;
+            if (a.empty())
+                return make_int(0);
+            bool ok = true;
+            aura::ast::NodeId root = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a, "query:dirty-subtree", &ok, root);
+            if (!ok)
+                return err;
+            const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
+                                                 ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
+                                                 : 0xFF; // 0xFF = all reasons
+            if (root == aura::ast::NULL_NODE || root >= flat.size())
+                return make_int(0);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
+            std::uint64_t count = 0;
+            std::vector<aura::ast::NodeId> stack;
+            stack.push_back(root);
+            while (!stack.empty()) {
+                const auto cur = stack.back();
+                stack.pop_back();
+                if (cur == aura::ast::NULL_NODE || cur >= flat.size())
+                    continue;
+                if ((flat.dirty(cur) & reason_mask) != 0)
+                    ++count;
+                for (auto child : flat.children_columnar(cur))
+                    stack.push_back(static_cast<aura::ast::NodeId>(child));
+            }
+            return make_int(static_cast<std::int64_t>(count));
+        }
+        // Soft / Off: historical body, equivalent to the
+        // evaluator_primitives_query.cpp registration this add overrides
+        // under production (get_query_evaluator lookup, no lock, borrowed
+        // children span — the Soft contract is zero-cost).
+        auto* qev = Evaluator::get_query_evaluator();
+        if (!qev)
+            return make_int(0);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        auto* ws_flat = qev->workspace_flat();
+        if (!ws_flat)
+            return make_int(0);
+        auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
+                                             ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
+                                             : 0xFF; // 0xFF = all reasons
+        if (root == aura::ast::NULL_NODE || root >= ws_flat->size())
+            return make_int(0);
+        if (auto* m = static_cast<CompilerMetrics*>(qev->compiler_metrics()))
+            m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
+        std::uint64_t count = 0;
+        std::vector<aura::ast::NodeId> stack;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const auto cur = stack.back();
+            stack.pop_back();
+            if (cur == aura::ast::NULL_NODE || cur >= ws_flat->size())
+                continue;
+            if ((ws_flat->dirty(cur) & reason_mask) != 0)
+                ++count;
+            for (auto child : ws_flat->children(cur))
+                stack.push_back(static_cast<aura::ast::NodeId>(child));
+        }
+        return make_int(static_cast<std::int64_t>(count));
+    });
+
     // Issue #278: (query:defines-by-marker marker-name) —
     // return all Define nodes whose SyntaxMarker matches
     // the given name. Same marker vocabulary as
@@ -2156,77 +2331,91 @@ void register_workspace_query_primitives(
     // (the Aura-level (define ...) for colon-prefixed
     // names hits a flat-evaluator closure issue, so the
     // C++ engine primitive is the canonical implementation).
-    add("query:defines-by-marker", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:defines-by-marker marker-name)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "marker name string index out of range");
-        const auto& marker_name = ws.string_heap[idx];
-        aura::ast::SyntaxMarker target;
-        if (marker_name == "User") {
-            target = aura::ast::SyntaxMarker::User;
-        } else if (marker_name == "MacroIntroduced") {
-            target = aura::ast::SyntaxMarker::MacroIntroduced;
-        } else if (marker_name == "BoolLiteral") {
-            target = aura::ast::SyntaxMarker::BoolLiteral;
-        } else {
-            return mev("unknown-marker", std::string("unknown marker: \"") + marker_name +
-                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
-        }
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define && v.marker == target) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
+    // Issue #4088: bare NodeId list exit — Production auto-upgrades the
+    // list to the schema-2 stamped hash; Soft keeps the bare list.
+    add("query:defines-by-marker",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !is_string(a[0]))
+                return mev("bad-arg", "usage: (query:defines-by-marker marker-name)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "marker name string index out of range");
+            const auto& marker_name = ws.string_heap[idx];
+            aura::ast::SyntaxMarker target;
+            if (marker_name == "User") {
+                target = aura::ast::SyntaxMarker::User;
+            } else if (marker_name == "MacroIntroduced") {
+                target = aura::ast::SyntaxMarker::MacroIntroduced;
+            } else if (marker_name == "BoolLiteral") {
+                target = aura::ast::SyntaxMarker::BoolLiteral;
+            } else {
+                return mev("unknown-marker",
+                           std::string("unknown marker: \"") + marker_name +
+                               "\" (expected User / MacroIntroduced / BoolLiteral)");
             }
-        }
-        return result;
-    });
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                if (v.tag == aura::ast::NodeTag::Define && v.marker == target) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
+            }
+            // Issue #4088: Production auto-upgrades to the schema-2 stamped
+            // hash inside end_query_epoch_maybe_result; Soft keeps the bare list.
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
 
     // Issue #278: (query:calls-by-marker marker-name) —
     // return all Call nodes whose SyntaxMarker matches
     // the given name. C++ engine primitive (same
     // rationale as query:defines-by-marker).
-    add("query:calls-by-marker", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:calls-by-marker marker-name)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "marker name string index out of range");
-        const auto& marker_name = ws.string_heap[idx];
-        aura::ast::SyntaxMarker target;
-        if (marker_name == "User") {
-            target = aura::ast::SyntaxMarker::User;
-        } else if (marker_name == "MacroIntroduced") {
-            target = aura::ast::SyntaxMarker::MacroIntroduced;
-        } else if (marker_name == "BoolLiteral") {
-            target = aura::ast::SyntaxMarker::BoolLiteral;
-        } else {
-            return mev("unknown-marker", std::string("unknown marker: \"") + marker_name +
-                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
-        }
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Call && v.marker == target) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
+    // Issue #4088: bare NodeId list exit — Production auto-upgrades the
+    // list to the schema-2 stamped hash; Soft keeps the bare list.
+    add("query:calls-by-marker",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !is_string(a[0]))
+                return mev("bad-arg", "usage: (query:calls-by-marker marker-name)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "marker name string index out of range");
+            const auto& marker_name = ws.string_heap[idx];
+            aura::ast::SyntaxMarker target;
+            if (marker_name == "User") {
+                target = aura::ast::SyntaxMarker::User;
+            } else if (marker_name == "MacroIntroduced") {
+                target = aura::ast::SyntaxMarker::MacroIntroduced;
+            } else if (marker_name == "BoolLiteral") {
+                target = aura::ast::SyntaxMarker::BoolLiteral;
+            } else {
+                return mev("unknown-marker",
+                           std::string("unknown marker: \"") + marker_name +
+                               "\" (expected User / MacroIntroduced / BoolLiteral)");
             }
-        }
-        return result;
-    });
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                if (v.tag == aura::ast::NodeTag::Call && v.marker == target) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
+            }
+            // Issue #4088: Production auto-upgrades to the schema-2 stamped
+            // hash inside end_query_epoch_maybe_result; Soft keeps the bare list.
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
 
     // (query:by-marker marker-name) — Issue #244 / #1914: general marker
     // query. Returns all nodes with the given SyntaxMarker.
