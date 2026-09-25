@@ -3828,8 +3828,13 @@ public:
                     std::unique_lock cache_write(jit_cache_mtx_);
                     auto cache_it = jit_cache_.find(ir_fn.name);
                     auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                    if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
-                        shape_profiler_.is_stable(fn_key)) {
+                    // Issue #4073: same epoch predicate as the shared probe.
+                    // A miss there must not be turned back into a hit here.
+                    if (cache_it != jit_cache_.end() &&
+                        cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
+                        jit_cache_.erase(cache_it);
+                    } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
+                               shape_profiler_.is_stable(fn_key)) {
                         std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
                                      ir_fn.name.c_str());
                         jit_cache_.erase(cache_it);
@@ -13836,6 +13841,56 @@ public:
         return try_jit_scalar_invokes_for_test_.load(std::memory_order_relaxed);
     }
 
+    // Issue #4073: seed a jit_cache_ hit, advance the mutation epoch
+    // without evict_jit_cache_after_production_facade_ on this name, then
+    // try_jit_execute. Returns ScalarFn invoke count. Non-zero sentinels
+    // mean the entry was already gone or its epoch matched (precondition).
+    std::uint32_t public_try_jit_stale_epoch_scalar_invokes_for_test() {
+        try_jit_scalar_invokes_for_test_.store(0, std::memory_order_relaxed);
+        try_jit_scalar_override_for_test_ = &counting_scalar_fn_for_test_;
+        constexpr const char* kName = "ac4073_stale";
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            auto [it, _ins] = jit_cache_.try_emplace(kName);
+            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
+            it->second.local_count = 1;
+            it->second.arg_count = 0;
+            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+        }
+        aura::core::bump_mutation_epoch();
+        {
+            std::shared_lock cache_read(jit_cache_mtx_);
+            auto it = jit_cache_.find(kName);
+            if (it == jit_cache_.end() ||
+                it->second.last_seen_epoch_ == aura::core::current_mutation_epoch()) {
+                try_jit_scalar_override_for_test_ = nullptr;
+                return it == jit_cache_.end() ? 0xffffffffu : 0xfffffffeu;
+            }
+        }
+        aura::ir::IRModule mod;
+        aura::ir::IRFunction fn;
+        fn.id = 0;
+        fn.name = kName;
+        fn.local_count = 1;
+        fn.arg_count = 0;
+        aura::ir::BasicBlock block;
+        block.id = 0;
+        aura::ir::IRInstruction ret;
+        ret.opcode = aura::ir::IROpcode::Return;
+        ret.operands[0] = 0;
+        block.instructions.push_back(ret);
+        fn.blocks.push_back(std::move(block));
+        mod.functions.push_back(std::move(fn));
+        mod.entry_function_id = 0;
+        (void)try_jit_execute(mod, nullptr);
+        try_jit_scalar_override_for_test_ = nullptr;
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_cache_.erase(kName);
+        }
+        return try_jit_scalar_invokes_for_test_.load(std::memory_order_relaxed);
+    }
+
     // Issue #1377: opt-in SoA dual-emit (default off). When false,
     // lower_to_ir skips IRFunctionSoA columns + bridge counters.
     void set_soa_dual_emit(bool enable) noexcept {
@@ -15166,7 +15221,12 @@ public:
                 auto cache_it = jit_cache_.find(ir_fn.name);
                 if (cache_it != jit_cache_.end()) {
                     auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                    if (!cache_it->second.has_shape_map && shape_profiler_.is_stable(fn_key)) {
+                    // Issue #4073: last_seen_epoch_ != current mutation epoch
+                    // is a miss. Do not load the pre-mutate ScalarFn.
+                    if (cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
+                        // Unique re-probe erases. Shared lock cannot.
+                    } else if (!cache_it->second.has_shape_map &&
+                               shape_profiler_.is_stable(fn_key)) {
                         // hot-recompile path: needs unique lock
                     } else if (jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                         shape::jit_shape_miss_count.fetch_add(1, std::memory_order_relaxed);
@@ -15183,8 +15243,12 @@ public:
                 std::unique_lock cache_write(jit_cache_mtx_);
                 auto cache_it = jit_cache_.find(ir_fn.name);
                 auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
-                    shape_profiler_.is_stable(fn_key)) {
+                // Issue #4073: same epoch predicate as the shared probe.
+                if (cache_it != jit_cache_.end() &&
+                    cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
+                    jit_cache_.erase(cache_it);
+                } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
+                           shape_profiler_.is_stable(fn_key)) {
                     std::fprintf(stderr, "spec: hot-recompile '%s' (try_jit)\n",
                                  ir_fn.name.c_str());
                     jit_cache_.erase(cache_it);
@@ -15305,11 +15369,18 @@ public:
                         break;
                 }
 
-                // Skip if already cached (prevents duplicate JIT symbols)
+                // Skip if already cached at the current mutation epoch
+                // (prevents duplicate JIT symbols). Issue #4073: a stale
+                // last_seen_epoch_ must not revive the pre-mutate ScalarFn.
                 {
                     std::shared_lock cache_read(jit_cache_mtx_);
-                    if (ir_fn.name != "__top__" && jit_cache_.count(ir_fn.name)) {
-                        fn_ptr = jit_cache_[ir_fn.name].fn_ptr;
+                    if (ir_fn.name != "__top__") {
+                        auto cached = jit_cache_.find(ir_fn.name);
+                        if (cached != jit_cache_.end() &&
+                            cached->second.last_seen_epoch_ ==
+                                aura::core::current_mutation_epoch()) {
+                            fn_ptr = cached->second.fn_ptr.load(std::memory_order_acquire);
+                        }
                     }
                 }
                 if (!fn_ptr) {
@@ -15336,6 +15407,7 @@ public:
                         it->second.local_count = ir_fn.local_count;
                         it->second.arg_count = ir_fn.arg_count;
                         it->second.env_count = env_count;
+                        it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
                         it->second.has_shape_map = final_shape_map != nullptr;
                         if (final_shape_map != nullptr) {
                             it->second.compiled_shape_version_ =

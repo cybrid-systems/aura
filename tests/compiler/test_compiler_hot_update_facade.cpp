@@ -1365,6 +1365,23 @@ static void ac3977_unnamed_owner_scoped_skips_process_count() {
           "3977 AC4: Soft unnamed count consult is a load");
 }
 
+// Issue #4073: try_jit_execute must not invoke a ScalarFn whose
+// last_seen_epoch_ is behind current_mutation_epoch. Named facade
+// eviction is not what drops this entry.
+static void ac4073_stale_epoch_try_jit_does_not_invoke() {
+    std::println("\n--- #4073: stale mutation epoch is not a jit cache hit ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #4073") != std::string::npos, "4073: service.ixx cites");
+    CHECK(ixx.find("public_try_jit_stale_epoch_scalar_invokes_for_test") != std::string::npos,
+          "4073: stale-epoch probe");
+    CHECK(read_file("tests/compiler/test_issue_4073.cpp").empty(), "4073: no test_issue file");
+    CHECK(read_file("docs/design/4073-try-jit-epoch.md").empty(), "4073: no docs/design");
+    CHECK(ixx.find("schema-4073") == std::string::npos, "4073: no new query key");
+    CompilerService cs;
+    CHECK(cs.public_try_jit_stale_epoch_scalar_invokes_for_test() == 0,
+          "4073: stale last_seen_epoch_ does not invoke the cached ScalarFn");
+}
+
 int run_test_issue_3112() {
     std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
@@ -1428,6 +1445,10 @@ int run_test_issue_3112() {
     // Issue #3977: unnamed deopt_pending_count is not the owner-scoped
     // peer-anon leave-native gate.
     ac3977_unnamed_owner_scoped_skips_process_count();
+
+    // Issue #4073: try_jit_execute must not run a ScalarFn whose
+    // last_seen_epoch_ is behind current_mutation_epoch.
+    ac4073_stale_epoch_try_jit_does_not_invoke();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {
