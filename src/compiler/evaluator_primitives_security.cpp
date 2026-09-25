@@ -4944,7 +4944,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     };
                     if (rec && (!filt_tenant || rec->tenant_id == want_tenant) &&
                         (!filt_effect || (rec->effect_bits & want_effect) == want_effect)) {
-                        push_line(std::format(
+                        // Issue #4063: reason is an additive tail. Empty
+                        // reason keeps the #4042 line unchanged.
+                        auto line = std::format(
                             "seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={} "
                             "effect={} tenant={} mutation_id={} epoch={} denied={} "
                             "bridge_epoch={} wal-replay-hint=1 wal-lookup-window-miss=0 "
@@ -4952,7 +4954,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             rec->seq, rec->fiber_id, rec->op, rec->target_node, rec->nodes_changed,
                             rec->epoch_delta, rec->timestamp_ms, rec->effect_bits, rec->tenant_id,
                             rec->provenance_mutation_id, rec->epoch, rec->effect_denied ? 1 : 0, 0,
-                            wal_full_scan_hit, wal_segments_scanned));
+                            wal_full_scan_hit, wal_segments_scanned);
+                        if (rec->reason[0] != '\0')
+                            line += std::format(" reason={}", rec->reason);
+                        push_line(std::move(line));
                     } else if (!rec) {
                         push_line(std::format(
                             "seq=0 fiber=0 op= target=0 nodes=0 epoch_delta=0 ts=0 "

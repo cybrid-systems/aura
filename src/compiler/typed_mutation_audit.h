@@ -3413,6 +3413,10 @@ inline constexpr int kTypeExportGrantAlignDeferredGreenIssue = 4030;
 inline thread_local std::uint8_t g_tls_deferred_outermost_green_would_allow{0};
 inline thread_local std::uint8_t g_tls_deferred_outermost_green_linear_ok{0};
 inline std::atomic<std::uint8_t> g_inject_linear_synth_after_persist_for_test{0};
+// Issue #4063: one-shot. The post-persist amend append consumes this by
+// arming inject_fail_remaining, so the pre-persist allow row is not the
+// injected miss. reset_for_test clears it.
+inline std::atomic<std::uint8_t> g_inject_post_persist_amend_append_fail_for_test{0};
 
 inline void drop_deferred_outermost_green_proof() noexcept {
     g_tls_deferred_outermost_green_would_allow = 0;
@@ -5339,6 +5343,7 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 inline void reset_for_test() noexcept {
     drop_deferred_outermost_green_proof();
     g_inject_linear_synth_after_persist_for_test.store(0, std::memory_order_relaxed);
+    g_inject_post_persist_amend_append_fail_for_test.store(0, std::memory_order_relaxed);
     reset_outermost_persist_reject_needs_restore_for_test();
     g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
     g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
