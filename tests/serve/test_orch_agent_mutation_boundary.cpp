@@ -10,10 +10,16 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/observability_metrics.h"
+#include "core/gc_hooks.h"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
+#include "serve/gc_coordinator.h"
+#include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -25,6 +31,7 @@ extern "C" int aura_orch_agent_body_try_acquire();
 extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary);
 extern "C" void aura_orch_agent_body_release_guard();
 extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void*);
+extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 
 import std;
 import aura.compiler.service;
@@ -198,6 +205,127 @@ static void ac4_query() {
     CHECK(href(cs, "orch_agent_steal_skipped_boundary_total") >= 0, "steal skip key");
 }
 
+// Issue #4085: default agent soft boundary is a steal-visibility mark.
+// It must not keep the first real write from taking workspace_mtx_.
+// Two agent fibers (mutation_boundary default on) enter the soft window,
+// then both try_acquire a Guard. The second blocks on the mutex; while
+// it waits, a depth-0 sender's mailbox push is Backpressure and
+// GCCollector::request defers because MutationHold is armed.
+static void ac4085_soft_boundary_real_write_takes_workspace() {
+    std::println("\n--- #4085: soft boundary does not hide the workspace lock ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4085: eval warm");
+    auto* metrics =
+        static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(metrics != nullptr, "4085: metrics");
+
+    Scheduler sched(2);
+    std::atomic<int> phase{0}; // 1 = holder live, 2 = release
+    std::atomic<int> holder_ok{0};
+    std::atomic<int> waiter_got{0};
+    std::atomic<std::uint32_t> held_seen{0};
+    std::atomic<int> hold_defer{0};
+    std::atomic<int> mailbox_bp{0};
+    std::atomic<int> gc_deferred{0};
+    std::atomic<std::uint64_t> waiters_seen{0};
+
+    AgentSpec holder;
+    holder.name = "4085-holder";
+    holder.mutation_boundary = true;
+    holder.attach_mailbox = false;
+    holder.body = [&]() {
+        bool ok = true;
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        if (!gr) {
+            holder_ok.store(-1);
+            phase.store(2);
+            return;
+        }
+        holder_ok.store(1);
+        phase.store(1);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (phase.load() == 1 && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    };
+
+    AgentSpec waiter;
+    waiter.name = "4085-waiter";
+    waiter.mutation_boundary = true;
+    waiter.attach_mailbox = false;
+    waiter.body = [&]() {
+        bool ok = true;
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        if (gr)
+            waiter_got.store(1);
+        else
+            waiter_got.store(-1);
+    };
+
+    auto h = spawn_agent_with_mailbox(sched, std::move(holder));
+    CHECK(h.ok, "4085: holder spawn");
+    std::thread io([&sched]() { sched.run(); });
+
+    const auto arm_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (phase.load() == 0 && std::chrono::steady_clock::now() < arm_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    auto w = spawn_agent_with_mailbox(sched, std::move(waiter));
+    CHECK(w.ok, "4085: waiter spawn");
+
+    const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    std::uint64_t waiters = 0;
+    while (std::chrono::steady_clock::now() < wait_deadline) {
+        waiters = metrics->workspace_mtx_waiters_now.load(std::memory_order_relaxed);
+        if (phase.load() == 1 && waiters > 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    waiters_seen.store(waiters);
+    held_seen.store(aura_process_mutation_boundary_held_count());
+    hold_defer.store(aura::gc_hooks::mutation_hold_defer_active() ? 1 : 0);
+
+    aura::serve::mf_mailbox::MultiFiberMailbox mb;
+    aura::serve::mf_mailbox::MailMessage msg;
+    msg.payload = "4085";
+    const auto pst = mb.push(std::move(msg));
+    mailbox_bp.store(pst == aura::serve::mf_mailbox::PushStatus::Backpressure ? 1 : 0);
+
+    const auto gc_before =
+        aura::gc_hooks::g_gc_request_deferred_mutation_hold_total.load(std::memory_order_relaxed);
+    aura::serve::GCCollector gc(nullptr);
+    const bool gc_started = gc.request();
+    const auto gc_after =
+        aura::gc_hooks::g_gc_request_deferred_mutation_hold_total.load(std::memory_order_relaxed);
+    gc_deferred.store(!gc_started && gc_after > gc_before ? 1 : 0);
+
+    phase.store(2);
+    const auto join_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (waiter_got.load() == 0 && std::chrono::steady_clock::now() < join_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    sched.stop();
+    io.join();
+
+    CHECK(holder_ok.load() == 1, "4085: holder Guard acquired under soft boundary");
+    CHECK(waiters_seen.load() > 0, "4085: waiter blocked on workspace_mtx_");
+    CHECK(held_seen.load() > 0, "4085: process held count live while waiter blocks");
+    CHECK(hold_defer.load() == 1, "4085: MutationHold armed while waiter blocks");
+    CHECK(mailbox_bp.load() == 1, "4085: depth-0 mailbox push is Backpressure");
+    CHECK(gc_deferred.load() == 1, "4085: GC request deferred for MutationHold");
+    CHECK(waiter_got.load() == 1, "4085: waiter acquires after holder releases");
+
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto flip = emb.find("if (soft_only_below)\n            outermost = true;");
+    const auto lock = emb.find("lock_.lock();");
+    const auto held = emb.find("aura_process_mutation_boundary_held_enter();");
+    const auto arm = emb.find("aura::gc_hooks::arm_mutation_hold_defer();");
+    CHECK(flip != std::string::npos && lock != std::string::npos && flip < lock,
+          "4085: soft-only-below outermost reaches the workspace lock");
+    CHECK(held != std::string::npos && arm != std::string::npos && flip < held && held < arm,
+          "4085: process held and MutationHold follow the outermost flip");
+    CHECK(read_file("tests/serve/test_issue_4085.cpp").empty(), "4085: no test_issue file");
+    CHECK(read_file("docs/design/4085-soft-boundary-lock.md").empty(), "4085: no docs/design");
+}
+
 static void ac5_source() {
     std::println("\n--- AC5: source wiring ---");
     auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
@@ -227,6 +355,7 @@ int run_test_orch_agent_mutation_boundary() {
     ac2_pure_reasoning_zero_cost();
     ac3_nested_no_leak();
     ac4_query();
+    ac4085_soft_boundary_real_write_takes_workspace();
     ac5_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
