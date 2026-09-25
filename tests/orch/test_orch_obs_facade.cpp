@@ -877,6 +877,13 @@ int run_test_orch_obs_facade() {
                       "3673 AC1: schema-2347 row (#2188/#2347 lineage)");
             }
         }
+        // #2651: the deny hash interns through push_string_heap. A bare
+        // size()+push_back races the spawn body on the shared monotonic
+        // resource and SIGSEGVs the next eval's tree-walker lookup
+        // (isolated rc=139).
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp")
+                      .find("push_string_heap(\"recv-under-boundary\")") != std::string::npos,
+              "3673: recv deny interns under push_string_heap (#2651)");
         // AC2: no Guard, quiet empty (try semantics — wait #t would park
         // forever on a quiet mailbox; Policy A only short-circuits under
         // Guard) → empty=#t, no deny intern.
