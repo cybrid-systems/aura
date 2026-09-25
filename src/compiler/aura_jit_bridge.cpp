@@ -1534,6 +1534,11 @@ extern "C" std::uint64_t aura_reload_old_so_pending_v_read(void) {
 // Issue #3747: production remount then drain so pending==0 without a
 // later success Guard. Keep staging across the remount walk (#3539).
 // Soft: zero extra (BoundaryExit periodic walk still the drain site).
+// Issue #4074: aura_closure_dispatch_native_checked runs fn() under the
+// workspace read lock and does not take g_aot_reload_mtx. dlclose takes
+// the matching write lock so an in-flight call returns before unmap.
+// BoundaryExit drain stays outside this helper — that dtor already holds
+// the unique lock.
 static void production_remount_then_drain_old_so() noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return;
@@ -1543,7 +1548,9 @@ static void production_remount_then_drain_old_so() noexcept {
     std::uint64_t cap_ok = 0;
     std::uint64_t cap_fail = 0;
     aura_sync_remount_anon_captured_live_closures(&cap_ok, &cap_fail);
+    aura_lock_workspace_write();
     aura_force_drain_old_so();
+    aura_unlock_workspace_write();
 }
 static std::uint64_t g_aot_last_commit_epoch = 0;
 static std::uint64_t g_aot_last_module_version = 0;
@@ -4944,8 +4951,13 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         // Issue #3747: production drain after remount walks. In-flight
         // used remap; MustDeopt leftovers must not need the old .so.
         // Soft keeps #3539 BoundaryExit staging.
-        if (aura::compiler::typed_audit::production_defaults_active())
+        // Issue #4074: same write lock as production_remount_then_drain
+        // so dlclose waits out fn() on the workspace read lock.
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            aura_lock_workspace_write();
             aura_force_drain_old_so();
+            aura_unlock_workspace_write();
+        }
     }
 
     // Issue #2016: adaptive region mask based on this call's dirty density
