@@ -26,6 +26,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h" // aura_set_aot_metrics + closures
 #include "compiler/typed_mutation_audit.h"
+#include "core/security_event.hh"
 #include "core/lifetime_consistency_proof.hh"
 #include "core/moving_densify_health.hh"
 #include "test_harness.hpp"
@@ -48,6 +49,7 @@ extern "C" void aura_test_set_current_eval_identity(void* id) noexcept;
 // Declared in aura_jit_runtime / stubs.
 extern "C" void aura_deopt_inc();
 extern "C" void aura_hot_update_note_deopt(void);
+extern "C" std::uint64_t aura_fiber_current_id();
 extern "C" int aura_hot_update_should_throttle_reemit(void);
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t, std::uint64_t);
 extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
@@ -70,8 +72,11 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -2230,6 +2235,133 @@ static void ac4046_densify_mirror_retain_and_arena_refuse(CompilerService& cs) {
     aura_free_closure(alias);
 }
 
+static std::string href_str(CompilerService& cs, const char* q, std::string_view key) {
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", q, key));
+    if (!r || !is_string(*r))
+        return {};
+    const auto idx = as_string_idx(*r);
+    const auto heap = cs.evaluator().string_heap();
+    if (idx >= heap.size())
+        return {};
+    return std::string(heap[idx]);
+}
+
+static void ac4065_reemit_last_mid() {
+    std::println("\n--- #4065: reemit stats record the mutation mid ---");
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::note_boundary_audit_mid(4065001);
+    aura::compiler::typed_audit::note_boundary_audit_tenant(7);
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::SecurityEventKind;
+    append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow,
+                          /*tenant=*/7, /*mutation_id=*/4065001, /*epoch=*/0, /*effect=*/0,
+                          "mutate", "allow", /*denied=*/false, /*fiber=*/0);
+
+    CompilerService cs;
+    aura_aot_set_reemit_owner_eval(&cs.evaluator());
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    ReemitFixture rf;
+    rf.candidates = {{"ac4065", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "4065: reemit success");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid") == 4065001,
+          "4065: last-mid is the boundary mid");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "last-reemit-tenant") == 7,
+          "4065: tenant is the boundary tenant");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "last-reemit-fiber") ==
+              static_cast<std::int64_t>(aura_fiber_current_id()),
+          "4065: fiber is the current fiber");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason") == "reemit-ok",
+          "4065: reason reemit-ok");
+    auto sec = cs.eval("(engine:metrics \"query:security-audit\" 8 7 0 0 4065001)");
+    CHECK(sec && is_pair(*sec), "4065: security-audit has the mid");
+
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    rf.cursor = 0;
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "4065: background reemit still runs");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid") == 0,
+          "4065: no boundary keeps mid 0");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason") == "reemit-ok",
+          "4065: reason still written without a boundary");
+
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_deopt_storm_threshold(5, 100000);
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(1ULL << 1);
+    for (int i = 0; i < 10; ++i)
+        aura_hot_update_note_deopt();
+    aura::compiler::typed_audit::note_boundary_audit_mid(4065001);
+    aura::compiler::typed_audit::note_boundary_audit_tenant(7);
+    CHECK(aura_hot_update_hard_storm_active() == 0, "4065 storm: soft, not the hard ceiling");
+    CHECK(aura_hot_update_should_throttle_reemit() == 1, "4065 storm: global throttle armed");
+    ReemitFixture storm;
+    storm.candidates = {{"ac4065s", 1, false}};
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &storm);
+    CHECK(aura_reemit_aot_for_dirty(0) == 0, "4065 storm: candidate skipped");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid") == 4065001,
+          "4065 storm: same mid");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason") ==
+              "reemit-storm-skip",
+          "4065 storm: reason reemit-storm-skip");
+
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+    aura::compiler::typed_audit::note_boundary_audit_mid(4065001);
+    auto* sm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    aura_set_aot_metrics(sm);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+    const auto before_count = sm->aot_incremental_reemit_count.load(std::memory_order_relaxed);
+    const auto before_success =
+        sm->aot_incremental_reemit_success_total.load(std::memory_order_relaxed);
+    ReemitFixture sf;
+    sf.candidates = {{"ac4065soft", 1, false}};
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &sf);
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "4065 soft: reemit still counts");
+    CHECK(sm->aot_incremental_reemit_success_total.load() > before_success ||
+              sm->aot_incremental_reemit_count.load() > before_count,
+          "4065 soft: an existing counter still bumps");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid") == 0,
+          "4065 soft: last-mid stays 0");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason").empty(),
+          "4065 soft: reason stays empty");
+
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto metrics = read_file("src/compiler/observability_metrics.h");
+    CHECK(bridge.find("Issue #4065") != std::string::npos, "4065: bridge cite");
+    CHECK(bridge.find("join_audit_and_se_mid") != std::string::npos, "4065: mutation mid");
+    CHECK(bridge.find("kAotLastReemitReasonFail") != std::string::npos, "4065: llvm fail face");
+    CHECK(bridge.find("kAotLastReemitReasonStormSkip") != std::string::npos, "4065: storm face");
+    CHECK(bridge.find("current_bridge_epoch") == std::string::npos ||
+              bridge.find("aot_last_reemit_mid") != std::string::npos,
+          "4065: last mid is not the bridge epoch");
+    CHECK(obs.find("last-reemit-reason") != std::string::npos, "4065: query key");
+    CHECK(obs.find("kAotIncrementalReemitStatsPlannedKeys = 272") != std::string::npos,
+          "4065: planned keys raised");
+    CHECK(obs.find("schema-4065") == std::string::npos, "4065: no new query key");
+    const auto cold = metrics.rfind("incremental_relower_cold_miss_total");
+    const auto last = metrics.rfind("aot_last_reemit_mid");
+    CHECK(cold != std::string::npos && last != std::string::npos && cold < last,
+          "4065: fields appended at struct end");
+    CHECK(read_file("docs/design/4065-reemit-last-mid.md").empty(), "4065: no docs/design");
+
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_clear_stable_func_id_map();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+}
+
 } // namespace
 
 int main() {
@@ -3011,6 +3143,8 @@ int main() {
         aura_set_current_bridge_epoch(c0);
         aura_set_aot_defuse_version(d0);
     }
+
+    ac4065_reemit_last_mid();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

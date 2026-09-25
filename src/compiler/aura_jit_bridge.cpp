@@ -4336,6 +4336,28 @@ static int64_t aura_aot_reemit_sentinel_fn(int64_t* /*args*/, uint32_t /*n*/) {
     return 0;
 }
 
+// Issue #4065: production last-reemit face. Soft/Off returns before any
+// boundary TLS read. mid 0 stays 0; reason is still stored.
+static void note_aot_reemit_audit_face(std::uint8_t reason) noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return;
+    auto* m = aot_metrics();
+    if (!m)
+        return;
+    const auto mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    m->aot_last_reemit_mid.store(mid, std::memory_order_relaxed);
+    if (mid != 0) {
+        m->aot_last_reemit_tenant.store(aura::compiler::typed_audit::audit_se_join_tenant_id(),
+                                        std::memory_order_relaxed);
+        m->aot_last_reemit_fiber.store(static_cast<std::int64_t>(aura_fiber_current_id()),
+                                       std::memory_order_relaxed);
+    } else {
+        m->aot_last_reemit_tenant.store(0, std::memory_order_relaxed);
+        m->aot_last_reemit_fiber.store(0, std::memory_order_relaxed);
+    }
+    m->aot_last_reemit_reason.store(reason, std::memory_order_relaxed);
+}
+
 // Issue #2016: default LLVM incremental reemit when host did not wire
 // aura_set_aot_emit_fn. Uses the process AuraJIT (batch-deopt target) to
 // emit a native object for the named function. Caller registers stable id.
@@ -4372,6 +4394,9 @@ static bool default_llvm_incremental_emit(const char* name, std::uint64_t region
         if (aot_metrics())
             aot_metrics()->aot_incremental_llvm_emit_fail_total.fetch_add(
                 1, std::memory_order_relaxed);
+        // Issue #4065: LLVM miss is reemit-fail even when the skeleton
+        // path still counts the candidate.
+        note_aot_reemit_audit_face(aura::compiler::CompilerMetrics::kAotLastReemitReasonFail);
         if (aura_reemit_keep_fail_enabled()) {
             aura_reemit_keep_failed_obj(obj_path.c_str(), "compile_failed");
         } else {
@@ -4710,6 +4735,9 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             if ((storm_scope_mask & cbit) != 0 && !hur.is_critical_region(cbit)) {
                 ++region_skips;
                 ++storm_scope_skips;
+                // Issue #4065: scoped storm defer is reemit-storm-skip.
+                note_aot_reemit_audit_face(
+                    aura::compiler::CompilerMetrics::kAotLastReemitReasonStormSkip);
                 continue;
             }
         }
@@ -4760,6 +4788,10 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                     aot_metrics()->aot_incremental_llvm_emit_total.fetch_add(
                         1, std::memory_order_relaxed);
             }
+            // Issue #4065: a real emit success is reemit-ok. Skeleton
+            // (count_emit_success false) does not overwrite a fail face.
+            if (count_emit_success)
+                note_aot_reemit_audit_face(aura::compiler::CompilerMetrics::kAotLastReemitReasonOk);
             if (sid != 0) {
                 reemit_names.emplace_back(name);
                 reemit_stable_ids.push_back(sid);

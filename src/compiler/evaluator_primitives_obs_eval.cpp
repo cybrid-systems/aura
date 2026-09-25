@@ -15343,7 +15343,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 // Live ~174 keys (169 + 5 additive dirty-region #3736);
                 // planned 256 (≥ live + headroom). query_hash_capacity_for
                 // doubles then rounds to power-of-two.
-                constexpr std::size_t kAotIncrementalReemitStatsPlannedKeys = 256;
+                // Issue #4065: four additive last-reemit keys. Stay >= live+8.
+                constexpr std::size_t kAotIncrementalReemitStatsPlannedKeys = 272;
                 auto* ht = FlatHashTable::create(
                     query_hash_capacity_for(kAotIncrementalReemitStatsPlannedKeys));
                 if (!ht)
@@ -15834,6 +15835,46 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2297", make_int(2297)},
                 {"issue-2297", make_int(2297)},
                 {"capture-cell-remap-wired", make_int(1)},
+                // Issue #4065: last reemit face at the end of the hash.
+                // Soft/Off publishes 0 / empty and does not read boundary TLS.
+                {"last-reemit-mid",
+                 make_int(aura::compiler::typed_audit::production_defaults_active() &&
+                                  ev.compiler_metrics_
+                              ? static_cast<std::int64_t>(
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                        ->aot_last_reemit_mid.load(std::memory_order_relaxed))
+                              : 0)},
+                {"last-reemit-tenant",
+                 make_int(aura::compiler::typed_audit::production_defaults_active() &&
+                                  ev.compiler_metrics_
+                              ? static_cast<std::int64_t>(
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                        ->aot_last_reemit_tenant.load(std::memory_order_relaxed))
+                              : 0)},
+                {"last-reemit-fiber",
+                 make_int(aura::compiler::typed_audit::production_defaults_active() &&
+                                  ev.compiler_metrics_
+                              ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                    ->aot_last_reemit_fiber.load(std::memory_order_relaxed)
+                              : 0)},
+                {"last-reemit-reason",
+                 [&] {
+                     const char* s = "";
+                     if (aura::compiler::typed_audit::production_defaults_active() &&
+                         ev.compiler_metrics_) {
+                         const auto code = static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                               ->aot_last_reemit_reason.load(std::memory_order_relaxed);
+                         if (code == CompilerMetrics::kAotLastReemitReasonOk)
+                             s = "reemit-ok";
+                         else if (code == CompilerMetrics::kAotLastReemitReasonFail)
+                             s = "reemit-fail";
+                         else if (code == CompilerMetrics::kAotLastReemitReasonStormSkip)
+                             s = "reemit-storm-skip";
+                     }
+                     auto idx = ev.string_heap_.size();
+                     ev.string_heap_.push_back(s);
+                     return make_string(idx);
+                 }()},
             };
             return build_hash(kv);
         });
