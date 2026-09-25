@@ -8227,6 +8227,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4052 IsolationDeny epoch linter failed — run python3 scripts/check_isolation_deny_epoch_4052.py")
         return r
+    # Issue #4089 (types residual): agent-fiber mutate skipped the outermost
+    # type belt. orch_soft_boundary_enter pushes a lightweight checkpoint
+    # before any mutate:*, so the later MutationBoundaryGuard captured
+    # is_outermost_ == false (prev = fiber_stack.size() + 1 >= 2): its dtor
+    # never ran the type belt (occurrence persist / deferred green proof
+    # commit / linear fast-path revalidate) and a !inv_ok audit hit the
+    # nested-success skip — a single agent could keep a type-failed edit
+    # committed with a stale green TypeLinearCommitProof and no fresh
+    # occurrence freeze. Gate pins: the soft frame is marked
+    # (MutationCheckpoint::orch_soft_frame + orch_soft_boundary_enter
+    # stamp); the Guard ctor flips to the type-authority outermost when
+    # every frame below is soft (gated on on_fiber — host face unchanged);
+    # exit only takes the nested-success skip for real Guard nesting
+    # (restore + success flip otherwise). Existing belt, no new solver.
+    ftb4089_script = ROOT / "scripts" / "check_fiber_type_belt_4089.py"
+    if not ftb4089_script.exists():
+        fail(f"missing {ftb4089_script}")
+        return 1
+    r = run([sys.executable, str(ftb4089_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4089 fiber type-belt linter failed — run python3 scripts/check_fiber_type_belt_4089.py")
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the
@@ -8262,6 +8284,23 @@ def cmd_lint():
     r = run([sys.executable, str(scj4050_script)], cwd=ROOT)
     if r != 0:
         fail("Issue #4050 supervise-batch child-join linter failed — run python3 scripts/check_supervise_join_4050.py")
+        return r
+    # Issue #4090: every IR/JIT result took the shard unique lock and
+    # heap-allocated a shape histogram — is_stable/dominant_shape/
+    # current_snapshot flushed the TLS slot (unique_lock + unordered_map
+    # compute_dominant) from the second sample of every stable function,
+    # and record_shape fetch_added hotpath_invariant_hits_total per call.
+    # Gate pins: the sampled hotpath tick in record_shape (TLS merge kept),
+    # the three hot reads answering via the pre-flush pending-slot fast
+    # path, compute_dominant counting the closed inline ShapeID set in a
+    # stack array, and the design marker + runtime ACs + wiring present.
+    shp4090_script = ROOT / "scripts" / "check_shape_hotpath_4090.py"
+    if not shp4090_script.exists():
+        fail(f"missing {shp4090_script}")
+        return 1
+    r = run([sys.executable, str(shp4090_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4090 shape hot-path linter failed — run python3 scripts/check_shape_hotpath_4090.py")
         return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so

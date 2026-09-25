@@ -517,15 +517,31 @@ ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
     if (history.size() == 0)
         return SHAPE_UNKNOWN;
 
-    std::unordered_map<ShapeID, std::uint32_t> counts;
-    history.for_each([&](const ShapeRecord& rec) { counts[rec.shape_id]++; });
+    // Issue #4090: count the closed inline ShapeID set in a stack array —
+    // compute_dominant runs under the shard unique_lock on every merge,
+    // and the unordered_map heap walk serialized same-FnKey fibers for
+    // the allocation's duration. Buckets 0..SHAPE_REF cover every known
+    // id; one residual bucket keeps out-of-set ids dominant-eligible
+    // exactly like the pre-#4090 map (production ids all come from
+    // inline_shape_of, so the residual path is unreachable in practice).
+    constexpr std::size_t kDominantBuckets = static_cast<std::size_t>(SHAPE_REF) + 2;
+    std::uint32_t counts[kDominantBuckets] = {};
+    ShapeID residual_id = SHAPE_UNKNOWN;
+    history.for_each([&](const ShapeRecord& rec) {
+        if (rec.shape_id <= SHAPE_REF)
+            counts[static_cast<std::size_t>(rec.shape_id)]++;
+        else {
+            residual_id = rec.shape_id;
+            counts[kDominantBuckets - 1]++;
+        }
+    });
 
     ShapeID best = SHAPE_UNKNOWN;
     std::uint32_t best_count = 0;
-    for (auto& [sid, cnt] : counts) {
-        if (cnt > best_count) {
-            best_count = cnt;
-            best = sid;
+    for (std::size_t i = 0; i < kDominantBuckets; ++i) {
+        if (counts[i] > best_count) {
+            best_count = counts[i];
+            best = i == kDominantBuckets - 1 ? residual_id : static_cast<ShapeID>(i);
         }
     }
     // Issue #1519: dominant count cannot exceed history size.
@@ -697,7 +713,10 @@ void ShapeProfiler::flush_tls_records() noexcept {
 bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     // The pre (shape_id != SHAPE_UNKNOWN) is on the declaration
     // in shape_profiler.h.
-    aura::core::cpp26::record_hotpath_invariant_hit();
+    // Issue #4090: sampled thread-local tick (1/256) instead of a
+    // process-wide fetch_add on every IR/JIT result — same policy as
+    // note_value_tag_hot_path / the AURA_HOT_RECORD soft-observe path.
+    aura::core::cpp26::record_hotpath_invariant_hit_sampled();
     contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
 
     // Issue #3357: TLS coalesce on hot FnKey. First observation this
@@ -732,17 +751,53 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     return record_shape_apply_locked_(fn, shape_id, 1);
 }
 
+// Issue #4090: caller holds the shared_lock on shard si. True when fn's
+// TLS slot has pending same-shape observations (0 < count < merge batch)
+// and the shard profile is already stable on that shape. Pending
+// same-shape observations only ever raise the dominant's ratio, so the
+// hot reads can answer from the profile without flush_tls_records() —
+// the flush's unique_lock + compute_dominant heap walk ran per eval
+// result from the second sample of every stable function.
+bool ShapeProfiler::tls_pending_stable_read_(FnKey fn, std::size_t si) const {
+    if (g_shape_tls_merge.owner != this)
+        return false;
+    for (const auto& s : g_shape_tls_merge.slots) {
+        if (s.fn != fn || s.count == 0 || s.count >= kShapeTlsMergeBatch)
+            continue;
+        const auto it = shards_[si].profiles.find(fn);
+        return it != shards_[si].profiles.end() && it->second.is_stable &&
+               it->second.stable_shape == s.shape;
+    }
+    return false;
+}
+
 bool ShapeProfiler::is_stable(FnKey fn) const {
-    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
+    {
+        // Issue #4090: hot read — answer from the shard when the pending
+        // TLS slot cannot flip the answer (see tls_pending_stable_read_).
+        auto lock = shared_lock_shard_(si);
+        if (tls_pending_stable_read_(fn, si))
+            return true;
+    }
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto lock = shared_lock_shard_(si);
     auto it = shards_[si].profiles.find(fn);
     return it != shards_[si].profiles.end() && it->second.is_stable;
 }
 
 ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
-    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
+    {
+        // Issue #4090: hot read — see tls_pending_stable_read_.
+        auto lock = shared_lock_shard_(si);
+        if (tls_pending_stable_read_(fn, si)) {
+            const auto it = shards_[si].profiles.find(fn);
+            if (it != shards_[si].profiles.end())
+                return it->second.stable_shape;
+        }
+    }
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto lock = shared_lock_shard_(si);
     auto it = shards_[si].profiles.find(fn);
     if (it == shards_[si].profiles.end())
@@ -751,8 +806,24 @@ ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
 }
 
 ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
-    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
+    {
+        // Issue #4090: hot read — see tls_pending_stable_read_. Pending
+        // same-shape observations never bump the version (only stability
+        // loss / invalidate do), so the unflushed snapshot is identical
+        // to the flushed one in this state.
+        auto lock = shared_lock_shard_(si);
+        if (tls_pending_stable_read_(fn, si)) {
+            auto it = shards_[si].profiles.find(fn);
+            if (it != shards_[si].profiles.end()) {
+                ShapeSnapshot snap;
+                snap.id = it->second.stable_shape;
+                snap.version = it->second.version;
+                return snap;
+            }
+        }
+    }
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto lock = shared_lock_shard_(si);
     ShapeSnapshot snap;
     auto it = shards_[si].profiles.find(fn);
