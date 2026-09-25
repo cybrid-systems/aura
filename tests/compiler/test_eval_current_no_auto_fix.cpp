@@ -264,6 +264,14 @@ static void ac4079_second_eval_current_displays() {
     std::println("\n--- #4079: second eval-current still displays ---");
     const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
     CHECK(ev.find("Issue #4079") != std::string::npos, "4079: eval-current cites");
+    const auto serve = read_file("src/serve/serve_async.cpp");
+    CHECK(serve.find("Issue #4079") != std::string::npos, "4079: serve-async cites the park race");
+    CHECK(serve.find("w->enqueue(f)") != std::string::npos,
+          "4079: reader enqueues a parked session directly");
+    CHECK(serve.find("emit_status_line") != std::string::npos,
+          "4079: status line bypasses the FILE buffer");
+    CHECK(serve.find("::write(STDOUT_FILENO") != std::string::npos,
+          "4079: status line is a raw stdout write");
     CHECK(read_file("tests/compiler/test_issue_4079.cpp").empty(), "4079: no test_issue file");
     CHECK(read_file("docs/design/4079-serve-async-eval-current.md").empty(),
           "4079: no docs/design");
