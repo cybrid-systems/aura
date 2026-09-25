@@ -40,6 +40,12 @@ std::vector<PairSlot*> g_pair_slots;
 // Process-exit cleanup frees them; arena-owned slots are not listed here.
 std::vector<PairSlot*> g_owned_pair_slots_;
 
+// Issue #4057: owner-principal stamps parallel to g_pair_slots — same SSOT
+// placement so the evaluator partition TUs and the JIT SOs share one array
+// (a definition living only in aura_jit_runtime.cpp would repeat the
+// g_pair_slots undefined-symbol load-order failure this TU exists for).
+std::vector<std::uint64_t> g_pair_slot_tenants;
+
 // Arena allocation flag (CLI --no-arena / runtime bridges).
 bool g_use_arena = true;
 

@@ -4989,6 +4989,14 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
     g_owned_pair_slots_.push_back(slot);
+    // Issue #4057: stamp the owning principal parallel to the slot — the same
+    // owner hook the closure table stamps (#4036). set-car!/set-cdr! compare
+    // this stamp against the caller principal under the production face
+    // before writing the process-level slot (index space is process-shared,
+    // so a foreign tenant's JIT pair can land at idx >= pairs_.size()).
+    if (g_pair_slot_tenants.size() < g_pair_slots.size())
+        g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
+    g_pair_slot_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
     aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
@@ -5029,6 +5037,11 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
     aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
+    // Issue #4057: same owner-principal stamp as aura_alloc_pair — the arena
+    // path publishes into the same process-shared index space.
+    if (g_pair_slot_tenants.size() < g_pair_slots.size())
+        g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
+    g_pair_slot_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
     aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
@@ -5881,6 +5894,9 @@ void aura_reset_runtime() {
     // to the new per-fiber clear function.
     aura_exception_clear_all();
     g_pair_slots.clear();
+    // Issue #4057: owner stamps die with the slots they describe — a stale
+    // stamp must never survive a reset and re-attach to a reused index.
+    g_pair_slot_tenants.clear();
     std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
     // Issue #136: clear string and float pools. They grow on
     // every aura_alloc_string / aura_alloc_float call, with no
