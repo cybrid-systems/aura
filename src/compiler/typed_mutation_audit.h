@@ -175,6 +175,7 @@ enum class EvolutionSuggestedNext : std::uint8_t {
     WaitCommitReadiness = 4, // commit_readiness would_allow=false
     InspectDensify = 5,      // densify would_allow_mutate=false
     ReloadPlaybook = 6,      // playbook action != Idle
+    InspectDeny = 7,         // Issue #4064: Rollback / Error / SE deny
 };
 
 [[nodiscard]] inline const char* evolution_suggested_next_cstr(EvolutionSuggestedNext n) noexcept {
@@ -193,6 +194,8 @@ enum class EvolutionSuggestedNext : std::uint8_t {
             return "inspect-densify";
         case EvolutionSuggestedNext::ReloadPlaybook:
             return "reload-playbook";
+        case EvolutionSuggestedNext::InspectDeny:
+            return "inspect-deny";
     }
     return "none";
 }
@@ -205,6 +208,10 @@ struct EvolutionSuggestedNextInput {
     bool densify_ok = true;
     bool posture_degraded = false;
     std::int64_t playbook_action = 0; // 0 = Idle
+    // Issue #4064: same codes as query typed-outcome (0 unknown, 1 Success,
+    // 2 Rollback, 3 Error). last_se_denied is the same-mid SE denied bit.
+    std::uint8_t typed_outcome = 0;
+    bool last_se_denied = false;
 };
 
 // Pure: same input → same output. No atomics / WAL / mutate.
@@ -214,6 +221,10 @@ decide_evolution_suggested_next(const EvolutionSuggestedNextInput& in) noexcept 
         return EvolutionSuggestedNext::SoftObserve;
     if (in.join_mid == 0)
         return EvolutionSuggestedNext::None;
+    // Issue #4064: a green schedule / commit / densify / playbook must not
+    // call a rollback or SE deny "ok". Observe only — no playbook, no reemit.
+    if (in.typed_outcome == 2 || in.typed_outcome == 3 || in.last_se_denied)
+        return EvolutionSuggestedNext::InspectDeny;
     if (in.schedule_would_deny || in.posture_degraded)
         return EvolutionSuggestedNext::ScheduleDeny;
     if (!in.commit_would_allow)
