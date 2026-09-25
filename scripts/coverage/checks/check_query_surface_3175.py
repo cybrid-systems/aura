@@ -7,7 +7,11 @@ stay as sink_query_prim bodies (C++ + existing engine:metrics) but are
 not registered. Agents use calls/defines/dirty/provenance/by-marker
 plus query:result-fresh? / query:result-matches (#3766 occupancy poll).
 
-  AC1 Public query: add() count < 32; core keep list present
+  AC1 Distinct public query: add() count < 32; core keep list present;
+      same-name re-registration (dispatch override) is not surface
+      growth (#4088 re-registers query:dirty-subtree from the workspace
+      registration so production dispatches the resolve_query_node_arg
+      gate — Primitives::add replaces the table entry by name)
   AC2 sink_query_prim holds the 15 sunk names; no add("query:hygiene-…
   AC3 Pin/hygiene counters remain on engine:metrics (register_stats_impl)
   AC4 No new public query key; SlimSurface shrinks
@@ -102,9 +106,12 @@ def main() -> int:
     build = _read("build.py")
     q = read_query_prims()
 
-    public = [n for n in ADD_RE.findall(src) if n.startswith("query:")]
+    # #4088: count DISTINCT names — the ceiling guards the public query
+    # surface, and a same-name re-registration overrides the dispatch
+    # table entry (Primitives::add) without growing that surface.
+    public = sorted({n for n in ADD_RE.findall(src) if n.startswith("query:")})
     if len(public) >= 32:
-        fails.append(f"AC1: public query: add() count {len(public)} >= 32: {public}")
+        fails.append(f"AC1: distinct public query: add() count {len(public)} >= 32: {public}")
     for k in KEEP:
         if k not in public:
             fails.append(f"AC1: missing public {k}")
@@ -141,7 +148,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print(f"OK: Issue #3175 query: surface reduction — public={len(public)} sunk={len(SUNK)}")
+    print(f"OK: Issue #3175 query: surface reduction — distinct public={len(public)} sunk={len(SUNK)}")
     return 0
 
 
