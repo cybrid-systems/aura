@@ -3382,6 +3382,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         if (soft_only_below)
             outermost = true;
     }
+    // Issue #4085: the soft frame is steal visibility only. The first
+    // real write still takes workspace_mtx_, the process held count, and
+    // MutationHold (the if (outermost) arm below). A depth-0 peer then
+    // waits on the mutex; mailbox push is Backpressure and GC request
+    // defers. Soft/Off keeps the same lock — this is not a second gate.
     is_outermost_ = outermost;
     // Issue #3440: persist-reject TLS must not leak across outermost
     // boundaries. A prior production persist-reject that was not
