@@ -27,6 +27,7 @@
 #include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/mutation_audit_wal.hh"
+#include "core/security_event.hh"
 #include "core/wal_append_fail_slo.h"
 #include "test_harness.hpp"
 
@@ -1871,6 +1872,251 @@ static void ac4044_post_persist_deny_amends_audit() {
     reset_for_test();
 }
 
+static void ac4063_post_persist_deny_wal_reason() {
+    std::println("\n--- #4063: post-persist deny WAL row carries reason ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    const char* prev_closed = std::getenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    const std::string prev_closed_s = prev_closed ? prev_closed : "";
+    const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+    const std::string prev_open_s = prev_open ? prev_open : "";
+    ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aura-4063-audit";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    aura::core::audit_wal::reset_audit_wal_for_test();
+    typed_audit::composite_txn_exit();
+    typed_audit::g_inject_post_persist_amend_append_fail_for_test.store(0,
+                                                                        std::memory_order_relaxed);
+
+    auto joined = [](Evaluator& ev, const aura::compiler::types::EvalValue& root) {
+        std::string out;
+        aura::compiler::types::EvalValue cur = root;
+        for (int n = 0; n < 8 && aura::compiler::types::is_pair(cur); ++n) {
+            const auto& pr = ev.pairs()[aura::compiler::types::as_pair_idx(cur)];
+            if (aura::compiler::types::is_string(pr.car)) {
+                const auto idx = aura::compiler::types::as_string_idx(pr.car);
+                if (idx < ev.string_heap().size())
+                    out += ev.string_heap()[idx];
+                out.push_back('\n');
+            }
+            cur = pr.cdr;
+        }
+        return out;
+    };
+    auto se_has = [](std::uint64_t mid, std::string_view needle) {
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::kSecurityEventRingSize;
+        auto& ring = g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        const auto n = std::min<std::uint64_t>(head, kSecurityEventRingSize);
+        for (std::uint64_t i = 0; i < n; ++i) {
+            const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+            if (e.mutation_id == mid &&
+                std::string_view(e.reason).find(needle) != std::string_view::npos)
+                return true;
+        }
+        return false;
+    };
+
+    constexpr std::uint64_t kMid = 4063001;
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(dir.string()), "4063: WAL on");
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4063: warm");
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(kMid);
+        typed_audit::g_inject_linear_synth_after_persist_for_test.store(1,
+                                                                        std::memory_order_release);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+        }
+        CHECK(!ok, "4063: post-persist deny flips success");
+        auto wal =
+            aura::core::audit_wal::g_mutation_audit_wal().find_recent_by_provenance_mutation_id(
+                kMid, 4);
+        CHECK(wal && wal->effect_denied == 1, "4063: newest WAL row is denied");
+        CHECK(wal &&
+                  std::string_view(wal->reason).find("post-persist-deny") != std::string_view::npos,
+              "4063: amend reason is post-persist-deny");
+        CHECK(se_has(kMid, "invariant-denied"), "4063: security event reason matches the deny");
+        std::uint64_t se_tenant = 0;
+        std::int64_t se_fiber = 0;
+        {
+            using aura::core::security_event::g_security_event_ring;
+            using aura::core::security_event::kSecurityEventRingSize;
+            auto& ring = g_security_event_ring();
+            const auto head = ring.seq.load(std::memory_order_relaxed);
+            const auto n = std::min<std::uint64_t>(head, kSecurityEventRingSize);
+            for (std::uint64_t i = 0; i < n; ++i) {
+                const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+                if (e.mutation_id == kMid &&
+                    std::string_view(e.reason).find("invariant-denied") != std::string_view::npos) {
+                    se_tenant = e.tenant_id;
+                    se_fiber = e.fiber_id;
+                    break;
+                }
+            }
+        }
+        auto sec = cs.eval(std::format("(engine:metrics \"query:security-audit\" 20 {} {} 0 {})",
+                                       se_tenant, se_fiber, kMid));
+        const auto sec_text =
+            (sec && aura::compiler::types::is_pair(*sec)) ? joined(ev, *sec) : std::string{};
+        CHECK(sec_text.find("invariant-denied") != std::string::npos,
+              "4063: query:security-audit reason is not empty");
+        CHECK(sec_text.find(std::to_string(kMid)) != std::string::npos, "4063: security audit mid");
+
+        if (wal) {
+            // Ring still holds kMid, so the live query would print the ring
+            // line (no reason field). A mid that never entered the ring takes
+            // the same WAL fallback the ring-miss path uses.
+            constexpr std::uint64_t kReplayMid = 4063111;
+            auto replay = aura::core::audit_wal::make_record(
+                wal->seq, wal->timestamp_ms, wal->fiber_id, wal->nodes_changed, wal->epoch_delta,
+                wal->target_node, wal->op, wal->effect_bits, wal->tenant_id, kReplayMid, wal->epoch,
+                /*effect_denied=*/true, "post-persist-deny");
+            CHECK(aura::core::audit_wal::g_mutation_audit_wal().append(replay),
+                  "4063: append ring-absent row");
+            auto log =
+                cs.eval(std::format("(engine:metrics \"query:mutation-audit-log\" 5 {} 0 {})",
+                                    wal->tenant_id, kReplayMid));
+            const auto log_text =
+                (log && aura::compiler::types::is_pair(*log)) ? joined(ev, *log) : std::string{};
+            CHECK(log_text.find("wal-replay-hint=1") != std::string::npos,
+                  "4063: ring miss reads the WAL row");
+            CHECK(log_text.find("denied=1") != std::string::npos, "4063: replayed row is denied");
+            CHECK(log_text.find("reason=post-persist-deny") != std::string::npos,
+                  "4063: reason is an additive tail");
+            CHECK(log_text.find("mutation_id=4063111") != std::string::npos, "4063: replay mid");
+        }
+        ev.disable_mutation_audit_wal();
+    }
+
+    constexpr std::uint64_t kMissMid = 4063002;
+    {
+        const auto dir_miss = fs::temp_directory_path() / "aura-4063-miss";
+        fs::remove_all(dir_miss);
+        fs::create_directories(dir_miss);
+        aura::core::audit_wal::reset_audit_wal_for_test();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(dir_miss.string()), "4063 miss: WAL on");
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4063 miss: warm");
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(kMissMid);
+        typed_audit::g_inject_linear_synth_after_persist_for_test.store(1,
+                                                                        std::memory_order_release);
+        typed_audit::g_inject_post_persist_amend_append_fail_for_test.store(
+            1, std::memory_order_release);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+        }
+        CHECK(!ok, "4063 miss: deny still flips success");
+        auto wal =
+            aura::core::audit_wal::g_mutation_audit_wal().find_recent_by_provenance_mutation_id(
+                kMissMid, 4);
+        CHECK(wal && wal->effect_denied == 1, "4063 miss: newest WAL row is not the allow");
+        CHECK(wal &&
+                  std::string_view(wal->reason).find("post-persist-deny") != std::string_view::npos,
+              "4063 miss: retry kept the reason");
+        CHECK(se_has(kMissMid, "mutation_wal_append_miss"),
+              "4063 miss: SE reason mutation_wal_append_miss");
+        ev.disable_mutation_audit_wal();
+        fs::remove_all(dir_miss);
+    }
+
+    {
+        apply_dev_audit_defaults();
+        const auto dir_soft = fs::temp_directory_path() / "aura-4063-soft";
+        fs::remove_all(dir_soft);
+        fs::create_directories(dir_soft);
+        aura::core::audit_wal::reset_audit_wal_for_test();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(dir_soft.string()), "4063 soft: WAL on");
+        const auto before =
+            aura::core::audit_wal::g_audit_wal_metrics().audit_record_persisted_total.load(
+                std::memory_order_relaxed);
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(4063003);
+        typed_audit::g_inject_linear_synth_after_persist_for_test.store(1,
+                                                                        std::memory_order_release);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+        }
+        const auto after =
+            aura::core::audit_wal::g_audit_wal_metrics().audit_record_persisted_total.load(
+                std::memory_order_relaxed);
+        CHECK(after - before <= 1, "4063 soft: no second amend append");
+        auto wal =
+            aura::core::audit_wal::g_mutation_audit_wal().find_recent_by_provenance_mutation_id(
+                4063003, 4);
+        CHECK(!wal ||
+                  std::string_view(wal->reason).find("post-persist-deny") == std::string_view::npos,
+              "4063 soft: no post-persist-deny row");
+        ev.disable_mutation_audit_wal();
+        fs::remove_all(dir_soft);
+    }
+
+    {
+        apply_production_audit_defaults();
+        aura::core::audit_wal::reset_audit_wal_for_test();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(!ev.mutation_audit_wal_enabled(), "4063 wal-off: disabled");
+        const auto before =
+            aura::core::audit_wal::g_audit_wal_metrics().audit_record_persisted_total.load(
+                std::memory_order_relaxed);
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(4063004);
+        typed_audit::g_inject_linear_synth_after_persist_for_test.store(1,
+                                                                        std::memory_order_release);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+        }
+        const auto after =
+            aura::core::audit_wal::g_audit_wal_metrics().audit_record_persisted_total.load(
+                std::memory_order_relaxed);
+        CHECK(after == before, "4063 wal-off: no amend append");
+        CHECK(!aura::core::audit_wal::g_mutation_audit_wal().is_enabled(),
+              "4063 wal-off: stays disabled");
+    }
+
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto sec_src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(emb.find("Issue #4063") != std::string::npos, "4063: boundary cite");
+    CHECK(emb.find("post-persist-deny") != std::string::npos, "4063: stable reason literal");
+    CHECK(emb.find("mutation_wal_append_miss") != std::string::npos, "4063: miss face");
+    CHECK(emb.find("schema-4063") == std::string::npos, "4063: no new query key");
+    CHECK(sec_src.find("Issue #4063") != std::string::npos, "4063: log tail cite");
+    CHECK(read_file("docs/design/4063-post-persist-deny-reason.md").empty(),
+          "4063: no docs/design");
+
+    typed_audit::g_inject_post_persist_amend_append_fail_for_test.store(0,
+                                                                        std::memory_order_relaxed);
+    aura::core::audit_wal::reset_audit_wal_for_test();
+    fs::remove_all(dir);
+    if (prev_closed)
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    if (prev_open)
+        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
 static void ac3984_4_soft_unchanged() {
     std::println("\n--- #3984 AC4: Soft/Off unchanged ---");
     reset_for_test();
@@ -2860,6 +3106,8 @@ int run_test_type_linear_commit_health() {
     ac3984_4_soft_unchanged();
     std::println("\n=== Issue #4044: post-persist deny amends the precommitted audit ===");
     ac4044_post_persist_deny_amends_audit();
+    std::println("\n=== Issue #4063: post-persist deny WAL reason ===");
+    ac4063_post_persist_deny_wal_reason();
     std::println("\n=== Issue #4030: type export grant aligns with deferred green ===");
     ac4030_1_source_grant_after_deferred_commit();
     ac4030_2_last_look_recover_fail_still_note_3440();

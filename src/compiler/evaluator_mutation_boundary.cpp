@@ -4718,13 +4718,52 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 if (slot.provenance_mutation_id != amend_mid)
                     continue;
                 slot.effect_denied = true;
+                // Issue #4063: fill epoch_delta from the defuse delta at
+                // amend time. epoch stays slot.epoch (Mutation), not Bridge.
+                {
+                    const auto defuse_now = ev_->defuse_version_.load(std::memory_order_relaxed);
+                    if (defuse_now >= defuse_version_at_enter_) {
+                        const auto d = defuse_now - defuse_version_at_enter_;
+                        slot.epoch_delta =
+                            d > 0xffffffffu ? 0xffffffffu : static_cast<std::uint32_t>(d);
+                    }
+                }
                 if (::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+                    // Issue #4063: fail this append once when the test arms
+                    // the latch. The pre-persist allow row must not consume it.
+                    if (typed_audit::g_inject_post_persist_amend_append_fail_for_test.exchange(
+                            0, std::memory_order_acq_rel) != 0) {
+                        ::aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining
+                            .store(1, std::memory_order_relaxed);
+                    }
                     const auto rec = ::aura::core::audit_wal::make_record(
                         slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
                         slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
                         slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
-                        /*effect_denied=*/true);
-                    (void)::aura::core::audit_wal::g_mutation_audit_wal().append(rec);
+                        /*effect_denied=*/true, "post-persist-deny");
+                    auto& wal = ::aura::core::audit_wal::g_mutation_audit_wal();
+                    bool appended = wal.append(rec);
+                    if (!appended && ::aura::core::wal_slo::wal_append_fail_closed_active()) {
+                        // Same miss face as emit_mutation_audit (#3856/#3907).
+                        // Ring stays effect_denied. One retry so a single
+                        // injected miss does not leave the newest row denied=0.
+                        const auto se_mid = typed_audit::join_audit_and_se_mid(amend_mid);
+                        (void)::aura::core::security_event_wal::emit_security_event_durable(
+                            ::aura::core::security_event::SecurityEventKind::EffectDeny,
+                            static_cast<std::uint32_t>(slot.tenant_id), se_mid, slot.epoch,
+                            slot.effect_bits, slot.op, "mutation_wal_append_miss",
+                            /*denied=*/true, slot.fiber_id);
+                        ::aura::core::security_event_wal::WalOverflowRecord ovr{};
+                        ovr.mid = amend_mid;
+                        ovr.tenant_id = static_cast<std::uint32_t>(slot.tenant_id);
+                        ovr.fiber_id = static_cast<std::uint64_t>(slot.fiber_id);
+                        ovr.epoch = slot.epoch;
+                        ovr.op = slot.op[0] ? std::string(slot.op) : std::string("structural");
+                        ovr.reason = "mutation_wal_append_miss";
+                        (void)::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
+                        appended = wal.append(rec);
+                    }
+                    (void)appended;
                 }
                 break;
             }
