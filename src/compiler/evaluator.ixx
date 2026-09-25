@@ -6568,6 +6568,63 @@ public:
     // Public for tests/orch/test_agent_apply_mutex concurrent ACs.
     mutable std::mutex agent_apply_mu_;
 
+    // Issue #4062: session-local set of region keys currently inside
+    // spawn apply_closure. Not an AgentRegistry. Soft/Off never calls
+    // with region_fast, so the set stays untouched.
+    mutable std::mutex spawn_region_inflight_mu_;
+    mutable std::condition_variable spawn_region_inflight_cv_;
+    mutable std::unordered_set<std::uint64_t> spawn_region_inflight_;
+
+    // region_fast: production + region concurrency + non-zero key.
+    // Claimed key runs body without agent_apply_mu_. A key that is
+    // already live takes agent_apply_mu_ (on_lock) and waits until it
+    // can claim, so two same-key bodies do not overlap. Distinct keys
+    // do not take the mutex.
+    template <class F, class OnLock>
+    void gate_spawn_apply_region(std::uint64_t region_key, bool region_fast, F&& body,
+                                 OnLock&& on_lock) {
+        struct Release {
+            Evaluator* self = nullptr;
+            std::uint64_t key = 0;
+            bool armed = false;
+            ~Release() {
+                if (!armed || self == nullptr)
+                    return;
+                std::lock_guard<std::mutex> lock(self->spawn_region_inflight_mu_);
+                self->spawn_region_inflight_.erase(key);
+                self->spawn_region_inflight_cv_.notify_all();
+            }
+        } rel{this, region_key, false};
+
+        if (region_fast) {
+            std::lock_guard<std::mutex> lock(spawn_region_inflight_mu_);
+            rel.armed = spawn_region_inflight_.insert(region_key).second;
+        }
+        if (rel.armed) {
+            body();
+            return;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> apply(agent_apply_mu_);
+        const auto wait_us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        on_lock(wait_us);
+        if (region_fast) {
+            std::unique_lock<std::mutex> lock(spawn_region_inflight_mu_);
+            spawn_region_inflight_cv_.wait(
+                lock, [&] { return spawn_region_inflight_.insert(region_key).second; });
+            rel.armed = true;
+        }
+        body();
+    }
+
+    [[nodiscard]] std::size_t spawn_region_inflight_size_for_test() const {
+        std::lock_guard<std::mutex> lock(spawn_region_inflight_mu_);
+        return spawn_region_inflight_.size();
+    }
+
 private:
     static constexpr std::size_t kMutationAuditRingSize = 64;
     struct MutationAuditEntry {
