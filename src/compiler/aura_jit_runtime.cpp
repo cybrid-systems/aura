@@ -4,6 +4,7 @@
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 #include "core/atomic_fence_port.h"
 
+#include "compiler/lock_order_audit.h" // #4083: skip workspace re-lock under the guard
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
 #include "compiler/security_capabilities.h" // #3720/#4018 kEffectMutate for JIT hash/cell writes
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
@@ -117,6 +118,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set> // Issue #2092: stable_id_set for remap
 #include <array>
@@ -4231,6 +4233,110 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
         *out_env_count = it->second.env_count;
     aura_unlock_workspace_read();
     return fn;
+}
+
+// Issue #4083: name or name# (same prefix rule as invalidate_prefix).
+static bool jit_key_matches_define(std::string_view key, std::string_view name) noexcept {
+    if (name.empty() || key.size() < name.size())
+        return false;
+    if (key.compare(0, name.size(), name) != 0)
+        return false;
+    return key.size() == name.size() || key[name.size()] == '#';
+}
+
+// Issue #4083: partial relower removes the ORC tracker, so deopt_pending
+// cannot stick and the closure fast path would keep calling the old
+// ScalarFn. Drop name / name# rows, primary and overflow slots that hold
+// those pointers, and closure-cache entries that would jump to them.
+// Caller may already hold workspace unique (MutationBoundaryGuard). That
+// mutex is not recursive, and dispatch takes g_closure_table_mtx before
+// workspace — do not re-lock either when the guard is already held.
+static void drop_jit_fn_native_for_define_locked(std::string_view name) {
+    using Fn = int64_t (*)(int64_t*, uint32_t);
+    std::vector<Fn> dropped;
+    auto note = [&](Fn fn) {
+        if (!fn)
+            return;
+        for (Fn p : dropped) {
+            if (p == fn)
+                return;
+        }
+        dropped.push_back(fn);
+    };
+    auto holds = [&](Fn fn) {
+        if (!fn)
+            return false;
+        for (Fn p : dropped) {
+            if (p == fn)
+                return true;
+        }
+        return false;
+    };
+
+    for (auto it = g_jit_fns_by_name.begin(); it != g_jit_fns_by_name.end();) {
+        if (jit_key_matches_define(it->first, name)) {
+            note(it->second.fn);
+            it = g_jit_fns_by_name.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    const auto nclos = g_closure_names.size();
+    for (std::size_t cid = 0; cid < nclos; ++cid) {
+        if (g_closure_names[cid].empty() || !jit_key_matches_define(g_closure_names[cid], name))
+            continue;
+        if (cid < g_closure_func_ids.size()) {
+            const auto fid = g_closure_func_ids[cid];
+            if (fid >= 0 && fid < 512) {
+                note(g_jit_fns[fid].fn);
+                g_jit_fns[fid] = {nullptr, 0, 0, 0};
+            } else if (fid >= 512) {
+                auto oit = g_jit_fns_overflow.find(fid);
+                if (oit != g_jit_fns_overflow.end()) {
+                    note(oit->second.fn);
+                    g_jit_fns_overflow.erase(oit);
+                }
+            }
+        }
+        invalidate_closure_cache_for(static_cast<int64_t>(cid));
+    }
+
+    for (auto& slot : g_jit_fns) {
+        if (holds(slot.fn))
+            slot = {nullptr, 0, 0, 0};
+    }
+    for (auto it = g_jit_fns_overflow.begin(); it != g_jit_fns_overflow.end();) {
+        if (holds(it->second.fn))
+            it = g_jit_fns_overflow.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = g_jit_fns_by_name.begin(); it != g_jit_fns_by_name.end();) {
+        if (holds(it->second.fn))
+            it = g_jit_fns_by_name.erase(it);
+        else
+            ++it;
+    }
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
+        if (holds(g_closure_cache[i].fn))
+            clear_closure_cache_entry(g_closure_cache[i]);
+    }
+}
+
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
+    if (!name || name[0] == '\0')
+        return;
+    const bool ws_held =
+        aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace);
+    if (ws_held) {
+        drop_jit_fn_native_for_define_locked(name);
+        return;
+    }
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    aura_lock_workspace_write();
+    drop_jit_fn_native_for_define_locked(name);
+    aura_unlock_workspace_write();
 }
 
 // Issue #3441: #3412 only gated the slow named arm. Fast-path cache +

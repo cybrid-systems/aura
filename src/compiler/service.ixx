@@ -94,6 +94,10 @@ extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((w
 // macro_expansion.cpp. Soft/Off returns 0 (historical half-expand).
 extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 
+// Issue #4083: partial-relower success drops installed ScalarFn rows
+// after ORC prefix removal. Strong def in aura_jit_runtime.cpp.
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
+
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
     const char* why = aura_macro_hygiene_last_limit_reason_string();
     return aura::diag::Diagnostic{
@@ -7096,6 +7100,22 @@ public:
                         }
                         // Issue #1514: sync JIT — evict native code for this
                         // define so next exec recompiles only the dirty fn.
+                        // Issue #4083: partial_recompile only removes the ORC
+                        // tracker. Erase jit_cache_ under jit_cache_mtx_ (same
+                        // window as invalidate_function) and drop the installed
+                        // ScalarFn before that remove, so the next eval cannot
+                        // cache-hit and a closure cannot call the unloaded
+                        // address. Soft already runs partial_recompile; this
+                        // is the dangling-pointer teardown, not a second gate.
+                        // Do not call jit_.invalidate here — #2476 keeps a
+                        // single invalidate_prefix pass inside partial_recompile.
+                        {
+                            std::unique_lock cache_write(jit_cache_mtx_);
+                            if (jit_cache_.erase(name) > 0)
+                                metrics_.jit_cache_evictions.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        }
+                        aura_drop_jit_fn_native_for_define(name.c_str());
                         (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
                                                      dirty_ids.size());
                         metrics_.jit_partial_recompile_requests_total.fetch_add(
