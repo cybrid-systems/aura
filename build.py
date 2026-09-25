@@ -8275,6 +8275,31 @@ def cmd_lint():
             "Issue #4087 authority-gap lifecycle linter failed — run python3 scripts/check_authority_gap_lifecycle_4087.py"
         )
         return r
+    # Issue #4088 (query bare NodeId): five list exits (query:calls /
+    # defines / node-type / defines-by-marker / calls-by-marker) bypassed
+    # end_query_epoch_maybe_result and handed Agent memory a bare
+    # int-linked-list of NodeIds — occupancy, not identity, so reads after
+    # slot reuse return the new occupant. The exits now finish via the
+    # shared helper (Production auto-upgrades to schema-2, Soft keeps the
+    # bare list), reflect-node-members body/init members export the
+    # as-stable-ref spine, and query:dirty-subtree resolves its root
+    # through resolve_query_node_arg + shared_lock + children_columnar
+    # under production. Gate pins: every exit finish carries
+    # /*as_query_result=*/false + the #4088 cite; the Soft early return
+    # stays; the reflect spine gates the export budget; the dirty-subtree
+    # re-registration keeps the override order (registry runs
+    # register_query_primitives before register_workspace_query_primitives)
+    # and the Soft historical walk.
+    qbni4088_script = ROOT / "scripts" / "check_query_bare_nodeid_4088.py"
+    if not qbni4088_script.exists():
+        fail(f"missing {qbni4088_script}")
+        return 1
+    r = run([sys.executable, str(qbni4088_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4088 query bare-NodeId schema-2 linter failed — run python3 scripts/check_query_bare_nodeid_4088.py"
+        )
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the
