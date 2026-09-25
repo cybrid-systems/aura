@@ -865,7 +865,22 @@ private:
     mutable std::mutex listeners_mtx_;
     std::vector<EpochListener> epoch_listeners_;
     std::vector<DirtyListener> dirty_listeners_;
-    std::vector<std::pair<std::uint64_t, StormListener>> storm_listeners_;
+    // Storm listeners as FIXED SLOTS (no heap buffer): worker-fiber
+    // registrations realloc a vector buffer while another thread's
+    // unregister erase_if walks it (ASAN heap-use-after-free on the
+    // storm_listeners_ buffer — obs_facade rc=139 / mailbox rc=1 CI
+    // red). Slot storage has no buffer to free; capacity is bounded
+    // and a register overflow aborts (nested CompilerService depth is
+    // single-digit). storm_call_mtx_ (class tail) additionally
+    // serializes the notify INVOKE phase so unregister waits for
+    // in-flight callbacks (the listener captures the CompilerService
+    // `this`, #2576).
+    struct StormSlot {
+        std::atomic<std::uint64_t> id{0}; // 0 = free; published with release
+        StormListener fn;
+    };
+    static constexpr std::size_t kStormSlotCount = 16;
+    StormSlot storm_slots_[kStormSlotCount];
     std::uint64_t next_listener_id_{1};
 
     std::atomic<bool> reemit_wired_{false};
@@ -1378,6 +1393,19 @@ public:
     std::atomic<std::uint64_t> region_force_first_armed_ms_[64] = {};
     std::atomic<std::uint64_t> reemit_throttle_cause_mask_{0};
     std::atomic<std::uint64_t> reemit_soft_storm_region_skips_{0};
+
+
+    // Storm-listener call-phase lock. notify_deopt_storm_locked invokes
+    // listeners OUTSIDE listeners_mtx_ (snapshot-then-invoke), so an
+    // in-flight worker-side callback can overlap ~CompilerService's
+    // unregister — the listener captures the CompilerService `this`
+    // (#2576 hazard). Serializing register/unregister/clear with the
+    // notify INVOKE phase makes unregister wait for in-flight storm
+    // callbacks. Listeners must not re-enter register/unregister/
+    // clear synchronously (the current CompilerService listener does
+    // not — it publishes the TLS storm context and clears the spec
+    // cache). Appended at struct END per #2906.
+    mutable std::mutex storm_call_mtx_;
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).

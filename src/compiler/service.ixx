@@ -1882,7 +1882,11 @@ public:
 
         // ── Known names that must go through tree-walker ───────────────
         // Includes: EDSL primitives, special forms, module system operations.
-        static const std::unordered_set<std::string> tree_walker_only = {
+        // Intentionally leaked (no destructor): the buckets of a function-local
+        // static set were observed freed mid-run by an OrchSchedHolder
+        // worker thread (ASAN heap-use-after-free in the visitor count()
+        // — obs_facade rc=139 CI red).
+        static const auto* const tree_walker_only = new std::unordered_set<std::string>{
             // EDSL / AI agent primitives
             "define-type",
             "set-code",
@@ -1973,7 +1977,11 @@ public:
         // Names that lowering explicitly handles (special forms lowered to IR)
         // These should NOT trigger tree-walker fallback even though they're
         // not primitives or cached defines.
-        static const std::unordered_set<std::string> lowering_known = {
+        // Intentionally leaked (no destructor): the buckets of a function-local
+        // static set were observed freed mid-run by an OrchSchedHolder
+        // worker thread (ASAN heap-use-after-free in the visitor count()
+        // — obs_facade rc=139 CI red).
+        static const auto* const lowering_known = new std::unordered_set<std::string>{
             "try",
             "catch",
             "raise",
@@ -2027,7 +2035,7 @@ public:
                 if (!vn.empty() &&
                     evaluator_.primitives().slot_for_name(vn) >=
                         evaluator_.primitives().slot_count() &&
-                    !name_in_ir_define_cache(vn) && !lowering_known.count(vn)) {
+                    !name_in_ir_define_cache(vn) && !lowering_known->count(vn)) {
                     return true;
                 }
             }
@@ -2049,7 +2057,7 @@ public:
                             return true;
 
                         // Known tree-walker-only names (EDSL, special forms, module)
-                        if (tree_walker_only.count(name))
+                        if (tree_walker_only->count(name))
                             return true;
 
                         // Catch binding forms like (catch (e) handler) have the
@@ -2065,7 +2073,7 @@ public:
                         // Issue #1284: ir_cache_v2_ counts as a define-cache hit.
                         if (evaluator_.primitives().slot_for_name(name) >=
                                 evaluator_.primitives().slot_count() &&
-                            !name_in_ir_define_cache(name) && !lowering_known.count(name)) {
+                            !name_in_ir_define_cache(name) && !lowering_known->count(name)) {
                             return true;
                         }
                     }
@@ -2093,7 +2101,11 @@ public:
         // Reuse the same known-names sets as the slow path.
         // They're already lazily-initialized static — no
         // allocation per call.
-        static const std::unordered_set<std::string> tree_walker_only = {
+        // Intentionally leaked (no destructor): the buckets of a function-local
+        // static set were observed freed mid-run by an OrchSchedHolder
+        // worker thread (ASAN heap-use-after-free in the visitor count()
+        // — obs_facade rc=139 CI red).
+        static const auto* const tree_walker_only = new std::unordered_set<std::string>{
             // EDSL / AI agent primitives
             "define-type",
             "set-code",
@@ -2146,7 +2158,11 @@ public:
             "check-capability",
             "capability-stack",
         };
-        static const std::unordered_set<std::string> lowering_known = {
+        // Intentionally leaked (no destructor): the buckets of a function-local
+        // static set were observed freed mid-run by an OrchSchedHolder
+        // worker thread (ASAN heap-use-after-free in the visitor count()
+        // — obs_facade rc=139 CI red).
+        static const auto* const lowering_known = new std::unordered_set<std::string>{
             "try",
             "catch",
             "raise",
@@ -2211,7 +2227,7 @@ public:
                 if (!vn.empty() &&
                     evaluator_.primitives().slot_for_name(vn) >=
                         evaluator_.primitives().slot_count() &&
-                    !name_in_ir_define_cache(vn) && !lowering_known.count(vn)) {
+                    !name_in_ir_define_cache(vn) && !lowering_known->count(vn)) {
                     needs = true;
                     return;
                 }
@@ -2230,7 +2246,7 @@ public:
                         // sequentially — treat them as known (asan-verify 937d53d22).
                         if (extra_known && extra_known->count(name))
                             return;
-                        if (tree_walker_only.count(name)) {
+                        if (tree_walker_only->count(name)) {
                             needs = true;
                             return;
                         }
@@ -2239,7 +2255,7 @@ public:
                         // Issue #1284: ir_cache_v2_ define cache hits.
                         if (evaluator_.primitives().slot_for_name(name) >=
                                 evaluator_.primitives().slot_count() &&
-                            !name_in_ir_define_cache(name) && !lowering_known.count(name)) {
+                            !name_in_ir_define_cache(name) && !lowering_known->count(name)) {
                             needs = true;
                             return;
                         }
