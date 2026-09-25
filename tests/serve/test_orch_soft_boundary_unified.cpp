@@ -312,12 +312,120 @@ static void ac10_build_gate_wiring_source_cite() {
           "AC10: build.py runs check_mutation_boundary_shared_exit_2600 gate (manifest SSOT)");
 }
 
+// ── Issue #4089: agent-fiber mutate is the type-authority outermost ──────────
+//
+// orch_soft_boundary_enter pushes a lightweight checkpoint onto the
+// per-fiber mutation stack BEFORE any mutate:*. The later
+// MutationBoundaryGuard saw prev = fiber_stack.size() + 1 >= 2 →
+// is_outermost_ == false, so its dtor never ran the type belt (occurrence
+// persist / deferred green proof commit / linear fast-path revalidate) and
+// a !inv_ok audit hit the nested-success skip (goto
+// skip_nested_success_composite_restore) — a single agent could keep a
+// type-failed edit committed with a stale green TypeLinearCommitProof and
+// no fresh occurrence freeze (get-inferred-type / query-type-of stuck
+// in-flight). Fix (existing belt, no new solver): the soft frame is marked
+// (orch_soft_frame); a Guard whose below-frames are all soft IS the
+// type-authority outermost (ctor flip, gated on on_fiber — host face
+// unchanged); exit only takes the nested-success skip for real Guard
+// nesting (restore + success flip otherwise).
+//
+// AC11: MutationCheckpoint carries the orch_soft_frame marker (default
+//       false) + orch_soft_boundary_enter stamps it before the push.
+// AC12: Guard ctor flips to type-authority outermost when soft-only-below,
+//       gated on on_fiber; the flip happens before the ctor-captured
+//       is_outermost_ (#2120) so every existing outermost arm (persist
+//       belt + abort restore) runs; real Guard nesting stays nested.
+// AC13: exit_mutation_boundary computes soft-only-below after the pop and
+//       gates the nested-success skip on !soft_only_below — a failed audit
+//       on the authority boundary takes the restore path (workspace back
+//       to the pre-mutate tree, success flipped via
+//       note_outermost_audit_rollback_needs_fail, proof outcome Reject).
+// AC14: host face unchanged (empty fiber stack): the prev == 1
+//       determination is retained and the flip cannot fire off-fiber.
+// AC15: linter + build.py wiring + root allowlist (source-cite).
+static void ac11_soft_frame_marker() {
+    std::println("\n--- #4089 AC11: orch_soft_frame checkpoint marker ---");
+    const auto ix = read_file("src/compiler/evaluator.ixx");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(ix.find("bool orch_soft_frame = false;") != std::string::npos,
+          "AC11: MutationCheckpoint declares orch_soft_frame (default false)");
+    CHECK(ix.find("Issue #4089") != std::string::npos, "AC11: evaluator.ixx cites #4089");
+    CHECK(efm.find("cp.orch_soft_frame = true;") != std::string::npos,
+          "AC11: orch_soft_boundary_enter stamps cp.orch_soft_frame");
+    CHECK(efm.find("Issue #4089") != std::string::npos,
+          "AC11: evaluator_fiber_mutation.cpp cites #4089");
+    const auto stamp_pos = efm.find("cp.orch_soft_frame = true;");
+    const auto push_pos = efm.find("active_mutation_stack_static().push_back(std::move(cp))");
+    CHECK(stamp_pos != std::string::npos && push_pos != std::string::npos && stamp_pos < push_pos,
+          "AC11: marker stamped before the stack push");
+}
+
+static void ac12_guard_ctor_authority_flip() {
+    std::println("\n--- #4089 AC12: Guard ctor type-authority outermost flip ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("Issue #4089") != std::string::npos,
+          "AC12: evaluator_mutation_boundary.cpp cites #4089");
+    CHECK(emb.find("if (!outermost && on_fiber)") != std::string::npos,
+          "AC12: flip gated on on-fiber (host face unchanged)");
+    CHECK(emb.find("if (soft_only_below)\n            outermost = true;") != std::string::npos,
+          "AC12: soft-only-below flips to type-authority outermost");
+    const auto flip_pos = emb.find("if (soft_only_below)\n            outermost = true;");
+    const auto capture_pos = emb.find("is_outermost_ = outermost;");
+    CHECK(flip_pos != std::string::npos && capture_pos != std::string::npos &&
+              flip_pos < capture_pos,
+          "AC12: flip happens before the ctor-captured is_outermost_ (#2120)");
+    CHECK(emb.find("c4089.orch_soft_frame") != std::string::npos,
+          "AC12: frames classified via orch_soft_frame (real nesting stays nested)");
+}
+
+static void ac13_exit_restore_not_skip() {
+    std::println("\n--- #4089 AC13: exit restore on failed authority audit ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("bool soft_only_below = true;") != std::string::npos,
+          "AC13: soft-only-below computed after the pop (exit + ctor)");
+    CHECK(emb.find("if (nested_boundary && success && !soft_only_below)\n"
+                   "                                goto skip_nested_success_composite_restore;") !=
+              std::string::npos,
+          "AC13: nested-success skip only for real Guard nesting");
+    CHECK(emb.find("if (nested_boundary && success)\n") == std::string::npos,
+          "AC13: old unconditional nested-success skip removed");
+    CHECK(emb.find("note_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "AC13: abort path flips Guard success via the existing note");
+}
+
+static void ac14_host_face_unchanged() {
+    std::println("\n--- #4089 AC14: host outermost face unchanged ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("bool outermost = (prev == 1);") != std::string::npos,
+          "AC14: prev == 1 host determination retained");
+    CHECK(emb.find("const bool on_fiber = (aura::compiler::Evaluator::g_current_fiber_void != "
+                   "nullptr);") != std::string::npos,
+          "AC14: on_fiber SSOT retained (#3384)");
+}
+
+static void ac15_linter_and_wiring() {
+    std::println("\n--- #4089 AC15: linter + build.py wiring + allowlist ---");
+    const auto lint = read_file("scripts/check_fiber_type_belt_4089.py");
+    CHECK(lint.find("Issue #4089") != std::string::npos,
+          "AC15: check_fiber_type_belt_4089.py linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_fiber_type_belt_4089") != std::string::npos,
+          "AC15: build.py wires the #4089 linter");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(allow.find("check_fiber_type_belt_4089.py") != std::string::npos,
+          "AC15: root allowlist carries check_fiber_type_belt_4089.py");
+    CHECK(read_file("docs/design/4089-fiber-type-belt.md").empty(),
+          "AC15: no docs/design/4089-* per #1655");
+}
+
 } // namespace
 
 int run_test_orch_soft_boundary_unified() {
     std::println("=== Issue #2515: orch soft boundary unified with depth/held semantics ===");
     std::println("=== Issue #2600: shared exit helper (soft fiber + full Guard) (extends #2515 "
                  "test file per #81967) ===");
+    std::println("=== Issue #4089: agent-fiber mutate is the type-authority outermost (extends "
+                 "#2515/#2600 test file per #81967) ===");
     ac1_soft_publishes_mirrors();
     ac2_unified_safety_semantics();
     ac3_gc_defer_via_mirror();
@@ -328,7 +436,12 @@ int run_test_orch_soft_boundary_unified() {
     ac8_full_guard_uses_helper();
     ac9_includes_source_cite();
     ac10_build_gate_wiring_source_cite();
-    std::println("\n=== #2515 + #2600: see per-AC results above ===");
+    ac11_soft_frame_marker();
+    ac12_guard_ctor_authority_flip();
+    ac13_exit_restore_not_skip();
+    ac14_host_face_unchanged();
+    ac15_linter_and_wiring();
+    std::println("\n=== #2515 + #2600 + #4089: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 

@@ -3081,6 +3081,10 @@ namespace {
         Evaluator::MutationCheckpoint cp{};
         cp.version = ev->defuse_version_for_test(); // snapshot; soft marker
         cp.evaluator_id = static_cast<void*>(ev);
+        // Issue #4089: mark the frame so a later MutationBoundaryGuard sees
+        // soft-only-below and treats itself as the type-authority outermost
+        // (type belt + abort restore) instead of nested.
+        cp.orch_soft_frame = true;
         Evaluator::active_mutation_stack_static().push_back(std::move(cp));
         ++g_orch_soft_boundary_depth;
         // Issue #2515: track the Evaluator so the symmetric exit publish
