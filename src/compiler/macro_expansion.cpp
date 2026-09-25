@@ -1311,6 +1311,29 @@ extern "C" void aura_note_macro_hygiene_last_limit_reason(std::uint8_t code) noe
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept {
     return hygiene_last_limit_reason_string();
 }
+
+// Issue #4078: production callers must not typecheck or eval after
+// macro_expand_all when this fiber's reason is pass/depth/gensym/steal/cap.
+// Fiber last_limit_reason is the authority (#4034) — not TLS s_hygiene_depth,
+// and not the process-global string (last-writer-wins). Soft/Off is one
+// sandbox load and returns 0 so the historical half-expand is still eval'd.
+// Quiet map read: get_fiber_hygiene_metrics bumps the query counter.
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept {
+    if (!aura::core::sandbox::is_sandbox_active())
+        return 0;
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    std::uint8_t fr = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+        if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end())
+            fr = it->second.last_limit_reason;
+    }
+    return fr == kHygieneLimitReasonDepthLimit || fr == kHygieneLimitReasonPassLimit ||
+                   fr == kHygieneLimitReasonStealAbort || fr == kHygieneLimitReasonCapabilityDeny ||
+                   fr == kHygieneLimitReasonGensymCeiling
+               ? 1
+               : 0;
+}
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     // Issue #3787: also clear per-fiber sticky 8/9/10 so host tests that
@@ -3521,6 +3544,50 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
     }
 }
 
+// Issue #4078: pre-pass child edges + markers of the FlatAST the caller
+// holds. set-code publishes a new workspace and does not edit this
+// object; truncate_to resizes the tail and leaves set_child slots on
+// parents below size0. Defined above macro_expand_all_body so the
+// #3062 source window still reaches the deny predicate.
+struct PassLoopCallerRollback {
+    aura::ast::FlatAST* flat = nullptr;
+    std::size_t size0 = 0;
+    bool armed = false;
+    decltype(std::declval<aura::ast::FlatAST&>().snapshot_children()) children;
+    aura::ast::FlatAST::MarkerProvenanceSnapshot markers;
+    void arm(aura::ast::FlatAST& tree) {
+        if (armed)
+            return;
+        children = tree.snapshot_children();
+        markers = tree.snapshot_marker_provenance();
+        flat = &tree;
+        size0 = tree.size();
+        armed = true;
+    }
+    // Truncate before restore so free_orphan does not push ids the
+    // column resize drops.
+    void rollback() noexcept {
+        if (!armed || flat == nullptr)
+            return;
+        auto* tree = flat;
+        const auto keep = size0;
+        auto snap = std::move(children);
+        auto marks = std::move(markers);
+        armed = false;
+        flat = nullptr;
+        try {
+            if (tree->size() > keep)
+                tree->truncate_to(keep);
+            tree->restore_children(std::move(snap));
+            tree->restore_marker_provenance(std::move(marks));
+        } catch (...) {
+            // [SILENCE-PRIM-#615] child restore failed; still drop the refused tail.
+            if (tree->size() > keep)
+                tree->truncate_to(keep);
+        }
+    }
+};
+
 // Issue #2023: body of macro_expand_all after capability gate (DepthPolicyGuard
 // is held by the caller via TLS already set).
 static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
@@ -3543,6 +3610,9 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         // truncate_to it on deny. Boundary-active keeps the boundary SSOT.
         aura::ast::FlatAST* local_target = nullptr;
         std::size_t local_size0 = 0;
+        // Issue #4078: armed only at depth 0. An active MutationBoundary
+        // stays the topology SSOT (#3608) — no second snapshot.
+        PassLoopCallerRollback caller;
         void ensure_installed() noexcept {
             if (owned || consumed)
                 return;
@@ -3554,12 +3624,16 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             local_target = &tree;
             local_size0 = tree.size();
         }
+        void arm_caller_edges(aura::ast::FlatAST& tree) { caller.arm(tree); }
         void try_restore() noexcept {
             consumed = true;
             if (owned)
                 (void)aura_evaluator_try_restore_macro_expand_checkpoint();
             else if (local_target != nullptr)
                 local_target->truncate_to(local_size0);
+            // Issue #4078: set-code and truncate_to are not the only
+            // rollback. The caller's pointer must match the pre-pass tree.
+            caller.rollback();
         }
         ~ExpandCheckpointGuard() {
             if (owned && !consumed)
@@ -3618,6 +3692,11 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             // truncate half-adds without TLS (clone walk parity).
             if (!expand_ckpt.owned && aura_evaluator_mutation_boundary_depth() == 0)
                 expand_ckpt.install_local_snapshot(flat);
+            // Issue #4078: snapshot child edges even when the C-ABI
+            // checkpoint is owned. depth>0 stays the boundary SSOT
+            // (no second snapshot, no double restore).
+            if (aura_evaluator_mutation_boundary_depth() == 0)
+                expand_ckpt.arm_caller_edges(flat);
         }
 
         // Phase 2: find and expand macro calls

@@ -89,6 +89,18 @@ import aura.core.error; // Issue #807/#808: AuraResult bridge
 // the GMF (only preprocessor inclusions allowed there).
 extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
 
+// Issue #4078: production pass/depth/gensym/steal/cap must not typecheck
+// or eval the flat macro_expand_all just returned. Strong def in
+// macro_expansion.cpp. Soft/Off returns 0 (historical half-expand).
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
+
+[[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
+    const char* why = aura_macro_hygiene_last_limit_reason_string();
+    return aura::diag::Diagnostic{
+        aura::diag::ErrorKind::InternalError,
+        (why != nullptr && why[0] != '\0') ? std::string(why) : std::string("hygiene-pass-limit")};
+}
+
 // Issue #1885: CompilerService is the primary Compiler-layer entry.
 // Dependency direction: Compiler → Core + Parser (not reverse).
 // Layering authority: src/core/module_boundary.ixx — update it when
@@ -2671,6 +2683,11 @@ public:
 
         // Pre-expand all macros in this expression
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+        // Issue #4078: pass/depth/gensym/steal/cap — do not typecheck or
+        // eval the refused tree. The flat was rolled back in place; the
+        // agent-visible reason is the existing hygiene string.
+        if (aura_hygiene_expand_deny_blocks_eval())
+            return std::unexpected(hygiene_expand_deny_diag_4078());
 
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so the remaining expression can go through the IR path without fallback.
@@ -3266,6 +3283,9 @@ public:
 
         // Pre-expand all macros in this expression
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+        // Issue #4078: do not validate, typecheck, or lower a refused expand.
+        if (aura_hygiene_expand_deny_blocks_eval())
+            return std::unexpected(hygiene_expand_deny_diag_4078());
 
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so cached define functions are available during lowering.
@@ -4592,6 +4612,9 @@ public:
 
         // Macro expand
         auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
+        // Issue #4078: do not cache or lower a refused half-expand.
+        if (aura_hygiene_expand_deny_blocks_eval())
+            return std::unexpected(hygiene_expand_deny_diag_4078());
 
         // Walk top-level defines. Issue #132: extracted to
         // aura::compiler.find_top_level_defines (was the
@@ -9113,6 +9136,9 @@ public:
 
         // Macro expand
         auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
+        // Issue #4078: do not IR-cache defines from a refused half-expand.
+        if (aura_hygiene_expand_deny_blocks_eval())
+            return;
 
         // Walk top-level expressions to find (define ...) forms.
         // Issue #132: extracted to aura::compiler.find_top_level_defines

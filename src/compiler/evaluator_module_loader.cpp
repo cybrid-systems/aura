@@ -16,7 +16,12 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+import aura.diag;
 import aura.parser.parser;
+
+// Issue #4078: production expand deny must not eval the module body.
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
+extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
 
 namespace aura::compiler {
 
@@ -476,7 +481,18 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     RequireInjectGuard inject_guard(*this, mod_env);
 
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
-    auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
+    // Issue #4078: do not eval a refused half-expand. fail_load (below)
+    // drops the partial module; the reason string is the existing one.
+    EvalResult result = std::unexpected(
+        aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "hygiene-pass-limit"});
+    if (aura_hygiene_expand_deny_blocks_eval()) {
+        const char* why = aura_macro_hygiene_last_limit_reason_string();
+        if (why != nullptr && why[0] != '\0')
+            result =
+                std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, why});
+    } else {
+        result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
+    }
 
     // Issue #2570: fail-closed module load — do NOT cache a half-evaluated
     // module. Mid-body unbound/error (e.g. letrec define phase) used to
