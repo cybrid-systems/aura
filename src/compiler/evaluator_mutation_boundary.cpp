@@ -833,9 +833,12 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // (#3984 Guard commit helper) rather than granting
     // after recover while live would_allow may still be false. Soft/Off:
     // existing grant (zero extra beyond today's Soft path). Live
-    // would_allow=false never arms deferred TLS — clear and skip grant
-    // (AST/Occurrence already committed by #3376 recover-success design;
-    // do not note_3440_restore). Deferred armed → Guard grants after commit.
+    // would_allow=false does not arm deferred TLS, except a #4081
+    // remount-last-zero persist whose other arms would allow. That defer
+    // stays non-green until commit_deferred publishes. Otherwise clear
+    // and skip grant (AST/Occurrence already committed by #3376
+    // recover-success design; do not note_3440_restore). Deferred armed
+    // → Guard grants after commit.
     if (!defer_green) {
         ev->grant_type_export_authority();
     } else if (!aura::compiler::typed_audit::deferred_outermost_green_pending()) {
@@ -6929,12 +6932,19 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
     {
         const auto prior_outcome_2854 = typed_audit::last_type_linear_proof_outcome_v_read();
         if (prior_outcome_2854 == typed_audit::kTypeLinearProofOutcomeQuiet) {
-            void* tc_handle = commit_type_checker_handle();
-            typed_audit::note_stamp_last_look_tc(tc_handle);
-            const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
-            (void)typed_audit::build_type_linear_commit_proof_from_live(
-                cp.saved_defuse_version, truth.live_goal_count, truth.goal_fingerprint,
-                truth.from_cs);
+            // Issue #4081: hygiene save is not the remount-last-zero
+            // retire. While the latch is set, skip the live stamp so a
+            // SOLVED commit TC cannot republish green. Soft/Off never
+            // sets the latch; production_hard_face_active is the mode load.
+            if (!(typed_audit::production_hard_face_active() &&
+                  typed_audit::remount_last_zero_strip_face_v_read() != 0)) {
+                void* tc_handle = commit_type_checker_handle();
+                typed_audit::note_stamp_last_look_tc(tc_handle);
+                const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
+                (void)typed_audit::build_type_linear_commit_proof_from_live(
+                    cp.saved_defuse_version, truth.live_goal_count, truth.goal_fingerprint,
+                    truth.from_cs);
+            }
         }
         // Non-Quiet (Reject / Stamped) → Phase-5 already stamped with
         // the explicit outcome (would_allow_commit + linear_ok derived
