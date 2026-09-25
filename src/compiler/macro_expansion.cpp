@@ -97,9 +97,21 @@ namespace aura::compiler::macro_exp {
 // Returns 1 only when *this* call installed a checkpoint we must later
 // restore or commit. Soft/Off never calls this (zero-cost). Existing
 // NameMapCheckpoint + steal-abort paths are unchanged.
+// Issue #4077: expand_inner_macros does not install a checkpoint.
+// restore_panic_checkpoint is legal only when this expand's save
+// returned owned. A false result keeps a Guard-owned snapshot for
+// the Guard dtor (commit on success, restore on success==false).
+[[nodiscard]] static bool expand_inner_checkpoint_owned() noexcept {
+    return false;
+}
+
 [[nodiscard]] static int install_macro_expand_checkpoint() noexcept {
     if (aura_evaluator_mutation_boundary_depth() > 0)
         return 0;
+    // Issue #4077: depth is already 0 inside exit_mutation_boundary
+    // before phase 3 commits the Guard snapshot. try_save returns 0
+    // when a checkpoint is already live, so this expand does not
+    // overwrite or adopt it.
     return aura_evaluator_try_save_macro_expand_checkpoint();
 }
 
@@ -3267,7 +3279,10 @@ aura::ast::NodeId expand_inner_macros(
         // Belt set_child restores the pre-unwrap NodeId when no Evaluator
         // is wired (standalone FlatAST). Soft/Off keeps the rewrite.
         if (production_surface && inner_expand_production_limit_deny()) {
-            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            // Issue #4077: do not set-code a Guard-owned checkpoint.
+            // This expander never saved one (expand_inner_checkpoint_owned).
+            if (expand_inner_checkpoint_owned())
+                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
             if (rewrote)
                 flat->set_child(parent_id, unwrap_ci, root);
             return root;
@@ -3363,12 +3378,14 @@ aura::ast::NodeId expand_inner_macros(
                     // parent set_child below is skipped so no half tree is
                     // committed. Soft/Off keeps the splice (contract).
                     if (production_surface && inner_expand_production_limit_deny()) {
-                        (void)aura_evaluator_try_restore_macro_expand_checkpoint();
-                        // Issue #3890: no outer Guard → C-ABI ckpt restore
-                        // does not drop the committed clone body. Truncate
-                        // like #3817 rest-spine so no eval-able MI residue.
-                        if (aura_evaluator_mutation_boundary_depth() == 0)
-                            flat->truncate_to(clone_ckpt);
+                        // Issue #4077: set-code only a checkpoint this expand
+                        // installed. A Guard snapshot stays live until the
+                        // dtor (depth is 0 after the stack pop, so depth is
+                        // not ownership). Truncate this expand's clone on
+                        // the flat being expanded (#3890 / #3979).
+                        if (expand_inner_checkpoint_owned())
+                            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+                        flat->truncate_to(clone_ckpt);
                         return root;
                     }
                     // Rewrite the parent's child to use the cloned body

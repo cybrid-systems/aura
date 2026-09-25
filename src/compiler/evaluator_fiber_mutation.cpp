@@ -2254,6 +2254,12 @@ extern "C" int aura_evaluator_try_save_macro_expand_checkpoint(void) {
         ev = evaluator_for_scheduler_hooks();
     if (!ev)
         return 0;
+    // Issue #4077: a live checkpoint belongs to whoever installed it
+    // (MutationBoundaryGuard, or an earlier expand that still owns it).
+    // Overwriting panic_safe_source_ here would let a later restore
+    // set-code the Guard's pre-body source after the success audit.
+    if (ev->has_panic_checkpoint())
+        return 0;
     return ev->save_panic_checkpoint() ? 1 : 0;
 }
 

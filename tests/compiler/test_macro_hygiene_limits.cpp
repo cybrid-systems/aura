@@ -15,6 +15,7 @@
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/grant_test_support.hh"
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
@@ -26,6 +27,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -1360,6 +1362,225 @@ static void ac3753_reexpand_call_inner_deny_no_splice() {
     reset_all();
 }
 
+// Issue #4077: inner-deny must not set-code the Guard's panic snapshot.
+// exit_mutation_boundary pops the stack before the cascade, so depth is
+// 0 while panic_safe_source_ is still the pre-body checkpoint. Restore
+// is owned by the Guard dtor.
+static void ac4077_arm_production(CompilerService& cs) {
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    grant_self_evo_production();
+    std::filesystem::create_directories("build/test-wal-4077");
+    if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-4077"), nullptr, 0);
+    }
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test({});
+    (void)cs;
+}
+
+static void ac4077_guard_checkpoint_survives_inner_deny() {
+    std::println("\n--- #4077 AC1: inner depth deny keeps the committed flat ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    reset_all();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4077 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4077 AC1: eval");
+    auto& ev = cs.evaluator();
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "4077 AC1: workspace");
+    if (!ws) {
+        reset_all();
+        apply_dev_audit_defaults();
+        return;
+    }
+    aura::ast::NodeId lit = NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt) {
+            lit = id;
+            break;
+        }
+    }
+    CHECK(lit != NULL_NODE && ws->get(lit).int_value == 10, "4077 AC1: literal 10");
+    ac4077_arm_production(cs);
+    const auto restores0 = ev.get_panic_checkpoint_restore_count();
+    const auto seq0 = ev.mutation_audit_seq();
+    bool ok = true;
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(gr.has_value(), "4077 AC1: guard acquired");
+    if (gr.has_value()) {
+        auto guard = std::move(*gr);
+        CHECK(ev.has_panic_checkpoint(), "4077 AC1: Guard saved panic snapshot");
+        auto* live = ev.workspace_flat();
+        live->set_int(lit, 99);
+        // Deny on a side flat. restore_panic_checkpoint set-codes the
+        // workspace even when the expanded flat is not the workspace.
+        StringPool pool;
+        FlatAST side;
+        StringPool body_pool;
+        FlatAST body_flat;
+        auto m_body_one = body_flat.add_literal(1);
+        auto m_body_self = body_flat.add_variable(body_pool.intern("m"));
+        std::array<aura::ast::NodeId, 1> body_args{m_body_one};
+        auto m_body_call = body_flat.add_call(m_body_self, body_args);
+        std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            macros;
+        macros["m"] = aura::compiler::macro_exp::MacroExpansionDef{
+            {"one"}, false, &body_flat, &body_pool, m_body_call};
+        auto one_id = side.add_literal(1);
+        std::array<aura::ast::NodeId, 1> call_args{one_id};
+        auto root_call = side.add_call(side.add_variable(pool.intern("m")), call_args);
+        side.root = root_call;
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out =
+            aura::compiler::macro_exp::expand_inner_macros(&side, &pool, side.root, 0, 2, macros);
+        CHECK(out == root_call, "4077 AC1: deny returns the pre-splice call");
+        CHECK(ev.workspace_flat() == live, "4077 AC1: workspace_flat_ not replaced");
+        CHECK(ev.has_panic_checkpoint(), "4077 AC1: Guard checkpoint still owned");
+        CHECK(ev.workspace_flat()->get(lit).int_value == 99, "4077 AC1: committed mutate kept");
+        CHECK(ev.get_panic_checkpoint_restore_count() == restores0,
+              "4077 AC1: inner deny did not restore");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-depth-limit",
+              "4077 AC2: hygiene-depth-limit still stamped");
+        (void)guard;
+    }
+    CHECK(!ev.has_panic_checkpoint(), "4077 AC1: dtor commit cleared the snapshot");
+    CHECK(ev.workspace_flat() != nullptr && ev.workspace_flat()->get(lit).int_value == 99,
+          "4077 AC1: mutate still present after success exit");
+    CHECK(ev.get_panic_checkpoint_restore_count() == restores0,
+          "4077 AC1: success exit did not restore");
+    CHECK(ev.mutation_audit_seq() > seq0, "4077 AC2: success audit row was emitted");
+    if (ev.mutation_audit_seq() > seq0) {
+        const auto& row = ev.mutation_audit_entry_at(ev.mutation_audit_seq() - 1);
+        CHECK(!row.effect_denied, "4077 AC2: success audit is not a deny");
+    }
+    aura::compiler::clear_mutation_concurrency_health_admit_snapshot_for_test();
+    reset_all();
+    apply_dev_audit_defaults();
+}
+
+static void ac4077_guard_failure_restores_once() {
+    std::println("\n--- #4077 AC3: Guard success==false restores once ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    reset_all();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4077 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4077 AC3: eval");
+    auto& ev = cs.evaluator();
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "4077 AC3: workspace");
+    if (!ws) {
+        reset_all();
+        apply_dev_audit_defaults();
+        return;
+    }
+    aura::ast::NodeId lit = NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt) {
+            lit = id;
+            break;
+        }
+    }
+    CHECK(lit != NULL_NODE, "4077 AC3: literal");
+    ac4077_arm_production(cs);
+    ev.set_auto_rollback_on_panic(true);
+    const auto restores0 = ev.get_panic_checkpoint_restore_count();
+    bool ok = true;
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(gr.has_value(), "4077 AC3: guard acquired");
+    if (gr.has_value()) {
+        auto guard = std::move(*gr);
+        CHECK(ev.has_panic_checkpoint(), "4077 AC3: checkpoint armed");
+        ev.workspace_flat()->set_int(lit, 99);
+        guard->mark_failed();
+    }
+    CHECK(ev.get_panic_checkpoint_restore_count() == restores0 + 1,
+          "4077 AC3: phase 3 restored once");
+    CHECK(!ev.has_panic_checkpoint(), "4077 AC3: restore cleared the snapshot");
+    auto* restored = ev.workspace_flat();
+    CHECK(restored != nullptr, "4077 AC3: workspace after set-code");
+    bool saw10 = false;
+    bool saw99 = false;
+    if (restored) {
+        for (aura::ast::NodeId id = 0; id < restored->size(); ++id) {
+            if (!restored->is_live_node(id) || restored->tag(id) != aura::ast::NodeTag::LiteralInt)
+                continue;
+            if (restored->get(id).int_value == 10)
+                saw10 = true;
+            if (restored->get(id).int_value == 99)
+                saw99 = true;
+        }
+    }
+    CHECK(saw10 && !saw99, "4077 AC3: set-code put back base 10, not the failed 99");
+    ev.set_auto_rollback_on_panic(false);
+    aura::compiler::clear_mutation_concurrency_health_admit_snapshot_for_test();
+    reset_all();
+    apply_dev_audit_defaults();
+}
+
+static void ac4077_soft_does_not_restore() {
+    std::println("\n--- #4077 AC4: Soft inner deny does not restore ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    reset_all();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4077 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4077 AC4: eval");
+    auto& ev = cs.evaluator();
+    CHECK(ev.save_panic_checkpoint(), "4077 AC4: manual checkpoint");
+    const auto restores0 = ev.get_panic_checkpoint_restore_count();
+    auto* live = ev.workspace_flat();
+    StringPool pool;
+    FlatAST side;
+    StringPool body_pool;
+    FlatAST body_flat;
+    auto m_body_one = body_flat.add_literal(1);
+    auto m_body_self = body_flat.add_variable(body_pool.intern("m"));
+    std::array<aura::ast::NodeId, 1> body_args{m_body_one};
+    auto m_body_call = body_flat.add_call(m_body_self, body_args);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"one"}, false, &body_flat, &body_pool, m_body_call};
+    auto one_id = side.add_literal(1);
+    std::array<aura::ast::NodeId, 1> call_args{one_id};
+    auto root_call = side.add_call(side.add_variable(pool.intern("m")), call_args);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    (void)aura::compiler::macro_exp::expand_inner_macros(&side, &pool, root_call, 0, 2, macros);
+    CHECK(ev.workspace_flat() == live, "4077 AC4: Soft did not replace the flat");
+    CHECK(ev.has_panic_checkpoint(), "4077 AC4: Soft left the checkpoint live");
+    CHECK(ev.get_panic_checkpoint_restore_count() == restores0, "4077 AC4: no restore");
+    ev.commit_panic_checkpoint();
+    CHECK(!ev.has_panic_checkpoint(), "4077 AC4: test commit cleared it");
+    reset_all();
+    apply_dev_audit_defaults();
+}
+
+static void ac4077_source_cite() {
+    std::println("\n--- #4077: source-cite owned restore only ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    const auto fib = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(me.find("Issue #4077") != std::string::npos, "4077: macro_expansion cites #4077");
+    CHECK(me.find("expand_inner_checkpoint_owned") != std::string::npos,
+          "4077: inner expand does not own a checkpoint");
+    CHECK(fib.find("Issue #4077") != std::string::npos, "4077: save refuses a live checkpoint");
+    CHECK(fib.find("has_panic_checkpoint()") != std::string::npos,
+          "4077: try_save returns 0 when a checkpoint is already live");
+    CHECK(me.find("flat->truncate_to(clone_ckpt)") != std::string::npos,
+          "4077: inner deny truncates the clone range");
+    CHECK(read_file("tests/compiler/test_issue_4077.cpp").empty() &&
+              read_file("tests/issues/test_issue_4077.cpp").empty(),
+          "4077: no test_issue_4077.cpp per #81967");
+    CHECK(read_file("docs/design/4077-inner-deny-guard-checkpoint.md").empty(),
+          "4077: no docs/design/4077-* per #1655");
+}
+
 static void ac3888_sticky_mi_then_ceiling_still_observable() {
     std::println("\n--- #3888 AC1: MI then gensym ceiling stays observable ---");
     reset_all();
@@ -1437,6 +1658,11 @@ int run_test_macro_hygiene_limits() {
     ac3735_soft_and_source();
     std::println("\n=== Issue #3888: sticky MI/rest does not mask ceiling belts ===");
     ac3888_sticky_mi_then_ceiling_still_observable();
+    std::println("\n=== Issue #4077: inner deny must not consume the Guard checkpoint ===");
+    ac4077_guard_checkpoint_survives_inner_deny();
+    ac4077_guard_failure_restores_once();
+    ac4077_soft_does_not_restore();
+    ac4077_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
