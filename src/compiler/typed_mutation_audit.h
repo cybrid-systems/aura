@@ -3445,6 +3445,9 @@ inline void drop_deferred_outermost_green_proof() noexcept {
 [[nodiscard]] inline bool commit_deferred_outermost_green_proof() noexcept {
     const bool commit = deferred_outermost_green_pending();
     if (commit) {
+        // Issue #4011 / #4081: this green publish is the remount-last-zero
+        // retire. publish_last_proof_face clears the latch. The live stamp
+        // must not have cleared it already.
         publish_last_proof_face(true, true);
         publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
     }
@@ -3463,13 +3466,13 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // retires remount-last-zero strip. Latch means "do not ride OLD
     // green"; a new live proof is not that ride.
     // Issue #4080: commit_readiness_live_policy must observe the latch.
-    // Retire only after that read. Clearing first lets a SOLVED commit
-    // TC republish would_allow=1 on the hygiene-save Quiet stamp.
-    const bool retire_remount_last_zero =
+    // Issue #4081: this builder does not retire the latch. A SOLVED
+    // Quiet stamp must not clear it. Persist (publish_green_face=false)
+    // may defer green when every other arm would allow;
+    // commit_deferred_outermost_green_proof publishes and clears.
+    const bool remount_latched =
         g_remount_last_zero_strip_face.load(std::memory_order_relaxed) != 0;
     const auto ready = commit_readiness_live_policy();
-    if (retire_remount_last_zero)
-        g_remount_last_zero_strip_face.store(0, std::memory_order_release);
     const auto live_r = commit_readiness(ready);
     p.readiness_bp = live_r.readiness_bp;
     p.force_reason_code = static_cast<std::uint32_t>(live_r.force_reason_code);
@@ -3519,7 +3522,31 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
     // Issue #3984: persist helper holds observer-visible green until Guard
     // post-persist deny arms pass (publish_green_face=false).
-    if (!publish_green_face && p.would_allow_commit && p.linear_ok) {
+    // Issue #4081: latch deny still records force 17 on this proof. When
+    // the caller is the outermost persist and every other arm would
+    // allow, defer that green. The latch stays until commit publishes.
+    bool defer_remount_reproof = false;
+    if (!publish_green_face && remount_latched && !p.would_allow_commit &&
+        (production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
+        CommitReadinessInput without_remount = ready;
+        without_remount.remount_last_zero_strip = false;
+        if (::g_tls_audit_commit_readiness_evaluator == nullptr) {
+            const bool faces_clear = !without_remount.pending_full_solve_residual &&
+                                     !without_remount.cone_outside_goal_drop_face &&
+                                     !without_remount.occurrence_empty_after_fence_face &&
+                                     !without_remount.refined_consistency_drift &&
+                                     !without_remount.region_type_cross_talk_face;
+            const auto outcome = g_last_type_linear_proof_outcome.load(std::memory_order_relaxed);
+            const bool stamped = outcome == kTypeLinearProofOutcomeStamped;
+            const bool gen_ok = g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) ==
+                                g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed);
+            if (faces_clear && !(stamped && gen_ok) && without_remount.solve_status == 0)
+                without_remount.solve_status = 2;
+        }
+        const auto without_r = commit_readiness(without_remount);
+        defer_remount_reproof = without_r.would_allow_commit && ready.linear_ok;
+    }
+    if ((!publish_green_face && p.would_allow_commit && p.linear_ok) || defer_remount_reproof) {
         g_tls_deferred_outermost_green_would_allow = 1;
         g_tls_deferred_outermost_green_linear_ok = 1;
         publish_last_proof_face(false, false);

@@ -964,6 +964,153 @@ static void ac4080_4_source_cite() {
           "4080 AC4: no docs/design/4080-*");
 }
 
+// Issue #4081: hygiene save must not retire the remount-last-zero latch.
+// The retire is an outermost persist whose commit_deferred actually
+// publishes green.
+
+static void arm_4081_production_face() {
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    drop_deferred_outermost_green_proof();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void disarm_4081() {
+    using namespace aura::compiler::typed_audit;
+    drop_deferred_outermost_green_proof();
+    aura_typed_audit_clear_readiness_evaluator();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4081_1_hygiene_save_leaves_latch() {
+    std::println("\n--- #4081 AC1: hygiene save leaves the strip latch armed ---");
+    using namespace aura::compiler::typed_audit;
+    arm_4081_production_face();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "4081 AC1: workspace");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4081 AC1: strip latched");
+    (void)cs.evaluator().save_hygiene_checkpoint();
+    (void)cs.evaluator().save_hygiene_checkpoint();
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4081 AC1: second save leaves latch");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "4081 AC1: stored would_allow stays 0");
+    CHECK(!linear_move_drop_elision_ok(), "4081 AC1: elision stays false");
+    const auto in = commit_readiness_live_policy();
+    CHECK(in.solve_status == 0, "4081 AC1: SOLVED commit face");
+    CHECK(in.remount_last_zero_strip, "4081 AC1: live policy still sees the latch");
+    CHECK(href_health(cs, "would-allow-commit") == 0, "4081 AC1: query would-allow-commit 0");
+    CHECK(href_health(cs, "force-reason") == 17, "4081 AC1: query force-reason 17");
+    disarm_4081();
+}
+
+static void ac4081_2_persist_commit_retires() {
+    std::println("\n--- #4081 AC2: outermost green commit retires the latch ---");
+    using namespace aura::compiler::typed_audit;
+    arm_4081_production_face();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4081 AC2: warm eval");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    seed_green_face();
+    publish_last_proof_face(true, true);
+    strip_green_face_on_remount_last_zero();
+    const auto stamped = build_type_linear_commit_proof_from_live(
+        1, /*live_goal_count_hint=*/0, /*goal_fingerprint=*/0, /*goal_truth_from_cs=*/false,
+        /*publish_green_face=*/false);
+    CHECK(!stamped.would_allow_commit, "4081 AC2: stamp observed the latch");
+    CHECK(stamped.force_reason_code == static_cast<std::uint32_t>(kRemountLastZeroForceReasonCode),
+          "4081 AC2: stamp force_reason 17");
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4081 AC2: stamp did not retire");
+    CHECK(deferred_outermost_green_pending(), "4081 AC2: persist defers the green re-proof");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "4081 AC2: observer face stays denied until commit");
+    CHECK(href_health(cs, "would-allow-commit") == 0, "4081 AC2: query still 0 before commit");
+    CHECK(href_health(cs, "force-reason") == 17, "4081 AC2: query still 17 before commit");
+    CHECK(commit_deferred_outermost_green_proof(), "4081 AC2: commit publishes green");
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4081 AC2: commit clears the latch");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0,
+          "4081 AC2: published would_allow");
+    CHECK(g_last_proof_linear_ok.load(std::memory_order_relaxed) != 0,
+          "4081 AC2: published linear_ok");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeStamped,
+          "4081 AC2: outcome Stamped");
+    CHECK(!deferred_outermost_green_pending(), "4081 AC2: deferred consumed");
+    CHECK(href_health(cs, "would-allow-commit") == 1, "4081 AC2: query allows after commit");
+    disarm_4081();
+}
+
+static void ac4081_3_soft_never_sets_latch() {
+    std::println("\n--- #4081 AC3: Soft strip does not set the latch ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    publish_last_proof_face(true, true);
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4081 AC3: Soft latch stays clear");
+    CHECK(!production_hard_face_active(), "4081 AC3: Soft is not the hard face");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto fn = tma.find("inline void strip_green_face_on_remount_last_zero");
+    CHECK(fn != std::string::npos, "4081 AC3: strip helper");
+    const auto body = fn == std::string::npos ? std::string{} : tma.substr(fn, 1600);
+    const auto gate = body.find("production_defaults_active()");
+    const auto store = body.find("g_remount_last_zero_strip_face.store(1");
+    CHECK(gate != std::string::npos && store != std::string::npos && gate < store,
+          "4081 AC3: Soft returns on one mode load before the latch store");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4081_4_source_cite() {
+    std::println("\n--- #4081 AC4: source-cite + no new query ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(tma.find("Issue #4081") != std::string::npos, "4081 AC4: header cites #4081");
+    const auto builder =
+        tma.find("inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(");
+    const auto next = tma.find("build_type_linear_commit_proof_from_live_with_outcome", builder);
+    CHECK(builder != std::string::npos && next != std::string::npos && next > builder,
+          "4081 AC4: live stamp helper");
+    const auto body = (builder == std::string::npos || next == std::string::npos)
+                          ? std::string{}
+                          : tma.substr(builder, next - builder);
+    CHECK(body.find("commit_readiness_live_policy()") != std::string::npos,
+          "4081 AC4: stamp still reads live policy");
+    CHECK(body.find("g_remount_last_zero_strip_face.store(0") == std::string::npos,
+          "4081 AC4: live stamp does not retire the latch");
+    CHECK(tma.find("Issue #4011: a live outermost stamp is the green rebind") != std::string::npos,
+          "4081 AC4: #4011 retire cite kept");
+    CHECK(emb.find("Issue #4081: hygiene save is not the remount-last-zero") != std::string::npos,
+          "4081 AC4: hygiene save skips while latched");
+    CHECK(tma.find("commit_deferred_outermost_green_proof") != std::string::npos &&
+              tma.find("publish_last_proof_face(true, true)") != std::string::npos,
+          "4081 AC4: green commit is the retire");
+    CHECK(tma.find("schema-4081") == std::string::npos &&
+              emb.find("schema-4081") == std::string::npos,
+          "4081 AC4: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4081.cpp").empty() &&
+              read_file("tests/issues/test_issue_4081.cpp").empty(),
+          "4081 AC4: no test_issue_4081.cpp");
+    CHECK(read_file("docs/design/4081-remount-latch-retire.md").empty(),
+          "4081 AC4: no docs/design/4081-*");
+}
+
 // ── Issue #3578: background rebind/strip observability + Quiet=unknown ──
 // (void) call sites discard the bool; Agent polls evolution-snapshot
 // gauges. Reject is not an immediate commit-barrier. Quiet ≠ invalid/green.
@@ -1343,6 +1490,11 @@ int run_test_remount_force_deopt() {
     ac4080_2_hygiene_save_keeps_elision_false();
     ac4080_3_soft_no_latch();
     ac4080_4_source_cite();
+    std::println("\n=== Issue #4081: hygiene save must not retire remount-last-zero ===");
+    ac4081_1_hygiene_save_leaves_latch();
+    ac4081_2_persist_commit_retires();
+    ac4081_3_soft_never_sets_latch();
+    ac4081_4_source_cite();
     ac3578_2_last0_green_quiet_unknown();
     ac3578_3_void_call_sites_observability_cite();
     ac3578_4_linter_3448_not_regressed();
