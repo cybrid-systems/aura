@@ -5418,6 +5418,97 @@ static void ac3947_3_soft_zero_and_no_invent() {
     CHECK(ffi.find("class InteriorPinRegistry") == std::string::npos, "3947: no second registry");
 }
 
+// Issue #4068: struct-interior cover must survive consume and be rewritten
+// on the next Moving window. The ephemeral FFI queue is one window only.
+static void ac4068_second_window_rewrites_interior() {
+    std::println("\n--- #4068: second Moving window rewrites the interior word ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    ASTArena arena(256 * 1024);
+    auto* a = arena.create<Pod16>(0x4068, 1, 2, 3);
+    CHECK(a != nullptr, "4068: create referent");
+    for (int i = 0; i < 7; ++i) {
+        CHECK(arena.create<Pod16>(i, i, i, i) != nullptr, "4068: sibling create");
+    }
+    void* block = std::malloc(sizeof(void*));
+    CHECK(block != nullptr, "4068: libc struct base");
+    void* raw = a;
+    std::memcpy(block, &raw, sizeof(raw));
+    void** interior = reinterpret_cast<void**>(block);
+    CHECK(aura::ast::opaque_heap_element_cover_or_required_fail(raw, interior, "struct-interior"),
+          "4068: ephemeral cover");
+    aura::ast::register_struct_interior_slot_for_densify(interior);
+
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "4068: first window moved");
+    void* after1 = *interior;
+    CHECK(after1 == arena.resolve_object_remap(raw), "4068: first window matches remap");
+    std::vector<void**> still;
+    bool durable_kept = false;
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(still) > 0,
+          "4068: slot survives consume");
+    for (void** s : still) {
+        if (s == interior)
+            durable_kept = true;
+    }
+    CHECK(durable_kept, "4068: interior slot still queued after the first window");
+
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved > 0, "4068: second window moved");
+    void* latest = *interior;
+    CHECK(latest != nullptr, "4068: interior still populated");
+    CHECK(static_cast<Pod16*>(latest)->a == 0x4068,
+          "4068: interior names the same object after the second move");
+    void* via_prev = arena.resolve_object_remap(after1);
+    if (via_prev != nullptr)
+        CHECK(latest == via_prev, "4068: interior matches the remap of the previous address");
+    else
+        CHECK(latest == after1, "4068: unmoved previous address stays in the interior");
+
+    aura::ast::forget_struct_interior_slots_covering(block, sizeof(void*));
+    still.clear();
+    durable_kept = false;
+    (void)aura::ast::snapshot_ffi_alias_slots_for_densify(still);
+    for (void** s : still) {
+        if (s == interior)
+            durable_kept = true;
+    }
+    CHECK(!durable_kept, "4068: c-free range drops the interior slot");
+    std::free(block);
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4068_soft_and_source() {
+    std::println("\n--- #4068: Soft does not queue; no second registry ---");
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    {
+        MovingFlagGuard off(0);
+        int payload = 1;
+        void* p = &payload;
+        void** slot = &p;
+        aura::ast::register_struct_interior_slot_for_densify(slot);
+        std::vector<void**> snap;
+        CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 0,
+              "4068: Off/Soft register is a no-op");
+    }
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(ffi.find("register_struct_interior_slot_for_densify") != std::string::npos,
+          "4068: c-struct-set! re-arms the interior");
+    CHECK(ffi.find("forget_struct_interior_slots_covering") != std::string::npos,
+          "4068: c-free drops the interior");
+    CHECK(arena.find("Issue #4068") != std::string::npos, "4068: arena cites");
+    CHECK(arena.find("class InteriorSlotRegistry") == std::string::npos,
+          "4068: no second registry");
+    CHECK(read_file("docs/design/4068-struct-interior.md").empty(), "4068: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4068.cpp").empty(), "4068: no test_issue_4068.cpp");
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+}
+
 // Issue #4066: peer bind × Moving recycle. The #3857 entry load is
 // check-then-act; the inventory mutex stays held from the live==0 re-read
 // through small_pool_.recycle. bind_temporary_moving_live_ptr blocks on
@@ -6484,6 +6575,10 @@ int run_test_moving_densify_fail_closed() {
     ac3947_1_source_cite_interior_triad();
     ac3947_2_interior_slot_rewrites_on_moving();
     ac3947_3_soft_zero_and_no_invent();
+
+    std::println("\n=== Issue #4068: struct-interior slot survives the next Moving ===");
+    ac4068_second_window_rewrites_interior();
+    ac4068_soft_and_source();
 
     std::println("\n=== Issue #4066: Moving canary hold through recycle ===");
     ac4066_peer_sees_unrecycled_or_remapped();

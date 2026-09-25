@@ -201,6 +201,9 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             // Raw c-opaque or already freed untracked pointer.
             ++free_unknown_total_;
         } else {
+            // Issue #4068: drop interior slots inside this block before
+            // the libc free. Ephemeral alias entries are not in this range.
+            aura::ast::forget_struct_interior_slots_covering(ptr, it->second);
             opaque_sizes_.erase(it);
         }
         std::free(ptr);
@@ -278,6 +281,12 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
                 std::memset(base + offset, 0, sizeof(ptr));
                 return make_void();
             }
+            // Issue #4068: the cover helper's queue entry is consumed at
+            // the end of this Moving window. The interior word lives at a
+            // stable libc-heap base+offset, so re-arm it on the durable
+            // side of the same inventory. Soft/Off: helper EXEMPT, this
+            // register is a no-op.
+            aura::ast::register_struct_interior_slot_for_densify(interior);
         }
         return make_void();
     });

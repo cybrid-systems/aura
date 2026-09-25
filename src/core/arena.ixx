@@ -832,8 +832,17 @@ namespace moving_ffi_alias_slot_detail {
     struct Inventory {
         std::mutex mtx;
         std::vector<void**> slots;
+        // Issue #4068: c-struct-set! interior void** (libc-heap base+offset).
+        // The base is stable across Moving windows, unlike &opaque_heap_[i].
+        // Same inventory — not a second pin table. consume does not drop these.
+        std::vector<void**> durable;
         std::atomic<std::uint32_t> live{0};
     };
+    inline void store_live(Inventory& inv) noexcept {
+        const auto n = inv.slots.size() + inv.durable.size();
+        inv.live.store(n > 0xffffffffu ? 0xffffffffu : static_cast<std::uint32_t>(n),
+                       std::memory_order_release);
+    }
     inline Inventory g_inventory{};
 } // namespace moving_ffi_alias_slot_detail
 
@@ -841,6 +850,7 @@ export inline void reset_ffi_alias_slots_for_densify_for_test() noexcept {
     auto& inv = moving_ffi_alias_slot_detail::g_inventory;
     std::lock_guard<std::mutex> lock(inv.mtx);
     inv.slots.clear();
+    inv.durable.clear();
     inv.live.store(0, std::memory_order_release);
 }
 
@@ -851,7 +861,10 @@ export inline std::size_t snapshot_ffi_alias_slots_for_densify(std::vector<void*
         return 0;
     }
     std::lock_guard<std::mutex> lock(inv.mtx);
-    out.assign(inv.slots.begin(), inv.slots.end());
+    out.clear();
+    out.reserve(inv.slots.size() + inv.durable.size());
+    out.insert(out.end(), inv.slots.begin(), inv.slots.end());
+    out.insert(out.end(), inv.durable.begin(), inv.durable.end());
     return out.size();
 }
 
@@ -891,8 +904,7 @@ consume_ffi_alias_slots_for_densify(const std::vector<void**>& consumed) noexcep
             }
             if (n > 0) {
                 inv.slots.swap(kept);
-                inv.live.store(static_cast<std::uint32_t>(inv.slots.size()),
-                               std::memory_order_release);
+                moving_ffi_alias_slot_detail::store_live(inv);
             }
         }
     }
@@ -914,7 +926,52 @@ export inline void register_external_root_slot_for_densify(void** slot) noexcept
     {
         std::lock_guard<std::mutex> lock(inv.mtx);
         inv.slots.push_back(slot);
-        inv.live.store(static_cast<std::uint32_t>(inv.slots.size()), std::memory_order_release);
+        moving_ffi_alias_slot_detail::store_live(inv);
+    }
+}
+
+// Issue #4068: keep a struct-interior void** across Moving windows.
+// c-struct-set! writes an arena pointer at libc-heap base+offset. The
+// ephemeral alias queue is consumed at window end (#3569) and
+// register_known only re-walks &opaque_heap_[i] / &modules_[i], so the
+// interior word stayed on the previous generation. Durable entries live
+// in the same FFI-alias inventory and are snapshotted every window.
+// Soft / Off / !moving_compact_enabled: no insert.
+export inline void register_struct_interior_slot_for_densify(void** slot) noexcept {
+    if (slot == nullptr || *slot == nullptr || !moving_compact_enabled())
+        return;
+    auto& inv = moving_ffi_alias_slot_detail::g_inventory;
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    for (void** existing : inv.durable) {
+        if (existing == slot)
+            return;
+    }
+    inv.durable.push_back(slot);
+    moving_ffi_alias_slot_detail::store_live(inv);
+}
+
+// Issue #4068: c-free drops interior slots whose address sits in the
+// freed libc block. Ephemeral queue entries are unaffected.
+export inline void forget_struct_interior_slots_covering(void* base, std::size_t nbytes) noexcept {
+    if (base == nullptr || nbytes == 0)
+        return;
+    const auto begin = reinterpret_cast<std::uintptr_t>(base);
+    const auto end = begin + static_cast<std::uintptr_t>(nbytes);
+    auto& inv = moving_ffi_alias_slot_detail::g_inventory;
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    if (inv.durable.empty())
+        return;
+    std::vector<void**> kept;
+    kept.reserve(inv.durable.size());
+    for (void** slot : inv.durable) {
+        const auto addr = reinterpret_cast<std::uintptr_t>(slot);
+        if (addr >= begin && addr < end)
+            continue;
+        kept.push_back(slot);
+    }
+    if (kept.size() != inv.durable.size()) {
+        inv.durable.swap(kept);
+        moving_ffi_alias_slot_detail::store_live(inv);
     }
 }
 
