@@ -14212,6 +14212,10 @@ public:
         // with the topology on abort (no phantom over-dirty cones). Captured
         // only on non-lightweight boundaries; empty = keep live columns.
         aura::ast::FlatAST::DirtySoaSnapshot dirty_soa_snapshot;
+        // Issue #4076: marker_ + provenance_ captured beside the dirty SoA
+        // on production hard-face enter. Empty on Soft/Off and lightweight
+        // so abort does not copy or restore those columns.
+        aura::ast::FlatAST::MarkerProvenanceSnapshot marker_provenance_snapshot;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).

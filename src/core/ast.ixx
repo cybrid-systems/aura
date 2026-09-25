@@ -5667,6 +5667,23 @@ public:
         macro_dirty_ = std::move(snap.macro_dirty_);
     }
 
+    // Issue #4076: marker_ + provenance_ ride the same abort as macro_dirty_.
+    // Empty marker means uncaptured (Soft/Off or lightweight) — keep live
+    // columns. A non-empty snapshot is the production enter copy.
+    struct MarkerProvenanceSnapshot {
+        std::pmr::vector<SyntaxMarker> marker;
+        std::pmr::vector<std::uint32_t> provenance;
+    };
+    [[nodiscard]] MarkerProvenanceSnapshot snapshot_marker_provenance() const {
+        return MarkerProvenanceSnapshot{marker_, provenance_};
+    }
+    void restore_marker_provenance(MarkerProvenanceSnapshot&& snap) noexcept {
+        if (snap.marker.empty())
+            return;
+        marker_ = std::move(snap.marker);
+        provenance_ = std::move(snap.provenance);
+    }
+
     // Issue #2959: Guard abort dual topology path — mutation-log rollback
     // + children_ snapshot restore + parent_ rebuild + dual canary, all
     // under ONE StructuralMutationGuard so densify/steal cannot observe
@@ -5676,14 +5693,17 @@ public:
     std::size_t
     abort_restore_dual_topology(std::size_t mutation_log_checkpoint,
                                 std::vector<PersistentChildVector<NodeId>>&& children_snapshot,
-                                DirtySoaSnapshot&& dirty_soa_snapshot = {}) {
+                                DirtySoaSnapshot&& dirty_soa_snapshot = {},
+                                MarkerProvenanceSnapshot&& markers = {}) {
         StructuralMutationGuard guard(this);
         contract_assert(static_cast<bool>(guard));
         const auto rolled = rollback_to_size(mutation_log_checkpoint);
         restore_children_locked(std::move(children_snapshot));
-        // Issue #3865: restore the dirty SoA family with the topology —
-        // phantom over-dirty cones from the aborted window are gone.
+        // Issue #3865: dirty SoA restored with the topology.
         restore_dirty_soa(std::move(dirty_soa_snapshot));
+        // Issue #4076: failed unstamp must not leave marker_=User against
+        // a restored kMacroExpansion bit. Empty snapshot is a no-op.
+        restore_marker_provenance(std::move(markers));
         return rolled;
     }
 

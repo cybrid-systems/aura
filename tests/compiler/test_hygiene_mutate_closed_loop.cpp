@@ -13,6 +13,8 @@
 //   AC6: provenance_tracker.hh documents FailOnStale mutate contract
 
 #include "test_harness.hpp"
+#include "compiler/castop_density_policy.hh"
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
@@ -998,6 +1000,23 @@ static std::string merr_kind_3027(CompilerService& cs, const EvalValue& v) {
     if (!is_string(pairs[idx].car))
         return {};
     auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static std::string merr_text_4076(CompilerService& cs, const EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size() || !is_pair(pairs[idx].cdr))
+        return {};
+    auto inner = as_pair_idx(pairs[idx].cdr);
+    if (inner >= pairs.size() || !is_string(pairs[inner].car))
+        return {};
+    auto sidx = as_string_idx(pairs[inner].car);
     auto heap = cs.evaluator().string_heap();
     if (sidx >= heap.size())
         return {};
@@ -6214,6 +6233,263 @@ static void ac3979_2_reexpand_truncate_not_depth0_gated() {
           "3979 AC2: reexpand truncate fires even when Guard depth > 0");
 }
 
+// Issue #4076: production dual-topology abort restores marker_ and
+// provenance_ with macro_dirty_. A failed unstamp must not leave User
+// against a restored kMacroExpansion bit. Soft/Off does not copy the
+// columns. The commit path does not restore.
+static void stamp_4076_macro(aura::ast::FlatAST& ws, aura::ast::NodeId id, std::uint32_t prov) {
+    {
+        auto meta = ws.begin_metadata_mutation();
+        ws.set_marker(id, aura::ast::SyntaxMarker::MacroIntroduced);
+        ws.set_provenance(id, prov);
+    }
+    ws.apply_macro_dirty_bits(
+        id, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+}
+
+static bool bind_lit_ref_4076(CompilerService& cs, aura::ast::NodeId lit, const char* qname,
+                              const char* rname) {
+    auto defined =
+        cs.eval(std::format("(define {} (query:filter (query:where :node-type \"LiteralInt\") "
+                            ":include-macro-introduced #t))",
+                            qname));
+    if (!defined.has_value()) {
+        std::println(stderr, "4076 bind: define {} failed", qname);
+        return false;
+    }
+    auto n = cs.eval(std::format("(length (hash-ref {} \"matches\"))", qname));
+    if (!n || !is_int(*n) || as_int(*n) < 1) {
+        std::println(stderr, "4076 bind: {} match count missing (has {})", qname, n.has_value());
+        return false;
+    }
+    for (std::int64_t i = 0; i < as_int(*n); ++i) {
+        if (!cs.eval(std::format("(define {} (query:as-stable-ref {} :index {}))", rname, qname, i))
+                 .has_value())
+            continue;
+        auto car = cs.eval(std::format("(car {})", rname));
+        if (car && is_int(*car) && static_cast<aura::ast::NodeId>(as_int(*car)) == lit)
+            return true;
+    }
+    return false;
+}
+
+static aura::ast::NodeId parented_lit_4076(aura::ast::FlatAST* ws) {
+    if (!ws)
+        return aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt &&
+            ws->parent_of(id) != aura::ast::NULL_NODE)
+            return id;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+static void ac4076_production_abort_restores_marker() {
+    std::println("\n--- #4076 AC1: production abort restores marker with macro_dirty ---");
+    using aura::compiler::castop_density::g_density_gate_reject_pending;
+    using aura::compiler::castop_density::reset_density_gate_reject_pending_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_density_gate_reject_pending_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4076 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4076 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4076 AC1: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    const auto lit = parented_lit_4076(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "4076 AC1: parented LiteralInt");
+    if (lit == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    stamp_4076_macro(*ws, lit, 42);
+    const auto dirty_before = ws->macro_dirty(lit);
+    const auto prov_before = ws->provenance(lit);
+    CHECK(ws->is_macro_introduced(lit), "4076 AC1: stamped MacroIntroduced");
+    CHECK((dirty_before & 0x01) != 0, "4076 AC1: expansion bit at enter");
+    CHECK(prov_before == 42, "4076 AC1: provenance at enter");
+    CHECK(ws->validate_macro_hygiene_invariants() == 0, "4076 AC1: enter invariant 0");
+    const auto unstamp_before = ws->unstamp_macro_introduced_total();
+    apply_production_audit_defaults();
+    // Live densify-fail from earlier members must not admit-reject this Guard.
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test({});
+    CHECK(aura::compiler::typed_audit::production_hard_face_active(), "4076 AC1: hard face");
+    // Production rejects a bare NodeId before the body (#3395). The packed
+    // ref is what lets unstamp run inside the same outermost Guard.
+    CHECK(bind_lit_ref_4076(cs, lit, "q4076", "r4076"), "4076 AC1: packed ref");
+    // Same outermost Guard fails closed after the body writes marker_
+    // (density pre-exit deny, production/Full only).
+    g_density_gate_reject_pending.store(1, std::memory_order_release);
+    auto rolled = cs.eval("(mutate:rollback-macro-introduced r4076)");
+    reset_density_gate_reject_pending_for_test();
+    const auto rolled_kind = rolled ? merr_kind_3027(cs, *rolled) : std::string("novalue");
+    CHECK(rolled.has_value(), "4076 AC1: returns");
+    CHECK(rolled_kind == "persist-reject",
+          std::format("4076 AC1: outermost guard aborted (got {} {})", rolled_kind,
+                      rolled ? merr_text_4076(cs, *rolled) : std::string{}));
+    CHECK(ws->unstamp_macro_introduced_total() > unstamp_before,
+          "4076 AC1: unstamp ran before the abort");
+    CHECK(ws->is_macro_introduced(lit), "4076 AC1: marker restored");
+    CHECK(ws->macro_dirty(lit) == dirty_before, "4076 AC1: macro_dirty matches enter");
+    CHECK(ws->provenance(lit) == prov_before, "4076 AC1: provenance restored");
+    CHECK(ws->validate_macro_hygiene_invariants() == 0,
+          "4076 AC2: invariant 0 because marker and expansion bit were restored together");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    // Abort restamp invalidates the pre-fail ref. Re-bind, then default-deny.
+    CHECK(bind_lit_ref_4076(cs, lit, "q4076b", "r4076b"), "4076 AC1: rebound ref");
+    auto denied = cs.eval("(mutate:replace-subtree r4076b \"99\")");
+    CHECK(denied.has_value(), "4076 AC1: replace-subtree returns");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    const auto denied_kind = denied ? merr_kind_3027(cs, *denied) : std::string("novalue");
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          std::format("4076 AC1: following mutate is hygiene-macro-introduced (kind {})",
+                      denied_kind));
+    CHECK(ws->get(lit).int_value == 10, "4076 AC1: literal not replaced");
+    reset_density_gate_reject_pending_for_test();
+    apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac4076_success_unstamp_stays_user() {
+    std::println("\n--- #4076 AC3: successful MSE unstamp stays User ---");
+    using aura::compiler::castop_density::reset_density_gate_reject_pending_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    apply_dev_audit_defaults();
+    reset_density_gate_reject_pending_for_test();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4076 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4076 AC3: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4076 AC3: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    const auto lit = parented_lit_4076(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "4076 AC3: parented LiteralInt");
+    if (lit == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    stamp_4076_macro(*ws, lit, 42);
+    // Sandbox stays Off (effect mode 0): the unstamp is the authorized
+    // commit, and MacroSelfEvo is not consulted. Production hard-face
+    // still snapshots marker_; success must not put that snapshot back.
+    grant_3301_production_mutate(cs);
+    cs.evaluator().set_effect_sandbox_mode(0);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    apply_production_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test({});
+    CHECK(aura::compiler::typed_audit::production_hard_face_active(), "4076 AC3: hard face");
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "4076 AC3: effect sandbox off");
+    CHECK(bind_lit_ref_4076(cs, lit, "q4076c", "r4076c"), "4076 AC3: packed ref");
+    auto rolled = cs.eval("(mutate:rollback-macro-introduced r4076c)");
+    const auto rolled_kind = rolled ? merr_kind_3027(cs, *rolled) : std::string("novalue");
+    CHECK(rolled.has_value() && is_int(*rolled) && as_int(*rolled) >= 1,
+          "4076 AC3: commit path returns the unstamp count");
+    CHECK(!ws->is_macro_introduced(lit), "4076 AC3: marker stays User");
+    CHECK(ws->provenance(lit) == 0, "4076 AC3: provenance stays cleared");
+    CHECK((ws->macro_dirty(lit) & 0x01) == 0, "4076 AC3: expansion bit stays cleared");
+    reset_density_gate_reject_pending_for_test();
+    reset_capability_effects_for_test();
+    apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac4076_soft_failure_does_not_restore() {
+    std::println("\n--- #4076 AC4: Soft guard failure does not restore marker ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::production_hard_face_active;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4076 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4076 AC4: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4076 AC4: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    const auto lit = parented_lit_4076(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "4076 AC4: parented LiteralInt");
+    if (lit == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    stamp_4076_macro(*ws, lit, 7);
+    CHECK(!production_hard_face_active(), "4076 AC4: Soft face");
+    bool ok = true;
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+    CHECK(gr.has_value(), "4076 AC4: Soft guard acquired");
+    if (gr.has_value()) {
+        auto guard = std::move(*gr);
+        const auto n = ws->unstamp_macro_introduced(lit, false);
+        CHECK(n >= 1, "4076 AC4: unstamp inside the guard");
+        CHECK(!ws->is_macro_introduced(lit), "4076 AC4: marker written User");
+        CHECK(ws->provenance(lit) == 0, "4076 AC4: provenance written 0");
+        guard->mark_failed();
+    }
+    CHECK(!ws->is_macro_introduced(lit), "4076 AC4: Soft abort leaves marker User");
+    CHECK(ws->provenance(lit) == 0, "4076 AC4: Soft abort leaves provenance cleared");
+    CHECK((ws->macro_dirty(lit) & 0x01) != 0,
+          "4076 AC4: dirty SoA still restored; marker columns were not");
+    apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac4076_source_cite() {
+    std::println("\n--- #4076: source-cite abort restores marker, Soft does not copy ---");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ast.find("Issue #4076") != std::string::npos, "4076: ast.ixx cites #4076");
+    CHECK(ast.find("restore_marker_provenance") != std::string::npos, "4076: restore helper");
+    const auto art = ast.find("abort_restore_dual_topology(std::size_t mutation_log_checkpoint");
+    CHECK(art != std::string::npos, "4076: abort function");
+    const auto art_win = ast.substr(art, 900);
+    CHECK(art_win.find("restore_marker_provenance(std::move(markers))") != std::string::npos,
+          "4076: abort restores marker and provenance");
+    CHECK(art_win.find("restore_dirty_soa(std::move(dirty_soa_snapshot))") != std::string::npos,
+          "4076: dirty SoA restore kept");
+    CHECK(mb.find("Issue #4076") != std::string::npos, "4076: boundary cites #4076");
+    const auto snap = mb.find("snapshot_marker_provenance()");
+    CHECK(snap != std::string::npos, "4076: enter snapshots marker");
+    const auto snap_win = mb.substr(snap > 240 ? snap - 240 : 0, 480);
+    CHECK(snap_win.find("production_hard_face_active()") != std::string::npos,
+          "4076: snapshot is production hard-face only");
+    std::size_t n_move = 0;
+    for (std::size_t p = 0;
+         (p = mb.find("std::move(cp.marker_provenance_snapshot)", p)) != std::string::npos; p += 1)
+        ++n_move;
+    CHECK(n_move == 4, "4076: all four abort sites pass the marker snapshot");
+    CHECK(mb.find("check_macro_hygiene_invariant_post_restore(\"abort-failure\")") !=
+              std::string::npos,
+          "4076: post-abort invariant check kept");
+    CHECK(ev.find("marker_provenance_snapshot") != std::string::npos,
+          "4076: checkpoint field at the end of MutationCheckpoint");
+    CHECK(read_file("tests/compiler/test_issue_4076.cpp").empty() &&
+              read_file("tests/issues/test_issue_4076.cpp").empty(),
+          "4076: no test_issue_4076.cpp per #81967");
+    CHECK(read_file("docs/design/4076-abort-marker-restore.md").empty(),
+          "4076: no docs/design/4076-* per #1655");
+}
+
 static void ac3979_3_soft_off_half_write() {
     std::println("\n--- #3979 AC3: Soft/Off half-write unchanged (one sandbox load) ---");
     const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
@@ -6464,6 +6740,11 @@ int main() {
     ac3979_1_source_truncate_under_guard();
     ac3979_2_reexpand_truncate_not_depth0_gated();
     ac3979_3_soft_off_half_write();
+    std::println("\n=== Issue #4076: abort restores marker_ and provenance_ ===");
+    ac4076_production_abort_restores_marker();
+    ac4076_success_unstamp_stays_user();
+    ac4076_soft_failure_does_not_restore();
+    ac4076_source_cite();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

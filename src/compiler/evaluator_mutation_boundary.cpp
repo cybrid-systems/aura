@@ -892,7 +892,8 @@ void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
     (void)mid_abort_ver;
     BoundaryRollbackStats stats;
     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-        cp.mutation_log_size, std::move(cp.children_snapshot), std::move(cp.dirty_soa_snapshot));
+        cp.mutation_log_size, std::move(cp.children_snapshot), std::move(cp.dirty_soa_snapshot),
+        std::move(cp.marker_provenance_snapshot));
     stats.children_column_restored = true;
     if (stats.field_records_rolled > 0)
         bump_mutation_log_rollback_count();
@@ -1035,8 +1036,13 @@ void Evaluator::enter_mutation_boundary() {
     // Issue #3865: capture the dirty SoA family at checkpoint (non-
     // lightweight) — restored with the topology on abort (no phantom
     // over-dirty cones). Empty on lightweight = keep live columns.
-    if (workspace_flat_ && !lightweight)
+    if (workspace_flat_ && !lightweight) {
         cp.dirty_soa_snapshot = workspace_flat_->snapshot_dirty_soa();
+        // Issue #4076: production abort restores marker_ and provenance_
+        // with macro_dirty_. Soft/Off pays no extra column copy.
+        if (typed_audit::production_hard_face_active())
+            cp.marker_provenance_snapshot = workspace_flat_->snapshot_marker_provenance();
+    }
     // Issue #3016: resolve audit mid once at enter (outer inherits from
     // TLS / parent checkpoint). total_mutations_ stays volume-only.
     // Issue #3971: note tenant before resolve so a refuse SE on this
@@ -1348,7 +1354,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             // does not leave phantom over-dirty cones (#3865 incomplete).
             stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
                 cp.mutation_log_size, std::move(cp.children_snapshot),
-                std::move(cp.dirty_soa_snapshot));
+                std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
             if (stats.field_records_rolled > 0) {
                 bump_mutation_log_rollback_count();
                 if (nested_boundary)
@@ -2257,7 +2263,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             stats.field_records_rolled =
                                 workspace_flat_->abort_restore_dual_topology(
                                     cp.mutation_log_size, std::move(cp.children_snapshot),
-                                    std::move(cp.dirty_soa_snapshot));
+                                    std::move(cp.dirty_soa_snapshot),
+                                    std::move(cp.marker_provenance_snapshot));
                             if (stats.field_records_rolled > 0) {
                                 bump_mutation_log_rollback_count();
                                 if (nested_boundary)
@@ -2446,7 +2453,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // phantom over-dirty cones (#3865 incomplete).
                     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
                         cp.mutation_log_size, std::move(cp.children_snapshot),
-                        std::move(cp.dirty_soa_snapshot));
+                        std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
                     if (stats.field_records_rolled > 0) {
                         bump_mutation_log_rollback_count();
                         if (nested_boundary)
