@@ -152,3 +152,4 @@ check_isolation_deny_epoch_4052.py
 check_soft_ready_http_post_after_probe_4056.py
 check_pair_slot_tenant_4057.py
 check_capability_stack_authorization_4058.py
+check_load_tenant_mutate_4059.py

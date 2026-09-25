@@ -1508,6 +1508,63 @@ int run_test_dispatch_required_effects() {
               "4057 AC4: no extra isolation deny");
     }
 
+    // ── Issue #4059 (allow side): with a real Mutate grant the load body
+    // choke ALLOWS and the workspace installs (the deny side runs in
+    // test_load_cap_io_read.cpp — MT escape + no-Mutate effect deny).
+    // #4037 AC2 grant shape: registry grants under Off, arm after, join
+    // the boundary seed to the live epoch.
+    {
+        std::println("\n--- #4059 AC3: Restricted + Mutate grant → load installs workspace ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        const auto live_mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        g_capability_registry().grant(4059, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0));
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4059);
+        ev.grant_capability(aura::compiler::security::kCapIoRead);
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(live_mid);
+        const std::string allow_path = "/tmp/aura_4059_allow.aura";
+        {
+            std::ofstream out(allow_path);
+            out << "(define *loaded4059* 41)\n";
+        }
+        const auto* ws0 = ev.workspace_flat();
+        auto r = cs.eval(std::format("(load \"{}\")", allow_path));
+        CHECK(r && !is_error(*r), "4059 AC3: load allowed with Mutate");
+        CHECK(ev.workspace_flat() != ws0, "4059 AC3: workspace swapped (fresh flat AST)");
+        auto got = cs.eval("*loaded4059*");
+        CHECK(got && is_int(*got) && as_int(*got) == 41, "4059 AC3: loaded body evaluated");
+        bool allow_row_ok = false;
+        const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        const std::size_t rn = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+        for (std::size_t i = 0; i < rn; ++i) {
+            const auto& e = g_security_event_ring().ring[i];
+            if (!e.denied && e.kind == aura::core::security_event::SecurityEventKind::EffectAllow &&
+                std::string_view(e.op) == "load")
+                allow_row_ok = e.epoch == live_mid;
+        }
+        CHECK(allow_row_ok, "4059 AC3: EffectAllow row carries the Mutation epoch");
+        // Wildcard variant: the "*" row (full mask) authorizes the swap too
+        // (the #3144 strip keeps TA/MSE out; Mutate survives).
+        aura::core::capability::reset_capability_effects_for_test();
+        aura::core::capability::g_capability_registry().grant(
+            4059, "*", aura::core::capability::effect_for_cap_name("*"),
+            aura::core::capability::make_grant_provenance(live_mid, true, 0, 0));
+        const auto* ws0b = ev.workspace_flat();
+        auto rw = cs.eval(std::format("(load \"{}\")", allow_path));
+        CHECK(rw && !is_error(*rw), "4059 AC3b: wildcard authorizes the swap");
+        CHECK(ev.workspace_flat() != ws0b, "4059 AC3b: workspace swapped");
+        std::remove(allow_path.c_str());
+    }
+
     // ── Issue #4058: capability_stack_ (with-capability pushes) is lexical
     // scope only — check-capability / capability-stack readouts. It never
     // satisfies has_capability: the oracle reads effects_effective_for +
