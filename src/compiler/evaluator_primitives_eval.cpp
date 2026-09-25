@@ -23,6 +23,19 @@ import aura.compiler.type_checker;
 import aura.parser.parser;
 import aura.diag;
 
+// Issue #4078: production expand deny must not eval_flat the refused tree.
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
+extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
+
+namespace {
+[[nodiscard]] const char* hygiene_expand_deny_why_4078() noexcept {
+    if (!aura_hygiene_expand_deny_blocks_eval())
+        return nullptr;
+    const char* why = aura_macro_hygiene_last_limit_reason_string();
+    return (why != nullptr && why[0] != '\0') ? why : "hygiene-pass-limit";
+}
+} // namespace
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -454,6 +467,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*ev.workspace_flat_, *ev.workspace_pool_,
                                                          ev.workspace_flat_->root);
+        // Issue #4078: load-file must not eval a refused half-expand.
+        if (const char* why = hygiene_expand_deny_why_4078())
+            return mev(why, why);
         auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
         ev.workspace_flat_->clear_all_dirty();
         if (result)
@@ -639,6 +655,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (ev.relower_dirty_defines_fn_)
             ev.relower_dirty_defines_fn_();
         auto expanded = aura::compiler::macro_expand_all(*flat, *pool, root);
+        // Issue #4078: do not eval_flat / cache a refused half-expand.
+        // Reason string stays hygiene-pass-limit (or the other deny code).
+        if (const char* why = hygiene_expand_deny_why_4078())
+            return mev(why, why);
         ev.coverage_counters_[4]++;
 
         // Incremental eval cache (Issue #32b / #159 / #1441).
@@ -761,6 +781,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             root = flat->root;
         }
         auto expanded = aura::compiler::macro_expand_all(*flat, *pool, root);
+        // Issue #4078: do not eval or capture output of a refused half-expand.
+        if (const char* why = hygiene_expand_deny_why_4078())
+            return mev(why, why);
         // Redirect stdout to a temp file (fd-level, catches fprintf too)
         std::fflush(stdout);
         auto* tmp = std::tmpfile();

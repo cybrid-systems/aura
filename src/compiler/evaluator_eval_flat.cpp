@@ -37,6 +37,10 @@ import aura.diag;
 import aura.parser.parser;
 import aura.compiler.soa_view;
 
+// Issue #4078: production expand deny must not eval the require import form.
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
+extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
+
 namespace aura::compiler {
 
 using aura::compiler::macro_exp::inner_expand_production_limit_deny;
@@ -5159,6 +5163,14 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Pre-expand macros so import primitive is recognized
                                 auto expanded_root =
                                     aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
+                                // Issue #4078: do not eval a refused half-expand.
+                                if (aura_hygiene_expand_deny_blocks_eval()) {
+                                    const char* why = aura_macro_hygiene_last_limit_reason_string();
+                                    return std::unexpected(Diagnostic{
+                                        ErrorKind::InternalError, (why != nullptr && why[0] != '\0')
+                                                                      ? why
+                                                                      : "hygiene-pass-limit"});
+                                }
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
                                 if (!last)
                                     return last;

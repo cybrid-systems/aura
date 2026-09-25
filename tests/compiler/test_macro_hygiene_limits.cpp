@@ -1608,6 +1608,234 @@ static void ac3888_sticky_mi_then_ceiling_still_observable() {
     reset_all();
 }
 
+// Issue #4078: non-root two-pass chain. Pass 0 splices (d 3) → (e 3) into
+// the begin parent. A later pass would reach (* 3 2). max_passes 1 refuses.
+static void fill_nonroot_two_pass(FlatAST& flat, StringPool& pool, aura::ast::NodeId& call_out) {
+    fill_two_pass_macros(flat, pool);
+    call_out = flat.root;
+    std::vector<aura::ast::NodeId> kids;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.get(id).tag == aura::ast::NodeTag::MacroDef)
+            kids.push_back(id);
+    }
+    kids.push_back(call_out);
+    flat.root = flat.add_begin(kids);
+}
+
+static bool walk_sees_macro_introduced(const FlatAST& flat, aura::ast::NodeId root) {
+    std::vector<aura::ast::NodeId> st{root};
+    while (!st.empty()) {
+        auto id = st.back();
+        st.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        if (flat.is_macro_introduced(id))
+            return true;
+        auto v = flat.get(id);
+        for (auto c : v.children)
+            st.push_back(c);
+    }
+    return false;
+}
+
+static bool walk_sees_call_named(const FlatAST& flat, StringPool& pool, aura::ast::NodeId root,
+                                 std::string_view name) {
+    std::vector<aura::ast::NodeId> st{root};
+    while (!st.empty()) {
+        auto id = st.back();
+        st.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+            auto cal = flat.get(v.child(0));
+            if (cal.tag == aura::ast::NodeTag::Variable && pool.resolve(cal.sym_id) == name)
+                return true;
+        }
+        for (auto c : v.children)
+            st.push_back(c);
+    }
+    return false;
+}
+
+static bool parents_keep_high_child(const FlatAST& flat, std::size_t size0) {
+    const auto n = std::min(size0, flat.size());
+    for (aura::ast::NodeId id = 0; id < n; ++id) {
+        auto v = flat.get(id);
+        for (auto c : v.children) {
+            if (c != NULL_NODE && c >= size0)
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool merr_mentions(Evaluator& ev, const aura::compiler::types::EvalValue& v,
+                          std::string_view needle) {
+    if (!is_pair(v))
+        return false;
+    auto pi = as_pair_idx(v);
+    if (pi >= ev.pairs().size())
+        return false;
+    auto look = [&](const aura::compiler::types::EvalValue& s) {
+        if (!is_string(s))
+            return false;
+        auto si = as_string_idx(s);
+        return si < ev.string_heap().size() &&
+               ev.string_heap()[si].find(needle) != std::string::npos;
+    };
+    const auto& outer = ev.pairs()[pi];
+    if (look(outer.car))
+        return true;
+    if (!is_pair(outer.cdr))
+        return false;
+    auto pi2 = as_pair_idx(outer.cdr);
+    return pi2 < ev.pairs().size() && look(ev.pairs()[pi2].car);
+}
+
+static void ac4078_production_same_flat_rollback() {
+    std::println("\n--- #4078 AC1/AC3: production deny restores the caller's flat ---");
+    reset_all();
+    grant_self_evo_production();
+    CHECK(set_hygiene_pass_cap(1), "4078 AC1 pass cap=1");
+    StringPool pool;
+    FlatAST flat;
+    aura::ast::NodeId call = NULL_NODE;
+    fill_nonroot_two_pass(flat, pool, call);
+    const auto orig = flat.root;
+    const auto size0 = flat.size();
+    const auto fp0 = tree_fp(flat, orig);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = macro_expand_all(flat, pool, orig, 8);
+    CHECK(out == orig, "4078 AC1: returns the pre-expand root");
+    CHECK(tree_fp(flat, out) == fp0, "4078 AC1: walk matches the pre-pass tree");
+    CHECK(!walk_sees_macro_introduced(flat, out),
+          "4078 AC1: no spliced MacroIntroduced clone reachable");
+    CHECK(walk_sees_call_named(flat, pool, out, "d"), "4078 AC1: original (d ...) call restored");
+    CHECK(!parents_keep_high_child(flat, size0),
+          "4078 AC3: parents below size0 do not retain child ids >= size0");
+    CHECK(flat.size() == size0, "4078 AC3: no-evaluator truncate drops the refused tail");
+    const auto* rs = hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-pass-limit",
+          "4078 AC1: reason string hygiene-pass-limit");
+    reset_all();
+}
+
+static void ac4078_workspace_same_tree() {
+    std::println("\n--- #4078 AC1: workspace and the caller pointer are the same tree ---");
+    reset_all();
+    CompilerService cs;
+    ac4077_arm_production(cs);
+    CHECK(set_hygiene_pass_cap(1), "4078 AC1 owned pass cap=1");
+    auto& ev = cs.evaluator();
+    {
+        StringPool pool;
+        FlatAST flat;
+        aura::ast::NodeId call = NULL_NODE;
+        fill_nonroot_two_pass(flat, pool, call);
+        const auto orig = flat.root;
+        const auto fp0 = tree_fp(flat, orig);
+        ev.set_workspace_flat(&flat);
+        ev.set_workspace_pool(&pool);
+        ev.set_current_flat(&flat);
+        ev.set_current_pool(&pool);
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out = macro_expand_all(flat, pool, orig, 8);
+        CHECK(out == orig, "4078 AC1: owned deny returns the pre-expand root");
+        CHECK(tree_fp(flat, out) == fp0, "4078 AC1: caller flat matches the pre-pass tree");
+        CHECK(!walk_sees_macro_introduced(flat, out), "4078 AC1: caller walk has no spliced clone");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "4078 AC1: workspace still set");
+        if (ws == &flat) {
+            CHECK(tree_fp(*ws, ws->root) == fp0, "4078 AC1: workspace pointer is the caller tree");
+        } else if (ws->root < ws->size()) {
+            CHECK(!walk_sees_macro_introduced(*ws, ws->root),
+                  "4078 AC1: refreshed workspace has no spliced MacroIntroduced clone");
+        }
+        ev.set_workspace_flat(nullptr);
+        ev.set_workspace_pool(nullptr);
+        ev.set_current_flat(nullptr);
+        ev.set_current_pool(nullptr);
+    }
+    reset_all();
+}
+
+static void ac4078_eval_skips_half_tree() {
+    std::println("\n--- #4078 AC2: eval / eval-current do not run the half tree ---");
+    const char* src = "(defmacro (d y) (e y)) (defmacro (e y) (* y 2)) (d 3)";
+    {
+        reset_all();
+        CompilerService cs;
+        grant_self_evo_production();
+        CHECK(set_hygiene_pass_cap(1), "4078 AC2 pass cap=1");
+        auto r = cs.eval(src);
+        CHECK(!r.has_value(), "4078 AC2: CompilerService::eval does not return the expansion");
+        if (!r) {
+            CHECK(r.error().format().find("hygiene-pass-limit") != std::string::npos,
+                  "4078 AC2: agent-visible reason hygiene-pass-limit");
+        }
+        reset_all();
+    }
+    {
+        reset_all();
+        CompilerService cs;
+        CHECK(cs.eval(std::string("(set-code \"") + src + "\")").has_value(), "4078 AC2: set-code");
+        ac4077_arm_production(cs);
+        CHECK(set_hygiene_pass_cap(1), "4078 AC2 eval-current pass cap=1");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value(), "4078 AC2: eval-current returns a value");
+        if (r) {
+            CHECK(!(is_int(*r) && as_int(*r) == 6),
+                  "4078 AC2: eval-current did not eval the half tree to 6");
+            CHECK(merr_mentions(cs.evaluator(), *r, "hygiene-pass-limit"),
+                  "4078 AC2: eval-current reason hygiene-pass-limit");
+        }
+        reset_all();
+    }
+}
+
+static void ac4078_soft_half_expand() {
+    std::println("\n--- #4078 AC4: Soft/Off keeps the historical half-expand ---");
+    reset_all();
+    CHECK(set_hygiene_pass_cap(1), "4078 AC4 pass cap=1");
+    StringPool pool;
+    FlatAST flat;
+    aura::ast::NodeId call = NULL_NODE;
+    fill_nonroot_two_pass(flat, pool, call);
+    const auto orig = flat.root;
+    const auto size0 = flat.size();
+    const auto fp0 = tree_fp(flat, orig);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = macro_expand_all(flat, pool, orig, 8);
+    CHECK(out == orig, "4078 AC4: begin root stays (non-root splice)");
+    CHECK(tree_fp(flat, out) != fp0, "4078 AC4: Soft keeps the spliced half-expand");
+    CHECK(flat.size() > size0, "4078 AC4: Soft does not truncate");
+    CHECK(!walk_sees_call_named(flat, pool, out, "d"), "4078 AC4: original call was spliced away");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    const auto arm = cpp.find("arm_caller_edges(flat)");
+    const auto gate = cpp.rfind("if (production_surface)", arm);
+    CHECK(arm != std::string::npos && gate != std::string::npos && gate < arm,
+          "4078 AC4: child snapshot stays under the one production_surface load");
+    CHECK(cpp.find("Issue #4078") != std::string::npos, "4078: macro_expansion cites #4078");
+    CHECK(cpp.find("aura_hygiene_expand_deny_blocks_eval") != std::string::npos,
+          "4078: caller gate uses the fiber deny codes");
+    CHECK(read_file("src/compiler/service.ixx").find("aura_hygiene_expand_deny_blocks_eval") !=
+              std::string::npos,
+          "4078: CompilerService::eval consults the gate");
+    CHECK(read_file("src/compiler/evaluator_primitives_eval.cpp")
+                  .find("hygiene_expand_deny_why_4078") != std::string::npos,
+          "4078: eval-current consults the gate");
+    CHECK(read_file("src/compiler/evaluator_module_loader.cpp")
+                  .find("aura_hygiene_expand_deny_blocks_eval") != std::string::npos,
+          "4078: module load consults the gate");
+    CHECK(read_file("tests/compiler/test_issue_4078.cpp").empty() &&
+              read_file("tests/issues/test_issue_4078.cpp").empty(),
+          "4078: no test_issue_4078.cpp per #81967");
+    CHECK(read_file("docs/design/4078-pass-limit-same-flat.md").empty(),
+          "4078: no docs/design/4078-* per #1655");
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -1663,6 +1891,11 @@ int run_test_macro_hygiene_limits() {
     ac4077_guard_failure_restores_once();
     ac4077_soft_does_not_restore();
     ac4077_source_cite();
+    std::println("\n=== Issue #4078: pass-limit restore must roll back the caller's flat ===");
+    ac4078_production_same_flat_rollback();
+    ac4078_workspace_same_tree();
+    ac4078_eval_skips_half_tree();
+    ac4078_soft_half_expand();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
