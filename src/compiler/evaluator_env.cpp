@@ -1361,105 +1361,44 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             m->dual_path_desync_soft_continue_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1269 / #1754 / #1999: enforce dual-path + version stamp on every
-    // materialize path — refresh only when the frame exists and is
-    // version-stale (not NULL/OOB — those have no bindings to refresh).
+    // Issue #1269 / #1754 / #1999: compare version_ under the lock already
+    // held. Do NOT call is_env_frame_stale() — it takes its own
+    // shared_lock, and std::shared_mutex is non-recursive.
     //
-    // CRITICAL: do NOT call is_env_frame_stale() here — it takes its own
-    // shared_lock(env_frames_mtx_), and std::shared_mutex is non-recursive.
-    // We already hold env_rlock; nested acquire is UB / EDEADLK
-    // ("Resource deadlock avoided") on pthread. Compare version_ under the
-    // lock we already hold (same predicate as is_env_frame_stale).
+    // Issue #4072: a frame behind defuse_version_ must not have version_
+    // washed to current and then still contribute fr.bindings_*. That
+    // copy is what apply_closure eval_flat's. Same empty Env as
+    // INVALID_VERSION. Do not add a Guard; Soft takes this path too.
     {
         const auto cur_defuse = defuse_version_.load(std::memory_order_acquire);
-        if (fr.version_ != INVALID_VERSION && fr.version_ < cur_defuse) {
-            refresh_stale_frame_in_walk(cl.env_id, "materialize_call_env");
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->envframe_dualpath_materialize_refresh.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    // Issue #242: detect a stale frame (captured before the
-    // current mutation epoch). The frame's bindings might be
-    // inconsistent with the post-mutation state — log a
-    // warning + bump the frame's version_ so subsequent
-    // lookups see it as fresh. We don't refresh the bindings
-    // themselves (that would require re-capturing against a
-    // new env, which is out of scope for the P0 ship); the
-    // warning + version bump is enough to make the staleness
-    // observable and prevent repeated warnings.
-    //
-    // Issue #317 follow-up: the version bump + stats counter
-    // bump are still unconditional (the future-proofing is
-    // cheap and the observability counter is essential for
-    // (query:envframe-dualpath-stats)). The stderr warning
-    // emission is now gated on the AURA_VERBOSE_ENVFRAME env
-    // var — production runs + the default CI flow stay silent,
-    // while operators debugging a real staleness issue can set
-    // the var to opt back in. The test suite (suite/edsl_self
-    // _test.aura) uses default settings, so the warning no
-    // longer appears in the suite output.
-    if (fr.version_ == INVALID_VERSION) {
-        // Issue #356 / #1916: post-rollback invalid frame. Do NOT
-        // refresh — the bindings may reference AST nodes / pool
-        // strings that no longer exist. Emit a distinct
-        // warning (gated behind AURA_VERBOSE_ENVFRAME, same as
-        // the regular stale warning) and return an empty Env so
-        // the closure body sees no captured bindings (it can
-        // still find globals via the workspace walk).
-        static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
-        if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
-            std::println(std::cerr,
-                         "[#356 warning] materialize_call_env: post-rollback "
-                         "EnvFrame id={} (frame.version_=INVALID). "
-                         "Bindings skipped — closure captured against a doomed "
-                         "transaction. Returning empty Env (globals still reachable).",
-                         cl.env_id);
-        }
-        // Still stamp the empty Env with the current version so
-        // downstream callers see a consistent snapshot.
-        ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
-        // Issue #1510 / #1916: post-rollback / invalid frame → dangling env prevented.
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
-            m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
-            m->dangling_env_prevented_materialize.fetch_add(1, std::memory_order_relaxed);
-        }
-        wire_global_access(ne);
-        return ne;
-    }
-    if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {
-        // Mutate the version under the same shared lock. A
-        // shared_lock allows multiple readers but blocks
-        // writers (alloc_env_frame); since we're not adding
-        // or removing frames, just updating a metadata
-        // field, the shared lock is sufficient (no other
-        // reader depends on version_ being immutable).
-        const_cast<EnvFrame&>(fr).version_ = defuse_version_.load(std::memory_order_acquire);
-        // Issue #543: bump the envframe_stale_refresh_count_
-        // observability counter so the (query:envframe-
-        // dualpath-stats) primitive can report stale-refresh
-        // events for production monitoring. Stats-only
-        // (relaxed-ordering); doesn't affect control flow.
-        bump_envframe_stale_refresh_count();
-        // Issue #741: EnvFrame version re-stamp on materialize for
-        // quote/lambda closures held across partial re-lower.
-        bump_incremental_closure_env_version_resync();
-        // Issue #317 follow-up: emit the diagnostic only when
-        // the operator has opted in. Default silent. The
-        // (query:envframe-dualpath-stats) primitive is the
-        // canonical source for staleness telemetry; this
-        // stderr message is for one-off debugging.
-        static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
-        if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
-            // Logging is best-effort — a fiber thread might not
-            // have a tty. We use std::println(std::cerr, ...) so
-            // the warning is always emitted (not just in debug).
-            std::println(std::cerr,
-                         "[#242 warning] materialize_call_env: stale EnvFrame id={} "
-                         "(frame.version_={}, current defuse_version_={}). "
-                         "Bindings may be inconsistent with post-mutation state. "
-                         "Bumped frame.version_ to silence future warnings.",
-                         cl.env_id, fr.version_, defuse_version_.load(std::memory_order_acquire));
+        const bool terminal = fr.version_ == INVALID_VERSION;
+        const bool behind = !terminal && fr.version_ < cur_defuse;
+        if (terminal || behind) {
+            static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
+            if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
+                if (terminal) {
+                    std::println(std::cerr,
+                                 "[#356 warning] materialize_call_env: post-rollback "
+                                 "EnvFrame id={} (frame.version_=INVALID). "
+                                 "Bindings skipped — closure captured against a doomed "
+                                 "transaction. Returning empty Env (globals still reachable).",
+                                 cl.env_id);
+                } else {
+                    std::println(std::cerr,
+                                 "[#242 warning] materialize_call_env: stale EnvFrame id={} "
+                                 "(frame.version_={}, current defuse_version_={}). "
+                                 "Bindings skipped — not copied into eval_flat.",
+                                 cl.env_id, fr.version_, cur_defuse);
+                }
+            }
+            ne.set_env_version(cur_defuse);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->dangling_env_prevented_materialize.fetch_add(1, std::memory_order_relaxed);
+            }
+            wire_global_access(ne);
+            return ne;
         }
     }
     // Issue #1482 restore: rehydrate BOTH paths from the capture frame.
@@ -1499,10 +1438,9 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // and lets future lookups via walk_env_frames (or
     // Env::lookup_cell_ptr) cheaply detect a stale chain by
     // comparing this stamp against the owner's current
-    // defuse_version_. The stamp is captured AFTER the frame
-    // version_ check above so a stale frame's bindings are
-    // re-stamped to current, and the new Env reflects that
-    // current value.
+    // defuse_version_. Reached only when frame.version_ is current.
+    // Issue #4072: a behind or INVALID_VERSION frame already returned
+    // an empty Env above and did not copy bindings.
     ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
     return ne;
 }
@@ -2706,48 +2644,50 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
     for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
         rlock[ef_i] =
             std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
-    walk_env_frames(start, [&](EnvId cur, const EnvFrame& fr) {
-        // Issue #264: skip frames stamped before the current
-        // mutation epoch (stale under concurrent mutate/compact).
-        if (fr.version_ < version_snap) {
-            // Issue #543: bump the envframe_version_mismatch_in_walk_
-            // counter so (query:envframe-dualpath-stats) can
-            // report walk-time version mismatches for production
-            // monitoring. Stats-only (relaxed-ordering); doesn't
-            // affect control flow.
+    // Issue #4072: do not use walk_env_frames here. That helper treats
+    // INVALID_VERSION as !OK and aborts the chain, and a visitor that
+    // only checks version_ < snap never sees INVALID_VERSION (uint64
+    // max). Skip the invalid frame and keep walking parents.
+    EnvId cur = start;
+    std::size_t hops = 0;
+    const auto hop_cap = env_frames_.size() + 1;
+    while (cur != NULL_ENV_ID && hops < hop_cap) {
+        if (static_cast<std::size_t>(cur) >= env_frames_.size())
+            break;
+        const EnvFrame& fr = env_frames_[cur];
+        if (fr.version_ == INVALID_VERSION) {
             bump_envframe_version_mismatch_in_walk();
-            // Issue #355: refresh the stale frame (bump its
-            // version_ + emit the [#242 warning] gated behind
-            // AURA_VERBOSE_ENVFRAME) so the walker surfaces the
-            // same staleness diagnostic that
-            // materialize_call_env does, and subsequent walks
-            // see it as fresh.
-            refresh_stale_frame_in_walk(cur, "lookup_by_symid_chain");
-            // After refresh, still consult this frame (do not skip).
+            cur = fr.parent_id;
+            ++hops;
+            continue;
+        }
+        // Issue #264: frames stamped before the current mutation epoch.
+        if (fr.version_ < version_snap) {
+            bump_envframe_version_mismatch_in_walk();
+            // Issue #355: refresh, then still consult this frame.
             // Skipping + #1128 parent fallthrough returned pre-rebind
             // bindings and broke mutate:rebind / dep-chain p0 tests.
+            refresh_stale_frame_in_walk(cur, "lookup_by_symid_chain");
         }
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
             auto val = *v;
             if (is_cell(val)) {
-                // Issue #1130: snapshot cell after acquire fence so a
-                // concurrent cell store is visible; re-check size so we
-                // never index past a concurrent shrink (push-only today).
                 auto idx = as_cell_id(val);
                 aura::util::thread_fence(std::memory_order_acquire);
                 const auto n = cells_.size();
                 if (idx < n)
-                    result = cells_[idx]; // EvalValue is int64 POD copy
+                    result = cells_[idx];
                 else
-                    result = val; // defensive
+                    result = val;
             } else {
                 result = std::move(val);
             }
-            return false; // stop walking — closest frame wins
+            break;
         }
-        return true; // continue walking
-    });
+        cur = fr.parent_id;
+        ++hops;
+    }
     return result;
 }
 

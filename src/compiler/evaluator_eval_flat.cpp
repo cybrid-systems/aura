@@ -1055,9 +1055,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         stamp_closure_bridge_epoch(cl_copy);
                     }
                 }
-                if (cl_copy.env_id != NULL_ENV_ID && is_valid_env_id(cl_copy.env_id))
-                    refresh_stale_frame_in_walk(cl_copy.env_id,
-                                                "apply_closure_must_deopt_soft_2581");
+                // Issue #4072: do not refresh_stale_frame_in_walk
+                // (apply_closure_must_deopt_soft_2581). Washing version_
+                // then materialize_call_env would eval_flat the old capture.
                 if (metrics) {
                     metrics->must_deopt_force_deopt_success_total.fetch_add(
                         1, std::memory_order_relaxed);
@@ -1184,8 +1184,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         stamp_closure_bridge_epoch(cl_copy);
                     }
                 }
-                if (cl_copy.env_id != NULL_ENV_ID && is_valid_env_id(cl_copy.env_id))
-                    refresh_stale_frame_in_walk(cl_copy.env_id, "apply_closure_soft_recover_2569");
+                // Issue #4072: do not refresh_stale_frame_in_walk
+                // (apply_closure_soft_recover_2569). materialize_call_env
+                // returns an empty Env while version_ stays behind defuse.
                 if (metrics) {
                     metrics->live_closure_epoch_restamp_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
@@ -1344,9 +1345,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                                 stamp_closure_bridge_epoch(cl_copy);
                             }
                         }
-                        if (cl_copy.env_id != NULL_ENV_ID && is_valid_env_id(cl_copy.env_id))
-                            refresh_stale_frame_in_walk(cl_copy.env_id,
-                                                        "apply_closure_race_soft_recover_2569");
+                        // Issue #4072: do not refresh_stale_frame_in_walk
+                        // (apply_closure_race_soft_recover_2569). The Env
+                        // passed to eval_flat was already materialized
+                        // without the unrefreshed capture.
                         if (metrics)
                             metrics->live_closure_epoch_restamp_total.fetch_add(
                                 1, std::memory_order_relaxed);

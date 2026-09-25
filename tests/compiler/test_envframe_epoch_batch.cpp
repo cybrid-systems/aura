@@ -1151,6 +1151,48 @@ static void run_3680_compact_owner_scope() {
     }
 }
 
+static void run_4072_invalid_and_stale_capture() {
+    std::println("\n--- #4072: INVALID_VERSION lookup skip + stale materialize ---");
+    using aura::compiler::Closure;
+    using aura::compiler::INVALID_VERSION;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::make_int;
+    Evaluator ev;
+    const auto parent = ev.alloc_env_frame();
+    ev.env_frame_mut(parent).bind_symid(9, make_int(1));
+    const auto child = ev.alloc_env_frame(parent, nullptr);
+    ev.env_frame_mut(child).bind_symid(7, make_int(4072));
+    ev.env_frame_mut(child).version_ = INVALID_VERSION;
+    auto old = ev.lookup_by_symid_chain(child, 7);
+    CHECK(!old.has_value(), "4072: invalid frame binding is not returned");
+    auto kept = ev.lookup_by_symid_chain(child, 9);
+    CHECK(kept.has_value() && is_int(*kept) && as_int(*kept) == 1,
+          "4072: parent binding still visible");
+
+    const auto live = ev.alloc_env_frame();
+    ev.env_frame_mut(live).bind_symid(7, make_int(4072));
+    ev.bump_defuse_version_for_test();
+    CHECK(ev.is_env_frame_stale(live), "4072: frame behind defuse");
+    const auto ver = ev.env_frame(live).version_;
+    Closure cl;
+    cl.env_id = live;
+    auto ne = ev.materialize_call_env(cl);
+    auto copied = ne.lookup_by_symid(7);
+    CHECK(!copied.has_value(), "4072: stale materialize does not copy the capture");
+    CHECK(ev.env_frame(live).version_ == ver, "4072: version_ was not washed to current");
+    const auto env_src = read_file("src/compiler/evaluator_env.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(env_src.find("Issue #4072") != std::string::npos, "4072: materialize cites");
+    CHECK(flat.find("apply_closure_soft_recover_2569") != std::string::npos,
+          "4072: #2569 site remains");
+    CHECK(flat.find("refresh_stale_frame_in_walk(cl_copy.env_id, \"apply_closure_soft_recover_"
+                    "2569\")") == std::string::npos,
+          "4072: apply does not wash the frame before eval_flat");
+    CHECK(read_file("docs/design/4072-defuse-stale-frame.md").empty(), "4072: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_4072.cpp").empty(), "4072: no test_issue file");
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1174,6 +1216,8 @@ int main() {
     aura_envframe_epoch_batch::ac3267_4_legacy_trust_read_once();
     aura_envframe_epoch_batch::ac3267_5_source_and_linter();
     aura_envframe_epoch_batch::run_3680_compact_owner_scope();
+    std::println("\n=== Issue #4072: stale defuse frame is not a current capture ===");
+    aura_envframe_epoch_batch::run_4072_invalid_and_stale_capture();
     if (::aura::test::g_failed)
         return 1;
     std::println(
