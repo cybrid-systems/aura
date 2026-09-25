@@ -382,6 +382,76 @@ static void ac5_source_cite_and_linter() {
 
 } // namespace
 
+// Issue #4069: Reclaimed && !Done must not unpin linear roots the body
+// still uses. Done (or a fiber that was never reclaimed) still drains.
+static void ac4069_reclaimed_live_body_keeps_linear_root() {
+    std::println("\n--- #4069: Reclaimed live body keeps linear roots ---");
+    aura::core::lifetime::reset_linear_roots_for_test();
+    static unsigned char body_root[64];
+    static unsigned char sibling_root[64];
+    auto* prev = aura::serve::g_current_fiber;
+    {
+        Fiber body(+[] {}, /*stack_size=*/64 * 1024);
+        Fiber sibling(+[] {}, /*stack_size=*/64 * 1024);
+        // Guard-enter snapshot does not yet include the root the body pins.
+        std::unordered_set<void*> keep;
+        keep.insert(static_cast<void*>(sibling_root));
+        body.set_outermost_linear_keep(std::move(keep));
+        aura::serve::g_current_fiber = &sibling;
+        aura::core::lifetime::pin_linear_root(sibling_root);
+        aura::serve::g_current_fiber = &body;
+        aura::core::lifetime::pin_linear_root(body_root);
+        body.mark_reclaimed();
+        CHECK(body.is_reclaimed() && !body.is_done(), "4069: join sees Reclaimed live body");
+        (void)body.release_orphan_roots();
+        std::unordered_set<void*> live;
+        aura::core::lifetime::snapshot_linear_roots(live);
+        CHECK(live.count(body_root) == 1, "4069: body root survives Reclaimed release");
+        CHECK(live.count(sibling_root) == 1, "4069: sibling root survives");
+        void* neu = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(body_root) + 0x40);
+        std::unordered_map<void*, void*> remap;
+        remap[static_cast<void*>(body_root)] = neu;
+        CHECK(aura::core::lifetime::remap_linear_roots_under_moving(remap) == 1,
+              "4069: Moving remaps the still-registered body root");
+        aura::core::lifetime::snapshot_linear_roots(live);
+        CHECK(live.count(neu) == 1, "4069: body root at the new address");
+        CHECK(live.count(static_cast<void*>(body_root)) == 0, "4069: old body address dropped");
+    }
+    std::unordered_set<void*> after_dtor;
+    aura::core::lifetime::snapshot_linear_roots(after_dtor);
+    void* neu = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(body_root) + 0x40);
+    CHECK(after_dtor.count(neu) == 1, "4069: ~Fiber while !Done does not unpin the body root");
+
+    {
+        Fiber done_body(+[] {}, /*stack_size=*/64 * 1024);
+        aura::serve::g_current_fiber = &done_body;
+        static unsigned char done_root[64];
+        aura::core::lifetime::pin_linear_root(done_root);
+        done_body.clear_outermost_linear_keep();
+        done_body.mark_reclaimed();
+        done_body.set_state(FiberState::Done);
+        (void)done_body.release_orphan_roots();
+        aura::core::lifetime::snapshot_linear_roots(after_dtor);
+        CHECK(after_dtor.count(done_root) == 0, "4069: Done reclaim still owner-drains");
+    }
+
+    aura::serve::g_current_fiber = prev;
+    const auto fh = read_file("src/serve/fiber.cpp");
+    CHECK(fh.find("Issue #4069") != std::string::npos, "4069: fiber.cpp cites");
+    CHECK(fh.find("is_reclaimed() && !is_done()") != std::string::npos,
+          "4069: linear unpin waits until Done");
+    CHECK(fh.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos,
+          "4069: scoped drain remains for the Done path");
+    CHECK(read_file("docs/design/4069-reclaimed-unpin.md").empty(), "4069: no docs/design");
+    CHECK(read_file("tests/serve/test_issue_4069.cpp").empty(), "4069: no test_issue_4069.cpp");
+    aura::core::lifetime::reset_linear_roots_for_test();
+}
+
+int run_test_ac4069_reclaimed_linear_keep() {
+    ac4069_reclaimed_live_body_keeps_linear_root();
+    return aura::test::g_failed ? 1 : 0;
+}
+
 int run_test_fiber_reclaim_orphan_release() {
     std::println("=== Issue #2498: fiber reclaim orphan release (off-stack table) ===");
     ac1_reclaim_releases_orphan_roots();
@@ -391,6 +461,7 @@ int run_test_fiber_reclaim_orphan_release() {
     ac5_source_cite_and_linter();
     ac6_3438_scoped_linear_drain();
     ac4031_owner_scoped_linear_drain();
+    ac4069_reclaimed_live_body_keeps_linear_root();
     std::println("\n=== #2498/#4031: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }

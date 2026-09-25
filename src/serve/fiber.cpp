@@ -1947,7 +1947,15 @@ std::size_t Fiber::release_orphan_roots() noexcept {
     // linear roots. Unarmed: owner-scoped only (never process-wide).
     // Empty registry is one lock + empty check. post-densify verify
     // never unpins.
-    (void)unpin_linear_roots_scoped_for_fiber(this);
+    // Issue #4069: Reclaimed && !Done means the body is still on a
+    // worker. Taking the keep (or owner-draining) here drops roots that
+    // pin_linear_root installed for this Guard; ~Fiber would then drop
+    // the ones the first call spared. Linear unpin waits until Done
+    // (destructor, abort, or steal hard-fail). Orphan-table callbacks
+    // above still run. Soft empty-registry check on the Done path is
+    // unchanged.
+    if (!(is_reclaimed() && !is_done()))
+        (void)unpin_linear_roots_scoped_for_fiber(this);
     return n;
 }
 
