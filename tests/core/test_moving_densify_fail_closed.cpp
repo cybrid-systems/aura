@@ -39,11 +39,13 @@
 #include "core/lifetime_consistency_proof.hh"
 #include "core/moving_densify_health.hh"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <print>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 #include <string_view>
@@ -5416,6 +5418,143 @@ static void ac3947_3_soft_zero_and_no_invent() {
     CHECK(ffi.find("class InteriorPinRegistry") == std::string::npos, "3947: no second registry");
 }
 
+// Issue #4066: peer bind × Moving recycle. The #3857 entry load is
+// check-then-act; the inventory mutex stays held from the live==0 re-read
+// through small_pool_.recycle. bind_temporary_moving_live_ptr blocks on
+// that mutex, then notes the post-remap address.
+std::atomic<int> g_ac4066_stage{0};
+
+void ac4066_before_recycle_hook() noexcept {
+    g_ac4066_stage.store(1, std::memory_order_release);
+    for (int i = 0; i < 8000000 &&
+                    aura::ast::g_moving_canary_lock_waiters.load(std::memory_order_acquire) == 0;
+         ++i)
+        std::this_thread::yield();
+    for (int i = 0; i < 64; ++i)
+        std::this_thread::yield();
+}
+
+static void ac4066_peer_sees_unrecycled_or_remapped() {
+    std::println("\n--- #4066: peer bind blocks across recycle and reads its payload ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::g_moving_canary_before_recycle_hook.store(nullptr, std::memory_order_release);
+    aura::ast::g_moving_canary_lock_waiters.store(0, std::memory_order_relaxed);
+    g_ac4066_stage.store(0, std::memory_order_relaxed);
+
+    ASTArena arena(64 * 1024);
+    auto* a = arena.create<Pod16>(0x4066, 1, 2, 3);
+    auto* b = arena.create<Pod16>(0x1111, 4, 5, 6);
+    auto* c = arena.create<Pod16>(0x2222, 7, 8, 9);
+    CHECK(a && b && c, "4066: three small-pool objects");
+    void* raw = a;
+    void* slot_a = a;
+    void* slot_b = b;
+    void* slot_c = c;
+    arena.register_external_root_slot_for_densify(&slot_a);
+    arena.register_external_root_slot_for_densify(&slot_b);
+    arena.register_external_root_slot_for_densify(&slot_c);
+
+    std::atomic<void*> got{nullptr};
+    std::atomic<int> payload{-1};
+    std::thread peer([&] {
+        for (int i = 0; i < 8000000 && g_ac4066_stage.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::yield();
+        if (g_ac4066_stage.load(std::memory_order_acquire) != 1) {
+            g_ac4066_stage.store(9, std::memory_order_release);
+            return;
+        }
+        bool noted = false;
+        void* p = arena.bind_temporary_moving_live_ptr(raw, &noted);
+        got.store(p, std::memory_order_release);
+        payload.store(p ? static_cast<Pod16*>(p)->a : -1, std::memory_order_release);
+        if (noted)
+            aura::ast::unnote_temporary_moving_live_ptr(p);
+        g_ac4066_stage.store(2, std::memory_order_release);
+    });
+
+    aura::ast::g_moving_canary_before_recycle_hook.store(&ac4066_before_recycle_hook,
+                                                         std::memory_order_release);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    aura::ast::g_moving_canary_before_recycle_hook.store(nullptr, std::memory_order_release);
+    peer.join();
+
+    CHECK(g_ac4066_stage.load() == 2, "4066: peer ran inside the pre-recycle hold");
+    CHECK(payload.load() == 0x4066, "4066: peer read its own payload, not a freelist sibling");
+    void* seen = got.load();
+    if (r.objects_moved > 0 && seen != raw) {
+        CHECK(arena.resolve_object_remap(raw) == seen,
+              "4066: moved window — peer address is the remap target");
+    } else if (r.objects_moved == 0) {
+        CHECK(seen == raw, "4066: no-move window keeps the unrecycled address");
+    }
+    CHECK(static_cast<Pod16*>(slot_a)->a == 0x4066, "4066: slotted root still the peer payload");
+    aura::ast::g_moving_canary_lock_waiters.store(0, std::memory_order_relaxed);
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4066_noted_before_recycle_does_not_move() {
+    std::println("\n--- #4066: live canary before recycle soft-gates the window ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    ASTArena arena(64 * 1024);
+    auto* a = arena.create<Pod16>(0x4066, 1, 1, 1);
+    auto* b = arena.create<Pod16>(9, 9, 9, 9);
+    CHECK(a && b, "4066: creates");
+    bool noted = false;
+    void* got = arena.bind_temporary_moving_live_ptr(a, &noted);
+    CHECK(noted && got == a, "4066: bind notes the pre-move address");
+    void* slot = b;
+    arena.register_external_root_slot_for_densify(&slot);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "4066: no recycle while the canary is live");
+    CHECK(r.soft_gated && r.moving_blocked_precondition, "4066: soft-gate");
+    CHECK(static_cast<Pod16*>(got)->a == 0x4066, "4066: pre-move address still the object");
+    aura::ast::unnote_temporary_moving_live_ptr(got);
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4066_soft_and_source() {
+    std::println("\n--- #4066: Soft bind is a no-op; no second registry ---");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    {
+        MovingFlagGuard off(0);
+        ASTArena arena(64 * 1024);
+        auto* a = arena.create<Pod16>(3, 3, 3, 3);
+        bool noted = true;
+        void* got = arena.bind_temporary_moving_live_ptr(a, &noted);
+        CHECK(!noted && got == a, "4066: Off/Soft bind does not note");
+        CHECK(a->a == 3, "4066: Off payload intact");
+    }
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == noted0,
+          "4066: Off bind does not bump the canary counter");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(arena_src.find("Issue #4066") != std::string::npos, "4066: arena cites");
+    CHECK(arena_src.find("bind_temporary_moving_live_ptr") != std::string::npos, "4066: bind");
+    CHECK(arena_src.find("canary_quiescent") != std::string::npos, "4066: hold across recycle");
+    CHECK(arena_src.find("class PostMovingPinRegistry") == std::string::npos,
+          "4066: no second registry");
+    CHECK(apply.find("bind_temporary_moving_live_ptr") != std::string::npos, "4066: apply binds");
+    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_flat") != std::string::npos,
+          "4066: apply flat canary name stays");
+    CHECK(apply.find("observe-only") != std::string::npos, "4066: observe-only comment stays");
+    CHECK(read_file("docs/design/4066-moving-canary.md").empty(), "4066: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4066.cpp").empty(), "4066: no test_issue_4066.cpp");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -6210,6 +6349,11 @@ int run_test_moving_densify_fail_closed() {
     ac3947_1_source_cite_interior_triad();
     ac3947_2_interior_slot_rewrites_on_moving();
     ac3947_3_soft_zero_and_no_invent();
+
+    std::println("\n=== Issue #4066: Moving canary hold through recycle ===");
+    ac4066_peer_sees_unrecycled_or_remapped();
+    ac4066_noted_before_recycle_does_not_move();
+    ac4066_soft_and_source();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();

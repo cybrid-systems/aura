@@ -570,6 +570,15 @@ export inline std::atomic<std::uint32_t> g_relocate_alloc_fail_inject_remaining{
 export inline void reset_relocate_alloc_fail_inject_for_test() noexcept {
     g_relocate_alloc_fail_inject_remaining.store(0, std::memory_order_relaxed);
 }
+// Issue #4066: test seam. Invoked on the densify thread while the #3210
+// inventory mutex is held and before small_pool_.recycle. Production:
+// nullptr, one relaxed load. The hook must not take that mutex.
+using MovingCanaryBeforeRecycleHook = void (*)() noexcept;
+export inline std::atomic<MovingCanaryBeforeRecycleHook> g_moving_canary_before_recycle_hook{
+    nullptr};
+// Bumped only while the hook is armed, so a peer bind can show it is
+// waiting on the inventory mutex. Production hook==nullptr: never touched.
+export inline std::atomic<std::uint32_t> g_moving_canary_lock_waiters{0};
 // Feature flag: default OFF (env AURA_ARENA_MOVING_COMPACT=1 enables).
 export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/default
 // Issue #2495: process-wide counter for Moving densify windows where the
@@ -932,6 +941,15 @@ export struct TemporaryMovingLivePtrCanary {
     ~TemporaryMovingLivePtrCanary() noexcept {
         if (p_)
             unnote_temporary_moving_live_ptr(p_);
+    }
+    // Issue #4066: inventory entry was pushed by bind_temporary_moving_live_ptr
+    // (resolve + note under one lock). Dtor still unnotes p_.
+    void own_noted(void* p) noexcept { p_ = p; }
+    void arm_observe(void* p) noexcept {
+        if (!p || !moving_compact_enabled())
+            return;
+        p_ = p;
+        note_temporary_moving_live_ptr(p_);
     }
     TemporaryMovingLivePtrCanary(const TemporaryMovingLivePtrCanary&) = delete;
     TemporaryMovingLivePtrCanary& operator=(const TemporaryMovingLivePtrCanary&) = delete;
@@ -1761,6 +1779,38 @@ public:
             note_post_moving_live_ptr_canary(p); // observe-only; LifetimePin SSOT unchanged
     }
 
+    // Issue #4066: under the #3210 inventory mutex, rewrite p through this
+    // arena's last_object_remap_ and note that address before releasing.
+    // Densify holds the same mutex from the live==0 re-check through
+    // recycle, so a peer either notes the pre-move address (the window
+    // then soft-gates and does not relocate) or blocks until the new
+    // address is published and notes that. LifetimePin stays the pin table.
+    // Soft / Off / !moving_compact_enabled: no lock, no note, *noted stays
+    // false. noted may be nullptr.
+    void* bind_temporary_moving_live_ptr(void* p, bool* noted) noexcept {
+        if (noted)
+            *noted = false;
+        if (!p || !moving_compact_enabled())
+            return p;
+        auto& inv = moving_temp_canary_detail::g_inventory;
+        const bool watch =
+            g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed) != nullptr;
+        if (watch)
+            g_moving_canary_lock_waiters.fetch_add(1, std::memory_order_acq_rel);
+        std::lock_guard<std::mutex> lock(inv.mtx);
+        if (watch)
+            g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
+        if (void* neu = resolve_object_remap(p))
+            p = neu;
+        inv.ptrs.push_back(p);
+        inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+        aura::core::densify_consistency::g_moving_temporary_canary_noted_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (noted)
+            *noted = true;
+        return p;
+    }
+
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
     // When set, allocate_raw consults allow_fn(owner, size) before
     // allocating; false → return nullptr (no allocation). Orphan arenas
@@ -2414,8 +2464,6 @@ public:
                 g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
             }
-            ++stats_.live_compact_moving_count;
-            g_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
             // Issue #2775 / #2837: prep-registered external roots + slots
             // are retained through relocate so #2837 can rewrite slots
             // and detect stale unremapped prep values. Captured into the
@@ -2430,12 +2478,6 @@ public:
             // dtors_ at the old address. failure-closed → set
             // moving_incomplete_remap + clear pin_contract_held.
             std::size_t untracked_kept_local = 0;
-            // Issue #3210: drain stack/temp EnvFrame/Closure/JIT/FFI live
-            // ptrs into post_moving_live_canaries_ BEFORE relocate so
-            // objects_moved>0 ∧ canary still a last_object_remap_ key
-            // fail-closes (existing #3055/#3182 gate). Empty inventory:
-            // one atomic load (Soft / no temps never take the mutex).
-            note_temporary_moving_live_canaries();
             // Issue #3473: drain process-level FFI/JIT alias slots into this
             // arena's rewrite list before relocate. Empty inventory: one load.
             // Issue #3569: `alias_slots` outlives the drain block — the same
@@ -2446,12 +2488,44 @@ public:
             // dangle and UAF the next window's rewrite walk. Mid-window
             // registrations (not in this snapshot) stay queued for the next
             // window, whose densify entry re-registers fresh.
+            // Snapshot BEFORE the #4066 canary hold so a live>0 re-read can
+            // skip relocate without returning early (consume below still runs).
             std::vector<void**> alias_slots;
             if (snapshot_ffi_alias_slots_for_densify(alias_slots) > 0) {
                 for (void** s : alias_slots)
                     this->register_external_root_slot_for_densify(s);
             }
-            result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
+            // Issue #4066: #3857's entry load is check-then-act. Re-read
+            // live under the inventory mutex. live>0 → same soft-gate, no
+            // recycle. live==0 → hold the mutex across recycle so a peer
+            // note cannot land on an address this window is about to free.
+            // Unlock before the late re-drain (that path takes the same
+            // mutex). Late drain stays defense, not the only remedy.
+            std::unique_lock<std::mutex> canary_quiescent(
+                moving_temp_canary_detail::g_inventory.mtx);
+            if (moving_temp_canary_detail::g_inventory.live.load(std::memory_order_acquire) > 0) {
+                canary_quiescent.unlock();
+                result.moving_blocked_precondition = true;
+                result.soft_gated = true;
+                aura::core::densify_consistency::g_moving_blocked_temp_canary_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                ++stats_.moving_blocked_precondition_total;
+                g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                if (auto* hook =
+                        g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed))
+                    hook();
+                ++stats_.live_compact_moving_count;
+                g_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
+                // Issue #3210: drain stack/temp EnvFrame/Closure/JIT/FFI live
+                // ptrs into post_moving_live_canaries_ BEFORE relocate so
+                // objects_moved>0 ∧ canary still a last_object_remap_ key
+                // fail-closes (existing #3055/#3182 gate). Empty inventory:
+                // one atomic load (no mutex — this thread already holds it).
+                note_temporary_moving_live_canaries();
+                result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
+                canary_quiescent.unlock();
+            }
             result.untracked_kept_count = untracked_kept_local;
             result.moved_live_objects = result.objects_moved > 0;
             stats_.objects_moved_total += result.objects_moved;

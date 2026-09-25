@@ -909,8 +909,27 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // densify (fiber steal × compact) fail-closes if they would go stale.
     // JIT/FFI apply sites use the same RAII. Soft / !moving_compact_enabled:
     // ctor is one atomic load (no mutex).
-    aura::ast::TemporaryMovingLivePtrCanary tmp_flat(cl_copy.flat);
-    aura::ast::TemporaryMovingLivePtrCanary tmp_pool(cl_copy.pool);
+    // Issue #4066: bind under the inventory mutex rewrites a densify-old
+    // stack copy to last_object_remap_ before the note is visible, and
+    // blocks across recycle so the address noted is the one eval derefs.
+    aura::ast::TemporaryMovingLivePtrCanary tmp_flat;
+    aura::ast::TemporaryMovingLivePtrCanary tmp_pool;
+    aura::ast::ASTArena* live_arena = cl_copy.owner_arena != nullptr ? cl_copy.owner_arena : arena_;
+    if (live_arena != nullptr) {
+        bool noted = false;
+        void* flat = live_arena->bind_temporary_moving_live_ptr(cl_copy.flat, &noted);
+        cl_copy.flat = static_cast<aura::ast::FlatAST*>(flat);
+        if (noted)
+            tmp_flat.own_noted(flat);
+        noted = false;
+        void* pool = live_arena->bind_temporary_moving_live_ptr(cl_copy.pool, &noted);
+        cl_copy.pool = static_cast<aura::ast::StringPool*>(pool);
+        if (noted)
+            tmp_pool.own_noted(pool);
+    } else {
+        tmp_flat.arm_observe(cl_copy.flat);
+        tmp_pool.arm_observe(cl_copy.pool);
+    }
     CompilerMetrics* metrics =
         compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
     if (tombstoned) {
