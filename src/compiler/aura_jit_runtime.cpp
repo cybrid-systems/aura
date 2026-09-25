@@ -2384,6 +2384,9 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        // Issue #4075: same fingerprint as aura_remap_live_closures_after_reemit.
+        // Passing 0 fails every non-zero g_closure_linear_state and re-arms deopt.
+        const auto linear_fp = aura_get_aot_live_linear_state_fingerprint();
 
         for (std::size_t cid = 0; cid < nslots; ++cid) {
             if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
@@ -2394,8 +2397,7 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
             if (sid == 0)
                 continue;
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                    static_cast<std::int64_t>(cid), live_env,
-                    /*linear_fp=*/0, table_epoch) != 0)
+                    static_cast<std::int64_t>(cid), live_env, linear_fp, table_epoch) != 0)
                 ++ok;
             else
                 ++fail;
@@ -2510,6 +2512,8 @@ extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        // Issue #4075: same live fingerprint as the named sync walk.
+        const auto linear_fp = aura_get_aot_live_linear_state_fingerprint();
 
         for (std::size_t cid = 0; cid < nslots; ++cid) {
             if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
@@ -2520,8 +2524,7 @@ extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
             if (sid != 0)
                 continue;
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                    static_cast<std::int64_t>(cid), live_env,
-                    /*linear_fp=*/0, table_epoch) != 0)
+                    static_cast<std::int64_t>(cid), live_env, linear_fp, table_epoch) != 0)
                 ++ok;
             else
                 ++fail;
@@ -2578,6 +2581,8 @@ extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        // Issue #4075: same live fingerprint as the named sync walk.
+        const auto linear_fp = aura_get_aot_live_linear_state_fingerprint();
 
         for (std::size_t cid = 0; cid < nslots; ++cid) {
             if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
@@ -2594,8 +2599,7 @@ extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_
             if (!aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid)))
                 continue;
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                    static_cast<std::int64_t>(cid), live_env,
-                    /*linear_fp=*/0, table_epoch) != 0)
+                    static_cast<std::int64_t>(cid), live_env, linear_fp, table_epoch) != 0)
                 ++ok;
             else
                 ++fail;
@@ -2781,6 +2785,8 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        // Issue #4075: budgeted pure-anon walk uses the same live fingerprint.
+        const auto linear_fp = aura_get_aot_live_linear_state_fingerprint();
         std::uint64_t used = 0;
 
         for (std::size_t cid = 0; cid < nslots; ++cid) {
@@ -2823,8 +2829,7 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
             // remount_or_force_deopt: for pure anon capture remount is a
             // no-op; success clears epoch-lag MustDeopt before first call.
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                    static_cast<std::int64_t>(cid), live_env,
-                    /*linear_fp=*/0, table_epoch) != 0)
+                    static_cast<std::int64_t>(cid), live_env, linear_fp, table_epoch) != 0)
                 ++ok;
             // fail path sets MustDeopt inside remount helper — still counts
             // as a budget unit (we attempted remount).
