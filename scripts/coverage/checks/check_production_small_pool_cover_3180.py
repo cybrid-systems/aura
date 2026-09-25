@@ -43,10 +43,13 @@ This linter is the regression guard:
     `maybe_note_allocate_intermediate_(ptr, size, cover_slot, cover_reason)`.
 
   * AC3_HOT_PATH_COVER_DECLS — each migrated hot-path file declares cover at
-    every small-pool intermediate create site: long-lived (`pat_pool` /
-    `pat_flat` / `pool_ptr` / `flat_ptr` / `mod_env` / `env`) pass slot
-    `reinterpret_cast<void**>(&var), nullptr`; transient (closure body,
-    import-parse, inst-env-cache) pass `nullptr, "<reason>"`.
+    every small-pool intermediate create site. Same-frame arenas (`pat_pool` /
+    `pat_flat`) and lasting vector slots (`cached_env`) pass
+    `reinterpret_cast<void**>(&var), nullptr`. Stack temps whose arena
+    outlives the frame (`CompilerService::eval` pool/flat, module load,
+    `copy_env`) use EXEMPT `nullptr, "stack-cover-dies-at-return"` (#4070).
+    `set-code` keeps member `&current_ast_` / `&current_pool_`. Transients
+    (closure body, import-parse) pass `nullptr, "<reason>"`.
 
   * AC4_ZERO_COST_PRESERVED — `maybe_note_allocate_intermediate_` keeps the
     single `general_object_pin_required_active()` load + `in_render_hotpath()`
@@ -194,70 +197,35 @@ _REQUIRED_HOT_PATH_COVER = (
         1,
         EVAL_FLAT,
     ),
-    # service.ixx: arena pool/flat + mod_arena pool/flat slot cover
+    # service.ixx / module loader / copy_env: stack temps are EXEMPT (#4070).
+    # set-code member addresses stay slot covers.
     (
-        "AC3: service.ixx declares arena parse_to_flat pool/flat slot cover",
-        re.compile(
-            r"note_intermediate_create_with_cover_\(\s*\n?\s*pool_ptr\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&pool_ptr\s*\)\s*,\s*nullptr\s*\)"
-        ),
+        "AC3: service.ixx stack cover is EXEMPT (#4070)",
+        re.compile(r"stack-cover-dies-at-return"),
         1,
         SERVICE_IXX,
     ),
     (
-        "AC3: service.ixx declares arena parse_to_flat flat_ptr slot cover",
-        re.compile(
-            r"note_intermediate_create_with_cover_\(\s*\n?\s*flat_ptr\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&flat_ptr\s*\)\s*,\s*nullptr\s*\)"
-        ),
+        "AC3: service.ixx set-code keeps member current_ast_ slot",
+        re.compile(r"reinterpret_cast<void\*\*>\(&current_ast_\)"),
         1,
         SERVICE_IXX,
     ),
     (
-        "AC3: service.ixx declares mod_arena parse_to_flat pool slot cover",
-        re.compile(
-            r"mod_arena\.note_intermediate_create_with_cover_\(\s*\n?\s*pool_ptr\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&pool_ptr\s*\)\s*,\s*nullptr\s*\)"
-        ),
+        "AC3: service.ixx set-code keeps member current_pool_ slot",
+        re.compile(r"reinterpret_cast<void\*\*>\(&current_pool_\)"),
         1,
         SERVICE_IXX,
     ),
     (
-        "AC3: service.ixx declares mod_arena parse_to_flat flat slot cover",
-        re.compile(
-            r"mod_arena\.note_intermediate_create_with_cover_\(\s*\n?\s*flat_ptr\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&flat_ptr\s*\)\s*,\s*nullptr\s*\)"
-        ),
-        1,
-        SERVICE_IXX,
-    ),
-    # evaluator_module_loader.cpp: pool/flat/env slot cover
-    (
-        "AC3: evaluator_module_loader declares mod_arena pool slot cover",
-        re.compile(
-            r"mod_arena\.note_intermediate_create_with_cover_\(\s*\n?\s*pool_ptr\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&pool_ptr\s*\)\s*,\s*nullptr\s*\)"
-        ),
+        "AC3: evaluator_module_loader stack cover is EXEMPT (#4070)",
+        re.compile(r"stack-cover-dies-at-return"),
         1,
         MOD_LOADER,
     ),
     (
-        "AC3: evaluator_module_loader declares mod_arena flat slot cover",
-        re.compile(
-            r"mod_arena\.note_intermediate_create_with_cover_\(\s*\n?\s*flat_ptr\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&flat_ptr\s*\)\s*,\s*nullptr\s*\)"
-        ),
-        1,
-        MOD_LOADER,
-    ),
-    (
-        "AC3: evaluator_module_loader declares mod_arena mod_env slot cover",
-        re.compile(
-            r"mod_arena\.note_intermediate_create_with_cover_\(\s*\n?\s*mod_env\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&mod_env\s*\)\s*,\s*nullptr\s*\)"
-        ),
-        1,
-        MOD_LOADER,
-    ),
-    # evaluator_workspace_tree.cpp: env slot cover
-    (
-        "AC3: evaluator_workspace_tree declares workspace env slot cover",
-        re.compile(
-            r"ar->note_intermediate_create_with_cover_\(\s*\n?\s*env\s*,\s*reinterpret_cast<void\*\*>\s*\(\s*&env\s*\)\s*,\s*nullptr\s*\)"
-        ),
+        "AC3: evaluator_workspace_tree copy_env stack cover is EXEMPT (#4070)",
+        re.compile(r"stack-cover-dies-at-return"),
         1,
         WS_TREE,
     ),
@@ -313,6 +281,37 @@ REQUIRED_PATTERNS = (
 
 # Forbidden patterns
 FORBIDDEN_PATTERNS = (
+    # Issue #4070: stack void** must not be registered as a densify slot.
+    (
+        "AC3: service.ixx must not register stack &pool_ptr (#4070)",
+        re.compile(r"reinterpret_cast<void\*\*>\(\s*&pool_ptr\s*\)"),
+        1,
+        SERVICE_IXX,
+    ),
+    (
+        "AC3: service.ixx must not register stack &flat_ptr (#4070)",
+        re.compile(r"reinterpret_cast<void\*\*>\(\s*&flat_ptr\s*\)"),
+        1,
+        SERVICE_IXX,
+    ),
+    (
+        "AC3: module loader must not register stack &pool_ptr (#4070)",
+        re.compile(r"reinterpret_cast<void\*\*>\(\s*&pool_ptr\s*\)"),
+        1,
+        MOD_LOADER,
+    ),
+    (
+        "AC3: module loader must not register stack &mod_env (#4070)",
+        re.compile(r"reinterpret_cast<void\*\*>\(\s*&mod_env\s*\)"),
+        1,
+        MOD_LOADER,
+    ),
+    (
+        "AC3: copy_env must not register stack &env (#4070)",
+        re.compile(r"reinterpret_cast<void\*\*>\(\s*&env\s*\)"),
+        1,
+        WS_TREE,
+    ),
     # AC5: no docs/design/3180-* (per #1655)
     (
         "AC5: forbidden docs/design/3180-* (per #1655)",

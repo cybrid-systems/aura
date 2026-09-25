@@ -1768,6 +1768,13 @@ public:
         return external_roots_for_densify_.size();
     }
 
+    // Slot vector (void**), not the value set. Issue #4070: a stack
+    // address must not still be here after the frame that registered
+    // it has returned.
+    [[nodiscard]] std::size_t external_root_slots_for_densify_count() const noexcept {
+        return external_root_slots_for_densify_.size();
+    }
+
     // Explicit clear (also called automatically at the end of each
     // live_compact(Moving) work after slot rewrite — see live_compact()).
     // Exposed for callers that want to reset prep state without running a

@@ -1498,10 +1498,11 @@ public:
         auto alloc = temp_arena_.allocator();
         aura::ast::StringPool* new_pool = nullptr;
         aura::ast::FlatAST* new_flat = nullptr;
+        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
         new_pool = temp_arena_.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&new_pool), nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
         new_flat = temp_arena_.create_with_cover<aura::ast::FlatAST>(
-            reinterpret_cast<void**>(&new_flat), nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
         if (!new_pool || !new_flat)
             return false;
         auto pr = aura::parser::parse_to_flat(new_source, *new_flat, *new_pool);
@@ -2621,22 +2622,16 @@ public:
         auto alloc = arena_.allocator();
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
+        // Issue #4070: stack pool_ptr / flat_ptr must not stay in
+        // external_root_slots_for_densify_ after eval returns. EXEMPT
+        // (no slot). The objects live in current_ast_ / current_pool_
+        // and are above the small-pool limit. set-code still covers
+        // its member addresses. Soft note_intermediate pushes any
+        // non-null slot, so this path must not pass one either.
         pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
-                                                                nullptr, alloc);
-        // Issue #3180 / #3326: arena-pool/flat are long-lived across the parse /
-        // eval cycle (live until arena teardown). Cover is declared at create
-        // (create_with_cover) so uncovered_under_required does not grow; the
-        // post-note below re-registers the slot once *slot is live.
-        if (pool_ptr) {
-            arena_.note_intermediate_create_with_cover_(
-                pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);
-        }
-        if (flat_ptr) {
-            arena_.note_intermediate_create_with_cover_(
-                flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr);
-        }
+            nullptr, "stack-cover-dies-at-return", alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
+            nullptr, "stack-cover-dies-at-return", alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -3144,10 +3139,11 @@ public:
                         auto fallback_alloc = arena_.allocator();
                         aura::ast::StringPool* f_pool = nullptr;
                         aura::ast::FlatAST* f_flat = nullptr;
+                        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
                         f_pool = arena_.create_with_cover<aura::ast::StringPool>(
-                            reinterpret_cast<void**>(&f_pool), nullptr, fallback_alloc);
+                            nullptr, "stack-cover-dies-at-return", fallback_alloc);
                         f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
-                            reinterpret_cast<void**>(&f_flat), nullptr, fallback_alloc);
+                            nullptr, "stack-cover-dies-at-return", fallback_alloc);
                         if (!f_pool || !f_flat)
                             return std::nullopt;
                         auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
@@ -3167,10 +3163,11 @@ public:
                     auto fallback_alloc = arena_.allocator();
                     aura::ast::StringPool* f_pool = nullptr;
                     aura::ast::FlatAST* f_flat = nullptr;
+                    // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
                     f_pool = arena_.create_with_cover<aura::ast::StringPool>(
-                        reinterpret_cast<void**>(&f_pool), nullptr, fallback_alloc);
+                        nullptr, "stack-cover-dies-at-return", fallback_alloc);
                     f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
-                        reinterpret_cast<void**>(&f_flat), nullptr, fallback_alloc);
+                        nullptr, "stack-cover-dies-at-return", fallback_alloc);
                     if (!f_pool || !f_flat)
                         return std::nullopt;
                     auto f_pr = aura::parser::parse_to_flat(src_it->second, *f_flat, *f_pool);
@@ -3221,10 +3218,11 @@ public:
         auto alloc = arena_.allocator();
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
+        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
         pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
-                                                                nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
+            nullptr, "stack-cover-dies-at-return", alloc);
         if (!pool_ptr || !flat_ptr) {
             return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                           "eval_ir: arena allocate failed"});
@@ -3449,10 +3447,11 @@ public:
                     auto fallback_alloc = arena_.allocator();
                     aura::ast::StringPool* f_pool = nullptr;
                     aura::ast::FlatAST* f_flat = nullptr;
+                    // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
                     f_pool = arena_.create_with_cover<aura::ast::StringPool>(
-                        reinterpret_cast<void**>(&f_pool), nullptr, fallback_alloc);
+                        nullptr, "stack-cover-dies-at-return", fallback_alloc);
                     f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
-                        reinterpret_cast<void**>(&f_flat), nullptr, fallback_alloc);
+                        nullptr, "stack-cover-dies-at-return", fallback_alloc);
                     if (!f_pool || !f_flat)
                         return std::nullopt;
                     auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
@@ -3510,10 +3509,11 @@ public:
         auto alloc = arena_.allocator();
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
+        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
         pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
-                                                                nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
+            nullptr, "stack-cover-dies-at-return", alloc);
         if (!pool_ptr || !flat_ptr) {
             return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                           "exec_jit: arena allocate failed"});
@@ -4554,21 +4554,12 @@ public:
         auto alloc = mod_arena.allocator();
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
+        // Issue #4070: mod_arena outlives this frame. EXEMPT the stack
+        // covers; do not note &pool_ptr / &flat_ptr into the slot vector.
         pool_ptr = mod_arena.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
         flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(
-            reinterpret_cast<void**>(&flat_ptr), nullptr, alloc);
-        // Issue #3180 / #3326: per-module pool/flat are long-lived (live until
-        // arena reset). Cover is declared at create; post-note re-registers
-        // the slot once *slot is live.
-        if (pool_ptr) {
-            mod_arena.note_intermediate_create_with_cover_(
-                pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);
-        }
-        if (flat_ptr) {
-            mod_arena.note_intermediate_create_with_cover_(
-                flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr);
-        }
+            nullptr, "stack-cover-dies-at-return", alloc);
         auto pr = aura::parser::parse_to_flat(source, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -7106,10 +7097,11 @@ public:
             auto alloc = arena_.allocator();
             aura::ast::StringPool* tmp_pool = nullptr;
             aura::ast::FlatAST* tmp_flat = nullptr;
+            // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
             tmp_pool = arena_.create_with_cover<aura::ast::StringPool>(
-                reinterpret_cast<void**>(&tmp_pool), nullptr, alloc);
+                nullptr, "stack-cover-dies-at-return", alloc);
             tmp_flat = arena_.create_with_cover<aura::ast::FlatAST>(
-                reinterpret_cast<void**>(&tmp_flat), nullptr, alloc);
+                nullptr, "stack-cover-dies-at-return", alloc);
             if (tmp_pool && tmp_flat) {
                 auto pr = aura::parser::parse_to_flat(source, *tmp_flat, *tmp_pool);
                 if (pr.success && pr.root != aura::ast::NULL_NODE) {
@@ -7627,10 +7619,11 @@ public:
             auto alloc = arena_.allocator();
             aura::ast::StringPool* tmp_pool = nullptr;
             aura::ast::FlatAST* tmp_flat = nullptr;
+            // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
             tmp_pool = arena_.create_with_cover<aura::ast::StringPool>(
-                reinterpret_cast<void**>(&tmp_pool), nullptr, alloc);
+                nullptr, "stack-cover-dies-at-return", alloc);
             tmp_flat = arena_.create_with_cover<aura::ast::FlatAST>(
-                reinterpret_cast<void**>(&tmp_flat), nullptr, alloc);
+                nullptr, "stack-cover-dies-at-return", alloc);
             if (!tmp_pool || !tmp_flat)
                 continue;
             auto pr = aura::parser::parse_to_flat(canonical, *tmp_flat, *tmp_pool);
@@ -9082,10 +9075,11 @@ public:
         auto alloc = arena_.allocator();
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
+        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
         pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
-                                                                nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
+            nullptr, "stack-cover-dies-at-return", alloc);
         if (!pool_ptr || !flat_ptr)
             return;
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
@@ -10605,10 +10599,11 @@ public:
         auto alloc = arena_.allocator();
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
+        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
         pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
-                                                                nullptr, alloc);
+            nullptr, "stack-cover-dies-at-return", alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
+            nullptr, "stack-cover-dies-at-return", alloc);
         if (!pool_ptr || !flat_ptr) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::InternalError, "define_function: arena allocate failed"});
