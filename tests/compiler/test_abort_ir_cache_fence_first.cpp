@@ -101,10 +101,10 @@ static void ac1_2_three_abort_sites_ordering() {
         ++topology_count;
         tp = boundary_cpp.find("abort_restore_dual_topology(", tp + 1);
     }
-    CHECK(topology_count == 4,
-          "AC1+AC2: exactly 4 abort_restore_dual_topology call sites "
+    CHECK(topology_count == 5,
+          "AC1+AC2: exactly 5 abort_restore_dual_topology call sites "
           "(MutationBoundary abort + typed_mutate fail + dual-topology restore hook "
-          "+ persist-reject #3687)");
+          "+ persist-reject #3687 + synth-hard-fail #4082)");
 
     // Count fence (begin_force) calls — must be exactly 3.
     std::size_t fence_count = 0;
@@ -659,10 +659,10 @@ static void ac3821_1_synth_hard_fail_pairs_force_dirty() {
     const auto win = emb.substr(start, end - start);
     CHECK(win.find("Issue #3821") != std::string::npos, "3821 AC1: Issue #3821 cite");
     const auto bpos = win.find("abort_ir_cache_begin_force_fn_");
-    const auto rpos = win.find("rollback_to_size");
+    const auto rpos = win.find("abort_restore_dual_topology");
     const auto dpos = win.find("abort_ir_cache_force_dirty_fn_");
     CHECK(bpos != std::string::npos, "3821 AC1: begin fence on synth arm");
-    CHECK(rpos != std::string::npos, "3821 AC1: topology restore on synth arm");
+    CHECK(rpos != std::string::npos, "3821 AC1: dual-topology restore on synth arm");
     CHECK(dpos != std::string::npos, "3821 AC1: synth-hard-fail pairs force_dirty");
     CHECK(bpos < rpos && rpos < dpos, "3821 AC1: begin < restore < force_dirty order");
 }
@@ -961,7 +961,7 @@ static void ac3865_dirty_soa_restore_source_cite() {
           "3865: no docs/design/3865-* per #1655");
 }
 
-// ── #3897: all four abort_restore_dual_topology sites pass dirty snapshot ──
+// ── #3897: all five abort_restore_dual_topology sites pass dirty snapshot ──
 static void ac3897_all_abort_sites_pass_dirty_soa() {
     std::println("\n--- #3897: all abort sites pass DirtySoaSnapshot ---");
     std::string mb;
@@ -977,12 +977,12 @@ static void ac3897_all_abort_sites_pass_dirty_soa() {
          (p = mb.find("workspace_flat_->abort_restore_dual_topology(", p)) != std::string::npos;
          p += 1)
         ++n_call;
-    CHECK(n_call == 4, "3897 AC1: four abort_restore_dual_topology call sites");
+    CHECK(n_call == 5, "3897 AC1: five abort_restore_dual_topology call sites");
     std::size_t n_move = 0;
     for (std::size_t p = 0;
          (p = mb.find("std::move(cp.dirty_soa_snapshot)", p)) != std::string::npos; p += 1)
         ++n_move;
-    CHECK(n_move == 4, "3897 AC1: all four sites pass moved dirty snapshot");
+    CHECK(n_move == 5, "3897 AC1: all five sites pass moved dirty snapshot");
     CHECK(mb.find("Issue #3897") != std::string::npos, "3897 AC1: cites #3897");
     CHECK(read_file("tests/issues/test_issue_3897.cpp").empty(),
           "3897 AC3: no test_issue_3897.cpp per #81967");

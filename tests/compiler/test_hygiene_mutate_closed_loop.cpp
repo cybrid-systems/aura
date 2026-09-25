@@ -6480,7 +6480,7 @@ static void ac4076_source_cite() {
     for (std::size_t p = 0;
          (p = mb.find("std::move(cp.marker_provenance_snapshot)", p)) != std::string::npos; p += 1)
         ++n_move;
-    CHECK(n_move == 4, "4076: all four abort sites pass the marker snapshot");
+    CHECK(n_move == 5, "4076: all five abort sites pass the marker snapshot");
     CHECK(mb.find("check_macro_hygiene_invariant_post_restore(\"abort-failure\")") !=
               std::string::npos,
           "4076: post-abort invariant check kept");

@@ -14,8 +14,8 @@
       "ac": "AC2",
       "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
       "contains": [
-        "3897 AC1: four abort_restore_dual_topology call sites",
-        "3897 AC1: all four sites pass moved dirty snapshot",
+        "3897 AC1: five abort_restore_dual_topology call sites",
+        "3897 AC1: all five sites pass moved dirty snapshot",
         "ac3897_all_abort_sites_pass_dirty_soa"
       ]
     },

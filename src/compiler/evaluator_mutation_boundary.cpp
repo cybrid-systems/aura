@@ -1957,21 +1957,31 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // cannot claim Success after a synth TypeError.
                 // force_linear_rollback classifies linear_synth_hard_fail_pending
                 // first (deny_if_linear_synth_hard_fail is the thin alias).
+                // Issue #4082: capture the synth sticky before force clears it.
+                // Nested re-arms it so the outer pre-persist belt still denies.
+                const bool synth_sticky_4082 = linear_synth_hard_fail_pending();
                 if (force_linear_rollback(composite ? "composite-linear-synth-hard-fail"
                                                     : "linear-synth-hard-fail")) {
                     // Issue #3217: fence then restore then proof clear then stamp.
                     if (abort_ir_cache_begin_force_fn_)
                         abort_ir_cache_begin_force_fn_();
-                    // Structural undo (mirror hard-gate force-rollback body).
+                    // Issue #4082 / #3232: hold abort authority across the
+                    // dual-topology restore (same shape as the later arm).
+                    typed_audit::AbortAuthorityHold abort_authority;
+                    const auto mid_abort_ver_4082 =
+                        typed_audit::begin_mid_abort_authority(cp.audit_mid);
+                    (void)mid_abort_ver_4082;
+                    // Issue #4082: dual topology so dirty SoA matches the
+                    // restored children.
                     BoundaryRollbackStats stats;
-                    stats.field_records_rolled =
-                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                        cp.mutation_log_size, std::move(cp.children_snapshot),
+                        std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
                     if (stats.field_records_rolled > 0) {
                         bump_mutation_log_rollback_count();
                         if (nested_boundary)
                             bump_edsl_nested_atomic_rollback();
                     }
-                    workspace_flat_->restore_children(std::move(cp.children_snapshot));
                     stats.children_column_restored = true;
                     if (cp.fine_rollback) {
                         workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
@@ -2012,20 +2022,43 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             typed_audit::AuditOutcome::Error,
                             static_cast<std::uint32_t>(audit_target), 0, fid, 0,
                             static_cast<std::uint32_t>(capability_tenant_id()));
-                    // Issue #2717: stamp TypeLinearCommitProof on boundary
-                    // reject path. Agents can hold the proof across
-                    // densify / steal / remap and re-check
-                    // defuse_or_epoch_stamp without re-joining N
-                    // query surfaces. #2758/#2842: freeze live_goal_count
-                    // + goal_fingerprint from commit TypeChecker CS (0 quiet).
+                    // Issue #4082: force_linear_rollback already cleared the
+                    // sticky, so a live stamp would see linear_ok and publish
+                    // green. Explicit deny is the pre-clear authority.
+                    // Restore occurrence to the enter size (same #3158 helper
+                    // as the later invariant arm). Outermost notes the dtor
+                    // fail flip; nested re-arms synth for the outer belt.
+                    if (typed_audit::production_defaults_active() ||
+                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                                commit_type_checker_handle())) {
+                            const auto dropped =
+                                tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                                    cp.occurrence_entry_size);
+                            aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
+                                dropped);
+                        }
+                    } else {
+                        aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
+                    }
+                    aura_clear_occurrence_persist_buffer(this);
+                    clear_type_export_authority();
                     {
                         void* tc_handle = commit_type_checker_handle();
                         typed_audit::note_stamp_last_look_tc(tc_handle);
                         const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
-                        (void)typed_audit::build_type_linear_commit_proof_from_live(
-                            cp.version, truth.live_goal_count, truth.goal_fingerprint,
-                            truth.from_cs);
+                        (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                            cp.version, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                            truth.live_goal_count, truth.goal_fingerprint, truth.from_cs,
+                            /*force_reason=*/3);
+                        typed_audit::publish_type_linear_proof_outcome(
+                            typed_audit::kTypeLinearProofOutcomeReject);
                     }
+                    if (!nested_boundary)
+                        typed_audit::note_outermost_audit_rollback_needs_fail();
+                    else if (synth_sticky_4082)
+                        note_linear_synth_hard_fail_pending();
+                    typed_audit::end_mid_abort_authority(cp.audit_mid);
                     return cp;
                 }
                 // Composite paths never under-sample (self-evo multi-step safety).

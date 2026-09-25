@@ -140,19 +140,19 @@ REQUIRED_PATTERNS = (
     (
         "restore_or_clear_occurrence_to_entry call present in boundary cpp",
         re.compile(r"restore_or_clear_occurrence_to_entry\s*\("),
-        4,
+        5,
         EVALUATOR_MUTATION_BOUNDARY_CPP,
     ),
     (
         "note_3158_occurrence_abort_restore call present in boundary cpp",
         re.compile(r"note_3158_occurrence_abort_restore\s*\("),
-        4,
+        5,
         EVALUATOR_MUTATION_BOUNDARY_CPP,
     ),
     (
         "note_3158_occurrence_abort_observe call present in boundary cpp",
         re.compile(r"note_3158_occurrence_abort_observe\s*\(\s*\)"),
-        3,
+        4,
         EVALUATOR_MUTATION_BOUNDARY_CPP,
     ),
     # --- AC4: new counters + helpers in typed_mutation_audit.h ---
