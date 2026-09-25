@@ -453,6 +453,53 @@ static void ac2602_source_and_schema() {
     CHECK(href(cs, "schema-2550") == 2550, "AC5: schema-2550 retained");
 }
 
+// Issue #4075: sync remount must pass the live linear fingerprint.
+// A non-zero stamp that matches the closure stays remounted (no MustDeopt,
+// no batch_deopt). A real mismatch still MustDeopts and calls batch_deopt.
+static void ac4075_sync_remount_live_linear_fp() {
+    std::println("\n--- #4075: sync remount uses the live linear fingerprint ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #4075") != std::string::npos, "4075: runtime cites");
+    CHECK(read_file("tests/compiler/test_issue_4075.cpp").empty(), "4075: no test_issue file");
+    CHECK(read_file("docs/design/4075-sync-remount-linear.md").empty(), "4075: no docs/design");
+
+    aura_reset_runtime();
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_live_env_frame_version(0);
+    aura_set_aot_live_linear_state_fingerprint(3);
+    aura_clear_stable_func_id_map();
+
+    const auto name = "ac4075_named";
+    const auto sid = aura_get_or_preserve_stable_func_id(name, nullptr);
+    const auto cid = aura_alloc_closure(static_cast<std::int64_t>(sid));
+    CHECK(cid >= 0, "4075: alloc");
+    aura_closure_set_name(cid, name);
+    aura_closure_set_must_deopt(cid, 0);
+
+    const auto batch0 = aura_jit_batch_deopt_for_total();
+    std::uint64_t sync_ok = 99, sync_fail = 99;
+    aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+    CHECK(sync_ok >= 1, "4075: matching fingerprint remounts");
+    CHECK(sync_fail == 0, "4075: matching fingerprint is not a linear miss");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "4075: must_deopt stays clear");
+    CHECK(aura_jit_batch_deopt_for_total() == batch0, "4075: walk does not batch_deopt");
+    CHECK(aura_jit_is_deopt_pending(name) == 0, "4075: deopt_pending stays clear");
+
+    aura_set_aot_live_linear_state_fingerprint(9);
+    const auto batch1 = aura_jit_batch_deopt_for_total();
+    sync_ok = 99;
+    sync_fail = 99;
+    aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+    CHECK(sync_fail >= 1, "4075: mismatched fingerprint fails remount");
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "4075: mismatch sets must_deopt");
+    CHECK(aura_jit_batch_deopt_for_total() > batch1, "4075: mismatch calls batch_deopt");
+
+    aura_reset_runtime();
+    aura_set_aot_live_linear_state_fingerprint(0);
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_live_env_frame_version(0);
+}
+
 } // namespace
 
 int run_test_live_closure_full_restamp() {
@@ -484,6 +531,7 @@ int run_test_live_closure_full_restamp() {
     ac2602_anonymous_still_force_deopt();
     ac2602_soft_zero_cost();
     ac2602_source_and_schema();
+    ac4075_sync_remount_live_linear_fp();
     std::println("\n=== #2542 + #2602 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
