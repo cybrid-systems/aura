@@ -394,21 +394,12 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     auto alloc = mod_arena.allocator();
     aura::ast::StringPool* pool_ptr = nullptr;
     aura::ast::FlatAST* flat_ptr = nullptr;
+    // Issue #4070: mod_arena outlives this frame. EXEMPT the stack
+    // covers so the next Moving rewrite does not dereference them.
     pool_ptr = mod_arena.create_with_cover<aura::ast::StringPool>(
-        reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
-    flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
-                                                               nullptr, alloc);
-    // Issue #3180: per-module pool/flat are long-lived (live until
-    // arena reset). Declare slot cover on the stack-stable pointer
-    // fields so densify rewrites them.
-    if (pool_ptr) {
-        mod_arena.note_intermediate_create_with_cover_(
-            pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);
-    }
-    if (flat_ptr) {
-        mod_arena.note_intermediate_create_with_cover_(
-            flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr);
-    }
+        nullptr, "stack-cover-dies-at-return", alloc);
+    flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(nullptr,
+                                                               "stack-cover-dies-at-return", alloc);
     auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         {
@@ -428,14 +419,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Arena-allocate in the per-module arena so closures captured during
     // module eval stay valid for the module's lifetime.
     Env* mod_env = nullptr;
-    mod_env = mod_arena.create_with_cover<Env>(reinterpret_cast<void**>(&mod_env), nullptr, &top_);
-    // Issue #3180: mod_env is long-lived (live until arena reset).
-    // Declare slot cover on the stack-stable pointer field so densify
-    // rewrites it.
-    if (mod_env) {
-        mod_arena.note_intermediate_create_with_cover_(mod_env, reinterpret_cast<void**>(&mod_env),
-                                                       nullptr);
-    }
+    // Issue #4070: &mod_env dies at return. require_inject_env_ is the
+    // lasting slot (register_known). EXEMPT the stack cover.
+    mod_env = mod_arena.create_with_cover<Env>(nullptr, "stack-cover-dies-at-return", &top_);
     mod_env->set_primitives(&primitives_);
     // Issue #2766: attach the module StringPool so Env::bind dual-writes
     // bindings_ + bindings_symid_ during (require …) inject and define.

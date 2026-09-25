@@ -237,36 +237,28 @@ static void ac3180_hot_path_cover_declarations() {
     CHECK(eval_flat.find("cached_env, env_slot, nullptr") != std::string::npos,
           "AC3: evaluator_eval_flat declares cached_env slot cover (#3443)");
 
-    // service.ixx — parse_to_flat pool/flat slot cover on arena_ + module_arena.
-    CHECK(service.find("note_intermediate_create_with_cover_(\n                pool_ptr, "
-                       "reinterpret_cast<void**>(&pool_ptr), nullptr)") != std::string::npos,
-          "AC3: service arena parse_to_flat declares pool/flat slot cover");
-    CHECK(service.find("note_intermediate_create_with_cover_(\n                flat_ptr, "
-                       "reinterpret_cast<void**>(&flat_ptr), nullptr)") != std::string::npos,
-          "AC3: service arena parse_to_flat declares pool/flat slot cover");
-    CHECK(service.find("mod_arena.note_intermediate_create_with_cover_") != std::string::npos &&
-              service.find("pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr") !=
-                  std::string::npos,
-          "AC3: service module_arena parse_to_flat declares pool slot cover");
-    CHECK(service.find("flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr") !=
-              std::string::npos,
-          "AC3: service module_arena parse_to_flat declares flat slot cover");
+    // Issue #4070: stack pool/flat/env covers are EXEMPT. set-code member
+    // addresses stay slots. A frame address must not be registered.
+    CHECK(service.find("stack-cover-dies-at-return") != std::string::npos,
+          "AC3: service stack cover is EXEMPT (#4070)");
+    CHECK(service.find("reinterpret_cast<void**>(&pool_ptr)") == std::string::npos,
+          "AC3: service does not register stack &pool_ptr");
+    CHECK(service.find("reinterpret_cast<void**>(&flat_ptr)") == std::string::npos,
+          "AC3: service does not register stack &flat_ptr");
+    CHECK(service.find("reinterpret_cast<void**>(&current_ast_)") != std::string::npos &&
+              service.find("reinterpret_cast<void**>(&current_pool_)") != std::string::npos,
+          "AC3: set-code keeps member current_ast_ / current_pool_ slots");
 
-    // evaluator_module_loader.cpp — pool/flat/env slot cover.
-    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_") != std::string::npos &&
-              mod_load.find("pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr") !=
-                  std::string::npos,
-          "AC3: evaluator_module_loader declares pool slot cover");
-    CHECK(mod_load.find("flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr") !=
-              std::string::npos,
-          "AC3: evaluator_module_loader declares flat slot cover");
-    CHECK(mod_load.find("reinterpret_cast<void**>(&mod_env)") != std::string::npos,
-          "AC3: evaluator_module_loader declares mod_env slot cover");
+    CHECK(mod_load.find("stack-cover-dies-at-return") != std::string::npos,
+          "AC3: evaluator_module_loader stack cover is EXEMPT (#4070)");
+    CHECK(mod_load.find("reinterpret_cast<void**>(&pool_ptr)") == std::string::npos &&
+              mod_load.find("reinterpret_cast<void**>(&mod_env)") == std::string::npos,
+          "AC3: module loader does not register stack slots");
 
-    // evaluator_workspace_tree.cpp — env slot cover.
-    CHECK(ws_tree.find("ar->note_intermediate_create_with_cover_(env, "
-                       "reinterpret_cast<void**>(&env), nullptr)") != std::string::npos,
-          "AC3: evaluator_workspace_tree declares env slot cover");
+    CHECK(ws_tree.find("stack-cover-dies-at-return") != std::string::npos,
+          "AC3: copy_env stack cover is EXEMPT (#4070)");
+    CHECK(ws_tree.find("reinterpret_cast<void**>(&env)") == std::string::npos,
+          "AC3: copy_env does not register stack &env");
 }
 
 // AC1 + AC2: maybe_note_allocate_intermediate_ routes through with_cover_

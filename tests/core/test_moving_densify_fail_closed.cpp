@@ -5781,6 +5781,74 @@ static void ac4067_source_cite() {
     CHECK(read_file("tests/core/test_issue_4067.cpp").empty(), "4067: no test_issue_4067.cpp");
 }
 
+// Issue #4070: CompilerService::eval used to push &pool_ptr / &flat_ptr
+// into external_root_slots_for_densify_. Those locals die at return.
+// The next Moving rewrite dereferences every slot. EXEMPT keeps the
+// frame address out of the vector on Soft and on pin-required.
+static void ac4070_eval_drops_stack_densify_slots() {
+    std::println("\n--- #4070: eval must not leave stack void** in densify slots ---");
+    const auto service = read_file("src/compiler/service.ixx");
+    CHECK(service.find("Issue #4070") != std::string::npos, "4070: service cites");
+    CHECK(service.find("stack-cover-dies-at-return") != std::string::npos, "4070: EXEMPT reason");
+    CHECK(service.find("reinterpret_cast<void**>(&pool_ptr)") == std::string::npos,
+          "4070: no stack &pool_ptr registration");
+    CHECK(service.find("reinterpret_cast<void**>(&flat_ptr)") == std::string::npos,
+          "4070: no stack &flat_ptr registration");
+    CHECK(service.find("reinterpret_cast<void**>(&current_ast_)") != std::string::npos,
+          "4070: set-code member slot remains");
+    CHECK(read_file("docs/design/4070-stack-cover.md").empty(), "4070: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4070.cpp").empty(), "4070: no test_issue file");
+
+    auto eval_leaves_no_slots = [](int pin_required, const char* label) {
+        RequiredPinGuard pin(pin_required);
+        CompilerService cs;
+        aura::core::lifetime::g_general_object_pin_required_pref.store(pin_required,
+                                                                       std::memory_order_relaxed);
+        auto r = cs.eval("(+ 1 2)");
+        CHECK(r.has_value(), std::string("4070: eval ") + label);
+        CHECK(cs.arena().external_root_slots_for_densify_count() == 0,
+              std::string("4070: ") + label + " eval leaves no densify slots");
+        return r.has_value();
+    };
+    CHECK(eval_leaves_no_slots(0, "soft"), "4070: soft path");
+
+    // After eval returns, a Moving window that relocates a small-pool
+    // object walks every registered slot. The only slots are the live
+    // pod pointers in this frame. ASan must not read the freed eval frame.
+    {
+        RequiredPinGuard pin_off(0);
+        CompilerService cs;
+        aura::core::lifetime::g_general_object_pin_required_pref.store(0,
+                                                                       std::memory_order_relaxed);
+        CHECK(cs.eval("(+ 1 2)").has_value(), "4070: eval before Moving");
+        CHECK(cs.arena().external_root_slots_for_densify_count() == 0,
+              "4070: slot vector empty before the live pod covers");
+        MovingFlagGuard moving(1);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        auto* p0 = cs.arena().create<Pod16>(0x4070, 1, 2, 3);
+        auto* p1 = cs.arena().create<Pod16>(4, 5, 6, 7);
+        auto* p2 = cs.arena().create<Pod16>(8, 9, 10, 11);
+        CHECK(p0 && p1 && p2, "4070: small-pool pods allocated");
+        void* s0 = p0;
+        void* s1 = p1;
+        void* s2 = p2;
+        cs.arena().register_external_root_slot_for_densify(&s0);
+        cs.arena().register_external_root_slot_for_densify(&s1);
+        cs.arena().register_external_root_slot_for_densify(&s2);
+        CHECK(cs.arena().external_root_slots_for_densify_count() == 3,
+              "4070: only the three live pod slots are registered");
+        const auto compact = cs.arena().live_compact(LiveCompactMode::Moving);
+        CHECK(compact.objects_moved > 0, "4070: Moving relocated a small-pool object");
+        CHECK(s0 != nullptr && static_cast<Pod16*>(s0)->a == 0x4070,
+              "4070: pod payload intact after slot rewrite");
+        (void)s1;
+        (void)s2;
+    }
+
+    CHECK(eval_leaves_no_slots(1, "required"), "4070: pin-required path");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -6589,6 +6657,9 @@ int run_test_moving_densify_fail_closed() {
     ac4067_admit_clean_retry_clears_throttle();
     ac4067_lcp_deny_keeps_closed_window();
     ac4067_source_cite();
+
+    std::println("\n=== Issue #4070: eval stack cover must not outlive the frame ===");
+    ac4070_eval_drops_stack_densify_slots();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();

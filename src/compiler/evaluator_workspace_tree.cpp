@@ -663,14 +663,10 @@ Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
     contract_assert(arena_ != nullptr);
     auto* ar = target ? target : arena_;
     Env* env = nullptr;
+    // Issue #4070: &env dies when copy_env returns. The caller holds the
+    // pointer value. EXEMPT so the arena does not keep the stack slot.
     if (ar)
-        env = ar->create_with_cover<Env>(reinterpret_cast<void**>(&env), nullptr, e);
-    // Issue #3180: workspace env is long-lived (lives in the workspace
-    // arena). Declare slot cover on the stack-stable pointer field so
-    // densify rewrites it.
-    if (env && ar) {
-        ar->note_intermediate_create_with_cover_(env, reinterpret_cast<void**>(&env), nullptr);
-    }
+        env = ar->create_with_cover<Env>(nullptr, "stack-cover-dies-at-return", e);
     return env;
 }
 
