@@ -2723,6 +2723,18 @@ maybe_reject_mutation_concurrency_health(Evaluator& ev, bool region_concurrent) 
                                      std::string(h.force_reason));
 }
 
+// Issue #4067: densify-throttle must not lock the next mutate out of the
+// existing recover entry. Production only. One recover attempt; if the
+// throttle is still set afterwards, admit refuses. Soft/Off never calls.
+static bool densify_throttle_still_blocks_admit(Evaluator& ev) noexcept {
+    if (!typed_audit::production_defaults_active())
+        return false;
+    if (!aura::core::moving_densify_health::agent_throttle_for_moving_densify())
+        return false;
+    (void)ev.recover_moving_sticky_densify_off(true);
+    return aura::core::moving_densify_health::agent_throttle_for_moving_densify();
+}
+
 // ── try_acquire (#1547 / #1556 / #1590) ──────────────────────────────────
 aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
 Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pending_count,
@@ -2837,8 +2849,8 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     }
     // Issue #3958: Agent densify throttle sampled at Guard admit (not
     // only auto-arm #3909). Soft: skip.
-    if (typed_audit::production_defaults_active() &&
-        aura::core::moving_densify_health::agent_throttle_for_moving_densify()) {
+    // Issue #4067: try the existing recover entry before refusing.
+    if (densify_throttle_still_blocks_admit(ev)) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
             m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
         return std::unexpected(
@@ -3020,8 +3032,8 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                   std::string("AdmissionRejected: densify-in-flight")));
     }
     // Issue #3958: same densify-throttle admit refuse as try_acquire.
-    if (typed_audit::production_defaults_active() &&
-        aura::core::moving_densify_health::agent_throttle_for_moving_densify()) {
+    // Issue #4067: same recover-before-refuse as try_acquire.
+    if (densify_throttle_still_blocks_admit(ev)) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
             m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
         return std::unexpected(
@@ -5830,10 +5842,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (typed_audit::production_defaults_active() &&
                 aura::ast::moving_incomplete_remap_sticky_densify_off()) {
                 auto r = ev_->recover_moving_sticky_densify_off(/*retry_densify=*/true);
-                auto_recover_attempted = true;
-                // Success / failure already stamped via
-                // g_moving_sticky_cleared_via_recovery_total +
-                // g_moving_densify_retry_after_recovery_total.
+                // Issue #4067: skip this publish only when the retry
+                // densify already published (success clears throttle;
+                // incomplete advances the window seq). A recover that
+                // did not densify still publishes the Phase-5 window.
+                auto_recover_attempted = r.densify_retried;
                 (void)r;
             }
             if (!auto_recover_attempted) {
@@ -7556,6 +7569,21 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             const auto compact_r = arena_group_->compact_all_moving_pinned();
             out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             out.incomplete_remap = compact_r.moving_incomplete_remap_any;
+            // Issue #4067: the retry window must be published. Success
+            // (pin held, not incomplete) clears the agent throttle.
+            // objects_moved>0 and incomplete makes
+            // window_would_allow_mutate false and advances
+            // g_last_window_seq. Leaving the previous allow in place
+            // let apply seq-skip a failed retry.
+            const auto root_fail =
+                static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total +
+                                           compact_r.root_remap_closure_capture_fail_total);
+            aura::core::moving_densify_health::publish_last_moving_densify_window(
+                /*had_moving_densify=*/true, compact_r.pin_contract_held,
+                compact_r.moving_incomplete_remap_any,
+                static_cast<std::uint64_t>(compact_r.objects_moved_total),
+                static_cast<std::uint64_t>(compact_r.untracked_kept_total), root_fail,
+                static_cast<std::uint64_t>(compact_r.external_roots_prep_registered_total));
         }
         aura::core::densify_consistency::g_moving_densify_retry_after_recovery_total.fetch_add(
             1, std::memory_order_relaxed);
