@@ -46,6 +46,16 @@ extern std::vector<PairSlot*> g_pair_slots;
 // back to heap allocation leak silently.
 extern std::vector<PairSlot*> g_owned_pair_slots_;
 
+// Issue #4057: owner-principal stamps parallel to g_pair_slots (entry i is
+// the capability tenant that allocated g_pair_slots[i] via aura_alloc_pair /
+// aura_alloc_pair_arena; 0 = unstamped legacy slot). Definition lives in
+// runtime_ssot.cpp next to g_pair_slots (same SSOT link-order class:
+// readers in libaura_test_objects.so and the JIT SOs must resolve the same
+// array). set-car!/set-cdr! compare this stamp against the caller principal
+// under the production face before touching the process-level slot;
+// index-guarded reads treat a short array as unstamped (fail-closed).
+extern std::vector<std::uint64_t> g_pair_slot_tenants;
+
 // ── Flags ──
 extern bool g_use_arena;
 

@@ -12,6 +12,9 @@ module;
 #include "prim_heap_quota.hh" // Issue #2916
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
+#include "security_side_effect.hh"    // Issue #4057: kEffectMutate on the isolation consult
+#include "core/sandbox.hh"            // Issue #4057: is_strict() production-face arm
+#include "core/provenance_tracker.hh" // Issue #4057: multi_tenant_env_active() face arm
 
 module aura.compiler.evaluator;
 
@@ -493,6 +496,33 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (idx < pairs.size()) {
                 pairs[idx].car = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+                // Issue #4057: g_pair_slots index space is process-shared — a
+                // foreign tenant's JIT pair can land at idx >= pairs_.size()
+                // (mailbox handoff), so the index alone is not ownership.
+                // Production face (sandbox != 0 and Strict or Restricted+MT):
+                // compare the slot's owner stamp (#4036-style parallel array)
+                // against the caller principal BEFORE the write; a foreign or
+                // unstamped (0) slot is refused with the slot unchanged.
+                // IsolationDeny goes through the existing
+                // check_workspace_isolation / record_audit path (fiber id +
+                // Mutation epoch). Dispatch is the single Mutate choke
+                // (#4036 body-choke contract) — no second effect check in the
+                // body, a single-use grant must not double-consume.
+                // Soft/Off: the tenant array is never read, write proceeds.
+                const std::uint64_t slot_tenant =
+                    (idx < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[idx] : 0;
+                const bool prod_pair_face =
+                    ev.effect_sandbox_mode() != 0 &&
+                    (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
+                     ::aura::core::provenance::multi_tenant_env_active());
+                if (prod_pair_face && slot_tenant != ev.capability_tenant_id()) {
+                    (void)ev.check_workspace_isolation(
+                        /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
+                        aura::compiler::security::kEffectMutate, "set-car!");
+                    return make_primitive_error(string_heap, error_values,
+                                                "set-car!: cross-tenant pair slot write "
+                                                "denied (#4057)");
+                }
                 g_pair_slots[idx]->car = a[1].val;
             }
             return make_void();
@@ -510,6 +540,25 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (idx < pairs.size()) {
                 pairs[idx].cdr = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+                // Issue #4057: same cross-tenant arm as set-car! — the
+                // process-shared slot's owner stamp must equal the caller
+                // principal under the production face (foreign or unstamped
+                // (0) refused, slot unchanged, IsolationDeny via
+                // check_workspace_isolation); Soft/Off writes unchanged.
+                const std::uint64_t slot_tenant =
+                    (idx < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[idx] : 0;
+                const bool prod_pair_face =
+                    ev.effect_sandbox_mode() != 0 &&
+                    (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
+                     ::aura::core::provenance::multi_tenant_env_active());
+                if (prod_pair_face && slot_tenant != ev.capability_tenant_id()) {
+                    (void)ev.check_workspace_isolation(
+                        /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
+                        aura::compiler::security::kEffectMutate, "set-cdr!");
+                    return make_primitive_error(string_heap, error_values,
+                                                "set-cdr!: cross-tenant pair slot write "
+                                                "denied (#4057)");
+                }
                 g_pair_slots[idx]->cdr = a[1].val;
             }
             return make_void();

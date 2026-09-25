@@ -1334,6 +1334,180 @@ int run_test_dispatch_required_effects() {
         CHECK(src.find("set-car!") != std::string::npos, "4036 AC5: infer names present");
     }
 
+    // ── Issue #4057: set-car!/set-cdr! process-level g_pair_slots branch is
+    // tenant-gated under the production face (sandbox != 0 and Strict or
+    // Restricted+MT). The g_pair_slots index space is process-shared, so the
+    // #4036 dispatch Mutate choke alone cannot stop a same-tenant grant from
+    // writing another tenant's JIT pair handed over via mailbox (idx >=
+    // pairs_.size() falls through to the process slot). The branch compares
+    // the slot's owner stamp (g_pair_slot_tenants, parallel to g_pair_slots)
+    // against the caller principal BEFORE the write; foreign or unstamped (0)
+    // slots refuse with the slot unchanged and the existing
+    // check_workspace_isolation / record_audit path carries the IsolationDeny
+    // (fiber id + Mutation epoch). Soft/Off never reads the tenant array.
+    // Runtime ACs drive the prim body directly (prims.lookup, #3798 AC2
+    // precedent): under Restricted+MT the NodeId-less dispatch consult
+    // denies unstamped refs pre-body (#4036 AC3 note), which would make a
+    // dispatch-level deny vacuous for the body gate under test.
+    {
+        std::println("\n--- #4057 AC1: Restricted+MT foreign JIT pair → deny, slot unchanged ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        const auto live_mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        // Adversarial shape: tenant A holds own-tenant Mutate (the #4036
+        // dispatch choke passes for it); NO cross_grant A→77 exists, so only
+        // the in-body isolation arm can stop the foreign-slot write.
+        g_capability_registry().grant(4057, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0));
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);     // Restricted (evaluator face)
+        set_mode(SandboxMode::Restricted); // registry SOLE writer (#2657)
+        ev.set_capability_tenant_id(4057);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        // Deterministic process slot table: idx0 = legacy unstamped slot
+        // (tenant 0), idx1 = foreign tenant-77 JIT pair (mailbox handoff).
+        // A's pairs_ stays empty so both indices take the g_pair_slots
+        // branch (idx >= pairs_.size()). Slots go on the heap-owned list so
+        // process-exit PairSlotCleanup frees them.
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* legacy = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        legacy->car = 101;
+        legacy->cdr = 102;
+        g_pair_slots.push_back(legacy);
+        g_pair_slot_tenants.push_back(0);
+        g_owned_pair_slots_.push_back(legacy);
+        auto* foreign = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        foreign->car = 11;
+        foreign->cdr = 22;
+        g_pair_slots.push_back(foreign);
+        g_pair_slot_tenants.push_back(77);
+        g_owned_pair_slots_.push_back(foreign);
+        auto set_car_fn = ev.primitives().lookup("set-car!");
+        auto set_cdr_fn = ev.primitives().lookup("set-cdr!");
+        CHECK(set_car_fn.has_value() && set_cdr_fn.has_value(), "4057 AC1: pair mutators present");
+        const auto iso_epoch = aura::core::current_mutation_epoch();
+        const auto fiber_now = static_cast<std::int64_t>(aura_fiber_current_id());
+        auto r1 = (*set_car_fn)({aura::compiler::types::make_pair(1), make_int(9)});
+        CHECK(is_error(r1), "4057 AC1: foreign JIT pair set-car! denied");
+        CHECK(foreign->car == 11 && foreign->cdr == 22,
+              "4057 AC1: foreign slot car/cdr unchanged (zero write)");
+        CHECK(std::string_view(ev.last_mutate_error()).find("set-car") != std::string_view::npos,
+              "4057 AC1: deny reason names set-car (isolation, not wildcard)");
+        auto r1b = (*set_cdr_fn)({aura::compiler::types::make_pair(1), make_int(9)});
+        CHECK(is_error(r1b), "4057 AC1: foreign JIT pair set-cdr! denied");
+        CHECK(foreign->cdr == 22, "4057 AC1: foreign slot cdr still unchanged");
+        // The deny rows are IsolationDeny carrying the live fiber id and the
+        // Mutation epoch (#4057 observable; record_audit single path).
+        const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        const std::size_t rn1 = std::min<std::size_t>(seq1, g_security_event_ring().ring.size());
+        bool saw_iso4057_car = false;
+        bool saw_iso4057_cdr = false;
+        for (std::size_t i = 0; i < rn1; ++i) {
+            const auto& e = g_security_event_ring().ring[i];
+            const auto op_sv = std::string_view(e.op);
+            if (e.denied && e.epoch == iso_epoch && e.fiber_id == fiber_now &&
+                e.kind == aura::core::security_event::SecurityEventKind::IsolationDeny) {
+                if (op_sv.find("set-car") != std::string_view::npos)
+                    saw_iso4057_car = true;
+                if (op_sv.find("set-cdr") != std::string_view::npos)
+                    saw_iso4057_cdr = true;
+            }
+        }
+        CHECK(saw_iso4057_car, "4057 AC1: IsolationDeny op set-car! fiber+Mutation epoch");
+        CHECK(saw_iso4057_cdr, "4057 AC1: IsolationDeny op set-cdr! fiber+Mutation epoch");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4057 AC2: Restricted+MT unstamped legacy slot (tenant 0) → deny ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4057);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* legacy = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        legacy->car = 101;
+        legacy->cdr = 102;
+        g_pair_slots.push_back(legacy);
+        g_pair_slot_tenants.push_back(0); // unstamped — fails closed on MT
+        g_owned_pair_slots_.push_back(legacy);
+        auto sc_fn = ev.primitives().lookup("set-car!");
+        CHECK(sc_fn.has_value(), "4057 AC2: set-car! present");
+        auto r = (*sc_fn)({aura::compiler::types::make_pair(0), make_int(9)});
+        CHECK(is_error(r), "4057 AC2: unstamped slot set-car! denied");
+        CHECK(legacy->car == 101 && legacy->cdr == 102,
+              "4057 AC2: unstamped slot unchanged (zero write)");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4057 AC3: caller's own pairs_[idx] write keeps working ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        const auto live_mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        g_capability_registry().grant(4057, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0));
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted); // no MT: dispatch unstamped-ref rule idle
+        ev.set_capability_tenant_id(4057);
+        // Restricted allow-path needs the live Mutation epoch joined (same
+        // #4036 AC3 / #3594 seeding — a silent fail-closed deny has an empty
+        // reason and would mask the allow shape under test).
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(live_mid);
+        // Own pair via cons: idx 0 < pairs_.size() → local branch, no tenant
+        // gate; the dispatch Mutate allow comes from the grant (#3720 AC4
+        // Restricted no-MT allow-path precedent).
+        CHECK(cs.eval("(define *p4057* (cons 5 6))").has_value(), "4057 AC3: cons");
+        auto w = cs.eval("(set-car! *p4057* 9)");
+        CHECK(w && !is_error(*w), "4057 AC3: own pair set-car! allowed");
+        auto got = cs.eval("(car *p4057*)");
+        CHECK(got && is_int(*got) && as_int(*got) == 9, "4057 AC3: write landed");
+    }
+
+    {
+        std::println("\n--- #4057 AC4: Soft/Off — high idx still writes the process slot ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        set_mode(SandboxMode::Off);
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* foreign = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        foreign->car = 11;
+        foreign->cdr = 22;
+        g_pair_slots.push_back(foreign);
+        g_pair_slot_tenants.push_back(77); // foreign stamp — unread on Soft/Off
+        g_owned_pair_slots_.push_back(foreign);
+        const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
+        auto sc_fn = ev.primitives().lookup("set-car!");
+        CHECK(sc_fn.has_value(), "4057 AC4: set-car! present");
+        auto r = (*sc_fn)({aura::compiler::types::make_pair(0), make_int(9)});
+        CHECK(!is_error(r), "4057 AC4: Soft write allowed");
+        // The slot stores raw EvalValue bits (the prim writes a[1].val), so
+        // the landed car is make_int(9).val — compare in the same encoding.
+        CHECK(foreign->car == make_int(9).val && foreign->cdr == 22,
+              "4057 AC4: process slot written (tenant array unread)");
+        CHECK(g_security_event_ring().total.load(std::memory_order_relaxed) == se0,
+              "4057 AC4: no extra isolation deny");
+    }
+
 
     // ── Issue #3798: PrimCall ownerless production fail-closed (#3720 residual) ──
     {

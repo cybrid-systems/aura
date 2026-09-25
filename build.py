@@ -8065,6 +8065,27 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4036 mutation choke linter failed — run python3 scripts/check_mutation_choke_4036.py")
         return r
+    # Issue #4057 (security residual): the process-level g_pair_slots write in
+    # set-car!/set-cdr! had no ownership check — the index space is
+    # process-shared, so a same-tenant Mutate grant (the #4036 dispatch choke
+    # passes) still wrote another tenant's JIT pair at idx >= pairs_.size().
+    # Gate pins: aura_alloc_pair / aura_alloc_pair_arena stamp the owning
+    # principal into the g_pair_slot_tenants parallel array via the existing
+    # owner hook, the prim bodies compare the slot stamp against the caller
+    # under the production face (sandbox != 0 and Strict or Restricted+MT)
+    # BEFORE the write with the deny on the existing
+    # check_workspace_isolation path (no second effect choke), the local
+    # pairs_ branch stays first and unconditional, Soft/Off never reads the
+    # tenant array, the SSOT definition sits beside g_pair_slots, and the
+    # reset clears the stamps with the slots.
+    pair4057_script = ROOT / "scripts" / "check_pair_slot_tenant_4057.py"
+    if not pair4057_script.exists():
+        fail(f"missing {pair4057_script}")
+        return 1
+    r = run([sys.executable, str(pair4057_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4057 pair slot tenant linter failed — run python3 scripts/check_pair_slot_tenant_4057.py")
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed
