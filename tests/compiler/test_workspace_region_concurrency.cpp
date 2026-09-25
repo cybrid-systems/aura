@@ -37,6 +37,10 @@ import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
 
+extern "C" void aura_test_reset_region_admit_state() noexcept;
+extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary);
+extern "C" void aura_orch_agent_body_release_guard();
+
 namespace {
 
 using aura::compiler::CompilerMetrics;
@@ -558,6 +562,263 @@ static void ac3039_5_linter_and_suite() {
     CHECK(read_file("tests/compiler/test_issue_3039.cpp").empty(), "3039 AC5: no invent test");
 }
 
+// Issue #4086: cross-thread cone overlap is process-level. A peer with
+// an empty TLS must still see the holder's shard slot.
+static void ac4086_cross_thread_mask_overlap_rejects() {
+    std::println("\n--- #4086: cross-thread intersecting cones hard-reject ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura_test_reset_region_admit_state();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+          "4086: opt-in ScopedParallel");
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    const auto hard0 = aura::compiler::mutation_region_overlap_hard_reject_total_v_read();
+    // Distinct shards (1 and 2). Masks 0x5 and 0x1 intersect.
+    constexpr std::uint64_t k_holder = 1;
+    constexpr std::uint64_t k_peer = 2;
+    CHECK(Evaluator::workspace_region_shard(k_holder) != Evaluator::workspace_region_shard(k_peer),
+          "4086: keys land on different shards");
+
+    std::atomic<int> hold{1};
+    std::atomic<int> holder_ok{0};
+    std::thread holder([&] {
+        Evaluator::note_parallel_task_cone_mask(0x5);
+        bool ok = true;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k_holder, 1, &ok);
+        if (!g || !*g) {
+            holder_ok.store(-1);
+            hold.store(0);
+            Evaluator::clear_parallel_task_cone_mask();
+            return;
+        }
+        holder_ok.store((*g)->is_region_mode() ? 1 : -2);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (hold.load(std::memory_order_acquire) == 1 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        g->reset();
+        Evaluator::clear_parallel_task_cone_mask();
+    });
+
+    const auto live_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (holder_ok.load(std::memory_order_acquire) == 0 &&
+           std::chrono::steady_clock::now() < live_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    std::atomic<int> peer{0};
+    std::string peer_msg;
+    std::thread peer_th([&] {
+        Evaluator::note_parallel_task_cone_mask(0x1);
+        bool ok = true;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k_peer, 1, &ok);
+        if (!g) {
+            peer_msg = g.error().message;
+            peer.store(peer_msg.find("region-overlap") != std::string::npos ? 1 : -1);
+        } else {
+            peer.store(-2);
+            g->reset();
+        }
+        Evaluator::clear_parallel_task_cone_mask();
+    });
+    peer_th.join();
+    hold.store(0);
+    holder.join();
+
+    CHECK(holder_ok.load() == 1, "4086: holder region-admits");
+    CHECK(peer.load() == 1, "4086: peer AdmissionRejected: region-overlap");
+    CHECK(peer_msg.find("AdmissionRejected: region-overlap") != std::string::npos,
+          "4086: structured region-overlap reason");
+    CHECK(aura::compiler::mutation_region_overlap_hard_reject_total_v_read() > hard0,
+          "4086: hard-reject counter bumps");
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura_test_reset_region_admit_state();
+}
+
+// Same key, disjoint cones: overlap does not reject. The shard mutex
+// still serializes the two admits (peer stays inside try_acquire until
+// the holder drops the lock).
+static void ac4086_same_key_shard_serializes() {
+    std::println("\n--- #4086: same key stays on one shard mutex ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura_test_reset_region_admit_state();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+          "4086 same-key: opt-in");
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    constexpr std::uint64_t k_same = 7;
+    CHECK(Evaluator::workspace_region_shard(k_same) == Evaluator::workspace_region_shard(k_same),
+          "4086 same-key: one shard");
+
+    std::atomic<int> hold{1};
+    std::atomic<int> holder_ok{0};
+    std::thread holder([&] {
+        Evaluator::note_parallel_task_cone_mask(0x1);
+        bool ok = true;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k_same, 1, &ok);
+        if (!g || !*g || !(*g)->is_region_mode()) {
+            holder_ok.store(-1);
+            hold.store(0);
+            Evaluator::clear_parallel_task_cone_mask();
+            return;
+        }
+        holder_ok.store(1);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (hold.load(std::memory_order_acquire) == 1 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        g->reset();
+        Evaluator::clear_parallel_task_cone_mask();
+    });
+    const auto live_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (holder_ok.load(std::memory_order_acquire) == 0 &&
+           std::chrono::steady_clock::now() < live_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    std::atomic<int> peer_entered{0};
+    std::atomic<int> peer_done{0};
+    std::thread peer_th([&] {
+        Evaluator::note_parallel_task_cone_mask(0x2);
+        peer_entered.store(1, std::memory_order_release);
+        bool ok = true;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k_same, 1, &ok);
+        if (!g) {
+            peer_done.store(g.error().message.find("region-overlap") != std::string::npos ? -1
+                                                                                          : -2);
+        } else {
+            const bool region = (*g)->is_region_mode();
+            g->reset();
+            peer_done.store(region ? 1 : -3);
+        }
+        Evaluator::clear_parallel_task_cone_mask();
+    });
+    const auto entered_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (peer_entered.load(std::memory_order_acquire) == 0 &&
+           std::chrono::steady_clock::now() < entered_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const int done_while_held = peer_done.load(std::memory_order_acquire);
+    hold.store(0);
+    peer_th.join();
+    holder.join();
+
+    CHECK(holder_ok.load() == 1, "4086 same-key: holder region-admits");
+    CHECK(done_while_held == 0, "4086 same-key: peer blocked while holder owns the shard");
+    CHECK(peer_done.load() == 1, "4086 same-key: peer admits after release");
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura_test_reset_region_admit_state();
+}
+
+// No declared parallel-task region: host body must take GlobalExclusive.
+// Two host threads then cannot both shared-lock the workspace.
+static void ac4086_host_undeclared_is_global_exclusive() {
+    std::println("\n--- #4086: host body without a declared region is global exclusive ---");
+    aura_test_reset_region_admit_state();
+    Evaluator::clear_parallel_task_region_key();
+    CompilerService cs;
+    cs.evaluator().set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "4086 host: metrics");
+    const auto g0 = m->workspace_global_exclusive_total.load(std::memory_order_relaxed);
+
+    std::atomic<int> hold{1};
+    std::atomic<int> holder_rc{-99};
+    std::thread holder([&] {
+        Evaluator::clear_parallel_task_region_key();
+        const int rc = aura_orch_agent_body_try_acquire_ex(0);
+        holder_rc.store(rc);
+        if (rc != 0) {
+            hold.store(0);
+            return;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (hold.load(std::memory_order_acquire) == 1 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        aura_orch_agent_body_release_guard();
+    });
+    const auto live_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (holder_rc.load(std::memory_order_acquire) == -99 &&
+           std::chrono::steady_clock::now() < live_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    std::atomic<int> peer_rc{-99};
+    std::thread peer([&] {
+        Evaluator::clear_parallel_task_region_key();
+        const int rc = aura_orch_agent_body_try_acquire_ex(0);
+        peer_rc.store(rc);
+        if (rc == 0)
+            aura_orch_agent_body_release_guard();
+    });
+    bool saw_waiter = false;
+    const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < wait_deadline) {
+        if (m->workspace_mtx_waiters_now.load(std::memory_order_relaxed) > 0) {
+            saw_waiter = true;
+            break;
+        }
+        if (peer_rc.load(std::memory_order_acquire) != -99)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    hold.store(0);
+    peer.join();
+    holder.join();
+
+    CHECK(holder_rc.load() == 0, "4086 host: holder acquires");
+    CHECK(m->workspace_global_exclusive_total.load(std::memory_order_relaxed) > g0,
+          "4086 host: undeclared key took GlobalExclusive");
+    CHECK(saw_waiter, "4086 host: peer waited on workspace_mtx_");
+    CHECK(peer_rc.load() == 0, "4086 host: peer acquires after release");
+    Evaluator::clear_parallel_task_region_key();
+    aura_test_reset_region_admit_state();
+}
+
+static void ac4086_source_cite() {
+    std::println("\n--- #4086: source cite, no thread-id region, no new query key ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(emb.find("Issue #4086") != std::string::npos, "4086: boundary cites issue");
+    CHECK(fm.find("Issue #4086") != std::string::npos, "4086: host path cites issue");
+    CHECK(emb.find("thread_local std::uint64_t g_last_admitted_region_key") == std::string::npos,
+          "4086: last-admit is not thread_local");
+    CHECK(emb.find("regions_disjoint(region_key, g_last_admitted_region_key, cone_mask") !=
+              std::string::npos,
+          "4086: regions_disjoint call preserved");
+    CHECK(emb.find("g_last_admitted_cone_mask_soft") != std::string::npos,
+          "4086: soft last-admit name preserved");
+    const auto host = fm.find("Issue #4086");
+    CHECK(host != std::string::npos, "4086: host acquire present");
+    const auto slice = (host == std::string::npos) ? std::string{} : fm.substr(host, 1500);
+    CHECK(slice.find("parallel_task_region_key()") != std::string::npos,
+          "4086: host key is the declared parallel-task region");
+    CHECK(slice.find("std::hash<std::thread::id>") == std::string::npos,
+          "4086: host key is not a thread-id hash");
+    CHECK(slice.find("orch-agent-") == std::string::npos, "4086: no invented orch-agent key");
+    CHECK(read_file("tests/compiler/test_issue_4086.cpp").empty(), "4086: no test_issue file");
+    CHECK(read_file("docs/design/4086-region-overlap.md").empty(), "4086: no docs/design");
+}
+
 static void ac2990_5_throughput_and_linter() {
     std::println("\n--- #2990 AC5: source-cite + linter + no invented test ---");
     const auto t = read_file("tests/compiler/test_workspace_region_concurrency.cpp");
@@ -595,6 +856,11 @@ int run_test_workspace_region_concurrency() {
     ac3039_3_soft_observe_only();
     ac3039_4_schema();
     ac3039_5_linter_and_suite();
+    std::println("\n=== Issue #4086: process-level region overlap ===");
+    ac4086_cross_thread_mask_overlap_rejects();
+    ac4086_same_key_shard_serializes();
+    ac4086_host_undeclared_is_global_exclusive();
+    ac4086_source_cite();
 
     std::println("\n=== test_workspace_region_concurrency: {} passed, {} failed ===", g_passed,
                  g_failed);

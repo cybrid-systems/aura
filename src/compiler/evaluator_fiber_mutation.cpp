@@ -3321,18 +3321,17 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
         }
         return 0;
     }
-    // Issue #2523 residual soft path: when region concurrency is enabled,
-    // host orch agents prefer try_acquire_for_region with a thread-keyed
-    // soft region so disjoint multi-Agent mutates avoid dual global
-    // exclusive holds. Policy OFF / atomic-batch fall back inside the
-    // factory to GlobalExclusive (AC3). Topology-changing Agents that
-    // need full exclusive should call try_acquire directly.
-    // Issue #2555: both paths go through TransactionGuard (MBG + panic).
-    if (ev->workspace_region_concurrency_enabled()) {
-        const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
-        const auto key = aura::compiler::Evaluator::workspace_region_key_from_name(
-            std::format("orch-agent-{}", tid));
-        g_orch_agent_body_tx.emplace(Evaluator::transaction_guard_host_for_region(*ev, key),
+    // Issue #4086: host orch agents take a region lock only when the caller
+    // declared a disjoint parallel-task region (AgentSpec region_key /
+    // :region-keys / note_parallel_task_region_key). Hashing thread::id
+    // minted a different shard per host thread, so both took
+    // shared_lock(workspace_mtx_) and wrote the same AST. No declared key
+    // stays GlobalExclusive. Policy OFF / atomic-batch still fall back
+    // inside the factory (#2523 AC3). Issue #2555: both paths are
+    // TransactionGuard.
+    const auto declared = Evaluator::parallel_task_region_key();
+    if (declared != 0 && ev->workspace_region_concurrency_enabled()) {
+        g_orch_agent_body_tx.emplace(Evaluator::transaction_guard_host_for_region(*ev, declared),
                                      /*pending=*/1);
     } else {
         g_orch_agent_body_tx.emplace(Evaluator::transaction_guard_host(*ev), /*pending=*/1);
