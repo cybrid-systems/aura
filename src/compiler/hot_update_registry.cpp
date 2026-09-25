@@ -11,6 +11,7 @@
 #include "compiler/typed_mutation_audit.h"  // #3101 should_hard_reject_soft_sibling
 
 #include <chrono>
+#include <cstdio>  // storm slot overflow abort message
 #include <cstdlib> // Issue #2236: std::getenv for AURA_STORM_ISOLATION resolver
 #include <cstring> // Issue #2236: std::strcmp for resolver
 #include <utility>
@@ -2610,23 +2611,46 @@ std::uint64_t HotUpdateRegistry::register_dirty_listener(DirtyListener fn) {
 }
 
 std::uint64_t HotUpdateRegistry::register_storm_listener(StormListener fn) {
+    std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
     std::lock_guard<std::mutex> lock(listeners_mtx_);
     const auto id = next_listener_id_++;
-    storm_listeners_.emplace_back(id, std::move(fn));
-    register_calls_.fetch_add(1, std::memory_order_relaxed);
-    return id;
+    for (auto& slot : storm_slots_) {
+        if (slot.id.load(std::memory_order_relaxed) != 0)
+            continue;
+        slot.fn = std::move(fn);
+        slot.id.store(id, std::memory_order_release);
+        register_calls_.fetch_add(1, std::memory_order_relaxed);
+        return id;
+    }
+    // Bounded by design (see hot_update_registry.hh): abort rather than
+    // grow a heap buffer a concurrent unregister could walk.
+    std::fprintf(stderr, "aura: storm listener slots exhausted (%zu)\n", kStormSlotCount);
+    std::abort();
 }
 
 void HotUpdateRegistry::unregister_storm_listener(std::uint64_t id) noexcept {
+    std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
     std::lock_guard<std::mutex> lock(listeners_mtx_);
-    std::erase_if(storm_listeners_, [id](const auto& e) { return e.first == id; });
+    if (id == 0)
+        return;
+    for (auto& slot : storm_slots_) {
+        if (slot.id.load(std::memory_order_acquire) == id) {
+            slot.id.store(0, std::memory_order_release);
+            slot.fn = nullptr;
+            return;
+        }
+    }
 }
 
 void HotUpdateRegistry::clear_listeners() noexcept {
+    std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
     std::lock_guard<std::mutex> lock(listeners_mtx_);
     epoch_listeners_.clear();
     dirty_listeners_.clear();
-    storm_listeners_.clear();
+    for (auto& slot : storm_slots_) {
+        slot.id.store(0, std::memory_order_release);
+        slot.fn = nullptr;
+    }
 }
 
 void HotUpdateRegistry::notify_epoch_bump(std::uint64_t epoch) noexcept {
@@ -2670,17 +2694,29 @@ void HotUpdateRegistry::notify_deopt_storm_locked(std::uint64_t deopts_in_window
     std::vector<std::pair<std::uint64_t, StormListener>> storm_copy;
     std::vector<EpochListener> epoch_copy;
     {
-        std::lock_guard<std::mutex> lock(listeners_mtx_);
-        storm_copy = storm_listeners_;
-        epoch_copy = epoch_listeners_;
-    }
-    for (auto& [id, fn] : storm_copy) {
-        (void)id;
-        if (fn) {
-            try {
-                fn(deopts_in_window, window_ms);
-            } catch (...) {
-                // [SILENCE-PRIM-#2014] storm listener errors must not poison deopt path
+        // Storm call-phase lock: hold across the snapshot AND the listener
+        // invocation so unregister_storm_listener (~CompilerService) waits
+        // for in-flight callbacks — the listener captures the service
+        // `this`, and a concurrent worker registration's realloc must not
+        // free the buffer another thread is walking.
+        std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
+        {
+            std::lock_guard<std::mutex> lock(listeners_mtx_);
+            for (const auto& slot : storm_slots_) {
+                const auto slot_id = slot.id.load(std::memory_order_acquire);
+                if (slot_id != 0 && slot.fn)
+                    storm_copy.emplace_back(slot_id, slot.fn);
+            }
+            epoch_copy = epoch_listeners_;
+        }
+        for (auto& [id, fn] : storm_copy) {
+            (void)id;
+            if (fn) {
+                try {
+                    fn(deopts_in_window, window_ms);
+                } catch (...) {
+                    // [SILENCE-PRIM-#2014] storm listener errors must not poison deopt path
+                }
             }
         }
     }
@@ -2711,7 +2747,13 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
         std::lock_guard<std::mutex> lock(listeners_mtx_);
         s.epoch_listeners = static_cast<std::int64_t>(epoch_listeners_.size());
         s.dirty_listeners = static_cast<std::int64_t>(dirty_listeners_.size());
-        s.storm_listeners = static_cast<std::int64_t>(storm_listeners_.size());
+        {
+            std::int64_t storm_count = 0;
+            for (const auto& slot : storm_slots_)
+                if (slot.id.load(std::memory_order_acquire) != 0)
+                    ++storm_count;
+            s.storm_listeners = storm_count;
+        }
     }
     s.register_calls_total =
         static_cast<std::int64_t>(register_calls_.load(std::memory_order_relaxed));
