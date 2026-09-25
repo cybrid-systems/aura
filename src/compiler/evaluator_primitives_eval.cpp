@@ -646,12 +646,40 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Lockless rebind set_child's a new lambda that is not itself
         // marked dirty; last-form-only would cache-hit the pre-rebind
         // closure (and leave stdin looking at a stale eval-current).
+        // Issue #4079: display/newline/print/write must run again on the
+        // next eval-current. A clean value cache would return () and
+        // drop the effect from that response.
+        auto replay_io_effects = [](aura::ast::FlatAST& f, aura::ast::StringPool& pool) {
+            static constexpr std::string_view kIo[] = {"display", "newline", "print", "write"};
+            for (aura::ast::NodeId id = 0; id < f.size(); ++id) {
+                if (f.is_free_slot(id))
+                    continue;
+                auto node = f.get(id);
+                if (node.tag != aura::ast::NodeTag::Call || node.children.empty())
+                    continue;
+                auto head = f.get(node.child(0));
+                if (head.tag != aura::ast::NodeTag::Variable)
+                    continue;
+                const auto name = pool.resolve(head.sym_id);
+                for (auto io : kIo) {
+                    if (name == io)
+                        return true;
+                }
+            }
+            return false;
+        };
+        const bool replay_io = replay_io_effects(*flat, *pool);
         {
             const auto gen = flat->generation();
-            if (expanded != aura::ast::NULL_NODE && !flat->has_dirty_subtree(expanded) &&
-                ev.last_eval_current_result_ && gen == ev.last_eval_current_generation_) {
+            if (!replay_io && expanded != aura::ast::NULL_NODE &&
+                !flat->has_dirty_subtree(expanded) && ev.last_eval_current_result_ &&
+                gen == ev.last_eval_current_generation_) {
                 return *ev.last_eval_current_result_;
             }
+        }
+        if (replay_io) {
+            for (aura::ast::NodeId id = 0; id < flat->size(); ++id)
+                flat->clear_cached_value(id);
         }
 
         // Issue #3915: eval-current walks workspace Defines into top_ and

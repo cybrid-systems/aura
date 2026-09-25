@@ -9,9 +9,11 @@
 
 #include "test_harness.hpp"
 
+#include <cstdio>
 #include <fstream>
 #include <print>
 #include <string>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -256,6 +258,42 @@ static void ac3918_batch_rebind_env() {
     CHECK(svc.find("Issue #3918") != std::string::npos, "3918 AC: Path B env SSOT cites");
 }
 
+// Issue #4079: a second eval-current of a workspace that displays must
+// print again. The clean incremental cache used to return () and drop it.
+static void ac4079_second_eval_current_displays() {
+    std::println("\n--- #4079: second eval-current still displays ---");
+    const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(ev.find("Issue #4079") != std::string::npos, "4079: eval-current cites");
+    CHECK(read_file("tests/compiler/test_issue_4079.cpp").empty(), "4079: no test_issue file");
+    CHECK(read_file("docs/design/4079-serve-async-eval-current.md").empty(),
+          "4079: no docs/design");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (cand) 1) (display (cand)) (newline)\")").has_value(),
+          "4079: set-code");
+    CHECK(cs.eval("(mutate:rebind \"cand\" \"(lambda () 99)\" \"shared-ast-probe\")").has_value(),
+          "4079: rebind");
+    std::fflush(stdout);
+    int fds[2] = {-1, -1};
+    CHECK(::pipe(fds) == 0, "4079: pipe");
+    const int saved = ::dup(STDOUT_FILENO);
+    ::dup2(fds[1], STDOUT_FILENO);
+    CHECK(cs.eval("(eval-current)").has_value(), "4079: first eval-current");
+    CHECK(cs.eval("(eval-current)").has_value(), "4079: second eval-current");
+    std::fflush(stdout);
+    ::dup2(saved, STDOUT_FILENO);
+    ::close(fds[1]);
+    ::close(saved);
+    std::string out;
+    char buf[256];
+    ssize_t n = 0;
+    while ((n = ::read(fds[0], buf, sizeof(buf))) > 0)
+        out.append(buf, static_cast<std::size_t>(n));
+    ::close(fds[0]);
+    const auto first = out.find("99");
+    const auto second = first == std::string::npos ? std::string::npos : out.find("99", first + 2);
+    CHECK(second != std::string::npos, "4079: display 99 on both eval-current calls");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -267,6 +305,7 @@ int run_test_eval_current_no_auto_fix() {
     ac3917_extra_paren_cli();
     ac3918_batch_rebind_env();
     ac3927_set_then_compare();
+    ac4079_second_eval_current_displays();
     std::println("\n=== #2484/#3915/#3917/#3918/#3927 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
