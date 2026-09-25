@@ -127,6 +127,10 @@ void sleep_no_progress_body(AgentHandle& h, std::atomic<bool>& keep_running) {
 void ac3208_set_prod(bool on) {
     aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
         on ? 1u : 0u, std::memory_order_relaxed);
+    // #3899: a production claim with the harden cache explicitly stored 0
+    // (reset_member_face's dev defaults) aborts the ABI gate — keep the
+    // cache in sync with the face (same shape as the bridge setter).
+    aura::core::cpp26::note_hot_contract_harden_armed(on);
 }
 
 static void ac3208_stop(AgentScope& scope, std::atomic<bool>& keep) {
