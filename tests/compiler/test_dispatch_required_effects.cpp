@@ -1508,6 +1508,172 @@ int run_test_dispatch_required_effects() {
               "4057 AC4: no extra isolation deny");
     }
 
+    // ── Issue #4058: capability_stack_ (with-capability pushes) is lexical
+    // scope only — check-capability / capability-stack readouts. It never
+    // satisfies has_capability: the oracle reads effects_effective_for +
+    // the granted_capabilities_ string mirror, so a zero-grant Agent can no
+    // longer read host files, clear process exception stacks, or open the
+    // kPrimSecSandboxed dispatch gate by pushing strings. with-capability
+    // stays a non-grant (no registry write).
+    {
+        std::println("\n--- #4058 AC1: with-capability \"*\" cannot read files (zero grant) ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);     // Restricted (evaluator face)
+        set_mode(SandboxMode::Restricted); // registry SOLE writer (#2657)
+        ev.set_capability_tenant_id(4058);
+        const std::string secret = std::string("/tmp/aura_4058_secret.txt");
+        {
+            std::ofstream out(secret);
+            out << "aura-4058-secret-content\n";
+        }
+        auto r1 = cs.eval(std::format("(with-capability \"*\" (read-file \"{}\"))", secret));
+        CHECK(r1 && is_error(*r1), "4058 AC1: stack-disguised read-file denied");
+        bool leaked4058 = false;
+        for (const auto& s : ev.string_heap())
+            if (s.find("aura-4058-secret") != std::string::npos)
+                leaked4058 = true;
+        CHECK(!leaked4058, "4058 AC1: file content did not enter the string heap");
+        // A real io-read registry grant keeps reading (non-MT Restricted:
+        // the #3802 host-path gate stays passthrough for /tmp).
+        ev.grant_capability(aura::compiler::security::kCapIoRead);
+        auto r2 = cs.eval(std::format("(read-file \"{}\")", secret));
+        CHECK(r2 && !is_error(*r2) && is_string(*r2),
+              "4058 AC1: real io-read registry grant still reads");
+        if (r2 && is_string(*r2)) {
+            const auto sidx = as_string_idx(*r2);
+            CHECK(sidx < ev.string_heap().size() &&
+                      ev.string_heap()[sidx].find("aura-4058-secret") != std::string::npos,
+                  "4058 AC1: real grant reads actual content");
+        }
+        std::remove(secret.c_str());
+    }
+
+    {
+        std::println(
+            "\n--- #4058 AC2: with-capability \"exception-control\" cannot clear fibers ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4058);
+        auto e1 = cs.eval("(with-capability \"exception-control\" (jit:exception-fibers-clear))");
+        CHECK(e1 && is_error(*e1), "4058 AC2: stack-disguised exception-fibers-clear denied");
+        bool reason4058 = false;
+        for (const auto& s : ev.string_heap())
+            if (s.find("exception-control required") != std::string::npos)
+                reason4058 = true;
+        CHECK(reason4058, "4058 AC2: deny names the exception-control gate");
+        CHECK(!ev.has_capability(aura::compiler::security::kCapExceptionControl),
+              "4058 AC2: no capability leaked from the push");
+        // Off-face control: the same form executes — the deny above is the
+        // capability gate, not syntax.
+        reset_all();
+        CompilerService cs2;
+        auto e2 = cs2.eval("(with-capability \"exception-control\" (jit:exception-fibers-clear))");
+        CHECK(e2 && !is_error(*e2), "4058 AC2: Off face keeps the prim working");
+    }
+
+    {
+        std::println("\n--- #4058 AC3: with-capability \"sandbox\" cannot open the "
+                     "kPrimSecSandboxed dispatch ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4058);
+        // mutation-log-compact: kPrimSecSandboxed meta with
+        // requires_mutation_guard unset → heap_mutate false → the dispatch
+        // kCapSandbox gate applies (#3235 skips Guard-gated heap mutators).
+        auto s1 = cs.eval("(with-capability \"sandbox\" (mutation-log-compact))");
+        CHECK(s1 && is_error(*s1),
+              "4058 AC3: stack-disguised sandbox push does not open the dispatch gate");
+        bool sandbox_deny4058 = false;
+        for (const auto& s : ev.string_heap())
+            if (s.find("sandboxed primitive requires kCapSandbox") != std::string::npos)
+                sandbox_deny4058 = true;
+        CHECK(sandbox_deny4058, "4058 AC3: deny names the kCapSandbox gate");
+        // A REAL sandbox string grant (grant_capability → granted_capabilities_
+        // + registry) opens the sandbox gate and the prim executes — the
+        // disguise deny above disappears. (Its Mutate meta is
+        // effect_enforced_in_body, so per #2583 AC2 the dispatch skips the
+        // double require_effect; no second deny is expected here.)
+        ev.grant_capability(aura::compiler::security::kCapSandbox);
+        auto s2 = cs.eval("(mutation-log-compact)");
+        CHECK(s2 && !is_error(*s2),
+              "4058 AC3: real sandbox grant passes the sandbox gate (prim executes)");
+        CHECK(ev.has_capability("sandbox"), "4058 AC3: registry-backed grant satisfies the oracle");
+        // Off-face control: the prim executes.
+        reset_all();
+        CompilerService cs3;
+        auto s3 = cs3.eval("(mutation-log-compact)");
+        CHECK(s3 && !is_error(*s3), "4058 AC3: Off face keeps the prim working");
+    }
+
+    {
+        std::println("\n--- #4058 AC4: check-capability still sees the pushed layer (lexical) ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4058);
+        auto c1 = cs.eval("(with-capability \"sandbox\" (check-capability \"sandbox\"))");
+        CHECK(c1 && is_bool(*c1) && as_bool(*c1),
+              "4058 AC4: lexical query sees the pushed layer inside the body");
+        auto c2 = cs.eval("(check-capability \"sandbox\")");
+        CHECK(c2 && is_bool(*c2) && !as_bool(*c2), "4058 AC4: scope popped after the body");
+    }
+
+    {
+        std::println(
+            "\n--- #4058 AC5: has_capability ignores the pushed stack (in-body probe) ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4058);
+        // capability? consults has_capability with "*" pushed — the pre-fix
+        // oracle answered true right here; the registry-backed oracle must
+        // still say no. This is the same predicate the dual-fiber hazard
+        // exposes (tenant B resuming on the same Evaluator observes
+        // has_capability with A's un-popped layers present).
+        auto p1 = cs.eval("(with-capability \"*\" (capability? \"io-read\"))");
+        CHECK(p1 && is_bool(*p1) && !as_bool(*p1),
+              "4058 AC5: pushed \"*\" does not satisfy has_capability");
+        CHECK(!ev.has_capability("io-read") && !ev.has_capability("sandbox"),
+              "4058 AC5: zero grant stays zero post-pop");
+        // Off-face control: the oracle short-circuits allow-all again.
+        reset_all();
+        CompilerService cs2;
+        auto p2 = cs2.eval("(with-capability \"*\" (capability? \"io-read\"))");
+        CHECK(p2 && is_bool(*p2) && as_bool(*p2), "4058 AC5: Soft/Off oracle stays allow-all");
+    }
+
+    {
+        std::println("\n--- #4058 AC6: Soft/Off — disguise still reads, zero extra deny rows ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        set_mode(SandboxMode::Off);
+        const std::string soft_secret = std::string("/tmp/aura_4058_soft.txt");
+        {
+            std::ofstream out(soft_secret);
+            out << "aura-4058-soft-content\n";
+        }
+        const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
+        auto s1 = cs.eval(std::format("(with-capability \"*\" (read-file \"{}\"))", soft_secret));
+        CHECK(s1 && !is_error(*s1) && is_string(*s1), "4058 AC6: Soft/Off read still works");
+        CHECK(g_security_event_ring().total.load(std::memory_order_relaxed) == se0,
+              "4058 AC6: no extra deny rows on the Soft face");
+        std::remove(soft_secret.c_str());
+    }
+
 
     // ── Issue #3798: PrimCall ownerless production fail-closed (#3720 residual) ──
     {

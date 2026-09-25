@@ -5280,7 +5280,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
                             for (auto& cap : caps)
                                 tail_env->bind("%cap:" + cap, make_bool(true));
-                            // Push to capability_stack_ for capability-stack readout
+                            // Push to capability_stack_ for capability-stack readout.
+                            // Issue #4058: lexical scope only — never an
+                            // authorization oracle (has_capability does not
+                            // scan this stack).
                             capability_stack_.push_back(caps);
                             // Evaluate body in child env
                             EvalResult last = make_void();

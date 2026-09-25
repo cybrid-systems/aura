@@ -8086,6 +8086,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4057 pair slot tenant linter failed — run python3 scripts/check_pair_slot_tenant_4057.py")
         return r
+    # Issue #4058 (security): capability_stack_ (with-capability pushes)
+    # satisfied Evaluator::has_capability, so a zero-grant Agent could read
+    # host files, clear process exception stacks, and open the
+    # kPrimSecSandboxed dispatch gate with no EffectDeny. Gate pins:
+    # has_capability consults only effects_effective_for + the
+    # granted_capabilities_ string mirror (zero stack scans), both
+    # with-capability sites keep the lexical push with the #4058 contract
+    # comment and write no registry, the check-capability /
+    # capability-stack lexical readouts stay intact, the dispatch
+    # kCapSandbox gate and the file/exception-control body gates keep
+    # consulting has_capability, and the runtime ACs extend the
+    # #2152/#4036/#4057 host test file.
+    cap4058_script = ROOT / "scripts" / "check_capability_stack_authorization_4058.py"
+    if not cap4058_script.exists():
+        fail(f"missing {cap4058_script}")
+        return 1
+    r = run([sys.executable, str(cap4058_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4058 capability stack authorization linter failed — run python3 scripts/check_capability_stack_authorization_4058.py"
+        )
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed

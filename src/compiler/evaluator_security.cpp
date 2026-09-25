@@ -88,6 +88,10 @@ extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept {
 //   (effect_for_cap_name == None, SECURITY_EXEMPT staged):
 //   compile, compile-stats, compile-dirty, compile-deopt, fiber, workspace,
 //   exception-control, macro, query, sandbox.
+// Issue #4058: capability_stack_ (with-capability pushes) is lexical scope
+// only — check-capability / capability-stack readouts. It NEVER satisfies
+// has_capability: authorization = effects_effective_for(tenant) + the
+// granted_capabilities_ string mirror written by grant_capability.
 bool Evaluator::has_capability(std::string_view needed) const noexcept {
     // Sandbox fully off (Evaluator sandbox + global registry effect mode)
     // preserves legacy "always allow" semantics — matches check_and_record_effect.
@@ -112,17 +116,15 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
     // Explicit "*" in any layer grants non-TA/MSE effect-mapped caps +
     // string-only caps. TA/MSE queries always fall through to
     // effects_effective_for (#3876; still the #3144 effects_for strip).
+    // Issue #4058: the with-capability stack is lexical scope only (the
+    // check-capability / capability-stack readouts scan it); it is NOT an
+    // authorization oracle. A pushed "*" satisfies nothing here — the
+    // wildcard check reads the granted_capabilities_ string mirror only.
     if (!is_ta_mse_eff) {
         const auto wildcard_held = [&]() noexcept {
             for (const auto& cap : granted_capabilities_) {
                 if (cap == kCapWildcard)
                     return true;
-            }
-            for (const auto& layer : capability_stack_) {
-                for (const auto& cap : layer) {
-                    if (cap == kCapWildcard)
-                        return true;
-                }
             }
             return false;
         }();
@@ -141,17 +143,15 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
         return has_effect(g_capability_registry().effects_effective_for(capability_tenant_id_),
                           eff);
     }
-    // Legacy string-only caps keep the list path.
+    // Legacy string-only caps keep the list path. Issue #4058:
+    // granted_capabilities_ only — with-capability pushes never authorize
+    // (the capability_stack_ scan that used to live here let a zero-grant
+    // Agent read host files, clear process exception stacks, and open the
+    // kPrimSecSandboxed dispatch gate with no EffectDeny).
     const auto matches = [&](const std::string& held) { return held == needed; };
     for (const auto& cap : granted_capabilities_) {
         if (matches(cap))
             return true;
-    }
-    for (const auto& layer : capability_stack_) {
-        for (const auto& cap : layer) {
-            if (matches(cap))
-                return true;
-        }
     }
     return false;
 }
