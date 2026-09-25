@@ -187,6 +187,26 @@ static std::string http_post_in_process(const std::string& url, const std::strin
     return res == CURLE_OK ? response : std::string{};
 }
 
+// Issue #4079: display/newline fprintf + fflush, then std::println, leaves
+// the JSON status in the C++ FILE buffer. A pipe client sees "99" and not
+// the status line until the next stdin exec flushes that buffer and steals
+// value (). Protocol lines are a single ::write.
+void emit_status_line(std::string line) {
+    line.push_back('\n');
+    const char* p = line.data();
+    std::size_t n = line.size();
+    while (n > 0) {
+        const ssize_t w = ::write(STDOUT_FILENO, p, n);
+        if (w < 0) {
+            if (errno == EINTR)
+                continue;
+            return;
+        }
+        p += w;
+        n -= static_cast<std::size_t>(w);
+    }
+}
+
 // ── run_serve_async ─────────────────────────────────────
 
 void run_serve_async(int num_workers) {
@@ -615,19 +635,27 @@ void run_serve_async(int num_workers) {
                        std::equal_to<>>
         sessions;
 
-    auto wake_waiting_session_fibers = [&sessions]() {
+    // Issue #4079: the stdin epoll turn enqueues the Waiting session
+    // before the reader pushes the line. Worker LIFO runs the session
+    // first; it sees an empty queue and parks. An eventfd write from
+    // the reader is then skipped while that fiber is still queued, and
+    // the JSON status sits until the next stdin byte — a 30s client
+    // consumes it as the following exec. Enqueue the parked session on
+    // its worker directly once the line is in the deque.
+    auto wake_waiting_session_fibers = [&sessions, &sched]() {
         for (auto& [id, sess] : sessions) {
             (void)id;
             Fiber* f = sess ? sess->fiber : nullptr;
             if (!f || f->is_done())
                 continue;
-            if (f->state() != FiberState::Waiting)
+            if (f->state() != FiberState::Waiting || f->is_queued())
                 continue;
-            int evfd = f->eventfd();
-            if (evfd < 0)
-                continue;
-            uint64_t one = 1;
-            (void)::write(evfd, &one, sizeof(one));
+            int wid = 0;
+            const int nworkers = std::max(1, sched.num_workers());
+            if (f->affinity() >= 0)
+                wid = std::min(f->affinity(), nworkers - 1);
+            if (auto* w = sched.worker(wid))
+                w->enqueue(f);
         }
     };
 
@@ -638,6 +666,17 @@ void run_serve_async(int num_workers) {
         if (sid == "default")
             return sess.empty() || sess == "default";
         return sess == sid;
+    };
+
+    auto take_session_line = [&stdin_lines, &line_for_session](const std::string& sid) {
+        for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
+            if (!line_for_session(*it, sid))
+                continue;
+            std::string got = std::move(*it);
+            stdin_lines.erase(it);
+            return got;
+        }
+        return std::string{};
     };
 
     // 4. Spawn stdin_reader fiber
@@ -775,33 +814,31 @@ void run_serve_async(int num_workers) {
     // Soft shared graph (#4047 B / #4048): pin named sessions to worker 0 with
     // the default session so shared Evaluator denseness never migrates.
     // Production isolation: pin by name hash across workers.
-    auto spawn_named_session_fiber =
-        [&sched, &stdin_lines, &stdin_eof, &sessions, &line_for_session, &cs_for,
-         soft_shared_graph](const std::string& nsid, Session& sess) -> Fiber* {
+    auto spawn_named_session_fiber = [&sched, &stdin_eof, &sessions, &cs_for, &take_session_line,
+                                      soft_shared_graph](const std::string& nsid,
+                                                         Session& sess) -> Fiber* {
         const int aff =
             soft_shared_graph
                 ? 0
                 : (static_cast<int>(std::hash<std::string>{}(nsid) %
                                     static_cast<std::size_t>(std::max(1, sched.num_workers()))));
         return sched.spawn_with_affinity(
-            [nsid, &sess, &stdin_lines, &stdin_eof, &line_for_session, &cs_for]() {
+            [nsid, &sess, &stdin_eof, &cs_for, &take_session_line]() {
                 sess.mailbox.attach(aura::serve::g_current_fiber);
                 sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
                 while (sess.active) {
-                    std::string sl;
-                    for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
-                        if (line_for_session(*sit, nsid)) {
-                            sl = std::move(*sit);
-                            stdin_lines.erase(sit);
-                            break;
-                        }
-                    }
+                    std::string sl = take_session_line(nsid);
                     if (sl.empty()) {
                         if (stdin_eof)
                             break;
+                        // Issue #4079: same-turn reader push vs park.
                         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-                        aura::serve::Fiber::yield();
-                        continue;
+                        sl = take_session_line(nsid);
+                        if (sl.empty()) {
+                            aura::serve::Fiber::yield();
+                            continue;
+                        }
+                        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
                     }
                     auto c = json_field(sl, "cmd");
                     if (c == "exec") {
@@ -811,15 +848,14 @@ void run_serve_async(int num_workers) {
                             aura::messaging::g_current_compiler_service = &cs;
                             auto r = cs.exec_with_cache(code);
                             if (r) {
-                                std::println(
+                                emit_status_line(std::format(
                                     "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                    json_escape(nsid), json_escape(fmt_val(*r, cs)));
+                                    json_escape(nsid), json_escape(fmt_val(*r, cs))));
                             } else {
-                                std::println(
+                                emit_status_line(std::format(
                                     "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
-                                    json_escape(nsid), json_escape(r.error().format()));
+                                    json_escape(nsid), json_escape(r.error().format())));
                             }
-                            std::fflush(stdout);
                         }
                     }
                 }
@@ -868,27 +904,14 @@ void run_serve_async(int num_workers) {
         // Issue #4048: pin session fibers (esp. Soft shared default) to worker 0 so
         // denseness spawn/join inherits affinity and never migrates Evaluators.
         auto* fiber = sched.spawn_with_affinity(
-            [sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched,
-             &shared_workspace_tree, &line_for_session, &cs_for, &emplace_named_session,
-             soft_shared_graph]() {
+            [sid = sid, &sess = *sess, &stdin_eof, &sessions, &sched, &shared_workspace_tree,
+             &take_session_line, &cs_for, &emplace_named_session, soft_shared_graph]() {
                 // Attach mailbox to this fiber
                 sess.mailbox.attach(g_current_fiber);
 
                 while (sess.active) {
-                    // Try to pop a line from stdin
-                    std::string line;
-                    {
-                        // Lock-free: dequeue from shared buffer if available
-                        // Since we're single-threaded, no actual lock needed
-                        line.clear();
-                        for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
-                            if (line_for_session(*it, sid)) {
-                                line = std::move(*it);
-                                stdin_lines.erase(it);
-                                break;
-                            }
-                        }
-                    }
+                    // Try to pop a line from stdin.
+                    std::string line = take_session_line(sid);
 
                     if (line.empty()) {
                         // No lines for us — check mailbox
@@ -905,9 +928,17 @@ void run_serve_async(int num_workers) {
                         // Nothing to do
                         if (stdin_eof)
                             break;
+                        // Issue #4079: epoll wakes this fiber before the
+                        // stdin reader pushes. Park only after a second
+                        // look, and let the reader's direct enqueue
+                        // resume us once the line is actually queued.
                         g_current_fiber->set_state(FiberState::Waiting);
-                        Fiber::yield();
-                        continue;
+                        line = take_session_line(sid);
+                        if (line.empty()) {
+                            Fiber::yield();
+                            continue;
+                        }
+                        g_current_fiber->set_state(FiberState::Running);
                     }
 
                     // Parse and execute
@@ -937,27 +968,27 @@ void run_serve_async(int num_workers) {
                                 auto& v = *result;
                                 // Check if closure
                                 if (is_closure(v)) {
-                                    std::println("{{\"session\":\"{}\",\"status\":\"closure\","
-                                                 "\"value\":\"#<procedure>\"}}",
-                                                 json_escape(sid));
+                                    emit_status_line(
+                                        std::format("{{\"session\":\"{}\",\"status\":\"closure\","
+                                                    "\"value\":\"#<procedure>\"}}",
+                                                    json_escape(sid)));
                                 } else {
-                                    std::println(
+                                    emit_status_line(std::format(
                                         "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                        json_escape(sid), json_escape(fmt_val(v, cs)));
+                                        json_escape(sid), json_escape(fmt_val(v, cs))));
                                 }
                             } catch (const std::bad_alloc&) {
-                                std::println(
+                                emit_status_line(std::format(
                                     "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out "
                                     "of memory\"}}",
-                                    json_escape(sid));
+                                    json_escape(sid)));
                             }
                         } else {
                             auto& d = result.error();
-                            std::println(
+                            emit_status_line(std::format(
                                 "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
-                                json_escape(sid), json_escape(d.format()));
+                                json_escape(sid), json_escape(d.format())));
                         }
-                        std::fflush(stdout);
 
                     } else if (cmd == "session") {
                         auto action = json_field(line, "action");
