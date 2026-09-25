@@ -13,6 +13,7 @@
 #include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
+#include "compiler/agent_name_table.h"
 
 #include <atomic>
 #include <chrono>
@@ -719,6 +720,200 @@ int run_test_agent_ask_typed_corr() {
               "4049 AC6: no AgentRegistry");
         CHECK(read_file("docs/design/4049-agent-reply-payload.md").empty(),
               "4049 AC6: no docs/design file");
+    }
+
+    // ── Issue #4060: non-scalar send/reply is unsupported-payload, no push ──
+    // Both faces refuse. This member starts on dev defaults (Soft); the
+    // string/int/bool branch is still first and has no production check.
+    // A later production probe repeats the hash send. Packed stable-ref
+    // failure stays handoff-required / export-stale, distinct from the
+    // literal string "payload" which is delivered unchanged.
+    {
+        using aura::ast::NodeId;
+        using aura::ast::NULL_NODE;
+        std::println("\n=== Issue #4060: non-scalar send/reply refused ===");
+        CompilerService cs4060;
+        CHECK(
+            cs4060.eval(R"ach((set-code "(define a 1) (define b 2) (define c 3)"))ach").has_value(),
+            "4060 setup: set-code");
+        CHECK(cs4060.eval("(eval-current)").has_value(), "4060 setup: eval-current");
+        auto* ws4060 = cs4060.evaluator().workspace_flat();
+        CHECK(ws4060 != nullptr, "4060 setup: flat workspace");
+        NodeId nid4060 = NULL_NODE;
+        for (NodeId id = 1; id < ws4060->size(); ++id) {
+            if (ws4060->is_live_node(id) && !ws4060->is_free_slot(id)) {
+                nid4060 = id;
+                break;
+            }
+        }
+        CHECK(nid4060 != NULL_NODE, "4060 setup: live node");
+
+        // No live fiber. A running body holds the spawn soft boundary and
+        // #2312 turns every scalar push into backpressure; a done fiber
+        // owned by both the scheduler and the name table double-frees on
+        // the way out. A fiber-null zero-reservation slot is
+        // reclaimable-clean and find() retires it (#3598). must_wait
+        // keeps the slot resolvable. The mailbox has no attacher, so the
+        // delivery gate does not defer the string / int / bool push.
+        auto mb4060 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
+        AgentHandle parked4060{};
+        parked4060.ok = true;
+        parked4060.id = 4060001;
+        parked4060.name = "ac4060";
+        parked4060.mailbox = mb4060;
+        parked4060.must_wait_reclaimed = true;
+        CHECK(cs4060.evaluator().agent_names_->put(std::move(parked4060)) != nullptr,
+              "4060 setup: peer on this Evaluator's name table");
+
+        const auto closed0 = href(cs4060, "send-closed");
+        auto refused = [&](const char* form, const char* label) {
+            auto ok =
+                cs4060.eval(std::format(R"((hash-ref (orch:agent-send "ac4060" {}) "ok"))", form));
+            CHECK(ok && is_bool(*ok) && !as_bool(*ok), std::format("4060: {} send not ok", label));
+            auto st = cs4060.eval(std::format(
+                R"((equal? (hash-ref (orch:agent-send "ac4060" {}) "status") "unsupported-payload"))",
+                form));
+            CHECK(st && is_bool(*st) && as_bool(*st),
+                  std::format("4060: {} status unsupported-payload", label));
+        };
+        // Each refused() evals send twice (ok + status).
+        refused("(hash \"k\" 1)", "hash");
+        refused("(vector 1 2)", "vector");
+        refused("(let ((f (lambda () 1))) f)", "closure");
+        refused("(cons \"nope\" \"list\")", "ordinary pair");
+        CHECK(mb4060->size() == 0, "4060: non-scalar sends did not push");
+        auto empty4060 =
+            cs4060.eval(R"((hash-ref (orch:agent-recv "ac4060" :wait #f :timeout-ms 0) "empty"))");
+        CHECK(empty4060 && is_bool(*empty4060) && as_bool(*empty4060),
+              "4060: peer recv stays empty");
+        CHECK(href(cs4060, "send-closed") == closed0 + 8,
+              "4060: send reuses send-closed (two evals × four forms)");
+
+        auto str_ok = cs4060.eval(
+            R"((let ((h (orch:agent-send "ac4060" "payload")))
+                 (if (hash-ref h "ok") 1
+                     (if (equal? (hash-ref h "status") "backpressure") 2
+                         (if (equal? (hash-ref h "status") "closed") 3
+                             (if (equal? (hash-ref h "status") "unsupported-payload") 4
+                                 (if (equal? (hash-ref h "status") "handoff-required") 5 0)))))))");
+        CHECK(str_ok && is_int(*str_ok) && as_int(*str_ok) == 1,
+              std::format("4060: string payload still ok (code {})",
+                          str_ok && is_int(*str_ok) ? as_int(*str_ok) : -1));
+        auto str_body = cs4060.eval(
+            R"((equal? (hash-ref (orch:agent-recv "ac4060" :wait #f :timeout-ms 0) "payload") "payload"))");
+        CHECK(str_body && is_bool(*str_body) && as_bool(*str_body),
+              "4060: peer received the two characters payload");
+        CHECK(href(cs4060, "send-closed") == closed0 + 8,
+              "4060: string send did not bump send-closed");
+
+        auto int_ok = cs4060.eval(R"((hash-ref (orch:agent-send "ac4060" 7) "ok"))");
+        CHECK(int_ok && is_bool(*int_ok) && as_bool(*int_ok), "4060: int still ok");
+        auto int_body = cs4060.eval(
+            R"((equal? (hash-ref (orch:agent-recv "ac4060" :wait #f :timeout-ms 0) "payload") "7"))");
+        CHECK(int_body && is_bool(*int_body) && as_bool(*int_body), "4060: int body 7");
+        auto bool_ok = cs4060.eval(R"((hash-ref (orch:agent-send "ac4060" #t) "ok"))");
+        CHECK(bool_ok && is_bool(*bool_ok) && as_bool(*bool_ok), "4060: bool still ok");
+        auto bool_body = cs4060.eval(
+            R"((equal? (hash-ref (orch:agent-recv "ac4060" :wait #f :timeout-ms 0) "payload") "#t"))");
+        CHECK(bool_body && is_bool(*bool_body) && as_bool(*bool_body), "4060: bool body #t");
+
+        // Packed stable-ref failure is a different status and still does not push.
+        aura::core::provenance::set_stable_ref_export_hard_reject(true);
+        aura::core::provenance::set_hard_capture_tenant(true);
+        const auto sz_before_stale = mb4060->size();
+        auto stale_ok = cs4060.eval(
+            std::format(R"((hash-ref (orch:agent-send "ac4060" (cons {} 1)) "ok"))", nid4060));
+        CHECK(stale_ok && is_bool(*stale_ok) && !as_bool(*stale_ok),
+              "4060: expired stable-ref send not ok");
+        auto stale_export = cs4060.eval(std::format(
+            R"((equal? (hash-ref (orch:agent-send "ac4060" (cons {} 1)) "status") "export-stale"))",
+            nid4060));
+        auto stale_hand = cs4060.eval(std::format(
+            R"((equal? (hash-ref (orch:agent-send "ac4060" (cons {} 1)) "status") "handoff-required"))",
+            nid4060));
+        CHECK((stale_export && is_bool(*stale_export) && as_bool(*stale_export)) ||
+                  (stale_hand && is_bool(*stale_hand) && as_bool(*stale_hand)),
+              "4060: stable-ref fail is export-stale or handoff-required");
+        auto stale_unsup = cs4060.eval(std::format(
+            R"((equal? (hash-ref (orch:agent-send "ac4060" (cons {} 1)) "status") "unsupported-payload"))",
+            nid4060));
+        CHECK(stale_unsup && is_bool(*stale_unsup) && !as_bool(*stale_unsup),
+              "4060: stable-ref fail is not unsupported-payload");
+        CHECK(mb4060->size() == sz_before_stale, "4060: stable-ref fail did not push");
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_stable_ref_export_hard_reject(false);
+
+        // Reply: a hash must not complete the ask as body "payload".
+        auto reply_mb4060 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
+        const std::uint64_t corr4060 = 4060001;
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks[corr4060] = reply_mb4060;
+        }
+        const auto reply_fail0 = href(cs4060, "agent-reply-fail-total");
+        auto rep_ok = cs4060.eval(
+            std::format(R"((hash-ref (orch:agent-reply {} (hash "k" 1)) "ok"))", corr4060));
+        CHECK(rep_ok && is_bool(*rep_ok) && !as_bool(*rep_ok), "4060: hash reply not ok");
+        auto rep_st = cs4060.eval(std::format(
+            R"((equal? (hash-ref (orch:agent-reply {} (hash "k" 1)) "status") "unsupported-payload"))",
+            corr4060));
+        CHECK(rep_st && is_bool(*rep_st) && as_bool(*rep_st),
+              "4060: hash reply status unsupported-payload");
+        CHECK(reply_mb4060->size() == 0, "4060: hash reply did not push");
+        CHECK(href(cs4060, "agent-reply-fail-total") == reply_fail0 + 2,
+              "4060: reply bumps agent-reply-fail-total");
+
+        auto rep_str = cs4060.eval(
+            std::format(R"((hash-ref (orch:agent-reply {} "payload") "ok"))", corr4060));
+        CHECK(rep_str && is_bool(*rep_str) && as_bool(*rep_str),
+              "4060: string reply \"payload\" still ok");
+        {
+            auto m = reply_mb4060->recv(/*wait=*/true, /*timeout_ms=*/100, /*fiber_id=*/0);
+            CHECK(m.has_value() && m->payload == format_reply_payload(corr4060, "payload"),
+                  "4060: ask mailbox got the literal payload body");
+        }
+
+        aura::core::provenance::set_stable_ref_export_hard_reject(true);
+        aura::core::provenance::set_hard_capture_tenant(true);
+        auto rep_stale = cs4060.eval(std::format(
+            R"((equal? (hash-ref (orch:agent-reply {} (cons {} 1)) "status") "unsupported-payload"))",
+            corr4060, nid4060));
+        CHECK(rep_stale && is_bool(*rep_stale) && !as_bool(*rep_stale),
+              "4060: reply stable-ref fail is not unsupported-payload");
+        auto rep_stale_ok = cs4060.eval(
+            std::format(R"((hash-ref (orch:agent-reply {} (cons {} 1)) "ok"))", corr4060, nid4060));
+        CHECK(rep_stale_ok && is_bool(*rep_stale_ok) && !as_bool(*rep_stale_ok),
+              "4060: reply stable-ref fail not ok");
+        CHECK(reply_mb4060->size() == 0, "4060: reply stable-ref fail did not push");
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_stable_ref_export_hard_reject(false);
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks.erase(corr4060);
+        }
+
+        // Production face takes the same refuse (no sandbox branch).
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        auto prod_st = cs4060.eval(
+            R"((equal? (hash-ref (orch:agent-send "ac4060" (hash "k" 1)) "status") "unsupported-payload"))");
+        CHECK(prod_st && is_bool(*prod_st) && as_bool(*prod_st),
+              "4060: production hash send is unsupported-payload");
+        CHECK(mb4060->size() == 0, "4060: production hash send did not push");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+
+        const auto prim4060 = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim4060.find("unsupported-payload") != std::string::npos,
+              "4060: status literal in the primitive");
+        CHECK(prim4060.find("message integrity, not a sandbox gate") != std::string::npos,
+              "4060: Soft and production share the refuse");
+        CHECK(prim4060.find("send_closed_total.fetch_add") != std::string::npos,
+              "4060: send reuses send_closed_total");
+        CHECK(prim4060.find("agent_reply_fail_total.fetch_add") != std::string::npos,
+              "4060: reply reuses agent_reply_fail_total");
+        CHECK(prim4060.find("insert_kv(\"unsupported-payload\"") == std::string::npos,
+              "4060: no new query:orch-module-stats key");
+        CHECK(read_file("docs/design/4060-unsupported-payload.md").empty(),
+              "4060: no docs/design file");
     }
 
     std::println("\n=== #2538 results: {} passed, {} failed ===", g_passed, g_failed);

@@ -5237,14 +5237,33 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             ev.primitive_error_counter_ptr());
             }
             // Issue #4049: string / int / bool stay zero-cost (same short-circuit
-            // as orch:agent-send). Non-scalar payloads get the #2848 StableNodeRef
-            // recognition — packed (id . gen) with an in-bounds id auto-runs
-            // stamp_stable_ref + handoff_ref, and the asker receives the
-            // post-handoff stable-ref:id:gen body. Handoff failure returns the
-            // existing structured status (handoff-required / export-stale) and
-            // does NOT push — never a silent literal-"payload" success.
+            // as orch:agent-send). Packed (id . gen) with an in-bounds id
+            // auto-runs stamp_stable_ref + handoff_ref, and the asker receives
+            // the post-handoff stable-ref:id:gen body. Handoff failure returns
+            // the existing structured status (handoff-required / export-stale)
+            // and does NOT push.
+            // Issue #4060: hash / vector / closure / a pair that is not that
+            // packed shape are not a payload. Refuse on Soft and production
+            // (message integrity, not a sandbox gate) — ok=#f,
+            // status=unsupported-payload, no push. The string branch stays
+            // first and does not grow a production check.
             std::string payload;
             std::optional<std::uint64_t> held_token;
+            auto refuse_unsupported = [&]() -> EvalValue {
+                aura::orch::g_orch_module_stats.agent_reply_fail_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                auto sidx = ev.push_string_heap("unsupported-payload");
+                std::vector<std::pair<std::string, EvalValue>> fkv = {
+                    {"ok", make_bool(false)},
+                    {"status", make_string(sidx)},
+                    {"schema", make_int(aura::orch::kAgentReplyIssue)},
+                    {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
+                    {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                    {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+                    {"agent-reply-auto-handoff-wired", make_int(1)},
+                };
+                return build_orch_hash(fkv);
+            };
             if (types::is_string(a[1])) {
                 payload = heap_str_from(ev.string_heap_, a[1]);
             } else if (types::is_int(a[1])) {
@@ -5305,10 +5324,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     payload =
                         "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
                 } else {
-                    payload = "payload";
+                    // Issue #4060: ordinary list / non-stable pair. Do not
+                    // coerce to the literal "payload" and do not push.
+                    return refuse_unsupported();
                 }
             } else {
-                payload = "payload";
+                // Issue #4060: hash, vector, closure, and any other non-scalar.
+                return refuse_unsupported();
             }
             // Issue #4049: resolve the replying agent's handle (the current
             // fiber's name-table / scope handle when one is bound) so BP notes
@@ -5376,6 +5398,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
             // AC2: string/int/bool — existing short-circuit; no held_ref_token,
             // no handoff work, single optional load on the #2663 gate.
+            // Issue #4060: anything else that is not a packed in-bounds
+            // StableNodeRef returns ok=#f status=unsupported-payload and
+            // does not push. Soft and production share this refuse (integrity,
+            // not a sandbox gate). Reuses send_closed_total — the existing
+            // non-Ok counter — because agent_send is not called.
+            auto refuse_unsupported = [&]() -> EvalValue {
+                aura::orch::g_orch_module_stats.send_closed_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                auto sidx = ev.push_string_heap("unsupported-payload");
+                std::vector<std::pair<std::string, EvalValue>> fkv = {
+                    {"ok", make_bool(false)},
+                    {"status", make_string(sidx)},
+                    {"schema", make_int(1588)},
+                    {"schema-2011", make_int(2011)},
+                    {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                    {"agent-send-auto-handoff-wired", make_int(1)},
+                };
+                return build_orch_hash(fkv);
+            };
             if (types::is_string(a[1])) {
                 msg.payload = heap_str_from(ev.string_heap_, a[1]);
             } else if (types::is_int(a[1])) {
@@ -5442,10 +5483,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     aura::orch::g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(
                         1, std::memory_order_relaxed);
                 } else {
-                    msg.payload = "payload";
+                    // Issue #4060: ordinary list / non-stable pair.
+                    return refuse_unsupported();
                 }
             } else {
-                msg.payload = "payload";
+                // Issue #4060: hash, vector, closure, and any other non-scalar.
+                return refuse_unsupported();
             }
 
             auto st = aura::orch::agent_send(*hp, std::move(msg)); // orch-raw-send-ok
