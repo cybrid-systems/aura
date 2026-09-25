@@ -1794,7 +1794,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_reload_recovery_query.cpp` (—) [large, domain_suite, theme_compiler] — AC1: soft empty path — idle recovery → recovery-active=0, zeros free
 - `tests/compiler/test_relower_fallback_reason.cpp` (—) [domain_suite, theme_compiler] — AC1: RelowerFallbackReason enum defined
 - `tests/compiler/test_relower_strategy_cache_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_shape_storm_partial_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: When StormLevel has Shape bit, partial is preferred for a wider
+- `tests/compiler/test_shape_storm_partial_relower.cpp` (—) [large, domain_suite, theme_compiler] — AC1: When StormLevel has Shape bit, partial is preferred for a wider
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
 - `tests/compiler/test_specjit_per_eval_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / Global path — process-wide stamp path unchanged

@@ -8302,6 +8302,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4090 shape hot-path linter failed — run python3 scripts/check_shape_hotpath_4090.py")
         return r
+    # Issue #4091: stability loss scanned every ir_cache_v2_ entry (string
+    # hash per entry) and mark_all_blocks_dirty() forced a full-function
+    # relower per result-shape flip. Gate pins: the FnKey → name side index
+    # resolves the cache entry in O(1) before any fallback scan, the dirty
+    # mark goes through the mark_blocks_dirty batch entry targeting the
+    # entry function's Return blocks (never mark_all_blocks_dirty), the
+    # side index is maintained at the cache mutation sites, and the
+    # #4091 runtime ACs + wiring exist.
+    sdc4091_script = ROOT / "scripts" / "check_shape_dirty_cone_4091.py"
+    if not sdc4091_script.exists():
+        fail(f"missing {sdc4091_script}")
+        return 1
+    r = run([sys.executable, str(sdc4091_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4091 shape dirty-cone linter failed — run python3 scripts/check_shape_dirty_cone_4091.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

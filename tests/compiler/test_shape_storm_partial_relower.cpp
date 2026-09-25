@@ -419,6 +419,82 @@ static void ac3986_shape_flip_empty_persist_forces_full() {
     reset_partial_relower_threshold_for_test();
 }
 
+// ── Issue #4091: result-shape flip dirties the result cone, not every block ──
+//   AC1: multiple cached defines; flipping one define's result shape leaves
+//        the other defines' dirty_block_count() at 0.
+//   AC2: the flipped define dirties a strict SUBSET of its blocks (the
+//        result cone via the mark_blocks_dirty batch entry — not
+//        mark_all_blocks_dirty).
+//   AC3: the cache entry resolves via the FnKey → name side index (O(1) in
+//        the FnKey; structural pin in check_shape_dirty_cone_4091.py) and
+//        the flipped define still evaluates after the flip.
+static void ac4091_shape_flip_dirty_cone() {
+    std::println("\n--- #4091: shape flip → result-block cone ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4091: warm");
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x)
+  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9)))))))))
+)
+(define g (lambda (x) x))
+(define h (lambda (x) x))
+")
+)")
+              .has_value(),
+          "4091: set-code f/g/h");
+    CHECK(cs.eval("(eval-current)").has_value(), "4091: eval-current");
+    if (!cs.get_define_v2("f"))
+        (void)cs.eval("(compile:cache-define \"f\")");
+    if (!cs.get_define_v2("g"))
+        (void)cs.eval("(compile:cache-define \"g\")");
+    if (!cs.get_define_v2("h"))
+        (void)cs.eval("(compile:cache-define \"h\")");
+    CHECK(cs.get_define_v2("f") != nullptr, "4091: f cached");
+    CHECK(cs.get_define_v2("g") != nullptr, "4091: g cached");
+    CHECK(cs.get_define_v2("h") != nullptr, "4091: h cached");
+
+    // Direct toplevel calls like (f 1) short-circuit to the tree-walk
+    // evaluator (try_dispatch_toplevel_define_call_ → apply_closure) and
+    // never reach record_eval_result_shape — verified by probe: f
+    // total_calls stays 0. The production trigger for the shape→dirty
+    // cache path is invalidate_shape (mutate flows call it): it seeds the
+    // profile when empty, invalidates, and fires the deopt hook →
+    // on_shape_deopt_hook → mark_shape_dirty_for_fn_key.
+
+    // Clean slate: relower everything, then assert the baseline is clean.
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    const auto f_entry = cs.get_define_v2("f");
+    const auto g_entry = cs.get_define_v2("g");
+    const auto h_entry = cs.get_define_v2("h");
+    CHECK(f_entry && g_entry && h_entry, "4091: entries live");
+    if (f_entry && g_entry && h_entry) {
+        CHECK(g_entry->dirty_block_count() == 0, "4091 baseline: g clean");
+        CHECK(h_entry->dirty_block_count() == 0, "4091 baseline: h clean");
+        CHECK(f_entry->dirty_block_count() == 0, "4091 baseline: f clean");
+        const auto total_blocks = f_entry->irs.empty() ? 0 : f_entry->irs[0].blocks.size();
+        CHECK(total_blocks >= 4, "4091: nested-if define lowered multi-block");
+
+        // Trigger the production shape→dirty path: invalidate_shape seeds
+        // f's empty profile, invalidates, and fires the deopt hook →
+        // on_shape_deopt_hook → mark_shape_dirty_for_fn_key — the exact
+        // path the issue flags (cache scan + full-function mark).
+        const auto m0 = cs.metrics().irsoa_dirty_cascade_savings.load(std::memory_order_relaxed);
+        cs.invalidate_shape("f");
+        std::println("  4091 probe: cascade {} -> {}", m0,
+                     cs.metrics().irsoa_dirty_cascade_savings.load(std::memory_order_relaxed));
+
+        CHECK(g_entry->dirty_block_count() == 0, "#4091 AC1: other define stays clean (g)");
+        CHECK(h_entry->dirty_block_count() == 0, "#4091 AC1: other define stays clean (h)");
+        const auto dirty = f_entry->dirty_block_count();
+        std::println("  4091: f blocks={} dirty={}", total_blocks, dirty);
+        CHECK(dirty > 0, "#4091 AC2: flipped define dirties its result cone");
+        CHECK(dirty < total_blocks,
+              "#4091 AC2: strict subset of blocks (not mark_all_blocks_dirty)");
+        CHECK(cs.eval("(f 1)").has_value(), "#4091 AC3: flipped define still evaluable");
+    }
+}
+
 } // namespace
 
 int run_test_shape_storm_partial_relower() {
@@ -429,6 +505,7 @@ int run_test_shape_storm_partial_relower() {
     ac4_lineage_and_source();
     ac3070_hysteresis_and_forced_thr();
     ac3986_shape_flip_empty_persist_forces_full();
+    ac4091_shape_flip_dirty_cone();
 
     std::println("\n=== test_shape_storm_partial_relower: {} passed, {} failed ===", g_passed,
                  g_failed);

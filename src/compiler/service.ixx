@@ -5291,6 +5291,11 @@ public:
     std::unordered_map<std::string, IRCacheEntry, aura::core::TransparentStringHash,
                        std::equal_to<>>
         ir_cache_v2_;
+    // Issue #4091: FnKey → define-name side index for the shape dirty hook.
+    // mark_shape_dirty_for_fn_key resolves the cache entry in O(1) instead
+    // of hashing session_id_ + name for every cached define on every
+    // result-shape flip. Maintained at the ir_cache_v2_ insert/erase sites.
+    std::unordered_map<shape::FnKey, std::string> shape_fnkey_names_;
     // Issue #3069: abort-force generation fence. Bumped (release) *before*
     // walking ir_cache_v2_ so concurrent lookup_define_v2 can observe
     // abort-in-progress without reading a half-forced entry. 0 = never
@@ -5310,6 +5315,8 @@ public:
         for (auto it = ir_cache_v2_.begin();
              it != ir_cache_v2_.end() && ir_cache_v2_.size() > kIRCacheV2MaxEntries;) {
             if (it->second.dirty) {
+                // Issue #4091: drop the FnKey → name side index row.
+                shape_fnkey_names_.erase(shape::make_fn_key(session_id_, it->first));
                 it = ir_cache_v2_.erase(it);
                 metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -5327,6 +5334,8 @@ public:
                     victim = it;
                 }
             }
+            // Issue #4091: drop the FnKey → name side index row.
+            shape_fnkey_names_.erase(shape::make_fn_key(session_id_, victim->first));
             ir_cache_v2_.erase(victim);
             metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
             metrics_.ir_cache_v2_lru_evictions_total.fetch_add(1, std::memory_order_relaxed);
@@ -5444,6 +5453,8 @@ public:
                          std::vector<std::string> strings) {
         auto hash = fnv1a_64(source);
         auto& entry = ir_cache_v2_[name];
+        // Issue #4091: keep the FnKey → name side index in sync.
+        shape_fnkey_names_.insert_or_assign(shape::make_fn_key(session_id_, name), name);
         entry.source = std::move(source);
         entry.source_hash = hash;
         entry.irs = std::move(irs);
@@ -7519,6 +7530,8 @@ public:
             // computed last time and is still valid if the source hash matches.)
             const bool existed = ir_cache_v2_.find(name) != ir_cache_v2_.end();
             auto& entry = ir_cache_v2_[name];
+            // Issue #4091: keep the FnKey → name side index in sync.
+            shape_fnkey_names_.insert_or_assign(shape::make_fn_key(session_id_, name), name);
             if (!existed) {
                 entry.source = canonical;
                 entry.source_hash = hash;
@@ -7653,6 +7666,8 @@ public:
                 }
             } else {
                 auto& entry = ir_cache_v2_[name];
+                // Issue #4091: keep the FnKey → name side index in sync.
+                shape_fnkey_names_.insert_or_assign(shape::make_fn_key(session_id_, name), name);
                 entry.source = canonical;
                 entry.source_hash = hash;
                 entry.dirty = false;
@@ -8897,6 +8912,8 @@ public:
             ir_cache_.erase(fname);
             ir_cache_bridge_.erase(fname);
             ir_cache_strings_.erase(fname);
+            // Issue #4091: drop the FnKey → name side index row.
+            shape_fnkey_names_.erase(shape::make_fn_key(session_id_, fname));
             ir_cache_v2_.erase(fname);
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
@@ -15552,14 +15569,79 @@ public:
     }
 
     // Issue #686: mark IR cache dirty for a ShapeProfiler FnKey.
+    // Issue #4091: resolve the define via the FnKey → name side index
+    // (O(1); the pre-#4090 loop hashed session_id_ + name for every cached
+    // define on every result-shape flip) and dirty only the entry
+    // function's result block(s) through the mark_blocks_dirty batch
+    // entry — mark_all_blocks_dirty forced the next lower/opt to rebuild
+    // the whole function instead of the dirty cone. A real structural
+    // mutate keeps its existing cone dirty path.
     void mark_shape_dirty_for_fn_key(shape::FnKey fn_key) {
-        for (auto& [name, entry] : ir_cache_v2_) {
+        const auto idx = shape_fnkey_names_.find(fn_key);
+        if (idx != shape_fnkey_names_.end() && mark_shape_dirty_result_block_(idx->second))
+            return;
+        // Cold fallback: index row missing (entry stored before the row
+        // existed / erased). One scan, then the row is cached.
+        for (const auto& [name, entry] : ir_cache_v2_) {
+            (void)entry;
             if (shape::make_fn_key(session_id_, name) != fn_key)
                 continue;
-            entry.mark_all_blocks_dirty();
-            metrics_.irsoa_dirty_cascade_savings.fetch_add(1, std::memory_order_relaxed);
+            shape_fnkey_names_.insert_or_assign(fn_key, name);
+            (void)mark_shape_dirty_result_block_(name);
             return;
         }
+    }
+
+    // Issue #4091: dirty the entry function's result block(s) — the blocks
+    // holding Return ops of the define's function — via the
+    // mark_blocks_dirty batch entry (#2522 / #2615 discipline; the
+    // single-block mark_block_dirty is deleted under AURA_PRODUCTION_PACK).
+    // Returns false when no v2 cache entry exists for `name`.
+    bool mark_shape_dirty_result_block_(const std::string& name) {
+        const auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        auto& entry = it->second;
+        if (entry.irs.empty()) {
+            // Source-only shell — nothing lowered to dirty yet.
+            metrics_.irsoa_dirty_cascade_savings.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        // The define's entry function: named after the define when present,
+        // else the first function.
+        std::size_t func_idx = 0;
+        for (std::size_t fi = 0; fi < entry.irs.size(); ++fi) {
+            if (entry.irs[fi].name == name) {
+                func_idx = fi;
+                break;
+            }
+        }
+        // Result block(s): blocks holding Return ops. block_dirty_per_func_
+        // and the SoA mirror are indexed by block POSITION, not
+        // BasicBlock::id — push positions.
+        std::vector<std::uint32_t> result_blocks;
+        if (func_idx < entry.irs.size()) {
+            const auto& ir_fn = entry.irs[func_idx];
+            for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+                for (const auto& instr : ir_fn.blocks[bi].instructions) {
+                    if (instr.opcode == aura::ir::IROpcode::Return) {
+                        result_blocks.push_back(static_cast<std::uint32_t>(bi));
+                        break;
+                    }
+                }
+            }
+        }
+        if (result_blocks.empty() && func_idx < entry.soa_mod.functions.size()) {
+            // Defensive: no Return mapped — dirty the function's last block
+            // (still a strict subset, never mark_all_blocks_dirty).
+            const auto& soa_fn = entry.soa_mod.functions[func_idx];
+            if (!soa_fn.blocks_.empty())
+                result_blocks.push_back(static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1));
+        }
+        if (!result_blocks.empty())
+            entry.mark_blocks_dirty(func_idx, std::span<const std::uint32_t>(result_blocks));
+        metrics_.irsoa_dirty_cascade_savings.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // Issue #686: propagate stable dominant shape into IRSoA shape_ids_.
