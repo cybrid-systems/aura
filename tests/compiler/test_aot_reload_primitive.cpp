@@ -24,10 +24,12 @@ extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
 extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(void);
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -766,6 +768,123 @@ static void ac3747_3_soft_staging_unchanged() {
     CHECK(aura_reload_old_so_pending_v_read() == 0, "3747 AC3: explicit drain still works");
 }
 
+// Issue #4074: production dlclose waits out an in-flight native fn().
+static std::shared_mutex g_4074_mu;
+static std::atomic<int> g_4074_unloaded{0};
+
+extern "C" void aura_test_4074_note_unload(void) {
+    g_4074_unloaded.fetch_add(1, std::memory_order_release);
+}
+
+static void ac4074_lock_read(void* p) {
+    static_cast<std::shared_mutex*>(p)->lock_shared();
+}
+static void ac4074_unlock_read(void* p) {
+    static_cast<std::shared_mutex*>(p)->unlock_shared();
+}
+static void ac4074_lock_write(void* p) {
+    static_cast<std::shared_mutex*>(p)->lock();
+}
+static void ac4074_unlock_write(void* p) {
+    static_cast<std::shared_mutex*>(p)->unlock();
+}
+
+static std::string build_test_so_unload(std::uint64_t version) {
+    const std::string cpath = std::format("/tmp/aura_aot_4074_{}.c", version);
+    const std::string sopath = std::format("/tmp/aura_aot_4074_{}.so", version);
+    {
+        std::ofstream f(cpath);
+        if (!f)
+            return {};
+        f << "#include <stdint.h>\n#include <dlfcn.h>\n";
+        f << "uint64_t aot_emit_version = " << version << "ULL;\n";
+        f << "uint64_t aot_region_mask = 0ULL;\n";
+        f << "__attribute__((constructor)) static void reg(void) {(void)aot_emit_version;}\n";
+        f << "__attribute__((destructor)) static void bye(void) {\n";
+        f << "  void* self = dlopen(0, 1);\n";
+        f << "  void (*fn)(void) = self ? (void (*)(void))dlsym(self, "
+             "\"aura_test_4074_note_unload\") : 0;\n";
+        f << "  if (!fn) fn = (void (*)(void))dlsym(((void*)0), \"aura_test_4074_note_unload\");\n";
+        f << "  if (fn) fn();\n";
+        f << "}\n";
+    }
+    const std::string cmd =
+        std::format("cc -shared -fPIC -o {} {} -ldl 2>/dev/null", sopath, cpath);
+    if (std::system(cmd.c_str()) != 0)
+        return {};
+    return sopath;
+}
+
+static void ac4074_dlclose_waits_for_native() {
+    std::println("\n--- #4074: production dlclose waits for in-flight native ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto fn = br.find("static void production_remount_then_drain_old_so()");
+    CHECK(fn != std::string::npos, "4074: helper present");
+    const auto body = br.substr(fn, 900);
+    CHECK(body.find("if (!aura::compiler::typed_audit::production_defaults_active())") !=
+              std::string::npos,
+          "4074: Soft returns before the drain lock");
+    const auto wpos = body.find("aura_lock_workspace_write()");
+    const auto dpos = body.find("aura_force_drain_old_so()");
+    const auto upos = body.find("aura_unlock_workspace_write()");
+    CHECK(wpos != std::string::npos && dpos != std::string::npos && upos != std::string::npos &&
+              wpos < dpos && dpos < upos,
+          "4074: dlclose runs under the workspace write lock");
+    CHECK(br.find("schema-4074") == std::string::npos, "4074: no new query key");
+    CHECK(read_file("docs/design/4074-inflight-dlclose.md").empty(), "4074: no docs/design");
+
+    aura_force_drain_old_so();
+    g_4074_unloaded.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    aura_set_lock_hooks(ac4074_lock_read, ac4074_unlock_read, ac4074_lock_write,
+                        ac4074_unlock_write, nullptr, nullptr, &g_4074_mu);
+    const auto so1 = build_test_so_unload(40741);
+    const auto so2 = build_test_so_unload(40742);
+    if (so1.empty() || so2.empty()) {
+        CHECK(true, "4074: cc unavailable — source-cite only");
+        aura_set_lock_hooks(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        return;
+    }
+    CHECK(aura_reload_aot_module_for_eval(&cs.evaluator(), so1.c_str(), 0) == true,
+          "4074: first module loaded");
+    std::atomic<int> holding{0};
+    std::atomic<int> release{0};
+    std::atomic<int> reload_rc{0};
+    std::thread holder([&] {
+        g_4074_mu.lock_shared();
+        holding.store(1, std::memory_order_release);
+        while (release.load(std::memory_order_acquire) == 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        g_4074_mu.unlock_shared();
+    });
+    while (holding.load(std::memory_order_acquire) == 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::thread reloader([&] {
+        const bool ok = aura_reload_aot_module_for_eval(&cs.evaluator(), so2.c_str(), 0);
+        reload_rc.store(ok ? 1 : 2, std::memory_order_release);
+    });
+    const auto blocked_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (reload_rc.load(std::memory_order_acquire) == 0 &&
+           std::chrono::steady_clock::now() < blocked_until)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(reload_rc.load(std::memory_order_acquire) == 0,
+          "4074: reload still in flight while native holds the read lock");
+    CHECK(g_4074_unloaded.load(std::memory_order_acquire) == 0,
+          "4074: old .so destructor has not run");
+    release.store(1, std::memory_order_release);
+    holder.join();
+    reloader.join();
+    CHECK(reload_rc.load(std::memory_order_acquire) == 1,
+          "4074: reload commits after native returns");
+    CHECK(g_4074_unloaded.load(std::memory_order_acquire) >= 1,
+          "4074: old .so unmapped after the native call");
+    CHECK(aura_reload_old_so_pending_v_read() == 0, "4074: production drain finished");
+    aura_set_lock_hooks(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 static void ac3747_4_no_invent_fail_dlclose_new() {
     std::println("\n--- #3747 AC4: no invent; fail still dlclose new handle ---");
     const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
@@ -860,6 +979,7 @@ int main() {
     ac3747_2_must_deopt_even_if_drain_delayed();
     ac3747_3_soft_staging_unchanged();
     ac3747_4_no_invent_fail_dlclose_new();
+    ac4074_dlclose_waits_for_native();
     ac3978_2arg_prod_multi_no_owner();
     ac3978_soft_single_unchanged();
     ac7_cross_workspace_reject_2178();
