@@ -498,20 +498,19 @@ static void run_543_stale_detection() {
 }
 
 static void run_543_materialize_bumps_stale() {
-    std::println("\n--- AC5 (#543): materialize_call_env bumps stale_refresh_count_ ---");
+    std::println("\n--- AC5 (#543/#4072): stale materialize does not wash version_ ---");
     Evaluator ev;
     auto id = ev.alloc_env_frame();
     aura::compiler::Closure cl;
     cl.env_id = id;
-    const auto baseline = ev.get_envframe_stale_refresh_count();
     ev.bump_defuse_version_for_test();
     CHECK(ev.is_env_frame_stale(id), "frame stale before materialize_call_env");
+    const auto ver_before = ev.env_frame(id).version_;
     auto ne = ev.materialize_call_env(cl);
     (void)ne;
-    const auto after = ev.get_envframe_stale_refresh_count();
-    CHECK(after > baseline, "stale_refresh_count_ bumped by materialize_call_env");
-    CHECK(ev.env_frame(id).version_ == ev.defuse_version_for_test(),
-          "frame.version_ == defuse_version_ post-refresh");
+    CHECK(ev.env_frame(id).version_ == ver_before,
+          "frame.version_ stays behind defuse (not washed then copied)");
+    CHECK(ev.is_env_frame_stale(id), "frame still stale after materialize");
 }
 
 static void run_543_walk_version_mismatch() {
