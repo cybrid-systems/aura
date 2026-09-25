@@ -93,8 +93,9 @@ def main() -> int:
     if fpos < 0:
         fails.append("AC4: force_ir_cache_dirty_after_abort missing")
     else:
-        # Take a generous body window.
-        body = svc[fpos : fpos + 4000]
+        # Body window covers the #4084 jit_cache_ erase that sits
+        # before the in_progress clear.
+        body = svc[fpos : fpos + 6000]
         must("abort_force_in_progress_.store(0, std::memory_order_release)", "AC4 clear latch", body)
         must("abort_map_invalid = true", "AC4 abort_map_invalid", body)
 
