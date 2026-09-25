@@ -917,6 +917,80 @@ int run_test_security_audit_unify() {
         CompilerService cs;
         CHECK(href_evol(cs, "observe-only") == 1, "3246 AC2: query does not execute playbook");
     }
+    {
+        using aura::compiler::typed_audit::decide_evolution_suggested_next;
+        using aura::compiler::typed_audit::evolution_suggested_next_cstr;
+        using aura::compiler::typed_audit::EvolutionSuggestedNext;
+        using aura::compiler::typed_audit::EvolutionSuggestedNextInput;
+        using aura::compiler::typed_audit::record_boundary_deny_after_restore;
+        std::println("\n--- #4064: rollback / SE deny is not suggested-next ok ---");
+        EvolutionSuggestedNextInput in;
+        in.production_defaults = true;
+        in.join_mid = 4064001;
+        in.typed_outcome = 2;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::InspectDeny,
+              "4064: Rollback is inspect-deny");
+        CHECK(std::string_view(evolution_suggested_next_cstr(
+                  EvolutionSuggestedNext::InspectDeny)) == "inspect-deny",
+              "4064: inspect-deny literal");
+        in.typed_outcome = 3;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::InspectDeny,
+              "4064: Error is inspect-deny");
+        in.typed_outcome = 1;
+        in.last_se_denied = true;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::InspectDeny,
+              "4064: SE deny is inspect-deny");
+        in.last_se_denied = false;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::Ok,
+              "4064: Success and no SE deny stays ok");
+        in.join_mid = 0;
+        in.typed_outcome = 2;
+        in.last_se_denied = true;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::None,
+              "4064: join mid 0 stays none");
+        in.production_defaults = false;
+        in.join_mid = 4064001;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::SoftObserve,
+              "4064: Soft stays soft-observe");
+        in.production_defaults = true;
+        in.typed_outcome = 1;
+        in.last_se_denied = false;
+        in.schedule_would_deny = true;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::ScheduleDeny,
+              "4064: schedule deny still wins when the verdict is green");
+
+        reset_process();
+        apply_production_audit_defaults();
+        record_boundary_deny_after_restore(4064001, "rollback", 1, 2);
+        CompilerService cs;
+        CHECK(href_evol_mid(cs, 4064001, "typed-outcome") == 2,
+              "4064: query typed-outcome Rollback");
+        CHECK(href_evol_mid(cs, 4064001, "last-se-denied") == 1, "4064: query last-se-denied");
+        CHECK(href_evol_mid(cs, 4064001, "suggested-next-code") ==
+                  static_cast<std::int64_t>(EvolutionSuggestedNext::InspectDeny),
+              "4064: query suggested-next is not ok");
+        {
+            auto r =
+                cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4064001) "
+                        "\"suggested-next\")");
+            CHECK(r && is_string(*r), "4064: suggested-next string");
+            const auto idx = as_string_idx(*r);
+            const auto heap = cs.evaluator().string_heap();
+            CHECK(idx < heap.size() && heap[idx] == "inspect-deny",
+                  "4064: query literal inspect-deny");
+        }
+        CHECK(href_evol_mid(cs, 4064001, "observe-only") == 1,
+              "4064: query still does not run playbook");
+        const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+        const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(hdr.find("Issue #4064") != std::string::npos, "4064: decision cite");
+        CHECK(sec.find("nin.typed_outcome") != std::string::npos,
+              "4064: query passes typed outcome");
+        CHECK(sec.find("nin.last_se_denied") != std::string::npos, "4064: query passes SE deny");
+        CHECK(sec.find("schema-4064") == std::string::npos, "4064: no new query key");
+        CHECK(read_file("docs/design/4064-suggested-next-deny.md").empty(), "4064: no docs/design");
+        reset_process();
+    }
 
     {
         std::println("\n--- 3242 AC3: mid=0 Success does not invent typed summary ---");

@@ -6636,6 +6636,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 nin.densify_ok = densify.would_allow_mutate;
                 nin.posture_degraded = posture_degraded;
                 nin.playbook_action = static_cast<std::int64_t>(pb.action);
+                // Issue #4064: fold the same-mid typed outcome and SE deny
+                // already loaded above. Still observe-only.
+                nin.typed_outcome = static_cast<std::uint8_t>(typed_outcome);
+                nin.last_se_denied = last_se_denied != 0;
                 const auto next = decide_evolution_suggested_next(nin);
                 insert_kv_str("suggested-next", evolution_suggested_next_cstr(next));
                 insert_kv("suggested-next-code", static_cast<std::int64_t>(next));
