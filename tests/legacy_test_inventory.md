@@ -1930,7 +1930,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_boundary_consistency.cpp` (—) [domain_suite, theme_compiler] — Issue #1568 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_live_closure_walk.cpp` (—) [domain_suite, theme_compiler] — Issue #1557/#1568/#1596/#1659/#1895 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_walk_active_closures.cpp` (—) [domain_suite, theme_compiler] — Issue #1895/#1928 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_live_closure_full_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: N named closures + reemit → epoch_restamp_total ≥ N
+- `tests/compiler/test_live_closure_full_restamp.cpp` (—) [large, domain_suite, theme_compiler] — AC1: N named closures + reemit → epoch_restamp_total ≥ N
 - `tests/compiler/test_lock_order_production_soft.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft (force mode 2) + inversion bumps metrics, no abort
 - `tests/compiler/test_longrunning_infra_primitives.cpp` (—) [domain_suite, theme_compiler] — test_longrunning_infra_primitives.cpp — Issue #753:
 - `tests/compiler/test_longrunning_recovery_latency.cpp` (—) [domain_suite, theme_compiler] — AC1: panic-restore path instruments recovery latency
