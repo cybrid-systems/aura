@@ -24,6 +24,9 @@
 #include "core/capability_model.hh"
 #include "compiler/security_capabilities.h"
 #include "compiler/grant_test_support.hh"
+#include "compiler/mutation_concurrency_health.hh"
+#include "serve/fiber.h"
+#include "serve/multi_fiber_mailbox.h"
 #include "serve/runtime_production_abi.h"
 
 #include <array>
@@ -6502,6 +6505,115 @@ static void ac3979_3_soft_off_half_write() {
           "3979 AC3: truncate stays behind the sandbox load");
 }
 
+// Issue #4087: agent-body fiber window (orch soft checkpoint frame below) —
+// the first real write's Guard IS the type-authority outermost (#4089
+// soft-only-below flip), so its dtor runs unified_restamp_after_boundary +
+// clear_nested_authority_gap. Regression (the issue's verify arm): after a
+// successful mutate:replace-subtree inside the body, an immediate
+// query:pattern on Defines untouched by the write must return the durable
+// schema-2 QueryResult (reserved == kQueryResultMatchSchema2Prod), never
+// restamp-lag; nested_authority_gap() must be false after the body returns.
+static void ac4087_1_agent_body_write_query_schema2() {
+    std::println("\n--- #4087 AC1: agent-body write → immediate query schema-2, gap clear ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_production_audit_defaults();
+    // Earlier ACs in this suite may leave the #3775 process-global agent
+    // throttle armed (mailbox-starvation face) — a fresh production mutate
+    // would guard-reject on it. Reset the face before the agent-body write.
+    aura::serve::mf_mailbox::reset_scope_starve_map_for_test();
+    aura::serve::mf_mailbox::clear_agent_throttle_for_mailbox_starvation();
+    // Earlier ACs may also leave #2985 concurrency-health faces armed
+    // (process-global densify counters / thread-local admit override) — the
+    // production admission gate would deny the agent-body write with
+    // guard-reject 'densify-fail'. Admission is orthogonal to the gap
+    // lifecycle under test: observe-only for this AC, default restored after.
+    aura::compiler::clear_mutation_concurrency_health_admit_snapshot_for_test();
+    aura::compiler::set_mutation_concurrency_health_soft_for_test(true);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "4087 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4087 AC1: workspace_flat");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        aura::core::provenance::reset_provenance_enforcement_for_test();
+        return;
+    }
+    aura::ast::NodeId target = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->parent_of(id) != aura::ast::NULL_NODE &&
+            !ws->is_macro_introduced(id)) {
+            target = id;
+            break;
+        }
+    }
+    CHECK(target != aura::ast::NULL_NODE, "4087 AC1: parented user node for replace-subtree");
+    // Agent-body window: orch_soft_boundary_enter pushes the marked soft
+    // checkpoint onto the fiber mutation stack BEFORE any mutate (the fiber
+    // held-mirror publish is the #2515 serve face — not needed for the gap
+    // lifecycle under test). A real Fiber object backs g_current_fiber_void
+    // so active_mutation_stack_static() resolves the fiber's own stack.
+    aura::serve::Fiber fiber4087([] {}, 64 * 1024);
+    Evaluator::set_current_fiber(&fiber4087);
+    Evaluator::MutationCheckpoint soft4087{};
+    soft4087.version = cs.evaluator().defuse_version_for_test();
+    soft4087.evaluator_id = &cs.evaluator();
+    soft4087.orch_soft_frame = true;
+    Evaluator::active_mutation_stack_static().push_back(soft4087);
+    // First real write in the agent body: pre-#4089 this Guard saw
+    // prev = size()+1 != 1 → nested → its exit stamped the gap and the query
+    // below printed restamp-lag. With the #4089 soft-only-below flip the
+    // Guard is the type-authority outermost (gap never survives the write).
+    // #3395: production mutate rejects bare-int node args — route the target
+    // through query:stable-ref (schema-2 hash operand, #3424).
+    auto w = cs.eval(std::format("(mutate:replace-subtree (query:stable-ref {}) \"99\")",
+                                 static_cast<unsigned>(target)));
+    // Success is #t or a captured-vars pair (#2797 AC2b shape) — never a
+    // hygiene / parse reject for a user node under production.
+    const auto w_kind = w.has_value() ? merr_kind_3027(cs, *w) : std::string("<no value>");
+    const auto w_msg = w.has_value() ? merr_cadr_3121(cs, *w) : std::string("");
+    const bool w_ok =
+        w.has_value() && (is_bool(*w) ? as_bool(*w)
+                                      : (is_pair(*w) && w_kind != "hygiene" &&
+                                         w_kind != "hygiene-protected" && w_kind != "parse-error"));
+    CHECK(w_ok,
+          std::format("4087 AC1: replace-subtree commits (kind: '{}', msg: '{}')", w_kind, w_msg));
+    // Immediate query after the successful body write: production
+    // auto-upgrades to the durable schema-2 hash — never restamp-lag.
+    auto q = cs.eval("(query:pattern \"*\")");
+    CHECK(q.has_value() && is_hash(*q), "4087 AC1: durable schema-2 QueryResult hash");
+    CHECK(merr_kind_3027(cs, *q) != "restamp-lag", "4087 AC1: not restamp-lag");
+    // Freshness-only TU (#3451): the reserved face is asserted through the
+    // production freshness SSOT — build a schema-2 QR for a Define root the
+    // write never touched (make_pre_nested_schema2_qr stamps reserved ==
+    // kQueryResultMatchSchema2Prod); pre-#4089 the nested stamp's gap face
+    // made this stale. Checked still inside the agent body.
+    aura::ast::NodeId untouched = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = ws->size(); id-- > 0;) {
+        if (ws->is_live_node(id) && ws->parent_of(id) == aura::ast::NULL_NODE) {
+            untouched = id;
+            break;
+        }
+    }
+    CHECK(untouched != aura::ast::NULL_NODE, "4087 AC1: untouched Define root");
+    CHECK(!ws->nested_authority_gap(), "4087 AC1: no gap face after the in-body write");
+    CHECK(cs.evaluator().allow_query_stable_ref_export(untouched),
+          "4087 AC1: untouched Define exports (no restamp-lag gate)");
+    const auto qr4087 = make_pre_nested_schema2_qr(*ws, untouched);
+    CHECK(aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+              qr4087, *ws, /*tenant=*/0, /*fiber=*/0) == aura::core::QueryResultFreshness::Fresh,
+          "4087 AC1: untouched Define schema-2 QR fresh (no restamp-lag face)");
+    // Body returns: orch_soft_boundary_exit pops the soft frame; the fiber
+    // face clears. No nested stamp may survive the body.
+    Evaluator::active_mutation_stack_static().pop_back();
+    Evaluator::set_current_fiber(nullptr);
+    CHECK(!ws->nested_authority_gap(), "4087 AC1: gap clear after body return");
+    aura::compiler::reset_mutation_concurrency_health_soft_for_test();
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -6745,6 +6857,8 @@ int main() {
     ac4076_success_unstamp_stays_user();
     ac4076_soft_failure_does_not_restore();
     ac4076_source_cite();
+    std::println("\n=== Issue #4087: agent-body authority gap lifecycle (#4089 root fix) ---");
+    ac4087_1_agent_body_write_query_schema2();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -418,6 +418,110 @@ static void ac15_linter_and_wiring() {
           "AC15: no docs/design/4089-* per #1655");
 }
 
+// ── Issue #4087: nested-mutate authority gap lifecycle ───────────────────────
+//
+// Nested Guard success (REAL Guard nesting) stamps the workspace authority
+// gap — note_nested_authority_gap + force_query_epoch_stale_from_restamp_budget
+// (production/Full only). The ONLY clear is the outermost Guard dtor
+// (unified_restamp_after_boundary then ws->clear_nested_authority_gap()).
+// Default agent bodies run on a fiber with an orch soft checkpoint frame
+// pushed (orch_soft_boundary_enter): pre-#4089 the first real write's Guard
+// saw prev = size()+1 != 1 → nested → its exit stamped the gap the soft
+// window never cleared → an immediate query:pattern on an untouched Define
+// printed restamp-lag after a SUCCESSFUL write, and nested_authority_gap()
+// stayed true after the body returned. The #4089 ctor flip (soft-only-below
+// → type-authority outermost, captured into is_outermost_ per #2120) routes
+// the first real write's dtor through the outermost triad + gap clear, so
+// the nested-exit stamp fires only for real Guard nesting. That IS the root
+// fix this issue prescribed (soft frames must not occupy the mutation
+// stack's outermost slot — realized as the soft-only-below classification
+// instead of unmarking the stack). No new query API, no old query key
+// change, Soft/Off never enter the production/Full arm. Runtime regression
+// arm (write → immediate query schema-2, gap false after body return):
+// ac4087_1_agent_body_write_query_schema2 in
+// tests/compiler/test_hygiene_mutate_closed_loop.cpp.
+//
+// AC16: nested-exit gap stamp arm is gated production/Full (Soft/Off zero
+//       extra); stamp fires before the #3041 QueryEpoch poison.
+// AC17: the only gap clear is the outermost dtor, after the ctor-captured
+//       is_outermost_ (#2120); gap-open window telemetry retained.
+// AC18: soft-only-below flip precedes the is_outermost_ capture — the first
+//       real write's Guard is outermost (dtor clears); real Guard nesting
+//       (non-soft frame below) keeps the nested determination; the runtime
+//       verify arm lives in the hygiene closed-loop suite.
+// AC19: linter + build.py wiring + root allowlist + no docs/design/4087-*.
+static void ac16_gap_stamp_gated_production() {
+    std::println("\n--- #4087 AC16: nested-exit gap stamp gated production/Full ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto gate_pos = emb.find("if (success && (typed_audit::production_defaults_active() ||");
+    const auto stamp_pos = emb.find("workspace_flat_->note_nested_authority_gap();");
+    const auto poison_pos = emb.find("aura::core::force_query_epoch_stale_from_restamp_budget();");
+    CHECK(gate_pos != std::string::npos,
+          "AC16: nested-exit stamp arm gated on production/Full strategy");
+    CHECK(stamp_pos != std::string::npos, "AC16: note_nested_authority_gap stamp exists");
+    CHECK(poison_pos != std::string::npos, "AC16: #3041 QueryEpoch poison fires with the stamp");
+    CHECK(gate_pos != std::string::npos && stamp_pos != std::string::npos &&
+              poison_pos != std::string::npos && gate_pos < stamp_pos && stamp_pos < poison_pos,
+          "AC16: gate precedes the stamp; poison ordered after the stamp");
+    CHECK(emb.find("Soft / Off: zero extra") != std::string::npos,
+          "AC16: Soft/Off zero extra cited at the gap arm");
+}
+
+static void ac17_outermost_dtor_clears_gap() {
+    std::println("\n--- #4087 AC17: the only gap clear is the outermost dtor ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto capture_pos = emb.find("const bool outermost = is_outermost_;");
+    const auto clear_pos = emb.find("ws->clear_nested_authority_gap();");
+    CHECK(capture_pos != std::string::npos,
+          "AC17: ctor-captured is_outermost_ (#2120) drives the dtor");
+    CHECK(clear_pos != std::string::npos, "AC17: dtor clears nested_authority_gap");
+    CHECK(capture_pos != std::string::npos && clear_pos != std::string::npos &&
+              capture_pos < clear_pos,
+          "AC17: clear runs after the outermost capture in the dtor");
+    CHECK(emb.find("nested_authority_gap_open_ns") != std::string::npos,
+          "AC17: gap-open window telemetry retained");
+    CHECK(emb.find("Issue #3196: outermost triad published") != std::string::npos,
+          "AC17: outermost triad drop cites #3196");
+}
+
+static void ac18_flip_routes_first_write_outermost() {
+    std::println("\n--- #4087 AC18: soft-only-below flip routes the first write's dtor to the "
+                 "clear ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto flip_pos = emb.find("if (soft_only_below)\n            outermost = true;");
+    const auto capture_pos = emb.find("is_outermost_ = outermost;");
+    CHECK(flip_pos != std::string::npos && capture_pos != std::string::npos &&
+              flip_pos < capture_pos,
+          "AC18: flip precedes the ctor capture → first real write is outermost");
+    CHECK(emb.find("c4089.orch_soft_frame") != std::string::npos,
+          "AC18: real Guard nesting (non-soft frame below) keeps nested");
+    CHECK(emb.find("Issue #4089") != std::string::npos,
+          "AC18: agent-body outermost flip cites #4089 (root fix)");
+    const auto hmg = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    CHECK(hmg.find("ac4087_1_agent_body_write_query_schema2") != std::string::npos,
+          "AC18: runtime verify arm lives in the hygiene closed-loop suite");
+    CHECK(hmg.find("kQueryResultMatchSchema2Prod") != std::string::npos,
+          "AC18: runtime arm pins the schema-2 face");
+}
+
+static void ac19_linter_and_wiring() {
+    std::println("\n--- #4087 AC19: linter + build.py wiring + allowlist ---");
+    const auto lint = read_file("scripts/check_authority_gap_lifecycle_4087.py");
+    CHECK(lint.find("Issue #4087") != std::string::npos,
+          "AC19: check_authority_gap_lifecycle_4087.py linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_authority_gap_lifecycle_4087") != std::string::npos,
+          "AC19: build.py wires the #4087 linter");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(allow.find("check_authority_gap_lifecycle_4087.py") != std::string::npos,
+          "AC19: root allowlist carries check_authority_gap_lifecycle_4087.py");
+    CHECK(read_file("docs/design/4087-nested-authority-gap.md").empty(),
+          "AC19: no docs/design/4087-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4087.cpp").empty() &&
+              read_file("tests/core/test_issue_4087.cpp").empty(),
+          "AC19: no tests/**/test_issue_4087.cpp per #81934");
+}
+
 } // namespace
 
 int run_test_orch_soft_boundary_unified() {
@@ -426,6 +530,8 @@ int run_test_orch_soft_boundary_unified() {
                  "test file per #81967) ===");
     std::println("=== Issue #4089: agent-fiber mutate is the type-authority outermost (extends "
                  "#2515/#2600 test file per #81967) ===");
+    std::println("=== Issue #4087: nested-mutate authority gap lifecycle (extends #2515/#2600/"
+                 "#4089 test file per #81967) ===");
     ac1_soft_publishes_mirrors();
     ac2_unified_safety_semantics();
     ac3_gc_defer_via_mirror();
@@ -441,7 +547,11 @@ int run_test_orch_soft_boundary_unified() {
     ac13_exit_restore_not_skip();
     ac14_host_face_unchanged();
     ac15_linter_and_wiring();
-    std::println("\n=== #2515 + #2600 + #4089: see per-AC results above ===");
+    ac16_gap_stamp_gated_production();
+    ac17_outermost_dtor_clears_gap();
+    ac18_flip_routes_first_write_outermost();
+    ac19_linter_and_wiring();
+    std::println("\n=== #2515 + #2600 + #4089 + #4087: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 

@@ -1558,7 +1558,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_orch_agent_mutation_boundary.cpp` (—) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false
 - `tests/orch/test_orch_scope.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_orch_scope.cpp
 - `tests/compiler/test_orch_scope_child.cpp` (—) [domain_suite, theme_compiler] — AC1: spawn_child hierarchy + cancel_all top-down propagation
-- `tests/serve/test_orch_soft_boundary_unified.cpp` (—) [domain_suite, theme_serve] — AC1: soft 进入/退出必 publish mirrors（source-cite）—
+- `tests/serve/test_orch_soft_boundary_unified.cpp` (—) [large, domain_suite, theme_serve] — AC1: soft 进入/退出必 publish mirrors（source-cite）—
 - `tests/serve/test_orchestration_steal_boost.cpp` (—) [domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
 - `tests/serve/test_orphan_reap_stress.cpp` (—) [domain_suite, theme_serve] — AC1: orphan_mutex_ held for minimal time (just iterate + decide
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp` (—) [domain_suite, theme_serve] — test_panic_checkpoint_fiber_resume_safety.cpp — Issue #592:

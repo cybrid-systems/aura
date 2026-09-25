@@ -8249,6 +8249,32 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4089 fiber type-belt linter failed — run python3 scripts/check_fiber_type_belt_4089.py")
         return r
+    # Issue #4087 (nested-mutate authority gap lifecycle): nested Guard
+    # success stamps the workspace authority gap (production/Full only) and
+    # the ONLY clear is the outermost Guard dtor. Pre-#4089, a default agent
+    # body on a fiber pushed an orch soft checkpoint frame so the first real
+    # write's Guard was misclassified nested — its exit stamped the gap the
+    # soft window never cleared and the next query:pattern printed
+    # restamp-lag after a successful write. Root fix at HEAD via #4089
+    # (34df1d964): the Guard ctor flips to the type-authority outermost when
+    # every frame below is soft, so the first real write's dtor owns
+    # unified_restamp_after_boundary + clear_nested_authority_gap and the
+    # nested-exit stamp fires only for real Guard nesting. Gate pins: the
+    # stamp arm stays gated production/Full; the clear stays in the dtor
+    # after the ctor-captured is_outermost_ (#2120); the flip precedes the
+    # capture; the issue's verify arm (write → immediate query schema-2, not
+    # restamp-lag; gap false after body return) is regression-covered at
+    # runtime in the hygiene closed-loop suite.
+    agl4087_script = ROOT / "scripts" / "check_authority_gap_lifecycle_4087.py"
+    if not agl4087_script.exists():
+        fail(f"missing {agl4087_script}")
+        return 1
+    r = run([sys.executable, str(agl4087_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4087 authority-gap lifecycle linter failed — run python3 scripts/check_authority_gap_lifecycle_4087.py"
+        )
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the
