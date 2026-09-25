@@ -73,6 +73,14 @@ static std::int64_t href(CompilerService& cs, const char* key) {
     return as_int(*r);
 }
 
+static std::int64_t href_health(CompilerService& cs, const char* key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:type-linear-commit-health\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 static std::int64_t href_evolv(CompilerService& cs, const char* key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:type-linear-evolution-snapshot\") \"{}\")", key));
@@ -836,6 +844,126 @@ static void ac4011_4_source_cite_no_invent() {
     CHECK(read_file("docs/design/4011-remount-live-policy.md").empty(), "4011 AC4: no docs/design");
 }
 
+// Issue #4080: last==0 green rebind must arm the same remount-last-zero
+// latch strip_green_face_on_remount_last_zero sets, and the live stamp
+// must not clear it before commit_readiness_live_policy reads it.
+
+static void ac4080_1_last0_rebind_live_health_denies() {
+    std::println("\n--- #4080 AC1: last==0 rebind denies live commit health ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4080 AC1: warm eval");
+    // Bound evaluator skips the no-TC solve_status=2 arm. Default commit
+    // TC (or a null handle under that TLS) stays SOLVED, so only the
+    // remount latch can force reason 17.
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(rebind_linear_proof_after_root_migration(), "4080 AC1: last==0 rebind");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "4080 AC1: stored would_allow is 0");
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4080 AC1: strip latch armed");
+    const auto in = commit_readiness_live_policy();
+    CHECK(in.solve_status == 0, "4080 AC1: SOLVED commit face");
+    CHECK(in.remount_last_zero_strip, "4080 AC1: live policy sees the latch");
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "4080 AC1: live would_allow_commit is 0");
+    CHECK(cr.force_reason_code == kRemountLastZeroForceReasonCode, "4080 AC1: force_reason 17");
+    CHECK(href_health(cs, "would-allow-commit") == 0, "4080 AC1: query would-allow-commit 0");
+    CHECK(href_health(cs, "force-reason") == 17, "4080 AC1: query force-reason 17");
+    aura_typed_audit_clear_readiness_evaluator();
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4080_2_hygiene_save_keeps_elision_false() {
+    std::println("\n--- #4080 AC2: save_hygiene_checkpoint does not restore elision ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "4080 AC2: workspace");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(rebind_linear_proof_after_root_migration(), "4080 AC2: last==0 rebind");
+    CHECK(!linear_move_drop_elision_ok(), "4080 AC2: elision false before save");
+    (void)cs.evaluator().save_hygiene_checkpoint();
+    CHECK(!linear_move_drop_elision_ok(), "4080 AC2: elision stays false after save");
+    aura_typed_audit_clear_readiness_evaluator();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4080_3_soft_no_latch() {
+    std::println("\n--- #4080 AC3: Soft last==0 does not arm the latch ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(!rebind_linear_proof_after_root_migration(), "4080 AC3: Soft no hard-drop");
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4080 AC3: Soft latch stays clear");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0,
+          "4080 AC3: Soft face stays");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4080_4_source_cite() {
+    std::println("\n--- #4080 AC4: source-cite + no new query ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("Issue #4080") != std::string::npos, "4080 AC4: header cites #4080");
+    const auto arm = tma.find("last==0 + green face");
+    CHECK(arm != std::string::npos, "4080 AC4: last==0 arm");
+    const auto arm_win = arm == std::string::npos ? std::string{} : tma.substr(arm, 1600);
+    CHECK(arm_win.find("g_remount_last_zero_strip_face.store(1") != std::string::npos,
+          "4080 AC4: last==0 production arm sets the strip latch");
+    CHECK(tma.find("Issue #4080: commit_readiness_live_policy must observe the latch") !=
+              std::string::npos,
+          "4080 AC4: live stamp reads the latch before retire");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(gc.find("rebind_linear_proof_after_root_migration()") != std::string::npos,
+          "4080 AC4: GC compact hook rebinds");
+    CHECK(svc.find("on_arena_compact_notify") != std::string::npos &&
+              svc.find("rebind_linear_proof_after_root_migration()") != std::string::npos,
+          "4080 AC4: arena compact notify rebinds");
+    CHECK(tma.find("schema-4080") == std::string::npos, "4080 AC4: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4080.cpp").empty() &&
+              read_file("tests/issues/test_issue_4080.cpp").empty(),
+          "4080 AC4: no test_issue_4080.cpp");
+    CHECK(read_file("docs/design/4080-last-zero-live-policy.md").empty(),
+          "4080 AC4: no docs/design/4080-*");
+}
+
 // ── Issue #3578: background rebind/strip observability + Quiet=unknown ──
 // (void) call sites discard the bool; Agent polls evolution-snapshot
 // gauges. Reject is not an immediate commit-barrier. Quiet ≠ invalid/green.
@@ -1210,6 +1338,11 @@ int run_test_remount_force_deopt() {
     ac4011_2_green_rebind_clears();
     ac4011_3_soft_observe();
     ac4011_4_source_cite_no_invent();
+    std::println("\n=== Issue #4080: last==0 rebind arms remount-last-zero live deny ===");
+    ac4080_1_last0_rebind_live_health_denies();
+    ac4080_2_hygiene_save_keeps_elision_false();
+    ac4080_3_soft_no_latch();
+    ac4080_4_source_cite();
     ac3578_2_last0_green_quiet_unknown();
     ac3578_3_void_call_sites_observability_cite();
     ac3578_4_linter_3448_not_regressed();
