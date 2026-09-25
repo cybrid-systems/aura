@@ -511,8 +511,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_void();
             active = ev.active_strategy_;
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(active));
+        auto sidx = ev.push_string_heap(std::move(active));
         return make_string(sidx);
     });
 
@@ -579,8 +578,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.push_string_heap(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -623,8 +621,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
                 active = ev.active_strategy_;
             }
-            auto active_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(active);
+            auto active_idx = ev.push_string_heap(active);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"active-strategy", make_string(active_idx)},
                 {"greedy-hits", make_int(static_cast<std::int64_t>(greedy_h))},
@@ -769,8 +766,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         }
 
         // Apply filled code to workspace via set-code
-        auto code_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(filled);
+        auto code_idx = ev.push_string_heap(filled);
         auto sc_fn = ev.primitives_.lookup("set-code");
         if (!sc_fn)
             return make_void();
@@ -797,8 +793,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
     sink_query_prim("query:templates", [&ev](const auto&) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = g_template_patterns.rbegin(); it != g_template_patterns.rend(); ++it) {
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(it->first);
+            auto idx = ev.push_string_heap(it->first);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(idx), list});
             list = make_pair(pid);
@@ -867,8 +862,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         auto getenv_fn = ev.primitives_.lookup("getenv");
         std::string api_key;
         if (getenv_fn) {
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("LLM_API_KEY");
+            auto kidx = ev.push_string_heap("LLM_API_KEY");
             auto kr = (*getenv_fn)({make_string(kidx)});
             if (is_string(kr)) {
                 auto ai = as_string_idx(kr);
@@ -887,8 +881,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         // Get API URL
         std::string api_url = "https://api.deepseek.com/v1/chat/completions";
         if (getenv_fn) {
-            auto uidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("LLM_API_URL");
+            auto uidx = ev.push_string_heap("LLM_API_URL");
             auto ur = (*getenv_fn)({make_string(uidx)});
             if (is_string(ur)) {
                 auto ui = as_string_idx(ur);
@@ -916,14 +909,11 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             body += "  ]\n";
             body += "}\n";
 
-            auto bi = ev.string_heap_.size();
-            ev.string_heap_.push_back(body);
-            auto ui2 = ev.string_heap_.size();
-            ev.string_heap_.push_back(api_url);
+            auto bi = ev.push_string_heap(body);
+            auto ui2 = ev.push_string_heap(api_url);
             // Issue #1236: do not leave API key permanently on the string heap —
             // push, call, then scrub the slot.
-            auto ki = ev.string_heap_.size();
-            ev.string_heap_.push_back(api_key);
+            auto ki = ev.push_string_heap(api_key);
 
             auto resp = (*http_fn)({make_string(ui2), make_string(bi), make_string(ki)});
             // Scrub key material from the heap after the call.
@@ -950,8 +940,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             if (parse_fn && href_fn) {
                 auto root = (*parse_fn)({make_string(ri)});
                 auto push_key = [&ev](const char* k) -> EvalValue {
-                    auto i = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto i = ev.push_string_heap(k);
                     return make_string(i);
                 };
                 if (is_hash(root)) {
@@ -984,8 +973,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 continue;
 
             // Try set-code
-            auto ci = ev.string_heap_.size();
-            ev.string_heap_.push_back(code);
+            auto ci = ev.push_string_heap(code);
             auto sc_fn = ev.primitives_.lookup("set-code");
             if (!sc_fn)
                 continue;
@@ -1117,8 +1105,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto compute_fitness = [&](const std::string& src) -> double {
                 if (!fitness_expr.empty()) {
                     // User-provided fitness: eval the expression
-                    auto sv = ev.string_heap_.size();
-                    ev.string_heap_.push_back(src);
+                    auto sv = ev.push_string_heap(src);
                     auto eval_fn = ev.primitives_.lookup("eval");
                     if (eval_fn) {
                         auto r = (*eval_fn)({make_string(sv)});
@@ -1186,11 +1173,16 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 std::size_t probe_slot = std::numeric_limits<std::size_t>::max();
                 auto try_probe = [&](const std::string& call_src) {
                     ++total_tests;
-                    if (probe_slot >= ev.string_heap_.size()) {
-                        probe_slot = ev.string_heap_.size();
-                        ev.string_heap_.push_back(call_src);
-                    } else {
-                        ev.string_heap_[probe_slot] = call_src;
+                    {
+                        // #2651: size check + write share alloc_storage_lock_
+                        // with every other fiber using this Evaluator's heap.
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        if (probe_slot >= ev.string_heap_.size()) {
+                            probe_slot = ev.string_heap_.size();
+                            ev.string_heap_.push_back(call_src);
+                        } else {
+                            ev.string_heap_[probe_slot] = call_src;
+                        }
                     }
                     if (eval_fn) {
                         auto r = (*eval_fn)({make_string(probe_slot)});
@@ -1281,8 +1273,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                             WorkspaceSwapGuard guard(ev, *tree, "xover");
                             if (guard.valid()) {
                                 // Set variant as current code
-                                auto vi = ev.string_heap_.size();
-                                ev.string_heap_.push_back(variant);
+                                auto vi = ev.push_string_heap(variant);
                                 auto sc_fn = ev.primitives_.lookup("set-code");
                                 if (sc_fn) {
                                     auto sr = (*sc_fn)({make_string(vi)});
@@ -1397,8 +1388,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                             static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
                         WorkspaceSwapGuard guard(ev, *tree, "evolve-variant");
                         if (guard.valid()) {
-                            auto vi = ev.string_heap_.size();
-                            ev.string_heap_.push_back(variant);
+                            auto vi = ev.push_string_heap(variant);
                             auto sc_r = (*sc_fn)({make_string(vi)});
 
                             if (is_bool(sc_r) && as_bool(sc_r)) {
@@ -1416,8 +1406,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
 
                     if (!evaluated) {
                         // Fallback: direct set-code
-                        auto vi = ev.string_heap_.size();
-                        ev.string_heap_.push_back(variant);
+                        auto vi = ev.push_string_heap(variant);
                         auto sc_r = (*sc_fn)({make_string(vi)});
                         if (!is_bool(sc_r) || !as_bool(sc_r))
                             continue;
@@ -1430,8 +1419,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                             continue;
                         f = compute_fitness(variant);
                         // Restore
-                        auto bi = ev.string_heap_.size();
-                        ev.string_heap_.push_back(baseline);
+                        auto bi = ev.push_string_heap(baseline);
                         (*sc_fn)({make_string(bi)});
                     }
 
@@ -1448,8 +1436,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             }
 
             // Apply best to workspace
-            auto bi = ev.string_heap_.size();
-            ev.string_heap_.push_back(best_code);
+            auto bi = ev.push_string_heap(best_code);
             auto sc_fn = ev.primitives_.lookup("set-code");
             if (sc_fn)
                 (*sc_fn)({make_string(bi)});
@@ -1460,11 +1447,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             destroy_defuse_index();
 
             auto gs = std::to_string(best_gen);
-            auto gi = ev.string_heap_.size();
-            ev.string_heap_.push_back(gs);
+            auto gi = ev.push_string_heap(gs);
             auto fs = std::to_string(best_fitness);
-            auto fi = ev.string_heap_.size();
-            ev.string_heap_.push_back(fs);
+            auto fi = ev.push_string_heap(fs);
 
             auto p1 = ev.pairs_.size();
             ev.pairs_.push_back({make_string(gi), make_string(fi)});
@@ -1639,18 +1624,23 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         std::size_t slot_code = std::numeric_limits<std::size_t>::max();
         std::size_t slot_err = std::numeric_limits<std::size_t>::max();
         auto put_slot = [&](std::size_t& slot, const std::string& s) -> types::EvalValue {
-            if (slot >= ev.string_heap_.size()) {
-                slot = ev.string_heap_.size();
-                ev.string_heap_.push_back(s);
-            } else {
-                ev.string_heap_[slot] = s;
+            {
+                // #2651: reuse-or-append under the heap lock. A bare
+                // size()+push_back races a fiber apply on the same
+                // monotonic resource.
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                if (slot >= ev.string_heap_.size()) {
+                    slot = ev.string_heap_.size();
+                    ev.string_heap_.push_back(s);
+                } else {
+                    ev.string_heap_[slot] = s;
+                }
             }
             return types::make_string(slot);
         };
         auto finish_result = [&](std::string result_str) -> EvalValue {
             // Only the final status string is retained on the heap.
-            auto rs = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(result_str));
+            auto rs = ev.push_string_heap(std::move(result_str));
             restore();
             return types::make_string(rs);
         };
@@ -1752,8 +1742,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         std::string result = ev.timeline_snapshot();
         if (result.empty())
             result = "(empty)";
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
+        auto sidx = ev.push_string_heap(result);
         return types::make_string(sidx);
     });
 
@@ -1769,8 +1758,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
         auto pin = ev.pin_workspace_flat();
         if (!pin || !pin.pool()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::string("WORKSPACE-ERROR: no workspace AST loaded"));
+            auto sidx =
+                ev.push_string_heap(std::string("WORKSPACE-ERROR: no workspace AST loaded"));
             return types::make_string(sidx);
         }
         auto& flat = *pin;
@@ -1797,8 +1786,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // Prepend a one-line summary header so the LLM has an
         // easy parse target: "WORKSPACE: <n> defines".
         out = "WORKSPACE: " + std::to_string(define_count) + " defines\n" + out;
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
+        auto sidx = ev.push_string_heap(std::move(out));
         return types::make_string(sidx);
     });
 
@@ -1894,8 +1882,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
         result += "))";
 
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
+        auto sidx = ev.push_string_heap(result);
         return types::make_string(sidx);
     });
 
@@ -1987,8 +1974,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (s.name != name)
                 continue;
             if (field == "body") {
-                auto sid = ev.string_heap_.size();
-                ev.string_heap_.push_back(s.body);
+                auto sid = ev.push_string_heap(s.body);
                 return types::make_string(sid);
             }
             if (field == "max-attempts") {
@@ -1998,16 +1984,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return types::make_float(s.temperature);
             }
             if (field == "sys-prompt-template") {
-                auto sid = ev.string_heap_.size();
-                ev.string_heap_.push_back(s.sys_prompt_template);
+                auto sid = ev.push_string_heap(s.sys_prompt_template);
                 return types::make_string(sid);
             }
             if (field == "evolution") {
                 return types::make_int(s.evolution);
             }
             if (field == "parent") {
-                auto sid = ev.string_heap_.size();
-                ev.string_heap_.push_back(s.parent);
+                auto sid = ev.push_string_heap(s.parent);
                 return types::make_string(sid);
             }
         }
@@ -2069,8 +2053,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 result += " evolution:" + std::to_string(s.evolution);
                 result += " parent:\"" + s.parent + "\"";
                 result += ")";
-                auto sid = ev.string_heap_.size();
-                ev.string_heap_.push_back(result);
+                auto sid = ev.push_string_heap(result);
                 return types::make_string(sid);
             }
         }
@@ -2129,8 +2112,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         } else {
             auto prim = ev.primitives_.lookup("intend-analytics");
             if (prim) {
-                auto sid = ev.string_heap_.size();
-                ev.string_heap_.push_back(name);
+                auto sid = ev.push_string_heap(name);
                 auto res = (*prim)({types::make_string(sid)});
                 if (types::is_string(res))
                     analytics = heap_str_from(ev.string_heap_, res);
@@ -2315,8 +2297,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             ev.strategies_.push_back(evolved);
         }
 
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(evolved.name);
+        auto sid = ev.push_string_heap(evolved.name);
         return types::make_string(sid);
     });
 
@@ -2357,8 +2338,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.push_string_heap(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -2640,8 +2620,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"status",
                  [&] {
-                     auto sidx = ev.string_heap_.size();
-                     ev.string_heap_.push_back("ok");
+                     auto sidx = ev.push_string_heap("ok");
                      return make_string(sidx);
                  }()},
                 {"ok-count", make_int(0)},
@@ -2880,13 +2859,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     prod, /*mutate_batch=*/true)) {
                 aura::serve::parallel_orch::g_parallel_orch_stats.invalid_batches.fetch_add(
                     1, std::memory_order_relaxed);
-                auto iso_sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("serialized");
-                auto reason_sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(
+                auto iso_sidx = ev.push_string_heap("serialized");
+                auto reason_sidx = ev.push_string_heap(
                     aura::serve::parallel_orch::kSerializedReasonMissingOrOverlapKeys);
-                auto st_sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("invalid");
+                auto st_sidx = ev.push_string_heap("invalid");
                 auto rvidx = ev.vector_heap_.size();
                 ev.vector_heap_.push_back({});
                 std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -2995,8 +2971,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     tr.error.empty() && i < ash->errors.size() ? ash->errors[i] : tr.error;
                 if (err.empty())
                     err = "error";
-                auto eidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(err);
+                auto eidx = ev.push_string_heap(err);
                 tkv.push_back({"error", make_string(eidx)});
             }
             result_elems.push_back(build_hash(tkv));
@@ -3004,8 +2979,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto rvidx = ev.vector_heap_.size();
         ev.vector_heap_.push_back(std::move(result_elems));
 
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(status_str);
+        auto sidx = ev.push_string_heap(status_str);
 
         // Issue #2163: eval-serialized=#f when pure path engaged for this batch
         // and at least one task applied unlocked (not all forced-lock fallback).
@@ -3034,10 +3008,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const bool region_concurrent_eligible = iso_decision.region_concurrent_eligible;
         const char* isolation_level =
             aura::serve::parallel_orch::isolation_level_cstr(iso_decision.level);
-        const auto iso_sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(isolation_level);
-        const auto reason_sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(
+        const auto iso_sidx = ev.push_string_heap(isolation_level);
+        const auto reason_sidx = ev.push_string_heap(
             region_key_missing ? aura::serve::parallel_orch::kSerializedReasonMissingOrOverlapKeys
                                : "");
 
@@ -3061,8 +3033,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 join_st = "reclaimed";
                 break;
         }
-        const auto join_sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(join_st);
+        const auto join_sidx = ev.push_string_heap(join_st);
 
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"status", make_string(sidx)},
@@ -3178,8 +3149,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
+            auto kidx = ev.push_string_heap(k);
             EvalValue key_ev = make_string(kidx);
             bool inserted = false;
             for (std::size_t at = 0; at < hcap; ++at) {
@@ -3231,12 +3201,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const char* name = aura::orch::agent_deny_class_name(cls);
         if (!name)
             return;
-        auto cidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(name);
+        auto cidx = ev.push_string_heap(name);
         kv.emplace_back("deny-class", make_string(cidx));
         if (!detail.empty()) {
-            auto didx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::string(detail));
+            auto didx = ev.push_string_heap(std::string(detail));
             kv.emplace_back("deny-detail", make_string(didx));
         }
         if (emit_retry)
@@ -3248,8 +3216,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                     const char* plane) {
         if (!aura::compiler::typed_audit::production_defaults_active())
             return;
-        auto pidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(plane);
+        auto pidx = ev.push_string_heap(plane);
         kv.emplace_back("identity-plane", make_string(pidx));
         kv.emplace_back("schema-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
         kv.emplace_back("issue-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
@@ -3273,8 +3240,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     auto add_handoff_observation_only = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv) {
         if (!aura::compiler::typed_audit::production_defaults_active())
             return;
-        auto oidx = ev.string_heap_.size();
-        ev.string_heap_.push_back("source");
+        auto oidx = ev.push_string_heap("source");
         kv.emplace_back("observation-only", make_bool(true));
         kv.emplace_back("ownership", make_string(oidx));
         kv.emplace_back("reservation-held-by-source", make_bool(true));
@@ -3290,8 +3256,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return;
         if (!aura::compiler::typed_audit::production_defaults_active())
             return;
-        auto lidx = ev.string_heap_.size();
-        ev.string_heap_.push_back("reclaimed-pending");
+        auto lidx = ev.push_string_heap("reclaimed-pending");
         kv.emplace_back("lifecycle", make_string(lidx));
         kv.emplace_back("schema-3220", make_int(aura::orch::kReclaimedPendingLifecycleIssue));
         kv.emplace_back("issue-3220", make_int(aura::orch::kReclaimedPendingLifecycleIssue));
@@ -3462,10 +3427,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     (pending->must_wait_reclaimed || pending->reclaimed_deferred_cleanup)) {
                     aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    auto ridx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(name);
-                    auto eidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(
+                    auto ridx = ev.push_string_heap(name);
+                    auto eidx = ev.push_string_heap(
                         "orch:spawn-agent: name still reclaimed-pending — wait_reclaimed_body "
                         "or abandon_reclaimed required before reuse");
                     std::vector<std::pair<std::string, EvalValue>> rkv = {
@@ -3501,10 +3464,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (auto* live = scope->find(name); live && live->ok && live->fiber) {
                         aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
                             1, std::memory_order_relaxed);
-                        auto ridx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(name);
-                        auto eidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(
+                        auto ridx = ev.push_string_heap(name);
+                        auto eidx = ev.push_string_heap(
                             "orch:spawn-agent: name live in AgentScope — join or stop "
                             "before spawn-agent of the same name");
                         std::vector<std::pair<std::string, EvalValue>> rkv = {
@@ -3534,10 +3495,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         1, std::memory_order_relaxed);
                     aura::orch::emit_spawn_tenant_spoof_se(requested, caller);
                     const auto err = aura::orch::spawn_tenant_spoof_error(requested, caller);
-                    auto nidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(name);
-                    auto eidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(err);
+                    auto nidx = ev.push_string_heap(name);
+                    auto eidx = ev.push_string_heap(err);
                     std::vector<std::pair<std::string, EvalValue>> rkv = {
                         {"ok", make_bool(false)},        {"id", make_int(0)},
                         {"name", make_string(nidx)},     {"schema", make_int(1588)},
@@ -3618,10 +3577,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // live agent may still occupy the same name; that is fine.
                 // Handle was never moved into the table on this path.
                 (void)handle; // not put; destructor releases any residual (none)
+                const auto nidx = ev.push_string_heap(out_name);
                 std::vector<std::pair<std::string, EvalValue>> qkv = {
                     {"ok", make_bool(false)},
                     {"id", make_int(0)},
-                    {"name", make_string(ev.string_heap_.size())},
+                    {"name", make_string(nidx)},
                     {"quota-exceeded", make_bool(true)},
                     {"schema", make_int(1588)},
                     {"schema-2011", make_int(2011)},
@@ -3632,11 +3592,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                          aura::orch::g_orch_module_stats.spawn_quota_reject_no_leak.load(
                              std::memory_order_relaxed)))},
                 };
-                // Sentinel name for quota-reject (we never put into agent_names_).
-                ev.string_heap_.push_back(out_name);
                 if (!qdim.empty()) {
-                    auto qidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(qdim);
+                    auto qidx = ev.push_string_heap(qdim);
                     qkv.push_back({"quota-dimension", make_string(qidx)});
                 }
                 qkv.push_back({"quota-used", make_int(static_cast<std::int64_t>(qused))});
@@ -3644,8 +3601,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 qkv.push_back({"retry-after-ms", make_int(static_cast<std::int64_t>(qretry))});
                 const std::string qerr =
                     err.empty() ? std::string("ResourceQuotaExceeded: orch spawn rejected") : err;
-                auto eidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(qerr);
+                auto eidx = ev.push_string_heap(qerr);
                 qkv.push_back({"error", make_string(eidx)});
                 // Issue #3251 / #3777: prefer handle.deny_class (ScheduleGate /
                 // Quota / BpAdmit) when stamped; else legacy qdim mapping.
@@ -3659,16 +3615,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return build_orch_hash(qkv);
             }
 
-            auto nidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(out_name);
+            auto nidx = ev.push_string_heap(out_name);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(ok)},           {"id", make_int(static_cast<std::int64_t>(id))},
                 {"name", make_string(nidx)},     {"schema", make_int(1588)},
                 {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(quota_exceeded)},
             };
             if (!ok && !err.empty()) {
-                auto eidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(err);
+                auto eidx = ev.push_string_heap(err);
                 kv.push_back({"error", make_string(eidx)});
             }
             return build_orch_hash(kv);
@@ -3712,8 +3666,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"ok", make_bool(false)},
                     {"status",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("invalid");
+                         auto s = ev.push_string_heap("invalid");
                          return make_string(s);
                      }()},
                     {"wait-us", make_int(0)},
@@ -3763,8 +3716,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 aura::orch::g_orch_module_stats.agent_join_reclaimed_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(st);
+            auto sidx = ev.push_string_heap(st);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
                 {"status", make_string(sidx)},
@@ -3868,8 +3820,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("body-acquire-rejected-wired", make_int(1));
                 // Issue #3251: fiber alive / body did not run.
                 if (aura::compiler::typed_audit::production_defaults_active()) {
-                    auto lidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("body-not-run");
+                    auto lidx = ev.push_string_heap("body-not-run");
                     kv.emplace_back("lifecycle", make_string(lidx));
                 }
                 add_deny_class(kv, hp->body_deny_class(), {}, 0, /*emit_retry=*/false);
@@ -3915,8 +3866,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 hp = resolve_aura_agent(ev, name);
             }
             if (!hp) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("invalid");
+                auto sidx = ev.push_string_heap("invalid");
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
                     {"status", make_string(sidx)},
@@ -3968,8 +3918,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             if (abandoned)
                 st = "abandoned";
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(st);
+            auto sidx = ev.push_string_heap(st);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(wait_ok)},
                 {"status", make_string(sidx)},
@@ -4018,8 +3967,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     };
     auto make_scope_addr_fail = [&ev, build_orch_hash](int schema, const char* status,
                                                        const char* error) -> EvalValue {
-        const auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(status);
+        const auto sidx = ev.push_string_heap(status);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"ok", make_bool(false)},
             {"schema", make_int(schema)},
@@ -4028,8 +3976,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"issue-3444", make_int(aura::orch::kScopeChildAddressIssue)},
         };
         if (error && *error) {
-            const auto eidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(error);
+            const auto eidx = ev.push_string_heap(error);
             kv.push_back({"error", make_string(eidx)});
         }
         return build_orch_hash(kv);
@@ -4165,10 +4112,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (pending || slot->ok) {
                         aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
                             1, std::memory_order_relaxed);
-                        auto ridx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(name);
-                        auto eidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(
+                        auto ridx = ev.push_string_heap(name);
+                        auto eidx = ev.push_string_heap(
                             pending
                                 ? "orch:scope-spawn: name still reclaimed-pending — "
                                   "wait_reclaimed_body or abandon_reclaimed required before reuse"
@@ -4231,10 +4176,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         1, std::memory_order_relaxed);
                     aura::orch::emit_spawn_tenant_spoof_se(requested, caller);
                     const auto err = aura::orch::spawn_tenant_spoof_error(requested, caller);
-                    auto nidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(name);
-                    auto eidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(err);
+                    auto nidx = ev.push_string_heap(name);
+                    auto eidx = ev.push_string_heap(err);
                     std::vector<std::pair<std::string, EvalValue>> rkv = {
                         {"ok", make_bool(false)},
                         {"id", make_int(0)},
@@ -4275,25 +4218,23 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         1, std::memory_order_relaxed);
                     aura::orch::g_orch_module_stats.spawn_failures.fetch_add(
                         1, std::memory_order_relaxed);
+                    const auto nidx = ev.push_string_heap(out_name);
                     std::vector<std::pair<std::string, EvalValue>> qkv = {
                         {"ok", make_bool(false)},
                         {"id", make_int(0)},
-                        {"name", make_string(ev.string_heap_.size())},
+                        {"name", make_string(nidx)},
                         {"quota-exceeded", make_bool(handle.quota_exceeded)},
                         {"schema", make_int(2588)},
                         {"schema-2083", make_int(2083)},
                         {"schema-2161", make_int(2161)},
                         {"status",
                          [&] {
-                             auto s = ev.string_heap_.size();
-                             ev.string_heap_.push_back("spawn-failed");
+                             auto s = ev.push_string_heap("spawn-failed");
                              return make_string(s);
                          }()},
                     };
-                    ev.string_heap_.push_back(out_name);
                     if (!handle.quota_dimension.empty()) {
-                        auto qidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(handle.quota_dimension);
+                        auto qidx = ev.push_string_heap(handle.quota_dimension);
                         qkv.push_back({"quota-dimension", make_string(qidx)});
                     }
                     qkv.push_back(
@@ -4303,8 +4244,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     qkv.push_back({"retry-after-ms",
                                    make_int(static_cast<std::int64_t>(handle.retry_after_ms))});
                     if (!handle.error.empty()) {
-                        auto eidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(handle.error);
+                        auto eidx = ev.push_string_heap(handle.error);
                         qkv.push_back({"error", make_string(eidx)});
                     }
                     // Issue #3251 / #3777: prefer handle.deny_class when stamped
@@ -4319,8 +4259,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                    /*emit_retry=*/false);
                     return build_orch_hash(qkv);
                 }
-                const auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(out_name);
+                const auto sidx = ev.push_string_heap(out_name);
                 aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
                     1, std::memory_order_relaxed);
                 std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -4332,8 +4271,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"schema-2161", make_int(2161)},
                     {"status",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("ok");
+                         auto s = ev.push_string_heap("ok");
                          return make_string(s);
                      }()},
                 };
@@ -4342,8 +4280,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (!addr_path.empty() || addr_child.has_value()) {
                     const std::string echoed =
                         !addr_path.empty() ? addr_path : std::to_string(*addr_child);
-                    const auto pidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(echoed);
+                    const auto pidx = ev.push_string_heap(echoed);
                     kv.push_back({"scope-path", make_string(pidx)});
                     kv.push_back({"schema-3444", make_int(aura::orch::kScopeChildAddressIssue)});
                 }
@@ -4363,8 +4300,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"schema", make_int(2588)},
                     {"status",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("spawn-failed");
+                         auto s = ev.push_string_heap("spawn-failed");
                          return make_string(s);
                      }()},
                 };
@@ -4429,10 +4365,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                        : (addr_child.has_value() ? std::to_string(*addr_child)
                                                                  : std::string("root"));
                 const auto spath = aura::orch::format_child_scope_path(parent_path, idx);
-                const auto cidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(name);
-                const auto pidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(spath);
+                const auto cidx = ev.push_string_heap(name);
+                const auto pidx = ev.push_string_heap(spath);
                 aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
                     1, std::memory_order_relaxed);
                 std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -4447,8 +4381,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"issue-3444", make_int(aura::orch::kScopeChildAddressIssue)},
                     {"status",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("ok");
+                         auto s = ev.push_string_heap("ok");
                          return make_string(s);
                      }()},
                 };
@@ -4465,8 +4398,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"schema", make_int(2631)},
                     {"status",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("scope-child-failed");
+                         auto s = ev.push_string_heap("scope-child-failed");
                          return make_string(s);
                      }()},
                 };
@@ -4621,15 +4553,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"bp-throttled", make_int(static_cast<std::int64_t>(wr.bp_throttled))},
                 {"on-backpressure",
                  [&] {
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back(
+                     auto s = ev.push_string_heap(
                          aura::orch::agent_failure_action_name(policy.on_backpressure));
                      return make_string(s);
                  }()},
                 {"policy",
                  [&] {
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back(
+                     auto s = ev.push_string_heap(
                          aura::orch::agent_failure_action_name(policy.on_stall));
                      return make_string(s);
                  }()},
@@ -4657,8 +4587,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                  [&] {
                      const char* nm =
                          aura::orch::agent_deny_class_name(scope->last_restart_deny_class());
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back(nm ? nm : "");
+                     auto s = ev.push_string_heap(nm ? nm : "");
                      return make_string(s);
                  }()},
                 {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
@@ -4842,10 +4771,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     st = "reclaimed";
                     break;
             }
-            const auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(st);
-            const auto fail_eff_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(aura::orch::on_join_fail_action_name(join_fail_effective));
+            const auto sidx = ev.push_string_heap(st);
+            const auto fail_eff_idx =
+                ev.push_string_heap(aura::orch::on_join_fail_action_name(join_fail_effective));
             aura::orch::g_orch_module_stats.scope_join_all_total.fetch_add(
                 1, std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -4907,8 +4835,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-deny-class",
                  [&] {
                      const char* nm = aura::orch::agent_deny_class_name(restart_deny_cls);
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back(nm ? nm : "");
+                     auto s = ev.push_string_heap(nm ? nm : "");
                      return make_string(s);
                  }()},
                 {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
@@ -4919,8 +4846,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {
                 const char* iso_cstr =
                     aura::serve::parallel_orch::isolation_level_cstr(iso_obs.decision.level);
-                const auto iso_sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(iso_cstr);
+                const auto iso_sidx = ev.push_string_heap(iso_cstr);
                 kv.push_back({"isolation-level", make_string(iso_sidx)});
                 kv.push_back({"isolation-level-wired", make_int(1)});
                 kv.push_back({"region-key-missing", make_bool(iso_obs.region_key_missing)});
@@ -5053,10 +4979,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (!hp) {
                 aura::orch::g_orch_module_stats.scope_resolve_miss_total.fetch_add(
                     1, std::memory_order_relaxed);
-                const auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("not-found");
-                const auto nidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::string(name));
+                const auto sidx = ev.push_string_heap("not-found");
+                const auto nidx = ev.push_string_heap(std::string(name));
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
                     {"name", make_string(nidx)},
@@ -5091,10 +5015,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             } else {
                 st = "alive";
             }
-            const auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(st);
-            const auto nidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(hp->name.empty() ? std::string(name) : hp->name);
+            const auto sidx = ev.push_string_heap(st);
+            const auto nidx = ev.push_string_heap(hp->name.empty() ? std::string(name) : hp->name);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(hp->ok)},
                 {"id", make_int(static_cast<std::int64_t>(hp->id))},
@@ -5160,12 +5082,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::vector<EvalValue> agent_elems;
             agent_elems.reserve(snap.entries.size());
             for (const auto& e : snap.entries) {
-                const auto nidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(e.name);
-                const auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(e.status);
-                const auto pidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(e.scope_path);
+                const auto nidx = ev.push_string_heap(e.name);
+                const auto sidx = ev.push_string_heap(e.status);
+                const auto pidx = ev.push_string_heap(e.scope_path);
                 std::vector<std::pair<std::string, EvalValue>> ekv = {
                     {"name", make_string(nidx)},
                     {"id", make_int(static_cast<std::int64_t>(e.id))},
@@ -5183,8 +5102,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 add_reclaimed_pending_lifecycle(ekv, e.lifecycle == "reclaimed-pending");
                 if (e.lifecycle == "body-not-run" &&
                     aura::compiler::typed_audit::production_defaults_active()) {
-                    auto lidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("body-not-run");
+                    auto lidx = ev.push_string_heap("body-not-run");
                     ekv.emplace_back("lifecycle", make_string(lidx));
                     ekv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
                 }
@@ -5260,12 +5178,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // correlation-id / schema-2231 / schema-2538.
             auto st_s =
                 r.status; // ok | timeout | backpressure | handoff-required | no-mailbox | malformed
-            auto st_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(st_s);
-            auto payload_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(r.payload);
-            auto corr_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(r.correlation_id));
+            auto st_idx = ev.push_string_heap(st_s);
+            auto payload_idx = ev.push_string_heap(r.payload);
+            auto corr_idx = ev.push_string_heap(std::to_string(r.correlation_id));
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(r.ok)},
                 {"status", make_string(st_idx)},
@@ -5371,8 +5286,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         if (!ev.last_mutate_error().empty() &&
                             ev.last_mutate_error().find("stale") != std::string::npos)
                             fail_st = "export-stale";
-                        auto sidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(fail_st);
+                        auto sidx = ev.push_string_heap(fail_st);
                         std::vector<std::pair<std::string, EvalValue>> fkv = {
                             {"ok", make_bool(false)},
                             {"status", make_string(sidx)},
@@ -5417,8 +5331,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             const auto r = aura::orch::agent_reply(corr_id, payload, /*reply_dest=*/nullptr,
                                                    reply_from, held_token);
-            auto st_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(r.status);
+            auto st_idx = ev.push_string_heap(r.status);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(r.ok)},
                 {"status", make_string(st_idx)},
@@ -5500,14 +5413,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         // Structured typed failure — not silent Closed (#2848 AC1).
                         aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
                             1, std::memory_order_relaxed);
-                        auto sidx = ev.string_heap_.size();
                         // Distinguish export-stale vs generic handoff-required when
                         // last_mutate_error_ carries a stale-ref reason.
                         const char* fail_st = "handoff-required";
                         if (!ev.last_mutate_error().empty() &&
                             ev.last_mutate_error().find("stale") != std::string::npos)
                             fail_st = "export-stale";
-                        ev.string_heap_.push_back(fail_st);
+                        auto sidx = ev.push_string_heap(fail_st);
                         std::vector<std::pair<std::string, EvalValue>> fkv = {
                             {"ok", make_bool(false)},
                             {"status", make_string(sidx)},
@@ -5548,8 +5460,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 st_s = "handoff-required";
                 send_deny = aura::orch::AgentDenyClass::Handoff;
             }
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(st_s);
+            auto sidx = ev.push_string_heap(st_s);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(st == aura::serve::mf_mailbox::PushStatus::Ok)},
                 {"status", make_string(sidx)},
@@ -5601,10 +5512,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (std::string_view(rec.status) == "recv-proxy-denied" ||
                 (!msg && hp->last_recv_proxy_denied)) {
                 hp->last_recv_proxy_denied = false; // consumed once
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("recv-proxy-denied");
-                auto pidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("");
+                auto sidx = ev.push_string_heap("recv-proxy-denied");
+                auto pidx = ev.push_string_heap("");
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
                     {"empty", make_bool(false)},
@@ -5634,10 +5543,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                  aura::compiler::typed_audit::production_defaults_active());
             if (stale_handoff_surface) {
                 hp->last_recv_stale_handoff = false; // consumed once
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("handoff-required");
-                auto pidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("");
+                auto sidx = ev.push_string_heap("handoff-required");
+                auto pidx = ev.push_string_heap("");
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
                     {"empty", make_bool(false)},
@@ -5663,10 +5570,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 (!msg && hp->last_recv_boundary_reject &&
                  aura::compiler::typed_audit::production_defaults_active())) {
                 hp->last_recv_boundary_reject = false; // consumed once
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("recv-under-boundary");
-                auto pidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("");
+                auto sidx = ev.push_string_heap("recv-under-boundary");
+                auto pidx = ev.push_string_heap("");
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},        {"empty", make_bool(false)},
                     {"status", make_string(sidx)},   {"payload", make_string(pidx)},
@@ -5683,8 +5588,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"empty", make_bool(true)},
                     {"payload",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("");
+                         auto s = ev.push_string_heap("");
                          return make_string(s);
                      }()},
                     {"schema", make_int(1588)},
@@ -5692,8 +5596,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 };
                 return build_orch_hash(kv);
             }
-            auto pidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(msg->payload);
+            auto pidx = ev.push_string_heap(msg->payload);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(true)},         {"empty", make_bool(false)},
                 {"payload", make_string(pidx)},  {"schema", make_int(1588)},
@@ -5882,8 +5785,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto ap = aura::orch::to_agent_policy(w);
             const auto pp = aura::orch::to_parallel_policy(w);
             auto push_str = [&ev](const char* s) -> EvalValue {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(s);
+                auto idx = ev.push_string_heap(s);
                 return make_string(idx);
             };
             // Projected fields usable as parallel-intend / scope-watch kwargs
@@ -6280,8 +6182,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     break;
             }
             auto push_str = [&ev](const char* s) -> EvalValue {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(s);
+                auto idx = ev.push_string_heap(s);
                 return make_string(idx);
             };
             const auto apply_total = aura::orch::g_orch_module_stats.workflow_apply_total.load(
@@ -6454,8 +6355,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
 
             auto push_str = [&ev](const char* s) -> EvalValue {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(s);
+                auto idx = ev.push_string_heap(s);
                 return make_string(idx);
             };
 
@@ -7600,8 +7500,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const auto hash = handoff_stash_put(ev, std::move(tok));
         if (hash.empty())
             return types::make_string(0);
-        const auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(hash);
+        const auto idx = ev.push_string_heap(hash);
         return types::make_string(idx);
     });
 
@@ -7641,8 +7540,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return types::make_string(0);
         if (ev.agent_names_->put(std::move(h)) == nullptr)
             return types::make_string(0);
-        const auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(new_name);
+        const auto idx = ev.push_string_heap(new_name);
         return types::make_string(idx);
     });
 
@@ -7671,8 +7569,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"ok", make_bool(false)},
                     {"status",
                      [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("invalid");
+                         auto s = ev.push_string_heap("invalid");
                          return make_string(s);
                      }()},
                     {"wait-us", make_int(0)},
@@ -7734,8 +7631,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                  res.status == aura::serve::JoinStatus::Reclaimed)},
                 {"status",
                  [&] {
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back(st);
+                     auto s = ev.push_string_heap(st);
                      return make_string(s);
                  }()},
                 {"wait-us", make_int(static_cast<std::int64_t>(res.wait_us))},
