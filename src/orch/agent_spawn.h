@@ -4651,6 +4651,7 @@ struct AskResult {
 struct ReplyResult {
     bool ok = false;
     // "ok" | "unknown-corr" | "closed" | "backpressure" | "no-mailbox"
+    // | "reply-not-target" (#4061, production only)
     std::string status;
 };
 
@@ -4661,12 +4662,31 @@ struct AskEnvelope {
     bool typed = false;    // true when match used MailKind/correlation_id
 };
 
-// Pending-ask table: corr_id → per-ask reply mailbox.
+// Pending-ask route: one wait-window mailbox plus the ask target's fiber
+// id. Not an AgentRegistry — the row dies with the ask (#1966).
+// Issue #4061: target_fiber is the id agent_ask already stamped on the
+// outbound MailMessage. Production reply must match it. A shared_ptr
+// assignment (test injection) stores the mailbox and clears the fiber.
+struct PendingAskRoute {
+    std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mailbox;
+    std::uint64_t target_fiber = 0;
+    PendingAskRoute() = default;
+    PendingAskRoute(std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mb,
+                    std::uint64_t fiber = 0)
+        : mailbox(std::move(mb))
+        , target_fiber(fiber) {}
+    PendingAskRoute& operator=(std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mb) {
+        mailbox = std::move(mb);
+        target_fiber = 0;
+        return *this;
+    }
+};
+
+// Pending-ask table: corr_id → per-ask reply route.
 // Lifetime = one agent_ask wait window only (RAII unregister).
 // NOT AgentRegistry / global agent map (#1966).
 inline std::mutex g_pending_ask_mu;
-inline std::unordered_map<std::uint64_t, std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox>>
-    g_pending_asks;
+inline std::unordered_map<std::uint64_t, PendingAskRoute> g_pending_asks;
 
 [[nodiscard]] inline std::string format_ask_prefix(std::uint64_t corr_id) {
     std::string p;
@@ -4775,7 +4795,9 @@ try_match_reply(const serve::mf_mailbox::MailMessage& m, std::uint64_t expected_
 //   1) explicit reply_dest if non-null, else
 //   2) pending-ask table entry for corr_id (registered by agent_ask).
 // Priority Normal (documented). Unknown corr / closed → structured fail
-// (no hang). Optional `from` stamps from_fiber for diagnostics only.
+// (no hang). Optional `from` stamps from_fiber. Issue #4061: on the
+// pending-table path, production also requires that fiber (or `from`)
+// to be the ask target. Soft / Off still delivers by corr.
 [[nodiscard]] inline ReplyResult
 agent_reply(std::uint64_t corr_id, std::string_view body,
             serve::mf_mailbox::MultiFiberMailbox* reply_dest = nullptr, AgentHandle* from = nullptr,
@@ -4786,12 +4808,26 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
     if (!dest) {
         std::lock_guard<std::mutex> lock(g_pending_ask_mu);
         auto it = g_pending_asks.find(corr_id);
-        if (it == g_pending_asks.end() || !it->second) {
+        if (it == g_pending_asks.end() || !it->second.mailbox) {
             out.status = "unknown-corr";
             g_orch_module_stats.agent_reply_fail_total.fetch_add(1, std::memory_order_relaxed);
             return out;
         }
-        held = it->second;
+        // Issue #4061: production only. Soft / Off does not read the
+        // fiber and still delivers by corr. Mismatch leaves the row.
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            std::uint64_t replier = 0;
+            if (serve::g_current_fiber)
+                replier = serve::g_current_fiber->id();
+            else if (from && from->ok)
+                replier = from->id;
+            if (replier == 0 || replier != it->second.target_fiber) {
+                out.status = "reply-not-target";
+                g_orch_module_stats.agent_reply_fail_total.fetch_add(1, std::memory_order_relaxed);
+                return out;
+            }
+        }
+        held = it->second.mailbox;
         dest = held.get();
     }
     if (!dest) {
@@ -4910,7 +4946,7 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     // Issue #2401: register so agent_reply(corr, body) can find dest.
     {
         std::lock_guard<std::mutex> lock(g_pending_ask_mu);
-        g_pending_asks[corr_id] = reply_mb;
+        g_pending_asks[corr_id] = PendingAskRoute{reply_mb, target.id};
     }
     // RAII unregister on every exit path (ok / timeout / malformed / early).
     struct PendingAskGuard {

@@ -270,7 +270,7 @@ int run_test_agent_ask_typed_corr() {
                     std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
                     auto it = aura::orch::g_pending_asks.find(corr);
                     if (it != aura::orch::g_pending_asks.end())
-                        dest = it->second;
+                        dest = it->second.mailbox;
                 }
                 if (!dest)
                     continue;
@@ -649,7 +649,7 @@ int run_test_agent_ask_typed_corr() {
                     std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
                     auto it = aura::orch::g_pending_asks.find(ask->correlation_id);
                     if (it != aura::orch::g_pending_asks.end())
-                        dest = it->second;
+                        dest = it->second.mailbox;
                 }
                 if (!dest)
                     continue;
@@ -914,6 +914,80 @@ int run_test_agent_ask_typed_corr() {
               "4060: no new query:orch-module-stats key");
         CHECK(read_file("docs/design/4060-unsupported-payload.md").empty(),
               "4060: no docs/design file");
+    }
+
+    // ── Issue #4061: production reply must come from the ask target ──
+    // Soft / Off still delivers by corr and does not read the fiber.
+    // The pending row is the wait-window route, not an AgentRegistry.
+    {
+        std::println("\n=== Issue #4061: reply must be the ask target ===");
+        auto* saved_fiber = aura::serve::g_current_fiber;
+        aura::serve::g_current_fiber = nullptr;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CompilerService cs4061;
+        auto mb4061 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
+        const std::uint64_t corr4061 = 4061001;
+        const std::uint64_t target_id4061 = 4061100;
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks[corr4061] =
+                aura::orch::PendingAskRoute{mb4061, target_id4061};
+        }
+        auto forged = cs4061.eval(std::format(
+            R"((let ((h (orch:agent-reply {} "forged-by-b")))
+                 (if (hash-ref h "ok") 0
+                     (if (equal? (hash-ref h "status") "reply-not-target") 1 2))))",
+            corr4061));
+        CHECK(forged && is_int(*forged) && as_int(*forged) == 1,
+              std::format("4061: foreign reply is reply-not-target (code {})",
+                          forged && is_int(*forged) ? as_int(*forged) : -1));
+        CHECK(mb4061->size() == 0, "4061: foreign reply did not push");
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            auto it = aura::orch::g_pending_asks.find(corr4061);
+            CHECK(it != aura::orch::g_pending_asks.end() && it->second.mailbox &&
+                      it->second.target_fiber == target_id4061,
+                  "4061: pending row kept after the foreign reply");
+        }
+        AgentHandle target4061{};
+        target4061.ok = true;
+        target4061.id = target_id4061;
+        auto delivered = agent_reply(corr4061, "from-target", /*reply_dest=*/nullptr, &target4061);
+        CHECK(delivered.ok && delivered.status == "ok", "4061: target reply ok");
+        {
+            auto m = mb4061->recv(/*wait=*/true, /*timeout_ms=*/100, /*fiber_id=*/0);
+            CHECK(m.has_value() && m->payload == format_reply_payload(corr4061, "from-target"),
+                  "4061: ask mailbox got the target body, not the forged one");
+            CHECK(!m || m->payload.find("forged-by-b") == std::string::npos,
+                  "4061: forged body is absent");
+        }
+
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        auto mb_soft4061 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks[corr4061] =
+                aura::orch::PendingAskRoute{mb_soft4061, target_id4061};
+        }
+        AgentHandle forged4061{};
+        forged4061.ok = true;
+        forged4061.id = 4061999;
+        auto soft = agent_reply(corr4061, "soft-ok", /*reply_dest=*/nullptr, &forged4061);
+        CHECK(soft.ok && soft.status == "ok", "4061: Soft delivers by corr with no fiber compare");
+        {
+            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            aura::orch::g_pending_asks.erase(corr4061);
+        }
+        const auto spawn4061 = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn4061.find("reply-not-target") != std::string::npos, "4061: status literal");
+        CHECK(spawn4061.find("Soft / Off does not read the") != std::string::npos,
+              "4061: Soft skips the fiber read");
+        CHECK(spawn4061.find("class AgentRegistry") == std::string::npos,
+              "4061: pending route is not an AgentRegistry");
+        CHECK(read_file("docs/design/4061-reply-not-target.md").empty(),
+              "4061: no docs/design file");
+        aura::serve::g_current_fiber = saved_fiber;
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 
     std::println("\n=== #2538 results: {} passed, {} failed ===", g_passed, g_failed);
