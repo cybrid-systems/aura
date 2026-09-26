@@ -89,7 +89,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.TARGET_BUDGET, 420)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, self.m.TARGET_BUDGET)
         # Ratchets down with demotion batches (#1449 / #2629); keep ≥ target.
-        self.assertLessEqual(self.m.INTERIM_HARD_CEILING, 540)  # #3946-#3957 wave +1 (full-gate scan)
+        self.assertLessEqual(
+            self.m.INTERIM_HARD_CEILING, 544
+        )  # #4094-#4104 concurrent ship wave (full-gate scan + margin)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 480)
 
     # ── Issue #1965 / #1967–#1970 / #2629 domain status + commercial budgets ──
@@ -115,8 +117,8 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("git-commit"), "deferred")
         self.assertIn("git-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 35
-        )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 22; 2026-09-16 wave +1 per CI run 35071333280); #3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan)
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 39
+        )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 22; 2026-09-16 wave +1 per CI run 35071333280); #3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
 
     def test_terminal_domain_removed_2626(self):
         # Issue #2626: terminal:* commercial surface deleted.
@@ -134,7 +136,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("synthesize:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"],
-            33,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan)
+            37,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 19; 2026-09-16 wave +1)
 
     def test_tcp_domain_deferred_and_budgeted(self):
@@ -144,7 +146,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("tcp-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"],
-            38,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan)
+            42,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 24; 2026-09-16 wave +1)
 
     def test_strategy_domain_deferred_and_budgeted(self):
@@ -154,7 +156,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("strategy:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"],
-            33,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan)
+            37,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 19; 2026-09-16 wave +1)
 
     def test_m4_domain_deferred_and_budgeted(self):
@@ -164,7 +166,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("m4-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"],
-            31,  # 3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan)
+            35,  # 3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 18; 2026-09-16 wave +1)
 
     def test_commercial_domain_counts_prefixes(self):
