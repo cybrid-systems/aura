@@ -4962,11 +4962,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
                                     /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
                                 if (expanded == aura::ast::NULL_NODE) {
-                                    // Issue #3817 / #4101: production rewind of
-                                    // the rest spine and any partial clone.
-                                    // Soft/Off keeps the historical half-write.
+                                    // Issue #3817: production rewind pre-clone
+                                    // MacroIntroduced rest spine. #4101:
+                                    // clone_ckpt is that size when the spine
+                                    // is pending, else the size before the
+                                    // clone. Soft/Off keeps the half-write.
                                     if (aura::core::sandbox::is_sandbox_active()) {
-                                        f->truncate_to(clone_ckpt);
+                                        if (rest_spine_pending)
+                                            f->truncate_to(rest_spine_ckpt);
+                                        else
+                                            f->truncate_to(clone_ckpt);
                                         if (macro_exp::inner_expand_production_limit_deny_all()) {
                                             // Module read, not the extern "C"
                                             // string: light-link tests
