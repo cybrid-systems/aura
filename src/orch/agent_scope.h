@@ -71,6 +71,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -243,12 +244,14 @@ struct CrossScopeEntry {
 // Issue #3125: read-only filter for cross-scope directory merge.
 // source_scope_paths allow-list is matched against each source's
 // bp_scope_id() (string compare). empty = include all sources.
-// dedup_by_name drops later occurrences across sources (first wins).
+// dedup_by_name keeps one row per name. An alive row replaces a worse
+// row (reclaimed / spawn-failed / unknown / done / cancelled). A worse
+// row does not replace alive. Equal rank keeps the earlier source.
 struct CrossScopeFilter {
     bool alive_only = false;                     // drop done/cancelled/spawn-failed
     std::string name_prefix;                     // empty = no name filter
     std::vector<std::string> source_scope_paths; // empty = include all sources
-    bool dedup_by_name = true;                   // first wins on duplicate names
+    bool dedup_by_name = true;                   // alive wins; equal rank keeps the earlier source
 };
 
 // Issue #3125: full snapshot returned by cross_scope_directory().
@@ -2221,7 +2224,12 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
                          source_path) != filter.source_scope_paths.end();
     };
 
-    std::unordered_set<std::string> seen_names;
+    // Issue #4096: name → index in out.entries. Alive (rank 1) replaces
+    // a kept non-alive row. Equal rank keeps the earlier source.
+    std::unordered_map<std::string, std::size_t> kept_by_name;
+    auto name_rank = [](std::string_view status) noexcept -> int {
+        return status == "alive" ? 1 : 0;
+    };
 
     for (std::size_t i = 0; i < sources.size(); ++i) {
         AgentScope* s = sources[i];
@@ -2244,10 +2252,6 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
                 ++out.entries_dropped;
                 continue;
             }
-            if (filter.dedup_by_name && !seen_names.insert(e.name).second) {
-                ++out.entries_dropped;
-                continue;
-            }
             CrossScopeEntry ce;
             ce.name = e.name;
             ce.id = e.id;
@@ -2259,6 +2263,19 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
             ce.ok = e.ok;
             ce.reclaimed_deferred = e.reclaimed_deferred;
             ce.must_wait_reclaimed = e.must_wait_reclaimed;
+            if (filter.dedup_by_name) {
+                auto found = kept_by_name.find(ce.name);
+                if (found != kept_by_name.end()) {
+                    auto& kept = out.entries[found->second];
+                    // Issue #4096: a later alive row replaces a reclaimed /
+                    // spawn-failed / unknown row. The worse row is the drop.
+                    if (name_rank(ce.status) > name_rank(kept.status))
+                        kept = std::move(ce);
+                    ++out.entries_dropped;
+                    continue;
+                }
+                kept_by_name.emplace(ce.name, out.entries.size());
+            }
             out.entries.push_back(std::move(ce));
         }
     }

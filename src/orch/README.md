@@ -891,9 +891,10 @@ Rules (per Issue #3125):
    for the scope's lifetime; suitable for downstream dashboard
    grouping. Filter `source_scope_paths` matches against this same
    label (string compare, empty = include all sources).
-4. **`dedup_by_name` defaults to `true`** (first-wins on duplicate
-   names across sources). Set `false` to keep duplicates (preserves
-   cross-source fan-out for diagnostic dashboards).
+4. **`dedup_by_name` defaults to `true`** (one row per name). An alive
+   row replaces a reclaimed / spawn-failed / unknown row (#4096). Equal
+   rank keeps the earlier source. Set `false` to keep duplicates
+   (preserves cross-source fan-out for diagnostic dashboards).
 5. **Not transactional** — best-effort at call time (matches
    `AgentDirectorySnapshot` `#2751` contract). Two callers racing on
    the same source scope observe independent snapshots.

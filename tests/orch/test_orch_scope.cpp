@@ -792,6 +792,97 @@ int run_test_orch_scope() {
         CHECK(stats_schema == 3125, "#3125 facade: schema-3125 = 3125");
     }
 
+    // Issue #4096: dedup keeps a later alive row over an earlier
+    // reclaimed-pending row with the same name. Equal rank stays first.
+    {
+        std::println("\n--- #4096: alive replaces reclaimed-pending on dedup ---");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        CHECK(scope_h.find("Issue #4096") != std::string::npos, "4096: dedup cites alive replace");
+        CHECK(scope_h.find("class AgentRegistry") == std::string::npos, "4096: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_4096.cpp").empty(), "4096: no test_issue file");
+        CHECK(read_file("docs/design/4096-cross-scope-dedup.md").empty(), "4096: no docs/design");
+
+        const auto prod_before = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                                     .production_defaults_active.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+
+        aura::serve::Scheduler sched(1);
+        aura::orch::AgentScope scope_a(sched);
+        aura::orch::AgentScope scope_b(sched);
+        aura::orch::AgentSpec spec;
+        spec.name = "worker";
+        spec.body = [] {};
+        CHECK(scope_a.spawn(spec).ok, "4096: scope A spawn");
+        CHECK(scope_b.spawn(spec).ok, "4096: scope B spawn");
+        CHECK(!scope_a.handles().empty() && scope_a.handles()[0].fiber, "4096: A has a fiber");
+        scope_a.handles_mut()[0].reclaimed_deferred_cleanup = true;
+
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        const auto dir_a = scope_a.directory_snapshot();
+        CHECK(dir_a.entries.size() == 1 && dir_a.entries[0].status == "reclaimed",
+              "4096: A projects reclaimed");
+        CHECK(dir_a.entries[0].lifecycle == "reclaimed-pending",
+              "4096: A lifecycle is reclaimed-pending");
+        const auto dir_b = scope_b.directory_snapshot();
+        CHECK(dir_b.entries.size() == 1 && dir_b.entries[0].status == "alive",
+              "4096: B projects alive");
+
+        const std::string path_a(scope_a.bp_scope_id());
+        const std::string path_b(scope_b.bp_scope_id());
+        auto one_worker = [](const aura::orch::CrossScopeSnapshot& snap, const char* label) {
+            std::size_t n = 0;
+            const aura::orch::CrossScopeEntry* row = nullptr;
+            for (const auto& e : snap.entries) {
+                if (e.name == "worker") {
+                    ++n;
+                    row = &e;
+                }
+            }
+            CHECK(n == 1, label);
+            return row;
+        };
+
+        aura::orch::AgentScope* ab[] = {&scope_a, &scope_b};
+        const auto fwd = aura::orch::cross_scope_directory(ab, {});
+        if (const auto* row = one_worker(fwd, "4096: one worker when A is first")) {
+            CHECK(row->status == "alive", "4096: alive replaces reclaimed-pending");
+            CHECK(row->source_path == path_b, "4096: source path is B");
+            CHECK(row->source_seq == 1, "4096: source seq is B");
+        }
+
+        aura::orch::AgentScope* ba[] = {&scope_b, &scope_a};
+        const auto rev = aura::orch::cross_scope_directory(ba, {});
+        if (const auto* row = one_worker(rev, "4096: one worker when B is first")) {
+            CHECK(row->status == "alive", "4096: reclaimed does not replace alive");
+            CHECK(row->source_path == path_b, "4096: reverse span still B");
+            CHECK(row->source_seq == 0, "4096: B is source seq 0 when listed first");
+        }
+
+        scope_a.handles_mut()[0].reclaimed_deferred_cleanup = false;
+        aura::orch::AgentScope* both_alive[] = {&scope_a, &scope_b};
+        const auto eq = aura::orch::cross_scope_directory(both_alive, {});
+        if (const auto* row = one_worker(eq, "4096: one worker when both alive")) {
+            CHECK(row->status == "alive", "4096: both-alive status");
+            CHECK(row->source_path == path_a, "4096: equal rank keeps the earlier source");
+            CHECK(row->source_seq == 0, "4096: earlier source seq stays 0");
+        }
+
+        auto retire = [](aura::orch::AgentScope& s) {
+            for (auto& h : s.handles_mut()) {
+                h.reclaimed_deferred_cleanup = false;
+                h.must_wait_reclaimed = false;
+                if (h.fiber && !h.fiber->is_done())
+                    h.fiber->set_state(aura::serve::FiberState::Done);
+            }
+        };
+        retire(scope_a);
+        retire(scope_b);
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(prod_before, std::memory_order_relaxed);
+    }
+
     // ── #3216: identity-plane on scope-resolve / directory + facade.
     // Empty-session resolve/directory only — no extra scope-spawn (batch-safe).
     {
