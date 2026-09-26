@@ -4407,19 +4407,16 @@ inline std::atomic<std::uint64_t> g_session_audit_mid_gen{0};
 resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     if (caller_mid != 0)
         return caller_mid;
-    // Issue #3296 AC1: TypedMid SSOT must precede epoch under production
-    // so audit mid joins grant.bound_mutation_id / SE.mutation_id /
-    // AuditWalRecord.provenance_mutation_id on the same boundary-stamped
-    // value. Drop the host-quota mid from the production cascade (drift /
-    // lag under steal × abort). TypedMid is authoritative only while a
-    // boundary is live on this thread (TLS-noted); a stale process-global
-    // stamp from a completed / foreign boundary must not shadow the
-    // current epoch (#3016 AC4 cross-evaluator isolation).
-    const auto tm = (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
-                        ? last_type_linear_commit_proof_stamp_v_read()
-                        : 0;
-    if (tm != 0)
-        return tm;
+    // Issue #3296 AC1: a live boundary note is the join key for
+    // grant.bound_mutation_id / SE.mutation_id /
+    // AuditWalRecord.provenance_mutation_id. Issue #4098: that key is
+    // g_tls_boundary_audit_mid, the same early return as
+    // join_audit_and_se_mid. The type-linear proof stamp is not the
+    // session mid — a leftover note after steal must not publish
+    // last_type_linear_commit_proof_stamp as session_mid_at_enter_
+    // (#3016 AC4). Host-quota mid stays out of this cascade.
+    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        return g_tls_boundary_audit_mid;
     const auto ep = ::aura::core::current_mutation_epoch();
     if (ep != 0)
         return ep;
@@ -4477,6 +4474,10 @@ inline thread_local EnforcementLinkKind g_tls_enforcement_link = EnforcementLink
 // (volume metric only). noted=true even when mid==0 (production refuse)
 // so stamp sites do not re-resolve and double-count refused_total.
 inline constexpr int kBoundaryAuditMidIssue = 3016;
+// Issue #4098: steal / resume clears a foreign TLS boundary note on the
+// source thread and re-notes the fiber's session mid on the destination.
+// The type-linear proof stamp is not that mid.
+inline constexpr int kBoundaryAuditStealNoteIssue = 4098;
 // Issue #3778: Occurrence persist / outermost-pre-persist / densify+steal
 // TypeLinear stamps join via cp.audit_mid / join_audit_and_se_mid /
 // session_mid — never defuse_version_ under production (defuse is

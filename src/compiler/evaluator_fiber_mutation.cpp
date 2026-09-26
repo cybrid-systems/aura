@@ -3592,6 +3592,32 @@ extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
         aura::serve::g_current_fiber->set_resume_had_mismatch(false);
 }
 
+// Issue #4098: Fiber::resume calls this on the thread that is about to
+// run the fiber. A foreign TLS boundary note (previous fiber, stolen
+// off this worker) must not become the next Guard's session mid. A
+// matching note is kept. A fiber that still carries session_mid is
+// re-noted here so the destination thread joins that mid. Tenant is
+// not stored on the fiber; a mismatch clear zeros it.
+extern "C" void aura_fiber_reconcile_boundary_audit_on_resume(void* fiber_ptr) noexcept {
+    if (!fiber_ptr)
+        return;
+    auto* f = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    const auto session = f->session_mid();
+    if (typed_audit::g_tls_boundary_audit_noted &&
+        typed_audit::g_tls_boundary_audit_mid != session) {
+        typed_audit::clear_boundary_audit_mid();
+    }
+    if (session != 0 && !typed_audit::g_tls_boundary_audit_noted)
+        typed_audit::note_boundary_audit_mid(session);
+}
+
+// Issue #4098: Fiber::resume calls this after swapcontext returns, on
+// the worker the fiber just left. The next fiber scheduled here must
+// not inherit this note.
+extern "C" void aura_fiber_clear_boundary_audit_after_yield() noexcept {
+    typed_audit::clear_boundary_audit_mid();
+}
+
 // Issue #2397: Fiber reclaim still-running / body-retired → OrchModuleStats.
 // Strong defs override fiber_bridge weak no-ops when evaluator/orch is linked.
 // Fiber owns the process-truth gauges; these mirrors feed query:orch-module-stats.

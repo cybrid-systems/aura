@@ -345,6 +345,13 @@ __attribute__((weak, used)) void aura_fiber_release_tenant_scope_after_yield() {
     aura::gc_hooks::bump_tenant_scope_resume_missing_total();
 }
 
+// Issue #4098: boundary-note reconcile / yield clear. Strong defs in
+// evaluator_fiber_mutation.cpp. Weak no-op when the evaluator is not
+// linked (light-link); those units do not publish a boundary note.
+__attribute__((weak, used)) void
+aura_fiber_reconcile_boundary_audit_on_resume(void* /*fiber_ptr*/) noexcept {}
+__attribute__((weak, used)) void aura_fiber_clear_boundary_audit_after_yield() noexcept {}
+
 // Issue #3275: strong-identity marker for the tenant-scope resume ABI.
 // Weak stub returns 0 (not production-strong); the strong def in
 // evaluator_fiber_mutation.cpp returns 1. Production self-check
