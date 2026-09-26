@@ -4940,6 +4940,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     stamp_rest_param_hygiene(*f, *md.flat, md.body_id, list_call);
                                     subst[md.params.back()] = list_call;
                                 }
+                                // Issue #4101: clone_ckpt is the size before the
+                                // rest spine and the clone, same as reexpand_call.
+                                // An inner deny truncates this range so the caller
+                                // flat does not keep the MacroIntroduced clone.
+                                const auto clone_ckpt =
+                                    rest_spine_pending ? rest_spine_ckpt : f->size();
                                 // Clone the macro body with substitution +
                                 // name_map. The cloned tree is in the
                                 // *current* FlatAST (we use the target's
@@ -4956,12 +4962,25 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
                                     /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
                                 if (expanded == aura::ast::NULL_NODE) {
-                                    // Issue #3817: production rewind pre-clone
-                                    // MacroIntroduced rest spine (clone ckpt
-                                    // cannot see nodes stamped before entry).
-                                    if (rest_spine_pending &&
-                                        aura::core::sandbox::is_sandbox_active())
-                                        f->truncate_to(rest_spine_ckpt);
+                                    // Issue #3817 / #4101: production rewind of
+                                    // the rest spine and any partial clone.
+                                    // Soft/Off keeps the historical half-write.
+                                    if (aura::core::sandbox::is_sandbox_active()) {
+                                        f->truncate_to(clone_ckpt);
+                                        if (macro_exp::inner_expand_production_limit_deny_all()) {
+                                            // Module read, not the extern "C"
+                                            // string: light-link tests
+                                            // interpose a weak stub that
+                                            // returns empty (#4101).
+                                            const char* why =
+                                                macro_exp::hygiene_last_limit_reason_string();
+                                            return std::unexpected(aura::diag::Diagnostic{
+                                                aura::diag::ErrorKind::InternalError,
+                                                (why != nullptr && why[0] != '\0')
+                                                    ? why
+                                                    : "hygiene-depth-limit"});
+                                        }
+                                    }
                                     return make_void();
                                 }
                                 // Issue #230 #2 follow-up: undo the Quote-wrap
@@ -4985,19 +5004,28 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
                                                                /*max_depth=*/10,
                                                                as_expansion_registry(macros_));
-                                // Issue #3684: production refuses to eval a
-                                // half-expanded body — if the inner expand hit
-                                // a deny (depth/pass/steal/cap/gensym/
-                                // same-flat/name-map/concurrent-top-level),
-                                // return void without evaluating; the deny
-                                // site already stamped last_limit_reason so
-                                // the Agent sees hygiene-depth-limit via
-                                // query:macro-hygiene-provenance-stats.
-                                // Soft/Off keeps the historical
-                                // expand-then-eval (contract).
+                                // Issue #3684 / #4101: production refuses to eval a
+                                // half-expanded body. deny_all covers depth/pass/
+                                // steal/cap/gensym and same-flat/name-map/
+                                // concurrent-top-level (8/9/10). Truncate the
+                                // rest spine and the clone; do not restamp and
+                                // do not eval_flat the clone. The deny site
+                                // already stamped last_limit_reason. Soft/Off
+                                // keeps the historical expand-then-eval
+                                // (one sandbox load, no truncate).
                                 if (aura::core::sandbox::is_sandbox_active() &&
-                                    macro_exp::inner_expand_production_limit_deny())
-                                    return make_void();
+                                    macro_exp::inner_expand_production_limit_deny_all()) {
+                                    f->truncate_to(clone_ckpt);
+                                    // Same module read as the NULL arm —
+                                    // the extern "C" string is a weak stub
+                                    // under light-link (#4101).
+                                    const char* why = macro_exp::hygiene_last_limit_reason_string();
+                                    return std::unexpected(
+                                        aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                               (why != nullptr && why[0] != '\0')
+                                                                   ? why
+                                                                   : "hygiene-depth-limit"});
+                                }
                                 // Issue #2019: full restamp for all live nodes after
                                 // structural splice + MacroIntroduced-only parent/dirty fix.
                                 f->restamp_all_node_generations();
