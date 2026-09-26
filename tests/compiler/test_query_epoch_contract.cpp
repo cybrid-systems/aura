@@ -513,6 +513,46 @@ int run_test_query_epoch_contract() {
               "3990: no docs/design");
     }
 
+    {
+        std::println("\n--- #4106: query:macro-introduced never a bare int list ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::types::is_void;
+        // The diagnostic prim is sunk (#3175 — compiled, not registered), so
+        // the eval surface is a structured error / void under BOTH faces:
+        // never a bare NodeId list, whose occupancy alias is the #4106 hole.
+        // The body hardening (production epoch bracket + schema-2 finish) is
+        // pinned by source-cite below so any future surfacing inherits it.
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define m4106 (lambda (x) 1))\")").has_value(),
+              "4106: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4106: eval");
+        auto prod4106 = cs.eval("(query:macro-introduced)");
+        CHECK(!prod4106 || is_error(*prod4106) || is_void(*prod4106),
+              "4106: production surface structured (no bare int list)");
+        apply_dev_audit_defaults();
+        auto soft4106 = cs.eval("(query:macro-introduced)");
+        CHECK(!soft4106 || is_error(*soft4106) || is_void(*soft4106),
+              "4106: Soft surface stays sunk (#3175) — no bare list either");
+        // Source-cite: the compiled body carries the production epoch
+        // bracket + schema-2 finish (Issue #4106 fix shape).
+        const auto qw4106 = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        // Issue #4106: clang-format re-wrapped the sink registration; anchor
+        // on the quoted prim name (first quoted occurrence in the file).
+        const auto b4106 = qw4106.find("\"query:macro-introduced\"");
+        CHECK(b4106 != std::string::npos, "4106: macro-introduced body present");
+        const auto w4106 = qw4106.substr(b4106, 3400);
+        CHECK(w4106.find("Issue #4106") != std::string::npos, "4106: body cites the issue");
+        CHECK(w4106.find("production_defaults_active()") != std::string::npos,
+              "4106: production gate");
+        CHECK(w4106.find("begin_query_epoch(&flat)") != std::string::npos,
+              "4106: production epoch begin");
+        CHECK(w4106.find("end_query_epoch_maybe_result(qe, &flat, result, "
+                         "/*as_query_result=*/false)") != std::string::npos,
+              "4106: schema-2 finish (never a bare list exit)");
+    }
+
     reset_query_epoch_metrics_for_test();
     aura::core::reset_query_result_metrics_for_test();
     set_query_epoch_strict(false);

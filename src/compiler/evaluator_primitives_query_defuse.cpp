@@ -4,12 +4,19 @@
 module;
 
 #include "runtime_shared.h"
+#include "typed_mutation_audit.h" // Issue #4106: production gate
+#include "serve/fiber.h"          // Issue #4106: aura_fiber_current_id
 
 module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+
+// Issue #3424/#4106: schema-2 QueryResult hash -> node identity + shared
+// v2 unpack (shared with mutate / workspace). Include in module purview
+// (after the imports) so aura::core / aura::ast / types are in scope.
+#include "compiler/query_result_decode.hh"
 
 namespace aura::compiler::primitives_detail {
 
@@ -105,16 +112,64 @@ void register_defuse_query_primitives(
     add("query:reaches",
         [&workspace_mtx, &workspace_flat, cb, make_merr](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
-            if (a.empty() || !is_int(a[0]))
+            if (a.empty())
                 return make_merr("bad-arg", "usage: (query:reaches node-id)");
             if (!workspace_flat)
                 return make_merr("no-workspace", "no workspace AST loaded");
-            auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
             auto& flat = *workspace_flat;
-            if (target >= flat.size())
-                return make_merr("out-of-range", "node ID " + std::to_string(target) +
-                                                     " >= flat size " +
-                                                     std::to_string(flat.size()));
+            aura::ast::NodeId target = aura::ast::NULL_NODE;
+            // Issue #4106: production resolves the operand through the shared
+            // gates before the def-use walk — a bare int is occupancy, not
+            // identity, and is rejected with the #3395 stale-ref face (a
+            // recycled slot must never report the new occupant's reaches).
+            // Packed v2 StableNodeRef / schema-2 QueryResult operands resolve
+            // + validate with the non-refresh rule (Issue #3661). Soft keeps
+            // the historical bare-int walk (out-of-range → out-of-range).
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                auto* qev = Evaluator::get_query_evaluator();
+                if (!qev)
+                    return make_merr("no-workspace", "no workspace AST loaded");
+                if (is_hash(a[0])) {
+                    using aura::compiler::query_result_decode::HashNodeKind;
+                    using aura::compiler::query_result_decode::parse_query_result_match_index;
+                    using aura::compiler::query_result_decode::resolve_query_result_match;
+                    auto hr = resolve_query_result_match(
+                        a[0], qev->string_heap_mut(), qev->pairs(), flat,
+                        qev->capability_tenant_id(),
+                        static_cast<std::uint64_t>(aura_fiber_current_id()), "query:reaches",
+                        parse_query_result_match_index(a, qev->keyword_table()));
+                    if (hr.kind != HashNodeKind::Ok)
+                        return make_merr(hr.err_kind, hr.err_msg);
+                    target = hr.node;
+                } else if (auto packed =
+                               aura::compiler::query_result_decode::unpack_query_stable_ref_v2(
+                                   qev->pairs(), a[0])) {
+                    auto ref = *packed;
+                    qev->stamp_query_stable_ref_export(ref);
+                    if (ref.id == aura::ast::NULL_NODE)
+                        return make_merr("restamp-lag",
+                                         "budget-exceeded: query:reaches: restamp budget "
+                                         "exceeded; generation torn for export (Issue #3230)");
+                    if (!qev->ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
+                        return make_merr("stale-ref", "query:reaches: stable-ref is stale or "
+                                                      "provenance ensure failed");
+                    target = ref.id;
+                } else {
+                    qev->bump_raw_nodeid_usage_in_primitives_count();
+                    return make_merr("stale-ref",
+                                     "query:reaches: raw node-id rejected under production; "
+                                     "use packed v2 StableNodeRef or QueryResult match (Issue "
+                                     "#3395)");
+                }
+            } else {
+                if (!is_int(a[0]))
+                    return make_merr("bad-arg", "usage: (query:reaches node-id)");
+                target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                if (target >= flat.size())
+                    return make_merr("out-of-range", "node ID " + std::to_string(target) +
+                                                         " >= flat size " +
+                                                         std::to_string(flat.size()));
+            }
             auto idx = cb.ensure_defuse();
             if (!idx)
                 return make_merr("internal", "failed to build def-use index");

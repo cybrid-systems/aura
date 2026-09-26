@@ -83,7 +83,11 @@ def main() -> int:
     if idx < 0:
         fails.append("AC4: ensure-ref make_stamped_safe_ref missing")
     else:
-        pre = ens[max(0, idx - 500) : idx]
+        # Issue #4106: the production bare-int refuse now sits between the
+        # torn gate and the stamp (face order pinned by the #3121 AC —
+        # production + torn + bare int stays restamp-lag), so widen the
+        # adjacency lookback from 500 to 1200.
+        pre = ens[max(0, idx - 1200) : idx]
         if "allow_query_stable_ref_export" not in pre:
             fails.append("AC4: ensure-ref make_stamped_safe_ref not preceded by allow")
 

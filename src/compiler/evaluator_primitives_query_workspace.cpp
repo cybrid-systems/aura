@@ -1118,18 +1118,57 @@ void register_workspace_query_primitives(
     // can capture it as a single value and pass it through
     // multi-round edit pipelines.
     add("query:stable-ref",
-        [ws, mev, &ev, begin_query_epoch,
-         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+        [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
+         resolve_query_node_arg](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !is_int(a[0]))
+            if (a.empty() || (!is_int(a[0]) && !is_pair(a[0]) && !is_hash(a[0])))
                 return mev("bad-arg", "usage: (query:stable-ref node-id)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
-            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
             auto& flat = *ws.workspace_flat;
-            if (node >= flat.size())
-                return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                               std::to_string(flat.size()));
+            aura::ast::NodeId node = aura::ast::NULL_NODE;
+            // Issue #4106: production resolves the operand through the shared
+            // gate before any stamp — a bare int is occupancy, not identity,
+            // and is rejected with the #3395 stale-ref face (a remembered int
+            // must never mint a fresh green stamp of whoever occupies the
+            // slot after a recycle). Packed v2 StableNodeRef / schema-2
+            // QueryResult operands resolve through unpack_query_stable_ref /
+            // resolve_query_result_match with the non-refresh rule (Issue
+            // #3661). Face order matches query:as-stable-ref (#3425): the
+            // torn gate wins over the bare-int reject, so production + torn
+            // keeps the structured restamp-lag face (#3230 / #3259 compose).
+            // Soft keeps the historical bare-int mint.
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                if (is_int(a[0])) {
+                    const auto raw = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                    if (raw >= flat.size())
+                        return mev("out-of-range", "node ID " + std::to_string(raw) +
+                                                       " >= flat size " +
+                                                       std::to_string(flat.size()));
+                    if (!ev.allow_query_stable_ref_export(raw))
+                        return mev("restamp-lag",
+                                   "budget-exceeded: query:stable-ref: restamp budget exceeded; "
+                                   "generation torn for export (Issue #3121 / #3037 / #3000); ; "
+                                   "// Issue #3138: Agent recovery hint recovery: re-query after "
+                                   "budget window or force full restamp before reusing refs");
+                    ev.bump_raw_nodeid_usage_in_primitives_count();
+                    return mev("stale-ref",
+                               "query:stable-ref: raw node-id rejected under production; "
+                               "use packed v2 StableNodeRef or QueryResult match (Issue "
+                               "#3395)");
+                }
+                bool ok = true;
+                auto rerr = resolve_query_node_arg(a, "query:stable-ref", &ok, node);
+                if (!ok)
+                    return rerr;
+            } else {
+                if (!is_int(a[0]))
+                    return mev("bad-arg", "usage: (query:stable-ref node-id)");
+                node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                if (node >= flat.size())
+                    return mev("out-of-range", "node ID " + std::to_string(node) +
+                                                   " >= flat size " + std::to_string(flat.size()));
+            }
             // Issue #3000 / Issue #3487: gate before export_ref_safe so a skipped
             // restamp cannot ship a stamped-green pre-mutate generation.
             // Latch==1 ORs the hard face inside allow (even if defaults flipped).
@@ -1188,13 +1227,63 @@ void register_workspace_query_primitives(
     // validate_or_refresh on an Agent-held handle and return a diagnostic
     // hash: valid / id / gen / refreshed / provenance snapshot keys +
     // schema-2404. Soft path: already-valid is metric-only (export-valid).
-    add("query:ensure-ref", [ws, mev, &ev](const auto& a) -> EvalValue {
+    add("query:ensure-ref", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty())
             return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *ws.workspace_flat;
+
+        // Issue #4106: shared valid=0 diagnostic face for the production
+        // refusals (bare-int occupancy reject in the is_int arm below; packed
+        // stale non-refresh at the export site) — exact field set of the
+        // historical !exported hash, so Agents see one refusal shape. Never
+        // mints a stamp of the current occupant.
+        auto refuse_valid0 = [&](aura::ast::NodeId id, std::uint16_t gen,
+                                 bool from_packed) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ws.string_heap.size();
+                        ws.string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("valid", 0);
+            insert_kv("id", static_cast<std::int64_t>(id));
+            insert_kv("gen", static_cast<std::int64_t>(gen));
+            insert_kv("refreshed", 0);
+            insert_kv("from-packed", from_packed ? 1 : 0);
+            insert_kv("schema-2404", 2404);
+            insert_kv("issue-2404", 2404);
+            insert_kv("stable-ref-export-wired", 1);
+            insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
+            insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+            insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
 
         aura::ast::FlatAST::StableNodeRef held{};
         bool from_packed = false;
@@ -1215,6 +1304,13 @@ void register_workspace_query_primitives(
                            "generation torn for export (Issue #3230 / #3121 / #3058 / #3037); ; "
                            "// Issue #3138: Agent recovery hint recovery: re-query after budget "
                            "window or force full restamp before reusing refs");
+            // Issue #4106: production — a bare int is occupancy, not identity.
+            // Never mint a green stamp of the current occupant: refuse with
+            // the diagnostic valid=0 face (no make_stamped_safe_ref / export
+            // runs on the unstamped int; the #3395 face in this primitive's
+            // ensure-ref shape). Soft keeps the historical stamp.
+            if (aura::compiler::typed_audit::production_defaults_active())
+                return refuse_valid0(node, /*gen=*/0, /*from_packed=*/false);
             held = ev.make_stamped_safe_ref(node, layer, cur_fiber);
         } else if (is_pair(a[0])) {
             from_packed = true;
@@ -1246,9 +1342,30 @@ void register_workspace_query_primitives(
             if (held.gen != 0 && held.gen != stamped.gen) {
                 stamped.gen = held.gen;
                 // wrap 0 allows refresh across gen mismatch (legacy pack).
-                stamped.wrap_epoch = 0;
+                // Issue #4106: production never zeroes wrap_epoch — the
+                // non-refresh rule (Issue #3661) refuses valid=0 at the
+                // export site below instead of silently refreshing across
+                // the held gen. Soft keeps the legacy-pack refresh.
+                if (!aura::compiler::typed_audit::production_defaults_active())
+                    stamped.wrap_epoch = 0;
             }
             held = stamped;
+        } else if (is_hash(a[0]) && aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #4106: production accepts a schema-2 QueryResult match
+            // through the shared resolve gate (validated identity — never an
+            // unstamped int); the ensure report then reflects the live ref.
+            bool ok = true;
+            aura::ast::NodeId rnode = aura::ast::NULL_NODE;
+            auto rerr = resolve_query_node_arg(a, "query:ensure-ref", &ok, rnode);
+            if (!ok)
+                return rerr;
+            std::uint32_t layer = 0;
+            if (ev.workspace_tree()) {
+                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                layer = wt->active_idx();
+            }
+            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+            held = ev.make_stamped_safe_ref(rnode, layer, cur_fiber);
         } else {
             return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
         }
@@ -1264,6 +1381,13 @@ void register_workspace_query_primitives(
                        "#3138: Agent recovery hint recovery: re-query after budget window or force "
                        "full restamp before reusing refs");
         const bool was_valid = held.is_valid_in(flat);
+        // Issue #4106: production non-refresh rule (same non-refresh rule as
+        // resolve_query_node_arg, Issue #3661) — a stale packed gen fails
+        // valid=0 with refreshed=0; export_held_ref's auto-refresh (policy
+        // default true) must not silently rebind Agent memory to the new
+        // generation. Soft keeps the refresh.
+        if (aura::compiler::typed_audit::production_defaults_active() && !was_valid)
+            return refuse_valid0(held.id, held.gen, from_packed);
         auto exported = ev.export_held_ref(held);
         // Build result hash via FlatHashTable (same pattern as obs stats).
         auto* ht = FlatHashTable::create(32);
@@ -2214,16 +2338,32 @@ void register_workspace_query_primitives(
     // to gauge how "central" a node is before mutating it
     // (high ref-counts → wider invalidation potential).
     ObservabilityPrims::register_stats_impl(
-        "query:ref-counts", [ws, mev](const auto& a) -> EvalValue {
+        "query:ref-counts", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !is_int(a[0]))
+            if (a.empty())
                 return mev("bad-arg", "usage: (query:ref-counts node-id)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
-            auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
             auto& flat = *ws.workspace_flat;
-            if (target >= flat.size())
-                return make_int(0);
+            aura::ast::NodeId target = aura::ast::NULL_NODE;
+            // Issue #4106: production resolves the operand through the shared
+            // gate before the parent walk — a bare int is occupancy, not
+            // identity (#3395 stale-ref face), so a recycled slot can never
+            // report the new occupant's parent count. Packed v2 / schema-2
+            // operands resolve + validate first. Soft keeps the historical
+            // bare-int walk (out-of-range → 0).
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                bool ok = true;
+                auto rerr = resolve_query_node_arg(a, "query:ref-counts", &ok, target);
+                if (!ok)
+                    return rerr;
+            } else {
+                if (!is_int(a[0]))
+                    return mev("bad-arg", "usage: (query:ref-counts node-id)");
+                target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                if (target >= flat.size())
+                    return make_int(0);
+            }
             std::int64_t count = 0;
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                 auto v = flat.get(id);
@@ -2835,38 +2975,64 @@ void register_workspace_query_primitives(
     // (no arg) returns all matches. Useful for the common
     // "do any macro-introduced nodes exist?" check
     // (pass limit=1).
-    sink_query_prim("query:macro-introduced", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.size() > 1)
-            return mev("bad-arg",
-                       "usage: (query:macro-introduced) or (query:macro-introduced limit-int)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
+    sink_query_prim(
+        "query:macro-introduced",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.size() > 1)
+                return mev("bad-arg",
+                           "usage: (query:macro-introduced) or (query:macro-introduced limit-int)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
 
-        std::int64_t limit = -1; // -1 = no limit
-        if (a.size() == 1) {
-            if (!is_int(a[0]))
-                return mev("bad-arg", "limit must be an integer");
-            limit = as_int(a[0]);
-            if (limit < 0)
-                return mev("bad-arg", "limit must be non-negative");
-        }
-
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-        std::int64_t emitted = 0;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (limit >= 0 && emitted >= limit)
-                break;
-            if (flat.is_macro_introduced(id)) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
-                ++emitted;
+            std::int64_t limit = -1; // -1 = no limit
+            if (a.size() == 1) {
+                if (!is_int(a[0]))
+                    return mev("bad-arg", "limit must be an integer");
+                limit = as_int(a[0]);
+                if (limit < 0)
+                    return mev("bad-arg", "limit must be non-negative");
             }
-        }
-        return result;
-    });
+
+            auto& flat = *ws.workspace_flat;
+            // Issue #4106: production brackets the match-list handoff with the
+            // query epoch — the finish auto-upgrades the bare NodeId list to the
+            // schema-2 stamped QueryResult hash (or a structured
+            // query-result-overflow / restamp-lag reject), so Agent memory never
+            // receives bare occupancy (a recycled slot reads as the new
+            // occupant). Soft / Off keeps the cheap bare list (zero-cost
+            // contract). The body is currently sunk (#3175 — compiled, not
+            // registered); the gate keeps the contract for any future surfacing.
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                const auto qe = begin_query_epoch(&flat);
+                EvalValue result = make_void();
+                std::int64_t emitted = 0;
+                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    if (limit >= 0 && emitted >= limit)
+                        break;
+                    if (flat.is_macro_introduced(id)) {
+                        auto pid = ws.pairs.size();
+                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                        result = make_pair(pid);
+                        ++emitted;
+                    }
+                }
+                return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+            }
+            EvalValue result = make_void();
+            std::int64_t emitted = 0;
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                if (limit >= 0 && emitted >= limit)
+                    break;
+                if (flat.is_macro_introduced(id)) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                    ++emitted;
+                }
+            }
+            return result;
+        });
 
     // (query:marker-stats) — Issue #247: aggregate SyntaxMarker
     // distribution in the workspace. Returns a 4-element list:

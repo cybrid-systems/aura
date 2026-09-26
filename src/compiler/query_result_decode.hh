@@ -341,6 +341,89 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
     r.fiber_id = qr.matches[pick].fiber_id;
     return r;
 }
+
+// Issue #4106: shared production v2-spine unpack for query prims whose
+// registration lives outside the workspace TU (query:stable-ref-provenance
+// in evaluator_primitives_query.cpp, query:reaches in _defuse.cpp,
+// query:macro-provenance-chain in _lifecycle.cpp). Same #3396/#3398 v2
+// wire shape the workspace file's local unpack_query_stable_ref lambda
+// walks: (id . (gen . (wrap . (tenant . (cow . (fiber . (boundary . _)))))))
+// — the caller stamps via Evaluator::stamp_query_stable_ref_export and
+// enforces the non-refresh rule (ensure_valid_or_refresh auto_refresh=false,
+// Issue #3661). nullopt → caller returns the bare-int #3395-class face
+// (raw node operand rejected under production).
+template <typename PairVec>
+[[nodiscard]] inline std::optional<aura::ast::FlatAST::StableNodeRef>
+unpack_query_stable_ref_v2(const PairVec& pairs, types::EvalValue arg) {
+    using types::as_int;
+    using types::as_pair_idx;
+    using types::is_int;
+    using types::is_pair;
+    if (!is_pair(arg))
+        return std::nullopt;
+    const auto outer = as_pair_idx(arg);
+    if (static_cast<std::size_t>(outer) >= pairs.size())
+        return std::nullopt;
+    if (!is_int(pairs[outer].car))
+        return std::nullopt;
+    aura::ast::FlatAST::StableNodeRef ref{};
+    ref.id = static_cast<aura::ast::NodeId>(as_int(pairs[outer].car));
+    auto rest = pairs[outer].cdr;
+    // gen
+    if (!is_pair(rest))
+        return std::nullopt;
+    const auto p_gen = as_pair_idx(rest);
+    if (static_cast<std::size_t>(p_gen) >= pairs.size())
+        return std::nullopt;
+    if (!is_int(pairs[p_gen].car))
+        return std::nullopt;
+    ref.gen = static_cast<std::uint16_t>(as_int(pairs[p_gen].car));
+    rest = pairs[p_gen].cdr;
+    // wrap
+    if (!is_pair(rest))
+        return std::nullopt;
+    const auto p_wrap = as_pair_idx(rest);
+    if (static_cast<std::size_t>(p_wrap) >= pairs.size())
+        return std::nullopt;
+    if (!is_int(pairs[p_wrap].car))
+        return std::nullopt;
+    ref.wrap_epoch = static_cast<std::uint32_t>(as_int(pairs[p_wrap].car));
+    rest = pairs[p_wrap].cdr;
+    // tenant
+    if (!is_pair(rest))
+        return std::nullopt;
+    const auto p_tenant = as_pair_idx(rest);
+    if (static_cast<std::size_t>(p_tenant) >= pairs.size())
+        return std::nullopt;
+    if (!is_int(pairs[p_tenant].car))
+        return std::nullopt;
+    ref.tenant_id = static_cast<std::uint64_t>(as_int(pairs[p_tenant].car));
+    rest = pairs[p_tenant].cdr;
+    // cow
+    if (!is_pair(rest))
+        return std::nullopt;
+    const auto p_cow = as_pair_idx(rest);
+    if (static_cast<std::size_t>(p_cow) >= pairs.size())
+        return std::nullopt;
+    if (!is_int(pairs[p_cow].car))
+        return std::nullopt;
+    ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(pairs[p_cow].car));
+    rest = pairs[p_cow].cdr;
+    // fiber (optional) + boundary (optional)
+    if (is_pair(rest)) {
+        const auto p_fiber = as_pair_idx(rest);
+        if (static_cast<std::size_t>(p_fiber) < pairs.size() && is_int(pairs[p_fiber].car))
+            ref.fiber_id = static_cast<std::uint32_t>(as_int(pairs[p_fiber].car));
+        rest = pairs[p_fiber].cdr;
+        if (is_pair(rest)) {
+            const auto p_boundary = as_pair_idx(rest);
+            if (static_cast<std::size_t>(p_boundary) < pairs.size() &&
+                is_int(pairs[p_boundary].car))
+                ref.boundary_pinned = as_int(pairs[p_boundary].car) != 0;
+        }
+    }
+    return ref;
+}
 #endif // AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
 
 } // namespace aura::compiler::query_result_decode

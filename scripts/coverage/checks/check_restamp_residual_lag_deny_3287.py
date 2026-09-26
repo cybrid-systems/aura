@@ -72,7 +72,9 @@ def main() -> int:
     if qpos == -1:
         qpos = q.find("query:stable-ref-provenance", q.find("query:stable-ref-provenance") + 1)
     must(qpos != -1, "G0: query:stable-ref-provenance surface present")
-    qwin = q[qpos : qpos + 2600] if qpos != -1 else ""
+    qwin = (
+        q[qpos : qpos + 6000] if qpos != -1 else ""
+    )  # Issue #4106: production operand-resolve block widened the body; was 2600
     must("Issue #3287" in qwin, "G1: stable-ref-provenance cites Issue #3287")
     must(
         "allow_query_stable_ref_export" in qwin and "production_defaults_active()" in qwin,

@@ -116,6 +116,11 @@ extern "C" std::uint64_t aura_hygiene_tracer_depth_max_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept;
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
+// Issue #3424/#4106: schema-2 QueryResult hash -> node identity + shared
+// v2 unpack (shared with mutate / workspace). Include in module purview
+// (after the imports) so aura::core / aura::ast / types are in scope.
+#include "compiler/query_result_decode.hh"
+
 namespace aura::compiler::primitives_detail {
 
 // Issue #2696: query:occurrence-goals-live — file-scope lifetime atomics
@@ -2127,13 +2132,61 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->stable_ref_provenance_query_total.fetch_add(1, std::memory_order_relaxed);
-            if (a.empty() || !is_int(a[0]))
-                return make_bool(false);
-            const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            const bool prod_4106 = aura::compiler::typed_audit::production_defaults_active();
+            // Issue #4106: the production read takes the workspace shared
+            // lock like the other workspace queries (make_stamped_safe_ref +
+            // is_valid_in read live FlatAST state). Soft keeps the
+            // historical lock-free body (zero-cost).
+            std::optional<Evaluator::WorkspaceSharedLock> ws_lock_4106;
+            if (prod_4106)
+                ws_lock_4106.emplace(ev);
             auto* ws = ev.workspace_flat();
             if (!ws)
                 return make_bool(false);
-            if (nid >= ws->size())
+            aura::ast::NodeId nid = aura::ast::NULL_NODE;
+            if (prod_4106) {
+                // Issue #4106: production face — a bare int is occupancy, not
+                // identity, and is refused with this primitive's existing #f
+                // face (never a schema-620 hash of whoever occupies the slot
+                // after a recycle). Packed v2 StableNodeRef / schema-2
+                // QueryResult operands resolve through the shared
+                // unpack_query_stable_ref_v2 / resolve_query_result_match
+                // helpers with the non-refresh rule (Issue #3661).
+                if (a.empty())
+                    return make_bool(false);
+                if (is_hash(a[0])) {
+                    using aura::compiler::query_result_decode::HashNodeKind;
+                    using aura::compiler::query_result_decode::parse_query_result_match_index;
+                    using aura::compiler::query_result_decode::resolve_query_result_match;
+                    auto hr = resolve_query_result_match(
+                        a[0], string_heap, pairs, *ws, ev.capability_tenant_id(),
+                        static_cast<std::uint64_t>(aura_fiber_current_id()),
+                        "query:stable-ref-provenance",
+                        parse_query_result_match_index(a, ev.keyword_table()));
+                    if (hr.kind != HashNodeKind::Ok)
+                        return make_bool(false);
+                    nid = hr.node;
+                } else if (auto packed =
+                               aura::compiler::query_result_decode::unpack_query_stable_ref_v2(
+                                   pairs, a[0])) {
+                    auto ref = *packed;
+                    ev.stamp_query_stable_ref_export(ref);
+                    if (ref.id == aura::ast::NULL_NODE)
+                        return make_bool(false);
+                    // Non-refresh rule: a gen mismatch is a refusal (#3661),
+                    // never an occupancy remake / auto-refresh.
+                    if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
+                        return make_bool(false);
+                    nid = ref.id;
+                } else {
+                    return make_bool(false);
+                }
+            } else {
+                if (a.empty() || !is_int(a[0]))
+                    return make_bool(false);
+                nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            }
+            if (nid == aura::ast::NULL_NODE || nid >= ws->size())
                 return make_bool(false);
             // Issue #3287: production + residual restamp-lag → deny clean
             // hit. The hot-cone eager restamp (#3259) may leave the non-hot
@@ -2141,8 +2194,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // not export a pre-mutate gen (looks green). allow_query_stable_
             // ref_export is the shared torn gate (production + torn + node
             // not eagerly restamped → reject). Soft observe stays metric-only.
-            if (aura::compiler::typed_audit::production_defaults_active() &&
-                !ev.allow_query_stable_ref_export(nid)) {
+            if (prod_4106 && !ev.allow_query_stable_ref_export(nid)) {
                 return make_bool(false);
             }
             // Issue #303 / Issue #392: capture full provenance.

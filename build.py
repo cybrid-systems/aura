@@ -8300,6 +8300,32 @@ def cmd_lint():
             "Issue #4088 query bare-NodeId schema-2 linter failed — run python3 scripts/check_query_bare_nodeid_4088.py"
         )
         return r
+    # Issue #4106 (P1): production query prims still treated a bare NodeId
+    # as the current occupant. query:stable-ref minted a schema-2 hash of
+    # whoever occupies the int's slot; query:ensure-ref stamped the current
+    # slot and auto-refreshed a stale packed gen across wrap_epoch=0;
+    # query:stable-ref-provenance / query:reaches / query:ref-counts /
+    # query:macro-provenance-chain described the bare slot; and
+    # query:macro-introduced handed Agent memory a bare NodeId list with no
+    # epoch bracket. Gate pins: the mint trio resolves operands through
+    # resolve_query_node_arg / refuse_valid0 (the #3395 face in each
+    # primitive's own shape) with the #3661 non-refresh rule; provenance /
+    # reaches / macro-provenance-chain use the shared
+    # unpack_query_stable_ref_v2 + resolve_query_result_match helpers and
+    # take the workspace shared lock under production; macro-introduced
+    # brackets its match list with the query epoch; every Soft body keeps
+    # the historical zero-cost bare-int contract (the two #3175-sunk bodies
+    # carry the gate for any future surfacing).
+    qbni4106_script = ROOT / "scripts" / "check_query_bare_nodeid_4106.py"
+    if not qbni4106_script.exists():
+        fail(f"missing {qbni4106_script}")
+        return 1
+    r = run([sys.executable, str(qbni4106_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4106 query bare-NodeId occupancy linter failed — run python3 scripts/check_query_bare_nodeid_4106.py"
+        )
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the
