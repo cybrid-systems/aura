@@ -6837,6 +6837,20 @@ def cmd_lint():
             "Issue #3339 Agent decision facade headroom linter failed — run python3 scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py"
         )
         return r
+    # Issue #4121: query:typed-mutation-audit-trail planned_keys must stay
+    # >= live insert_kv + 8. insert_kv_checked + query_hash_finish publish
+    # hash-overflow on probe miss. No new query key.
+    tmat4121_script = COVERAGE_CHECKS / "check_typed_mutation_audit_trail_headroom_4121.py"
+    if not tmat4121_script.exists():
+        fail(f"missing {tmat4121_script}")
+        return 1
+    r = run([sys.executable, str(tmat4121_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4121 typed-mutation-audit-trail headroom linter failed — "
+            "run python3 scripts/coverage/checks/check_typed_mutation_audit_trail_headroom_4121.py"
+        )
+        return r
     # Issue #3021: EnvFrame/Closure apply/use-site lifetime protocol.
     # Extends test_scan_skip_freed_closures + test_envframe_truncate_epoch
     # (#81967); no docs/design/ (#1655).
