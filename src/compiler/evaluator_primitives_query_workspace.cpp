@@ -1147,10 +1147,10 @@ void register_workspace_query_primitives(
                                                        std::to_string(flat.size()));
                     if (!ev.allow_query_stable_ref_export(raw))
                         return mev("restamp-lag",
+                                   "recovery: re-query after budget window or force full "
+                                   "restamp before reusing refs; "
                                    "budget-exceeded: query:stable-ref: restamp budget exceeded; "
-                                   "generation torn for export (Issue #3121 / #3037 / #3000); ; "
-                                   "// Issue #3138: Agent recovery hint recovery: re-query after "
-                                   "budget window or force full restamp before reusing refs");
+                                   "generation torn for export (Issue #3121 / #3037 / #3000)");
                     ev.bump_raw_nodeid_usage_in_primitives_count();
                     return mev("stale-ref",
                                "query:stable-ref: raw node-id rejected under production; "
@@ -1173,12 +1173,11 @@ void register_workspace_query_primitives(
             // restamp cannot ship a stamped-green pre-mutate generation.
             // Latch==1 ORs the hard face inside allow (even if defaults flipped).
             if (!ev.allow_query_stable_ref_export(node))
-                return mev(
-                    "restamp-lag",
-                    "budget-exceeded: query:stable-ref: restamp budget exceeded; "
-                    "generation torn for export (Issue #3121 / #3037 / #3000); ; // Issue "
-                    "#3138: Agent recovery hint recovery: re-query after budget window or force "
-                    "full restamp before reusing refs");
+                return mev("restamp-lag",
+                           "recovery: re-query after budget window or force full "
+                           "restamp before reusing refs; "
+                           "budget-exceeded: query:stable-ref: restamp budget exceeded; "
+                           "generation torn for export (Issue #3121 / #3037 / #3000)");
             // Issue #738 / #1630 / #2404 / #2960: export_ref_safe stamps + finalize
             // (sole Agent export path); query counter tracks the stamp.
             std::uint32_t layer = 0;
@@ -1300,10 +1299,10 @@ void register_workspace_query_primitives(
             // Issue #3230 / Issue #3487: torn/budget before make_safe_ref_layout.
             if (!ev.allow_query_stable_ref_export(node))
                 return mev("restamp-lag",
+                           "recovery: re-query after budget window or force full "
+                           "restamp before reusing refs; "
                            "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
-                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037); ; "
-                           "// Issue #3138: Agent recovery hint recovery: re-query after budget "
-                           "window or force full restamp before reusing refs");
+                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037)");
             // Issue #4106: production — a bare int is occupancy, not identity.
             // Never mint a green stamp of the current occupant: refuse with
             // the diagnostic valid=0 face (no make_stamped_safe_ref / export
@@ -1332,10 +1331,10 @@ void register_workspace_query_primitives(
             // Issue #3230: torn/budget before make_safe_ref_layout.
             if (!ev.allow_query_stable_ref_export(held.id))
                 return mev("restamp-lag",
+                           "recovery: re-query after budget window or force full "
+                           "restamp before reusing refs; "
                            "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
-                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037); ; "
-                           "// Issue #3138: Agent recovery hint recovery: re-query after budget "
-                           "window or force full restamp before reusing refs");
+                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037)");
             // Preserve captured gen for staleness; stamp fiber/tenant.
             auto stamped = ev.make_stamped_safe_ref(held.id, layer, cur_fiber);
             // If packed gen is older, force stale so refresh path runs.
