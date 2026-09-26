@@ -784,6 +784,156 @@ static void ac4093_3_soft_shares() {
     CHECK(aura_hash_ref_checked(hash_a, 7, 4094, 0) == 8, "4093 AC3: B reads it back (shared)");
 }
 
+// ── Issue #4094: JIT closure-capture tenant gate — a foreign-stamped env
+// cell is refused and an unstamped (0) slot fails closed under Strict / MT
+// (free's #4036 arms), the deny routed through check_workspace_isolation;
+// the Mutate choke sits in the production wrapper on the production face
+// (#3720/#4018 parity); Soft/Off keeps today's store (face probe precedes
+// any stamp load). The checked seam drives caller/face explicitly
+// (light-link binaries shadow the strong owner hooks — #4036 rationale);
+// aura_closure_env_get observes the cell value (diagnostic family of
+// aura_closure_get_env_gen). B's own Mutate-grant behavior on the choke is
+// #3720/#4018-covered; the arms below isolate the #4094 owner-compare
+// semantics.
+static void ac4094_source_cite() {
+    std::println("\n--- #4094 cite: capture gate, choke, seams, observation read ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("extern \"C\" void aura_closure_capture_checked(") != std::string::npos,
+          "4094 cite: aura_closure_capture_checked seam");
+    const auto cap =
+        rt.find("void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val)");
+    CHECK(cap != std::string::npos, "4094 cite: aura_closure_capture wrapper");
+    if (cap != std::string::npos) {
+        const auto win = rt.substr(cap, 900);
+        CHECK(win.find("aura_jit_owner_sandbox_mode()") != std::string::npos,
+              "4094 cite: choke reads the owner face");
+        CHECK(win.find("face != 0 &&") != std::string::npos,
+              "4094 cite: choke scoped to the production face (Soft/Off keeps today's store)");
+        CHECK(win.find("aura_jit_owner_require_effect(") != std::string::npos &&
+                  win.find("\"closure-capture\"") != std::string::npos,
+              "4094 cite: Mutate choke op closure-capture (no grant → no store)");
+        const auto joined = [](std::string s) {
+            for (auto& ch : s)
+                if (ch == '\n' || ch == '\t')
+                    ch = ' ';
+            return s;
+        }(win);
+        CHECK(joined.find("aura_closure_capture_checked(closure_id, idx, val,") !=
+                      std::string::npos &&
+                  joined.find("aura_jit_owner_capability_tenant(), face") != std::string::npos,
+              "4094 cite: wrapper delegates with owner-hook values");
+    }
+    const auto seam =
+        rt.find("aura_closure_capture_checked(int64_t closure_id, int64_t idx, int64_t val,");
+    CHECK(seam != std::string::npos, "4094 cite: checked seam body");
+    if (seam != std::string::npos) {
+        const auto end = cap != std::string::npos && cap > seam ? cap : seam + 4200;
+        const auto win = rt.substr(seam, end - seam);
+        const auto face = win.find("if (sandbox_mode != 0) {");
+        const auto stamp = win.find("g_closure_tenants[cid]");
+        CHECK(face != std::string::npos && stamp != std::string::npos,
+              "4094 cite: production-face gate reads the #4036 stamp array");
+        CHECK(face == std::string::npos || stamp == std::string::npos || stamp > face,
+              "4094 cite: face probe precedes the stamp load (Soft zero-cost)");
+        CHECK(win.find("slot_tenant != 0 && slot_tenant != caller_tenant") != std::string::npos,
+              "4094 cite: foreign-stamp refuse (free's #4036 arm)");
+        CHECK(win.find("::aura::core::sandbox::is_strict()") != std::string::npos &&
+                  win.find("::aura::core::provenance::multi_tenant_env_active()") !=
+                      std::string::npos,
+              "4094 cite: unstamped 0 fails closed under Strict / MT (free's #4036 arm)");
+        CHECK(win.find("aura_jit_owner_check_isolation(") != std::string::npos &&
+                  win.find("\"closure-capture\"") != std::string::npos,
+              "4094 cite: deny routed through check_workspace_isolation");
+        const auto is_arena = win.find("const bool is_arena");
+        CHECK(is_arena != std::string::npos && face != std::string::npos && face < is_arena,
+              "4094 cite: gate precedes the arena/heap store paths");
+    }
+    CHECK(rt.find("aura_closure_env_get(std::int64_t closure_id, std::int64_t idx)") !=
+              std::string::npos,
+          "4094 cite: value-observation read (aura_closure_get_env_gen family)");
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    CHECK(sh.find("aura_closure_capture_checked(") != std::string::npos &&
+              sh.find("aura_closure_env_get(") != std::string::npos,
+          "4094 cite: runtime_shared.h declares the seam + observation read");
+}
+
+static void ac4094_1_foreign_deny() {
+    std::println(
+        "\n--- #4094 AC1: foreign tenant capture of A's closure denied, env unchanged ---");
+    reset_all();
+    // Two principals, distinct stamps, production face via the seam params
+    // (light-link binaries shadow the strong owner hooks — #4036 rationale).
+    constexpr std::uint64_t tenant_a = 4094;
+    constexpr std::uint64_t tenant_b = 4095;
+    constexpr int kStrictFace = 2;
+    // A allocates (explicit-tenant seam stamps g_closure_tenants) and
+    // captures on its own stamp — the gate passes.
+    const auto cid_a = aura_alloc_closure_tenant(4094, tenant_a);
+    CHECK(cid_a >= 0, "4094 AC1: A alloc closure");
+    aura_closure_capture_checked(cid_a, 0, 111, tenant_a, kStrictFace);
+    CHECK(aura_closure_env_get(cid_a, 0) == 111, "4094 AC1: A capture lands");
+    // B's capture of A's cid: the owner compare refuses the foreign slot —
+    // capture skipped, env cell unchanged (in production links the deny
+    // fires through check_workspace_isolation: IsolationDeny SE with B's
+    // fiber id + the Mutation epoch; the light-link stub keeps JIT behavior).
+    aura_closure_capture_checked(cid_a, 0, 999, tenant_b, kStrictFace);
+    CHECK(aura_closure_env_get(cid_a, 0) == 111,
+          "4094 AC1: B capture on A denied (env cell unchanged)");
+    // B's own closure still captures under the same face (grant + own stamp).
+    const auto cid_b = aura_alloc_closure_tenant(4095, tenant_b);
+    CHECK(cid_b >= 0, "4094 AC1: B alloc closure");
+    aura_closure_capture_checked(cid_b, 0, 222, tenant_b, kStrictFace);
+    CHECK(aura_closure_env_get(cid_b, 0) == 222, "4094 AC1: B own capture lands");
+    // A's cell unchanged after B's attempt (deny = skip; no partial write).
+    CHECK(aura_closure_env_get(cid_a, 0) == 111, "4094 AC1: A env unchanged");
+}
+
+static void ac4094_2_unstamped_fail_closed() {
+    std::println("\n--- #4094 AC2: unstamped closure fails closed under Strict/MT, single-tenant "
+                 "permissive ---");
+    reset_all();
+    // Legacy unstamped slot (tenant 0) via the explicit-tenant seam.
+    const auto legacy = aura_alloc_closure_tenant(4094, 0);
+    CHECK(legacy >= 0, "4094 AC2: legacy unstamped closure allocated");
+    // Strict (process face): free's unstamped arm fires — capture refused.
+    set_mode(SandboxMode::Strict);
+    aura_closure_capture_checked(legacy, 0, 5, 4095, 2);
+    CHECK(aura_closure_env_get(legacy, 0) == 0, "4094 AC2: armed unstamped capture denied (0)");
+    // Restricted + MT: the same arm.
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    set_mode(SandboxMode::Restricted);
+    aura_closure_capture_checked(legacy, 0, 6, 4095, 1);
+    CHECK(aura_closure_env_get(legacy, 0) == 0, "4094 AC2: MT unstamped capture denied");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    // Single-tenant Restricted (mode 1, no MT, not Strict): the free-arm
+    // contract keeps legacy slots permissive.
+    aura_closure_capture_checked(legacy, 0, 7, 4095, 1);
+    CHECK(aura_closure_env_get(legacy, 0) == 7,
+          "4094 AC2: single-tenant Restricted stays permissive");
+    set_mode(SandboxMode::Off);
+}
+
+static void ac4094_3_soft_writes() {
+    std::println("\n--- #4094 AC3: Soft/Off keeps today's store ---");
+    reset_all();
+    const auto cid_a = aura_alloc_closure_tenant(4094, 4094);
+    CHECK(cid_a >= 0, "4094 AC3: A alloc closure");
+    // Face off (mode 0): no stamp compare — the tables stay shared across
+    // principals (zero-cost contract: the face probe precedes any
+    // g_closure_tenants load, so Soft/Off never reads the stamps).
+    aura_closure_capture_checked(cid_a, 0, 111, 4094, 0);
+    CHECK(aura_closure_env_get(cid_a, 0) == 111, "4094 AC3: A capture lands under Soft");
+    aura_closure_capture_checked(cid_a, 0, 555, 4095, 0);
+    CHECK(aura_closure_env_get(cid_a, 0) == 555, "4094 AC3: B captures A's slot under Soft");
+    // Production wrapper under the light-link weak stubs (face hook → 0):
+    // the choke never arms and the store proceeds — today's Soft behavior
+    // is preserved for every existing caller of the production symbol.
+    const auto cid_w = aura_alloc_closure(4094);
+    CHECK(cid_w >= 0, "4094 AC3: production alloc");
+    aura_closure_capture(cid_w, 0, 77);
+    CHECK(aura_closure_env_get(cid_w, 0) == 77, "4094 AC3: production wrapper stores under Soft");
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -2287,6 +2437,10 @@ int run_test_dispatch_required_effects() {
     ac4093_1_foreign_deny();
     ac4093_2_unstamped_and_single_tenant();
     ac4093_3_soft_shares();
+    ac4094_source_cite();
+    ac4094_1_foreign_deny();
+    ac4094_2_unstamped_fail_closed();
+    ac4094_3_soft_writes();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
