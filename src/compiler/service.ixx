@@ -14939,13 +14939,24 @@ public:
     // erase. try_jit_execute then cache-hit pre-mutate ScalarFn.
     // Same jit_cache_mtx_ window as Soft #1378 (erase + AuraJIT
     // invalidate + prefix). Soft never reaches this.
+    // Issue #4100: AuraJIT::invalidate removes the ORC tracker and
+    // erases deopt_pending; it does not clear g_jit_fns. Drop the
+    // installed ScalarFn first, matching the partial-relower window.
+    // The drop takes the closure table then the workspace write lock,
+    // so jit_cache_mtx_ is not held across it.
     void evict_jit_cache_after_production_facade_(const std::string& name) {
-        std::unique_lock cache_write(jit_cache_mtx_);
-        if (jit_cache_.erase(name) > 0)
-            metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
-        jit_.invalidate(name.c_str());
-        jit_.invalidate_prefix(name.c_str());
-        metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            if (jit_cache_.erase(name) > 0)
+                metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+        }
+        aura_drop_jit_fn_native_for_define(name.c_str());
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_.invalidate(name.c_str());
+            jit_.invalidate_prefix(name.c_str());
+            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     // Issue #2304 / #2366 / #2501 / #2541: post-bump epoch invariant walk.

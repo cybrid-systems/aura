@@ -4327,9 +4327,10 @@ extern "C" bool aura_aot_mangle_version_is_stale_ex(const char* mangled,
 //      actual LLVM re-emit path (#1481 follow-up) replaces this
 //      stub — for #1480 we bump aot_incremental_reemit_count as
 //      the placeholder "would re-emit" signal.
-//   4. On any successful re-emit: commit_func_table_swap() to
+//   4. On a new ScalarFn install (#4100): commit_func_table_swap() to
 //      atomically bump g_aot_table_epoch (acq_rel) so concurrent
-//      stale-frame probes see consistent before/after.
+//      stale-frame probes see consistent before/after. A skeleton
+//      would-reemit does not commit.
 //   5. Stamp all live closure bridges for the re-emitted set with
 //      the new bridge_epoch (closure_bridge_epoch refresh protocol).
 //
@@ -4423,17 +4424,33 @@ static bool default_llvm_incremental_emit(const char* name, std::uint64_t region
     return true;
 }
 
-static void register_stable_id_in_func_table(const char* name, std::uint32_t sid) {
-    if (!name || sid == 0)
-        return;
+static std::int64_t reemit_sentinel_fn_ptr() {
+    return static_cast<std::int64_t>(
+        reinterpret_cast<std::uintptr_t>(&aura_aot_reemit_sentinel_fn));
+}
+
+static std::int64_t lookup_installed_jit_fn(const char* name) {
+    if (!name || !*name)
+        return 0;
     int64_t locals = 0, args = 0, env = 0;
-    const int64_t existing = aura_lookup_fn_by_name(name, &locals, &args, &env);
-    if (existing != 0)
-        aura_register_fn_tracked(static_cast<int64_t>(sid), existing);
-    else
-        aura_register_fn_tracked(
-            static_cast<int64_t>(sid),
-            static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(&aura_aot_reemit_sentinel_fn)));
+    return aura_lookup_fn_by_name(name, &locals, &args, &env);
+}
+
+// Issue #4100: republishing aura_lookup_fn_by_name (the pre-mutate
+// pointer) or the sentinel is not an install. aura_register_fn_tracked
+// stores soft_stale=0, so publish only a different post-mutate ScalarFn.
+static bool jit_fn_is_new_install(std::int64_t pre_fn, std::int64_t post_fn) {
+    if (post_fn == 0 || post_fn == pre_fn || post_fn == reemit_sentinel_fn_ptr())
+        return false;
+    return true;
+}
+
+static bool register_stable_id_in_func_table(const char* name, std::uint32_t sid,
+                                             std::int64_t pre_fn, std::int64_t post_fn) {
+    if (!name || sid == 0 || !jit_fn_is_new_install(pre_fn, post_fn))
+        return false;
+    aura_register_fn_tracked(static_cast<std::int64_t>(sid), post_fn);
+    return true;
 }
 
 // Issue #2016: adapt live region mask after a pipeline call.
@@ -4649,6 +4666,9 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     std::uint64_t closure_dep_count = 0;
     std::uint64_t dirty_by_region[3] = {0, 0, 0};
     bool any_re_emit = false;
+    // Issue #4100: commit/remap only after g_jit_fns holds a new ScalarFn.
+    // Skeleton any_re_emit still feeds the would-reemit metrics below.
+    bool native_installed = false;
     // Host emit wired → always report success_count (may be 0).
     // Default LLVM only flips return mode after at least one real emit.
     const bool host_emit_wired = (g_aot_emit_fn != nullptr);
@@ -4777,13 +4797,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         }
 
         // count_emit_success: host/default LLVM success only (not skeleton).
+        // installed: g_jit_fns pointer changed to a non-sentinel ScalarFn.
         auto note_reemit = [&](std::uint32_t sid, int preserved, bool count_emit_success,
-                               bool count_llvm_metric) {
+                               bool count_llvm_metric, bool installed) {
             aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
-            // Issue #3300: successful local reemit for this name makes the
-            // name fresh again — clear the peer-JIT soft-stale bit so
-            // peers' next call may proceed (owner or peer reemit).
-            if (count_emit_success)
+            // Issue #3300 / #4100: clear the peer-JIT soft-stale bit only
+            // when the pointer aura_closure_call will invoke is the
+            // post-mutate body. A metric-only host success must not.
+            if (count_emit_success && installed)
                 aura_aot_clear_peer_jit_name_soft_stale(name);
             if (aot_metrics()) {
                 if (count_emit_success) {
@@ -4812,9 +4833,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             if (count_emit_success)
                 ++success_count;
             any_re_emit = true;
+            if (installed)
+                native_installed = true;
         };
 
         // Issue #1952 / #1930 / #2016: host emit → else default LLVM → skeleton.
+        // Issue #4100: snapshot g_jit_fns before the emit. A true return that
+        // leaves the same pointer (or the sentinel) is not an install.
+        const std::int64_t pre_fn = lookup_installed_jit_fn(name);
         if (g_aot_emit_fn) {
             const bool emitted = g_aot_emit_fn(name, region, g_aot_emit_userdata);
             if (emitted) {
@@ -4830,8 +4856,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                                                          : aura_aot_get_register_owner_eval(),
                         name, &preserved);
                 }
-                register_stable_id_in_func_table(name, sid);
-                note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/true);
+                const std::int64_t post_fn = lookup_installed_jit_fn(name);
+                const bool installed = jit_fn_is_new_install(pre_fn, post_fn);
+                if (installed)
+                    (void)register_stable_id_in_func_table(name, sid, pre_fn, post_fn);
+                // Host true stays a metric success even when it did not
+                // replace g_jit_fns (#4100). Remap waits for installed.
+                note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/true,
+                            installed);
                 real_llvm_emit_success = true;
             }
         } else if (g_batch_deopt_jit && default_llvm_incremental_emit(name, region)) {
@@ -4845,9 +4877,16 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                                                      : aura_aot_get_register_owner_eval(),
                     name, &preserved);
             }
-            register_stable_id_in_func_table(name, sid);
-            note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/false);
-            real_llvm_emit_success = true;
+            const std::int64_t post_fn = lookup_installed_jit_fn(name);
+            const bool installed = jit_fn_is_new_install(pre_fn, post_fn);
+            if (installed)
+                (void)register_stable_id_in_func_table(name, sid, pre_fn, post_fn);
+            // Deleting the object file is not an install. Without a new
+            // pointer this arm is skeleton-equivalent (no second note_reemit).
+            note_reemit(sid, preserved, /*count_emit_success=*/installed,
+                        /*count_llvm=*/false, installed);
+            if (installed)
+                real_llvm_emit_success = true;
         } else {
             // Phase 1 / #1480 skeleton (or default LLVM miss): stamp stable map.
             // Does not bump success_count (would-reemit return path).
@@ -4860,7 +4899,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                                                      : aura_aot_get_register_owner_eval(),
                     name, &preserved);
             }
-            note_reemit(sid, preserved, /*count_emit_success=*/false, /*count_llvm=*/false);
+            note_reemit(sid, preserved, /*count_emit_success=*/false, /*count_llvm=*/false,
+                        /*installed=*/false);
         }
     }
 
@@ -4884,11 +4924,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         p.schema = kAotReloadConsistencyProofIssue;
         stamp_aot_reload_consistency_proof(p);
         any_re_emit = false;
+        native_installed = false;
     }
 
-    // Atomic commit: bump func_table_epoch only if at least one
-    // successful / would-reemit path advanced.
-    if (any_re_emit) {
+    // Issue #4100: skeleton and a default-LLVM object that did not
+    // replace g_jit_fns must not commit or remap. Remap clears MustDeopt
+    // and restamps epochs while aura_closure_call still invokes the
+    // pre-mutate pointer. Would-reemit metrics stay on any_re_emit.
+    if (native_installed) {
         commit_func_table_swap();
         // Issue #2013: retarget live closures whose name matches a
         // reemitted stable id so they keep calling native code without

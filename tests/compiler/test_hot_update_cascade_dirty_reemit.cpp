@@ -171,9 +171,8 @@ static void ac4_reemit_when_wired() {
     auto& reg = hot_update_registry();
     // Static feed: cascade reemit may outlive this stack frame if async.
     // Synthetic candidate name (not a live define): host emit_ok still
-    // advances reemit metrics, but register_stable_id_in_func_table falls
-    // back to the process-static sentinel — never pins a JIT pointer that
-    // dies with CompilerService (UAF → free(): invalid pointer in AC5+).
+    // advances reemit metrics. Issue #4100 does not publish the pre-mutate
+    // lookup or the sentinel, so this name cannot pin a dying JIT pointer.
     static ReemitFeed feed;
     feed.names = {"__hu_probe_2035"};
     feed.regions = {1}; // Performance region
@@ -1116,7 +1115,7 @@ static void ac3976_soak_two_force_reasons() {
 // Repeated facade rounds (mark dirty → reemit → success) must never leave
 // a fail-stamped proof behind (#2845 face), a sticky force bit, or new
 // residual. Bounded N=8; per-round fresh CompilerService follows the AC4
-// pattern (emit_ok + static sentinel name — never pins a live JIT pointer
+// pattern (emit_ok + synthetic name — #4100 does not pin a JIT pointer
 // that dies with the service).
 static void ac_soak_3573_mutate_reemit_hygiene() {
     std::println("\n--- #3573: mutate×reemit bounded soak — proof hygiene + residual ---");
