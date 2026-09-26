@@ -226,7 +226,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(2, "(any any) -> pair", "Construct a pair."));
     register_prim(
         add, ev, "car",
-        [&pairs, &string_heap, &error_values,
+        [&ev, &pairs, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty() || !is_pair(a[0])) {
                 return make_primitive_error(string_heap, error_values, "car: not a pair",
@@ -236,8 +236,40 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (id < pairs.size())
                 return pairs[id].car;
             // Fallback to shared pair storage (JIT/arena pairs)
-            if (id < g_pair_slots.size() && g_pair_slots[id])
+            if (id < g_pair_slots.size() && g_pair_slots[id]) {
+                // Issue #4111: g_pair_slots index space is process-shared - the
+                // same #4057 rationale as set-car!/set-cdr!: a foreign
+                // tenant's JIT pair can land at idx >= the local pair
+                // vector (mailbox handoff), so the index alone is not
+                // ownership. Under the production face (sandbox != 0 and
+                // Strict or Restricted+MT) compare the slot's owner stamp
+                // against the caller principal BEFORE the read; a foreign
+                // or unstamped (0) slot is refused with the slot unread.
+                // IsolationDeny rides the existing check_workspace_isolation /
+                // record_audit path (fiber id + Mutation epoch) with
+                // required_effects = 0 - readers consume no effects and
+                // dispatch stays the single Mutate choke for writers
+                // (#4036). Soft/Off: the face probe short-circuits and
+                // the tenant array is never read (zero-cost contract).
+                const bool prod_pair_face =
+                    ev.effect_sandbox_mode() != 0 &&
+                    (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
+                     ::aura::core::provenance::multi_tenant_env_active());
+                if (prod_pair_face) {
+                    const std::uint64_t slot_tenant =
+                        (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+                    if (slot_tenant != ev.capability_tenant_id()) {
+                        (void)ev.check_workspace_isolation(
+                            /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
+                            /*required_effects=*/0, "car");
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "car: cross-tenant pair slot read denied (#4111)",
+                            primitive_error_counter);
+                    }
+                }
                 return types::EvalValue{g_pair_slots[id]->car};
+            }
             // Issue #2998: corrupted pair index is a true error, not silent 0.
             return make_primitive_error(string_heap, error_values, "car: corrupted pair",
                                         primitive_error_counter);
@@ -245,7 +277,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(1, "(pair) -> any", "First element of a pair."));
     register_prim(
         add, ev, "cdr",
-        [&pairs, &string_heap, &error_values,
+        [&ev, &pairs, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty() || !is_pair(a[0])) {
                 return make_primitive_error(string_heap, error_values, "cdr: not a pair",
@@ -255,13 +287,52 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (id < pairs.size())
                 return pairs[id].cdr;
             // Fallback to shared pair storage (JIT/arena pairs)
-            if (id < g_pair_slots.size() && g_pair_slots[id])
+            if (id < g_pair_slots.size() && g_pair_slots[id]) {
+                // Issue #4111: g_pair_slots index space is process-shared - the
+                // same #4057 rationale as set-car!/set-cdr!: a foreign
+                // tenant's JIT pair can land at idx >= the local pair
+                // vector (mailbox handoff), so the index alone is not
+                // ownership. Under the production face (sandbox != 0 and
+                // Strict or Restricted+MT) compare the slot's owner stamp
+                // against the caller principal BEFORE the read; a foreign
+                // or unstamped (0) slot is refused with the slot unread.
+                // IsolationDeny rides the existing check_workspace_isolation /
+                // record_audit path (fiber id + Mutation epoch) with
+                // required_effects = 0 - readers consume no effects and
+                // dispatch stays the single Mutate choke for writers
+                // (#4036). Soft/Off: the face probe short-circuits and
+                // the tenant array is never read (zero-cost contract).
+                const bool prod_pair_face =
+                    ev.effect_sandbox_mode() != 0 &&
+                    (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
+                     ::aura::core::provenance::multi_tenant_env_active());
+                if (prod_pair_face) {
+                    const std::uint64_t slot_tenant =
+                        (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+                    if (slot_tenant != ev.capability_tenant_id()) {
+                        (void)ev.check_workspace_isolation(
+                            /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
+                            /*required_effects=*/0, "cdr");
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "cdr: cross-tenant pair slot read denied (#4111)",
+                            primitive_error_counter);
+                    }
+                }
                 return types::EvalValue{g_pair_slots[id]->cdr};
+            }
             // Issue #2998: corrupted pair index is a true error, not silent 0.
             return make_primitive_error(string_heap, error_values, "cdr: corrupted pair",
                                         primitive_error_counter);
         },
         pure_general(1, "(pair) -> any", "Rest of a pair."));
+
+    // Issue #4111: the caar/cadr/... shorthands below read only the
+    // evaluator-local pair vector (idx >= its size yields void) - they
+    // never fall through to g_pair_slot_tenants, so the shorthand family has no
+    // ungated shared-slot read face and nested composition cannot
+    // bypass the #4111 car/cdr gate (documented no-fallthrough per
+    // the issue AC).
     register_prim(
         add, ev, "pair?",
         [](const auto& a) {
