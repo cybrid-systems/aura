@@ -8104,6 +8104,29 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4111 pair read tenant linter failed - run python3 scripts/check_pair_read_tenant_4111.py")
         return r
+    # Issue #4112 (security): Agent export/handoff washed ref.tenant_id with
+    # the caller before any occupancy consult — a foreign packed (id . gen)
+    # handoff (agent-reply / agent-send / orch bare-id shim) exported a
+    # caller-stamped handle that resolve_stamped Stage-1 then false-allowed
+    # (same-tenant). Gate pins: finalize_agent_export consults the #3415
+    # occupancy ring under the identical Strict|(Restricted+MT) regime
+    # BEFORE the #3204 stamp wash, mirrors restamp_read_ref's ladder (exact
+    # stamp, hygiene borrow, collision borrow), denies foreign/unstamped
+    # through check_workspace_isolation with required_effects = 0 + the
+    # "agent-export" op and returns {} so Agent delivery sees nullopt;
+    # Soft/Off adds zero extra work; the call sites stay on the shared
+    # handoff_ref choke point; no new query key (existing IsolationDeny SE +
+    # stable_ref_handoff_reject_total counters carry the signal).
+    aeo4112_script = ROOT / "scripts" / "check_agent_export_occupancy_4112.py"
+    if not aeo4112_script.exists():
+        fail(f"missing {aeo4112_script}")
+        return 1
+    r = run([sys.executable, str(aeo4112_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4112 agent export occupancy linter failed - run python3 scripts/check_agent_export_occupancy_4112.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

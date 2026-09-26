@@ -40,6 +40,7 @@
 #include "core/provenance_tracker.hh"
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
+#include "orch/agent_spawn.h"
 
 #include <cstdint>
 #include <cstring>
@@ -2718,6 +2719,300 @@ void test_ac4088_6_source_cite() {
     }
 }
 
+// Issue #4112: Agent export/handoff occupancy consult before the stamp
+// wash (dual-track vs restamp_read_ref). Under the consult regime the
+// export/handoff track must mirror restamp_read_ref: foreign occupancy
+// denies with IsolationDeny + nullopt handoff BEFORE the caller wash can
+// reach the delivered handle; the ring keeps the original owner
+// (refuse_foreign_owner parity); Soft/Off adds zero extra consult.
+void test_ac4112_1_foreign_occupancy_handoff_denied() {
+    std::print("AC4112/AC1 -- foreign occupancy handoff denied (nullopt, zero delivery)\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4112 AC1: set-code",
+                cs.eval("(set-code \"(define (t4112 x) (* x 2))\")").has_value());
+    expect_true("4112 AC1: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4112-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    // Tenant 7 stamps node X under the consult regime: owner export runs
+    // make_stamped_ref -> stamp_stable_ref, whose refuse_foreign_owner note
+    // records occupancy=7 in the #3415 ring.
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7);
+    ev.set_effect_sandbox_mode(1);
+    ev.arm_production_audit_defaults_for_test();
+    auto* flat = ev.workspace_flat();
+    expect_true("4112 AC1: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4112 AC1: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4112 AC1: owner export keeps id", static_cast<std::int64_t>(live),
+                  static_cast<std::int64_t>(owned.id));
+    expect_eq_i64("4112 AC1: setup occupancy=7", 7,
+                  static_cast<std::int64_t>(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(owned.id))));
+    // Tenant 42 packs (X . gen) and hands off: finalize must refuse BEFORE
+    // the wash so Agent delivery sees nullopt (zero delivery).
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(42);
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto rej0 = m ? m->stable_ref_handoff_reject_total.load() : 0;
+    aura::ast::FlatAST::StableNodeRef pk{};
+    pk.id = owned.id;
+    pk.gen = owned.gen;
+    const auto out = ev.handoff_ref(pk);
+    expect_true("4112 AC1: foreign packed handoff is nullopt", !out.has_value());
+    expect_true("4112 AC1: handoff-reject counter bumps (AC4 reused counter)",
+                m && m->stable_ref_handoff_reject_total.load() > rej0);
+    expect_true("4112 AC1: IsolationDeny reason names owner tenant",
+                ev.last_mutate_error().find("isolation-deny: ref-tenant=7") != std::string::npos);
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+void test_ac4112_2_no_wash_on_foreign_same_tenant_ok() {
+    std::print("AC4112/AC2 -- no tenant_id wash on foreign; same-tenant still ok\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4112 AC2: set-code",
+                cs.eval("(set-code \"(define (w4112 x) (+ x 1))\")").has_value());
+    expect_true("4112 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4112-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7);
+    ev.set_effect_sandbox_mode(1);
+    ev.arm_production_audit_defaults_for_test();
+    auto* flat = ev.workspace_flat();
+    expect_true("4112 AC2: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4112 AC2: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4112 AC2: owner export keeps id", static_cast<std::int64_t>(live),
+                  static_cast<std::int64_t>(owned.id));
+    // Positive control: the owner re-handoff / re-export still passes.
+    aura::ast::FlatAST::StableNodeRef again{};
+    again.id = owned.id;
+    again.gen = owned.gen;
+    const auto ok = ev.handoff_ref(again);
+    expect_true("4112 AC2: same-tenant handoff ok (no false deny)", ok.has_value());
+    const auto reexp = ev.export_ref(owned.id);
+    expect_eq_i64("4112 AC2: same-tenant re-export keeps id", static_cast<std::int64_t>(owned.id),
+                  static_cast<std::int64_t>(reexp.id));
+    // Foreign export as 42 must be refused with no tenant_id wash and no
+    // ring flip (field stamp aligns with refuse_foreign_owner).
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(42);
+    const auto washed = ev.export_ref(owned.id);
+    expect_eq_i64("4112 AC2: foreign export refused (NULL id, no wash)",
+                  static_cast<std::int64_t>(aura::ast::NULL_NODE),
+                  static_cast<std::int64_t>(washed.id));
+    expect_eq_i64("4112 AC2: ring keeps owner 7", 7,
+                  static_cast<std::int64_t>(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(owned.id))));
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+void test_ac4112_3_soft_zero_extra_consult() {
+    std::print("AC4112/AC3 -- Soft/Off zero extra consult: legacy export intact\n");
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4112 AC3: set-code",
+                cs.eval("(set-code \"(define (s4112 x) (- x 1))\")").has_value());
+    expect_true("4112 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto* flat = ev.workspace_flat();
+    expect_true("4112 AC3: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4112 AC3: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4112 AC3: Soft export ok", static_cast<std::int64_t>(live),
+                  static_cast<std::int64_t>(owned.id));
+    aura::ast::FlatAST::StableNodeRef pk{};
+    pk.id = owned.id;
+    pk.gen = owned.gen;
+    pk.tenant_id = 99; // foreign-looking stamp — Soft must not consult
+    const auto out = ev.handoff_ref(pk);
+    expect_true("4112 AC3: Soft foreign-stamped handoff still ok (zero extra)", out.has_value());
+}
+
+void test_ac4112_4_orch_bare_id_refused_counters_reused() {
+    std::print("AC4112/AC4 -- orch bare-id shim refused; no new query key\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4112 AC4: set-code",
+                cs.eval("(set-code \"(define (o4112 x) (* x 3))\")").has_value());
+    expect_true("4112 AC4: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4112-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7);
+    ev.set_effect_sandbox_mode(1);
+    ev.arm_production_audit_defaults_for_test();
+    auto* flat = ev.workspace_flat();
+    expect_true("4112 AC4: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4112 AC4: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4112 AC4: owner export keeps id", static_cast<std::int64_t>(live),
+                  static_cast<std::int64_t>(owned.id));
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(42);
+    std::uint64_t orch_tok = 4112;
+    const int orch_rc =
+        aura_orch_agent_send_handoff(&ev, static_cast<std::uint64_t>(owned.id), &orch_tok);
+    expect_eq_i64("4112 AC4: orch bare-id handoff refused", 0, static_cast<std::int64_t>(orch_rc));
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+void test_ac4112_5_source_cite() {
+    std::print("AC4112/AC5 -- source-cite consult-before-wash; no invent\n");
+    std::ifstream f_sec("src/compiler/evaluator_security.cpp");
+    std::string sec((std::istreambuf_iterator<char>(f_sec)), std::istreambuf_iterator<char>());
+    expect_true("4112 AC5: security TU readable", !sec.empty());
+    const auto fin = sec.find("Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref)");
+    expect_true("4112 AC5: finalize found", fin != std::string::npos);
+    const auto cite = sec.find("Issue #4112", fin);
+    expect_true("4112 AC5: finalize cites #4112", cite != std::string::npos);
+    const auto wash = sec.find("if (ref.tenant_id == 0 && stable_ref_export_hard_reject()) {", fin);
+    expect_true("4112 AC5: wash block found", wash != std::string::npos);
+    expect_true("4112 AC5: consult precedes the stamp wash", cite < wash);
+    const auto window = sec.substr(cite, wash - cite);
+    expect_true("4112 AC5: consult regime mirrors restamp",
+                window.find("strict || (restricted && mt)") != std::string::npos);
+    expect_true("4112 AC5: exact-stamp ladder",
+                window.find("existing_stamp_for_node") != std::string::npos);
+    expect_true("4112 AC5: hygiene borrow", window.find("last_hygiene") != std::string::npos);
+    expect_true("4112 AC5: collision borrow",
+                window.find("occupying_stamp_for_node") != std::string::npos);
+    expect_true("4112 AC5: deny via shared isolation face",
+                window.find("check_workspace_isolation") != std::string::npos);
+    expect_true("4112 AC5: agent-export op", window.find("\"agent-export\"") != std::string::npos);
+    expect_true("4112 AC5: deny reason names owner tenant",
+                window.find("isolation-deny: ref-tenant=") != std::string::npos);
+    std::ifstream f_ag("src/compiler/evaluator_primitives_agent.cpp");
+    std::string ag((std::istreambuf_iterator<char>(f_ag)), std::istreambuf_iterator<char>());
+    expect_true("4112 AC5: agent prims readable", !ag.empty());
+    expect_true("4112 AC5: twin call sites stay on shared handoff choke",
+                ag.find("ev.stamp_stable_ref(held);") != std::string::npos &&
+                    ag.find("ev.handoff_ref(std::move(held));") != std::string::npos);
+    expect_true("4112 AC5: no schema-4112", sec.find("schema-4112") == std::string::npos);
+    std::ifstream f_doc("docs/design/4112-agent-export-occupancy.md");
+    expect_true("4112 AC5: no docs/design 4112", !f_doc.good());
+    std::ifstream f_new("tests/core/test_issue_4112.cpp");
+    expect_true("4112 AC5: no test_issue_4112.cpp", !f_new.good());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -2844,8 +3139,13 @@ int main() {
     test_ac4088_4_soft_dirty_subtree_int_ok();
     test_ac4088_5_soft_reflect_member_pair();
     test_ac4088_6_source_cite();
+    test_ac4112_1_foreign_occupancy_handoff_denied();
+    test_ac4112_2_no_wash_on_foreign_same_tenant_ok();
+    test_ac4112_3_soft_zero_extra_consult();
+    test_ac4112_4_orch_bare_id_refused_counters_reused();
+    test_ac4112_5_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
-               "#3990 + #3991 + #3993 + #4088 AC tests PASSED\n");
+               "#3990 + #3991 + #3993 + #4088 + #4112 AC tests PASSED\n");
     return 0;
 }
