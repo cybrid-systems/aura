@@ -1797,6 +1797,10 @@ struct AgentHandle {
     // Issue #4004: Scheduler source-live flag copied at export/import.
     // Appended at END (#3461). Null on native source handles.
     std::shared_ptr<std::atomic<bool>> source_live;
+    // Issue #4097: spawn +1 on agents_active. Cleared once when Done-path
+    // cleanup releases the handle. Reclaimed / must-wait keeps the +1.
+    // A retry join must not subtract again. Appended at END (#3461).
+    bool agents_active_held = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1836,7 +1840,8 @@ struct AgentHandle {
         , bp_scope_id(std::move(o.bp_scope_id))
         , quota_recycled_pending(o.quota_recycled_pending)
         , import_proxy(o.import_proxy)
-        , source_live(std::move(o.source_live)) {
+        , source_live(std::move(o.source_live))
+        , agents_active_held(o.agents_active_held) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1875,6 +1880,7 @@ struct AgentHandle {
         o.quota_recycled_pending = false; // #3841 / #3461 END field
         o.import_proxy = false;           // #3930 / #3461 END field
         o.source_live.reset();            // #4004 / #3461 END field
+        o.agents_active_held = false;     // #4097 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1920,6 +1926,7 @@ struct AgentHandle {
             quota_recycled_pending = o.quota_recycled_pending;
             import_proxy = o.import_proxy;
             source_live = std::move(o.source_live);
+            agents_active_held = o.agents_active_held;
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1950,6 +1957,7 @@ struct AgentHandle {
             o.quota_recycled_pending = false; // #3841 / #3461 END field
             o.import_proxy = false;           // #3930 / #3461 END field
             o.source_live.reset();            // #4004 / #3461 END field
+            o.agents_active_held = false;     // #4097 / #3461 END field
         }
         return *this;
     }
@@ -2943,6 +2951,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     h.last_producer_bp_us = 0;
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
     g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
+    h.agents_active_held = true; // Issue #4097: one-shot; Done-path releases
 
     // Issue #2008 / #2159: optional Scheduler-owned keepalive helper fiber
     // (mailbox-native pulses). Fiber-native so cancel/GC/steal share the agent
@@ -3082,6 +3091,22 @@ inline void join_keepalive_helper(AgentHandle& h,
 // polling C++ residual state. complete_agent_join_cleanup Reclaimed
 // branch still skips release_agent_memory_reservation / mailbox->detach
 // (#2661 preserved). Keys absent on Ok / Timeout / Cancelled (#2885 AC2).
+// Issue #4097: agents_active is spawn − released. Reclaimed / must-wait
+// keeps the +1. Done-path cleanup (body done, reservation released)
+// subtracts once. A retry on an already-released slot is a no-op.
+inline void release_agents_active_once(AgentHandle& h) noexcept {
+    if (!h.agents_active_held)
+        return;
+    h.agents_active_held = false;
+    auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    for (;;) {
+        const auto next = cur > 0 ? cur - 1 : 0;
+        if (g_orch_module_stats.agents_active.compare_exchange_weak(
+                cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
+            break;
+    }
+}
+
 inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
     if (jr.status == serve::JoinStatus::Reclaimed) {
         // Defer path: global tables only, never body-stack.
@@ -3103,6 +3128,10 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
     release_agent_memory_reservation(h);
+    // Issue #4097: only a finished body drops the live gauge. A fiber
+    // that is still running stays counted until a later Done-path.
+    if (!h.fiber || h.fiber->is_done())
+        release_agents_active_once(h);
     h.reclaimed_deferred_cleanup = false; // Issue #2924: Done path completed
     // Issue #3467: Done-path cleanup is the name-reuse gate. Hosts
     // check must_wait_reclaimed || reclaimed_deferred_cleanup before
@@ -4055,16 +4084,9 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
                                       : std::min(policy.drain_ms, kDefaultKeepaliveHelperDrainMs);
         join_keepalive_helper(h, helper_drain);
     }
-    // agents_active: best-effort (never go below 0).
-    {
-        auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
-        for (;;) {
-            const auto next = cur > 0 ? cur - 1 : 0;
-            if (g_orch_module_stats.agents_active.compare_exchange_weak(
-                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
-                break;
-        }
-    }
+    // Issue #4097: do not subtract agents_active here. A still-running
+    // body is re-derived to Reclaimed below and keeps its spawn +1 until
+    // Done-path cleanup. release_agents_active_once is one-shot.
     // Issue #1879: mandate join-path StableNodeRef / linear enforcement
     // even when Fiber::join skipped host refresh (nested fiber join).
     // Provenance only on Ok (AC4) — never after cancel/drain path.
@@ -4204,16 +4226,9 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             join_keepalive_helper(a, helper_drain);
         }
     }
-    {
-        auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
-        const auto n = static_cast<std::uint64_t>(fibers.size());
-        for (;;) {
-            const auto next = cur > n ? cur - n : 0;
-            if (g_orch_module_stats.agents_active.compare_exchange_weak(
-                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
-                break;
-        }
-    }
+    // Issue #4097: per-handle Done-path releases agents_active inside
+    // complete_agent_join_cleanup. Subtracting fibers.size() here counted
+    // still-running Reclaimed bodies as gone, and a retry subtracted again.
     if (jr.status == serve::JoinStatus::Ok) {
         for (auto& a : agents) {
             if (a.fiber && !a.import_proxy)

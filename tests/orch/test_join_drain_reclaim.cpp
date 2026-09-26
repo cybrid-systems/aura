@@ -3253,6 +3253,116 @@ static void ac3631_5_source_cite_and_no_invent() {
     CHECK(slurp("tests/orch/test_issue_3631.cpp").empty(), "3631: no test_issue file");
 }
 
+// Issue #4097: Reclaimed join must not drop agents_active, and a retry
+// must not drop it again. The gauge falls only after Done-path cleanup.
+static void ac4097_agents_active_held_across_reclaimed_retry() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #4097: agents_active stays across Reclaimed retry ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("Issue #4097") != std::string::npos, "4097: spawn cites the gauge");
+    CHECK(spawn.find("release_agents_active_once") != std::string::npos,
+          "4097: one-shot release helper");
+    CHECK(spawn.find("agents_active_held") != std::string::npos, "4097: handle one-shot flag");
+    CHECK(read_file("tests/orch/test_issue_4097.cpp").empty(), "4097: no test_issue file");
+    CHECK(read_file("docs/design/4097-agents-active-reclaimed.md").empty(), "4097: no docs/design");
+
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    std::filesystem::create_directories("build/test-wal-4097");
+    const bool wal_on = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-4097"), nullptr, 0);
+
+    Scheduler sched(1);
+    const auto before = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    aura::orch::AgentSpec spec;
+    spec.name = "4097-stuck";
+    spec.attach_mailbox = true;
+    spec.body = [] {
+        for (;;) {
+        }
+    };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "4097: spawn ok");
+    CHECK(h.agents_active_held, "4097: spawn holds the live gauge");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 1,
+          "4097: agents_active +1 after spawn");
+    const auto reserved = h.reserved_memory_bytes;
+    CHECK(reserved > 0, "4097: reservation recorded");
+
+    JoinPolicy policy;
+    policy.primary_ms = 20;
+    policy.drain_ms = 0;
+    const auto jr1 = join_agent(h, policy);
+    CHECK(jr1.status == JoinStatus::Reclaimed, "4097: first join Reclaimed");
+    CHECK(h.must_wait_reclaimed, "4097: production must-wait");
+    CHECK(h.reserved_memory_bytes == reserved, "4097: reservation still held");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 1,
+          "4097: first Reclaimed join keeps agents_active");
+    CHECK(h.agents_active_held, "4097: flag still held after first join");
+
+    const auto jr2 = join_agent(h, policy);
+    CHECK(jr2.status == JoinStatus::Reclaimed, "4097: second join still Reclaimed");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 1,
+          "4097: retry does not subtract again");
+    CHECK(h.reserved_memory_bytes == reserved, "4097: retry does not release reservation");
+
+    aura::orch::AgentSpec spec_b;
+    spec_b.name = "4097-batch";
+    spec_b.attach_mailbox = true;
+    spec_b.body = [] {
+        for (;;) {
+        }
+    };
+    auto hb = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_b));
+    CHECK(hb.ok && hb.fiber, "4097: batch spawn ok");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 2,
+          "4097: second spawn is +1");
+    AgentHandle batch_handles[] = {std::move(hb)};
+    const auto jrb = join_agents(std::span<AgentHandle>(batch_handles), policy);
+    CHECK(jrb.status == JoinStatus::Reclaimed ||
+              batch_handles[0].last_join_status == JoinStatus::Reclaimed,
+          "4097: join_agents re-derives Reclaimed");
+    CHECK(batch_handles[0].must_wait_reclaimed, "4097: batch must-wait");
+    CHECK(batch_handles[0].reserved_memory_bytes > 0, "4097: batch reservation held");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 2,
+          "4097: join_agents does not drop the live gauge");
+    const auto jrb2 = join_agents(std::span<AgentHandle>(batch_handles), policy);
+    (void)jrb2;
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 2,
+          "4097: join_agents retry does not subtract again");
+
+    if (h.fiber) {
+        h.fiber->set_state(FiberState::Done);
+        h.fiber->note_body_exit_if_reclaimed();
+    }
+    h.finish_reclaimed_cleanup_on_dtor();
+    CHECK(!h.agents_active_held, "4097: Done-path releases the flag");
+    CHECK(h.reserved_memory_bytes == 0, "4097: Done-path releases reservation");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 1,
+          "4097: gauge drops by one after body exit");
+    if (batch_handles[0].fiber) {
+        batch_handles[0].fiber->set_state(FiberState::Done);
+        batch_handles[0].fiber->note_body_exit_if_reclaimed();
+    }
+    batch_handles[0].finish_reclaimed_cleanup_on_dtor();
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before,
+          "4097: gauge is back to the pre-spawn baseline");
+
+    apply_dev_audit_defaults();
+    if (!wal_on)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
 // Issue #3953: repeated join_agent on a stuck Reclaimed name must not
 // re-burn drain×8; 2nd+ join uses the 50ms ensure budget.
 static void ac3953_1_repeat_join_short_budget() {
@@ -8123,6 +8233,9 @@ int run_test_join_drain_reclaim() {
     ac3905_3_soft_no_getenv_non_orphan_zero();
     ac3905_4_queued_resume_not_destroyed();
     ac3905_5_source_cite();
+
+    std::println("\n=== Issue #4097: agents_active stays on Reclaimed retry ===");
+    ac4097_agents_active_held_across_reclaimed_retry();
 
     std::println("\n=== Issue #3953: reclaim wait yields on fiber; repeat join short ===");
     ac3953_1_repeat_join_short_budget();
