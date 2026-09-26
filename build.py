@@ -8148,6 +8148,30 @@ def cmd_lint():
             "Issue #4113 resolve_stamped occupancy belt linter failed - run python3 scripts/check_resolve_stamped_occupancy_4113.py"
         )
         return r
+    # Issue #4114 (orch): production FailFast compose left Scope
+    # on_join_fail=ReportOnly — compose_workflow_policy(FailFast) /
+    # to_agent_policy(FailFast) armed on_stall=Cancel but never wrote
+    # on_join_fail, and apply_workflow routes to compose_supervised_batch
+    # only when on_join_fail != ReportOnly, so commercial hosts composing
+    # FailFast got a juxtaposed API (batch FailFast did NOT cancel/join
+    # live Scope agents without a second explicit knob). Gate pins: the
+    # bridge arms on_join_fail=Cancel under production_defaults_active()
+    # (Soft / Off keep ReportOnly, zero-cost), the explicit post-compose
+    # ReportOnly override still wins (#3969 AC1), RetryN / CircuitBreaker
+    # / CollectAll mappings are untouched, the #3969 route gate and
+    # compose_supervised_batch join arm stay intact, runtime ACs live in
+    # tests/orch/test_failure_policy_bridge.cpp, no AgentRegistry / new
+    # query key / docs-design invent.
+    ffjf4114_script = ROOT / "scripts" / "check_join_fail_failfast_4114.py"
+    if not ffjf4114_script.exists():
+        fail(f"missing {ffjf4114_script}")
+        return 1
+    r = run([sys.executable, str(ffjf4114_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4114 FailFast join-fail production arm linter failed - run python3 scripts/check_join_fail_failfast_4114.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

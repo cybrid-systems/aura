@@ -98,6 +98,13 @@ static void ac4000_run_added_tests();
 // Issue #4050: supervise-batch watch path joins the child; one-shot
 // supervise bodies are not cancelled for a missing agent_poll.
 static void ac4050_run_added_tests();
+// Issue #4114: production FailFast compose arms on_join_fail=Cancel
+// (extend-in-place at end of file).
+static void ac4114_run_added_tests();
+// #3206 production-face toggle (defined mid-file; the #2539 AC2 dev-face
+// pin and the #3052 AC4 both-face fixture below call it before its
+// definition point).
+static void ac3206_set_prod(bool on);
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -121,12 +128,13 @@ int run_test_failure_policy_bridge() {
         std::println("\n--- AC2: mapping table ---");
 
         {
+            ac3206_set_prod(false); // #4114 face pin: dev / Soft / Off face
             auto p = to_agent_policy(FailurePolicy::FailFast);
             CHECK(p.on_stall == AgentFailureAction::Cancel, "AC2: FailFast → Cancel");
             CHECK(p.max_restarts == 0, "AC2: FailFast max_restarts default 0");
             CHECK(p.consecutive_stall_limit == 3, "AC2: FailFast keeps default limit 3");
             CHECK(p.on_join_fail == AgentFailureAction::ReportOnly,
-                  "AC2: on_join_fail default ReportOnly");
+                  "AC2: on_join_fail dev default ReportOnly (#4114: production arms Cancel)");
         }
         {
             auto p = to_agent_policy(FailurePolicy::CollectAll);
@@ -428,6 +436,11 @@ int run_test_failure_policy_bridge() {
     ac3726_run_added_tests();
     ac3926_supervise_batch_isolation_honest();
     ac3969_run_added_tests();
+    // Issue #4114: production FailFast compose arms on_join_fail=Cancel.
+    // Runs before the #4000 CompilerService block so the runtime ACs below
+    // exercise Scheduler(1)+spawn+apply_workflow on a clean scheduler — the
+    // same shape as the proven #3969 fixtures.
+    ac4114_run_added_tests();
     ac4000_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
@@ -444,9 +457,20 @@ int run_test_failure_policy_bridge() {
         w.agent_policy.on_join_fail = AgentFailureAction::ReportOnly; // explicit
         CHECK(to_agent_policy(w).on_join_fail == AgentFailureAction::ReportOnly,
               "3052 AC4: explicit AgentFailurePolicy not overwritten");
+        // Issue #4114 supersedes the pre-fix outcome: FailFast arms
+        // on_join_fail=Cancel under production defaults; Soft / Off keep
+        // ReportOnly (zero-cost). Both faces pinned here.
+        ac3206_set_prod(false);
+        auto ff_dev = to_agent_policy(FailurePolicy::FailFast);
+        CHECK(ff_dev.on_join_fail == AgentFailureAction::ReportOnly,
+              "3052 AC4: FailFast dev face keeps on_join_fail ReportOnly (#4114)");
+        ac3206_set_prod(true);
         auto ff = to_agent_policy(FailurePolicy::FailFast);
-        CHECK(ff.on_join_fail == AgentFailureAction::ReportOnly,
-              "3052 AC4: FailFast does not set on_join_fail");
+        CHECK(ff.on_join_fail == AgentFailureAction::Cancel,
+              "3052 AC4: FailFast production arms on_join_fail Cancel (#4114)");
+        CHECK(ff.on_stall == AgentFailureAction::Cancel,
+              "3052 AC4: FailFast on_stall still Cancel (#4114)");
+        ac3206_set_prod(false);
         auto header = read_file("src/orch/agent_spawn.h");
         auto scope = read_file("src/orch/agent_scope.h");
         auto t = read_file("tests/orch/test_agent_failure_policy.cpp");
@@ -2194,6 +2218,124 @@ static void ac4050_run_added_tests() {
     ac4050_3_coop_off_no_skip();
     ac4050_4_soft_no_extra_wait();
     ac4050_5_keys_and_no_invent();
+}
+
+// ── Issue #4114: production FailFast compose arms on_join_fail=Cancel ──
+static void ac4114_1_bridge_and_compose_production_arm() {
+    std::println(
+        "\n--- #4114 AC1: production bridge/compose FailFast arms on_join_fail=Cancel ---");
+    ac3206_set_prod(true);
+    auto p = to_agent_policy(FailurePolicy::FailFast);
+    CHECK(p.on_stall == AgentFailureAction::Cancel, "4114 AC1: on_stall still Cancel");
+    CHECK(p.on_join_fail == AgentFailureAction::Cancel,
+          "4114 AC1: production to_agent_policy(FailFast) arms on_join_fail=Cancel");
+    auto w = compose_workflow_policy(FailurePolicy::FailFast);
+    CHECK(w.agent_policy.on_join_fail == AgentFailureAction::Cancel,
+          "4114 AC1: compose_workflow_policy(FailFast) arms on_join_fail=Cancel");
+    // AC4: RetryN / CircuitBreaker / CollectAll mappings unchanged.
+    auto rn = to_agent_policy(FailurePolicy::RetryN, /*max_restarts=*/3);
+    CHECK(rn.on_join_fail == AgentFailureAction::RestartN,
+          "4114 AC4: RetryN on_join_fail mapping unchanged");
+    auto ca = to_agent_policy(FailurePolicy::CollectAll);
+    CHECK(ca.on_join_fail == AgentFailureAction::ReportOnly,
+          "4114 AC4: CollectAll on_join_fail mapping unchanged");
+    auto cb = to_agent_policy(FailurePolicy::CircuitBreaker);
+    CHECK(cb.on_join_fail == AgentFailureAction::ReportOnly,
+          "4114 AC4: CircuitBreaker on_join_fail mapping unchanged");
+    // Soft / Off keep ReportOnly (zero-cost).
+    ac3206_set_prod(false);
+    auto dev = to_agent_policy(FailurePolicy::FailFast);
+    CHECK(dev.on_join_fail == AgentFailureAction::ReportOnly,
+          "4114 AC1: Soft / Off keeps on_join_fail ReportOnly");
+    auto wdev = compose_workflow_policy(FailurePolicy::FailFast);
+    CHECK(wdev.agent_policy.on_join_fail == AgentFailureAction::ReportOnly,
+          "4114 AC1: Soft / Off compose keeps on_join_fail ReportOnly");
+}
+
+static void ac4114_2_explicit_report_only_after_compose_honored() {
+    std::println("\n--- #4114 AC2: explicit ReportOnly after production compose still honored ---");
+    ac3206_set_prod(true);
+    auto w = compose_workflow_policy(FailurePolicy::FailFast);
+    CHECK(w.agent_policy.on_join_fail == AgentFailureAction::Cancel,
+          "4114 AC2: compose default armed Cancel under production");
+    // Explicit post-compose override wins: the bridge does not overwrite an
+    // already-written field, and apply_workflow's route gate keys on the
+    // final on_join_fail — so an explicit ReportOnly takes the observe-first
+    // path (no Scope cancel). The live-agent no-cancel runtime face for a
+    // ReportOnly policy is pinned by #3969 AC1; this pins the composed+
+    // overridden policy shape deterministically.
+    w.agent_policy.on_join_fail = AgentFailureAction::ReportOnly; // explicit override
+    CHECK(to_agent_policy(w).on_join_fail == AgentFailureAction::ReportOnly,
+          "4114 AC2: explicit ReportOnly survives projection");
+    const bool supervised_route = aura::compiler::typed_audit::production_defaults_active() &&
+                                  w.agent_policy.on_join_fail != AgentFailureAction::ReportOnly;
+    CHECK(!supervised_route,
+          "4114 AC2: composed+overridden policy routes observe-first (no Scope cancel)");
+    CHECK(to_parallel_policy(w).failure_policy == FailurePolicy::FailFast,
+          "4114 AC2: batch face unchanged by the override");
+    ac3206_set_prod(false);
+}
+
+static void ac4114_3_production_compose_routes_supervised_join() {
+    std::println(
+        "\n--- #4114 AC3: production compose routes the supervised join (no manual knob) ---");
+    ac3206_set_prod(true);
+    auto w = compose_workflow_policy(FailurePolicy::FailFast);
+    CHECK(w.agent_policy.on_join_fail == AgentFailureAction::Cancel,
+          "4114 AC3: compose armed on_join_fail=Cancel (production)");
+    // The under-test route gate (apply_workflow's own predicate): with the
+    // #4114 arm the composed FailFast policy takes the supervised path.
+    const bool supervised_route = aura::compiler::typed_audit::production_defaults_active() &&
+                                  w.agent_policy.on_join_fail != AgentFailureAction::ReportOnly;
+    CHECK(supervised_route,
+          "4114 AC3: armed compose routes apply_workflow through compose_supervised_batch");
+    // Supervised join arm source pins: the batch-fail join runs under the
+    // composed agent policy. The runtime cancel/no-cancel faces of this
+    // exact path are pinned at runtime by #3969 AC1 (ReportOnly observe)
+    // and #3969 AC2 (Cancel cancels) in this member.
+    const auto scope_hdr = read_file("src/orch/agent_scope.h");
+    CHECK(scope_hdr.find(
+              "if (batch_fail && w.agent_policy.on_join_fail != AgentFailureAction::ReportOnly)") !=
+              std::string::npos,
+          "4114 AC3: batch-fail join arm gates on the armed on_join_fail");
+    CHECK(scope_hdr.find("(void)scope.join_all(jp, to_agent_policy(w));") != std::string::npos,
+          "4114 AC3: supervised join runs under the composed agent policy");
+    ac3206_set_prod(false);
+}
+
+static void ac4114_4_source_cite_no_invent() {
+    std::println("\n--- #4114 AC5: source-cite + no AgentRegistry + no new query key ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto scope_hdr = read_file("src/orch/agent_scope.h");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
+    CHECK(spawn.find("kFailFastJoinFailProductionArmIssue = 4114") != std::string::npos,
+          "4114: issue stamp");
+    CHECK(spawn.find("Issue #4114") != std::string::npos, "4114: bridge cite");
+    CHECK(spawn.find("if (production_defaults_active())") != std::string::npos,
+          "4114: production gate in the bridge");
+    CHECK(scope_hdr.find("class AgentRegistry") == std::string::npos, "4114: no AgentRegistry");
+    CHECK(spawn.find("query:4114") == std::string::npos, "4114: no query:4114");
+    CHECK(obs.find("query:orch-module-stats") != std::string::npos,
+          "4114: query:orch-module-stats unchanged (no rename)");
+    CHECK(read_file("tests/orch/test_issue_4114.cpp").empty(), "4114: no invented test file");
+    CHECK(read_file("docs/design/4114-failfast-join-fail.md").empty(),
+          "4114: no docs/design/4114-* per #1655");
+    CHECK(build.find("check_join_fail_failfast_4114") != std::string::npos,
+          "4114: linter registered in build.py");
+    CHECK(allow.find("check_join_fail_failfast_4114.py") != std::string::npos,
+          "4114: linter allowlisted for the coverage policy gate");
+    CHECK(t.find("ac4114_3_production_compose_routes_supervised_join") != std::string::npos,
+          "4114: runtime ACs live in this file (#81967)");
+}
+
+static void ac4114_run_added_tests() {
+    ac4114_1_bridge_and_compose_production_arm();
+    ac4114_2_explicit_report_only_after_compose_honored();
+    ac4114_3_production_compose_routes_supervised_join();
+    ac4114_4_source_cite_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

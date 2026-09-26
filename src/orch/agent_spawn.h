@@ -5169,8 +5169,13 @@ namespace agent_scope_compat {
 //   - Calling this bridge does not change default AgentFailurePolicy
 //     or ParallelPolicy behaviour for callers that never use it (AC3).
 //
-// Mapping table (AC2 / #3052 AC4):
-//   FailFast        → on_stall=Cancel (on_join_fail stays ReportOnly)
+// Mapping table (AC2 / #3052 AC4 / #4114):
+//   FailFast        → on_stall=Cancel; production defaults (#4114) also
+//                     arm on_join_fail=Cancel so a composed FailFast
+//                     routes apply_workflow through compose_supervised_batch
+//                     (#3969 AC2 path). Soft / Off keep ReportOnly
+//                     (zero-cost observe-first). Explicit post-compose
+//                     ReportOnly is still honored (#3969 AC1 face).
 //   CollectAll      → on_stall=ReportOnly
 //   RetryN          → on_stall=RestartN AND on_join_fail=RestartN,
 //                     max_restarts from arg (retry-on-batch-fail
@@ -5191,6 +5196,15 @@ to_agent_policy(serve::parallel_orch::FailurePolicy p, std::uint32_t max_restart
     switch (p) {
         case FP::FailFast:
             out.on_stall = AgentFailureAction::Cancel;
+            // Issue #4114: under production defaults FailFast arms
+            // on_join_fail=Cancel so a composed FailFast workflow routes
+            // apply_workflow through compose_supervised_batch (#3969 AC2
+            // path) — batch failure cancels/joins live Scope agents
+            // without a second explicit knob. Soft / Off keep ReportOnly
+            // (zero-cost observe-first); an explicit post-compose
+            // ReportOnly override still wins (#3969 AC1 face).
+            if (production_defaults_active())
+                out.on_join_fail = AgentFailureAction::Cancel;
             break;
         case FP::CollectAll:
             out.on_stall = AgentFailureAction::ReportOnly;
@@ -5285,6 +5299,12 @@ inline constexpr int kJoinFailProductionDefaultIssue = 3208;
 // stays observe-first; the adapter runs only when the caller sets
 // agent_policy.on_join_fail to something other than ReportOnly.
 inline constexpr int kComposeSupervisedBatchIssue = 3969;
+// Issue #4114: production FailFast compose arms on_join_fail=Cancel in
+// the to_agent_policy bridge so commercial hosts that compose FailFast
+// cancel/join live Scope agents on batch failure without setting a
+// second explicit knob. Soft / Off keep ReportOnly (zero-cost); an
+// explicit post-compose ReportOnly is still honored (#3969 AC1 face).
+inline constexpr int kFailFastJoinFailProductionArmIssue = 4114;
 // Issue #4000: orch:supervise-batch optional :region-keys forwards into
 // TaskSpec / AgentSpec (same decide_isolation SSOT as parallel-intend).
 // Missing keys stay Serialized. Production + ≥2 distinct non-zero keys
