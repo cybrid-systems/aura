@@ -1283,6 +1283,14 @@ extern "C" int aura_test_claim_name_map_clone(const void* m) noexcept {
 extern "C" void aura_test_release_name_map_clone(const void* m) noexcept {
     release_name_map_clone(m);
 }
+// Issue #4101: pin a FlatAST in the same-flat table so a later top-level
+// clone (eval_flat inner clone included) refuses with same-flat-clone-reject.
+extern "C" int aura_test_claim_same_flat_clone(const void* flat) noexcept {
+    return claim_same_flat_clone(static_cast<const aura::ast::FlatAST*>(flat)) ? 1 : 0;
+}
+extern "C" void aura_test_release_same_flat_clone(const void* flat) noexcept {
+    release_same_flat_clone(static_cast<const aura::ast::FlatAST*>(flat));
+}
 extern "C" void aura_test_arm_nested_clone_steal_inject(void) noexcept {
     g_arm_nested_steal_inject.store(1, std::memory_order_relaxed);
 }
@@ -2883,6 +2891,26 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                     return aura::ast::NULL_NODE;
                 }
                 new_id = target.add_define(s, child_ids[0]);
+            }
+            break;
+        }
+        case NodeTag::MacroDef: {
+            // Issue #4101: copy a nested define. new_id NULL makes the
+            // production parent abort the whole clone with no limit
+            // reason, so a later inner deny never has a MacroDef tail
+            // for the caller to truncate. The macro name stays the
+            // source spelling (pre_scan gensyms params only); params
+            // already went through rename_binding.
+            if (!child_ids.empty()) {
+                const bool dotted = (v.int_value & 1) != 0;
+                const bool hygienic_bit = (v.int_value & 2) != 0;
+                const bool preserved = (v.int_value & 4) != 0;
+                if (production_surface && inner_expand_production_limit_deny()) {
+                    expand_ckpt.try_restore();
+                    return aura::ast::NULL_NODE;
+                }
+                new_id = target.add_macrodef(transplant(v.sym_id), param_syms, child_ids[0], dotted,
+                                             hygienic_bit, preserved);
             }
             break;
         }

@@ -1836,6 +1836,249 @@ static void ac4078_soft_half_expand() {
     reset_all();
 }
 
+static int count_named(const FlatAST& flat, StringPool& pool, std::string_view name) {
+    int n = 0;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        auto v = flat.get(id);
+        if (v.has_name() && pool.resolve(v.sym_id) == name)
+            ++n;
+    }
+    return n;
+}
+
+static int count_macrodefs(const FlatAST& flat) {
+    int n = 0;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.is_live_node(id) && flat.get(id).tag == aura::ast::NodeTag::MacroDef)
+            ++n;
+    }
+    return n;
+}
+
+static bool eval_error_has(const aura::compiler::EvalResult& r, std::string_view needle) {
+    if (r.has_value())
+        return false;
+    return r.error().format().find(needle) != std::string::npos;
+}
+
+// Issue #4101: eval_flat hygienic deny truncates the caller flat and
+// returns the stable reason. deny_all covers 8/9/10, so a same-flat
+// refuse on the inner clone does not eval the outer clone.
+extern "C" int aura_test_claim_same_flat_clone(const void* flat) noexcept;
+extern "C" void aura_test_release_same_flat_clone(const void* flat) noexcept;
+extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noexcept;
+
+static void ac4101_arm(Evaluator& ev) {
+    MacroSelfEvoPolicy pol;
+    pol.max_expansion_passes = 32;
+    pol.max_depth = 256;
+    pol.allow_rest_hygiene = true;
+    pol.allow_concurrent_fiber = true;
+    const auto tenant = ev.capability_tenant_id();
+    (void)g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                        aura_test_grant_prov());
+    (void)g_capability_registry().grant_macro_self_evo(tenant, pol, aura_test_grant_prov());
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    set_mode(SandboxMode::Restricted);
+}
+
+static void ac4101_bind_flat(Evaluator& ev, FlatAST& flat, StringPool& pool) {
+    ev.set_workspace_flat(&flat);
+    ev.set_workspace_pool(&pool);
+    ev.set_current_flat(&flat);
+    ev.set_current_pool(&pool);
+}
+
+static void ac4101_unbind_flat(Evaluator& ev) {
+    ev.set_workspace_flat(nullptr);
+    ev.set_workspace_pool(nullptr);
+    ev.set_current_flat(nullptr);
+    ev.set_current_pool(nullptr);
+}
+
+// Caller flat and current_flat_ are the tree eval_flat truncated.
+// workspace_flat_ stays that pointer unless panic set-code reparses
+// current-source into a new flat (gensym ceiling restore).
+static void ac4101_check_caller(Evaluator& ev, const FlatAST& flat, std::size_t size0,
+                                const char* what) {
+    CHECK(flat.size() == size0, what);
+    CHECK(ev.current_flat() == &flat && ev.current_flat()->size() == size0, what);
+    if (ev.workspace_flat() == &flat)
+        CHECK(ev.workspace_flat()->size() == size0, what);
+}
+
+static void ac4101_depth_truncates_and_hides_tail_def() {
+    std::println("\n--- #4101: depth deny truncates the clone and returns the reason ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ac4101_arm(ev);
+    StringPool pool;
+    FlatAST flat;
+    auto x = pool.intern("x");
+    auto y = pool.intern("y");
+    auto mname = pool.intern("m4101");
+    auto tname = pool.intern("tail4101");
+    // Begin, not a Call to begin: the nested MacroDef must clone, then
+    // the recursive call must trip expand_inner's max_depth.
+    auto tail = flat.add_macrodef(tname, {y}, flat.add_variable(y), false, true);
+    auto rec = flat.add_call(flat.add_variable(mname),
+                             std::vector<aura::ast::NodeId>{flat.add_variable(x)});
+    std::array<aura::ast::NodeId, 2> parts{rec, tail};
+    auto body = flat.add_begin(parts);
+    auto mdef = flat.add_macrodef(mname, {x}, body, false, true);
+    auto call = flat.add_call(flat.add_variable(mname),
+                              std::vector<aura::ast::NodeId>{flat.add_literal(1)});
+    ac4101_bind_flat(ev, flat, pool);
+    auto reg = ev.eval_flat(flat, pool, mdef, ev.top_env());
+    CHECK(reg.has_value(), "4101: macrodef registers");
+    const auto size0 = flat.size();
+    const auto defs0 = count_macrodefs(flat);
+    const auto tails0 = count_named(flat, pool, "tail4101");
+    CHECK(tails0 >= 1 && defs0 >= 2, "4101: source body has the tail MacroDef");
+    CHECK(flat.is_hygienic_macrodef(mdef), "4101: macrodef is hygienic");
+    // Aura sandbox stays Restricted (truncate gate). The capability
+    // registry goes back to Off so an inner clone is not
+    // provenance-fenced before expand_inner reaches max_depth.
+    g_capability_registry().sandbox_mode.store(EffectSandboxMode::Off, std::memory_order_release);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto r = ev.eval_flat(flat, pool, call, ev.top_env());
+    CHECK(eval_error_has(r, "hygiene-depth-limit"), "4101: call returns hygiene-depth-limit");
+    CHECK(ev.workspace_flat() == &flat, "4101: workspace flat is the caller flat");
+    ac4101_check_caller(ev, flat, size0, "4101: workspace and current flats are the pre-call size");
+    CHECK(count_macrodefs(flat) == defs0, "4101: refused clone's MacroDef is not left for phase-1");
+    CHECK(count_named(flat, pool, "tail4101") == tails0,
+          "4101: refused clone does not keep a second tail4101");
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        static_cast<std::uint32_t>(aura_fiber_current_id()), 0);
+    (void)macro_expand_all(flat, pool, call, 4);
+    CHECK(flat.size() == size0, "4101: following macro_expand_all does not keep a refused tail");
+    CHECK(count_macrodefs(flat) == defs0, "4101: phase-1 does not see a clone-only MacroDef");
+    ac4101_unbind_flat(ev);
+    reset_all();
+}
+
+static void ac4101_gensym_ceiling_truncates() {
+    std::println("\n--- #4101: gensym ceiling on the clone returns the reason ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ac4101_arm(ev);
+    StringPool pool;
+    FlatAST flat;
+    auto x = pool.intern("x");
+    auto a = pool.intern("a4101");
+    auto b = pool.intern("b4101");
+    auto g = pool.intern("g4101");
+    auto inner = flat.add_let(b, flat.add_literal(2), flat.add_variable(x));
+    auto outer = flat.add_let(a, flat.add_literal(1), inner);
+    auto gdef = flat.add_macrodef(g, {x}, outer, false, true);
+    auto call =
+        flat.add_call(flat.add_variable(g), std::vector<aura::ast::NodeId>{flat.add_literal(7)});
+    ac4101_bind_flat(ev, flat, pool);
+    CHECK(ev.eval_flat(flat, pool, gdef, ev.top_env()).has_value(), "4101: gensym macrodef");
+    const auto size0 = flat.size();
+    aura_test_set_max_gensym_map_size_for_test(1);
+    auto r = ev.eval_flat(flat, pool, call, ev.top_env());
+    CHECK(eval_error_has(r, "hygiene-gensym-ceiling"), "4101: call returns hygiene-gensym-ceiling");
+    ac4101_check_caller(ev, flat, size0, "4101: gensym deny truncates to the pre-call size");
+    aura_test_set_max_gensym_map_size_for_test(0);
+    ac4101_unbind_flat(ev);
+    reset_all();
+}
+
+static void ac4101_same_flat_inner_skips_eval() {
+    std::println("\n--- #4101: same-flat refuse skips eval and truncates ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ac4101_arm(ev);
+    StringPool pool;
+    FlatAST flat;
+    auto x = pool.intern("x");
+    auto sname = pool.intern("s4101");
+    auto plus = flat.add_variable(pool.intern("+"));
+    auto body = flat.add_call(
+        plus, std::vector<aura::ast::NodeId>{flat.add_variable(x), flat.add_literal(1)});
+    auto sdef = flat.add_macrodef(sname, {x}, body, false, true);
+    auto call = flat.add_call(flat.add_variable(sname),
+                              std::vector<aura::ast::NodeId>{flat.add_literal(2)});
+    ac4101_bind_flat(ev, flat, pool);
+    CHECK(ev.eval_flat(flat, pool, sdef, ev.top_env()).has_value(), "4101: same-flat macrodef");
+    const auto size0 = flat.size();
+    CHECK(aura_test_claim_same_flat_clone(&flat) == 1, "4101: flat claimed");
+    auto r = ev.eval_flat(flat, pool, call, ev.top_env());
+    CHECK(eval_error_has(r, "same-flat-clone-reject"),
+          "4101: reason 8 returns same-flat-clone-reject");
+    CHECK(!r.has_value() || !(is_int(*r) && as_int(*r) == 3),
+          "4101: same-flat refuse does not eval the clone to 3");
+    CHECK(ev.workspace_flat() == &flat, "4101: same-flat workspace stays the caller flat");
+    ac4101_check_caller(ev, flat, size0, "4101: same-flat refuse truncates to the pre-call size");
+    aura_test_release_same_flat_clone(&flat);
+    ac4101_unbind_flat(ev);
+    reset_all();
+}
+
+static void ac4101_soft_still_evals() {
+    std::println("\n--- #4101: Soft/Off still evals; reexpand truncate stays ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    StringPool pool;
+    FlatAST flat;
+    auto x = pool.intern("x");
+    auto iname = pool.intern("inc4101");
+    auto plus = flat.add_variable(pool.intern("+"));
+    auto body = flat.add_call(
+        plus, std::vector<aura::ast::NodeId>{flat.add_variable(x), flat.add_literal(1)});
+    auto idef = flat.add_macrodef(iname, {x}, body, false, true);
+    auto call = flat.add_call(flat.add_variable(iname),
+                              std::vector<aura::ast::NodeId>{flat.add_literal(2)});
+    ac4101_bind_flat(ev, flat, pool);
+    CHECK(ev.eval_flat(flat, pool, idef, ev.top_env()).has_value(), "4101: soft macrodef");
+    auto r = ev.eval_flat(flat, pool, call, ev.top_env());
+    CHECK(r.has_value() && is_int(*r) && as_int(*r) == 3, "4101: Soft evals the hygienic body");
+    ac4101_unbind_flat(ev);
+
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto arm = eef.find("Issue #4101: clone_ckpt is the size before the");
+    CHECK(arm != std::string::npos, "4101: eval_flat cites #4101");
+    if (arm != std::string::npos) {
+        const auto win = eef.substr(arm, 5200);
+        CHECK(win.find("inner_expand_production_limit_deny_all()") != std::string::npos,
+              "4101: hygienic arm uses deny_all (8/9/10 included)");
+        CHECK(win.find("truncate_to(clone_ckpt)") != std::string::npos,
+              "4101: deny truncates clone_ckpt");
+        CHECK(win.find("half-expanded body") != std::string::npos,
+              "4101: half-expanded body is not evaluated");
+        CHECK(win.find("is_sandbox_active()") != std::string::npos,
+              "4101: Soft/Off is one sandbox load");
+        CHECK(win.find("rest_spine_pending ? rest_spine_ckpt : f->size()") != std::string::npos,
+              "4101: clone_ckpt covers the rest spine and the clone");
+    }
+    const auto re = eef.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");
+    CHECK(re != std::string::npos, "4101: reexpand_call still expands");
+    if (re != std::string::npos) {
+        const auto rwin = eef.substr(re, 1200);
+        CHECK(rwin.find("inner_expand_production_limit_deny()") != std::string::npos,
+              "4101: reexpand_call still consults the deny");
+        CHECK(rwin.find("truncate_to(clone_ckpt)") != std::string::npos,
+              "4101: reexpand_call still truncates");
+        CHECK(rwin.find("return false") != std::string::npos,
+              "4101: reexpand deny does not splice");
+    }
+    CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("is_macro_introduced") !=
+              std::string::npos,
+          "4101: mutate default-reject of MacroIntroduced is unchanged");
+    CHECK(read_file("tests/compiler/test_issue_4101.cpp").empty(), "4101: no test_issue file");
+    CHECK(read_file("docs/design/4101-eval-flat-hygiene-truncate.md").empty(),
+          "4101: no docs/design");
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -1896,6 +2139,11 @@ int run_test_macro_hygiene_limits() {
     ac4078_workspace_same_tree();
     ac4078_eval_skips_half_tree();
     ac4078_soft_half_expand();
+    std::println("\n=== Issue #4101: eval_flat hygienic deny truncates the caller flat ===");
+    ac4101_depth_truncates_and_hides_tail_def();
+    ac4101_gensym_ceiling_truncates();
+    ac4101_same_flat_inner_skips_eval();
+    ac4101_soft_still_evals();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
