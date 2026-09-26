@@ -234,8 +234,50 @@ inline LcpEvalSlot* lcp_eval_slot_find(const void* eval_id) noexcept {
     return nullptr;
 }
 
-// Keyed stamp: process-wide publish above + this evaluator's slot. A full
-// table degrades to process-only (same visibility as today).
+// Issue #4104: one overflow record when all 64 slots are owned by other
+// evaluators. Steal Rejects only when the victim id matches and
+// would_allow is 0. A different evaluator stays quiet-allow. Seqlock so a
+// concurrent publish cannot pair this id with another id's would_allow.
+inline std::atomic<std::uint64_t> g_lcp_overflow_seq{0};
+inline std::atomic<const void*> g_lcp_overflow_id{nullptr};
+inline std::atomic<std::uint8_t> g_lcp_overflow_would_allow{1};
+
+inline void lcp_overflow_publish(const void* eval_id, bool would_allow) noexcept {
+    std::uint64_t s = g_lcp_overflow_seq.load(std::memory_order_acquire);
+    for (;;) {
+        if ((s & 1ULL) != 0) {
+            s = g_lcp_overflow_seq.load(std::memory_order_acquire);
+            continue;
+        }
+        if (g_lcp_overflow_seq.compare_exchange_weak(s, s + 1, std::memory_order_acq_rel,
+                                                     std::memory_order_acquire))
+            break;
+    }
+    g_lcp_overflow_would_allow.store(would_allow ? 1 : 0, std::memory_order_relaxed);
+    g_lcp_overflow_id.store(eval_id, std::memory_order_relaxed);
+    g_lcp_overflow_seq.store(s + 2, std::memory_order_release);
+}
+
+[[nodiscard]] inline bool lifetime_consistency_overflow_rejects(const void* eval_id) noexcept {
+    if (!eval_id)
+        return false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const auto s1 = g_lcp_overflow_seq.load(std::memory_order_acquire);
+        if ((s1 & 1ULL) != 0)
+            continue;
+        const auto id = g_lcp_overflow_id.load(std::memory_order_relaxed);
+        const auto allow = g_lcp_overflow_would_allow.load(std::memory_order_relaxed);
+        const auto s2 = g_lcp_overflow_seq.load(std::memory_order_acquire);
+        if (s1 == s2)
+            return id == eval_id && allow == 0;
+    }
+    return false;
+}
+
+// Keyed stamp: process-wide publish above + this evaluator's slot.
+// Issue #4104: a full table used to return with no per-eval stamp, and
+// steal treated the missing slot as allow. Publish this id in the
+// overflow record instead of CAS-ing another evaluator's slot.
 inline void stamp_lifetime_consistency_proof_for(const void* eval_id,
                                                  const LifetimeConsistencyProof& p) noexcept {
     stamp_lifetime_consistency_proof(p);
@@ -254,10 +296,14 @@ inline void stamp_lifetime_consistency_proof_for(const void* eval_id,
                 slot = &s;
         }
     }
-    if (!slot)
+    if (!slot) {
+        lcp_overflow_publish(eval_id, p.would_allow_commit);
         return;
+    }
     slot->would_allow.store(p.would_allow_commit ? 1 : 0, std::memory_order_relaxed);
     slot->present.store(1, std::memory_order_release);
+    if (g_lcp_overflow_id.load(std::memory_order_acquire) == eval_id)
+        lcp_overflow_publish(nullptr, true);
 }
 
 [[nodiscard]] inline bool
@@ -310,6 +356,17 @@ inline void reset_lifetime_consistency_proof_for_test() noexcept {
     g_lcp_last_force_reason_code().store(0, std::memory_order_relaxed);
     g_lcp_last_mutation_epoch().store(0, std::memory_order_relaxed);
     g_lcp_stamped_total().store(0, std::memory_order_relaxed);
+    lcp_overflow_publish(nullptr, true);
+}
+
+// Test hook: empty the 64 per-eval slots and the #4104 overflow record.
+inline void reset_lcp_eval_slots_for_test() noexcept {
+    for (auto& s : g_lcp_eval_slots) {
+        s.present.store(0, std::memory_order_relaxed);
+        s.would_allow.store(1, std::memory_order_relaxed);
+        s.id.store(nullptr, std::memory_order_release);
+    }
+    lcp_overflow_publish(nullptr, true);
 }
 
 // Issue #3185: densify-entry LCP consult helper. Cheap single-load surface
