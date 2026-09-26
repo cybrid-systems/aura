@@ -318,6 +318,54 @@ static void ac4095_status_carries_display() {
           "4095: no docs/design");
 }
 
+// Issue #4122: set! of a let binding stays bound when the same named-let
+// body also calls set-car!.
+static void ac4122_set_with_pair_mutate() {
+    std::println("\n--- #4122: set! stays bound beside set-car! ---");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    const auto at = env.find("Issue #4122:");
+    CHECK(at != std::string::npos, "4122: cite");
+    const auto win = at == std::string::npos ? std::string{} : env.substr(at, 900);
+    CHECK(win.find("refresh_stale_frame_in_walk") != std::string::npos,
+          "4122: still records the behind frame");
+    CHECK(win.find("version_ =") == std::string::npos, "4122: does not stamp version_");
+    CompilerService cs;
+    auto n = cs.eval(R"(
+        (begin
+          (define (solve nums)
+            (let ((widx 0)
+                  (n (length nums)))
+              (let loop ((read 0))
+                (if (< read n)
+                    (begin
+                      (if (not (= 0 (list-ref nums read)))
+                          (begin
+                            (set-car! nums (list-ref nums read))
+                            (set! widx (+ widx 1))))
+                      (loop (+ read 1)))
+                    widx))))
+          (solve (list 0 1)))
+    )");
+    CHECK(n && is_int(*n) && as_int(*n) == 1, "4122: set-car! + set! returns 1");
+    auto plain = cs.eval(R"(
+        (begin
+          (define (solve2 nums)
+            (let ((widx 0)
+                  (n (length nums)))
+              (let loop ((read 0))
+                (if (< read n)
+                    (begin
+                      (if (not (= 0 (list-ref nums read)))
+                          (set! widx (+ widx 1)))
+                      (loop (+ read 1)))
+                    widx))))
+          (solve2 (list 0 1 0)))
+    )");
+    CHECK(plain && is_int(*plain) && as_int(*plain) == 1, "4122: set! alone still returns 1");
+    CHECK(read_file("tests/compiler/test_issue_4122.cpp").empty(), "4122: no invent");
+    CHECK(read_file("docs/design/4122-set-bang-set-car.md").empty(), "4122: no docs/design");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -329,6 +377,7 @@ int run_test_eval_current_no_auto_fix() {
     ac3917_extra_paren_cli();
     ac3918_batch_rebind_env();
     ac3927_set_then_compare();
+    ac4122_set_with_pair_mutate();
     ac4079_second_eval_current_displays();
     ac4095_status_carries_display();
     std::println("\n=== #2484/#3915/#3917/#3918/#3927 results: {} passed, {} failed ===", g_passed,

@@ -6956,6 +6956,98 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             e = e->parent();
                         }
                     }
+                    // Issue #4122: materialize stores the let cell in
+                    // bindings_symid_ (string bindings_ often empty).
+                    // lookup reads that symid entry, including a non-cell
+                    // copy. set! must write the same entry.
+                    if (auto* pool = const_cast<aura::ast::StringPool*>(eval_env.pool())) {
+                        const auto sid = pool->intern(std::string(name));
+                        auto write_syms = [&](Env& e) -> bool {
+                            auto& syms = e.bindings_symid_mut();
+                            for (auto it = syms.rbegin(); it != syms.rend(); ++it) {
+                                if (it->first != sid)
+                                    continue;
+                                if (is_cell(it->second)) {
+                                    const auto ci = as_cell_id(it->second);
+                                    if (ci < cells_.size())
+                                        cells_[ci] = *val;
+                                } else {
+                                    it->second = *val;
+                                }
+                                return true;
+                            }
+                            return false;
+                        };
+                        if (write_syms(const_cast<Env&>(eval_env)))
+                            return *val;
+                        for (auto* e = const_cast<Env*>(eval_env.parent()); e;
+                             e = const_cast<Env*>(e->parent())) {
+                            if (write_syms(*e))
+                                return *val;
+                        }
+                    }
+                    // Same SoA parent chain Env::lookup reads. A behind
+                    // named-let capture keeps the cell here after set-car!
+                    // bumps defuse. Write that entry, cell or value.
+                    if (auto* owner = eval_env.owner()) {
+                        const auto sid = eval_env.pool()
+                                             ? const_cast<aura::ast::StringPool*>(eval_env.pool())
+                                                   ->intern(std::string(name))
+                                             : aura::ast::INVALID_SYM;
+                        auto write_frame = [&](EnvFrame& fr) -> bool {
+                            for (auto& b : fr.bindings_) {
+                                if (b.first != name)
+                                    continue;
+                                if (is_cell(b.second)) {
+                                    const auto ci = as_cell_id(b.second);
+                                    if (ci < cells_.size())
+                                        cells_[ci] = *val;
+                                } else {
+                                    b.second = *val;
+                                }
+                                return true;
+                            }
+                            if (sid != aura::ast::INVALID_SYM) {
+                                for (auto it = fr.bindings_symid_.rbegin();
+                                     it != fr.bindings_symid_.rend(); ++it) {
+                                    if (it->first != sid)
+                                        continue;
+                                    if (is_cell(it->second)) {
+                                        const auto ci = as_cell_id(it->second);
+                                        if (ci < cells_.size())
+                                            cells_[ci] = *val;
+                                    } else {
+                                        it->second = *val;
+                                    }
+                                    return true;
+                                }
+                            }
+                            return false;
+                        };
+                        EnvId cur = eval_env.parent_id();
+                        for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < 64; ++hops) {
+                            std::unique_lock<std::shared_mutex> wlock(
+                                owner->env_frame_shard_mu(Evaluator::env_frame_shard_index(cur)));
+                            EnvFrame& fr = owner->env_frame_mut(cur);
+                            if (write_frame(fr))
+                                return *val;
+                            if (cur == 0) {
+                                for (auto& b : owner->top_env().bindings()) {
+                                    if (b.first != name)
+                                        continue;
+                                    if (is_cell(b.second)) {
+                                        const auto ci = as_cell_id(b.second);
+                                        if (ci < cells_.size())
+                                            cells_[ci] = *val;
+                                    } else {
+                                        b.second = *val;
+                                    }
+                                    return *val;
+                                }
+                            }
+                            cur = fr.parent_id;
+                        }
+                    }
                     // Suggest closest bound variables
                     {
                         std::vector<std::string> candidates;
