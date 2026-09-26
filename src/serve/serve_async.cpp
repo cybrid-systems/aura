@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 
 import std;
@@ -205,6 +206,109 @@ void emit_status_line(std::string line) {
         p += w;
         n -= static_cast<std::size_t>(w);
     }
+}
+
+// Issue #4095: display/newline and the status line are two stdout
+// records. A text-mode readline+select client reads "99" and leaves the
+// status in the decoder buffer; select() watches the fd and times out
+// (serve_session_timeout) even though the bytes were already written.
+// The second eval-current is the fast replay, so both records are in
+// the pipe before that read. Capture exec stdout and put it on the
+// status object — one write is the whole turn.
+template <typename Fn>
+auto capture_stdout_during(Fn&& fn) -> std::pair<std::invoke_result_t<Fn>, std::string> {
+    using R = std::invoke_result_t<Fn>;
+    std::fflush(stdout);
+    const int saved = ::dup(STDOUT_FILENO);
+    int fds[2] = {-1, -1};
+    if (saved < 0 || ::pipe(fds) != 0) {
+        if (saved >= 0)
+            ::close(saved);
+        if (fds[0] >= 0)
+            ::close(fds[0]);
+        if (fds[1] >= 0)
+            ::close(fds[1]);
+        return {std::forward<Fn>(fn)(), {}};
+    }
+    if (::dup2(fds[1], STDOUT_FILENO) < 0) {
+        ::close(saved);
+        ::close(fds[0]);
+        ::close(fds[1]);
+        return {std::forward<Fn>(fn)(), {}};
+    }
+    ::close(fds[1]);
+    std::string captured;
+    std::thread drain([&] {
+        char buf[4096];
+        while (true) {
+            const ssize_t n = ::read(fds[0], buf, sizeof(buf));
+            if (n > 0) {
+                captured.append(buf, static_cast<std::size_t>(n));
+                continue;
+            }
+            if (n < 0 && errno == EINTR)
+                continue;
+            break;
+        }
+    });
+    struct Finish {
+        int saved;
+        int read_fd;
+        std::thread& drain;
+        bool done = false;
+        Finish(int s, int r, std::thread& d)
+            : saved(s)
+            , read_fd(r)
+            , drain(d) {}
+        void finish() {
+            if (done)
+                return;
+            done = true;
+            std::fflush(stdout);
+            if (saved >= 0) {
+                ::dup2(saved, STDOUT_FILENO);
+                ::close(saved);
+                saved = -1;
+            }
+            std::clearerr(stdout);
+            if (drain.joinable()) {
+                try {
+                    drain.join();
+                } catch (...) {
+                }
+            }
+            if (read_fd >= 0) {
+                ::close(read_fd);
+                read_fd = -1;
+            }
+        }
+        ~Finish() { finish(); }
+    } finish(saved, fds[0], drain);
+    R result = std::forward<Fn>(fn)();
+    finish.finish();
+    return {std::move(result), std::move(captured)};
+}
+
+std::string status_line_ok(std::string_view session, std::string_view value,
+                           std::string_view display) {
+    if (display.empty()) {
+        return std::format("{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
+                           json_escape(session), json_escape(value));
+    }
+    return std::format(
+        "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\",\"display\":\"{}\"}}",
+        json_escape(session), json_escape(value), json_escape(display));
+}
+
+std::string status_line_error(std::string_view session, std::string_view msg,
+                              std::string_view display) {
+    if (display.empty()) {
+        return std::format("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
+                           json_escape(session), json_escape(msg));
+    }
+    return std::format(
+        "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\",\"display\":\"{}\"}}",
+        json_escape(session), json_escape(msg), json_escape(display));
 }
 
 // ── run_serve_async ─────────────────────────────────────
@@ -846,15 +950,13 @@ void run_serve_async(int num_workers) {
                         if (!code.empty()) {
                             auto& cs = cs_for(sess);
                             aura::messaging::g_current_compiler_service = &cs;
-                            auto r = cs.exec_with_cache(code);
+                            auto [r, display] =
+                                capture_stdout_during([&] { return cs.exec_with_cache(code); });
                             if (r) {
-                                emit_status_line(std::format(
-                                    "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                    json_escape(nsid), json_escape(fmt_val(*r, cs))));
+                                emit_status_line(status_line_ok(nsid, fmt_val(*r, cs), display));
                             } else {
-                                emit_status_line(std::format(
-                                    "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
-                                    json_escape(nsid), json_escape(r.error().format())));
+                                emit_status_line(
+                                    status_line_error(nsid, r.error().format(), display));
                             }
                         }
                     }
@@ -962,32 +1064,33 @@ void run_serve_async(int num_workers) {
                         }
                         auto& cs = cs_for(sess);
                         aura::messaging::g_current_compiler_service = &cs;
-                        auto result = cs.exec_with_cache(code);
+                        auto [result, display] =
+                            capture_stdout_during([&] { return cs.exec_with_cache(code); });
                         if (result) {
                             try {
                                 auto& v = *result;
                                 // Check if closure
                                 if (is_closure(v)) {
-                                    emit_status_line(
-                                        std::format("{{\"session\":\"{}\",\"status\":\"closure\","
-                                                    "\"value\":\"#<procedure>\"}}",
-                                                    json_escape(sid)));
+                                    if (display.empty()) {
+                                        emit_status_line(std::format(
+                                            "{{\"session\":\"{}\",\"status\":\"closure\","
+                                            "\"value\":\"#<procedure>\"}}",
+                                            json_escape(sid)));
+                                    } else {
+                                        emit_status_line(std::format(
+                                            "{{\"session\":\"{}\",\"status\":\"closure\","
+                                            "\"value\":\"#<procedure>\",\"display\":\"{}\"}}",
+                                            json_escape(sid), json_escape(display)));
+                                    }
                                 } else {
-                                    emit_status_line(std::format(
-                                        "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                        json_escape(sid), json_escape(fmt_val(v, cs))));
+                                    emit_status_line(status_line_ok(sid, fmt_val(v, cs), display));
                                 }
                             } catch (const std::bad_alloc&) {
-                                emit_status_line(std::format(
-                                    "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out "
-                                    "of memory\"}}",
-                                    json_escape(sid)));
+                                emit_status_line(status_line_error(sid, "out of memory", display));
                             }
                         } else {
                             auto& d = result.error();
-                            emit_status_line(std::format(
-                                "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
-                                json_escape(sid), json_escape(d.format())));
+                            emit_status_line(status_line_error(sid, d.format(), display));
                         }
 
                     } else if (cmd == "session") {

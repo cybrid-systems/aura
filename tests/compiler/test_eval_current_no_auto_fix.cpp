@@ -302,6 +302,22 @@ static void ac4079_second_eval_current_displays() {
     CHECK(second != std::string::npos, "4079: display 99 on both eval-current calls");
 }
 
+// Issue #4095: serve-async must carry replayed display on the status
+// line. A second stdout record is already in the text decoder when
+// readline returns "99", and select() then waits out the client.
+static void ac4095_status_carries_display() {
+    std::println("\n--- #4095: status line carries display ---");
+    const auto serve = read_file("src/serve/serve_async.cpp");
+    CHECK(serve.find("Issue #4095") != std::string::npos, "4095: serve cites the coalesced status");
+    CHECK(serve.find("capture_stdout_during") != std::string::npos,
+          "4095: exec stdout is captured");
+    CHECK(serve.find(R"(display\":\"{})") != std::string::npos,
+          "4095: status object has a display field");
+    CHECK(read_file("tests/compiler/test_issue_4095.cpp").empty(), "4095: no test_issue file");
+    CHECK(read_file("docs/design/4095-serve-async-display-status.md").empty(),
+          "4095: no docs/design");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -314,6 +330,7 @@ int run_test_eval_current_no_auto_fix() {
     ac3918_batch_rebind_env();
     ac3927_set_then_compare();
     ac4079_second_eval_current_displays();
+    ac4095_status_carries_display();
     std::println("\n=== #2484/#3915/#3917/#3918/#3927 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
