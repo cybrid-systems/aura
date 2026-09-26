@@ -2470,6 +2470,11 @@ Evaluator::handoff_ref(ast::FlatAST::StableNodeRef ref) noexcept {
 //      tenant_boundary_violation_prevented_total /
 //      cross_tenant_provenance_deny_total bumped inside
 //      check_workspace_isolation).
+//   2.5 occupancy belt (#4113): under the same Strict | (Restricted+MT)
+//      regime, the #3415 occupancy ring is re-checked for ref.id so a
+//      residual stamp wash (tenant=caller, occupancy=foreign) cannot
+//      false-allow via Stage-1's ref.tenant_id-only consult; deny uses
+//      the same face/metrics, verdict honored for allowed cross-grants.
 //   3. FlatAST validity: get_safe(ref) (gen + COW epoch check inside
 //      FlatAST) — stale / free-slot / cross-tenant ref → nullopt with
 //      reason "resolve-stamped: stale-ref" so callers can tell apart
@@ -2505,6 +2510,56 @@ std::optional<ast::NodeView> Evaluator::resolve_stamped(const ast::FlatAST::Stab
                                            std::to_string(ref.tenant_id);
         }
         return std::nullopt;
+    }
+    // Issue #4113: occupancy belt for the Agent export stamp wash
+    // (defense-in-depth, dual-track vs restamp_read_ref). Stage 1 above
+    // consults ref.tenant_id only; any residual wash site that sets
+    // ref.tenant_id = caller while the #3415 occupancy ring still holds a
+    // foreign owner would false-allow here (same-tenant). Mirror
+    // finalize_agent_export (#4112) / restamp_read_ref (#3772): consult
+    // regime Strict | (Restricted+MT); exact stamp, hygiene borrow,
+    // collision borrow. Non-zero foreign occupancy denies through the
+    // same check_workspace_isolation face (IsolationDeny SE,
+    // cross_tenant_provenance_deny_total bumped inside; no new query
+    // key). The verdict is honored — an allowed cross-grant target passes
+    // unchanged (check_boundary SSOT). Soft/Off: consult off — zero extra
+    // (legacy wash contract intact).
+    {
+        const auto mode = effect_sandbox_mode();
+        const bool strict = mode == 2 || ::aura::core::sandbox::is_strict();
+        const bool restricted = mode == 1;
+        const bool mt = ::aura::core::provenance::hard_capture_tenant_active() ||
+                        ::aura::core::provenance::multi_tenant_env_active();
+        if (strict || (restricted && mt)) {
+            const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
+            std::uint64_t existing = ::aura::core::provenance::existing_stamp_for_node(
+                static_cast<std::uint32_t>(ref.id));
+            if (existing == 0) {
+                const auto& hs = ::aura::core::provenance::g_provenance_tracker().last_hygiene;
+                if (hs.tenant_id != 0 && hs.node_id == static_cast<std::uint32_t>(ref.id))
+                    existing = hs.tenant_id;
+            }
+            if (existing == 0) {
+                const auto occ = ::aura::core::provenance::occupying_stamp_for_node(
+                    static_cast<std::uint32_t>(ref.id));
+                if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(ref.id))
+                    existing = occ.tenant_id; // #3641/#4039 collision borrow — deny below
+            }
+            if (existing != 0 && existing != caller) {
+                // Foreign occupancy behind a caller-stamped ref — the
+                // wash belt denies with the shared isolation face
+                // (required=0: the tenant boundary is the contract here;
+                // effects were already adjudicated by Stage 1). Honoring
+                // the verdict keeps allowed cross-grant targets intact.
+                if (!check_workspace_isolation(caller, existing, /*required=*/0, op)) {
+                    // Deterministic Agent-readable trail (restamp_read_ref
+                    // parity); the SE face already fired inside the check.
+                    last_mutate_error_ = std::string(op) +
+                                         ": isolation-deny: ref-tenant=" + std::to_string(existing);
+                    return std::nullopt;
+                }
+            }
+        }
     }
     // Stage 2: FlatAST validity (gen + COW + workspace_id match).
     // get_safe already returns nullopt for stale / out-of-bounds / free

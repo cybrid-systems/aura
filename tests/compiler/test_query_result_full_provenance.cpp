@@ -3013,6 +3013,288 @@ void test_ac4112_5_source_cite() {
     expect_true("4112 AC5: no test_issue_4112.cpp", !f_new.good());
 }
 
+// Issue #4113: resolve_stamped Stage-1 occupancy belt for the Agent export
+// stamp wash (defense-in-depth follow-up to the #4112 export choke). Under
+// the consult regime a washed ref (tenant=caller, occupancy=foreign) must
+// deny with the shared IsolationDeny face + nullopt (no new query key); an
+// allowed cross-grant target passes; Soft/Off adds zero extra consult.
+void test_ac4113_1_washed_ref_foreign_occupancy_denied() {
+    std::print("AC4113/AC1 -- washed ref (tenant=caller, occupancy=foreign) denied\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4113 AC1: set-code",
+                cs.eval("(set-code \"(define (r4113 x) (* x 2))\")").has_value());
+    expect_true("4113 AC1: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4113-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    // Tenant 7 stamps the node: owner export runs make_stamped_ref ->
+    // stamp_stable_ref, recording occupancy=7 in the #3415 ring.
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7);
+    ev.set_effect_sandbox_mode(1);
+    ev.arm_production_audit_defaults_for_test();
+    auto* flat = ev.workspace_flat();
+    expect_true("4113 AC1: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4113 AC1: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4113 AC1: owner export keeps id", static_cast<std::int64_t>(live),
+                  static_cast<std::int64_t>(owned.id));
+    expect_eq_i64("4113 AC1: setup occupancy=7", 7,
+                  static_cast<std::int64_t>(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(owned.id))));
+    // Tenant 42 resolves a WASHED ref: tenant_id = 42 (caller) while the
+    // ring still holds owner 7. Stage-1 (ref.tenant_id only) false-allows;
+    // the #4113 belt must deny (nullopt + IsolationDeny face + reused
+    // counter, no new metric).
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(42);
+    aura::ast::FlatAST::StableNodeRef washed{};
+    washed.id = owned.id;
+    washed.gen = owned.gen;
+    washed.tenant_id = 42;
+    const auto base = snapshot_tenant_isolation_stats();
+    const auto out = ev.resolve_stamped(washed, 0, "t4113-resolve");
+    const auto after = snapshot_tenant_isolation_stats();
+    expect_true("4113 AC1: washed ref resolve is nullopt", !out.has_value());
+    expect_true("4113 AC1: IsolationDeny reason names owner tenant",
+                ev.last_mutate_error().find("isolation-deny: ref-tenant=7") != std::string::npos);
+    expect_true("4113 AC1: cross_tenant_provenance_deny_total bumped (reused face)",
+                after.cross_tenant_provenance_deny > base.cross_tenant_provenance_deny);
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+void test_ac4113_2_allowed_cross_grant_target_ok() {
+    std::print("AC4113/AC2 -- allowed cross-grant target passes (no false deny)\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4113 AC2: set-code",
+                cs.eval("(set-code \"(define (g4113 x) (+ x 3))\")").has_value());
+    expect_true("4113 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4113-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7);
+    ev.set_effect_sandbox_mode(1);
+    ev.arm_production_audit_defaults_for_test();
+    auto* flat = ev.workspace_flat();
+    expect_true("4113 AC2: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4113 AC2: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4113 AC2: setup occupancy=7", 7,
+                  static_cast<std::int64_t>(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(owned.id))));
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(42);
+    // #3090/#2968: the SSOT cross-grant refuses a mid-0-bound TenantAdmin
+    // row under production — install an explicit mid-bound TA row
+    // (grant_tenant_admin_mid equivalent) so grant_cross_tenant_access can
+    // mint the 42 -> 7 grant.
+    {
+        auto ta_prov =
+            aura::core::capability::make_grant_provenance(/*mid=*/1,
+                                                          /*force_mutation_bind=*/true, 0, 0);
+        const auto prev_mode =
+            aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        g_capability_registry().grant(42, "tenant-admin", Effect::TenantAdmin, ta_prov);
+        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(prev_mode));
+    }
+    // allow_cross=true (TenantAdmin granted above) opens cross-tenant
+    // negotiation (#3010); under production the actual authorization is
+    // the REGISTERED cross-grant 42 -> 7 (#3332/#2968 SSOT). The belt
+    // consult must HONOR the shared-face verdict: a permitted cross-grant
+    // target is not a wash (AC: "≠ allowed cross-grant target").
+    ev.set_tenant_principal(42, "4113-xgrant", /*allow_cross=*/true);
+    ev.grant_cross_tenant_access(/*from=*/42, /*to=*/7, aura::compiler::security::kEffectMutate);
+    aura::ast::FlatAST::StableNodeRef granted{};
+    granted.id = owned.id;
+    granted.gen = owned.gen;
+    granted.tenant_id = 42;
+    const auto ok = ev.resolve_stamped(granted, 0, "t4113-resolve");
+    expect_true("4113 AC2: allowed cross-grant target resolves", ok.has_value());
+    expect_eq_i64("4113 AC2: ring keeps owner 7", 7,
+                  static_cast<std::int64_t>(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(owned.id))));
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+void test_ac4113_3_soft_zero_extra_consult() {
+    std::print("AC4113/AC3 -- Soft/Off zero extra consult: legacy wash intact\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4113 AC3: set-code",
+                cs.eval("(set-code \"(define (s4113 x) (- x 1))\")").has_value());
+    expect_true("4113 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4113-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    // Mode stays 0 (Soft/Off): the belt regime gate is off even with the
+    // MT env active — the washed ref keeps the legacy resolve contract.
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7);
+    auto* flat = ev.workspace_flat();
+    expect_true("4113 AC3: workspace flat", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4113 AC3: live node", live != aura::ast::NULL_NODE);
+    const auto owned = ev.export_ref(live);
+    expect_eq_i64("4113 AC3: Soft export keeps id", static_cast<std::int64_t>(live),
+                  static_cast<std::int64_t>(owned.id));
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(42);
+    aura::ast::FlatAST::StableNodeRef washed{};
+    washed.id = owned.id;
+    washed.gen = owned.gen;
+    washed.tenant_id = 42;
+    const auto out = ev.resolve_stamped(washed, 0, "t4113-resolve");
+    expect_true("4113 AC3: Soft washed-ref resolve still ok (zero extra)", out.has_value());
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+void test_ac4113_4_source_cite() {
+    std::print("AC4113/AC4 -- source-cite belt-after-Stage1; no invent\n");
+    std::ifstream f_sec("src/compiler/evaluator_security.cpp");
+    std::string sec((std::istreambuf_iterator<char>(f_sec)), std::istreambuf_iterator<char>());
+    expect_true("4113 AC4: security TU readable", !sec.empty());
+    const auto rs = sec.find("std::optional<ast::NodeView> Evaluator::resolve_stamped(");
+    expect_true("4113 AC4: resolve_stamped found", rs != std::string::npos);
+    const auto stage1 = sec.find("Stage 1: isolation", rs);
+    expect_true("4113 AC4: Stage 1 found", stage1 != std::string::npos);
+    const auto cite = sec.find("Issue #4113", rs);
+    expect_true("4113 AC4: resolve_stamped cites #4113", cite != std::string::npos);
+    const auto stage2 = sec.find("Stage 2: FlatAST validity", rs);
+    expect_true("4113 AC4: Stage 2 found", stage2 != std::string::npos);
+    expect_true("4113 AC4: belt sits after Stage 1 and before Stage 2",
+                stage1 < cite && cite < stage2);
+    const auto window = sec.substr(cite, stage2 - cite);
+    expect_true("4113 AC4: consult regime mirrors family",
+                window.find("strict || (restricted && mt)") != std::string::npos);
+    expect_true("4113 AC4: exact-stamp ladder",
+                window.find("existing_stamp_for_node") != std::string::npos);
+    expect_true("4113 AC4: hygiene borrow", window.find("last_hygiene") != std::string::npos);
+    expect_true("4113 AC4: collision borrow",
+                window.find("occupying_stamp_for_node") != std::string::npos);
+    expect_true("4113 AC4: verdict honored (allowed cross-grant passes)",
+                window.find("if (!check_workspace_isolation(caller, existing") !=
+                    std::string::npos);
+    expect_true("4113 AC4: belt deny consults with required=0",
+                window.find("/*required=*/0") != std::string::npos);
+    expect_true("4113 AC4: deny reason names owner tenant",
+                window.find("isolation-deny: ref-tenant=") != std::string::npos);
+    expect_true("4113 AC4: no new metrics bump in belt window",
+                window.find("fetch_add") == std::string::npos);
+    expect_true("4113 AC4: no schema-4113", sec.find("schema-4113") == std::string::npos);
+    std::ifstream f_mf("src/compiler/compiler_metrics_fields.inc");
+    std::string mf((std::istreambuf_iterator<char>(f_mf)), std::istreambuf_iterator<char>());
+    expect_true("4113 AC4: metrics fields readable", !mf.empty());
+    expect_true("4113 AC4: reused counter still declared",
+                mf.find("cross_tenant_provenance_deny_total") != std::string::npos);
+    expect_true("4113 AC4: no 4113 metric marker", mf.find("4113") == std::string::npos);
+    std::ifstream f_doc("docs/design/4113-resolve-stamped-occupancy-belt.md");
+    expect_true("4113 AC4: no docs/design 4113", !f_doc.good());
+    std::ifstream f_new("tests/core/test_issue_4113.cpp");
+    expect_true("4113 AC4: no test_issue_4113.cpp", !f_new.good());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -3144,8 +3426,15 @@ int main() {
     test_ac4112_3_soft_zero_extra_consult();
     test_ac4112_4_orch_bare_id_refused_counters_reused();
     test_ac4112_5_source_cite();
+    // Issue #4113: resolve_stamped Stage-1 occupancy belt (follow-up to
+    // the #4112 export choke — belt at the resolve face for residual
+    // washes).
+    test_ac4113_1_washed_ref_foreign_occupancy_denied();
+    test_ac4113_2_allowed_cross_grant_target_ok();
+    test_ac4113_3_soft_zero_extra_consult();
+    test_ac4113_4_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
-               "#3990 + #3991 + #3993 + #4088 + #4112 AC tests PASSED\n");
+               "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
     return 0;
 }
