@@ -18,6 +18,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
+#include "core/resource_quota.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
@@ -1339,10 +1340,13 @@ static void ac3121_3_under_budget_green() {
     }
     CHECK(live != aura::ast::NULL_NODE, "3121 AC3: live");
     auto sr = cs.eval(std::format("(query:stable-ref {})", live));
-    // Issue #3862: production query:stable-ref finishes schema-2 (hash),
-    // not the historical layout-only pair. Under-budget still must not
-    // restamp-lag (3121 AC3).
-    CHECK(sr && is_hash(*sr), "3121 AC3: under-budget production stable-ref schema-2");
+    // Issue #4106: production stable-ref refuses bare ints (occupancy, not
+    // identity — the #3395 stale-ref face supersedes the #3862 bare-int
+    // schema-2 mint). The schema-2 finish stays reachable through packed v2
+    // / schema-2 operands. Under-budget still must not restamp-lag (3121
+    // AC3).
+    CHECK(sr.has_value() && merr_kind_3027(cs, *sr) == "stale-ref",
+          "3121 AC3: under-budget production stable-ref bare int → stale-ref (#4106)");
     CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
           "3121 AC3: under-budget stable-ref not lag");
     // Issue #3425: production as-stable-ref rejects bare int. Under-budget
@@ -6614,6 +6618,105 @@ static void ac4087_1_agent_body_write_query_schema2() {
     aura::core::provenance::reset_provenance_enforcement_for_test();
 }
 
+// Issue #4106: production read prims must resolve the node operand before
+// the walk — a bare int is occupancy, not identity, so (query:reaches
+// old-int) and (query:ref-counts old-int) are stale-ref, never the new
+// occupant's reaches or parent count. query:macro-provenance-chain is
+// currently sunk (#3175); the sink + body-gate pin composes with it.
+static void ac4106_read_trio() {
+    std::println("\n=== Issue #4106: read trio refuses bare int under production ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    // Issue #3049 / #1547 / #1618: the resource-quota limits/usage are
+    // process-global; reset the whole process quota (orthogonal DoS guard)
+    // so production set-code cannot deny with resource-quota-exceeded
+    // before the #4106 faces run. Restored (re-reset) at the end.
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "4106: dense workspace");
+    auto* ws4106 = cs.evaluator().workspace_flat();
+    CHECK(ws4106 != nullptr, "4106: workspace");
+    aura::ast::NodeId live4106 = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; ws4106 && id < ws4106->size(); ++id) {
+        if (ws4106->is_live_node(id) && !ws4106->is_free_slot(id) &&
+            ws4106->get(id).tag == aura::ast::NodeTag::Define) {
+            live4106 = id;
+            break;
+        }
+    }
+    if (live4106 == aura::ast::NULL_NODE && ws4106) {
+        for (aura::ast::NodeId id = 1; id < ws4106->size(); ++id) {
+            if (ws4106->is_live_node(id) && !ws4106->is_free_slot(id)) {
+                live4106 = id;
+                break;
+            }
+        }
+    }
+    CHECK(live4106 != aura::ast::NULL_NODE, "4106: live node");
+    // reaches: the #3395 stale-ref face, never the current slot's reaches.
+    auto re4106 = cs.eval(std::format("(query:reaches {})", live4106));
+    CHECK(re4106.has_value() && merr_kind_3027(cs, *re4106) == "stale-ref",
+          "4106: reaches bare int → stale-ref");
+    // ref-counts (stats facade): stale-ref, never the slot's parent count.
+    auto rc4106 = cs.eval(std::format("(engine:metrics \"query:ref-counts\" {})", live4106));
+    CHECK(rc4106.has_value() && merr_kind_3027(cs, *rc4106) == "stale-ref",
+          "4106: ref-counts bare int → stale-ref");
+    // macro-provenance-chain: sunk (#3175) — no chain from any occupant.
+    auto mp4106 = cs.eval(std::format("(query:macro-provenance-chain {})", live4106));
+    CHECK(!mp4106 || is_error(*mp4106),
+          "4106: macro-provenance-chain stays sunk (#3175), no chain");
+    // Recycle realism: after a mutate advances the workspace the same int
+    // still refuses — the bare-int reject is face-complete (occupancy, not
+    // identity).
+    CHECK(cs.eval("(mutate:rename-symbol \"f\" \"ff4106\")").has_value(), "4106: mutate ran");
+    auto re2 = cs.eval(std::format("(query:reaches {})", live4106));
+    CHECK(re2.has_value() && merr_kind_3027(cs, *re2) == "stale-ref",
+          "4106: reaches still stale-ref after recycle");
+    // Soft keeps the historical bare-int walk (no error).
+    apply_dev_audit_defaults();
+    auto resoft = cs.eval(std::format("(query:reaches {})", live4106));
+    CHECK(resoft.has_value() && merr_kind_3027(cs, *resoft) != "stale-ref",
+          "4106: Soft reaches still walks (no production reject)");
+    auto rcsoft = cs.eval(std::format("(engine:metrics \"query:ref-counts\" {})", live4106));
+    CHECK(rcsoft.has_value() && merr_kind_3027(cs, *rcsoft).empty(),
+          "4106: Soft ref-counts still counts (not an error)");
+    // Source-cite: each touched body carries the gate + issue cite.
+    const auto qd = read_file("src/compiler/evaluator_primitives_query_defuse.cpp");
+    const auto b_re = qd.find("add(\"query:reaches\"");
+    CHECK(b_re != std::string::npos, "4106: reaches body present");
+    const auto w_re = qd.substr(b_re, 3600);
+    CHECK(w_re.find("Issue #4106") != std::string::npos, "4106: reaches cites the issue");
+    CHECK(w_re.find("raw node-id rejected under production") != std::string::npos,
+          "4106: reaches #3395 face");
+    CHECK(w_re.find("unpack_query_stable_ref_v2") != std::string::npos, "4106: reaches v2 unpack");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto b_rc = qws.find("\"query:ref-counts\"");
+    CHECK(b_rc != std::string::npos, "4106: ref-counts body present");
+    const auto w_rc = qws.substr(b_rc, 2200);
+    CHECK(w_rc.find("Issue #4106") != std::string::npos, "4106: ref-counts cites the issue");
+    CHECK(w_rc.find("resolve_query_node_arg(a, \"query:ref-counts\"") != std::string::npos,
+          "4106: ref-counts resolve gate");
+    const auto ql = read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
+    const auto b_mp = ql.find("\"query:macro-provenance-chain\"");
+    CHECK(b_mp != std::string::npos, "4106: chain body present");
+    const auto w_mp = ql.substr(b_mp, 3200);
+    CHECK(w_mp.find("Issue #4106") != std::string::npos, "4106: chain cites the issue");
+    CHECK(w_mp.find("unpack_query_stable_ref_v2") != std::string::npos, "4106: chain v2 unpack");
+    CHECK(w_mp.find("WorkspaceSharedLock") != std::string::npos,
+          "4106: chain workspace shared lock");
+    const auto qq = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto b_sp = qq.find("\"query:stable-ref-provenance\"");
+    CHECK(b_sp != std::string::npos, "4106: provenance body present");
+    const auto w_sp = qq.substr(b_sp, 3600);
+    CHECK(w_sp.find("Issue #4106") != std::string::npos, "4106: provenance cites the issue");
+    CHECK(w_sp.find("WorkspaceSharedLock") != std::string::npos,
+          "4106: provenance workspace shared lock");
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -6859,6 +6962,7 @@ int main() {
     ac4076_source_cite();
     std::println("\n=== Issue #4087: agent-body authority gap lifecycle (#4089 root fix) ---");
     ac4087_1_agent_body_write_query_schema2();
+    ac4106_read_trio();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

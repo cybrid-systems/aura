@@ -101,6 +101,11 @@ extern "C" std::uint64_t aura_hygiene_tracer_depth_max_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept;
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
+// Issue #3424/#4106: schema-2 QueryResult hash -> node identity + shared
+// v2 unpack (shared with mutate / workspace). Include in module purview
+// (after the imports) so aura::core / aura::ast / types are in scope.
+#include "compiler/query_result_decode.hh"
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -164,19 +169,67 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                          std::pmr::vector<std::string>& string_heap,
                                          void*& type_registry,
                                          ModulePathResolver resolve_module_path, Evaluator& ev) {
-    (void)pairs;
+    // Issue #4106: pairs is now used by the production operand resolve below.
     (void)string_heap;
     (void)type_registry;
     (void)resolve_module_path;
     (void)ev;
     sink_query_prim(
-        "query:macro-provenance-chain", [&ev, &string_heap](const auto& a) -> EvalValue {
-            if (a.empty() || !is_int(a[0]))
-                return make_void();
+        "query:macro-provenance-chain", [&ev, &string_heap, &pairs](const auto& a) -> EvalValue {
+            // Issue #4106: the production read takes the workspace shared lock
+            // like the other workspace queries. Soft keeps the historical
+            // bare-int, lock-free body (zero-cost). The body is currently
+            // sunk (#3175 — compiled, not registered); the gate keeps the
+            // contract for any future surfacing.
+            const bool prod_4106 = aura::compiler::typed_audit::production_defaults_active();
+            std::optional<Evaluator::WorkspaceSharedLock> ws_lock_4106;
+            if (prod_4106)
+                ws_lock_4106.emplace(ev);
             auto* ws = ev.workspace_flat();
             if (!ws)
                 return make_void();
-            const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            aura::ast::NodeId nid = aura::ast::NULL_NODE;
+            if (prod_4106) {
+                // Issue #4106: production resolves the operand before the
+                // provenance walk — a bare int is occupancy, not identity, so
+                // the #3395 stale-ref semantics apply (a recycled slot must
+                // never report the new occupant's chain); this primitive's
+                // refusal face is void. Packed v2 StableNodeRef / schema-2
+                // QueryResult operands resolve + validate with the
+                // non-refresh rule (Issue #3661).
+                if (a.empty())
+                    return make_void();
+                if (is_hash(a[0])) {
+                    using aura::compiler::query_result_decode::HashNodeKind;
+                    using aura::compiler::query_result_decode::parse_query_result_match_index;
+                    using aura::compiler::query_result_decode::resolve_query_result_match;
+                    auto hr = resolve_query_result_match(
+                        a[0], string_heap, pairs, *ws, ev.capability_tenant_id(),
+                        static_cast<std::uint64_t>(aura_fiber_current_id()),
+                        "query:macro-provenance-chain",
+                        parse_query_result_match_index(a, ev.keyword_table()));
+                    if (hr.kind != HashNodeKind::Ok)
+                        return make_void();
+                    nid = hr.node;
+                } else if (auto packed =
+                               aura::compiler::query_result_decode::unpack_query_stable_ref_v2(
+                                   pairs, a[0])) {
+                    auto ref = *packed;
+                    ev.stamp_query_stable_ref_export(ref);
+                    if (ref.id == aura::ast::NULL_NODE)
+                        return make_void();
+                    if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
+                        return make_void();
+                    nid = ref.id;
+                } else {
+                    ev.bump_raw_nodeid_usage_in_primitives_count();
+                    return make_void();
+                }
+            } else {
+                if (a.empty() || !is_int(a[0]))
+                    return make_void();
+                nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            }
             if (nid == aura::ast::NULL_NODE || nid >= ws->size() || !ws->is_live_node(nid))
                 return make_void();
 

@@ -1114,9 +1114,221 @@ static void test_ac3661_5_suites_and_linter() {
     }
 }
 
+// Issue #4106: production query mint prims must not treat a bare NodeId as
+// the current occupant. After a slot recycle the remembered int aliases the
+// NEW occupant; query:stable-ref / query:ensure-ref / query:stable-ref-
+// provenance must refuse it (stale-ref / valid=0 / #f) instead of minting a
+// green stamp, while packed v2 / schema-2 operands whose gen still matches
+// still resolve. Soft keeps the historical bare-int mint.
+
+// Issue #4106: C++-side error-kind reader (pair + string car) — avoids the
+// EDSL define-of-error + string-arg forms the compile-time checker rejects.
+static std::string kind4106(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    using namespace aura::compiler::types;
+    if (!is_pair(v))
+        return {};
+    auto& prs = cs.evaluator().pairs();
+    const auto pidx = as_pair_idx(v);
+    if (pidx >= prs.size() || !is_string(prs[pidx].car))
+        return {};
+    auto heap = cs.evaluator().string_heap();
+    const auto cidx = as_string_idx(prs[pidx].car);
+    if (cidx >= heap.size())
+        return {};
+    return std::string(heap[cidx]);
+}
+
+static void ac4106_1_prod_mint_bare_int_refuses() {
+    std::println("\n=== #4106 AC1: production mint prims refuse bare int ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    // Issue #3049 / #1547 / #1618: the resource-quota limits/usage are
+    // process-global; the long-running suites before these ACs exhaust the
+    // production mutation budget, so set-code would deny with
+    // resource-quota-exceeded before the #4106 faces run. Reset the whole
+    // process quota (orthogonal DoS guard; default is unlimited).
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define t4106 (lambda (x) 1))\")").has_value(),
+          "4106 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4106 AC1: eval");
+    // stable-ref: the #3395 stale-ref face — never a schema-2 hash minted
+    // from the current occupant of the int's slot.
+    auto sr4106 = cs.eval("(query:stable-ref 1)");
+    CHECK(sr4106.has_value(), "4106 AC1: bind");
+    CHECK(kind4106(cs, *sr4106) == "stale-ref", "4106 AC1: stable-ref bare int → stale-ref");
+    // ensure-ref: the diagnostic hash face — valid=0, refreshed=0, and no
+    // make_stamped_safe_ref / export ever runs on the unstamped int.
+    auto ens4106 = cs.eval("(query:ensure-ref 1)");
+    CHECK(ens4106 && is_hash(*ens4106), "4106 AC1: ensure-ref returns diagnostic hash");
+    auto ev4106 = cs.eval("(hash-ref (query:ensure-ref 1) \"valid\")");
+    CHECK(ev4106 && is_int(*ev4106) && as_int(*ev4106) == 0, "4106 AC1: ensure-ref valid=0");
+    auto er4106 = cs.eval("(hash-ref (query:ensure-ref 1) \"refreshed\")");
+    CHECK(er4106 && is_int(*er4106) && as_int(*er4106) == 0, "4106 AC1: ensure-ref refreshed=0");
+    // stable-ref-provenance: the primitive's existing #f refusal face —
+    // never is-live=1 of the occupant.
+    auto pr4106 = cs.eval("(query:stable-ref-provenance 1)");
+    CHECK(pr4106 && is_bool(*pr4106) && !as_bool(*pr4106), "4106 AC1: provenance bare int → #f");
+    apply_dev_audit_defaults();
+}
+
+static void ac4106_2_prod_packed_and_hash_still_resolve() {
+    std::println("\n=== #4106 AC2: packed v2 / schema-2 whose gen matches still resolve ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_pair;
+    {
+        auto& rq4106 = aura::core::resource_quota::process_resource_quota();
+        rq4106.set_limit(aura::core::resource_quota::Dimension::Mutations, 0);
+        rq4106.set_limit(aura::core::resource_quota::Dimension::Memory, 0);
+        rq4106.set_limit(aura::core::resource_quota::Dimension::Fibers, 0);
+        rq4106.set_limit(aura::core::resource_quota::Dimension::TimeUs, 0);
+        rq4106.reset_usage();
+    }
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define u4106 (lambda (x) 2))\")").has_value(),
+          "4106 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4106 AC2: eval");
+    CHECK(cs.eval("(define qr4106 (query :find \"u4106\" :as-query-result #t))").has_value(),
+          "4106 AC2: bind hash");
+    auto qr4106 = cs.eval("qr4106");
+    CHECK(qr4106 && is_hash(*qr4106), "4106 AC2: QueryResult hash");
+    CHECK(cs.eval("(define p4106 (query:as-stable-ref qr4106))").has_value(), "4106 AC2: pack v2");
+    auto pk4106 = cs.eval("p4106");
+    CHECK(pk4106 && is_pair(*pk4106), "4106 AC2: v2 pair");
+    // stable-ref on a live v2 pair → schema-2 hash (production export).
+    auto sp4106 = cs.eval("(query:stable-ref p4106)");
+    CHECK(sp4106 && is_hash(*sp4106), "4106 AC2: live v2 → schema-2 hash out");
+    // ensure-ref on the live v2 pair → valid=1, refreshed=0 (non-refresh
+    // rule never fires on a fresh gen).
+    auto ev1 = cs.eval("(hash-ref (query:ensure-ref p4106) \"valid\")");
+    CHECK(ev1 && is_int(*ev1) && as_int(*ev1) == 1, "4106 AC2: ensure-ref valid=1");
+    auto er1 = cs.eval("(hash-ref (query:ensure-ref p4106) \"refreshed\")");
+    CHECK(er1 && is_int(*er1) && as_int(*er1) == 0, "4106 AC2: ensure-ref refreshed=0");
+    // provenance on the live v2 pair → schema-620 hash.
+    auto prp = cs.eval("(query:stable-ref-provenance p4106)");
+    CHECK(prp && is_hash(*prp), "4106 AC2: live v2 → schema-620 hash");
+    auto sch = cs.eval("(hash-ref (query:stable-ref-provenance p4106) \"schema\")");
+    CHECK(sch && is_int(*sch) && as_int(*sch) == 620, "4106 AC2: schema=620");
+    // schema-2 hash operand resolves on stable-ref too.
+    auto sh4106 = cs.eval("(query:stable-ref qr4106)");
+    CHECK(sh4106 && is_hash(*sh4106), "4106 AC2: live hash → schema-2 hash out");
+    apply_dev_audit_defaults();
+}
+
+static void ac4106_3_recycled_slot_never_rebound() {
+    std::println("\n=== #4106 AC3: recycled slot — stale packed gen fails closed ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    {
+        auto& rq4106 = aura::core::resource_quota::process_resource_quota();
+        rq4106.set_limit(aura::core::resource_quota::Dimension::Mutations, 0);
+        rq4106.set_limit(aura::core::resource_quota::Dimension::Memory, 0);
+        rq4106.set_limit(aura::core::resource_quota::Dimension::Fibers, 0);
+        rq4106.set_limit(aura::core::resource_quota::Dimension::TimeUs, 0);
+        rq4106.reset_usage();
+    }
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define w4106 (lambda (x) 3))\")").has_value(),
+          "4106 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4106 AC3: eval");
+    CHECK(cs.eval("(define qr4106w (query :find \"w4106\" :as-query-result #t))").has_value(),
+          "4106 AC3: bind hash");
+    CHECK(cs.eval("(define p4106w (query:as-stable-ref qr4106w))").has_value(),
+          "4106 AC3: pack v2");
+    // Force a deterministic recycle (the 3121 fixture idiom): bump the
+    // workspace generation and restamp — every pre-bump packed gen now
+    // mismatches the authority, so the OLD packed v2 ref must fail closed
+    // on every mint prim — never restamped / refreshed onto the slot.
+    auto* ws4106r = cs.evaluator().workspace_flat();
+    CHECK(ws4106r != nullptr, "4106 AC3: workspace for recycle");
+    if (ws4106r) {
+        ws4106r->bump_generation();
+        ws4106r->restamp_all_node_generations();
+    }
+    auto sr4106s = cs.eval("(query:stable-ref p4106w)");
+    CHECK(sr4106s.has_value(), "4106 AC3: bind stale");
+    const auto kind_s = kind4106(cs, *sr4106s);
+    CHECK(kind_s == "stale-ref" || kind_s == "restamp-lag",
+          "4106 AC3: stale v2 → stale-ref/restamp-lag (never reminted)");
+    auto pr4106s = cs.eval("(query:stable-ref-provenance p4106w)");
+    CHECK(pr4106s && is_bool(*pr4106s) && !as_bool(*pr4106s), "4106 AC3: stale v2 provenance → #f");
+    auto ev0 = cs.eval("(hash-ref (query:ensure-ref p4106w) \"valid\")");
+    CHECK(ev0 && is_int(*ev0) && as_int(*ev0) == 0,
+          "4106 AC3: stale v2 ensure-ref valid=0 (no wrap-0 refresh)");
+    auto er0 = cs.eval("(hash-ref (query:ensure-ref p4106w) \"refreshed\")");
+    CHECK(er0 && is_int(*er0) && as_int(*er0) == 0, "4106 AC3: stale v2 ensure-ref refreshed=0");
+    apply_dev_audit_defaults();
+}
+
+static void ac4106_4_soft_stable_ref_still_mints() {
+    std::println("\n=== #4106 AC4: Soft stable-ref still mints the bare pair ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_pair;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s4106s (lambda (x) 4))\")").has_value(),
+          "4106 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4106 AC4: eval");
+    auto soft4106 = cs.eval("(query:stable-ref 1)");
+    CHECK(soft4106 && is_pair(*soft4106), "4106 AC4: Soft stable-ref still mints pair");
+    auto car4106 = cs.eval("(car (query:stable-ref 1))");
+    CHECK(car4106 && is_int(*car4106), "4106 AC4: Soft mint car is the NodeId int");
+}
+
+static void ac4106_5_no_docs_linter_wired() {
+    std::println("\n=== #4106 AC5: no docs/design/, linter wired, no invented test ===");
+    {
+        std::ifstream f("docs/design/4106-query-bare-nodeid-occupancy.md");
+        CHECK(!f.good(), "4106 AC5: no docs/design/4106-*");
+    }
+    {
+        std::ifstream f("tests/compiler/test_issue_4106.cpp");
+        CHECK(!f.good(), "4106 AC5: no tests/compiler/test_issue_4106.cpp (#81934)");
+    }
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_query_bare_nodeid_4106") != std::string::npos,
+          "4106 AC5: linter wired into build.py");
+    std::ifstream f_allow("scripts/coverage/root_check_allowlist.txt");
+    std::string allow((std::istreambuf_iterator<char>(f_allow)), std::istreambuf_iterator<char>());
+    CHECK(allow.find("check_query_bare_nodeid_4106.py") != std::string::npos,
+          "4106 AC5: root allowlist carries the linter");
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
+    // #4106 ACs — production query prims refuse bare NodeId occupancy.
+    // Dispatched FIRST: these ACs arm production from a pristine process;
+    // the long-running stress suites below exhaust the process-global
+    // production budget (#1547) that the mint prims consult under
+    // production, which would deny set-code before the faces can run.
+    ac4106_1_prod_mint_bare_int_refuses();
+    ac4106_2_prod_packed_and_hash_still_resolve();
+    ac4106_3_recycled_slot_never_rebound();
+    ac4106_4_soft_stable_ref_still_mints();
+    ac4106_5_no_docs_linter_wired();
     // ORIG ACs (9)
     ac1_orig();
     ac2_orig();
