@@ -26,8 +26,10 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <format>
 
 import std;
+import aura.compiler.ir;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -40,9 +42,16 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::get_partial_relower_threshold;
+using aura::compiler::partial_relower_threshold_is_forced;
+using aura::compiler::reset_partial_relower_threshold_for_test;
+using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::get_strategy;
+using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -373,6 +382,218 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(impact1 == impact0, "3484 AC3: Soft clean peel does not force-full");
         CHECK(cs.get_define_v2("g") && !cs.get_define_v2("g")->dirty,
               "3484 AC3: Soft leaves genuinely clean g unmarked");
+    }
+
+    // Issue #4103: partial relower must not restamp while nested IR
+    // after the dirty function is still the pre-mutate body.
+    {
+        std::println("\n--- #4103: nested IR after a partial peel is not a clean hit ---");
+        struct Face {
+            std::uint32_t strategy;
+            std::uint32_t prod;
+            std::size_t thr;
+            bool thr_forced;
+            Face()
+                : strategy(
+                      aura::compiler::typed_audit::g_typed_mutation_audit_counters.strategy.load(
+                          std::memory_order_relaxed))
+                , prod(aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                           .production_defaults_active.load(std::memory_order_relaxed))
+                , thr(get_partial_relower_threshold())
+                , thr_forced(partial_relower_threshold_is_forced()) {}
+            ~Face() {
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters.strategy.store(
+                    strategy, std::memory_order_relaxed);
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(prod, std::memory_order_relaxed);
+                if (thr_forced)
+                    set_partial_relower_threshold(thr);
+                else
+                    reset_partial_relower_threshold_for_test();
+            }
+        } face;
+        (void)face;
+
+        auto bundle_fp = [](const CompilerService::IRCacheEntry& e) {
+            std::string s;
+            for (const auto& fn : e.irs) {
+                if (fn.name == "__top__")
+                    continue;
+                s += fn.name;
+                s += "{";
+                for (const auto& b : fn.blocks) {
+                    for (const auto& ins : b.instructions) {
+                        s += std::format("{}:{}:{}:{}:{};", static_cast<unsigned>(ins.opcode),
+                                         ins.operands[0], ins.operands[1], ins.operands[2],
+                                         ins.operands[3]);
+                    }
+                    s += "|";
+                }
+                s += "}";
+            }
+            return s;
+        };
+        auto has_sentinel = [](const CompilerService::IRCacheEntry& e) {
+            for (std::size_t fi = 2; fi < e.irs.size(); ++fi) {
+                for (const auto& b : e.irs[fi].blocks) {
+                    for (const auto& ins : b.instructions) {
+                        if (ins.operands[3] == 0x4103u)
+                            return true;
+                    }
+                }
+            }
+            return false;
+        };
+        const char* nested_src =
+            R"src((set-code "(define (outer4103 x) (lambda (y) (+ y 1)))"))src";
+        const char* plain_src = R"src((set-code "(define (plain4103 x) (+ x 1))"))src";
+
+        auto cache_define = [](CompilerService& cs, const char* src, const char* name) {
+            CHECK(cs.eval(src).has_value(), std::format("4103 set-code {}", name));
+            CHECK(cs.eval("(eval-current)").has_value(), std::format("4103 eval {}", name));
+            if (!cs.get_define_v2(name) || cs.get_define_v2(name)->irs.empty())
+                (void)cs.eval(std::format("(compile:cache-define \"{}\")", name));
+            return cs.get_define_v2(name) != nullptr && !cs.get_define_v2(name)->irs.empty();
+        };
+
+        // Production / Full: nested siblings fall through to a full store.
+        {
+            CompilerService fresh;
+            CHECK(cache_define(fresh, nested_src, "outer4103"), "4103 fresh nested cache");
+            const auto fresh_fp = fresh.get_define_v2("outer4103")
+                                      ? bundle_fp(*fresh.get_define_v2("outer4103"))
+                                      : std::string{};
+
+            CompilerService cs;
+            CHECK(cache_define(cs, nested_src, "outer4103"), "4103 nested cache");
+            const auto planted = cs.plant_body_only_dirty_for_test("outer4103", true);
+            CHECK(planted >= 3, std::format("4103 dual-shape irs.size={} >= 3", planted));
+            const auto* before = cs.get_define_v2("outer4103");
+            CHECK(before != nullptr && has_sentinel(*before), "4103 sentinel planted on nested IR");
+            CHECK(!before->content_stored_this_epoch, "4103 content not stored while body-dirty");
+            CHECK(cs.lookup_define_v2("outer4103", before->source_hash) == 1,
+                  "4103 lookup stays 1 until a full store");
+            set_strategy(AuditStrategy::Full);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            // Keep the instruction peel from stealing the per-function arm.
+            set_partial_relower_threshold(1);
+            auto* m = metrics_of(cs);
+            const auto impact0 =
+                m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            CHECK(cs.relower_define_from_workspace_for_test("outer4103"), "4103 nested relower");
+            const auto* after = cs.get_define_v2("outer4103");
+            CHECK(after != nullptr, "4103 entry after relower");
+            CHECK(!has_sentinel(*after), "4103 full store replaced poisoned nested IR");
+            CHECK(after->content_stored_this_epoch, "4103 content stored by full re-lower");
+            CHECK(cs.lookup_define_v2("outer4103", after->source_hash) == 0,
+                  "4103 lookup 0 only after the nested function was replaced");
+            CHECK(bundle_fp(*after) == fresh_fp, "4103 nested IR matches a full lower");
+            CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > impact0,
+                  "4103 reuses partial_forced_full_by_impact_total");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
+                  "4103 fell through to full re-lower");
+            CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) > per0,
+                  "4103 still entered the single-function peel before refusing the restamp");
+        }
+
+        // __top__ + body (irs.size()==2) may still peel and clean-hit.
+        {
+            CompilerService cs;
+            CHECK(cache_define(cs, plain_src, "plain4103"), "4103 plain cache");
+            const auto planted = cs.plant_body_only_dirty_for_test("plain4103", false);
+            CHECK(planted == 2, std::format("4103 plain irs.size={} == 2", planted));
+            const auto* before = cs.get_define_v2("plain4103");
+            CHECK(before != nullptr, "4103 plain entry");
+            CHECK(cs.lookup_define_v2("plain4103", before->source_hash) == 1,
+                  "4103 plain lookup 1 while body-dirty");
+            set_strategy(AuditStrategy::Full);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            set_partial_relower_threshold(1);
+            auto* m = metrics_of(cs);
+            const auto impact0 =
+                m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            CHECK(cs.relower_define_from_workspace_for_test("plain4103"), "4103 plain relower");
+            const auto* after = cs.get_define_v2("plain4103");
+            CHECK(after != nullptr && after->content_stored_this_epoch,
+                  "4103 plain content stored");
+            CHECK(cs.lookup_define_v2("plain4103", after->source_hash) == 0,
+                  "4103 plain peel clean-hits");
+            CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) > per0,
+                  "4103 plain took the per-function peel");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) == full0,
+                  "4103 plain peel did not fall through to full");
+            CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) == impact0,
+                  "4103 plain peel does not force-full");
+        }
+
+        // Soft / Off keeps the single-function return, nested sentinel included.
+        {
+            CompilerService cs;
+            CHECK(cache_define(cs, nested_src, "outer4103"), "4103 soft nested cache");
+            const auto planted = cs.plant_body_only_dirty_for_test("outer4103", true);
+            CHECK(planted >= 3, std::format("4103 soft irs.size={} >= 3", planted));
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            set_strategy(AuditStrategy::Sampled);
+            set_partial_relower_threshold(1);
+            auto* m = metrics_of(cs);
+            const auto impact0 =
+                m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            CHECK(cs.relower_define_from_workspace_for_test("outer4103"), "4103 soft relower");
+            const auto* after = cs.get_define_v2("outer4103");
+            CHECK(after != nullptr && has_sentinel(*after),
+                  "4103 Soft peel leaves nested IR on the pre-mutate body");
+            CHECK(after->content_stored_this_epoch, "4103 Soft peel stores the peeled function");
+            CHECK(cs.lookup_define_v2("outer4103", after->source_hash) == 0,
+                  "4103 Soft single-function peel clean-hits");
+            CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) == impact0,
+                  "4103 Soft peel does not force-full");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) == full0,
+                  "4103 Soft peel does not full-relower");
+        }
+
+        // Source cite: new gate, plus unknown-callee and abort-stale still force full.
+        {
+            const auto svc = read_file("src/compiler/service.ixx");
+            const auto at = svc.find("Issue #4103:");
+            CHECK(at != std::string::npos, "4103 cite present");
+            const auto win = svc.substr(at, 1400);
+            CHECK(win.find("it->second.irs.size() > dirty_func_idx + 1") != std::string::npos,
+                  "4103 cite: sibling size check");
+            CHECK(win.find("partial_forced_full_by_impact_total") != std::string::npos,
+                  "4103 cite: reuse partial_forced_full_by_impact_total");
+            CHECK(win.find("production_defaults_active()") != std::string::npos,
+                  "4103 cite: production_defaults_active");
+            CHECK(win.find("AuditStrategy::Full") != std::string::npos, "4103 cite: Full");
+            CHECK(win.find("content_stored_this_epoch = false") != std::string::npos,
+                  "4103 cite: do not store content on the sibling shape");
+            CHECK(win.find("restamp_cache_entry_live_") == std::string::npos,
+                  "4103 cite: sibling arm does not restamp");
+            const auto unk = svc.find("kUnknownCalleeConeBlocks");
+            CHECK(unk != std::string::npos, "4103 unknown-callee gate still present");
+            const auto unk_win = svc.substr(unk > 400 ? unk - 400 : 0, 900);
+            CHECK(unk_win.find("partial_forced_full_by_impact_total") != std::string::npos,
+                  "4103 unknown-callee still forces full");
+            CHECK(unk_win.find("allow_partial = false") != std::string::npos,
+                  "4103 unknown-callee clears allow_partial");
+            const auto abort_at = svc.find("Issue #3324: abort-restore must not instr-peel");
+            CHECK(abort_at != std::string::npos, "4103 abort-stale gate still present");
+            const auto abort_win = svc.substr(abort_at, 700);
+            CHECK(abort_win.find("content_stored_this_epoch = false") != std::string::npos,
+                  "4103 abort-stale still refuses a content store");
+            CHECK(abort_win.find("mark_all_blocks_dirty()") != std::string::npos,
+                  "4103 abort-stale still marks the entry dirty");
+            CHECK(read_file("tests/compiler/test_issue_4103.cpp").empty(),
+                  "4103 no test_issue_4103.cpp");
+            CHECK(read_file("docs/design/4103-nested-relower.md").empty(), "4103 no design note");
+        }
     }
 
     std::println("\n=== #2813/#3484 cascade relower silent skip: {} passed, {} failed ===",

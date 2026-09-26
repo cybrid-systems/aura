@@ -7083,117 +7083,138 @@ public:
                                                     : 0;
                 const auto partial_t0 = std::chrono::steady_clock::now();
                 if (relower_define_function(name, dirty_func_idx, flat, pool, expanded_root)) {
-                    // Issue #2113: debug incremental soundness oracle —
-                    // after partial success, full-lower the same Lambda and
-                    // compare IR (partial ≡ full). Zero cost when disabled.
-                    if (incremental_soundness_enabled() && dirty_func_idx < it->second.irs.size()) {
-                        auto full_fn = aura::compiler::lower_function_at(
-                            flat, pool, arena_, expanded_root, &evaluator_.primitives());
-                        // Align id for compare helper (ignores id already).
-                        full_fn.id = it->second.irs[dirty_func_idx].id;
-                        // check_incremental_soundness bumps process atomics;
-                        // mirror into CompilerMetrics for dump/export.
-                        const bool ok =
-                            check_incremental_soundness(it->second.irs[dirty_func_idx], full_fn);
-                        metrics_.incremental_soundness_runs_total.fetch_add(
+                    // Issue #4103: irs after the single dirty function
+                    // (nested lambdas at irs[2+] when the body is index 1)
+                    // were not rewritten. Production / Full must not set
+                    // content_stored_this_epoch and must not restamp
+                    // the live cache stamps; fall through to the full
+                    // re-lower. Soft / Off keeps the single-function
+                    // return. Reuses partial_forced_full_by_impact_total.
+                    const bool hard_nested_siblings =
+                        (aura::compiler::typed_audit::production_defaults_active() ||
+                         aura::compiler::typed_audit::get_strategy() ==
+                             aura::compiler::typed_audit::AuditStrategy::Full) &&
+                        it->second.irs.size() > dirty_func_idx + 1;
+                    if (hard_nested_siblings) {
+                        it->second.mark_all_blocks_dirty();
+                        it->second.dirty = true;
+                        it->second.content_stored_this_epoch = false;
+                        metrics_.partial_forced_full_by_impact_total.fetch_add(
                             1, std::memory_order_relaxed);
-                        if (ok) {
-                            metrics_.incremental_soundness_ok_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        } else {
-                            metrics_.incremental_soundness_mismatch_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                    }
-                    // Issue #2112: feed adaptive threshold history.
-                    const auto partial_ns = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::steady_clock::now() - partial_t0)
-                            .count());
-                    note_partial_relower_cost_ns(partial_ns);
-                    metrics_.avg_partial_relower_cost_ns.store(avg_partial_relower_cost_ns(),
-                                                               std::memory_order_relaxed);
-                    metrics_.partial_relower_cost_samples.store(
-                        partial_relower_cost_samples_atomic().load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-                    metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
-                                                                  std::memory_order_relaxed);
-                    if (clean_funcs > 0) {
-                        metrics_.relower_partial_funcs_saved_total.fetch_add(
-                            clean_funcs, std::memory_order_relaxed);
-                        // Issue #1915: minimal recompile scope observability.
-                        metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
-                            clean_funcs, std::memory_order_relaxed);
-                        metrics_.minimal_recompile_scope_samples.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                    // Issue #1639: hit-rate numerator bump on partial
-                    // success (paired with the denominator bump in
-                    // the full-fallback path). Together they let
-                    // dashboards compute relower_block_hit_rate =
-                    // numerator / denominator (basis points). Pairs
-                    // with the existing relower_per_function_called_count
-                    // + relower_skipped_entirely_count for full per-call
-                    // observability of the partial vs full decision.
-                    evaluator_.bump_relower_block_hit_rate(1, 1); // 1 hit, 1 total attempt
-                    // Issue #1915 AC: count blocks that took partial path.
-                    if (!dirty_ids.empty()) {
-                        metrics_.relower_block_count.fetch_add(dirty_ids.size(),
-                                                               std::memory_order_relaxed);
-                        metrics_.incremental_relower_blocks_total.fetch_add(
-                            dirty_ids.size(), std::memory_order_relaxed);
-                    }
-                    // Issue #1495: stamp source after partial so
-                    // lookup_define_v2 hits (hash match + clean dirty).
-                    if (!source.empty()) {
-                        it->second.source = std::string(source);
-                        it->second.source_hash = fnv1a_64(it->second.source);
-                    }
-                    it->second.dirty = false;
-                    // Issue #3481: per-fn re-lower rewrote AST/IR for this
-                    // function — content is stored this epoch.
-                    it->second.content_stored_this_epoch = true;
-                    // Issue #2181 AC2: after successful partial, desync must be 0.
-                    if (it->second.soa_mod.count_block_instr_dirty_desync() != 0) {
-                        metrics_.soa_dirty_desync_force_full_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        // Residual desync after peel → fall through to full.
                     } else {
-                        // Issue #2183 AC1: restamp after successful per-fn partial.
-                        restamp_cache_entry_live_(it->second);
-                        ack_peer_ir_stale_on_restamp_(it->second, name);
-                        // Issue #3136: success-path bitmap coherence (see 4968).
-                        if (aura_production_defaults_active_probe() != 0) {
-                            hot_update_registry().note_relower_success_coverage(
-                                1ULL << (fnv1a_64(name) & 63));
-                            // Issue #3229: define-id side set (6-bit collision).
-                            hot_update_registry().note_relower_success_define(
-                                relower_success_define_id(name));
+                        // Issue #2113: debug incremental soundness oracle —
+                        // after partial success, full-lower the same Lambda and
+                        // compare IR (partial ≡ full). Zero cost when disabled.
+                        if (incremental_soundness_enabled() &&
+                            dirty_func_idx < it->second.irs.size()) {
+                            auto full_fn = aura::compiler::lower_function_at(
+                                flat, pool, arena_, expanded_root, &evaluator_.primitives());
+                            // Align id for compare helper (ignores id already).
+                            full_fn.id = it->second.irs[dirty_func_idx].id;
+                            // check_incremental_soundness bumps process atomics;
+                            // mirror into CompilerMetrics for dump/export.
+                            const bool ok = check_incremental_soundness(
+                                it->second.irs[dirty_func_idx], full_fn);
+                            metrics_.incremental_soundness_runs_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            if (ok) {
+                                metrics_.incremental_soundness_ok_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            } else {
+                                metrics_.incremental_soundness_mismatch_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
                         }
-                        // Issue #1514: sync JIT — evict native code for this
-                        // define so next exec recompiles only the dirty fn.
-                        // Issue #4083: partial_recompile only removes the ORC
-                        // tracker. Erase jit_cache_ under jit_cache_mtx_ (same
-                        // window as invalidate_function) and drop the installed
-                        // ScalarFn before that remove, so the next eval cannot
-                        // cache-hit and a closure cannot call the unloaded
-                        // address. Soft already runs partial_recompile; this
-                        // is the dangling-pointer teardown, not a second gate.
-                        // Do not call jit_.invalidate here — #2476 keeps a
-                        // single invalidate_prefix pass inside partial_recompile.
-                        {
-                            std::unique_lock cache_write(jit_cache_mtx_);
-                            if (jit_cache_.erase(name) > 0)
-                                metrics_.jit_cache_evictions.fetch_add(1,
-                                                                       std::memory_order_relaxed);
+                        // Issue #2112: feed adaptive threshold history.
+                        const auto partial_ns = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - partial_t0)
+                                .count());
+                        note_partial_relower_cost_ns(partial_ns);
+                        metrics_.avg_partial_relower_cost_ns.store(avg_partial_relower_cost_ns(),
+                                                                   std::memory_order_relaxed);
+                        metrics_.partial_relower_cost_samples.store(
+                            partial_relower_cost_samples_atomic().load(std::memory_order_relaxed),
+                            std::memory_order_relaxed);
+                        metrics_.partial_relower_threshold_used.store(
+                            get_partial_relower_threshold(), std::memory_order_relaxed);
+                        if (clean_funcs > 0) {
+                            metrics_.relower_partial_funcs_saved_total.fetch_add(
+                                clean_funcs, std::memory_order_relaxed);
+                            // Issue #1915: minimal recompile scope observability.
+                            metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
+                                clean_funcs, std::memory_order_relaxed);
+                            metrics_.minimal_recompile_scope_samples.fetch_add(
+                                1, std::memory_order_relaxed);
                         }
-                        aura_drop_jit_fn_native_for_define(name.c_str());
-                        (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
-                                                     dirty_ids.size());
-                        metrics_.jit_partial_recompile_requests_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        return true;
-                    }
+                        // Issue #1639: hit-rate numerator bump on partial
+                        // success (paired with the denominator bump in
+                        // the full-fallback path). Together they let
+                        // dashboards compute relower_block_hit_rate =
+                        // numerator / denominator (basis points). Pairs
+                        // with the existing relower_per_function_called_count
+                        // + relower_skipped_entirely_count for full per-call
+                        // observability of the partial vs full decision.
+                        evaluator_.bump_relower_block_hit_rate(1, 1); // 1 hit, 1 total attempt
+                        // Issue #1915 AC: count blocks that took partial path.
+                        if (!dirty_ids.empty()) {
+                            metrics_.relower_block_count.fetch_add(dirty_ids.size(),
+                                                                   std::memory_order_relaxed);
+                            metrics_.incremental_relower_blocks_total.fetch_add(
+                                dirty_ids.size(), std::memory_order_relaxed);
+                        }
+                        // Issue #1495: stamp source after partial so
+                        // lookup_define_v2 hits (hash match + clean dirty).
+                        if (!source.empty()) {
+                            it->second.source = std::string(source);
+                            it->second.source_hash = fnv1a_64(it->second.source);
+                        }
+                        it->second.dirty = false;
+                        // Issue #3481: per-fn re-lower rewrote AST/IR for this
+                        // function — content is stored this epoch.
+                        it->second.content_stored_this_epoch = true;
+                        // Issue #2181 AC2: after successful partial, desync must be 0.
+                        if (it->second.soa_mod.count_block_instr_dirty_desync() != 0) {
+                            metrics_.soa_dirty_desync_force_full_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Residual desync after peel → fall through to full.
+                        } else {
+                            // Issue #2183 AC1: restamp after successful per-fn partial.
+                            restamp_cache_entry_live_(it->second);
+                            ack_peer_ir_stale_on_restamp_(it->second, name);
+                            // Issue #3136: success-path bitmap coherence (see 4968).
+                            if (aura_production_defaults_active_probe() != 0) {
+                                hot_update_registry().note_relower_success_coverage(
+                                    1ULL << (fnv1a_64(name) & 63));
+                                // Issue #3229: define-id side set (6-bit collision).
+                                hot_update_registry().note_relower_success_define(
+                                    relower_success_define_id(name));
+                            }
+                            // Issue #1514: sync JIT — evict native code for this
+                            // define so next exec recompiles only the dirty fn.
+                            // Issue #4083: partial_recompile only removes the ORC
+                            // tracker. Erase jit_cache_ under jit_cache_mtx_ (same
+                            // window as invalidate_function) and drop the installed
+                            // ScalarFn before that remove, so the next eval cannot
+                            // cache-hit and a closure cannot call the unloaded
+                            // address. Soft already runs partial_recompile; this
+                            // is the dangling-pointer teardown, not a second gate.
+                            // Do not call jit_.invalidate here — #2476 keeps a
+                            // single invalidate_prefix pass inside partial_recompile.
+                            {
+                                std::unique_lock cache_write(jit_cache_mtx_);
+                                if (jit_cache_.erase(name) > 0)
+                                    metrics_.jit_cache_evictions.fetch_add(
+                                        1, std::memory_order_relaxed);
+                            }
+                            aura_drop_jit_fn_native_for_define(name.c_str());
+                            (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
+                                                         dirty_ids.size());
+                            metrics_.jit_partial_recompile_requests_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            return true;
+                        }
+                    } // Issue #4103: Soft / Off single-function return
                 }
                 // If per-function failed, fall through to
                 // full re-lower below.
@@ -8733,6 +8754,81 @@ public:
         e.clear_all_block_dirty();
         e.clear_all_instruction_dirty();
         return true;
+    }
+
+    // Issue #4103: dual-shape body-only dirty. Prepends a clean __top__
+    // when the stored bundle dropped it, marks only irs[1], and optionally
+    // poisons operand[3] of every function after that index so a restamp
+    // of the partial peel is distinguishable from store_define_v2.
+    // Clears soa_mod so the SoA gate does not force full on the shape
+    // insert. Returns irs.size() (0 if the name is missing).
+    std::size_t plant_body_only_dirty_for_test(const std::string& name, bool poison_after_body) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end() || it->second.irs.empty())
+            return 0;
+        auto& entry = it->second;
+        if (entry.irs[0].name != "__top__") {
+            aura::ir::IRFunction top;
+            top.id = 0;
+            top.name = "__top__";
+            aura::ir::BasicBlock blk;
+            blk.id = 0;
+            top.blocks.push_back(std::move(blk));
+            entry.irs.insert(entry.irs.begin(), std::move(top));
+        }
+        entry.soa_mod = {};
+        entry.init_block_dirty_from_irs();
+        entry.init_instruction_dirty_from_irs();
+        entry.clear_all_block_dirty();
+        entry.clear_all_instruction_dirty();
+        (void)entry.mark_body_only_dirty();
+        if (poison_after_body) {
+            for (std::size_t fi = 2; fi < entry.irs.size(); ++fi) {
+                auto& fn = entry.irs[fi];
+                if (fn.blocks.empty()) {
+                    aura::ir::BasicBlock blk;
+                    blk.id = 0;
+                    fn.blocks.push_back(std::move(blk));
+                }
+                if (fn.blocks[0].instructions.empty()) {
+                    aura::ir::IRInstruction ins;
+                    ins.opcode = aura::ir::IROpcode::Nop;
+                    ins.operands[3] = 0x4103u;
+                    fn.blocks[0].instructions.push_back(ins);
+                } else {
+                    fn.blocks[0].instructions[0].operands[3] = 0x4103u;
+                }
+            }
+        }
+        return entry.irs.size();
+    }
+
+    // Issue #4103: drive relower_define_blocks from the workspace define
+    // whose name matches, using the cached source string.
+    bool relower_define_from_workspace_for_test(const std::string& name) {
+        auto* flat = evaluator_.workspace_flat();
+        auto* pool = evaluator_.workspace_pool();
+        if (!flat || !pool)
+            return false;
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        const std::string source = it->second.source;
+        aura::ast::NodeId lambda = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            auto v = flat->get(id);
+            if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            if (std::string(pool->resolve(v.sym_id)) != name || v.children.empty())
+                continue;
+            auto body = v.child(0);
+            if (body < flat->size() && flat->get(body).tag == aura::ast::NodeTag::Lambda)
+                lambda = body;
+            break;
+        }
+        if (lambda == aura::ast::NULL_NODE)
+            return false;
+        return relower_define_blocks(name, source, *flat, *pool, lambda);
     }
 
     // Issue #3484 test: persist-empty / body-only mark missed. Keep the
