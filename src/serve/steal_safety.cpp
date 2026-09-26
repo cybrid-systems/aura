@@ -252,20 +252,25 @@ namespace {
         (is_steal_snapshot_hard_mode() || aura_runtime_multi_worker_production_latched() != 0)) {
         namespace lcp = aura::core::lifetime_consistency_proof;
         // Issue #3617: victim-eval keyed — the process-last read fired on a
-        // foreign evaluator's Reject. Terms read the victim's own slots
-        // (#2727 identity). No identity → quiet skip.
-        // Issue #4104: a missing slot is quiet-allow except when this
+        // foreign evaluator's Reject. All three terms now read the victim's
+        // own slots (#2727 identity); no slot / no identity → quiet skip.
+        // Issue #4104: a missing slot stays quiet-allow except when this
         // victim is the overflow id and would_allow is 0.
         void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
-        if (victim_eval_id != nullptr &&
-            aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0) {
-            const bool present = lcp::last_lifetime_consistency_proof_present_for(victim_eval_id);
-            if ((present && !lcp::last_lifetime_consistency_would_allow_for(victim_eval_id)) ||
-                (!present && lcp::lifetime_consistency_overflow_rejects(victim_eval_id))) {
-                fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
-                if (bump_counters)
-                    note_steal_invariant_fail(StealInvariant::LifetimeProofOk);
-            }
+        const bool slotted_reject =
+            victim_eval_id != nullptr &&
+            lcp::last_lifetime_consistency_proof_present_for(victim_eval_id) &&
+            aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0 &&
+            !lcp::last_lifetime_consistency_would_allow_for(victim_eval_id);
+        const bool overflow_reject =
+            victim_eval_id != nullptr &&
+            !lcp::last_lifetime_consistency_proof_present_for(victim_eval_id) &&
+            aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0 &&
+            lcp::lifetime_consistency_overflow_rejects(victim_eval_id);
+        if (slotted_reject || overflow_reject) {
+            fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::LifetimeProofOk);
         }
     }
     return fail_bits;
