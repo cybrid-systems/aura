@@ -2341,6 +2341,229 @@ int main() {
             apply_dev_audit_defaults();
         }
 
+        // ── Issue #4107: production if-join / arith peel ground gate —
+        // synthesis must not publish a solved type without the gate. ──
+        {
+            using aura::compiler::ConstraintSystem;
+            using aura::compiler::GradualPermissiveness;
+            using aura::compiler::TypeChecker;
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::core::TypeRegistry;
+            using aura::diag::ErrorKind;
+
+            struct ProdScope {
+                ProdScope() { apply_production_audit_defaults(); }
+                ~ProdScope() { apply_dev_audit_defaults(); }
+            };
+
+            struct Infer4107 {
+                aura::core::TypeId ty{};
+                bool saw_gate_te = false;
+                bool saw_any_te = false;
+                bool authoritative = false;
+            };
+            auto infer_src = [](std::string_view src, TypeRegistry& treg) -> Infer4107 {
+                Infer4107 r;
+                TypeChecker tc(treg);
+                tc.set_strict(false);
+                aura::diag::DiagnosticCollector diag;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat(src, flat, pool);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE)
+                    return r;
+                flat.root = pr.root;
+                r.ty = tc.infer_flat(flat, pool, pr.root, diag);
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind == ErrorKind::TypeError) {
+                        r.saw_any_te = true;
+                        if (d.message.find("incompatible ground types") != std::string::npos)
+                            r.saw_gate_te = true;
+                    }
+                }
+                r.authoritative = tc.type_export_is_authoritative();
+                return r;
+            };
+
+            // AC1: Production infer of (if p 1 "a") is not an authoritative
+            // Dynamic — ground-gate TypeError + void, authority demoted.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(if p 1 \"a\")", treg);
+                if (r.saw_gate_te && r.ty == treg.void_type() && !r.authoritative) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_1_if_join_prod_not_authoritative");
+                } else {
+                    ++ts_failed;
+                    std::println(
+                        std::cerr,
+                        "TS FAIL: ac4107_1_if_join_prod_not_authoritative te={} void={} auth={}",
+                        r.saw_gate_te, r.ty == treg.void_type(), r.authoritative);
+                }
+            }
+
+            // AC1 soft: the gradual join still returns Dynamic.
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                auto r = infer_src("(if p 1 \"a\")", treg);
+                if (r.ty == treg.dynamic_type() && !r.saw_gate_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_1_if_join_soft_dynamic");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_1_if_join_soft_dynamic");
+                }
+            }
+
+            // AC2: Production infer of (+ "42" 1) is not an authoritative Int.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(+ \"42\" 1)", treg);
+                if (r.saw_gate_te && r.ty == treg.void_type() && !r.authoritative) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_2_arith_pair_prod_not_int");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_2_arith_pair_prod_not_int");
+                }
+            }
+
+            // AC2 soft: the historical runtime-coerce peel still returns Int.
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                auto r = infer_src("(+ \"42\" 1)", treg);
+                if (r.ty == treg.int_type() && !r.saw_any_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_2_arith_pair_soft_int");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_2_arith_pair_soft_int");
+                }
+            }
+
+            // AC3: Production infer of (+ "a") is not an authoritative String.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(+ \"a\")", treg);
+                if (r.saw_gate_te && r.ty == treg.void_type() && !r.authoritative) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_3_arith_single_prod_not_string");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_3_arith_single_prod_not_string");
+                }
+            }
+
+            // AC3 soft: the single-operand pass-through still returns String.
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                auto r = infer_src("(+ \"a\")", treg);
+                if (r.ty == treg.string_type() && !r.saw_any_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_3_arith_single_soft_string");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_3_arith_single_soft_string");
+                }
+            }
+
+            // AC4: Production (+ 1 2) and (+ 1 2.0) still solve Int / Float
+            // and the numeric arms report no TypeError (the gate does not
+            // over-fire). Authority is not asserted here: earlier
+            // production blocks in this process legitimately latch the
+            // #3237 pending_full_solve residual face, which refuses the
+            // export regardless of the gate.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r1 = infer_src("(+ 1 2)", treg);
+                auto r2 = infer_src("(+ 1 2.0)", treg);
+                if (r1.ty == treg.int_type() && r2.ty == treg.lookup_type("Float") &&
+                    !r1.saw_any_te && !r2.saw_any_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_4_numeric_arms_int_float");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4107_4_numeric_arms_int_float i={} f={} te1={} te2={}",
+                                 r1.ty == treg.int_type(), r2.ty == treg.lookup_type("Float"),
+                                 r1.saw_any_te, r2.saw_any_te);
+                }
+            }
+
+            // AC5: ground~Dynamic consistent_unify still fails closed under
+            // the production face (and still succeeds soft).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (!cs.consistent_unify(treg.int_type(), treg.dynamic_type()) &&
+                    !cs.consistent_unify(treg.dynamic_type(), treg.int_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_5_ground_dynamic_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_5_ground_dynamic_prod_false");
+                }
+            }
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (cs.consistent_unify(treg.int_type(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_5_ground_dynamic_soft_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_5_ground_dynamic_soft_true");
+                }
+            }
+
+            // AC5 annotated: check_flat_if against Int still reports the
+            // branch mismatch for (: r Int (if p 1 "a")).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                TypeChecker tc(treg);
+                tc.set_strict(false);
+                tc.set_gradual_permissiveness(GradualPermissiveness::Strict);
+                aura::diag::DiagnosticCollector diag;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat("(: r Int (if p 1 \"a\"))", flat, pool);
+                bool saw_te = false;
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    flat.root = pr.root;
+                    (void)tc.infer_flat(flat, pool, pr.root, diag);
+                    for (const auto& d : diag.diagnostics())
+                        if (d.kind == ErrorKind::TypeError)
+                            saw_te = true;
+                }
+                if (saw_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4107_5_annotated_if_branch_mismatch");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4107_5_annotated_if_branch_mismatch");
+                }
+            }
+
+            apply_dev_audit_defaults();
+        }
+
         // ── Issue #3662: Production is_coercible(Dynamic, T) matches unify
         // reject — check_flat must not insert CastOp after #3622. ──
         {
