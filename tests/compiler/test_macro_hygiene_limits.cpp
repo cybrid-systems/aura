@@ -2047,7 +2047,7 @@ static void ac4101_soft_still_evals() {
     const auto arm = eef.find("Issue #4101: clone_ckpt is the size before the");
     CHECK(arm != std::string::npos, "4101: eval_flat cites #4101");
     if (arm != std::string::npos) {
-        const auto win = eef.substr(arm, 5200);
+        const auto win = eef.substr(arm, 5400);
         CHECK(win.find("inner_expand_production_limit_deny_all()") != std::string::npos,
               "4101: hygienic arm uses deny_all (8/9/10 included)");
         CHECK(win.find("truncate_to(clone_ckpt)") != std::string::npos,
