@@ -8127,6 +8127,27 @@ def cmd_lint():
             "Issue #4112 agent export occupancy linter failed - run python3 scripts/check_agent_export_occupancy_4112.py"
         )
         return r
+    # Issue #4113 (security): resolve_stamped Stage-1 consults ref.tenant_id
+    # only, so a residual wash site that sets ref.tenant_id = caller while
+    # the #3415 occupancy ring holds a foreign owner false-allows Stage-1
+    # (same-tenant). The #4112 export choke closed the Agent handoff track;
+    # this belt re-adjudicates at the resolve face itself: Strict|
+    # (Restricted+MT) regime, family ladder (exact stamp, hygiene borrow,
+    # collision borrow), deny only for non-zero foreign occupancy routed
+    # through the shared check_workspace_isolation face with the verdict
+    # honored (allowed cross-grant target passes), deterministic
+    # isolation-deny reason + nullopt before Stage 2; Soft/Off zero extra;
+    # no new metric (cross_tenant_provenance_deny_total reused).
+    rso4113_script = ROOT / "scripts" / "check_resolve_stamped_occupancy_4113.py"
+    if not rso4113_script.exists():
+        fail(f"missing {rso4113_script}")
+        return 1
+    r = run([sys.executable, str(rso4113_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4113 resolve_stamped occupancy belt linter failed - run python3 scripts/check_resolve_stamped_occupancy_4113.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the
