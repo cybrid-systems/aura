@@ -1249,6 +1249,99 @@ static void ac3988_no_edge_opcode_poll() {
     CHECK(aura_jit_poll_hold_budget_safepoint() == 0, "3988: Soft peek-only");
 }
 
+// Issue #4104: a full 64-slot LCP table must not quiet-allow the evaluator
+// whose Reject never landed in a slot. Overflow Reject is that id only.
+static void ac4104_lcp_overflow_rejects_victim() {
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    namespace dens = aura::core::densify_consistency;
+    lcp::reset_lcp_eval_slots_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+
+    std::vector<void*> fillers;
+    fillers.reserve(lcp::kLcpEvalSlotCount);
+    lcp::LifetimeConsistencyProof allow{};
+    allow.would_allow_commit = true;
+    for (std::size_t i = 0; i < lcp::kLcpEvalSlotCount; ++i) {
+        auto* id = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x41041000u + i * 16u));
+        fillers.push_back(id);
+        lcp::stamp_lifetime_consistency_proof_for(id, allow);
+    }
+    CHECK(lcp::last_lifetime_consistency_proof_present_for(fillers[0]),
+          "4104: filler occupies a real slot");
+    CHECK(lcp::last_lifetime_consistency_would_allow_for(fillers[0]), "4104: filler would_allow");
+
+    auto* victim = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4104ABCDu));
+    auto* other = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4104EEEEu));
+    lcp::LifetimeConsistencyProof reject{};
+    reject.would_allow_commit = false;
+    lcp::stamp_lifetime_consistency_proof_for(victim, reject);
+    CHECK(!lcp::last_lifetime_consistency_proof_present_for(victim),
+          "4104: victim has no slot when the table is full");
+    CHECK(lcp::lifetime_consistency_overflow_rejects(victim),
+          "4104: overflow records victim Reject");
+    CHECK(!lcp::lifetime_consistency_overflow_rejects(other), "4104: overflow is not process-wide");
+    CHECK(!lcp::lifetime_consistency_overflow_rejects(fillers[0]),
+          "4104: slotted allow is not the overflow id");
+
+    dens::note_last_densify_result_for(victim, /*envframe_ok=*/true, /*dual_epoch_ok=*/true);
+    dens::note_last_densify_result_for(fillers[0], /*envframe_ok=*/true, /*dual_epoch_ok=*/true);
+    dens::note_last_densify_result_for(other, /*envframe_ok=*/true, /*dual_epoch_ok=*/true);
+    CHECK(dens::last_densify_call_seq_for(victim) > 0, "4104: victim densify seq");
+    CHECK(dens::last_densify_call_seq_for(fillers[0]) > 0, "4104: filler densify seq");
+
+    auto prep = [](Fiber& f, void* id) {
+        f.set_evaluator_id(id);
+        f.set_yield_reason(YieldReason::Explicit);
+        f.publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+    };
+    Fiber allow_f([]() {}, /*stack_size=*/64 * 1024);
+    Fiber other_f([]() {}, /*stack_size=*/64 * 1024);
+    Fiber victim_f([]() {}, /*stack_size=*/64 * 1024);
+    prep(allow_f, fillers[0]);
+    prep(other_f, other);
+    prep(victim_f, victim);
+
+    const auto m_lifetime =
+        aura::serve::steal_invariant_mask(aura::serve::StealInvariant::LifetimeProofOk);
+    CHECK(aura::serve::steal_safety_transaction(&allow_f) == aura::serve::StealSafetyDecision::Ok,
+          "4104: slotted would_allow still Ok");
+    CHECK(aura::serve::steal_safety_transaction(&other_f) == aura::serve::StealSafetyDecision::Ok,
+          "4104: a different evaluator is not RejectHard");
+    const auto d = aura::serve::steal_safety_transaction(&victim_f);
+    CHECK(d == aura::serve::StealSafetyDecision::RejectHard, "4104: overflow victim RejectHard");
+    CHECK((aura::serve::g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed) &
+           m_lifetime) != 0,
+          "4104: RejectHard is LifetimeProofOk");
+
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::serve::set_steal_snapshot_soft_for_test(true);
+    const auto soft_bits = aura::serve::evaluate_residual_hard_and_bits(
+        &victim_f, victim_f.mutation_safety_snapshot(), false);
+    CHECK((soft_bits & m_lifetime) == 0, "4104: Soft skips the Lifetime arm");
+
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    const auto hh = read_file("src/core/lifetime_consistency_proof.hh");
+    CHECK(ss.find("Issue #4104") != std::string::npos, "4104: steal cite");
+    CHECK(ss.find("lifetime_consistency_overflow_rejects(victim_eval_id)") != std::string::npos,
+          "4104: overflow consulted on the Lifetime arm");
+    CHECK(hh.find("Issue #4104") != std::string::npos, "4104: proof cite");
+    CHECK(hh.find("lcp_overflow_publish") != std::string::npos, "4104: overflow publish");
+    const auto arm = ss.find("StealInvariant::LifetimeProofOk — Issue #2957 residual arm");
+    const auto arm_win = arm != std::string::npos ? ss.substr(arm, 1700) : std::string{};
+    CHECK(arm_win.find("last_lifetime_consistency_proof_present_for(victim_eval_id)") !=
+              std::string::npos,
+          "4104: #3617 present read stays inside the Lifetime window");
+    CHECK(read_file("tests/serve/test_issue_4104.cpp").empty(), "4104: no invent");
+    CHECK(read_file("docs/design/4104-lcp-overflow.md").empty(), "4104: no docs/design");
+
+    lcp::reset_lcp_eval_slots_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::serve::reset_steal_snapshot_soft_for_test();
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -1296,6 +1389,8 @@ int run_test_steal_complete_gc_defer() {
     ac3850_4_soft_leftover_observe_wiring();
     std::println("\n=== Issue #3988: no-edge opcode-stride force-safepoint poll ===");
     ac3988_no_edge_opcode_poll();
+    std::println("\n=== Issue #4104: LCP overflow Reject is this evaluator only ===");
+    ac4104_lcp_overflow_rejects_victim();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
