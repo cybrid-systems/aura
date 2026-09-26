@@ -2550,6 +2550,142 @@ static void ac2847_6_source_and_linter() {
           "AC6: no invent test file per #81967");
 }
 
+// Issue #4105: a 257th occurrence goal outside the admitted mask must
+// not commit. The 256 cap stays for Soft. mask==0 still skips the walk.
+static void ac4105_region_commit_over_cap() {
+    std::println("\n--- #4105: region commit fail-closed past 256 goals ---");
+    using aura::compiler::Evaluator;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::clear_region_type_cross_talk_for_test;
+    using aura::compiler::typed_audit::node_id_to_region_mask_bit;
+    using aura::compiler::typed_audit::region_type_cross_talk_face_hit;
+    using aura::compiler::typed_audit::region_type_cross_talk_reject_total_v_read;
+
+    const auto inside = node_id_to_region_mask_bit(1);
+    const auto outside = node_id_to_region_mask_bit(2);
+    CHECK(inside != 0 && outside != 0 && inside != outside, "4105: distinct cone bits");
+
+    auto fill = [](std::size_t n, std::uint32_t pred, std::uint32_t extra_pred) {
+        std::vector<std::uint32_t> preds(n, pred);
+        if (extra_pred != 0)
+            preds.push_back(extra_pred);
+        return preds;
+    };
+
+    struct Face {
+        std::uint32_t strategy;
+        std::uint32_t prod;
+        Face()
+            : strategy(aura::compiler::typed_audit::g_typed_mutation_audit_counters.strategy.load(
+                  std::memory_order_relaxed))
+            , prod(aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                       .production_defaults_active.load(std::memory_order_relaxed)) {}
+        ~Face() {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.strategy.store(
+                strategy, std::memory_order_relaxed);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(prod, std::memory_order_relaxed);
+        }
+    } face;
+    (void)face;
+
+    apply_production_audit_defaults();
+    clear_region_type_cross_talk_for_test();
+
+    {
+        CompilerService cs;
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "4105: outermost Guard");
+            const auto preds = fill(256, /*pred=*/1, /*extra=*/2);
+            CHECK(cs.evaluator().plant_commit_occurrence_preds_for_test(preds) == 257,
+                  "4105: 257 goals planted");
+            g.set_admitted_cone_mask_for_test(inside);
+        }
+        CHECK(!ok, "4105: 257th out-of-cone goal rejects commit");
+        CHECK(region_type_cross_talk_face_hit(), "4105: cross-talk reject face set");
+        CHECK(region_type_cross_talk_reject_total_v_read() >= 1, "4105: reject counter");
+    }
+
+    clear_region_type_cross_talk_for_test();
+    const auto rej_cap = region_type_cross_talk_reject_total_v_read();
+    {
+        CompilerService cs;
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "4105: 256-goal Guard");
+            const auto preds = fill(256, /*pred=*/1, /*extra=*/0);
+            CHECK(cs.evaluator().plant_commit_occurrence_preds_for_test(preds) == 256,
+                  "4105: 256 in-cone goals");
+            g.set_admitted_cone_mask_for_test(inside);
+        }
+        // Size == 256 is not the over-cap reject. The fingerprint cap
+        // (#3418) may still deny a Guard with more than 16 live goals;
+        // this face must stay clear.
+        (void)ok;
+        CHECK(!region_type_cross_talk_face_hit(), "4105: 256 in-cone does not latch reject");
+        CHECK(region_type_cross_talk_reject_total_v_read() == rej_cap,
+              "4105: 256 in-cone does not note cross-talk");
+    }
+
+    // admitted_mask == 0 never enters the walk, so an out-of-cone goal
+    // cannot note cross-talk. Proof last-look (#3346) may still deny the
+    // Guard for a planted goal set; that is not the region gate.
+    clear_region_type_cross_talk_for_test();
+    const auto rej0 = region_type_cross_talk_reject_total_v_read();
+    {
+        CompilerService cs;
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            const auto preds = fill(1, /*pred=*/2, /*extra=*/0);
+            CHECK(cs.evaluator().plant_commit_occurrence_preds_for_test(preds) == 1,
+                  "4105: mask0 plants one out-of-cone goal");
+        }
+        (void)ok;
+        CHECK(region_type_cross_talk_reject_total_v_read() == rej0, "4105: mask 0 does not reject");
+        CHECK(!region_type_cross_talk_face_hit(), "4105: mask 0 does not latch");
+    }
+
+    apply_dev_audit_defaults();
+    clear_region_type_cross_talk_for_test();
+    {
+        CompilerService cs;
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            const auto preds = fill(256, /*pred=*/1, /*extra=*/2);
+            CHECK(cs.evaluator().plant_commit_occurrence_preds_for_test(preds) == 257,
+                  "4105: Soft plants 257");
+            g.set_admitted_cone_mask_for_test(inside);
+        }
+        CHECK(ok, "4105: Soft keeps the capped walk and commits");
+        CHECK(!region_type_cross_talk_face_hit(), "4105: Soft does not latch reject");
+    }
+
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto at = emb.find("Issue #4105:");
+    CHECK(at != std::string::npos, "4105: cite");
+    const auto win = at == std::string::npos ? std::string{} : emb.substr(at, 1400);
+    CHECK(win.find("kMaxGoals") != std::string::npos, "4105: cap remains");
+    CHECK(win.find("goals.size() > kMaxGoals") != std::string::npos, "4105: over-cap check");
+    CHECK(win.find("production_defaults_active()") != std::string::npos, "4105: production face");
+    CHECK(win.find("AuditStrategy::Full") != std::string::npos, "4105: Full face");
+    CHECK(win.find("note_region_type_cross_talk(hard)") != std::string::npos,
+          "4105: reuses note_region_type_cross_talk");
+    CHECK(emb.find("admitted_cone_mask_ != 0") != std::string::npos,
+          "4105: mask 0 still skips the walk");
+    CHECK(emb.find("Soft: observe only") != std::string::npos, "4105: Soft observe comment stays");
+    CHECK(read_file("tests/serve/test_issue_4105.cpp").empty(), "4105: no invent");
+    CHECK(read_file("docs/design/4105-region-goal-cap.md").empty(), "4105: no docs/design");
+    aura::compiler::typed_audit::reset_last_proof_goal_fingerprint_for_test();
+    apply_dev_audit_defaults();
+    clear_region_type_cross_talk_for_test();
+}
+
 // ── Issue #3289: mailbox under-boundary timeout re-polls the hold-budget
 //    in-body window so an already-held outermost Guard is driven to the
 //    same force-release as hold-budget overtime (depth 0 + unlocked +
@@ -4035,6 +4171,7 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2847_4_zero_cost_quiet();
     ac2847_5_additive_and_preserved();
     ac2847_6_source_and_linter();
+    ac4105_region_commit_over_cap();
     std::println("\n=== Issue #3289: mailbox under-boundary SLO re-polls hold-budget window ===");
     ac3289_1_mailbox_slo_repoll_source();
     std::println("\n=== Issue #3485: mailbox p99/SLO unions into hold-budget check ===");

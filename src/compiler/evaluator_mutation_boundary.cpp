@@ -4288,19 +4288,29 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // GlobalExclusive: zero extra cost (region_type_commit_ok short-circuit).
     if (is_outermost_ && success && admitted_cone_mask_ != 0) {
         std::uint64_t touched = 0;
+        bool over_cap = false;
         if (void* h = ev_->commit_type_checker_handle()) {
             auto* tc = static_cast<TypeChecker*>(h);
             const auto& goals = tc->constraint_system().occurrence_goals_for_test();
             // Bound walk (soft-cone discipline — same cap as #2842 fingerprint).
             constexpr std::size_t kMaxGoals = 256;
-            const std::size_t n = goals.size() < kMaxGoals ? goals.size() : kMaxGoals;
-            for (std::size_t i = 0; i < n; ++i) {
-                const auto pred = goals[i].predicate_cond_node;
-                if (pred != 0)
-                    touched |= typed_audit::node_id_to_region_mask_bit(pred);
+            // Issue #4105: production/Full must not treat the 256 prefix as
+            // the whole cone. A later goal outside the mask would commit.
+            // Soft keeps the capped observe walk.
+            const bool hard_face = typed_audit::production_defaults_active() ||
+                                   typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+            if (hard_face && goals.size() > kMaxGoals) {
+                over_cap = true;
+            } else {
+                const std::size_t n = goals.size() < kMaxGoals ? goals.size() : kMaxGoals;
+                for (std::size_t i = 0; i < n; ++i) {
+                    const auto pred = goals[i].predicate_cond_node;
+                    if (pred != 0)
+                        touched |= typed_audit::node_id_to_region_mask_bit(pred);
+                }
             }
         }
-        if (!typed_audit::region_type_commit_ok(admitted_cone_mask_, touched)) {
+        if (over_cap || !typed_audit::region_type_commit_ok(admitted_cone_mask_, touched)) {
             const bool hard = typed_audit::production_defaults_active() ||
                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
             typed_audit::note_region_type_cross_talk(hard);
