@@ -21,6 +21,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.ir;
 import aura.compiler.service;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.value;
@@ -495,6 +496,91 @@ static void ac4091_shape_flip_dirty_cone() {
     }
 }
 
+
+// ── Issue #4108: stable sync → side index + entry result-block columns ──
+//   Production trigger: record_eval_result_shape records the executed
+//   module's ENTRY function — for IR evals that entry is the reserved
+//   toplevel name __top__ (define calls short-circuit via
+//   try_dispatch_toplevel_define_call_ → apply_closure and never reach the
+//   IR result path; dunder-named defines are refused by the caching path).
+//   So the runtime contract observable here is the no-false-resolution
+//   one: a stable __top__-keyed sync must claim NO cached define and
+//   paint NO shape_ids_ column of any real define.
+//   AC1: the __top__ profile stabilizes through real IR results and the
+//        stable sync claims no side-index row (shape_ids_sync_hits flat —
+//        exact-name resolution cannot grab another define's row).
+//   AC2: the cached defines' shape_ids_ columns stay all-zero through the
+//        stable syncs (no cross-define painting).
+//   #4108 AC3: make_fn_key collision safety — the stored-name recheck
+//        before insert_or_assign, the FnKey → name side index consulted
+//        before any scan, and result-block-only entry-function stamping —
+//        is pinned structurally by check_shape_sync_index_4108 (the
+//        #4091 O(1) discipline; no eval record path can drive a colliding
+//        or define-named key at runtime).
+static void ac4108_stable_sync_side_index() {
+    std::println("\n--- #4108: stable sync → side index + entry result blocks ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4108: warm");
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x) (if x 1 (if x 2 (if x 3 (if x 4 5))))))
+(define g (lambda (x) (* x 2)))
+(define h (lambda (x) (* x 3)))
+")
+)")
+              .has_value(),
+          "4108: set-code f/g/h");
+    CHECK(cs.eval("(eval-current)").has_value(), "4108: eval-current");
+    if (!cs.get_define_v2("f"))
+        (void)cs.eval("(compile:cache-define \"f\")");
+    if (!cs.get_define_v2("g"))
+        (void)cs.eval("(compile:cache-define \"g\")");
+    if (!cs.get_define_v2("h"))
+        (void)cs.eval("(compile:cache-define \"h\")");
+    CHECK(cs.get_define_v2("f") != nullptr, "4108: f cached");
+    CHECK(cs.get_define_v2("g") != nullptr, "4108: g cached");
+    CHECK(cs.get_define_v2("h") != nullptr, "4108: h cached");
+    const auto f_entry = cs.get_define_v2("f");
+    const auto g_entry = cs.get_define_v2("g");
+    const auto h_entry = cs.get_define_v2("h");
+    CHECK(f_entry && g_entry && h_entry, "4108: entries live");
+
+    // Warm the module-entry profile through real IR results: every eval_ir
+    // record fires under the entry function's key (__top__), and once
+    // stable, EVERY further result runs sync_shape_ids_for_fn_key with
+    // that key (pre-fix: a full ir_cache_v2_ walk per stable result).
+    std::size_t warm = 0;
+    for (; warm < 200 && !cs.is_shape_stable("__top__"); ++warm)
+        (void)cs.eval_ir("(+ 1 1)");
+    std::println("  4108 probe: __top__ total_calls={} stable={} warm={}",
+                 cs.shape_metrics("__top__").total_calls, cs.is_shape_stable("__top__"), warm);
+    CHECK(cs.shape_metrics("__top__").total_calls > 0,
+          "#4108: IR result path records the entry key");
+    CHECK(cs.is_shape_stable("__top__"), "#4108: entry-key shape stabilizes");
+
+    // Stable syncs now fire per IR result. AC1: with no define owning the
+    // __top__ key, the exact-name resolution must claim nothing.
+    const auto hits0 = cs.metrics().shape_ids_sync_hits.load(std::memory_order_relaxed);
+    CHECK(cs.eval_ir("(+ 1 1)").has_value(), "4108: stable re-eval");
+    const auto hits1 = cs.metrics().shape_ids_sync_hits.load(std::memory_order_relaxed);
+    std::println("  4108 probe: sync hits {} -> {}", hits0, hits1);
+    CHECK(hits1 == hits0, "#4108 AC1: non-matching stable sync claims no define row");
+
+    // AC2: no define may be painted by another key's stable sync.
+    for (auto* e : {f_entry, g_entry, h_entry}) {
+        if (!e)
+            continue;
+        bool any_nonzero = false;
+        for (const auto& soa_fn : e->soa_mod.functions)
+            for (const auto col : soa_fn.shape_ids_)
+                any_nonzero = any_nonzero || col != 0;
+        CHECK(!any_nonzero, "#4108 AC2: non-resolved defines' columns stay untouched");
+    }
+    // Semantics survive the stable-sync flow.
+    const auto r = cs.eval_ir("(f 1)");
+    CHECK(r && is_int(*r) && as_int(*r) == 1, "#4108: f still evaluates after stable syncs");
+} // ac4108_stable_sync_side_index
+
 } // namespace
 
 int run_test_shape_storm_partial_relower() {
@@ -506,6 +592,7 @@ int run_test_shape_storm_partial_relower() {
     ac3070_hysteresis_and_forced_thr();
     ac3986_shape_flip_empty_persist_forces_full();
     ac4091_shape_flip_dirty_cone();
+    ac4108_stable_sync_side_index();
 
     std::println("\n=== test_shape_storm_partial_relower: {} passed, {} failed ===", g_passed,
                  g_failed);

@@ -15833,7 +15833,7 @@ public:
             auto fn_key = shape::make_fn_key(session, "__eval__");
             auto shape_id = shape::inline_shape_of(result.val);
             if (profiler.record_shape(fn_key, shape_id) && profiler.is_stable(fn_key))
-                sync_shape_ids_for_fn_key(fn_key, shape_id);
+                sync_shape_ids_for_fn_key(fn_key, "__eval__", shape_id);
             return;
         }
 
@@ -15843,7 +15843,7 @@ public:
                 auto fn_key = shape::make_fn_key(session, fn.name);
                 auto shape_id = shape::inline_shape_of(result.val);
                 if (profiler.record_shape(fn_key, shape_id) && profiler.is_stable(fn_key))
-                    sync_shape_ids_for_fn_key(fn_key, shape_id);
+                    sync_shape_ids_for_fn_key(fn_key, fn.name, shape_id);
 
                 // Also record argument shapes if we have them
                 // (Phase 2: expand to arg-level shape tracking)
@@ -15958,22 +15958,79 @@ public:
     }
 
     // Issue #686: propagate stable dominant shape into IRSoA shape_ids_.
-    void sync_shape_ids_for_fn_key(shape::FnKey fn_key, shape::ShapeID shape_id) {
+    // Issue #4108: the stable path resolves the define through the #4091
+    // FnKey → name side index exactly like mark_shape_dirty_for_fn_key —
+    // the pre-fix body scanned ir_cache_v2_ on every stable result and
+    // painted the result shape onto every unset shape_ids_ column of
+    // EVERY function in the entry, so a nested function's unset columns
+    // inherited the outer result shape and the next lower/JIT specialized
+    // those ops to a shape they never return. Stamp only the entry
+    // function's result-block columns (mark_shape_dirty_result_block_'s
+    // function + Return-block selection); other functions stay untouched.
+    void sync_shape_ids_for_fn_key(shape::FnKey fn_key, const std::string& want_name,
+                                   shape::ShapeID shape_id) {
         if (shape_id == shape::SHAPE_UNKNOWN)
             return;
-        for (auto& [name, entry] : ir_cache_v2_) {
-            if (shape::make_fn_key(session_id_, name) != fn_key)
-                continue;
-            const auto sid = static_cast<std::uint32_t>(shape_id);
-            for (auto& soa_fn : entry.soa_mod.functions) {
-                for (auto& col : soa_fn.shape_ids_) {
-                    if (col == 0)
-                        col = sid;
+        const auto sid = static_cast<std::uint32_t>(shape_id);
+        const auto idx = shape_fnkey_names_.find(fn_key);
+        if (idx == shape_fnkey_names_.end()) {
+            // Cold fallback, same shape as mark_shape_dirty_for_fn_key:
+            // one scan, then the row is cached. Equality rechecks the
+            // stored name, not only the hash (#4108): two different names
+            // that share a make_fn_key hash must not share a side-index row.
+            for (const auto& [name, entry] : ir_cache_v2_) {
+                (void)entry;
+                if (name != want_name || shape::make_fn_key(session_id_, name) != fn_key)
+                    continue;
+                shape_fnkey_names_.insert_or_assign(fn_key, name);
+                break;
+            }
+        }
+        // Resolve by exact name; a side-index row owned by a colliding
+        // name is never consulted for this define.
+        const auto it = ir_cache_v2_.find(want_name);
+        if (it == ir_cache_v2_.end())
+            return;
+        auto& entry = it->second;
+        // The define's entry function: named after the define when present,
+        // else the first function (mark_shape_dirty_result_block_'s selection).
+        std::size_t func_idx = 0;
+        for (std::size_t fi = 0; fi < entry.irs.size(); ++fi) {
+            if (entry.irs[fi].name == want_name) {
+                func_idx = fi;
+                break;
+            }
+        }
+        if (func_idx >= entry.soa_mod.functions.size())
+            return;
+        auto& soa_fn = entry.soa_mod.functions[func_idx];
+        // Result blocks: the blocks holding Return ops — the same
+        // positions the dirty path marks; fall back to the function's
+        // last block when no Return is mapped.
+        std::vector<std::uint32_t> result_blocks;
+        if (func_idx < entry.irs.size()) {
+            const auto& ir_fn = entry.irs[func_idx];
+            for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+                for (const auto& instr : ir_fn.blocks[bi].instructions) {
+                    if (instr.opcode == aura::ir::IROpcode::Return) {
+                        result_blocks.push_back(static_cast<std::uint32_t>(bi));
+                        break;
+                    }
                 }
             }
-            metrics_.shape_ids_sync_hits.fetch_add(1, std::memory_order_relaxed);
-            return;
         }
+        if (result_blocks.empty() && !soa_fn.blocks_.empty())
+            result_blocks.push_back(static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1));
+        for (const auto bi : result_blocks) {
+            if (bi >= soa_fn.blocks_.size())
+                continue;
+            const auto& blk = soa_fn.blocks_[bi];
+            for (auto ci = blk.start_idx; ci < blk.end_idx && ci < soa_fn.shape_ids_.size(); ++ci) {
+                if (soa_fn.shape_ids_[ci] == 0)
+                    soa_fn.shape_ids_[ci] = sid;
+            }
+        }
+        metrics_.shape_ids_sync_hits.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Invalidate shape profile for a function (called after mutate:*).

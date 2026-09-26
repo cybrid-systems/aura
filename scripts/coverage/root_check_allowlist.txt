@@ -162,3 +162,4 @@ check_jit_heap_tenant_4093.py
 check_closure_capture_tenant_4094.py
 check_query_bare_nodeid_4106.py
 check_type_ground_gate_4107.py
+check_shape_sync_index_4108.py
