@@ -699,6 +699,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-2972", kMailboxCreditInflightIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -778,6 +781,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("join-drain-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 

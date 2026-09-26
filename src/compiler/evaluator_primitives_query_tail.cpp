@@ -509,6 +509,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("closure-env-safety-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -651,6 +654,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("eda-verification-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -963,6 +969,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("issue-2275", make_int(2275));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1490,6 +1499,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("schema", 625);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 }

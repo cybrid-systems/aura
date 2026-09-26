@@ -455,6 +455,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return a.size() >= 3 ? a[2] : make_void();
+            // Issue #4110: same armed-face owner compare the JIT checked
+            // seams run before the probe — armed + foreign stamp reads as
+            // missing (3rd-arg default / void, table untouched); the deny
+            // fires through check_workspace_isolation. Unarmed: today's
+            // probe, no tenant load (face probe precedes the stamp read).
+            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
+                                       aura_jit_owner_sandbox_mode(), "hash-ref"))
+                return a.size() >= 3 ? a[2] : make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
             auto keys = ht->keys();
@@ -487,6 +495,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             std::lock_guard slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_bool(false);
+            // Issue #4110: armed + foreign stamp → #f without the probe
+            // (same compare as aura_hash_ref_checked; unarmed: no load).
+            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
+                                       aura_jit_owner_sandbox_mode(), "hash-has-key?"))
                 return make_bool(false);
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -523,6 +536,12 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             std::lock_guard slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            // Issue #4110: armed + foreign stamp → void WITHOUT storing
+            // (same compare as aura_hash_set_checked; the deny fires
+            // through check_workspace_isolation; unarmed: no load).
+            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
+                                       aura_jit_owner_sandbox_mode(), "hash-set!"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -684,6 +703,12 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
+            // Issue #4110: armed + foreign stamp → #f WITHOUT the tombstone
+            // write (same compare as the JIT hash-remove! gate; unarmed:
+            // no tenant load).
+            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
+                                       aura_jit_owner_sandbox_mode(), "hash-remove!"))
+                return make_bool(false);
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
             auto keys = ht->keys();

@@ -425,6 +425,8 @@ void register_workspace_query_primitives(
         aura::core::note_query_result_created();
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     };
 
@@ -1281,6 +1283,8 @@ void register_workspace_query_primitives(
             insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: SSOT owner stamp.
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         };
 
@@ -1430,6 +1434,9 @@ void register_workspace_query_primitives(
             insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         }
         insert_kv("valid", 1);
@@ -1448,6 +1455,8 @@ void register_workspace_query_primitives(
         insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -2883,6 +2892,9 @@ void register_workspace_query_primitives(
             insert_kv("issue", 1914);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2954,6 +2966,8 @@ void register_workspace_query_primitives(
         insert_kv("issue", 1914);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -3909,6 +3923,9 @@ void register_workspace_query_primitives(
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             auto cons_pair = ws.pairs.size();
             ws.pairs.push_back({make_hash(hidx), result});
             result = make_pair(cons_pair);
@@ -4047,6 +4064,9 @@ void register_workspace_query_primitives(
                 }
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 entries.push_back(make_hash(hidx));
             }
             for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
@@ -4427,6 +4447,8 @@ void register_workspace_query_primitives(
         insert_kv("issue-3075", 3075);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     };
     ObservabilityPrims::register_stats_impl("query:query-epoch-stats", query_epoch_stats_fn);

@@ -1364,6 +1364,8 @@ namespace primitives_detail {
         }
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return types::make_hash(hidx);
     }
 

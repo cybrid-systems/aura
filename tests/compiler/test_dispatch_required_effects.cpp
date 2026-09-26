@@ -72,6 +72,7 @@ using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectNone;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_closure_id;
+using aura::compiler::types::as_hash_idx; // Issue #4110: read the minted QueryResult hidx
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
@@ -932,6 +933,289 @@ static void ac4094_3_soft_writes() {
     CHECK(cid_w >= 0, "4094 AC3: production alloc");
     aura_closure_capture(cid_w, 0, 77);
     CHECK(aura_closure_env_get(cid_w, 0) == 77, "4094 AC3: production wrapper stores under Soft");
+}
+
+// ── Issue #4110: evaluator-minted hashes carry the owner stamp and the
+// tree-walker hash prims run the same armed-face owner compare the JIT
+// checked seams run. make_query_result_hash (and every other evaluator
+// mint) pushed g_hash_tables without stamping g_hash_tenants, so under
+// Restricted+MT / Strict the production JIT hash-ref gate read the
+// owner's own query:find / query:pattern result as foreign (not-found
+// sentinel 11); the interpreter prims never consulted the stamps, so a
+// foreign principal could still read / write the process-global table.
+// Fix: one SSOT stamp helper (aura_hash_stamp_new_table_owner) at every
+// push site + aura_hash_gate_checked in the four tree-walker prims.
+// Light-link binaries shadow the strong owner hooks with weak fail-closed
+// stubs (#4036 rationale), so the behavioral arms drive the gate through
+// the explicit-context seams with real tenant stamps; the hook-driven
+// production wiring is pinned by the cite arm + the linter.
+static void ac4110_source_cite() {
+    std::println("\n--- #4110 cite: stamp helper, sweep, tree-walker gate, seam ---");
+    const auto hdr = read_file("src/compiler/runtime_shared.h");
+    CHECK(hdr.find("void aura_hash_stamp_new_table_owner();") != std::string::npos,
+          "4110 cite: runtime_shared.h declares the stamp helper");
+    CHECK(hdr.find("aura_hash_gate_checked(std::uint64_t hidx") != std::string::npos,
+          "4110 cite: runtime_shared.h declares the tree-walker gate seam");
+    const auto ssot = read_file("src/compiler/runtime_ssot.cpp");
+    {
+        const auto at = ssot.find("void aura_hash_stamp_new_table_owner() {");
+        CHECK(at != std::string::npos, "4110 cite: runtime_ssot.cpp defines the stamp helper");
+        if (at != std::string::npos) {
+            const auto win = ssot.substr(at, 400);
+            CHECK(win.find("g_hash_tenants.resize(g_hash_tables.size(), 0);") != std::string::npos,
+                  "4110 cite: helper resizes to size (vector-constructor shape)");
+            CHECK(win.find("g_hash_tenants[g_hash_tables.size() - 1]") != std::string::npos,
+                  "4110 cite: helper stamps the back slot");
+            CHECK(win.find("aura_jit_owner_capability_tenant()") != std::string::npos,
+                  "4110 cite: helper stamps from the owner hook");
+        }
+    }
+    // Sweep: every mint file stamps every push (same statement shape the
+    // #4110 linter counts).
+    static constexpr std::array<std::string_view, 17> kSwept = {
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        "src/compiler/evaluator_primitives_query_tail.cpp",
+        "src/compiler/evaluator_primitives_query_lifecycle.cpp",
+        "src/compiler/evaluator_primitives_query_reflect.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp",
+        "src/compiler/evaluator_primitives_query_obs_mid.cpp",
+        "src/compiler/evaluator_primitives_mutation.cpp",
+        "src/compiler/evaluator_primitives_memory.cpp",
+        "src/compiler/evaluator_primitives_obs_jit.cpp",
+        "src/compiler/evaluator_primitives_obs_eval.cpp",
+        "src/compiler/evaluator_primitives_messaging.cpp",
+        "src/compiler/evaluator_primitives_stdlib_review.cpp",
+        "src/compiler/evaluator_primitives_persist.cpp",
+        "src/compiler/evaluator_primitives_json.cpp",
+        "src/compiler/evaluator_primitives_compile.cpp",
+        "src/compiler/evaluator.ixx",
+        "src/compiler/evaluator_workspace_tree.cpp",
+    };
+    auto count_of = [](const std::string& s, std::string_view pat) {
+        std::size_t n = 0;
+        auto at = s.find(pat);
+        while (at != std::string::npos) {
+            ++n;
+            at = s.find(pat, at + pat.size());
+        }
+        return n;
+    };
+    for (const auto f : kSwept) {
+        const auto src = read_file(std::string(f).c_str());
+        CHECK(!src.empty(), "4110 cite: swept mint file readable");
+        CHECK(count_of(src, "g_hash_tables.push_back(ht);") ==
+                  count_of(src, "aura_hash_stamp_new_table_owner();"),
+              "4110 cite: every push in the mint file stamps the owner");
+    }
+    const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(qw.find("make_query_result_hash") != std::string::npos,
+          "4110 cite: make_query_result_hash mint is in the stamped sweep set");
+    // #4093-pinned inline stamps stay (the helper is additive, no rewrite).
+    const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    CHECK(vec.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
+              std::string::npos,
+          "4110 cite: vector hash prim inline stamp (#4093) intact");
+    const auto ag = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(ag.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
+              std::string::npos,
+          "4110 cite: agent hash alloc inline stamps (#4093) intact");
+    // The four tree-walker prims gate before the probe with owner-hook values.
+    CHECK(vec.find("aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),") !=
+              std::string::npos,
+          "4110 cite: tree-walker gates pass the owner-hook caller");
+    CHECK(vec.find("aura_jit_owner_sandbox_mode(), \"hash-ref\"") != std::string::npos,
+          "4110 cite: hash-ref gate reads the owner face hook");
+    CHECK(vec.find("\"hash-ref\"))") != std::string::npos, "4110 cite: hash-ref gate op");
+    CHECK(vec.find("\"hash-has-key?\"))") != std::string::npos, "4110 cite: hash-has-key? gate op");
+    CHECK(vec.find("\"hash-set!\"))") != std::string::npos, "4110 cite: hash-set! gate op");
+    CHECK(vec.find("\"hash-remove!\"))") != std::string::npos, "4110 cite: hash-remove! gate op");
+    // Seam body: face probe precedes the stamp load; deny through the gate.
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    {
+        const auto at = rt.find("extern \"C\" bool aura_hash_gate_checked(");
+        CHECK(at != std::string::npos, "4110 cite: gate seam defined in the jit runtime TU");
+        if (at != std::string::npos) {
+            const auto win = rt.substr(at, 500);
+            const auto armed_at = win.find("jit_tenant_gate_armed(sandbox_mode)");
+            const auto load_at = win.find("g_hash_tenants[hidx]");
+            CHECK(armed_at != std::string::npos && load_at != std::string::npos &&
+                      armed_at < load_at,
+                  "4110 cite: face probe precedes the stamp load (Soft/Off zero-cost)");
+            CHECK(win.find("jit_tenant_gate(slot_tenant, caller_tenant, op)") != std::string::npos,
+                  "4110 cite: deny routed through jit_tenant_gate (check_workspace_isolation)");
+        }
+        CHECK(rt.find("if (slot_tenant == caller_tenant)") != std::string::npos,
+              "4110 cite: jit_tenant_gate exact compare intact");
+        CHECK(rt.find("slot_tenant == 0 ||") == std::string::npos &&
+                  rt.find("caller_tenant == 0 ||") == std::string::npos,
+              "4110 cite: no unstamped-0 match weakening");
+        CHECK(rt.find("aura_hash_alloc_tenant") != std::string::npos,
+              "4110 cite: #4093 hash alloc seam intact");
+    }
+}
+
+static void ac4110_1_query_find_stamped_jit_ref() {
+    std::println("\n--- #4110 AC1: query:find mint stamps the owner; JIT hash-ref reads it ---");
+    reset_all();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "4110 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4110 AC1: eval-current");
+    // :as-query-result mints the QueryResult hash via make_query_result_hash
+    // — the same push_back path the production auto-upgrade rides (schema-2
+    // keys incl. schema-2192 ride the identical insert + publish).
+    CHECK(cs.eval("(define qr4110 (query :find \"f\" :as-query-result #t))").has_value(),
+          "4110 AC1: query:find mints the QueryResult hash");
+    const auto qr = cs.eval("qr4110");
+    CHECK(qr.has_value() && is_hash(*qr), "4110 AC1: result is a QueryResult hash");
+    if (!qr || !is_hash(*qr))
+        return;
+    const auto hidx = as_hash_idx(*qr);
+    CHECK(hidx < g_hash_tables.size() && g_hash_tables[hidx] != nullptr,
+          "4110 AC1: table published");
+    // THE FIX: the mint stamps the owner (pre-fix the parallel array stayed
+    // at the resize default 0, so the JIT gate read the owner's own table
+    // as foreign and returned the not-found sentinel 11 under the face).
+    CHECK(g_hash_tenants.size() > hidx, "4110 AC1: stamp array covers the mint");
+    if (g_hash_tenants.size() > hidx) {
+        CHECK(g_hash_tenants[hidx] == aura_jit_owner_capability_tenant(),
+              "4110 AC1: minted table stamped with the owner hook value");
+    }
+    // Recover the raw key bytes of the schema-2192 field (string keys are
+    // string-heap tagged vals the test cannot mint) and drive the real JIT
+    // probe under the armed face — the same splitmix slot walk the
+    // production ABI runs (#4093 shape: face 2 arms without env arming).
+    const auto* ht = g_hash_tables[hidx];
+    const auto meta = ht->metadata();
+    const auto keys = ht->keys();
+    const auto vals = ht->values();
+    std::int64_t key_val = 0;
+    bool found = false;
+    for (std::uint64_t i = 0; i < ht->capacity; ++i) {
+        if (meta[i] == 0xFF)
+            continue;
+        if (vals[i] == make_int(2192).val) {
+            key_val = keys[i];
+            found = true;
+            break;
+        }
+    }
+    CHECK(found, "4110 AC1: schema-2192 field present");
+    if (!found)
+        return;
+    constexpr int kStrictFace = 2;
+    const auto hv = static_cast<std::int64_t>(qr->val);
+    // The armed gate admits the owner principal on the minted table (the
+    // fix — pre-#4110 the unstamped mint read as foreign and the JIT gate
+    // returned the not-found sentinel 11 for the owner's own table) and
+    // still skips a foreign principal through the same compare.
+    CHECK(
+        !aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(), kStrictFace, "hash-ref"),
+        "4110 AC1: armed gate admits the owner's own minted table");
+    CHECK(aura_hash_gate_checked(hidx, 4111, kStrictFace, "hash-ref"),
+          "4110 AC1: armed gate still skips a foreign principal");
+    CHECK(aura_hash_ref_checked(hv, key_val, 4111, kStrictFace) == 11,
+          "4110 AC1: foreign JIT ref still denied (sentinel 11)");
+}
+
+static void ac4110_2_tree_walker_agrees() {
+    std::println("\n--- #4110 AC2: tree-walker hash-ref agrees with the JIT result ---");
+    reset_all();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "4110 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4110 AC2: eval-current");
+    CHECK(cs.eval("(define qr4110 (query :find \"f\" :as-query-result #t))").has_value(),
+          "4110 AC2: query:find mints the QueryResult hash");
+    const auto qr = cs.eval("qr4110");
+    CHECK(qr.has_value() && is_hash(*qr), "4110 AC2: result is a QueryResult hash");
+    if (!qr || !is_hash(*qr))
+        return;
+    const auto hidx = as_hash_idx(*qr);
+    constexpr int kStrictFace = 2;
+    // The armed gate admits the owner on the minted table (JIT path); the
+    // tree-walker probe of the SAME table agrees on the content.
+    CHECK(
+        !aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(), kStrictFace, "hash-ref"),
+        "4110 AC2: owner gate-admitted on the minted table (JIT path)");
+    const auto tw = cs.eval("(hash-ref qr4110 \"schema-2192\")");
+    CHECK(tw.has_value() && is_int(*tw) && as_int(*tw) == 2192, "4110 AC2: tree-walker reads 2192");
+    CHECK(tw && as_int(*tw) == 2192,
+          "4110 AC2: tree-walker agrees with the minted field the gate admits");
+    const auto has = cs.eval("(hash-has-key? qr4110 \"schema-2192\")");
+    CHECK(has.has_value() && is_bool(*has) && as_bool(*has), "4110 AC2: hash-has-key? agrees (#t)");
+}
+
+static void ac4110_3_foreign_tree_walker_gate() {
+    std::println("\n--- #4110 AC3: foreign tree-walker access skipped, no store ---");
+    reset_all();
+    // Tenant-stamped table via the #4093 seam (the light-link binary's weak
+    // owner hook reads 0, so explicit stamps pin the slot tenant
+    // deterministically).
+    constexpr std::uint64_t tenant_a = 4110;
+    constexpr std::uint64_t tenant_b = 4111;
+    constexpr int kStrictFace = 2;
+    const auto hash_a = aura_hash_alloc_tenant(static_cast<std::int64_t>(tenant_a));
+    CHECK(hash_a >= 0, "4110 AC3: A alloc hash");
+    const auto hidx_a = static_cast<std::uint64_t>(hash_a) >> 6;
+    const auto kp = aura_alloc_pair_tenant(7, 8, static_cast<std::int64_t>(tenant_a));
+    CHECK(aura_hash_set_checked(hash_a, kp, tenant_a, kStrictFace) == 0, "4110 AC3: A stores 7->8");
+    // Owner passes the armed gate for the tree-walker ops; foreign is
+    // SKIPPED (true = skip; the deny fires through check_workspace_isolation
+    // in production links — the interpreter must return void / #f and not
+    // store).
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_a, kStrictFace, "hash-ref"),
+          "4110 AC3: owner ref allowed");
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_a, kStrictFace, "hash-set!"),
+          "4110 AC3: owner set allowed");
+    CHECK(aura_hash_gate_checked(hidx_a, tenant_b, kStrictFace, "hash-ref"),
+          "4110 AC3: foreign ref skipped");
+    CHECK(aura_hash_gate_checked(hidx_a, tenant_b, kStrictFace, "hash-has-key?"),
+          "4110 AC3: foreign has-key? skipped");
+    CHECK(aura_hash_gate_checked(hidx_a, tenant_b, kStrictFace, "hash-set!"),
+          "4110 AC3: foreign set skipped");
+    CHECK(aura_hash_gate_checked(hidx_a, tenant_b, kStrictFace, "hash-remove!"),
+          "4110 AC3: foreign remove skipped");
+    // The skip is real: B's write attempt leaves A's table unchanged.
+    const auto kp_b = aura_alloc_pair_tenant(9, 10, static_cast<std::int64_t>(tenant_b));
+    CHECK(aura_hash_set_checked(hash_a, kp_b, tenant_b, kStrictFace) == 0,
+          "4110 AC3: B set returns (skipped)");
+    CHECK(aura_hash_ref_checked(hash_a, 7, tenant_a, kStrictFace) == 8,
+          "4110 AC3: A entry intact after B's set");
+    CHECK(aura_hash_ref_checked(hash_a, 9, tenant_a, kStrictFace) == 11,
+          "4110 AC3: B insert not stored (not found for A)");
+}
+
+static void ac4110_4_unarmed_face_no_tenant_load() {
+    std::println("\n--- #4110 AC4: Soft/Off stays a face probe — no tenant consult ---");
+    reset_all();
+    constexpr std::uint64_t tenant_a = 4110;
+    constexpr std::uint64_t tenant_b = 4111;
+    const auto hash_a = aura_hash_alloc_tenant(static_cast<std::int64_t>(tenant_a));
+    CHECK(hash_a >= 0, "4110 AC4: A alloc hash");
+    const auto hidx_a = static_cast<std::uint64_t>(hash_a) >> 6;
+    const auto kp = aura_alloc_pair_tenant(7, 8, static_cast<std::int64_t>(tenant_a));
+    CHECK(aura_hash_set_checked(hash_a, kp, tenant_a, 0) == 0, "4110 AC4: A stores under Soft");
+    // Face 0: the gate seam allows WITHOUT consulting the stamp — the
+    // tables stay shared (the #4093 AC3 zero-cost contract; the face probe
+    // precedes any g_hash_tenants load, so Soft/Off never reads it).
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_b, 0, "hash-ref"),
+          "4110 AC4: unarmed ref allowed");
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_b, 0, "hash-set!"),
+          "4110 AC4: unarmed set allowed");
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_b, 0, "hash-has-key?"),
+          "4110 AC4: unarmed has-key? allowed");
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_b, 0, "hash-remove!"),
+          "4110 AC4: unarmed remove allowed");
+    const auto kp_b = aura_alloc_pair_tenant(9, 10, static_cast<std::int64_t>(tenant_b));
+    CHECK(aura_hash_set_checked(hash_a, kp_b, tenant_b, 0) == 0, "4110 AC4: B stores under Soft");
+    CHECK(aura_hash_ref_checked(hash_a, 9, tenant_b, 0) == 10,
+          "4110 AC4: B reads it back (shared)");
+    // Single-tenant Restricted (face 1, no MT env, not Strict): face off →
+    // permissive (the #4093 AC2 contract preserved).
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_b, 1, "hash-ref"),
+          "4110 AC4: mode-1 unarmed allowed");
 }
 
 int run_test_dispatch_required_effects() {
@@ -2441,6 +2725,13 @@ int run_test_dispatch_required_effects() {
     ac4094_1_foreign_deny();
     ac4094_2_unstamped_fail_closed();
     ac4094_3_soft_writes();
+
+    // ── Issue #4110: evaluator-minted hash stamps + tree-walker gate ──
+    ac4110_source_cite();
+    ac4110_1_query_find_stamped_jit_ref();
+    ac4110_2_tree_walker_agrees();
+    ac4110_3_foreign_tree_walker_gate();
+    ac4110_4_unarmed_face_no_tenant_load();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

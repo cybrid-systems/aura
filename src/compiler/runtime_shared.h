@@ -66,6 +66,13 @@ extern std::vector<std::uint64_t> g_pair_slot_tenants;
 // stays file-local to aura_jit_runtime.cpp next to the static g_cell_heap.
 extern std::vector<std::uint64_t> g_hash_tenants;
 
+// Issue #4110: the stamp every g_hash_tables.push_back site owes the array
+// above, as one SSOT helper (the #4093 vector-constructor shape; runtime_ssot
+// comments the contract "stamped at every g_hash_tables.push_back alloc
+// site"). Callers invoke it immediately after the push; the back slot IS
+// the pushed table. Definition in runtime_ssot.cpp (same link-order class).
+void aura_hash_stamp_new_table_owner();
+
 // Issue #4036/#4093: owner-Evaluator principal hook (strong def in
 // service.ixx; weak stub in aura_jit_prim_dispatch_stub.cpp; unwired → 0).
 // Declared here for the hash-alloc stamp sites outside aura_jit_runtime.cpp
@@ -430,6 +437,18 @@ extern "C" std::int64_t aura_hash_ref_checked(std::int64_t hash_val, std::int64_
                                               std::uint64_t caller_tenant, int sandbox_mode);
 extern "C" std::int64_t aura_hash_set_checked(std::int64_t hash_val, std::int64_t pair_val,
                                               std::uint64_t caller_tenant, int sandbox_mode);
+// Issue #4110: armed-face owner compare for the evaluator tree-walker hash
+// primitives (hash-ref / hash-has-key? / hash-set! / hash-remove! in
+// evaluator_primitives_vector.cpp) — the same jit_tenant_gate_armed +
+// jit_tenant_gate compare aura_hash_ref_checked runs before its probe,
+// exported because the gate helpers are TU-static to aura_jit_runtime.cpp.
+// Returns true when the access must be SKIPPED (armed + stamp mismatch; the
+// deny fires through check_workspace_isolation). Unarmed (Soft/Off/
+// single-tenant): returns false and never loads g_hash_tenants — the face
+// probe precedes any stamp read (the zero-cost contract). Tests drive
+// caller/face explicitly (#4036 light-link rationale).
+extern "C" bool aura_hash_gate_checked(std::uint64_t hidx, std::uint64_t caller_tenant,
+                                       int sandbox_mode, const char* op);
 extern "C" std::int64_t aura_pair_car_unchecked_checked(std::int64_t pair_val,
                                                         std::uint64_t caller_tenant,
                                                         int sandbox_mode);

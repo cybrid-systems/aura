@@ -5173,6 +5173,23 @@ static bool jit_tenant_gate(std::uint64_t slot_tenant, std::uint64_t caller_tena
     return true;
 }
 
+// Issue #4110: the tree-walker half of the hash gate. The
+// evaluator_primitives_vector.cpp prims (hash-ref / hash-has-key? /
+// hash-set! / hash-remove!) probed g_hash_tables[hidx] with no tenant
+// compare, so under the production face the interpreter still returned
+// values from / wrote a foreign principal into the process-global table
+// (the JIT side denies since #4093). Same armed-face compare the checked
+// seams run, exported because jit_tenant_gate(_armed) are TU-static here;
+// unarmed keeps the zero-cost contract (no g_hash_tenants load). Tests
+// drive caller/face explicitly (#4036 light-link rationale).
+extern "C" bool aura_hash_gate_checked(std::uint64_t hidx, std::uint64_t caller_tenant,
+                                       int sandbox_mode, const char* op) {
+    if (!jit_tenant_gate_armed(sandbox_mode))
+        return false; // unarmed: today's probe, no tenant load
+    const std::uint64_t slot_tenant = (hidx < g_hash_tenants.size()) ? g_hash_tenants[hidx] : 0;
+    return jit_tenant_gate(slot_tenant, caller_tenant, op);
+}
+
 int64_t aura_new_cell() {
     // Issue #157 Phase 2: write lock — push_back on g_cell_heap
     // is the same race as aura_alloc_pair.

@@ -56,6 +56,19 @@ std::vector<FlatHashTable*> g_hash_tables;
 // from aura_jit_owner_capability_tenant(), the same #4057 pair-slot shape.
 std::vector<std::uint64_t> g_hash_tenants;
 
+// Issue #4110: the stamp every g_hash_tables.push_back site owes the
+// parallel array above — one SSOT helper instead of a copy next to each of
+// the ~100 evaluator mint sites (query results, observability, persist,
+// compile hashes...). Same body as the #4093 vector-constructor stamp:
+// resize-to-size first, then stamp the back slot from the owner hook.
+// Callers invoke this immediately after their push_back; the back slot IS
+// the pushed table (no intervening push).
+void aura_hash_stamp_new_table_owner() {
+    if (g_hash_tenants.size() < g_hash_tables.size())
+        g_hash_tenants.resize(g_hash_tables.size(), 0);
+    g_hash_tenants[g_hash_tables.size() - 1] = aura_jit_owner_capability_tenant();
+}
+
 // ── FlatHashTable::create / destroy ──
 // Strong defs used to live only in aura_jit_runtime.cpp (JIT SOs).
 // evaluator_primitives_* in libaura_test_objects.so call create() for
