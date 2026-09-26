@@ -3889,6 +3889,10 @@ public:
     [[nodiscard]] void* commit_type_checker_handle() const noexcept {
         return commit_type_checker_opaque_;
     }
+    // Issue #4105 test: ensure the commit TypeChecker and append one
+    // OccurrenceGoal per predicate node id.
+    std::size_t
+    plant_commit_occurrence_preds_for_test(std::span<const std::uint32_t> preds) noexcept;
     // Issue #3170: fingerprint of the staged occurrence persist snapshot.
     // 0 = nothing staged (quiet / first persist). Outermost success
     // compares live goals against this; mismatch → clear + bump.
@@ -15608,6 +15612,10 @@ public:
         // Outermost session revoke prefers this over live TLS so dtor after
         // fiber clear does not mid-only sweep under Restricted+MT.
         [[nodiscard]] std::uint64_t captured_fiber_id() const noexcept { return fiber_id_; }
+        // Issue #4105 test: outermost dtor reads this mask. 0 skips the walk.
+        void set_admitted_cone_mask_for_test(std::uint64_t mask) noexcept {
+            admitted_cone_mask_ = mask;
+        }
 
     private:
         struct AcquireTag {};

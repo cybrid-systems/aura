@@ -2841,6 +2841,29 @@ void* Evaluator::ensure_typechecker() noexcept {
     }
 }
 
+std::size_t
+Evaluator::plant_commit_occurrence_preds_for_test(std::span<const std::uint32_t> preds) noexcept {
+    auto* reg_raw = ensure_type_registry();
+    if (!reg_raw)
+        return 0;
+    auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+    const auto reg_gen = type_registry_generation();
+    if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+        destroy_commit_type_checker();
+    if (!commit_type_checker_opaque_) {
+        auto* tc = new TypeChecker(*reg);
+        if (compiler_metrics_)
+            tc->set_metrics(compiler_metrics_);
+        commit_type_checker_opaque_ = tc;
+        commit_tc_registry_gen_ = reg_gen;
+    }
+    auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+    auto& cs = tc->constraint_system();
+    for (const auto pred : preds)
+        cs.note_occurrence_goal({}, {}, pred, /*mut=*/0, /*epoch=*/0);
+    return cs.occurrence_goals_size();
+}
+
 void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexcept {
     if (!type_checker_opaque)
         return;
