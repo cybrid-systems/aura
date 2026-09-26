@@ -21,6 +21,7 @@
 #include <thread>
 #include <unordered_set>
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 #include <cstring>
 
@@ -712,8 +713,8 @@ namespace aura_jit_run_incremental_aot_closure_1480 {
 //        (relaxed atomic, observable to EDSL)
 //   AC5: 100-iter stress test — push the same 5 candidates 100x,
 //        verify the cumulative aot_incremental_reemit_count grows by
-//        ≥500 and g_aot_table_epoch is bumped exactly 100 times (one
-//        commit_func_table_swap per call that re-emits anything).
+//        ≥500. Issue #4100: a skeleton would-reemit does not install a
+//        ScalarFn, so g_aot_table_epoch stays put (no commit).
 //   AC6: aot_closure_bridge_refresh_total grows by the re-emit count
 //        per call (paired with JIT-side jit_hotswap_live_closure_
 //        refreshed_total for cross-side observability).
@@ -886,8 +887,8 @@ namespace {
               "aot_closure_dependency_reemit_total grows by 1 (bar from_closure_capture=true)");
         CHECK(metrics.aot_closure_bridge_refresh_total.load() == before_bridge_refresh + 2,
               "aot_closure_bridge_refresh_total grows by 2 (foo + baz)");
-        CHECK(read_aot_func_table_epoch() == before_epoch + 1,
-              "g_aot_table_epoch bumped by 1 (atomic commit_func_table_swap)");
+        CHECK(read_aot_func_table_epoch() == before_epoch,
+              "g_aot_table_epoch unchanged (skeleton is not a ScalarFn install, #4100)");
         CHECK(f.callback_calls.load() == 4,
               "callback called 4 times (3 candidates + 1 sentinel false)");
 
@@ -960,8 +961,8 @@ namespace {
 
         CHECK(metrics.aot_incremental_reemit_count.load() == before_reemit + 5 * kIters,
               "aot_incremental_reemit_count grows by 500 over 100 iters");
-        CHECK(read_aot_func_table_epoch() == before_epoch + kIters,
-              "g_aot_table_epoch bumped exactly 100 times (one commit per iter)");
+        CHECK(read_aot_func_table_epoch() == before_epoch,
+              "g_aot_table_epoch unchanged across 100 skeleton iters (#4100)");
 
         aura_set_reemit_candidate_fn(nullptr, nullptr);
         return true;
@@ -1001,6 +1002,178 @@ namespace {
         return true;
     }
 
+    extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                           std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                           std::int32_t local_count, std::int32_t arg_count,
+                                           std::int32_t env_count);
+    extern "C" std::int64_t aura_lookup_fn_by_name(const char* name, std::int64_t* out_local_count,
+                                                   std::int64_t* out_arg_count,
+                                                   std::int64_t* out_env_count);
+    extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
+
+    static std::string read_source(const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    }
+
+    static std::atomic<int> g_ac4100_hits{0};
+    static std::int64_t ac4100_scalar(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+        g_ac4100_hits.fetch_add(1, std::memory_order_relaxed);
+        return 77;
+    }
+
+    // Issue #4100: production facade drops g_jit_fns before ORC remove,
+    // and a skeleton reemit (no new ScalarFn) does not clear MustDeopt
+    // or bump the table epoch. Soft invalidate does not take the facade.
+    bool test_4100_no_restamp_without_new_native() {
+        std::println("\n--- #4100: no restamp without a new ScalarFn ---");
+        const auto ixx = read_source("src/compiler/service.ixx");
+        const auto bridge = read_source("src/compiler/aura_jit_bridge.cpp");
+        const auto rt = read_source("src/compiler/aura_jit_runtime.cpp");
+        const auto dirty = read_source("src/compiler/service_dirty.cpp");
+
+        const auto facade = ixx.find("void evict_jit_cache_after_production_facade_");
+        CHECK(facade != std::string::npos, "4100: facade helper");
+        if (facade != std::string::npos) {
+            const auto win = ixx.substr(facade, 900);
+            const auto drop = win.find("aura_drop_jit_fn_native_for_define");
+            const auto inv = win.find("jit_.invalidate(name.c_str())");
+            CHECK(drop != std::string::npos && inv != std::string::npos && drop < inv,
+                  "4100: drop installed native before ORC invalidate");
+            CHECK(win.find("jit_cache_.erase(name)") != std::string::npos,
+                  "4100: still erases cache");
+            CHECK(win.find("std::unique_lock cache_write(jit_cache_mtx_)") != std::string::npos,
+                  "4100: cache lock still taken");
+        }
+        const auto gate = bridge.find("Issue #4100: skeleton and a default-LLVM");
+        CHECK(gate != std::string::npos, "4100: reemit cites the install gate");
+        if (gate != std::string::npos) {
+            const auto win = bridge.substr(gate, 4000);
+            CHECK(win.find("if (native_installed)") != std::string::npos, "4100: commit gated");
+            const auto commit = win.find("commit_func_table_swap()");
+            const auto remap = win.find("aura_remap_live_closures_after_reemit");
+            const auto remount = win.find("aura_sync_remount_named_live_closures");
+            CHECK(commit != std::string::npos && remap != std::string::npos &&
+                      remount != std::string::npos && commit < remap && remap < remount,
+                  "4100: commit, remap, and remount stay on the install path");
+        }
+        CHECK(bridge.find("aura_aot_clear_peer_jit_name_soft_stale(name)") != std::string::npos,
+              "4100: peer soft-stale clear call remains");
+        const auto leave = rt.find("closure_call_deopt_pending_leave_native_");
+        CHECK(leave != std::string::npos, "4100: unnamed leave-native helper");
+        if (leave != std::string::npos) {
+            const auto lwin = rt.substr(leave, 1800);
+            CHECK(lwin.find("Issue #3977") != std::string::npos, "4100: #3977 cite stays");
+            CHECK(lwin.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
+                  "4100: owner-scoped unnamed leave-native unchanged");
+        }
+        const auto ifn = dirty.find("void CompilerService::invalidate_function");
+        CHECK(ifn != std::string::npos, "4100: invalidate_function");
+        if (ifn != std::string::npos) {
+            const auto if_end = dirty.find("\nvoid CompilerService::", ifn + 1);
+            const auto iwin = dirty.substr(ifn, if_end == std::string::npos ? 12000 : if_end - ifn);
+            const auto prod = iwin.find("production_defaults_active()");
+            const auto evict = iwin.find("evict_jit_cache_after_production_facade_(name)");
+            CHECK(prod != std::string::npos && evict != std::string::npos && prod < evict,
+                  "4100: facade evict stays inside the production branch");
+        }
+
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura_production_defaults_active_probe() != 0, "4100: production face");
+        aura_set_aot_emit_fn(nullptr, nullptr);
+        aura_set_reemit_candidate_fn(nullptr, nullptr);
+        g_ac4100_hits.store(0, std::memory_order_relaxed);
+        aura_register_fn_named("ac4100f", 410, ac4100_scalar, 4, 1, 0);
+        const auto dropped = aura_alloc_closure(410);
+        CHECK(dropped >= 0, "4100: closure alloc");
+        aura_closure_set_name(dropped, "ac4100f");
+        aura_closure_set_must_deopt(dropped, 0);
+        aura_closure_set_env_gen(dropped, aura_get_aot_live_env_frame_version());
+        std::int64_t args[1] = {1};
+        CHECK(aura_closure_call(dropped, args, 1) == 77, "4100: warm call runs the native");
+        CHECK(g_ac4100_hits.load(std::memory_order_relaxed) == 1, "4100: one warm hit");
+        {
+            aura::compiler::CompilerService cs;
+            cs.public_invalidate_function("ac4100f");
+        }
+        CHECK(aura_lookup_fn_by_name("ac4100f", nullptr, nullptr, nullptr) == 0,
+              "4100: production facade dropped the pre-mutate ScalarFn");
+        const auto hits_after_drop = g_ac4100_hits.load(std::memory_order_relaxed);
+        CHECK(aura_closure_call(dropped, args, 1) == 0,
+              "4100: post-facade call does not return 77");
+        CHECK(g_ac4100_hits.load(std::memory_order_relaxed) == hits_after_drop,
+              "4100: post-facade call does not execute the pre-mutate native");
+        aura_free_closure(dropped);
+
+        // Post-store face: latch cleared, skeleton reemit, no new ScalarFn.
+        aura::compiler::hot_update_registry().note_ir_content_stored_for_native();
+        CHECK(!aura::compiler::hot_update_registry().ir_content_untrusted_for_native(),
+              "4100: stored latch is clear");
+        aura_hot_update_set_reemit_boundary_policy(0);
+        void* const prev_owner = aura_aot_get_reemit_owner_eval();
+        aura_aot_set_reemit_owner_eval(
+            reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4100)));
+        aura_set_aot_emit_region_mask(0);
+        aura_set_aot_emit_fn(nullptr, nullptr);
+        g_ac4100_hits.store(0, std::memory_order_relaxed);
+        aura_register_fn_named("ac4100keep", 411, ac4100_scalar, 4, 1, 0);
+        const auto kept = aura_alloc_closure(411);
+        CHECK(kept >= 0, "4100: keep closure");
+        aura_closure_set_name(kept, "ac4100keep");
+        aura_closure_set_must_deopt(kept, 0);
+        aura_closure_set_env_gen(kept, aura_get_aot_live_env_frame_version());
+        CHECK(aura_closure_call(kept, args, 1) == 77, "4100: keep closure warm");
+        aura_closure_set_must_deopt(kept, 1);
+        const auto ptr_before = aura_lookup_fn_by_name("ac4100keep", nullptr, nullptr, nullptr);
+        CHECK(ptr_before != 0, "4100: keep native installed");
+        aura::compiler::CompilerMetrics metrics{};
+        aura_set_aot_metrics(&metrics);
+        ReemitFixture feed;
+        feed.candidates = {{"ac4100keep", 1, false}};
+        aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+        const auto epoch_before = read_aot_func_table_epoch();
+        const auto n = aura_reemit_aot_for_dirty(0);
+        CHECK(n == 1, "4100: skeleton returns the would-reemit candidate");
+        CHECK(metrics.aot_closure_bridge_refresh_total.load(std::memory_order_relaxed) == 1,
+              "4100: skeleton still counts bridge refresh");
+        CHECK(read_aot_func_table_epoch() == epoch_before, "4100: skeleton does not commit");
+        CHECK(aura_closure_get_must_deopt(kept) == 1, "4100: skeleton does not clear MustDeopt");
+        CHECK(aura_lookup_fn_by_name("ac4100keep", nullptr, nullptr, nullptr) == ptr_before,
+              "4100: skeleton does not replace g_jit_fns");
+        const auto hits_mid = g_ac4100_hits.load(std::memory_order_relaxed);
+        CHECK(aura_closure_call(kept, args, 1) == 0,
+              "4100: MustDeopt still refuses the old native");
+        CHECK(g_ac4100_hits.load(std::memory_order_relaxed) == hits_mid,
+              "4100: refused call does not enter the pre-mutate native");
+        // Force-deopt poisons bridge_epoch (#2128). That consume is the
+        // refuse; a later clear does not make the old native callable.
+        aura_free_closure(kept);
+        aura_set_reemit_candidate_fn(nullptr, nullptr);
+        aura_set_aot_metrics(nullptr);
+        aura_aot_set_reemit_owner_eval(prev_owner);
+
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura_hot_update_set_reemit_boundary_policy(0);
+        g_ac4100_hits.store(0, std::memory_order_relaxed);
+        aura_register_fn_named("ac4100soft", 412, ac4100_scalar, 4, 0, 0);
+        const auto soft_ptr = aura_lookup_fn_by_name("ac4100soft", nullptr, nullptr, nullptr);
+        CHECK(soft_ptr != 0, "4100: soft native installed");
+        {
+            aura::compiler::CompilerService cs;
+            cs.public_invalidate_function("ac4100soft");
+        }
+        CHECK(aura_lookup_fn_by_name("ac4100soft", nullptr, nullptr, nullptr) == soft_ptr,
+              "4100: Soft invalidate does not take the facade drop");
+        return true;
+    }
+
     // ── Main runner ────────────────────────────────────────────────
 
 } // namespace
@@ -1020,6 +1193,7 @@ int run_incremental_aot_closure_1480() {
     test_last_call_stats_accessors();
     test_100_iter_stress();
     test_closure_bridge_refresh_pair_metric();
+    test_4100_no_restamp_without_new_native();
 
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
