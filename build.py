@@ -8451,6 +8451,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4109 materialize defuse linter failed — run python3 scripts/check_materialize_defuse_4109.py")
         return r
+    # Issue #4110 (P1 sec): evaluator-minted hashes (query:find /
+    # query:pattern QueryResult, observability, persist, compile, ...)
+    # stayed unstamped, so the production JIT hash gate read the owner's
+    # own table as foreign (not-found sentinel 11) and the tree-walker
+    # hash prims never consulted g_hash_tenants at all. The linter pins
+    # the SSOT stamp helper at every g_hash_tables.push_back site, the
+    # tree-walker armed-face gate, and the un-weakened jit_tenant_gate
+    # compare. Extends test_dispatch_required_effects; no docs/design/
+    # (#1655). No invent / new query key.
+    hts4110_script = ROOT / "scripts" / "check_hash_tenant_stamp_4110.py"
+    if not hts4110_script.exists():
+        fail(f"missing {hts4110_script}")
+        return 1
+    r = run([sys.executable, str(hts4110_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4110 hash tenant stamp linter failed — run python3 scripts/check_hash_tenant_stamp_4110.py")
+        return r
     # Issue #4093 (P0 sec): JIT cell/hash heaps carry owner-principal stamps
     # and the production face gates foreign / Strict-MT-unstamped access
     # (IsolationDeny via check_workspace_isolation; Soft/Off zero-cost);

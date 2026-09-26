@@ -129,6 +129,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                   : 0);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -292,6 +295,8 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         put("issue-2201", 2201);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     };
     ObservabilityPrims::register_stats_impl("query:mutation-log-compact-stats",
@@ -621,6 +626,8 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -724,6 +731,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             entries.push_back(make_hash(hidx));
         }
         for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
@@ -924,6 +934,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue", 1913);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1041,6 +1054,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 632);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1102,6 +1118,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 737);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 

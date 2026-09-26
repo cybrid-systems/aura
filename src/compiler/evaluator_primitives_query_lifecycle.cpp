@@ -337,6 +337,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -534,6 +537,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
         insert_kv("schema", 2022); // lineage 2764 / 2100 / 2022 / 1891 / 1610
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     };
     ObservabilityPrims::register_stats_impl("query:ir-hygiene-stats", build_ir_hygiene_stats);
@@ -599,6 +604,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("pattern-marker-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1120,6 +1128,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1448,6 +1459,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1562,6 +1576,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1815,6 +1832,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("prompt6-memory-safety-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1936,6 +1956,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("edsl-eda-sv-closedloop-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2028,6 +2051,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("multi-fiber-orchestration-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2449,6 +2475,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                       static_cast<std::int64_t>(residual_defer_steal_hard_fail));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3027,6 +3056,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("issue-2433", 2433);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3143,6 +3175,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("shape-storm-isolation-default-per-eval", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3253,6 +3288,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("schema", 624);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3353,6 +3391,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("task4-contracts-recommendation", 0);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3465,6 +3506,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("schema", 626);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3845,6 +3889,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                       static_cast<std::int64_t>(rec->composite_transaction_id));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -4006,6 +4053,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 insert_kv("live-effects", 0);
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             }
 
@@ -4140,6 +4190,9 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         };
 

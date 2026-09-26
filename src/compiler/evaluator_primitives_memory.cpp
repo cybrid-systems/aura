@@ -449,6 +449,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -686,6 +689,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         insert_kv("issue-2935", aura::core::densify_consistency::kMovingStickyDensifyRecoveryIssue);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -1184,6 +1189,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 }
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -1319,6 +1327,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 }
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -1470,6 +1481,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
     // (memory-pressure) — Assess overall memory pressure and suggest actions.
@@ -1627,6 +1641,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -1744,6 +1760,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         put("slots", static_cast<std::int64_t>(aura_closure_slot_count()));
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 }

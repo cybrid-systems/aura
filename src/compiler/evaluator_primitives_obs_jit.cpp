@@ -2005,6 +2005,8 @@ static EvalValue build_engine_metrics_hash(Evaluator& ev,
     }
     auto hidx = g_hash_tables.size();
     g_hash_tables.push_back(ht);
+    // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+    aura_hash_stamp_new_table_owner();
     return make_hash(hidx);
 }
 
@@ -9260,6 +9262,9 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             // dropped late keys (issue-2288 in AC7).
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 }

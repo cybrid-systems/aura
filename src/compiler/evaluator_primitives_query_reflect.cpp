@@ -281,6 +281,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2459", 2459);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -972,6 +975,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1169,6 +1175,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1374,6 +1383,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             });
     };
@@ -1575,6 +1587,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             });
     };
@@ -1739,6 +1754,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema-2038", 2038);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -1949,6 +1967,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2984", make_int(2984));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2100,6 +2121,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("violation-log", viol_log);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2239,6 +2263,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2131", 2131);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2369,6 +2396,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 1611); // lineage 502 / 551 / 750
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2676,6 +2706,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2747,6 +2780,8 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -2975,6 +3010,8 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
