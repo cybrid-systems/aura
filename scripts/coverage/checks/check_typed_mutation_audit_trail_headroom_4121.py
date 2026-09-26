@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 HEADROOM = 8
 INSERT_RE = re.compile(r'insert_kv\(\s*"')
 
