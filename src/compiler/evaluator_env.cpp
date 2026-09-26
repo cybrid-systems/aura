@@ -3492,30 +3492,40 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
             rlock[ef_i] = std::shared_lock<std::shared_mutex>(
                 owner_->env_frame_shard_mu(ef_i)); // Issue #3900
         owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
-            // Issue #355: skip + refresh stale frames in the
-            // parent walk. This path was previously missing
-            // the staleness check entirely (the version_ gate
-            // existed only in lookup_cell_ptr /
-            // lookup_by_symid_chain / walk_env_frame_roots).
-            if (f.version_ < version_snap) {
+            // Issue #355: record a behind frame. lookup_by_symid_chain
+            // still skips it (#4099). This walk must not.
+            // Issue #4122: set-car! / vector-set! / hash-set! bump
+            // defuse_version_ on the guard and leave the named-let
+            // capture behind without compacting its cells. Variable
+            // lookup still reads the cell, so (set! widx (+ widx 1))
+            // must store into that same cell. refresh does not stamp
+            // version_. A non-cell on a behind frame does not shadow
+            // a parent cell.
+            const bool behind = f.version_ < version_snap;
+            if (behind)
                 owner_->refresh_stale_frame_in_walk(cur, "Env::lookup_cell_index");
-                return true; // continue walking past the stale frame
-            }
             for (auto& b : f.bindings_) {
                 if (b.first == n) {
-                    if (is_cell(b.second))
+                    if (is_cell(b.second)) {
                         result = as_cell_id(b.second);
-                    return false;
+                        return false;
+                    }
+                    if (!behind)
+                        return false;
                 }
             }
-            // SymId path on parent frames
+            // SymId path on parent frames. A behind capture may only
+            // have bindings_symid_.
             if (pool_ && !f.bindings_symid_.empty()) {
                 auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
                 for (auto it = f.bindings_symid_.rbegin(); it != f.bindings_symid_.rend(); ++it) {
                     if (it->first == s) {
-                        if (is_cell(it->second))
+                        if (is_cell(it->second)) {
                             result = as_cell_id(it->second);
-                        return false;
+                            return false;
+                        }
+                        if (!behind)
+                            return false;
                     }
                 }
             }
