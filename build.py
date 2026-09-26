@@ -8419,6 +8419,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4091 shape dirty-cone linter failed — run python3 scripts/check_shape_dirty_cone_4091.py")
         return r
+    # Issue #4108 (P1 perf): the stable shape-sync path was the last
+    # #4091-discipline holdout — sync_shape_ids_for_fn_key scanned
+    # ir_cache_v2_ on every stable IR/JIT result and painted the result
+    # shape onto every unset shape_ids_ column of EVERY function. The
+    # linter pins the side-index-first resolution, the entry-function
+    # result-block-only stamp, the stored-name recheck before
+    # insert_or_assign, the named call sites, and the #4108 runtime ACs
+    # in the #4091 home.
+    ssi4108_script = ROOT / "scripts" / "check_shape_sync_index_4108.py"
+    if not ssi4108_script.exists():
+        fail(f"missing {ssi4108_script}")
+        return 1
+    r = run([sys.executable, str(ssi4108_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4108 shape sync-index linter failed — run python3 scripts/check_shape_sync_index_4108.py")
+        return r
     # Issue #4093 (P0 sec): JIT cell/hash heaps carry owner-principal stamps
     # and the production face gates foreign / Strict-MT-unstamped access
     # (IsolationDeny via check_workspace_isolation; Soft/Off zero-cost);
