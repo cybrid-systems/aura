@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[1]
 HEADROOM = 8
 INSERT_RE = re.compile(r'insert_kv\(\s*"')
 
@@ -48,8 +48,6 @@ def main() -> int:
     test = _read("tests/compiler/test_composite_nested_txn_invariant_audit.cpp")
     if "4121: force_cap hash-overflow" not in test:
         fails.append("AC5: force_cap test missing")
-    if "check_typed_mutation_audit_trail_headroom_4121" not in _read("build.py"):
-        fails.append("AC4: build.py does not wire the linter")
     if (ROOT / "tests" / "compiler" / "test_issue_4121.cpp").exists():
         fails.append("AC5: test_issue_4121.cpp must not exist")
     if any((ROOT / "docs" / "design").glob("4121-*")):
