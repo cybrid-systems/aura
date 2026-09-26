@@ -1136,13 +1136,23 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
-            // Empty-Env fallback (preserves downstream type-safety
-            // by keeping the closure body valid but with empty
-            // bindings; caller can refresh / re-materialize).
-            Env empty_ne;
-            empty_ne.set_owner(this);
-            empty_ne.set_parent_id(NULL_ENV_ID);
-            return empty_ne;
+            // Issue #2579: a live module closure keeps private free-vars
+            // (*aether-stats*) only in this capture frame. A later
+            // env_generation_ bump (compact / truncate of other frames)
+            // must not empty a still-valid frame — the call would report
+            // unbound. Invalidated frames still take the empty fallback.
+            const bool body_live = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
+                                   cl.body_id < cl.flat->size();
+            const bool env_terminal = fr.version_ == INVALID_VERSION;
+            if (!body_live || env_terminal) {
+                // Empty-Env fallback (preserves downstream type-safety
+                // by keeping the closure body valid but with empty
+                // bindings; caller can refresh / re-materialize).
+                Env empty_ne;
+                empty_ne.set_owner(this);
+                empty_ne.set_parent_id(NULL_ENV_ID);
+                return empty_ne;
+            }
         }
     }
     // P0 complete: legacy cl.env path removed. All closures have
@@ -1373,7 +1383,15 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         const auto cur_defuse = defuse_version_.load(std::memory_order_acquire);
         const bool terminal = fr.version_ == INVALID_VERSION;
         const bool behind = !terminal && fr.version_ < cur_defuse;
-        if (terminal || behind) {
+        // Issue #2579: a live module/tree-walker body keeps private
+        // free-vars only as cell ids in this frame. hash-set! bumps
+        // defuse_version_ but those cell ids stay valid. Emptying the
+        // capture makes the next call unbound (*aether-stats*). Do not
+        // wash fr.version_. A closure with no live body still takes the
+        // empty fallback (#4072).
+        const bool body_live = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
+                               cl.body_id < cl.flat->size();
+        if (terminal || (behind && !body_live)) {
             static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
             if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
                 if (terminal) {

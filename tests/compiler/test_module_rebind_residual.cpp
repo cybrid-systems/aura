@@ -188,6 +188,9 @@ static void ac5_source_gate() {
     std::println("\n--- #2579 AC5: source-cite + cmake ---");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
     CHECK(flat.find("#2579") != std::string::npos, "AC5: multi-define cites #2579");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    CHECK(env.find("Issue #2579") != std::string::npos,
+          "AC5: live module capture survives env_gen fence");
     const auto svc = read_file("src/compiler/service.ixx");
     CHECK(svc.find("#2579") != std::string::npos, "AC5: service cites #2579");
     CHECK(svc.find("sync_workspace_value_cells_from_env") != std::string::npos,

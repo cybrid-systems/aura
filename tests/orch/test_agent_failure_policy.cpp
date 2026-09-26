@@ -558,8 +558,11 @@ int run_test_agent_failure_policy() {
             spec.bp_scope_id = "tenant-bp-a";
             spec.keepalive_interval_ms = 0; // no stall path noise
             spec.body = [&] {
+                // The fiber can run before spawn publishes handles()[0].
+                // Indexing an empty vector is a SIGSEGV (ci/issues rc=139).
                 while (keep_running.load(std::memory_order_relaxed)) {
-                    if (scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested())
+                    auto* self = aura::serve::g_current_fiber;
+                    if (self && self->is_cancel_requested())
                         return;
                     aura::orch::fiber_sleep_ms(20);
                 }
@@ -782,7 +785,8 @@ int run_test_agent_failure_policy() {
             spec.keepalive_interval_ms = 0;
             spec.body = [&] {
                 while (keep_running.load(std::memory_order_relaxed)) {
-                    if (scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested())
+                    auto* self = aura::serve::g_current_fiber;
+                    if (self && self->is_cancel_requested())
                         return;
                     aura::orch::fiber_sleep_ms(20);
                 }
