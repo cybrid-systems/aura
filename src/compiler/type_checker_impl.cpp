@@ -1372,10 +1372,30 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         else if (c.kind == Constraint::INSTANCE) {
             bool depth_capped = false;
             ok = consistent_instance(c.lhs, c.rhs, 0, &depth_capped);
-            // Depth-cap on reverify: treat as soft pass (defer to next
-            // solve_delta / TIMEOUT path) — do not hard-fail clean scan.
-            if (ok && depth_capped)
+            // Issue #4102: depth cap is not CONFLICT. Production/Full
+            // must not look solved — record both endpoint reps and
+            // latch truncation so solve_delta escalates. Soft/Off
+            // returns true with no pending insert (one hard load).
+            if (ok && depth_capped) {
+                const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                                  aura::compiler::typed_audit::get_strategy() ==
+                                      aura::compiler::typed_audit::AuditStrategy::Full;
+                if (hard) {
+                    auto note = [&](aura::core::TypeId id) {
+                        if (!id.valid() || !reg_.is_var(id))
+                            return;
+                        const auto rep = union_find_rep_index(id);
+                        if (rep != UINT32_MAX)
+                            pending_full_solve_roots_.insert(rep);
+                    };
+                    note(c.lhs);
+                    note(c.rhs);
+                    last_reverify_truncated_ = true;
+                    if (last_reverify_unscanned_ == 0)
+                        last_reverify_unscanned_ = 1;
+                }
                 return true;
+            }
         } else
             ok = consistent_unify(c.lhs, c.rhs);
         if (!ok) {

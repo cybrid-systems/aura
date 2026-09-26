@@ -482,6 +482,163 @@ static void ac2643_source_cite() {
           "#2643 AC5: cmake wires linter (manifest SSOT)");
 }
 
+struct AuditFaceRestore {
+    std::uint32_t prod;
+    std::uint32_t strat;
+    AuditFaceRestore() {
+        auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        prod = c.production_defaults_active.load(std::memory_order_relaxed);
+        strat = c.strategy.load(std::memory_order_relaxed);
+    }
+    ~AuditFaceRestore() {
+        auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        c.production_defaults_active.store(prod, std::memory_order_relaxed);
+        c.strategy.store(strat, std::memory_order_relaxed);
+    }
+};
+
+static void arm_face(bool production, bool full) {
+    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    c.production_defaults_active.store(production ? 1 : 0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::set_strategy(
+        full ? aura::compiler::typed_audit::AuditStrategy::Full
+             : aura::compiler::typed_audit::AuditStrategy::Sampled);
+}
+
+// Clean INSTANCE (dirty bit clear) whose scheme exceeds the peel cap.
+// Touched mono var is the only seed, so reverify_one is the path.
+static SolveResult clean_deep_instance(ConstraintSystem& cs, TypeRegistry& reg,
+                                       CompilerMetrics& metrics, bool deep) {
+    cs.set_metrics(&metrics);
+    cs.set_delta_record_mode(true);
+    const int nest = deep ? kInstanceDepthCap + 3 : 1;
+    auto poly = nest_forall(reg, nest, reg.int_type());
+    auto mono = cs.fresh_var();
+    Constraint c;
+    c.kind = Constraint::INSTANCE;
+    c.lhs = poly;
+    c.rhs = mono;
+    c.affected_node = 4102;
+    cs.add_delta(std::move(c));
+    // Dirty bit clear on the INSTANCE. A separate dirty EQUAL keeps
+    // solve_delta on the worklist path so the clean closure runs
+    // reverify_one (empty dirty + touched-only takes full solve).
+    cs.mark_clean();
+    cs.mark_touched_on_delta(mono);
+    Constraint decoy;
+    decoy.kind = Constraint::EQUAL;
+    decoy.lhs = cs.fresh_var();
+    decoy.rhs = reg.int_type();
+    cs.add_delta(std::move(decoy));
+    auto r = solve_delta_occurrence(cs, {}, nullptr, &metrics);
+    return r.status;
+}
+
+static void ac4102_production_clean_depth_cap_not_green() {
+    std::println("\n--- #4102: clean depth-capped INSTANCE is not commit-green ---");
+    AuditFaceRestore restore;
+    {
+        arm_face(/*production=*/true, /*full=*/true);
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        CompilerMetrics metrics{};
+        auto status = clean_deep_instance(cs, reg, metrics, true);
+        CHECK(status != SolveResult::SOLVED, "4102: production solve_delta is not SOLVED");
+        CHECK(cs.last_reverify_truncated(), "4102: production reverify truncated");
+        CHECK(cs.last_reverify_unscanned() > 0, "4102: production unscanned non-zero");
+        auto gate = aura::compiler::commit_ok_after_delta_snapshot(cs, nullptr, nullptr);
+        CHECK(!gate.allow, "4102: production would_allow_commit stays false");
+    }
+    {
+        arm_face(/*production=*/false, /*full=*/true);
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        CompilerMetrics metrics{};
+        auto status = clean_deep_instance(cs, reg, metrics, true);
+        CHECK(status != SolveResult::SOLVED, "4102: Full audit solve_delta is not SOLVED");
+        CHECK(cs.last_reverify_truncated(), "4102: Full audit reverify truncated");
+        CHECK(cs.pending_full_solve_roots_size() > 0, "4102: Full audit pending reps");
+        CHECK(cs.last_reverify_unscanned() > 0, "4102: Full audit unscanned non-zero");
+        auto drain = cs.drain_pending_full_solve_before_commit(nullptr);
+        CHECK(drain != SolveResult::SOLVED, "4102: drain does not stamp green");
+    }
+    (void)restore;
+}
+
+static void ac4102_soft_no_pending_latch() {
+    std::println("\n--- #4102: Soft clean depth-cap does not latch pending ---");
+    AuditFaceRestore restore;
+    arm_face(/*production=*/false, /*full=*/false);
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics{};
+    auto status = clean_deep_instance(cs, reg, metrics, true);
+    CHECK(status == SolveResult::SOLVED, "4102: Soft clean scan stays SOLVED");
+    CHECK(!cs.last_reverify_truncated(), "4102: Soft does not latch truncated");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "4102: Soft pending stays empty");
+    (void)restore;
+}
+
+static void ac4102_shallow_still_solved() {
+    std::println("\n--- #4102: ground INSTANCE inside the cap still SOLVED ---");
+    AuditFaceRestore restore;
+    arm_face(/*production=*/true, /*full=*/true);
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics{};
+    auto status = clean_deep_instance(cs, reg, metrics, false);
+    CHECK(status == SolveResult::SOLVED, "4102: shallow INSTANCE SOLVED");
+    CHECK(!cs.last_reverify_truncated(), "4102: shallow reverify not truncated");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "4102: shallow pending empty");
+    auto gate = aura::compiler::commit_ok_after_delta_snapshot(cs, nullptr, nullptr);
+    CHECK(gate.allow, "4102: shallow may stamp green");
+    (void)restore;
+}
+
+static void ac4102_worklist_and_bfs_unchanged() {
+    std::println("\n--- #4102: worklist re-queue and BFS residual stay ---");
+    AuditFaceRestore restore;
+    arm_face(/*production=*/false, /*full=*/true);
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics{};
+    cs.set_metrics(&metrics);
+    auto poly = nest_forall(reg, kInstanceDepthCap + 3, reg.int_type());
+    Constraint c;
+    c.kind = Constraint::INSTANCE;
+    c.lhs = poly;
+    c.rhs = reg.int_type();
+    cs.add_delta(std::move(c));
+    auto r = solve_delta_occurrence(cs, {}, nullptr, &metrics);
+    CHECK(r.status == SolveResult::TIMEOUT, "4102: dirty worklist still TIMEOUT");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto work = impl.find("Cap → re-queue so pass limit yields TIMEOUT");
+    CHECK(work != std::string::npos, "4102: worklist still sees depth_capped");
+    if (work != std::string::npos) {
+        const auto win = impl.substr(work, 280);
+        CHECK(win.find("worklist.push_back") != std::string::npos,
+              "4102: worklist still re-queues the capped goal");
+    }
+    CHECK(impl.find("enqueue_residual_frontier") != std::string::npos,
+          "4102: BFS-cap residual enqueue unchanged");
+    const auto rev = impl.find("Issue #4102:");
+    CHECK(rev != std::string::npos, "4102: reverify_one cites the cap latch");
+    if (rev != std::string::npos) {
+        const auto rwin = impl.substr(rev, 1600);
+        CHECK(rwin.find("pending_full_solve_roots_.insert") != std::string::npos,
+              "4102: production records endpoint reps");
+        CHECK(rwin.find("last_reverify_truncated_") != std::string::npos,
+              "4102: production sets truncated");
+        CHECK(rwin.find("production_defaults_active()") != std::string::npos,
+              "4102: production defaults gate");
+        CHECK(rwin.find("AuditStrategy::Full") != std::string::npos, "4102: Full audit gate");
+        CHECK(rwin.find("return true") != std::string::npos, "4102: cap is not CONFLICT");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4102.cpp").empty(), "4102: no test_issue file");
+    CHECK(read_file("docs/design/4102-reverify-depth-cap.md").empty(), "4102: no docs/design");
+    (void)restore;
+}
+
 int run_test_instance_constraint_depth_cap() {
     std::println("=== test_instance_constraint_depth_cap + #2643 ===");
     ac1_instance_solves_poly();
@@ -493,6 +650,11 @@ int run_test_instance_constraint_depth_cap() {
     ac2643_solved_no_hints();
     ac2643_query_surface();
     ac2643_source_cite();
+    std::println("\n=== Issue #4102: depth-capped INSTANCE reverify ===");
+    ac4102_production_clean_depth_cap_not_green();
+    ac4102_soft_no_pending_latch();
+    ac4102_shallow_still_solved();
+    ac4102_worklist_and_bfs_unchanged();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
