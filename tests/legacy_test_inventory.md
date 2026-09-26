@@ -1917,7 +1917,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_frame_budget_cascade_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: under FrameBudget / render hotpath, non-render cascade deferred
 - `tests/compiler/test_hash_table_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: (hash) with 16 k/v pairs retains all keys
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_instance_constraint_depth_cap.cpp` (—) [domain_suite, theme_compiler] — Issue #2643 — Agent-visible depth-cap repair surface
+- `tests/compiler/test_instance_constraint_depth_cap.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2643 — Agent-visible depth-cap repair surface
 - `tests/compiler/test_instr_impact_minimal_dirty.cpp` (—) [minimal, domain_suite, theme_compiler] — AC1: nested lambda free-var body-only → no mark_all_blocks_dirty;
 - `tests/compiler/test_instr_level_impact_scope.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2031; ImpactScope::InstrRef + SourceIrLoc + affected_instrs
 - `tests/compiler/test_instruction_level_impact_partial.cpp` (—) [domain_suite, theme_compiler] — AC1: compute_impact_scope returns non-empty affected_instrs / affected_insts
