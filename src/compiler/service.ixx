@@ -14849,6 +14849,8 @@ public:
         bump_bridge_epoch();
         // Issue #1476: defuse_version_ in lockstep (acq_rel) for #1475 readers.
         evaluator_.bump_defuse_version_for_test();
+        // Issue #4109: bare bump re-definitions nothing — ride captures.
+        evaluator_.restamp_live_capture_frames_to_current();
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
         // Issue #2841 / #2744 / #2951: stamp current Evaluator as
         // reemit/register owner before the AOT table epoch bump so
@@ -14995,6 +14997,10 @@ public:
         if (!os_table_bump) {
             bump_bridge_epoch();
             evaluator_.bump_defuse_version_for_test();
+            // Issue #4109: this dual-epoch bump re-definitions nothing —
+            // ride still-valid captures up so the pure-counter advance does
+            // not strand them behind the empty-Env contract.
+            evaluator_.restamp_live_capture_frames_to_current();
             metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
         }
         on_typed_mutation_epoch_bump();
@@ -16218,6 +16224,10 @@ public:
                 // mark-dirty over full jit_cache_ erase when possible.
                 bump_bridge_epoch();
                 evaluator_.bump_defuse_version_for_test();
+                // Issue #4109: this dual-epoch bump re-definitions nothing —
+                // ride still-valid captures up so the pure-counter advance
+                // does not strand them behind the empty-Env contract.
+                evaluator_.restamp_live_capture_frames_to_current();
                 metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
                 metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
                 shape_jit_pass::record_incremental_recompile_hit();
@@ -16232,6 +16242,11 @@ public:
             // atomic_bump_epochs_and_stamp_bridge (hard path lockstep fail).
             bump_bridge_epoch();
             evaluator_.bump_defuse_version_for_test();
+            // Issue #4109: this dual-epoch bump re-definitions nothing —
+            // ride still-valid captures up so the pure-counter advance does
+            // not strand them behind the empty-Env contract. The resync
+            // walk below stays observability-only (#4099 no-wash).
+            evaluator_.restamp_live_capture_frames_to_current();
             metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
             evaluator_.resync_live_closure_env_versions_on_invalidate();
             jit_.invalidate(name.c_str());

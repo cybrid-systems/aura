@@ -488,6 +488,15 @@ void Evaluator::restore_panic_checkpoint_on_hot_swap_if_needed() noexcept {
 void Evaluator::run_post_restore_lifecycle_close(bool safe_total_event) noexcept {
     (void)truncate_env_frames_to_checkpoint();
     env_generation_ = env_generation_ + 1;
+    // Issue #4109: the post-restore env_generation_ bump re-definitions
+    // nothing (truncate already dropped the doomed frames) — restamp
+    // survivor stamps so the env_gen fence (always-empty on mismatch)
+    // does not strand captures across the restore close (#2579 module
+    // captures). Same critical section as the bump.
+    for (auto& fr : env_frames_) {
+        if (fr.env_gen_stamp_ != 0)
+            fr.env_gen_stamp_ = env_generation_;
+    }
     // Issue #2091 / #3267: post-restore does not hold env_frames_mtx_
     // (truncate released it). Shared-lock publish covers the scan.
     publish_live_env_linear_to_bridge();

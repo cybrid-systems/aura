@@ -8435,6 +8435,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4108 shape sync-index linter failed — run python3 scripts/check_shape_sync_index_4108.py")
         return r
+    # Issue #4109 (P1): live-body closures skipped the defuse-behind empty
+    # env and kept pre-mutate bindings — materialize_call_env keyed the
+    # behind/INVALID fallback on body_live, which is not a proof the capture
+    # is current. The linter pins the every-behind-frame empty fallback, the
+    # env_gen fence arm without body_live, the boundary-exit ride-up
+    # (restamp_live_capture_frames) that keeps still-valid module captures
+    # (#2579) at the current defuse, the compact/truncate survivor stamp
+    # restamps, and the #4109 runtime ACs in the two home test files.
+    mdf4109_script = ROOT / "scripts" / "check_materialize_defuse_4109.py"
+    if not mdf4109_script.exists():
+        fail(f"missing {mdf4109_script}")
+        return 1
+    r = run([sys.executable, str(mdf4109_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4109 materialize defuse linter failed — run python3 scripts/check_materialize_defuse_4109.py")
+        return r
     # Issue #4093 (P0 sec): JIT cell/hash heaps carry owner-principal stamps
     # and the production face gates foreign / Strict-MT-unstamped access
     # (IsolationDeny via check_workspace_isolation; Soft/Off zero-cost);

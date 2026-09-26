@@ -32,6 +32,7 @@
 #include <vector>
 
 import std;
+import aura.core.ast;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -1181,6 +1182,34 @@ static void run_4072_invalid_and_stale_capture() {
     auto copied = ne.lookup_by_symid(7);
     CHECK(!copied.has_value(), "4072: stale materialize does not copy the capture");
     CHECK(ev.env_frame(live).version_ == ver, "4072: version_ was not washed to current");
+
+    // Issue #4109: body_live is NOT a proof the capture is current. A
+    // behind frame whose closure body node is still in range still takes
+    // the empty fallback, and INVALID_VERSION stays terminal even with a
+    // live body.
+    aura::ast::FlatAST live_flat;
+    const auto body_node = live_flat.add_node(aura::ast::NodeTag::LiteralInt);
+    aura::ast::StringPool live_pool;
+    const auto behind_live = ev.alloc_env_frame();
+    ev.env_frame_mut(behind_live).bind_symid(7, make_int(4109));
+    Closure live_cl;
+    live_cl.env_id = behind_live;
+    live_cl.flat = &live_flat;
+    live_cl.pool = &live_pool;
+    live_cl.body_id = body_node;
+    ev.bump_defuse_version_for_test();
+    CHECK(ev.is_env_frame_stale(behind_live), "4109: behind live-body frame is stale");
+    const auto behind_ver = ev.env_frame(behind_live).version_;
+    auto ne_live = ev.materialize_call_env(live_cl);
+    CHECK(!ne_live.lookup_by_symid(7).has_value(),
+          "4109: behind live-body materialize does not copy the capture");
+    CHECK(ev.env_frame(behind_live).version_ == behind_ver,
+          "4109: behind live-body version_ was not washed");
+    // INVALID_VERSION + live body: still the empty fallback (terminal rule).
+    ev.env_frame_mut(behind_live).version_ = INVALID_VERSION;
+    auto ne_inv = ev.materialize_call_env(live_cl);
+    CHECK(!ne_inv.lookup_by_symid(7).has_value(),
+          "4109: INVALID live-body materialize does not copy the capture");
     const auto env_src = read_file("src/compiler/evaluator_env.cpp");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
     CHECK(env_src.find("Issue #4072") != std::string::npos, "4072: materialize cites");

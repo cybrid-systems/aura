@@ -2,12 +2,18 @@
 // @reason: Issue #2579 — module free-vars / multi-define value init / export
 //          residuals after #2566 #2569 #2570 #2581.
 //          Also locks #2581 two-pass multi-define (private free-vars + export).
+//          Issue #4109 — live-body behind captures are not copied; the
+//          boundary-exit ride-up (restamp_live_capture_frames) keeps
+//          still-valid module captures at the current defuse.
 //
 //   AC1: set-code multi-define (define g (f)) binds call result, not procedure
 //   AC2: split stats+loop modules survive unimpacted mutate:rebind
 //   AC3: large trailing export present on require surface
 //   AC4: top-level define after rebind stays bound
 //   AC5: source-cite + cmake
+//   AC6 (#4109): hash-set! on a module capture cell — capture still resolves
+//   AC7 (#4109): rebind of the captured name — call never evals the pre-mutate cell
+//   AC8 (#4109): source-cite + wiring (linter, ride-up, behind arm shape)
 
 #include "test_harness.hpp"
 
@@ -199,6 +205,73 @@ static void ac5_source_gate() {
     CHECK(cmake.find("test_module_rebind_residual") != std::string::npos, "AC5: cmake");
 }
 
+static void ac6_module_capture_rides_up_4109() {
+    std::println("\n--- #4109 AC6: hash-set! on a module capture cell still resolves ---");
+    const auto lib = find_lib_std();
+    CHECK(!lib.empty(), "AC6: lib found");
+    if (lib.empty())
+        return;
+    auto tmp = fs::temp_directory_path() / "aura_4109_mod";
+    fs::create_directories(tmp);
+    {
+        std::ofstream out(tmp / "aether-4109.aura");
+        out << R"((export bump4109 get4109)
+(define *aether-stats* (hash "rounds" 0))
+(define (bump4109)
+  (hash-set! *aether-stats* "rounds" (+ 1 (hash-ref *aether-stats* "rounds" 0)))
+  (hash-ref *aether-stats* "rounds" 0))
+(define (get4109)
+  (hash-ref *aether-stats* "rounds" 0))
+)";
+    }
+    setenv("AURA_PATH", (lib.string() + ":" + tmp.string()).c_str(), 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    CompilerService cs;
+    CHECK(eval_ok(cs, "(require \"aether-4109\" all:)"), "AC6: require module");
+    CHECK(eval_int_eq(cs, "(bump4109)", 1), "AC6: bump 1");
+    CHECK(eval_int_eq(cs, "(bump4109)", 2), "AC6: bump 2 (in-place hash-set! on capture cell)");
+    CHECK(eval_int_eq(cs, "(get4109)", 2),
+          "AC6: captured cell resolves after hash-set! boundaries (ride-up, no body_live)");
+    fs::remove_all(tmp);
+}
+
+static void ac7_rebind_never_pre_mutate_4109() {
+    std::println("\n--- #4109 AC7: rebind of captured name is never the pre-mutate value ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    CompilerService cs;
+    CHECK(eval_ok(cs, "(set-code \"(define v4109 41) (define (get-v4109) v4109)\")"),
+          "AC7: set-code v4109 + getter");
+    CHECK(eval_ok(cs, "(eval-current)"), "AC7: eval-current");
+    CHECK(eval_int_eq(cs, "(get-v4109)", 41), "AC7: pre-mutate capture reads 41");
+    CHECK(eval_ok(cs, "(mutate:rebind \"v4109\" \"42\" \"t\")"), "AC7: rebind v4109");
+    CHECK(eval_ok(cs, "(eval-current)"), "AC7: eval-current after rebind");
+    // The capture frame bound the OLD v4109 cell; the rebind moved the
+    // workspace binding to a new cell, so the frame stays behind and
+    // materialize_call_env (#4109) returns the empty Env instead of copying
+    // pre-mutate bindings. The call must not eval the PRE-mutate cell: the
+    // closed-over name falls through to the live top binding (42), never
+    // the stale 41.
+    CHECK(eval_int_eq(cs, "(get-v4109)", 42),
+          "AC7: post-rebind call reads 42, never the pre-mutate 41");
+}
+
+static void ac8_source_gate_4109() {
+    std::println("\n--- #4109 AC8: source-cite + wiring ---");
+    const auto env_src = read_file("src/compiler/evaluator_env.cpp");
+    CHECK(env_src.find("Issue #4109") != std::string::npos, "AC8: materialize cites #4109");
+    CHECK(env_src.find("if (terminal || behind)") != std::string::npos,
+          "AC8: behind arm returns empty for every behind frame (not keyed on body_live)");
+    CHECK(env_src.find("restamp_live_capture_frames") != std::string::npos,
+          "AC8: ride-up helper defined in evaluator_env.cpp");
+    const auto boundary_src = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(boundary_src.find("restamp_live_capture_frames") != std::string::npos,
+          "AC8: boundary bump rides still-valid captures up (#4109)");
+    CHECK(read_file("scripts/check_materialize_defuse_4109.py").find("4109") != std::string::npos,
+          "AC8: #4109 linter present");
+    const auto cmake = read_file("CMakeLists.txt");
+    CHECK(cmake.find("test_module_rebind_residual") != std::string::npos, "AC8: cmake");
+}
+
 } // namespace
 
 int run_test_module_rebind_residual() {
@@ -208,6 +281,9 @@ int run_test_module_rebind_residual() {
     ac3_large_trailing_export();
     ac4_define_after_rebind();
     ac5_source_gate();
+    ac6_module_capture_rides_up_4109();
+    ac7_rebind_never_pre_mutate_4109();
+    ac8_source_gate_4109();
     std::println("\n=== #2579: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

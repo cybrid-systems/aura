@@ -4711,6 +4711,23 @@ public:
     // reference (same precondition as materialize_call_env).
     // Issue #4099: the helper does not store version_.
     void refresh_stale_frame_in_walk(EnvId id, const char* site) const;
+    // Issue #4109: ride still-valid capture frames up to the current
+    // defuse_version_ in the same critical section as the boundary bump.
+    // Frames whose captured cell still matches the live workspace binding
+    // for that name (module captures, #2579) are restamped; frames whose
+    // captured cell was replaced by the boundary (mutate:rebind / set-code
+    // new cell) stay behind so materialize_call_env returns the empty Env
+    // instead of copying pre-mutate bindings. INVALID_VERSION never
+    // restamps (#356).
+    void restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint64_t entry_version,
+                                     std::size_t log_from) noexcept;
+    // Issue #4109: ride still-valid captures up to the CURRENT defuse with
+    // an empty invalidation window — for bare counter advances (service
+    // dual-epoch lockstep bumps) that re-define no names.
+    void restamp_live_capture_frames_to_current() noexcept {
+        const auto cur = defuse_version_.load(std::memory_order_acquire);
+        restamp_live_capture_frames(cur, cur, std::size_t(-1));
+    }
     // Look up an EnvFrame by id. UB if id is invalid — prefer
     // resolve_env_frame() when the id may be post-truncate stale (#1360).
     const EnvFrame& env_frame(EnvId id) const pre(id != NULL_ENV_ID) { return env_frames_[id]; }

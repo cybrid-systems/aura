@@ -1117,6 +1117,15 @@ void Evaluator::enter_mutation_boundary() {
     // Issue #189: bump the total-mutations counter for
     // observability. Relaxed because it's stats-only.
     total_mutations_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #4109: the enter bump must not strand still-valid captures
+    // for the DURATION of the boundary (nested eval inside the boundary
+    // materializes through the same behind arm). The mutation-log window
+    // this boundary recorded is still empty at enter, so every behind
+    // frame rides up; the EXIT restamp re-runs the window rule and leaves
+    // frames binding a name the boundary re-defined behind once the new
+    // cell is swapped in.
+    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
+                                cp.mutation_log_size);
 }
 // Exit a mutation boundary. Pops the checkpoint. If success
 // is true, the version advance is kept; if false, the
@@ -1669,6 +1678,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // We bump it even on rollback so dashboards can see
     // "the boundary attempted to mutate, then rolled back".
     total_mutations_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #4109: ride still-valid capture frames up to the new defuse
+    // in the same critical section as the bump. The boundary's own
+    // mutation-log window decides invalidation: frames binding a name the
+    // boundary re-defined (mutate:rebind / set-code replaced the Define —
+    // module captures, #2579, are NOT re-defined by unrelated mutates)
+    // stay behind; materialize_call_env then returns the empty Env
+    // instead of copying pre-mutate bindings into the next call.
+    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
+                                cp.mutation_log_size);
     // Issue #550 / #518: narrowing_refresh_count_ is
     // bumped from TypeChecker::infer_flat_partial's
     // reanalyze_occurrence_contexts path (actual
@@ -7308,6 +7326,12 @@ bool Evaluator::restore_hygiene_checkpoint(const HygieneCheckpoint& cp) noexcept
     // Bump defuse_version_ once so any reader holding a snapshot
     // across the restore sees a version mismatch and re-reads.
     defuse_version_.fetch_add(1, std::memory_order_release);
+    // Issue #4109: the restore re-definitions nothing (metadata columns
+    // only) — ride still-valid captures up so a pure-counter advance does
+    // not strand them behind the empty-Env contract.
+    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire),
+                                defuse_version_.load(std::memory_order_acquire),
+                                workspace_flat_ ? workspace_flat_->all_mutations().size() : 0);
     bump_hygiene_checkpoint_restore_success_total();
     return true;
 }
