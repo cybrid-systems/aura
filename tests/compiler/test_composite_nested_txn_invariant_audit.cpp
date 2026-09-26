@@ -236,6 +236,21 @@ static void ac7_service_smoke() {
     CHECK(load_u64(g_typed_mutation_audit_counters.invariant_audits) >= 0, "audits observed");
 }
 
+extern "C" void aura_query_hash_set_force_cap(std::uint64_t cap);
+
+static void ac4121_trail_headroom_and_overflow() {
+    std::println("\n--- #4121: trail planned headroom and hash-overflow ---");
+    reset_for_test();
+    CompilerService cs;
+    CHECK(trail_href(cs, "hash-overflow") != 1, "4121: planned cap does not overflow");
+    CHECK(trail_href(cs, "schema-2108") == 2108, "4121: late forensic key still present");
+    aura_query_hash_set_force_cap(4);
+    CHECK(trail_href(cs, "hash-overflow") == 1, "4121: force_cap hash-overflow");
+    aura_query_hash_set_force_cap(0);
+    CHECK(read_file("tests/compiler/test_issue_4121.cpp").empty(), "4121: no invent");
+    CHECK(read_file("docs/design/4121-trail-headroom.md").empty(), "4121: no docs/design");
+}
+
 } // namespace
 
 int main() {
@@ -246,6 +261,7 @@ int main() {
     ac5_partial_recover_wired();
     ac6_fine_rollback_consistency();
     ac7_service_smoke();
+    ac4121_trail_headroom_and_overflow();
     if (g_failed)
         return 1;
     std::println("composite nested txn invariant audit (#2027): OK ({} passed)", g_passed);

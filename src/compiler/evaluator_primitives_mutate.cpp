@@ -8274,38 +8274,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::uint32_t strategy = 0, ratio = 0;
             snapshot_global(considered, skipped, contextual, trail_sz, rollbacks, errors, strategy,
                             ratio);
-            // Capacity must stay well above key count (~126+ schemas). At 128 the
-            // linear-probe insert silently drops late keys (schema-2108 etc.).
-            auto* ht = FlatHashTable::create(
-                query_hash_capacity_for(146)); // #1894 + #2027 + #2108 + lineage
+            // Issue #4121: planned_keys >= live insert_kv + 8. Undersized
+            // tables silently drop late forensic keys. insert_kv_checked
+            // sets overflowed; query_hash_finish publishes hash-overflow.
+            constexpr std::size_t kTypedMutationAuditTrailPlannedKeys = 159;
+            auto* ht =
+                FlatHashTable::create(query_hash_capacity_for(kTypedMutationAuditTrailPlannedKeys));
             if (!ht)
                 return make_void();
             bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
+                if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
+                    overflowed = true;
             };
             insert_kv("audits-considered", static_cast<std::int64_t>(considered));
             insert_kv("samples-skipped", static_cast<std::int64_t>(skipped));
@@ -8662,6 +8642,41 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("latest-mutation-id", static_cast<std::int64_t>(latest.mutation_id));
                 insert_kv("latest-outcome", static_cast<std::int64_t>(latest.outcome));
                 insert_kv("latest-nodes-changed", static_cast<std::int64_t>(latest.nodes_changed));
+            }
+            // Issue #4121: a full table cannot take another slot, so the
+            // finish insert of hash-overflow would miss. Plant it over a
+            // non-schema entry before finish.
+            if (overflowed && !insert_kv_checked(ht, ev.string_heap_, "hash-overflow", 1)) {
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (unsigned char c : std::string_view{"hash-overflow"})
+                    h = (h ^ c) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                const auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("hash-overflow");
+                const auto key_ev = make_string(static_cast<std::uint64_t>(kidx));
+                for (std::size_t i = 0; i < ht->capacity; ++i) {
+                    if (meta[i] == 0xFF)
+                        continue;
+                    EvalValue ke{};
+                    ke.val = keys[i];
+                    if (is_string(ke)) {
+                        const auto si = as_string_idx(ke);
+                        if (si < ev.string_heap_.size() && ev.string_heap_[si] == "schema")
+                            continue;
+                    }
+                    meta[i] = fp;
+                    keys[i] = key_ev.val;
+                    vals[i] = make_int(1).val;
+                    break;
+                }
+                // Finish's overflow stamp overwrites the first non-schema
+                // slot, which is the sentinel just planted. Keep it.
+                return query_hash_finish(ht, ev.string_heap_, /*overflowed=*/false);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
