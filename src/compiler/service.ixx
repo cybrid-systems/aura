@@ -420,6 +420,34 @@ extern "C" std::uint64_t aura_jit_owner_capability_tenant(void) noexcept {
     return owner->capability_tenant_id();
 }
 
+// Issue #4093: owner sandbox mode for the JIT cell/hash/pair tenant gate —
+// the same owner wiring as aura_jit_owner_require_effect. Unwired owner → 0
+// (production face off; Soft/Off zero-cost contract keeps the tenant arrays
+// unread). Weak stub in aura_jit_prim_dispatch_stub.cpp.
+extern "C" int aura_jit_owner_sandbox_mode(void) noexcept {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        return 0;
+    return owner->effect_sandbox_mode();
+}
+
+// Issue #4093: emit the IsolationDeny through the owner's
+// check_workspace_isolation (fiber id + Mutation epoch, #2388 single
+// record_audit path — no second audit writer). Returns 1 on allow,
+// 0 on deny (the JIT access is skipped by the caller).
+extern "C" int aura_jit_owner_check_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
+                                              std::uint16_t bits, const char* op) noexcept {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        return 1;
+    return owner->check_workspace_isolation(target_tenant, ref_tenant, bits,
+                                            op ? std::string_view(op) : "jit-tenant")
+               ? 1
+               : 0;
+}
+
 // Issue #3593: test hook — drive the JIT C ABI dispatch entry directly.
 // Light-test links can bind a bare aura_jit_prim_dispatch reference to the
 // weak stub in aura_jit_light_test_objects (.so), silently bypassing the

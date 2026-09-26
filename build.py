@@ -8369,6 +8369,18 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4091 shape dirty-cone linter failed — run python3 scripts/check_shape_dirty_cone_4091.py")
         return r
+    # Issue #4093 (P0 sec): JIT cell/hash heaps carry owner-principal stamps
+    # and the production face gates foreign / Strict-MT-unstamped access
+    # (IsolationDeny via check_workspace_isolation; Soft/Off zero-cost);
+    # the stamp/gate/hook wiring is pinned by this source-cite gate.
+    jti4093_script = ROOT / "scripts" / "check_jit_heap_tenant_4093.py"
+    if not jti4093_script.exists():
+        fail(f"missing {jti4093_script}")
+        return 1
+    r = run([sys.executable, str(jti4093_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4093 JIT heap tenant linter failed — run python3 scripts/check_jit_heap_tenant_4093.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

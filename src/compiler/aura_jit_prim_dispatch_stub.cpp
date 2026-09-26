@@ -42,6 +42,21 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_owner_capability_tenant(
     return 0;
 }
 
+// Issue #4093: light-link fallback — no owner Evaluator → production face
+// off (Soft-like zero-cost contract; the tenant gate never arms and the
+// tenant arrays stay unread).
+extern "C" __attribute__((weak)) int aura_jit_owner_sandbox_mode(void) noexcept {
+    return 0;
+}
+
+// Issue #4093: light-link fallback — no owner Evaluator → no isolation
+// record. Only reachable when a strong sandbox hook arms the face; allow
+// (1) keeps light-link JIT behavior unchanged.
+extern "C" __attribute__((weak)) int
+aura_jit_owner_check_isolation(std::uint64_t, std::uint64_t, std::uint16_t, const char*) noexcept {
+    return 1;
+}
+
 // Do not stub aura_set/get_storm_eval_context here. This TU is in
 // aura_jit_test_objects (DT_NEEDED first for full-JIT tests); a weak
 // no-op in the first DSO wins ELF search over the strong TLS in

@@ -76,6 +76,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_void;
 using aura::compiler::types::make_int;
@@ -560,6 +561,229 @@ static void ac4037_source_cite() {
     CHECK(!al_row, "4037 cite: SECURITY_EXEMPT allowlist row removed");
 }
 
+// ── Issue #4093: JIT cell/hash heap tenant isolation — the process-global
+// g_cell_heap / g_hash_tables / g_pair_slots carry owner-principal stamps
+// (the #4057 pair-slot shape) and the production face (sandbox != 0 and
+// Strict or Restricted+MT) refuses foreign / unstamped slots with the
+// access skipped and the deny fired through the owner's
+// check_workspace_isolation (IsolationDeny SE, fiber id + Mutation epoch).
+// Light-link test binaries shadow the strong owner hooks with weak
+// fail-closed stubs (the #4036 rationale), so the behavioral arms drive the
+// gate through the explicit-context checked seams with real tenant stamps;
+// the hook-driven production wiring is pinned by the cite arm + the linter.
+static void ac4093_source_cite() {
+    std::println("\n--- #4093 cite: stamps, gates, seams, hooks, resets ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("static std::vector<std::uint64_t> g_cell_tenants;") != std::string::npos,
+          "4093 cite: g_cell_tenants parallel array");
+    const auto ncp = rt.find("int64_t aura_new_cell()");
+    CHECK(ncp != std::string::npos, "4093 cite: aura_new_cell");
+    if (ncp != std::string::npos) {
+        const auto win = rt.substr(ncp, 700);
+        CHECK(win.find("g_cell_tenants") != std::string::npos,
+              "4093 cite: aura_new_cell stamps the owner tenant");
+        CHECK(win.find("aura_jit_owner_capability_tenant()") != std::string::npos,
+              "4093 cite: stamp from the owner hook");
+    }
+    CHECK(rt.find("aura_new_cell_tenant") != std::string::npos,
+          "4093 cite: explicit-tenant seam (#4036 aura_alloc_closure_tenant shape)");
+    const auto cgc = rt.find("aura_cell_get_checked(int64_t cell_id, std::uint64_t caller_tenant");
+    CHECK(cgc != std::string::npos, "4093 cite: aura_cell_get_checked seam");
+    if (cgc != std::string::npos) {
+        const auto win = rt.substr(cgc, 1600);
+        CHECK(win.find("jit_tenant_gate_armed(sandbox_mode)") != std::string::npos,
+              "4093 cite: cell read face probe");
+        CHECK(win.find("jit_tenant_gate(slot_tenant, caller_tenant") != std::string::npos,
+              "4093 cite: cell read owner compare");
+    }
+    const auto cgp = rt.find("int64_t aura_cell_get(int64_t cell_id)");
+    CHECK(cgp != std::string::npos, "4093 cite: aura_cell_get wrapper");
+    if (cgp != std::string::npos) {
+        const auto win = rt.substr(cgp, 300);
+        CHECK(win.find("aura_jit_owner_capability_tenant()") != std::string::npos &&
+                  win.find("aura_jit_owner_sandbox_mode()") != std::string::npos,
+              "4093 cite: production read delegates with owner-hook values");
+    }
+    const auto csp = rt.find("void aura_cell_set(int64_t cell_id, int64_t val)");
+    CHECK(csp != std::string::npos, "4093 cite: aura_cell_set wrapper");
+    if (csp != std::string::npos) {
+        const auto win = rt.substr(csp, 700);
+        CHECK(win.find("aura_jit_owner_require_effect") != std::string::npos,
+              "4093 cite: #4018 Mutate choke stays in the production wrapper");
+        CHECK(win.find("aura_cell_set_checked(cell_id, val,") != std::string::npos,
+              "4093 cite: production write delegates to the checked seam");
+    }
+    const auto csc = rt.find("aura_cell_set_checked(int64_t cell_id, int64_t val,");
+    CHECK(csc != std::string::npos, "4093 cite: aura_cell_set_checked seam");
+    if (csc != std::string::npos) {
+        const auto win = rt.substr(csc, 1600);
+        CHECK(win.find("jit_tenant_gate_armed(sandbox_mode)") != std::string::npos,
+              "4093 cite: cell write face probe");
+    }
+    const auto hrc = rt.find("aura_hash_ref_checked(int64_t hash_val, int64_t key_val,");
+    CHECK(hrc != std::string::npos, "4093 cite: aura_hash_ref_checked seam");
+    if (hrc != std::string::npos) {
+        const auto win = rt.substr(hrc, 1800);
+        CHECK(win.find("jit_tenant_gate_armed(sandbox_mode)") != std::string::npos,
+              "4093 cite: hash read face probe");
+    }
+    const auto hsp = rt.find("int64_t aura_hash_set(int64_t hash_val, int64_t pair_val)");
+    CHECK(hsp != std::string::npos, "4093 cite: aura_hash_set wrapper");
+    if (hsp != std::string::npos) {
+        const auto win = rt.substr(hsp, 600);
+        CHECK(win.find("aura_jit_owner_require_effect") != std::string::npos,
+              "4093 cite: #3720 Mutate choke stays in the production wrapper");
+        CHECK(win.find("aura_hash_set_checked(hash_val, pair_val,") != std::string::npos,
+              "4093 cite: production hash write delegates to the checked seam");
+    }
+    CHECK(rt.find("jit_tenant_gate_armed(aura_jit_owner_sandbox_mode())") != std::string::npos,
+          "4093 cite: hash-remove inline gate reads the owner face");
+    const auto pfl = rt.find("static int64_t pair_field_locked");
+    CHECK(pfl != std::string::npos, "4093 cite: pair_field_locked");
+    if (pfl != std::string::npos) {
+        const auto win = rt.substr(pfl, 1600);
+        CHECK(win.find("g_pair_slot_tenants") != std::string::npos,
+              "4093 cite: pair field read consults the slot stamp");
+        CHECK(win.find("jit_tenant_gate_armed(sandbox_mode)") != std::string::npos,
+              "4093 cite: pair field face probe");
+    }
+    CHECK(rt.find("aura_hash_alloc_tenant") != std::string::npos,
+          "4093 cite: hash alloc seam stamps g_hash_tenants");
+    CHECK(rt.find("aura_alloc_pair_tenant") != std::string::npos,
+          "4093 cite: pair alloc seam stamps g_pair_slot_tenants");
+    CHECK(rt.find("g_cell_tenants.clear();") != std::string::npos &&
+              rt.find("g_hash_tenants.clear();") != std::string::npos,
+          "4093 cite: resets clear the stamp arrays");
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    CHECK(sh.find("extern std::vector<std::uint64_t> g_hash_tenants;") != std::string::npos,
+          "4093 cite: runtime_shared.h declares g_hash_tenants");
+    CHECK(sh.find("aura_cell_get_checked") != std::string::npos,
+          "4093 cite: runtime_shared.h declares the checked seams");
+    const auto ssot = read_file("src/compiler/runtime_ssot.cpp");
+    CHECK(ssot.find("std::vector<std::uint64_t> g_hash_tenants;") != std::string::npos,
+          "4093 cite: runtime_ssot.cpp defines g_hash_tenants");
+    const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    const auto ag = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(vec.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
+              std::string::npos,
+          "4093 cite: hash prim stamps the owner tenant");
+    CHECK(ag.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
+              std::string::npos,
+          "4093 cite: agent hash alloc sites stamp the owner tenant");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("aura_jit_owner_sandbox_mode") != std::string::npos &&
+              svc.find("owner->effect_sandbox_mode()") != std::string::npos,
+          "4093 cite: strong sandbox hook");
+    CHECK(svc.find("aura_jit_owner_check_isolation") != std::string::npos &&
+              svc.find("owner->check_workspace_isolation") != std::string::npos,
+          "4093 cite: strong isolation hook");
+    const auto stub = read_file("src/compiler/aura_jit_prim_dispatch_stub.cpp");
+    CHECK(stub.find("aura_jit_owner_sandbox_mode") != std::string::npos &&
+              stub.find("aura_jit_owner_check_isolation") != std::string::npos,
+          "4093 cite: weak stubs present");
+    const auto pair_src = read_file("src/compiler/evaluator_primitives_pair.cpp");
+    CHECK(pair_src.find("slot_tenant != ev.capability_tenant_id()") != std::string::npos,
+          "4093 cite: set-car!/set-cdr! #4057 compare intact");
+}
+
+static void ac4093_1_foreign_deny() {
+    std::println("\n--- #4093 AC1: foreign tenant JIT cell/hash/pair access denied ---");
+    reset_all();
+    // Two principals, distinct stamps, production face. The checked seams
+    // take the caller/face explicitly (light-link binaries shadow the strong
+    // owner hooks — #4036 rationale); sandbox_mode = 2 arms the face without
+    // env arming. B's own Mutate grant behavior is #3720/#4018-covered; the
+    // arms below isolate the #4093 owner-compare semantics.
+    constexpr std::uint64_t tenant_a = 4093;
+    constexpr std::uint64_t tenant_b = 4094;
+    constexpr int kStrictFace = 2;
+    // Tenant A owns its slots via the explicit-tenant alloc seams.
+    const auto cell_a = aura_new_cell_tenant(static_cast<std::int64_t>(tenant_a));
+    CHECK(cell_a >= 0, "4093 AC1: A alloc cell");
+    const auto hash_a = aura_hash_alloc_tenant(static_cast<std::int64_t>(tenant_a));
+    CHECK(hash_a >= 0, "4093 AC1: A alloc hash");
+    const auto pair_a = aura_alloc_pair_tenant(11, 22, static_cast<std::int64_t>(tenant_a));
+    CHECK(pair_a != 0, "4093 AC1: A alloc pair");
+    const auto kp_a = aura_alloc_pair_tenant(7, 8, static_cast<std::int64_t>(tenant_a));
+    CHECK(aura_hash_set_checked(hash_a, kp_a, tenant_a, kStrictFace) == 0,
+          "4093 AC1: A hash-set 7->8");
+    aura_cell_set_checked(cell_a, 111, tenant_a, kStrictFace);
+    CHECK(aura_cell_get_checked(cell_a, tenant_a, kStrictFace) == 111,
+          "4093 AC1: A cell holds 111");
+    CHECK(aura_hash_ref_checked(hash_a, 7, tenant_a, kStrictFace) == 8,
+          "4093 AC1: A hash holds 7->8");
+    CHECK(aura_pair_car_unchecked_checked(pair_a, tenant_a, kStrictFace) == 11,
+          "4093 AC1: A pair car 11");
+    // B's Mutate grant would pass the #4018 choke; the #4093 owner compare
+    // refuses A's slots — access skipped, slot unchanged (the deny fires
+    // through check_workspace_isolation in production links).
+    aura_cell_set_checked(cell_a, 999, tenant_b, kStrictFace);
+    CHECK(aura_cell_get_checked(cell_a, tenant_b, kStrictFace) == 0,
+          "4093 AC1: B cell-ref on A denied (0)");
+    const auto kp_b = aura_alloc_pair_tenant(9, 10, static_cast<std::int64_t>(tenant_b));
+    CHECK(aura_hash_set_checked(hash_a, kp_b, tenant_b, kStrictFace) == 0,
+          "4093 AC1: B hash-set on A denied");
+    CHECK(aura_hash_ref_checked(hash_a, 7, tenant_b, kStrictFace) == 11,
+          "4093 AC1: B hash-ref on A denied (not-found sentinel)");
+    CHECK(aura_pair_car_unchecked_checked(pair_a, tenant_b, kStrictFace) == 0,
+          "4093 AC1: B pair-car on A denied (0)");
+    // B's own slots still update under the same face (grant + own stamp).
+    const auto cell_b = aura_new_cell_tenant(static_cast<std::int64_t>(tenant_b));
+    aura_cell_set_checked(cell_b, 222, tenant_b, kStrictFace);
+    CHECK(aura_cell_get_checked(cell_b, tenant_b, kStrictFace) == 222,
+          "4093 AC1: B own cell updates");
+    const auto hash_b = aura_hash_alloc_tenant(static_cast<std::int64_t>(tenant_b));
+    CHECK(aura_hash_set_checked(hash_b, kp_b, tenant_b, kStrictFace) == 0,
+          "4093 AC1: B own hash-set 9->10");
+    CHECK(aura_hash_ref_checked(hash_b, 9, tenant_b, kStrictFace) == 10,
+          "4093 AC1: B own hash holds 9->10");
+    const auto pair_b = aura_alloc_pair_tenant(33, 44, static_cast<std::int64_t>(tenant_b));
+    CHECK(aura_pair_car_unchecked_checked(pair_b, tenant_b, kStrictFace) == 33,
+          "4093 AC1: B own pair readable");
+    // A's slots unchanged after B's attempts (deny = skip; no partial write).
+    CHECK(aura_cell_get_checked(cell_a, tenant_a, kStrictFace) == 111,
+          "4093 AC1: A cell unchanged");
+    CHECK(aura_hash_ref_checked(hash_a, 7, tenant_a, kStrictFace) == 8,
+          "4093 AC1: A hash unchanged");
+    CHECK(aura_pair_car_unchecked_checked(pair_a, tenant_a, kStrictFace) == 11,
+          "4093 AC1: A pair unchanged");
+}
+
+static void ac4093_2_unstamped_and_single_tenant() {
+    std::println(
+        "\n--- #4093 AC2: unstamped cell fails closed armed, single-tenant permissive ---");
+    reset_all();
+    // Legacy unstamped slot (tenant 0) via the explicit-tenant seam.
+    const auto legacy = aura_new_cell_tenant(0);
+    CHECK(legacy >= 0, "4093 AC2: legacy unstamped cell allocated");
+    // Strict face (mode 2): the owner compare refuses the unstamped ref
+    // (the #3365/#4057 deny shape on the JIT heap path).
+    aura_cell_set_checked(legacy, 5, 4094, 2);
+    CHECK(aura_cell_get_checked(legacy, 4094, 2) == 0, "4093 AC2: armed unstamped read denied (0)");
+    // Single-tenant Restricted (mode 1, no MT, not Strict): face off →
+    // legacy permissive (the contract the #4057 pair arm keeps).
+    aura_cell_set_checked(legacy, 6, 4094, 1);
+    CHECK(aura_cell_get_checked(legacy, 4094, 1) == 6,
+          "4093 AC2: single-tenant Restricted stays permissive");
+}
+
+static void ac4093_3_soft_shares() {
+    std::println("\n--- #4093 AC3: Soft/Off still shares the tables ---");
+    reset_all();
+    const auto cell_a = aura_new_cell_tenant(4093);
+    aura_cell_set_checked(cell_a, 111, 4093, 0);
+    const auto hash_a = aura_hash_alloc_tenant(4093);
+    const auto kp = aura_alloc_pair_tenant(7, 8, 4093);
+    CHECK(aura_hash_set_checked(hash_a, kp, 4093, 0) == 0, "4093 AC3: A hash-set");
+    // Face off (mode 0): no stamp compare — the tables stay shared across
+    // principals (zero-cost contract; the face probe precedes any stamp
+    // load, so Soft/Off never reads the tenant arrays).
+    aura_cell_set_checked(cell_a, 555, 4094, 0);
+    CHECK(aura_cell_get_checked(cell_a, 4094, 0) == 555, "4093 AC3: B writes A's cell under Soft");
+    CHECK(aura_hash_set_checked(hash_a, kp, 4094, 0) == 0, "4093 AC3: B hash-set on A's table");
+    CHECK(aura_hash_ref_checked(hash_a, 7, 4094, 0) == 8, "4093 AC3: B reads it back (shared)");
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -1041,7 +1265,9 @@ int run_test_dispatch_required_effects() {
         const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
         CHECK(rt.find("aura_jit_owner_require_effect") != std::string::npos,
               "3720 AC3: runtime calls owner choke");
-        const auto setp = rt.find("int64_t aura_hash_set");
+        // Issue #4093: anchor the production wrapper signature — the checked
+        // seam (aura_hash_set_checked) shares the prefix but holds no choke.
+        const auto setp = rt.find("int64_t aura_hash_set(int64_t hash_val");
         CHECK(setp != std::string::npos, "3720 AC3: aura_hash_set");
         if (setp != std::string::npos) {
             const auto win = rt.substr(setp, 700);
@@ -1059,7 +1285,8 @@ int run_test_dispatch_required_effects() {
         CHECK(svc.find("owner->require_effect") != std::string::npos,
               "3720 AC3: require_effect via owner");
         // Issue #4018: aura_cell_set shares the same Mutate choke.
-        const auto cellp = rt.find("void aura_cell_set");
+        // Issue #4093: anchor the production wrapper signature (see above).
+        const auto cellp = rt.find("void aura_cell_set(int64_t cell_id");
         CHECK(cellp != std::string::npos, "4018 AC: aura_cell_set");
         if (cellp != std::string::npos) {
             const auto cwin = rt.substr(cellp, 700);
@@ -2054,6 +2281,12 @@ int run_test_dispatch_required_effects() {
     ac4037_4_clear_zero_ungated();
     ac4037_5_off_ungated();
     ac4037_source_cite();
+
+    // ── Issue #4093: JIT cell/hash heap tenant isolation ──
+    ac4093_source_cite();
+    ac4093_1_foreign_deny();
+    ac4093_2_unstamped_and_single_tenant();
+    ac4093_3_soft_shares();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

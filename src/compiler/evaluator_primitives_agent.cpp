@@ -593,6 +593,12 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
+                // Issue #4093: stamp the owning principal parallel to the
+                // table (#4057 pair-slot shape) — the JIT hash gate compares
+                // this stamp under the production face before any access.
+                if (g_hash_tenants.size() < g_hash_tables.size())
+                    g_hash_tenants.resize(g_hash_tables.size(), 0);
+                g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();
                 return make_hash(hidx);
             };
             std::uint64_t greedy_h = 0, greedy_s = 0;
@@ -2353,6 +2359,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4093: same owner-principal stamp as the hash prim
+            // (#4057 pair-slot shape; production-face JIT hash gate).
+            if (g_hash_tenants.size() < g_hash_tables.size())
+                g_hash_tenants.resize(g_hash_tables.size(), 0);
+            g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();
             return make_hash(hidx);
         };
 
@@ -3164,6 +3175,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
+        // Issue #4093: same owner-principal stamp as the hash prim
+        // (#4057 pair-slot shape; production-face JIT hash gate).
+        if (g_hash_tenants.size() < g_hash_tables.size())
+            g_hash_tenants.resize(g_hash_tables.size(), 0);
+        g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();
         return make_hash(hidx);
     };
 

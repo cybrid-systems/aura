@@ -51,6 +51,10 @@ bool g_use_arena = true;
 
 // Flat hash table index space (Phase 4c).
 std::vector<FlatHashTable*> g_hash_tables;
+// Issue #4093: owner-principal stamps parallel to g_hash_tables (see
+// runtime_shared.h) — stamped at every g_hash_tables.push_back alloc site
+// from aura_jit_owner_capability_tenant(), the same #4057 pair-slot shape.
+std::vector<std::uint64_t> g_hash_tenants;
 
 // ── FlatHashTable::create / destroy ──
 // Strong defs used to live only in aura_jit_runtime.cpp (JIT SOs).

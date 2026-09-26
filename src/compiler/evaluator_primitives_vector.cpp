@@ -431,6 +431,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
+            // Issue #4093: stamp the owning principal parallel to the table
+            // (#4057 pair-slot shape) — the JIT hash gate compares this
+            // stamp against the caller principal under the production face
+            // before any ref/set/remove on the process-shared index.
+            if (g_hash_tenants.size() < g_hash_tables.size())
+                g_hash_tenants.resize(g_hash_tables.size(), 0);
+            g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();
             return make_hash(hidx);
         },
         pure_general(255, "(...kvs) -> hash", "Construct a hash from key/value pairs."));

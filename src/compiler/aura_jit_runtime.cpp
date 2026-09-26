@@ -5042,6 +5042,54 @@ extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
 
 // === Cell runtime ===
 static std::vector<int64_t> g_cell_heap;
+// Issue #4093: owner-principal stamps parallel to g_cell_heap (entry i is
+// the capability tenant that allocated g_cell_heap[i] via aura_new_cell;
+// 0 = unstamped legacy cell). File-local next to the static heap — same
+// visibility class, no second capability model.
+static std::vector<std::uint64_t> g_cell_tenants;
+
+// Issue #4093: JIT production-face tenant gate for the process-global
+// cell / hash / pair heaps — the same shape as the #4057 set-car!/set-cdr!
+// arm. Production face = sandbox mode != 0 and (Strict or Restricted+MT).
+// A slot whose owner stamp differs from the caller principal is skipped and
+// the deny goes through the owner's check_workspace_isolation (IsolationDeny
+// SE with fiber id + Mutation epoch, #2388 single record_audit path;
+// cross-grants still allow, and check_boundary_ex's #3365 arm refuses
+// Strict/MT-unstamped refs). Mutate stays the write choke (#3720/#4018);
+// the gate runs after the grant and never replaces it. Soft/Off: face is
+// false, the tenant arrays are never read (zero-cost contract — no tenant
+// load on the previously free read paths).
+//
+// Hooks follow the #4036 owner wiring (strong defs in service.ixx, weak
+// stubs in aura_jit_prim_dispatch_stub.cpp; unwired owner → face off).
+extern "C" int aura_jit_owner_sandbox_mode(void) noexcept;
+extern "C" int aura_jit_owner_check_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
+                                              std::uint16_t bits, const char* op) noexcept;
+
+// Face probe only — must run BEFORE any g_*_tenants load so Soft/Off keeps
+// the zero-cost contract (no tenant load). Takes the sandbox mode explicitly:
+// the production ABI passes the owner hook value, the #4036-style checked
+// seams pass the test's face.
+static bool jit_tenant_gate_armed(int sandbox_mode) {
+    return sandbox_mode != 0 && (sandbox_mode == 2 || ::aura::core::sandbox::is_strict() ||
+                                 ::aura::core::provenance::multi_tenant_env_active());
+}
+
+// Armed-face compare: returns true when the access must be SKIPPED. A stamp
+// mismatch denies locally (the #4057 set-car!/set-cdr! shape — no cross-grant
+// walk on the JIT heap path) and the deny is fired through the owner's
+// check_workspace_isolation for the IsolationDeny SE record (fiber id +
+// Mutation epoch, #2388 single record_audit path); the hook return is not
+// consulted for the access decision. slot_tenant == caller (incl. 0 == 0,
+// same as the #4057 pair arm) passes without a boundary round-trip.
+static bool jit_tenant_gate(std::uint64_t slot_tenant, std::uint64_t caller_tenant,
+                            const char* op) {
+    if (slot_tenant == caller_tenant)
+        return false;
+    (void)aura_jit_owner_check_isolation(caller_tenant, slot_tenant,
+                                         aura::compiler::security::kEffectMutate, op);
+    return true;
+}
 
 int64_t aura_new_cell() {
     // Issue #157 Phase 2: write lock — push_back on g_cell_heap
@@ -5049,25 +5097,102 @@ int64_t aura_new_cell() {
     aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_cell_heap.size());
     g_cell_heap.push_back(0);
+    // Issue #4093: stamp the owning principal parallel to the cell (the
+    // #4057 pair-slot shape) at the same publish point as the slot.
+    if (g_cell_tenants.size() < g_cell_heap.size())
+        g_cell_tenants.resize(g_cell_heap.size(), 0);
+    g_cell_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
     aura_unlock_workspace_write();
     return id;
 }
 
-int64_t aura_cell_get(int64_t cell_id) {
+// Issue #4093: explicit-tenant alloc seam (same #4036 rationale as
+// aura_alloc_closure_tenant) — tests/tools whose link order shadows the
+// strong owner hook, or that need a legacy unstamped (0) / foreign stamp,
+// drive the stamp directly. Same g_cell_tenants field, same stamp point;
+// not a second capability model.
+extern "C" int64_t aura_new_cell_tenant(int64_t owner_tenant) {
+    aura_lock_workspace_write();
+    int64_t id = static_cast<int64_t>(g_cell_heap.size());
+    g_cell_heap.push_back(0);
+    if (g_cell_tenants.size() < g_cell_heap.size())
+        g_cell_tenants.resize(g_cell_heap.size(), 0);
+    g_cell_tenants[static_cast<std::size_t>(id)] = static_cast<std::uint64_t>(owner_tenant);
+    aura_unlock_workspace_write();
+    return id;
+}
+
+// Issue #4093: explicit-context cell read — the gate body shared by the
+// production ABI and the checked seam (#4036 aura_free_closure_checked
+// shape: light-link test binaries shadow the strong owner hooks with weak
+// fail-closed stubs, so tests drive caller/face explicitly; same body, no
+// second model).
+extern "C" int64_t aura_cell_get_checked(int64_t cell_id, std::uint64_t caller_tenant,
+                                         int sandbox_mode) {
     // Issue #157 Phase 2: read lock — read g_cell_heap[id]. A
     // concurrent aura_cell_set / aura_new_cell would race without
     // the lock (vector resize, slot mutation).
     aura_lock_workspace_read();
     int64_t result = 0;
-    if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
+    if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size()) {
+        // Issue #4093: production-face tenant gate on the read — a foreign
+        // (or Strict/MT-unstamped) cell reads as the OOB default (0) with
+        // the deny fired through check_workspace_isolation. The face probe
+        // precedes the stamp load so Soft/Off never reads g_cell_tenants
+        // (zero-cost contract).
+        if (jit_tenant_gate_armed(sandbox_mode)) {
+            const std::uint64_t slot_tenant =
+                (static_cast<size_t>(cell_id) < g_cell_tenants.size())
+                    ? g_cell_tenants[static_cast<std::size_t>(cell_id)]
+                    : 0;
+            if (jit_tenant_gate(slot_tenant, caller_tenant, "cell-ref")) {
+                aura_unlock_workspace_read();
+                return 0;
+            }
+        }
         result = g_cell_heap[static_cast<size_t>(cell_id)];
+    }
     aura_unlock_workspace_read();
     return result;
+}
+
+int64_t aura_cell_get(int64_t cell_id) {
+    return aura_cell_get_checked(cell_id, aura_jit_owner_capability_tenant(),
+                                 aura_jit_owner_sandbox_mode());
 }
 
 // Issue #3720 / #4018: JIT cell / hash writes share Evaluator require_effect.
 // Weak stub in aura_jit_prim_dispatch_stub.cpp returns 0 (fail-closed).
 extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept;
+
+// Issue #4093: explicit-context cell write — the #4018 Mutate choke stays in
+// the production wrapper (hook-driven, #3720-covered); the checked seam
+// isolates the owner-compare semantics for light-link tests.
+extern "C" void aura_cell_set_checked(int64_t cell_id, int64_t val, std::uint64_t caller_tenant,
+                                      int sandbox_mode) {
+    // Issue #157 Phase 2: write lock — write g_cell_heap[id].
+    aura_lock_workspace_write();
+    if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size()) {
+        // Issue #4093: Mutate stays the write choke (#4018) in the
+        // production wrapper; it does not replace the owner compare — the
+        // production-face tenant gate runs after the grant passes and skips
+        // the write on a foreign / Strict-MT-unstamped cell (deny fired via
+        // check_workspace_isolation, slot unchanged). Face probe precedes
+        // the stamp load (Soft/Off zero-cost contract).
+        if (jit_tenant_gate_armed(sandbox_mode)) {
+            const std::uint64_t slot_tenant =
+                (static_cast<size_t>(cell_id) < g_cell_tenants.size())
+                    ? g_cell_tenants[static_cast<std::size_t>(cell_id)]
+                    : 0;
+            if (jit_tenant_gate(slot_tenant, caller_tenant, "cell-set!")) {
+                aura_unlock_workspace_write();
+                return;
+            }
+        }
+        g_cell_heap[static_cast<size_t>(cell_id)] = val;
+    }
+    aura_unlock_workspace_write();
+}
 
 void aura_cell_set(int64_t cell_id, int64_t val) {
     // Issue #4018: require Mutate before any g_cell_heap write (#3720 choke
@@ -5075,11 +5200,8 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
     // owner is wired. Deny → no write (unlock not held yet).
     if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "cell-set!") == 0)
         return;
-    // Issue #157 Phase 2: write lock — write g_cell_heap[id].
-    aura_lock_workspace_write();
-    if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
-        g_cell_heap[static_cast<size_t>(cell_id)] = val;
-    aura_unlock_workspace_write();
+    aura_cell_set_checked(cell_id, val, aura_jit_owner_capability_tenant(),
+                          aura_jit_owner_sandbox_mode());
 }
 
 // === Pair runtime (unified PairSlot pointer-based storage) ===
@@ -5157,6 +5279,28 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
     return (id << 2) | 1;
 }
 
+// Issue #4093: explicit-tenant pair alloc seam (same #4036 rationale as
+// aura_alloc_closure_tenant — light-link binaries shadow the strong owner
+// hook, so tests stamp the owning principal directly). Same g_pair_slots
+// publish + g_pair_slot_tenants stamp point as aura_alloc_pair; not a
+// second capability model.
+extern "C" int64_t aura_alloc_pair_tenant(int64_t car, int64_t cdr, int64_t owner_tenant) {
+    auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
+    if (!slot)
+        return 0;
+    slot->car = car;
+    slot->cdr = cdr;
+    aura_lock_workspace_write();
+    int64_t id = static_cast<int64_t>(g_pair_slots.size());
+    g_pair_slots.push_back(slot);
+    g_owned_pair_slots_.push_back(slot);
+    if (g_pair_slot_tenants.size() < g_pair_slots.size())
+        g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
+    g_pair_slot_tenants[static_cast<std::size_t>(id)] = static_cast<std::uint64_t>(owner_tenant);
+    aura_unlock_workspace_write();
+    return (id << 2) | 1;
+}
+
 // L2 specialization: "unchecked" pair access (shape already verified).
 //
 // Issue #1710 (P0): former NO-LOCK raw index into g_pair_slots was a
@@ -5169,13 +5313,45 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
 //
 // The shape check (SHAPE_PAIR) is still required at the call site —
 // pair_val should be a pair reference, not a fixnum/void.
-static int64_t pair_field_locked(int64_t pair_val, bool want_car) {
+static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op,
+                                 std::uint64_t caller_tenant, int sandbox_mode) {
     const uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id >= g_pair_slots.size() || g_pair_slots[id] == nullptr) {
         g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return 0;
     }
+    // Issue #4093: the unchecked JIT field read consults the same
+    // g_pair_slot_tenants stamp set-car!/set-cdr! compare (#4057) — the
+    // production face refuses a foreign / Strict-MT-unstamped slot with
+    // the OOB default (0) and the deny fired through
+    // check_workspace_isolation. Face probe precedes the stamp load
+    // (Soft/Off zero-cost contract — the array is never read).
+    if (jit_tenant_gate_armed(sandbox_mode)) {
+        const std::uint64_t slot_tenant =
+            (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+        if (jit_tenant_gate(slot_tenant, caller_tenant, op))
+            return 0;
+    }
     return want_car ? g_pair_slots[id]->car : g_pair_slots[id]->cdr;
+}
+
+// Issue #4093: explicit-context unchecked pair field read (#4036 seam shape
+// — light-link binaries shadow the owner hooks; tests pass caller/face).
+extern "C" int64_t aura_pair_car_unchecked_checked(int64_t pair_val, std::uint64_t caller_tenant,
+                                                   int sandbox_mode) {
+    g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1710: if L2 stamped a defuse version and it drifted, count
+    // fallback (still take lock+bounds — no nested re-entry to car).
+    if (g_tls_pair_l2_defuse_stamp != UINT64_MAX) {
+        const auto cur = aura_get_defuse_version();
+        if (cur != g_tls_pair_l2_defuse_stamp)
+            g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura_lock_workspace_read();
+    const int64_t result =
+        pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
+    aura_unlock_workspace_read();
+    return result;
 }
 
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
@@ -5188,7 +5364,9 @@ int64_t aura_pair_car_unchecked(int64_t pair_val) {
             g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
     }
     aura_lock_workspace_read();
-    const int64_t result = pair_field_locked(pair_val, /*want_car=*/true);
+    const int64_t result =
+        pair_field_locked(pair_val, /*want_car=*/true, "pair-car",
+                          aura_jit_owner_capability_tenant(), aura_jit_owner_sandbox_mode());
     aura_unlock_workspace_read();
     return result;
 }
@@ -5201,7 +5379,9 @@ int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
             g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
     }
     aura_lock_workspace_read();
-    const int64_t result = pair_field_locked(pair_val, /*want_car=*/false);
+    const int64_t result =
+        pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr",
+                          aura_jit_owner_capability_tenant(), aura_jit_owner_sandbox_mode());
     aura_unlock_workspace_read();
     return result;
 }
@@ -5305,7 +5485,11 @@ static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullpt
 // Hash-ref: (hash-ref hash key) → value or void
 
 
-int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
+// Issue #4093: explicit-context hash read (#4036 seam shape — light-link
+// test binaries shadow the strong owner hooks with weak fail-closed stubs,
+// so tests drive caller/face explicitly; same body the production ABI runs).
+extern "C" int64_t aura_hash_ref_checked(int64_t hash_val, int64_t key_val,
+                                         std::uint64_t caller_tenant, int sandbox_mode) {
     // Issue #157 Phase 2: read lock — read g_hash_tables[hidx]
     // and the FlatHashTable internals (metadata, keys, values
     // arrays). A concurrent aura_hash_set / aura_hash_remove /
@@ -5314,6 +5498,18 @@ int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
     int64_t result = 11; // void sentinel (not found)
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
     if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+        // Issue #4093: production-face tenant gate on the read — a foreign
+        // (or Strict/MT-unstamped) table reads as the not-found sentinel
+        // (11) with the deny emitted through check_workspace_isolation.
+        // Face probe precedes the stamp load (Soft/Off zero-cost contract).
+        if (jit_tenant_gate_armed(sandbox_mode)) {
+            const std::uint64_t slot_tenant =
+                (hidx < g_hash_tenants.size()) ? g_hash_tenants[hidx] : 0;
+            if (jit_tenant_gate(slot_tenant, caller_tenant, "hash-ref")) {
+                aura_unlock_workspace_read();
+                return result;
+            }
+        }
         auto* ht = g_hash_tables[hidx];
         auto meta = ht->metadata();
         auto keys = ht->keys();
@@ -5336,6 +5532,11 @@ int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
     return result;
 }
 
+int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
+    return aura_hash_ref_checked(hash_val, key_val, aura_jit_owner_capability_tenant(),
+                                 aura_jit_owner_sandbox_mode());
+}
+
 static int64_t (*g_hash_str_convert_fn)(int64_t) = nullptr;
 extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
     // Issue #1312 (P0): synchronize callback pointer with hash path readers.
@@ -5346,17 +5547,31 @@ extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
 // Issue #3720 / #4018: aura_jit_owner_require_effect declared above
 // aura_cell_set (same owner as aura_jit_prim_dispatch).
 
-int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
-    // Issue #3720: require Mutate before any g_hash_tables write. Soft/Off
-    // require_effect is a no-op (owner still must be wired — same fail-closed
-    // as PrimCall null-owner). Deny → unlock not held yet, zero write.
-    if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-set!") == 0)
-        return 0;
+// Issue #4093: explicit-context hash write — the #3720 Mutate choke stays in
+// the production wrapper (hook-driven); the checked seam isolates the
+// owner-compare semantics for light-link tests.
+extern "C" int64_t aura_hash_set_checked(int64_t hash_val, int64_t pair_val,
+                                         std::uint64_t caller_tenant, int sandbox_mode) {
     // Issue #157 Phase 2: write lock — writes g_hash_tables[hidx]
     // and the FlatHashTable internals (resize via rebuild,
     // metadata, keys, values mutations). Must be exclusive vs
     // concurrent aura_hash_ref / aura_hash_remove.
     aura_lock_workspace_write();
+    // Issue #4093: Mutate stays the write choke (#3720) in the production
+    // wrapper; it does not replace the owner compare — the production-face
+    // tenant gate on the hash id runs after the grant passes and skips the
+    // write on a foreign / Strict-MT-unstamped table (deny fired via
+    // check_workspace_isolation, table unchanged). Face probe precedes the
+    // stamp load (Soft/Off zero-cost contract).
+    if (jit_tenant_gate_armed(sandbox_mode)) {
+        const auto hidx_gate = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
+        const std::uint64_t slot_tenant =
+            (hidx_gate < g_hash_tenants.size()) ? g_hash_tenants[hidx_gate] : 0;
+        if (jit_tenant_gate(slot_tenant, caller_tenant, "hash-set!")) {
+            aura_unlock_workspace_write();
+            return 0;
+        }
+    }
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id < g_pair_slots.size() && g_pair_slots[id]) {
         int64_t key = g_pair_slots[id]->car;
@@ -5418,6 +5633,16 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
     return 0;
 }
 
+int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
+    // Issue #3720: require Mutate before any g_hash_tables write. Soft/Off
+    // require_effect is a no-op (owner still must be wired — same fail-closed
+    // as PrimCall null-owner). Deny → unlock not held yet, zero write.
+    if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-set!") == 0)
+        return 0;
+    return aura_hash_set_checked(hash_val, pair_val, aura_jit_owner_capability_tenant(),
+                                 aura_jit_owner_sandbox_mode());
+}
+
 int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
     // Issue #3720: Mutate choke before tombstone write (parity with hash-set!).
     if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-remove!") == 0)
@@ -5428,6 +5653,18 @@ int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
     int64_t result = 0; // not found
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
     if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+        // Issue #4093: same production-face tenant gate as aura_hash_set —
+        // Mutate stays the choke; the owner compare skips the tombstone
+        // write on a foreign / Strict-MT-unstamped table (deny via
+        // check_workspace_isolation). Face probe precedes the stamp load.
+        if (jit_tenant_gate_armed(aura_jit_owner_sandbox_mode())) {
+            const std::uint64_t slot_tenant =
+                (hidx < g_hash_tenants.size()) ? g_hash_tenants[hidx] : 0;
+            if (jit_tenant_gate(slot_tenant, aura_jit_owner_capability_tenant(), "hash-remove!")) {
+                aura_unlock_workspace_write();
+                return result;
+            }
+        }
         auto* ht = g_hash_tables[hidx];
         auto meta = ht->metadata();
         auto keys = ht->keys();
@@ -5453,6 +5690,27 @@ int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
     }
     aura_unlock_workspace_write();
     return result;
+}
+
+// Issue #4093: JIT hash alloc seam — the C-ABI alloc shape aura_alloc_pair
+// has for pairs, in the #4036 explicit-tenant form (light-link binaries
+// shadow the strong owner hook, so tests stamp the owning principal
+// directly). Same g_hash_tables publish + g_hash_tenants stamp point as the
+// evaluator hash prim; not a second capability model. Returns the raw
+// hash_val (hidx << 6 — the same >>6 index space the JIT C ABI decodes; the
+// C ABI consumers do not read the low tag bits the `hash` prim sets).
+extern "C" int64_t aura_hash_alloc_tenant(int64_t owner_tenant) {
+    auto* ht = FlatHashTable::create(32);
+    if (!ht)
+        return -1;
+    aura_lock_workspace_write();
+    const auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    if (g_hash_tenants.size() < g_hash_tables.size())
+        g_hash_tenants.resize(g_hash_tables.size(), 0);
+    g_hash_tenants[hidx] = static_cast<std::uint64_t>(owner_tenant);
+    aura_unlock_workspace_write();
+    return static_cast<int64_t>(static_cast<uint64_t>(hidx) << 6);
 }
 // ── Forward declarations (defined below, same extern "C" block) ──
 int64_t aura_alloc_float(double d);
@@ -6000,6 +6258,9 @@ void aura_reset_runtime() {
     g_jit_fns_overflow.clear(); // Issue #1304
     g_jit_fns_by_name.clear();
     g_cell_heap.clear();
+    // Issue #4093: tenant stamps die with the slots (a stale stamp must
+    // never survive a reset and re-attach to a reused index).
+    g_cell_tenants.clear();
     // Issue #195: per-fiber exception state — replaced
     // the old thread_local g_ex_stack.clear() with a call
     // to the new per-fiber clear function.
@@ -6037,6 +6298,9 @@ void aura_reset_runtime() {
     for (auto* fht : g_hash_tables)
         FlatHashTable::destroy(fht);
     g_hash_tables.clear();
+    // Issue #4093: tenant stamps die with the tables (same no-stale-stamp
+    // rule as the cell reset above).
+    g_hash_tenants.clear();
     // Clear closure inline cache (again after hash free — keep even gens)
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
         clear_closure_cache_entry(g_closure_cache[i]);

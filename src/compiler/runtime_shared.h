@@ -56,6 +56,22 @@ extern std::vector<PairSlot*> g_owned_pair_slots_;
 // index-guarded reads treat a short array as unstamped (fail-closed).
 extern std::vector<std::uint64_t> g_pair_slot_tenants;
 
+// Issue #4093: owner-principal stamps parallel to g_hash_tables (entry i is
+// the capability tenant that allocated g_hash_tables[i]; 0 = unstamped
+// legacy table). Definition lives in runtime_ssot.cpp next to g_hash_tables
+// (same SSOT link-order class). The JIT hash gate compares this stamp
+// against the caller principal under the production face before touching
+// the process-level table; index-guarded reads treat a short array as
+// unstamped (fail-closed under Strict / multi-tenant). g_cell_tenants
+// stays file-local to aura_jit_runtime.cpp next to the static g_cell_heap.
+extern std::vector<std::uint64_t> g_hash_tenants;
+
+// Issue #4036/#4093: owner-Evaluator principal hook (strong def in
+// service.ixx; weak stub in aura_jit_prim_dispatch_stub.cpp; unwired → 0).
+// Declared here for the hash-alloc stamp sites outside aura_jit_runtime.cpp
+// (same wiring class as the strong owner require_effect hook).
+extern "C" std::uint64_t aura_jit_owner_capability_tenant(void) noexcept;
+
 // ── Flags ──
 extern bool g_use_arena;
 
@@ -374,6 +390,41 @@ extern "C" std::int64_t aura_alloc_pair(std::int64_t car, std::int64_t cdr);
 
 // ── JIT / runtime C ABI (defined in aura_jit_runtime.cpp, aura_jit_bridge.cpp) ──
 extern "C" std::int64_t aura_jit_test();
+// Issue #4093: JIT cell / hash C ABI (tenant-gated under the production
+// face; the stamps live in g_cell_tenants / g_hash_tenants).
+extern "C" std::int64_t aura_new_cell(void);
+extern "C" std::int64_t aura_new_cell_tenant(std::int64_t owner_tenant);
+extern "C" std::int64_t aura_cell_get(std::int64_t cell_id);
+extern "C" void aura_cell_set(std::int64_t cell_id, std::int64_t val);
+extern "C" std::int64_t aura_hash_ref(std::int64_t hash_val, std::int64_t key_val);
+extern "C" std::int64_t aura_hash_set(std::int64_t hash_val, std::int64_t pair_val);
+extern "C" std::int64_t aura_hash_remove(std::int64_t hash_val, std::int64_t key_val);
+// Issue #4093: owner production-face + isolation hooks (same wiring class
+// as aura_jit_owner_require_effect; strong defs in service.ixx, weak
+// stubs in aura_jit_prim_dispatch_stub.cpp).
+extern "C" int aura_jit_owner_sandbox_mode(void) noexcept;
+extern "C" int aura_jit_owner_check_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
+                                              std::uint16_t bits, const char* op) noexcept;
+// Issue #4093: explicit-context checked seams (#4036 aura_free_closure_checked
+// shape) — light-link test binaries shadow the strong owner hooks with weak
+// fail-closed stubs, so tests drive the gate with explicit caller/face. Same
+// bodies the production ABI runs; not a second capability model.
+extern "C" std::int64_t aura_cell_get_checked(std::int64_t cell_id, std::uint64_t caller_tenant,
+                                              int sandbox_mode);
+extern "C" void aura_cell_set_checked(std::int64_t cell_id, std::int64_t val,
+                                      std::uint64_t caller_tenant, int sandbox_mode);
+extern "C" std::int64_t aura_hash_ref_checked(std::int64_t hash_val, std::int64_t key_val,
+                                              std::uint64_t caller_tenant, int sandbox_mode);
+extern "C" std::int64_t aura_hash_set_checked(std::int64_t hash_val, std::int64_t pair_val,
+                                              std::uint64_t caller_tenant, int sandbox_mode);
+extern "C" std::int64_t aura_pair_car_unchecked_checked(std::int64_t pair_val,
+                                                        std::uint64_t caller_tenant,
+                                                        int sandbox_mode);
+// Issue #4093: alloc-time stamp seams (the C-ABI alloc shapes; explicit
+// tenant per #4036 — light-link binaries cannot read the strong hook).
+extern "C" std::int64_t aura_hash_alloc_tenant(std::int64_t owner_tenant);
+extern "C" std::int64_t aura_alloc_pair_tenant(std::int64_t car, std::int64_t cdr,
+                                               std::int64_t owner_tenant);
 extern "C" const char* aura_jit_string_content(std::int64_t val);
 extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
                                                             std::int32_t));
