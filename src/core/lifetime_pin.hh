@@ -27,6 +27,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "layout_stamp.hh" // Issue #2170: LayoutStamp validate overload
@@ -1275,6 +1276,21 @@ inline std::size_t unpin_linear_roots_owned_by(void* owner) noexcept {
 inline void snapshot_linear_roots(std::unordered_set<void*>& out) noexcept {
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
     out = linear_roots();
+}
+
+// Address + owner tag pairs. Owner is the opaque Fiber* from pin time
+// (nullptr when the pin had no current fiber). Used by scoped drain to
+// spare a sibling's remapped root without a second pin registry.
+inline void snapshot_linear_root_owner_pairs(std::vector<std::pair<void*, void*>>& out) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    out.clear();
+    const auto& roots = linear_roots();
+    const auto& owners = linear_root_owners();
+    out.reserve(roots.size());
+    for (void* r : roots) {
+        auto it = owners.find(r);
+        out.emplace_back(r, it == owners.end() ? nullptr : it->second);
+    }
 }
 
 inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& keep) noexcept {

@@ -277,6 +277,22 @@ namespace {
         return it != g_fiber_registry.end() ? it->second : nullptr;
     }
 
+    // Issue #4069: true only while `owner` is still in the registry and
+    // Reclaimed && !Done. Called without linear_roots_mtx held. The
+    // registry lock keeps ~Fiber (unregister-then-destroy) from freeing
+    // the Fiber* for the duration of the flag read.
+    bool registered_fiber_reclaimed_not_done(void* owner) noexcept {
+        if (!owner)
+            return false;
+        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+        for (const auto& kv : g_fiber_registry) {
+            if (kv.second != owner)
+                continue;
+            return kv.second->is_reclaimed() && !kv.second->is_done();
+        }
+        return false;
+    }
+
     // Issue #3764: no-edge holder disposition (busy-path / join).
     // Never drops unique_lock from this thread. Running: mark_reclaimed
     // so join returns Reclaimed without UAF (#2467). Not Running:
@@ -2005,8 +2021,25 @@ std::size_t unpin_linear_roots_scoped_for_fiber(Fiber* f) noexcept {
     if (!f)
         return 0;
     std::unordered_set<void*> keep;
-    if (f->take_outermost_linear_keep(keep))
+    if (f->take_outermost_linear_keep(keep)) {
+        // Issue #4069: except-keep is this fiber's Guard-enter / lazy-arm
+        // snapshot. A sibling can pin a body root after that snapshot, and
+        // Moving remaps it off the old address, so process-wide except
+        // drops it from ~sibling. The owner's ~Fiber skips its own drain
+        // while Reclaimed && !Done, so fold those roots into keep. Done
+        // and unregistered owners still drain (#3438 leftover path).
+        std::vector<std::pair<void*, void*>> pairs;
+        aura::core::lifetime::snapshot_linear_root_owner_pairs(pairs);
+        for (const auto& [root, owner] : pairs) {
+            if (!owner || owner == static_cast<void*>(f))
+                continue;
+            if (keep.find(root) != keep.end())
+                continue;
+            if (registered_fiber_reclaimed_not_done(owner))
+                keep.insert(root);
+        }
         return aura::core::lifetime::unpin_linear_roots_except(keep);
+    }
     // Issue #4031: owner-scoped fallback — only this fiber's tagged
     // roots. NEVER process-wide unpin_all_linear_roots for a live fiber
     // (sibling Moving remap channel must survive). Soft empty = one
