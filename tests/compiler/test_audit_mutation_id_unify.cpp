@@ -37,6 +37,7 @@
 #include "core/typed_mutation_audit_counters.h"
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
+#include "serve/fiber.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -1461,6 +1462,203 @@ static void ac3994_3_source_cite() {
           "3994 AC3: no tests/issues invent");
 }
 
+// Issue #4098: a live boundary note is the session mid, not the
+// type-linear proof stamp. Steal clears that note on the source thread
+// before the next outermost Guard. Soft/Off still resolves the epoch.
+static void ac4098_boundary_mid_not_proof_stamp() {
+    std::println("\n--- #4098: boundary note is the session mid; steal clears it ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+
+    const auto prev_prod =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    const auto prev_epoch = current_mutation_epoch();
+    const auto prev_stamp =
+        aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read();
+    auto& reg = g_capability_registry();
+    const auto prev_mode = reg.sandbox_mode.load(std::memory_order_acquire);
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto fiber_src = read_file("src/serve/fiber.cpp");
+    const auto evm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(tma.find("Issue #4098") != std::string::npos, "4098: header cites #4098");
+    CHECK(tma.find("kBoundaryAuditStealNoteIssue = 4098") != std::string::npos,
+          "4098: issue stamp");
+    CHECK(tma.find("inline std::uint64_t\nresolve_audit_mutation_id") != std::string::npos,
+          "4098: resolve signature line break kept (#3296)");
+    CHECK(tma.find("Issue #3296") != std::string::npos, "4098: header still cites #3296");
+    const auto resolve_pos = tma.find("resolve_audit_mutation_id(std::uint64_t caller_mid");
+    const auto note_pos = tma.find("inline void note_boundary_audit_mid", resolve_pos);
+    CHECK(resolve_pos != std::string::npos && note_pos != std::string::npos,
+          "4098: resolve body located");
+    if (resolve_pos != std::string::npos && note_pos != std::string::npos) {
+        const auto body = tma.substr(resolve_pos, note_pos - resolve_pos);
+        CHECK(body.find("return g_tls_boundary_audit_mid;") != std::string::npos,
+              "4098: resolve returns the boundary mid");
+        CHECK(body.find("last_type_linear_commit_proof_stamp_v_read") == std::string::npos,
+              "4098: resolve does not publish the type-proof stamp");
+    }
+    CHECK(fiber_src.find("aura_fiber_reconcile_boundary_audit_on_resume(this)") !=
+              std::string::npos,
+          "4098: Fiber::resume reconciles before swap");
+    CHECK(fiber_src.find("aura_fiber_clear_boundary_audit_after_yield()") != std::string::npos,
+          "4098: Fiber::resume clears the note after yield");
+    CHECK(evm.find("void aura_fiber_reconcile_boundary_audit_on_resume") != std::string::npos,
+          "4098: strong reconcile hook");
+    CHECK(evm.find("clear_boundary_audit_mid()") != std::string::npos,
+          "4098: hook clears the note");
+    CHECK(evm.find("note_boundary_audit_mid(session)") != std::string::npos,
+          "4098: destination re-notes session_mid");
+    CHECK(!std::filesystem::exists("docs/design/4098-boundary-audit-steal-note.md"),
+          "4098: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_4098.cpp"), "4098: no test_issue file");
+
+    constexpr std::uint64_t kProof = 4242;
+    constexpr std::uint64_t kStolen = 77;
+    constexpr std::uint64_t kEpoch = 88;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kProof);
+    aura::compiler::typed_audit::note_boundary_audit_mid(kStolen);
+    aura::compiler::typed_audit::note_boundary_audit_tenant(9);
+    CHECK(resolve_audit_mutation_id(0) == kStolen, "4098: noted mid wins over the proof stamp");
+    CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == kStolen,
+          "4098: join and resolve agree on the boundary mid");
+    CHECK(aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read() == kProof,
+          "4098: proof stamp unchanged");
+
+    aura::serve::Fiber carrier([] {});
+    // Matching note stays (same-worker continuation). Tenant stays too.
+    carrier.set_session_mid(kStolen);
+    aura_fiber_reconcile_boundary_audit_on_resume(&carrier);
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == kStolen,
+          "4098: matching session mid keeps the note");
+    CHECK(aura::compiler::typed_audit::g_tls_boundary_audit_noted, "4098: matching note stays set");
+    CHECK(aura::compiler::typed_audit::audit_se_join_tenant_id() == 9,
+          "4098: matching note does not drop tenant");
+
+    // Foreign note on this thread, fiber carries a different mid: clear
+    // then re-note. Tenant is not on the fiber, so it goes to 0.
+    carrier.set_session_mid(55);
+    aura_fiber_reconcile_boundary_audit_on_resume(&carrier);
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == 55,
+          "4098: destination re-notes the carried mid");
+    CHECK(aura::compiler::typed_audit::audit_se_join_tenant_id() == 0,
+          "4098: mismatch clear zeros tenant");
+
+    // Source thread after the fiber is stolen: the next resume here has
+    // no session mid, so the leftover note is cleared before the next Guard.
+    aura::compiler::typed_audit::note_boundary_audit_mid(kStolen);
+    aura::compiler::typed_audit::note_boundary_audit_tenant(9);
+    carrier.set_session_mid(0);
+    aura_fiber_reconcile_boundary_audit_on_resume(&carrier);
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == 0,
+          "4098: steal clear drops the source-thread mid");
+    CHECK(!aura::compiler::typed_audit::g_tls_boundary_audit_noted,
+          "4098: steal clear drops noted");
+    CHECK(aura::compiler::typed_audit::audit_se_join_tenant_id() == 0,
+          "4098: steal clear drops tenant");
+
+    // Yield-back clear, then the same fiber resumes on the destination
+    // and notes its session mid again.
+    carrier.set_session_mid(kStolen);
+    aura_fiber_reconcile_boundary_audit_on_resume(&carrier);
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == kStolen,
+          "4098: destination notes the carried mid");
+    aura_fiber_clear_boundary_audit_after_yield();
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == 0,
+          "4098: yield clear drops the note on the worker");
+    CHECK(!aura::compiler::typed_audit::g_tls_boundary_audit_noted,
+          "4098: yield clear drops noted");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    reg.sandbox_mode.store(aura::core::capability::EffectSandboxMode::Off,
+                           std::memory_order_release);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, kEpoch);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+
+    auto se_has_since = [](std::uint64_t mid, std::uint64_t seq_before) {
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::kSecurityEventRingSize;
+        auto& ring = g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        for (auto s = seq_before; s < head; ++s) {
+            if (ring.ring[s % kSecurityEventRingSize].mutation_id == mid)
+                return true;
+        }
+        return false;
+    };
+    auto grant_session = [](std::uint64_t tenant, std::uint64_t mid, const char* name) {
+        aura::core::capability::EffectProvenance prov{};
+        prov.epoch = mid;
+        prov.mutation_id = mid;
+        prov.fiber_id = 0;
+        g_capability_registry().grant_session(tenant, name, aura::core::capability::Effect::Mutate,
+                                              prov, /*single_use=*/false);
+    };
+
+    bool ok = true;
+    std::uint64_t soft_mid = 0;
+    std::uint64_t seq_soft = 0;
+    std::uint64_t seq_prod = 0;
+    {
+        CompilerService cs;
+        auto g =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(g.has_value(), "4098: Soft Guard acquire");
+        soft_mid = aura::compiler::typed_audit::current_boundary_audit_mid();
+        CHECK(soft_mid == kEpoch, "4098: Soft session mid is the Mutation epoch");
+        CHECK(soft_mid != kProof, "4098: Soft session mid is not the proof stamp");
+        CHECK(soft_mid != kStolen, "4098: Soft session mid is not the stolen note");
+        CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == soft_mid,
+              "4098: Soft SE join mid is the session mid");
+        grant_session(41, soft_mid, "ac4098-soft-session");
+        grant_session(41, kProof, "ac4098-soft-proof");
+        CHECK(reg.session_bound_entries_alive(41) == 2, "4098: both session grants live");
+        seq_soft =
+            aura::core::security_event::g_security_event_ring().seq.load(std::memory_order_relaxed);
+    }
+    CHECK(reg.session_bound_entries_alive(41) == 1,
+          "4098: revoke_session_grants_for_mid drops the session mid only");
+    CHECK(se_has_since(soft_mid, seq_soft), "4098: SE mutation_id is the session mid");
+    CHECK(!se_has_since(kProof, seq_soft), "4098: SE does not use the proof stamp");
+
+    // Production: shared epoch is minted per Evaluator. The published mid
+    // is that mint, not the proof stamp and not the stolen note.
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, kEpoch);
+    std::uint64_t prod_mid = 0;
+    {
+        CompilerService cs;
+        auto g =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(g.has_value(), "4098: production Guard acquire");
+        prod_mid = aura::compiler::typed_audit::current_boundary_audit_mid();
+        CHECK(prod_mid != 0, "4098: production session mid is minted");
+        CHECK(prod_mid != kEpoch, "4098: production session mid is not the shared epoch");
+        CHECK(prod_mid != kProof, "4098: production session mid is not the proof stamp");
+        CHECK(prod_mid != kStolen, "4098: production session mid is not the stolen note");
+        CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == prod_mid,
+              "4098: production SE join mid is the minted session mid");
+        grant_session(43, prod_mid, "ac4098-prod-session");
+        grant_session(43, kProof, "ac4098-prod-proof");
+        CHECK(reg.session_bound_entries_alive(43) == 2, "4098: production grants live");
+        seq_prod =
+            aura::core::security_event::g_security_event_ring().seq.load(std::memory_order_relaxed);
+    }
+    CHECK(reg.session_bound_entries_alive(43) == 1,
+          "4098: production revoke uses the minted session mid");
+    CHECK(se_has_since(prod_mid, seq_prod), "4098: production SE mutation_id is the minted mid");
+    CHECK(!se_has_since(kProof, seq_prod), "4098: production SE does not use the proof stamp");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(prev_prod,
+                                                                     std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, prev_epoch);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(prev_stamp);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    reg.sandbox_mode.store(prev_mode, std::memory_order_release);
+    reset_all();
+}
+
 int run_test_audit_mutation_id_unify() {
     std::println("=== Issue #2493: mutation_id source unify (WorkspaceEpoch Mutation) ===");
     ac1_prefers_caller_then_mutation_epoch();
@@ -1505,6 +1703,8 @@ int run_test_audit_mutation_id_unify() {
     ac3874_tenant_stamp();
     std::println("\n=== Issue #3875: revoke_epoch hard-only process-origin stamp ===");
     ac3875_revoke_epoch_hard_only_invent();
+    std::println("\n=== Issue #4098: boundary mid is not the type-proof stamp ===");
+    ac4098_boundary_mid_not_proof_stamp();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

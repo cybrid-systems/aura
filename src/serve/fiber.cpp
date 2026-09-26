@@ -1577,6 +1577,14 @@ void Fiber::resume() {
             aura_evaluator_force_release_outermost_holder(id_);
     }
 
+    // Issue #4098: this thread is about to run the fiber. A steal leaves
+    // the previous fiber's boundary note on the source thread; drop it
+    // when it is not this fiber's session mid. The resumed fiber still
+    // carries session_mid and is re-noted here on the destination thread.
+    // Runs after the steal-ticket revoke so a cleared session mid is not
+    // noted again.
+    aura_fiber_reconcile_boundary_audit_on_resume(this);
+
     // Swap from worker's loop context to fiber's context
     if (::swapcontext(&wctx->uctx, &ctx_) == -1) {
         std::fprintf(stderr, "fiber[%lu]: resume swapcontext failed: %s\n", (unsigned long)id_,
@@ -1620,6 +1628,11 @@ void Fiber::resume() {
         if (hs.held && hs.fiber_id == id_)
             aura_evaluator_force_release_outermost_holder(id_);
     }
+
+    // Issue #4098: the fiber has left this CPU. Clear mid, noted, and
+    // tenant before the worker schedules the next fiber. The yielded
+    // fiber keeps session_mid; the next resume notes it again.
+    aura_fiber_clear_boundary_audit_after_yield();
 
     if (g_fiber_setter_)
         g_fiber_setter_(prev_fiber_void);

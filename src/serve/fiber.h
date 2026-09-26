@@ -49,6 +49,11 @@ extern "C" std::uint64_t aura_fiber_current_id();
 // module into their link unit.
 extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noexcept;
 extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept;
+// Issue #4098: reconcile this thread's boundary-audit note with the fiber
+// about to run, and drop it when the fiber yields back. Strong defs in
+// evaluator_fiber_mutation.cpp; weak no-ops in fiber_bridge.cpp.
+extern "C" void aura_fiber_reconcile_boundary_audit_on_resume(void* fiber_ptr) noexcept;
+extern "C" void aura_fiber_clear_boundary_audit_after_yield() noexcept;
 // Issue #3563: registry-only session revoke (Reclaimed / fiber-stack join).
 extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber);
 
