@@ -2169,6 +2169,151 @@ int run_test_dispatch_required_effects() {
               "4057 AC4: no extra isolation deny");
     }
 
+    // ---- Issue #4111: interpreter car/cdr reads of the process-shared pair
+    // slots are gated - the dual-track read face of the #4057 write gate.
+    // Foreign or unstamped (0) slots -> IsolationDeny via the existing
+    // check_workspace_isolation (fiber id + Mutation epoch, required_effects
+    // = 0 - no effect consume; dispatch stays the Mutate choke for writers)
+    // with the slot unread; Soft/Off never consults the tenant array.
+    {
+        std::println(
+            "\n--- #4111 AC1: Restricted+MT foreign JIT pair -> car/cdr deny, slot unread ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4111);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* foreign4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        foreign4111->car = make_int(11).val;
+        foreign4111->cdr = make_int(22).val;
+        g_pair_slots.push_back(foreign4111);
+        g_pair_slot_tenants.push_back(77);
+        g_owned_pair_slots_.push_back(foreign4111);
+        auto car_fn = ev.primitives().lookup("car");
+        auto cdr_fn = ev.primitives().lookup("cdr");
+        CHECK(car_fn.has_value() && cdr_fn.has_value(), "4111 AC1: pair readers present");
+        const auto iso_epoch = aura::core::current_mutation_epoch();
+        const auto fiber_now = static_cast<std::int64_t>(aura_fiber_current_id());
+        auto rc = (*car_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(is_error(rc), "4111 AC1: foreign JIT pair car denied");
+        CHECK(foreign4111->car == make_int(11).val && foreign4111->cdr == make_int(22).val,
+              "4111 AC1: slot never read (deny before any read)");
+        CHECK(std::string_view(ev.last_mutate_error()).find("car") != std::string_view::npos,
+              "4111 AC1: deny reason names car (isolation, not wildcard)");
+        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(is_error(rd), "4111 AC1: foreign JIT pair cdr denied");
+        CHECK(foreign4111->cdr == make_int(22).val, "4111 AC1: slot cdr still unread");
+        const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        const std::size_t rn1 = std::min<std::size_t>(seq1, g_security_event_ring().ring.size());
+        bool saw_car4111 = false;
+        bool saw_cdr4111 = false;
+        for (std::size_t i = 0; i < rn1; ++i) {
+            const auto& e = g_security_event_ring().ring[i];
+            const auto op_sv = std::string_view(e.op);
+            if (e.denied && e.epoch == iso_epoch && e.fiber_id == fiber_now &&
+                e.kind == aura::core::security_event::SecurityEventKind::IsolationDeny) {
+                if (op_sv == "car")
+                    saw_car4111 = true;
+                if (op_sv == "cdr")
+                    saw_cdr4111 = true;
+            }
+        }
+        CHECK(saw_car4111, "4111 AC1: IsolationDeny op car, fiber+Mutation epoch");
+        CHECK(saw_cdr4111, "4111 AC1: IsolationDeny op cdr, fiber+Mutation epoch");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4111 AC2: Restricted+MT unstamped legacy slot (tenant 0) -> deny ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4111);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* legacy4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        legacy4111->car = make_int(101).val;
+        legacy4111->cdr = make_int(102).val;
+        g_pair_slots.push_back(legacy4111);
+        g_pair_slot_tenants.push_back(0); // unstamped - fails closed under MT
+        g_owned_pair_slots_.push_back(legacy4111);
+        auto car_fn = ev.primitives().lookup("car");
+        CHECK(car_fn.has_value(), "4111 AC2: car reader present");
+        auto r = (*car_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(is_error(r), "4111 AC2: unstamped slot car denied");
+        CHECK(legacy4111->car == make_int(101).val && legacy4111->cdr == make_int(102).val,
+              "4111 AC2: unstamped slot never read");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4111 AC3: owner-tenant slot reads under the armed face ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(77); // matches the slot stamp
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* own4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        own4111->car = make_int(11).val;
+        own4111->cdr = make_int(22).val;
+        g_pair_slots.push_back(own4111);
+        g_pair_slot_tenants.push_back(77);
+        g_owned_pair_slots_.push_back(own4111);
+        auto car_fn = ev.primitives().lookup("car");
+        auto cdr_fn = ev.primitives().lookup("cdr");
+        CHECK(car_fn.has_value() && cdr_fn.has_value(), "4111 AC3: pair readers present");
+        auto rc = (*car_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(!is_error(rc) && is_int(rc) && as_int(rc) == 11,
+              "4111 AC3: owner car reads the stamped slot");
+        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(!is_error(rd) && is_int(rd) && as_int(rd) == 22,
+              "4111 AC3: owner cdr reads the stamped slot");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4111 AC4: Soft/Off - tenant array unread, legacy read unchanged ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        set_mode(SandboxMode::Off);
+        g_pair_slots.clear();
+        g_pair_slot_tenants.clear();
+        auto* foreign4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
+        foreign4111->car = make_int(11).val;
+        foreign4111->cdr = make_int(22).val;
+        g_pair_slots.push_back(foreign4111);
+        g_pair_slot_tenants.push_back(77); // foreign stamp - unread on Soft/Off
+        g_owned_pair_slots_.push_back(foreign4111);
+        const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
+        auto car_fn = ev.primitives().lookup("car");
+        auto cdr_fn = ev.primitives().lookup("cdr");
+        CHECK(car_fn.has_value() && cdr_fn.has_value(), "4111 AC4: pair readers present");
+        auto rc = (*car_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(!is_error(rc) && is_int(rc) && as_int(rc) == 11,
+              "4111 AC4: Soft/Off car still returns the value");
+        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(0)});
+        CHECK(!is_error(rd) && is_int(rd) && as_int(rd) == 22,
+              "4111 AC4: Soft/Off cdr still returns the value");
+        CHECK(g_security_event_ring().total.load(std::memory_order_relaxed) == se0,
+              "4111 AC4: no isolation deny row (tenant array never consulted)");
+    }
+
     // ── Issue #4059 (allow side): with a real Mutate grant the load body
     // choke ALLOWS and the workspace installs (the deny side runs in
     // test_load_cap_io_read.cpp — MT escape + no-Mutate effect deny).

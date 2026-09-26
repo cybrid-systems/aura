@@ -8086,6 +8086,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4057 pair slot tenant linter failed — run python3 scripts/check_pair_slot_tenant_4057.py")
         return r
+    # Issue #4111 (security): interpreter car/cdr reads of g_pair_slots
+    # had no tenant consult - foreign/unstamped slot content was returned
+    # under the production face (confidentiality bypass vs the #4057
+    # write gate). Gate pins: both reader prims compare the slot stamp
+    # against the caller under the identical #4057 production face BEFORE
+    # the read, deny through check_workspace_isolation with
+    # required_effects = 0 (no effect consume; dispatch stays the Mutate
+    # choke), Soft/Off never reads the tenant array, the local pairs_
+    # branch stays first, the shorthand family documents no shared-slot
+    # fallthrough, and the #4057 write face stays untouched.
+    pair4111_script = ROOT / "scripts" / "check_pair_read_tenant_4111.py"
+    if not pair4111_script.exists():
+        fail(f"missing {pair4111_script}")
+        return 1
+    r = run([sys.executable, str(pair4111_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4111 pair read tenant linter failed - run python3 scripts/check_pair_read_tenant_4111.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the
