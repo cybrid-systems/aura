@@ -8381,6 +8381,20 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4093 JIT heap tenant linter failed — run python3 scripts/check_jit_heap_tenant_4093.py")
         return r
+    # Issue #4094 (P0 sec): JIT closure capture wrote a foreign env with no
+    # Mutate choke and no owner check — the checked seam carries free's
+    # #4036 arms with the deny routed through check_workspace_isolation;
+    # the choke/face/seam/read wiring is pinned by this source-cite gate.
+    cct4094_script = ROOT / "scripts" / "check_closure_capture_tenant_4094.py"
+    if not cct4094_script.exists():
+        fail(f"missing {cct4094_script}")
+        return 1
+    r = run([sys.executable, str(cct4094_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4094 closure capture tenant linter failed — run python3 scripts/check_closure_capture_tenant_4094.py"
+        )
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

@@ -196,6 +196,19 @@ extern "C" std::int64_t aura_alloc_closure_arena(std::int64_t func_id);
 extern "C" std::int64_t aura_alloc_closure_tenant(std::int64_t func_id, std::uint64_t owner_tenant);
 extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name);
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
+// Issue #4094: explicit-context capture seam (#4036 aura_free_closure_checked
+// shape — light-link test binaries shadow the strong owner hooks with weak
+// fail-closed stubs, so tests drive caller/face explicitly). Same gated
+// write body as the production ABI: a foreign-stamped slot refuses the
+// capture, a legacy unstamped (0) slot fails closed under Strict /
+// multi-tenant, and the deny routes through check_workspace_isolation
+// (IsolationDeny, zero store). Soft/Off (mode 0) keeps today's store.
+extern "C" void aura_closure_capture_checked(std::int64_t closure_id, std::int64_t idx,
+                                             std::int64_t val, std::uint64_t caller_tenant,
+                                             int sandbox_mode);
+// Issue #4094: value-observation read for the capture ACs (unisolated
+// diagnostic family of aura_closure_get_env_gen; not a JIT surface).
+extern "C" std::int64_t aura_closure_env_get(std::int64_t closure_id, std::int64_t idx);
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
                                           std::int64_t argc);
 // Issue #3635: blessed anon closure native-dispatch entry — sole legal

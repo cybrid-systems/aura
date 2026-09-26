@@ -4072,7 +4072,28 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
     return remapped;
 }
 
-void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
+// Issue #4094: owner hooks for the closure-capture production face. Strong
+// defs in service.ixx, weak fail-closed stubs in
+// aura_jit_prim_dispatch_stub.cpp (same wiring as the #4093 cell/hash
+// hooks); unwired owner → face off.
+extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept;
+extern "C" int aura_jit_owner_sandbox_mode(void) noexcept;
+extern "C" int aura_jit_owner_check_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
+                                              std::uint16_t bits, const char* op) noexcept;
+
+// Issue #4094: explicit-context capture — the gated write body shared by the
+// production ABI and the checked seam (#4036 aura_free_closure_checked
+// shape: light-link test binaries shadow the strong owner hooks with weak
+// fail-closed stubs, so tests drive caller/face explicitly; same body, no
+// second model). Tenant arms are free's (#4036): a foreign-stamped slot
+// refuses the capture and a legacy unstamped (0) slot fails closed under
+// Strict / multi-tenant; the deny routes through the owner's
+// check_workspace_isolation (IsolationDeny SE, fiber id + Mutation epoch)
+// and stores nothing. Soft/Off (mode 0): the face probe precedes any
+// g_closure_tenants load — no choke, no stamp read, today's store
+// (zero-cost contract).
+extern "C" void aura_closure_capture_checked(int64_t closure_id, int64_t idx, int64_t val,
+                                             std::uint64_t caller_tenant, int sandbox_mode) {
     // Issue #157 Phase 2 + #1361: table mutex + workspace write when hooked.
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
@@ -4096,6 +4117,25 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
         aura_unlock_workspace_write();
         return;
+    }
+    // Issue #4094: production-face tenant gate — the same arms as
+    // aura_free_closure_checked (#4036), after the bounds/freed checks and
+    // before any env mutation (the env cell stays untouched on deny; one
+    // gate covers the arena and heap store paths below).
+    if (sandbox_mode != 0) {
+        const std::uint64_t slot_tenant =
+            (cid < g_closure_tenants.size()) ? g_closure_tenants[cid] : 0;
+        const bool foreign = slot_tenant != 0 && slot_tenant != caller_tenant;
+        const bool unstamped_strict =
+            slot_tenant == 0 && (::aura::core::sandbox::is_strict() ||
+                                 ::aura::core::provenance::multi_tenant_env_active());
+        if (foreign || unstamped_strict) {
+            (void)aura_jit_owner_check_isolation(caller_tenant, slot_tenant,
+                                                 aura::compiler::security::kEffectMutate,
+                                                 "closure-capture");
+            aura_unlock_workspace_write();
+            return;
+        }
     }
     // Issue #1309: only arena-mode closures (is_arena==1) use freeable env storage.
     // Heap-only closures must never enter this path (pre-#1309 used cid < size()
@@ -4136,6 +4176,48 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         env.resize(static_cast<size_t>(idx) + 1);
     env[static_cast<size_t>(idx)] = val;
     aura_unlock_workspace_write();
+}
+
+void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
+    // Issue #4094: production-face Mutate choke (#3720/#4018 parity). When
+    // the face is armed (sandbox_mode != 0) a caller with no Mutate grant
+    // never reaches the store; Soft/Off (mode 0) keeps today's store and
+    // never consults the grant. Deny → no store (checked seam not entered).
+    const int face = aura_jit_owner_sandbox_mode();
+    if (face != 0 && aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate,
+                                                   "closure-capture") == 0)
+        return;
+    aura_closure_capture_checked(closure_id, idx, val, aura_jit_owner_capability_tenant(), face);
+}
+
+// Issue #4094: value-observation read for the capture ACs — the same
+// unisolated diagnostic family as aura_closure_get_env_gen (not a JIT
+// surface; the generated read path is unchanged). Returns the env cell
+// (0 default for OOB / unallocated / freed).
+extern "C" std::int64_t aura_closure_env_get(std::int64_t closure_id, std::int64_t idx) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    if (cid < g_closure_is_arena.size() && g_closure_is_arena[cid] != 0) {
+        if (cid >= g_arena_closure_envs.size() || !g_arena_closure_envs[cid])
+            return 0;
+        const std::size_t asz =
+            cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+        if (static_cast<std::size_t>(idx) >= asz)
+            return 0;
+        return g_arena_closure_envs[cid][static_cast<std::size_t>(idx)];
+    }
+    if (cid >= g_closure_envs.size())
+        return 0;
+    const auto& env = g_closure_envs[cid];
+    if (static_cast<std::size_t>(idx) >= env.size())
+        return 0;
+    return env[static_cast<std::size_t>(idx)];
 }
 
 
