@@ -1928,17 +1928,18 @@ bool Evaluator::run_post_densify_linear_type_revalidate(bool had_moving_densify)
 // Issue #355: refresh_stale_frame_in_walk — single source of
 // truth for the "saw a stale frame during a walk" pattern.
 //
-// Mirrors the warning + version-bump + stats-counter logic that
-// materialize_call_env applies for closure-body entry. Walks
+// Records the skip and the [#242 warning]. Does not bump version_
+// (Issue #4099). Walks
 // (lookup_by_symid_chain / walk_env_frame_roots / Env::lookup_
 // cell_ptr / Env::lookup_cell_index) call this on the const ref
 // they hold via walk_env_frames so the staleness is observed
 // the same way across every consumer path.
 //
-// The version_ bump uses const_cast on the const ref. Callers
-// must hold the shared env_frames_mtx_ read lock for the
-// duration of the frame ref (same as materialize_call_env); the
-// exclusive lock excludes walker threads by design.
+// Issue #4099: do not advance version_. Bindings are not rewritten
+// to the current defuse, so a stamp would make later walks treat
+// pre-compact cells and pool strings as current. Callers skip the
+// frame (same as INVALID_VERSION). The stale-refresh counter still
+// records the skip. Callers hold the shared env frame lock.
 void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     if (id == NULL_ENV_ID || id >= env_frames_.size())
         return; // invalid frame — let the walk skip it as before
@@ -1967,16 +1968,12 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
         return;
     }
     if (fr.version_ >= current) {
-        // Already refreshed by a concurrent walker since this
-        // walk started. Nothing to do — the version_ gate
-        // already silences the warning.
+        // Already at the current defuse. Nothing to record.
         return;
     }
-    // Bump the frame's version_ to silence future warnings at
-    // every walk site (same pattern as materialize_call_env).
-    const_cast<EnvFrame&>(fr).version_ = current;
-    // Stats: bump the canonical stale-refresh counter so
-    // (query:envframe-dualpath-stats) reports the event.
+    // Issue #4099: behind, not invalid. Leave version_ and the
+    // bindings. A stamp without a rewrite is what let lookup and
+    // materialize treat a pre-compact cell index as current.
     bump_envframe_stale_refresh_count();
     // Optional stderr warning, gated behind AURA_VERBOSE_ENVFRAME
     // (same env var as materialize_call_env uses, so operators
@@ -1986,8 +1983,7 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
         std::println(std::cerr,
                      "[#242 warning] {}: stale EnvFrame id={} "
                      "(frame.version_={}, current defuse_version_={}). "
-                     "Bindings may be inconsistent with post-mutation state. "
-                     "Bumped frame.version_ to silence future warnings.",
+                     "Bindings left in place; version_ not advanced.",
                      site, id, fr.version_, current);
     }
 }
@@ -2032,9 +2028,11 @@ std::uint64_t Evaluator::resync_live_closure_env_versions_on_invalidate() {
             const EnvFrame& fr = env_frames_[cl.env_id];
             if (fr.version_ == INVALID_VERSION || fr.version_ >= current)
                 continue;
+            // Issue #4099: a behind capture is a mismatch, not a
+            // repaired resync. Do not advance version_ or count it
+            // as rewritten.
+            bump_envframe_version_mismatch_in_walk();
             refresh_stale_frame_in_walk(cl.env_id, "resync_live_closure_env_on_invalidate");
-            bump_incremental_closure_env_version_resync();
-            ++resynced;
         }
     return resynced;
 }
@@ -2680,12 +2678,15 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
             continue;
         }
         // Issue #264: frames stamped before the current mutation epoch.
+        // Issue #4099: skip the frame and continue at parent_id, same
+        // as INVALID_VERSION. Reading bindings after a version wash
+        // returned a pre-compact cell index as if the frame were current.
         if (fr.version_ < version_snap) {
             bump_envframe_version_mismatch_in_walk();
-            // Issue #355: refresh, then still consult this frame.
-            // Skipping + #1128 parent fallthrough returned pre-rebind
-            // bindings and broke mutate:rebind / dep-chain p0 tests.
             refresh_stale_frame_in_walk(cur, "lookup_by_symid_chain");
+            cur = fr.parent_id;
+            ++hops;
+            continue;
         }
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {

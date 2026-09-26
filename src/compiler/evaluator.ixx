@@ -4685,7 +4685,8 @@ public:
     // When a SoA parent walk encounters a frame whose version_ is
     // older than the current defuse_version_ snapshot, callers
     // invoke this helper to:
-    //   1. bump the frame's version_ to silence future warnings,
+    //   1. leave version_ and bindings unchanged (Issue #4099: a
+    //      bump that does not rewrite bindings is not a refresh),
     //   2. bump envframe_stale_refresh_count_ (the stats counter
     //      surfaced by (query:envframe-dualpath-stats)),
     //   3. emit the same [#242 warning] stderr message that
@@ -4704,9 +4705,7 @@ public:
     // Thread-safety: caller is expected to hold the shared
     // env_frames_mtx_ read lock for the duration of the frame
     // reference (same precondition as materialize_call_env).
-    // The version_ mutation uses const_cast on the const ref, so
-    // a concurrent writer holding the exclusive lock would race
-    // — by design the exclusive lock excludes walker threads.
+    // Issue #4099: the helper does not store version_.
     void refresh_stale_frame_in_walk(EnvId id, const char* site) const;
     // Look up an EnvFrame by id. UB if id is invalid — prefer
     // resolve_env_frame() when the id may be post-truncate stale (#1360).

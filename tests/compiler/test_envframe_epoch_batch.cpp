@@ -1193,6 +1193,74 @@ static void run_4072_invalid_and_stale_capture() {
     CHECK(read_file("tests/compiler/test_issue_4072.cpp").empty(), "4072: no test_issue file");
 }
 
+static void run_4099_behind_frame_not_washed() {
+    std::println("\n--- #4099: behind EnvFrame is skipped, version_ stays ---");
+    using aura::compiler::Closure;
+    using aura::compiler::INVALID_VERSION;
+    using aura::compiler::types::make_cell;
+    using aura::compiler::types::make_int;
+    Evaluator ev;
+    while (ev.defuse_version() < 2)
+        ev.bump_defuse_version_for_test();
+    const auto parent = ev.alloc_env_frame();
+    ev.env_frame_mut(parent).bind_symid(9, make_int(1));
+    const auto frame = ev.alloc_env_frame(parent, nullptr);
+    CHECK(frame != NULL_ENV_ID && frame != 0, "4099: frame id is a steal hint");
+    ev.env_frame_mut(frame).bind_symid(7, make_cell(0));
+    ev.env_frame_mut(frame).version_ = 1;
+    CHECK(ev.defuse_version() >= 2, "4099: defuse is ahead of the frame");
+    CHECK(ev.env_frame(parent).version_ >= ev.defuse_version(), "4099: parent is current");
+
+    auto cell = ev.lookup_by_symid_chain(frame, 7);
+    CHECK(!cell.has_value(), "4099: behind cell binding is not returned");
+    CHECK(ev.env_frame(frame).version_ == 1, "4099: lookup did not wash version_");
+    auto kept = ev.lookup_by_symid_chain(frame, 9);
+    CHECK(kept.has_value() && is_int(*kept) && as_int(*kept) == 1,
+          "4099: parent binding still visible");
+
+    const auto refreshed = ev.refresh_stale_frames_after_steal(frame, 0);
+    CHECK(refreshed == 0, "4099: steal refresh does not count a wash");
+    CHECK(ev.env_frame(frame).version_ == 1, "4099: steal refresh left version_ behind");
+    Closure cl;
+    cl.env_id = frame;
+    auto ne = ev.materialize_call_env(cl);
+    CHECK(!ne.lookup_by_symid(7).has_value(), "4099: materialize stays empty");
+    CHECK(ev.env_frame(frame).version_ == 1, "4099: materialize did not wash version_");
+
+    ev.env_frame_mut(frame).version_ = INVALID_VERSION;
+    ev.refresh_stale_frame_in_walk(frame, "test-4099");
+    CHECK(ev.env_frame(frame).version_ == INVALID_VERSION, "4099: INVALID_VERSION stays terminal");
+    auto inv = ev.lookup_by_symid_chain(frame, 7);
+    CHECK(!inv.has_value(), "4099: invalid binding is still skipped");
+    auto parent_still = ev.lookup_by_symid_chain(frame, 9);
+    CHECK(parent_still.has_value() && is_int(*parent_still) && as_int(*parent_still) == 1,
+          "4099: invalid frame still walks the parent");
+
+    const auto env_src = read_file("src/compiler/evaluator_env.cpp");
+    const auto refresh_pos = env_src.find("void Evaluator::refresh_stale_frame_in_walk");
+    CHECK(refresh_pos != std::string::npos, "4099: refresh helper present");
+    if (refresh_pos != std::string::npos) {
+        const auto body = env_src.substr(refresh_pos, 4000);
+        CHECK(body.find("Issue #4099") != std::string::npos, "4099: refresh cites");
+        CHECK(body.find("version_ = current") == std::string::npos,
+              "4099: refresh does not store the current defuse");
+    }
+    const auto look_pos =
+        env_src.find("std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain");
+    CHECK(look_pos != std::string::npos, "4099: lookup present");
+    if (look_pos != std::string::npos) {
+        const auto win = env_src.substr(look_pos, 4500);
+        CHECK(win.find("Issue #4099") != std::string::npos, "4099: lookup cites");
+        CHECK(win.find("cur = fr.parent_id;") != std::string::npos,
+              "4099: lookup continues at the parent");
+    }
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(steal.find("Issue #4099") != std::string::npos, "4099: steal refresh cites");
+    CHECK(read_file("docs/design/4099-stale-envframe-version-wash.md").empty(),
+          "4099: no docs/design");
+    CHECK(read_file("tests/issues/test_issue_4099.cpp").empty(), "4099: no test_issue file");
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1218,6 +1286,8 @@ int main() {
     aura_envframe_epoch_batch::run_3680_compact_owner_scope();
     std::println("\n=== Issue #4072: stale defuse frame is not a current capture ===");
     aura_envframe_epoch_batch::run_4072_invalid_and_stale_capture();
+    std::println("\n=== Issue #4099: behind frame lookup does not wash version_ ===");
+    aura_envframe_epoch_batch::run_4099_behind_frame_not_washed();
     if (::aura::test::g_failed)
         return 1;
     std::println(

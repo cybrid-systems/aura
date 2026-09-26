@@ -4529,10 +4529,11 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 return;
             }
             if (fr.version_ < current_defuse) {
+                // Issue #4099: count the mismatch. Do not wash version_
+                // or enqueue the frame as refreshed — that walked the
+                // old cell indexes under a current stamp.
                 ++version_mismatch;
                 refresh_stale_frame_in_walk(id, "refresh_stale_frames_after_steal");
-                ++refreshed;
-                refreshed_ids.push_back(id);
             }
         };
 
@@ -4551,15 +4552,11 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 consider_frame(cl.env_id);
             }
 
-        // Issue #1903: dual-path consistency enforcement on every
-        // refreshed frame. After refresh_stale_frame_in_walk bumps the
-        // version_ the bindings_ vs bindings_symid_ arrays should be in
-        // sync, but a concurrent mutate path between the bump and the
-        // walk exit could have introduced drift. Re-run the canonical
-        // helper here so the post-steal counter family
-        // (envframe_post_steal_dual_synced_) records the actual sync
-        // call count. Routed through env_frames_ directly (still under
-        // the shared lock held above) so frames can't shift index.
+        // Issue #1903: dual-path consistency on frames whose bindings
+        // were rewritten to this defuse. Issue #4099: a merely-behind
+        // frame is not in refreshed_ids, so this walk does not touch
+        // its pre-defuse cells. Routed through env_frames_ directly
+        // (still under the shared lock held above).
         for (const EnvId rid : refreshed_ids) {
             if (rid < env_frames_.size()) {
                 const_cast<EnvFrame&>(env_frames_[rid]).ensure_dual_path_consistent();
