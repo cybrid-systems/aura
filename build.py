@@ -8326,6 +8326,30 @@ def cmd_lint():
             "Issue #4106 query bare-NodeId occupancy linter failed — run python3 scripts/check_query_bare_nodeid_4106.py"
         )
         return r
+    # Issue #4107 (P1): production if-join and arithmetic peel published a
+    # solved type without the ground gate. lub returned dynamic_type() for
+    # any two distinct non-promotable grounds, so (if p 1 "a") cached an
+    # authoritative Dynamic; synthesize_flat_call_arith returned int_type()
+    # for two concrete non-numeric operands ((+ "42" 1)) and the operand
+    # type for a single concrete operand ((+ "a")). Gate pins: lub under
+    # production_hard_face || production_defaults reports a hard TypeError
+    # and returns void_type() for distinct grounds while the Int/Float
+    # promotion, both Dynamic arms, the var fallback, and the soft dynamic
+    # fallback stay; the arith peel gates the ground non-numeric operand
+    # shapes with the same TypeError and keeps the soft Int /
+    # pass-through plus the Dynamic escape; infer_flat captures the
+    # pre-synthesis diagnostic count and demotes
+    # last_type_export_authoritative_ when a synthesis TypeError was
+    # reported under the production face; the test ACs live in
+    # tests/compiler/test_ir.cpp (no new tree).
+    tg4107_script = ROOT / "scripts" / "check_type_ground_gate_4107.py"
+    if not tg4107_script.exists():
+        fail(f"missing {tg4107_script}")
+        return 1
+    r = run([sys.executable, str(tg4107_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4107 type ground gate linter failed — run python3 scripts/check_type_ground_gate_4107.py")
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the

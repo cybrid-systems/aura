@@ -4437,6 +4437,28 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     if ((a == reg_.int_type() && b == reg_.lookup_type("Float")) ||
         (a == reg_.lookup_type("Float") && b == reg_.int_type()))
         return reg_.lookup_type("Float");
+    // Issue #4107: under the production face a pair of distinct grounds
+    // reaching synthesize_flat_if's join must not publish a solved
+    // Dynamic (the authoritative-Dynamic hole behind `(if p 1 "a")`).
+    // The Int/Float promotion above, both Dynamic arms, and the gradual
+    // fallback below are unchanged. A type variable still returns so a
+    // later unify can bind it; any other pair of distinct grounds
+    // reports a hard TypeError and yields void_type() — never a
+    // successful Dynamic. infer_flat demotes the type-export authority
+    // when that error was reported (last_type_export_authoritative_).
+    if (aura::compiler::typed_audit::production_hard_face_active() ||
+        aura::compiler::typed_audit::production_defaults_active()) {
+        if (reg_.is_var(a) || reg_.is_var(b))
+            return reg_.dynamic_type(); // later unify binds the variable
+        diag_.report(
+            Diagnostic(ErrorKind::TypeError,
+                       "incompatible ground types: if branches join " + reg_.format_type(a) +
+                           " and " + reg_.format_type(b) + " under production typing",
+                       cur_loc_)
+                .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                .with_suggestion("add explicit type annotations so both if branches agree"));
+        return reg_.void_type();
+    }
     return reg_.dynamic_type(); // safe fallback
 }
 
@@ -4913,6 +4935,10 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     if (!preserve_cs)
         cs_.clear();
     cs_.set_delta_record_mode(incremental_delta_record_);
+    // Issue #4107: capture the diagnostic count before synthesis so a
+    // production TypeError reported by the lub ground join / arith peel
+    // can demote this export (see the authoritative store below).
+    const std::size_t diag_count_before_synthesis = diag_.diagnostics().size();
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
     cs_.set_delta_record_mode(false);
     std::vector<Constraint> unresolved;
@@ -4929,8 +4955,25 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
             cs_.mark_clean();
     }
     last_solve_status_ = solve_status;
-    if (!preserve_cs)
-        last_type_export_authoritative_ = true;
+    if (!preserve_cs) {
+        // Issue #4107: under the production face a synthesis-reported
+        // TypeError (lub ground join / arith peel) is not an
+        // authoritative type export — the existing
+        // last_type_export_authoritative_ store carries the demotion.
+        // Soft keeps the historical export face unchanged.
+        bool synth_type_error = false;
+        if (aura::compiler::typed_audit::production_defaults_active() ||
+            aura::compiler::typed_audit::production_hard_face_active()) {
+            const auto diags_after = diag_.diagnostics();
+            for (std::size_t i = diag_count_before_synthesis; i < diags_after.size(); ++i) {
+                if (diags_after[i].kind == ErrorKind::TypeError) {
+                    synth_type_error = true;
+                    break;
+                }
+            }
+        }
+        last_type_export_authoritative_ = !synth_type_error;
+    }
     if (solve_status != SolveResult::SOLVED) {
         // Issue #3081 / #3360: TIMEOUT / CONFLICT (including Soft +
         // allow_timeout_commit) is never query:type authority.
@@ -5924,8 +5967,28 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
         if (v.children.size() == 2) {
             auto t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
             t0 = cs_.normalize(t0);
-            if (!reg_.is_var(t0))
+            if (!reg_.is_var(t0)) {
+                // Issue #4107: under the production face a single ground
+                // non-numeric operand is a hard TypeError — the peel must
+                // not pass the operand type through as authoritative (the
+                // `(+ "a")` hole). Soft keeps the historical pass-through;
+                // a Dynamic operand keeps the gradual escape in both faces.
+                auto tag0 = reg_.tag_of(t0);
+                if ((aura::compiler::typed_audit::production_hard_face_active() ||
+                     aura::compiler::typed_audit::production_defaults_active()) &&
+                    tag0 != TypeTag::INT && tag0 != TypeTag::FLOAT && tag0 != TypeTag::DYNAMIC) {
+                    diag_.report(
+                        Diagnostic(ErrorKind::TypeError,
+                                   "incompatible ground types: arithmetic operand " +
+                                       reg_.format_type(t0) +
+                                       " is not numeric under production typing",
+                                   cur_loc_)
+                            .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                            .with_suggestion("use a numeric operand or an explicit annotation"));
+                    return reg_.void_type();
+                }
                 return t0;
+            }
         }
         return reg_.int_type();
     }
@@ -5954,8 +6017,25 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     }
 
     // Both concrete but not INT/FLOAT: runtime will coerce to numeric
-    // e.g., (+ "42" 1) → String coerce to Int at runtime
+    // e.g., (+ "42" 1) → String coerce to Int at runtime.
+    // Issue #4107: under the production face a pair of ground non-numeric
+    // operands is a hard TypeError — the peel must not publish an
+    // authoritative Int (the `(+ "42" 1)` hole). Soft keeps the
+    // runtime-coerce Int; a Dynamic operand keeps the gradual escape in
+    // both faces.
     if (!reg_.is_var(t0) && !reg_.is_var(t1)) {
+        if ((aura::compiler::typed_audit::production_hard_face_active() ||
+             aura::compiler::typed_audit::production_defaults_active()) &&
+            tag0 != TypeTag::DYNAMIC && tag1 != TypeTag::DYNAMIC) {
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                                    "incompatible ground types: arithmetic operands " +
+                                        reg_.format_type(t0) + " and " + reg_.format_type(t1) +
+                                        " are not numeric under production typing",
+                                    cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                             .with_suggestion("use numeric operands or explicit annotations"));
+            return reg_.void_type();
+        }
         // Return Int for arithmetic (runtime handles coercion)
         return reg_.int_type();
     }
