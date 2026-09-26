@@ -2353,6 +2353,52 @@ Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept {
             return {};
         return ref;
     }
+    // Issue #4112: occupancy consult BEFORE the stamp wash (dual-track vs
+    // restamp_read_ref). The Agent export/handoff track (agent-reply /
+    // agent-send packed (id . gen), orch bare-id
+    // aura_orch_agent_send_handoff) reaches this finalize with the caller
+    // already washed into ref.tenant_id by stamp_stable_ref, while the
+    // #3415 occupancy ring still holds the original owner —
+    // resolve_stamped Stage-1 then false-allows the washed handle
+    // (same-tenant). Mirror restamp_read_ref (#3772) exactly: consult
+    // regime Strict | (Restricted+MT); exact stamp, hygiene borrow,
+    // collision borrow. Foreign / unstamped occupancy → IsolationDeny
+    // through the shared check_workspace_isolation face (fiber + epoch-mid
+    // joinable SE, no new query key) and {} BEFORE any stamp write — the
+    // field stamp aligns with refuse_foreign_owner (no caller overwrite).
+    // Agent delivery sees NULL id → export_held_ref nullopt → handoff_ref
+    // bumps the existing stable_ref_handoff_reject_total. Soft/Off:
+    // consult off — zero extra (legacy wash contract intact).
+    {
+        const auto mode = effect_sandbox_mode();
+        const bool strict = mode == 2 || ::aura::core::sandbox::is_strict();
+        const bool restricted = mode == 1;
+        const bool mt = ::aura::core::provenance::hard_capture_tenant_active() ||
+                        ::aura::core::provenance::multi_tenant_env_active();
+        if (strict || (restricted && mt)) {
+            const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
+            std::uint64_t existing = ::aura::core::provenance::existing_stamp_for_node(
+                static_cast<std::uint32_t>(ref.id));
+            if (existing == 0) {
+                const auto& hs = ::aura::core::provenance::g_provenance_tracker().last_hygiene;
+                if (hs.tenant_id != 0 && hs.node_id == static_cast<std::uint32_t>(ref.id))
+                    existing = hs.tenant_id;
+            }
+            if (existing == 0) {
+                const auto occ = ::aura::core::provenance::occupying_stamp_for_node(
+                    static_cast<std::uint32_t>(ref.id));
+                if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(ref.id))
+                    existing = occ.tenant_id; // #3641/#4039 collision borrow — deny below
+            }
+            if (existing != caller) {
+                // Foreign (or unstamped) occupancy — refuse wash + export.
+                (void)check_workspace_isolation(caller, existing, /*required=*/0, "agent-export");
+                last_mutate_error_ = std::string("agent-export: isolation-deny: ref-tenant=") +
+                                     std::to_string(existing);
+                return {};
+            }
+        }
+    }
     // Issue #3204: production layout-only / mailbox re-export must pass
     // Evaluator stamp (sole production authority #2759) before Agent
     // delivery. Quiet: tenant already non-zero → skip. Soft/Off: no

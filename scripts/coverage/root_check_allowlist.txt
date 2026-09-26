@@ -166,3 +166,4 @@ check_type_ground_gate_4107.py
 check_shape_sync_index_4108.py
 check_materialize_defuse_4109.py
 check_hash_tenant_stamp_4110.py
+check_agent_export_occupancy_4112.py
