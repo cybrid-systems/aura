@@ -57,14 +57,18 @@ def main() -> int:
     good = "half-expanded clone" in me and "aura_evaluator_try_restore_macro_expand_checkpoint" in me
     report("AC2", good, "clone-path splice refused (try_restore + return root)")
 
+    # Issue #4101 renamed the qualified deny call to deny_all (with a
+    # using-declaration); the unqualified production-gated call remains.
     good = (
         "half-expanded body" in flat
-        and "macro_exp::inner_expand_production_limit_deny()" in flat
+        and "inner_expand_production_limit_deny()" in flat
         and "aura::core::sandbox::is_sandbox_active()" in flat
     )
     report("AC3", good, "eval_flat skips eval on deny (production-gated)")
 
-    good = "Soft/Off keeps the splice (contract)" in me and "Soft/Off keeps the historical" in flat
+    # Issue #4101 reworded the flat-side contract comment; macro-side pin
+    # unchanged.
+    good = "Soft/Off keeps the splice (contract)" in me and ("Soft/Off: historical half-write may remain" in flat)
     report("AC4", good, "Soft/Off half-expand contract unchanged")
 
     good = (

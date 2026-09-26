@@ -133,9 +133,13 @@ def _check_require_effect_cascade(esec: str) -> list[str]:
 
 
 def _check_resolve_audit_mid(tma: str) -> list[str]:
-    """resolve_audit_mutation_id cascade: caller_mid -> TypedMid -> epoch -> refuse.
+    """resolve_audit_mutation_id cascade: caller_mid -> boundary note -> epoch -> refuse.
 
-    Quota MUST NOT appear in this cascade under production.
+    Quota MUST NOT appear in this cascade under production. The TypedMid
+    (proof-stamp v_read) SSOT leg moved downstream to
+    pin_composite_batch_join_mid (#4098/#3016 AC4 — a leftover stamp after
+    steal must not publish as session mid), pinned by
+    _check_composite_batch_join_mid below.
     """
     fails: list[str] = []
     block = _find_func_block(tma, RESOLVE_AUDIT_MID)
@@ -150,18 +154,15 @@ def _check_resolve_audit_mid(tma: str) -> list[str]:
             f"(line ~{line_idx + 1}); SSOT is caller_mid -> TypedMid -> epoch -> refuse "
             f"(#3296 AC1)"
         )
-    tm_pos = body.find("last_type_linear_commit_proof_stamp_v_read")
+    # Issue #4106 note: the TypedMid (proof-stamp v_read) leg lives in
+    # pin_composite_batch_join_mid since the #4098/#3016 AC4 restructure —
+    # pinned by _check_composite_batch_join_mid. This cascade pins the
+    # epoch anchor + quota forbid only.
     ep_pos = body.find("::aura::core::current_mutation_epoch")
-    if tm_pos < 0 or ep_pos < 0:
+    if ep_pos < 0:
         fails.append(
             f"typed_mutation_audit.h: resolve_audit_mutation_id cascade missing "
-            f"TypedMid/anchor (tm_pos={tm_pos}, ep_pos={ep_pos}, line ~{line_idx + 1})"
-        )
-    elif tm_pos > ep_pos:
-        fails.append(
-            f"typed_mutation_audit.h: TypedMid must PRECEDE epoch in "
-            f"resolve_audit_mutation_id cascade (tm_pos={tm_pos} > ep_pos={ep_pos}, "
-            f"line ~{line_idx + 1})"
+            f"epoch anchor (ep_pos={ep_pos}, line ~{line_idx + 1})"
         )
     if not ISSUE_3296_ANCHOR.search(body):
         fails.append(
