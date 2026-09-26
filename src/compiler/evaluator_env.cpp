@@ -1140,19 +1140,21 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             // (*aether-stats*) only in this capture frame. A later
             // env_generation_ bump (compact / truncate of other frames)
             // must not empty a still-valid frame — the call would report
-            // unbound. Invalidated frames still take the empty fallback.
-            const bool body_live = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
-                                   cl.body_id < cl.flat->size();
-            const bool env_terminal = fr.version_ == INVALID_VERSION;
-            if (!body_live || env_terminal) {
-                // Empty-Env fallback (preserves downstream type-safety
-                // by keeping the closure body valid but with empty
-                // bindings; caller can refresh / re-materialize).
-                Env empty_ne;
-                empty_ne.set_owner(this);
-                empty_ne.set_parent_id(NULL_ENV_ID);
-                return empty_ne;
-            }
+            // unbound. That protection now lives at the bump sites, not
+            // here: compact_env_frames / truncate_env_frames_to_checkpoint
+            // restamp survivor stamps in the same critical section as the
+            // env_generation_ bump, and exit_mutation_boundary rides
+            // still-valid captures up via restamp_live_capture_frames.
+            // Issue #4109: a live body id is NOT a proof that the stamp
+            // mismatch is not a compact of this frame — every mismatch
+            // takes the empty fallback (foreign generation, #2251).
+            // Empty-Env fallback (preserves downstream type-safety
+            // by keeping the closure body valid but with empty
+            // bindings; caller can refresh / re-materialize).
+            Env empty_ne;
+            empty_ne.set_owner(this);
+            empty_ne.set_parent_id(NULL_ENV_ID);
+            return empty_ne;
         }
     }
     // P0 complete: legacy cl.env path removed. All closures have
@@ -1389,9 +1391,9 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // capture makes the next call unbound (*aether-stats*). Do not
         // wash fr.version_. A closure with no live body still takes the
         // empty fallback (#4072).
-        const bool body_live = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
-                               cl.body_id < cl.flat->size();
-        if (terminal || (behind && !body_live)) {
+        // Issue #4109 EXPERIMENT: behind frames always take the empty
+        // fallback — body_live is not a proof the capture is current.
+        if (terminal || behind) {
             static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
             if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
                 if (terminal) {
@@ -1988,6 +1990,113 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     }
 }
 
+// Issue #4109: ride still-valid capture frames up to the current
+// defuse_version_ in the same critical section as the boundary bump
+// (enter/exit_mutation_boundary). A frame whose captured cell still
+// matches the live workspace binding for that name (module captures,
+// #2579 — hash-set! bumps defuse but the cell id did not change) is
+// restamped so the next materialize_call_env does not strand it. A
+// frame whose captured cell differs from the workspace cell for that
+// name (mutate:rebind / set-code replaced the define and allocated a
+// new cell) is NOT restamped — it stays behind and materialize
+// returns the empty Env instead of copying pre-mutate bindings into
+// the call. Frame-local captures (lambda params / let bindings with
+// no workspace define) ride up: nothing outside the frame can have
+// invalidated them. INVALID_VERSION is terminal and never restamped
+// (#356). No new query key — the check reuses the frame's own
+// bindings_symid_ / bindings_ columns and the live top_env binding.
+void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint64_t entry_version,
+                                            std::size_t log_from) noexcept {
+    if (env_frames_.empty() || cur_defuse == 0)
+        return;
+    // Lock-free fast path: the steady state after the previous exit is
+    // zero behind frames; skip the shard barrier entirely.
+    bool any_behind = false;
+    for (const auto& fr : env_frames_) {
+        if (fr.version_ != INVALID_VERSION && fr.version_ < cur_defuse) {
+            any_behind = true;
+            break;
+        }
+    }
+    if (!any_behind)
+        return;
+    // Issue #4109: the boundary's OWN re-definitions decide which captures
+    // are invalidated. Walk the mutation-log window this boundary recorded
+    // ([log_from, size)) and collect the SymIds whose Define nodes it
+    // replaced (mutate:rebind / set-body / set-code define rewrite). A
+    // predating frame is stranded ONLY when it captures one of those names
+    // — its cell was replaced by the boundary and the next materialize
+    // must return the empty Env instead of copying pre-mutate bindings.
+    // Cell-id equality is deliberately NOT the test: set-code + eval-current
+    // re-create workspace cells for untouched names (#2579 module captures
+    // keep the live table in the captured cell), so id drift is not
+    // invalidation. No new query key — the log window is the boundary's own
+    // record.
+    std::vector<aura::ast::SymId> mutated_syms;
+    if (workspace_flat_) {
+        const auto& log = workspace_flat_->all_mutations();
+        for (std::size_t i = log_from; i < log.size(); ++i) {
+            const auto node = log[i].target_node;
+            if (node == aura::ast::NULL_NODE || node >= workspace_flat_->size())
+                continue;
+            if (workspace_flat_->is_free_slot(node))
+                continue;
+            const auto v = workspace_flat_->get(node);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM)
+                mutated_syms.push_back(v.sym_id);
+        }
+    }
+    const auto sym_mutated = [&mutated_syms](aura::ast::SymId s) {
+        for (auto m : mutated_syms)
+            if (m == s)
+                return true;
+        return false;
+    };
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
+    for (std::size_t fr_i = 0; fr_i < env_frames_.size(); ++fr_i) {
+        auto& fr = env_frames_[fr_i];
+        if (fr.version_ == INVALID_VERSION || fr.version_ >= cur_defuse)
+            continue;
+        // Frames allocated during THIS boundary (version_ > entry_version,
+        // i.e. stamped with the post-enter defuse) captured post-enter
+        // state — the boundary's own define creations. Ride unconditionally.
+        if (fr.version_ > entry_version) {
+            fr.version_ = cur_defuse;
+            continue;
+        }
+        // Predating frames: stranded only when the boundary re-defined a
+        // name they capture. SymId column directly; string column via the
+        // canonical pool intern (defines that never had a pool at bind
+        // time).
+        bool stranded = false;
+        for (const auto& b : fr.bindings_symid_) {
+            if (sym_mutated(b.first)) {
+                stranded = true;
+                break;
+            }
+        }
+        if (!stranded) {
+            // workspace_pool_ is null before the first workspace load
+            // (raw Evaluator / early boundaries) — string-column intern
+            // is only possible with a live canonical pool.
+            auto* cpool = canonical_pool();
+            for (const auto& b : fr.bindings_) {
+                if (b.first.empty() || cpool == nullptr)
+                    continue;
+                const auto s = cpool->intern(b.first);
+                if (s != aura::ast::INVALID_SYM && sym_mutated(s)) {
+                    stranded = true;
+                    break;
+                }
+            }
+        }
+        if (!stranded)
+            fr.version_ = cur_defuse;
+    }
+}
+
 // Issue #356: is_env_frame_invalid — true if the frame has
 // been marked INVALID_VERSION by a post-rollback invalidation
 // pass. Distinct from is_env_frame_stale (which tests against
@@ -2147,6 +2256,15 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
+    // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
+    // section as the env_generation_ bump — the materialize env_gen fence
+    // (always-empty on mismatch now that body_live is gone) must not strand
+    // frames this truncate did NOT doom. Doomed frames [checkpoint, size)
+    // are already INVALID_VERSION and stay empty.
+    for (auto& fr : env_frames_) {
+        if (fr.env_gen_stamp_ != 0)
+            fr.env_gen_stamp_ = env_generation_;
+    }
     // Issue #2091 / #3267: publish under the unique_lock already
     // held here. env_frames_mtx_ is non-recursive — do not call
     // publish_live_env_linear_to_bridge() (takes shared_lock).
@@ -2154,6 +2272,16 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Issue #1927 / #1955: dual-epoch lockstep with compact_env_frames —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure).
     defuse_version_.fetch_add(1, std::memory_order_release);
+    // Issue #4109: the dual-epoch bump re-definitions nothing — ride the
+    // surviving frames to the new defuse under the barrier this function
+    // already holds, so panic-restore does not strand captures behind a
+    // pure-counter advance (materialize #4109 empties behind frames).
+    // Doomed post-checkpoint frames stay INVALID (#356). Bridge-epoch
+    // staleness for pre-truncate closures is unchanged.
+    for (auto& fr : env_frames_) {
+        if (fr.version_ != INVALID_VERSION)
+            fr.version_ = defuse_version_.load(std::memory_order_acquire);
+    }
     bump_envframe_truncate(dropped);
     // Issue #1739 / #1889 / #1927 / #1955: bump bridge_epoch so cross-COW /
     // cross-evaluator closure freshness checks (is_bridge_stale /
@@ -2533,6 +2661,28 @@ std::size_t Evaluator::compact_env_frames() {
     // (JIT will not see "fresh epoch + dangling env_id" race).
     defuse_version_.fetch_add(1, std::memory_order_release);
     ++env_generation_;
+    // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
+    // section as the env_generation_ bump. The materialize env_gen fence
+    // takes the empty fallback on EVERY stamp mismatch now (body_live is
+    // not a proof the mismatch is not a compact of this frame), so frames
+    // this compact kept must leave with the new generation or the next
+    // call would strand them (#2579 module captures). Reclaimed frames
+    // are gone; their closures carry NULL_ENV_ID. Plain writes match the
+    // publish_layout_stamp restamp protocol (#759 workspace_mtx_ mutators
+    // are race-free against shard readers; env_frames_mtx_ is held here).
+    for (auto& fr : env_frames_) {
+        if (fr.env_gen_stamp_ != 0)
+            fr.env_gen_stamp_ = env_generation_;
+    }
+    // Issue #4109: the dual-epoch bump re-definitions nothing — ride the
+    // surviving frames to the new defuse (empty log window: compact
+    // reclaims, it does not re-define), so #2579 module captures survive
+    // a reclaim that kept them referenced. Survivors' cell ids stay valid
+    // (#2579 premise); reclaimed frames are gone with NULL_ENV_ID
+    // closures. Barrier was released above — this takes its own.
+    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire),
+                                defuse_version_.load(std::memory_order_acquire),
+                                workspace_flat_ ? workspace_flat_->all_mutations().size() : 0);
     // Issue #2091 / #3267: publish under the unique_lock already
     // held here. env_frames_mtx_ is non-recursive — do not call
     // publish_live_env_linear_to_bridge() (takes shared_lock).

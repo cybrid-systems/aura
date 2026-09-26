@@ -61,7 +61,9 @@ def main() -> int:
     build = _read("build.py")
 
     hpos = ixx.find("void stamp_eval_core_joint_after_production_facade_")
-    hwin = ixx[hpos : hpos + 2200] if hpos >= 0 else ""
+    # Issue #4109: the stamp function grew (capture ride-up at the dual-epoch
+    # bump) — extend the window so the pinned identifiers stay in range.
+    hwin = ixx[hpos : hpos + 2600] if hpos >= 0 else ""
     must("Issue #3219", "AC1 helper cite", ixx)
     must("evaluator_.bump_defuse_version_for_test()", "AC1 Evaluator defuse", hwin)
     must("bump_bridge_epoch()", "AC1 core bridge", hwin)

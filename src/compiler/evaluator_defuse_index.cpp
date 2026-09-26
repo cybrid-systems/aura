@@ -781,7 +781,22 @@ void Evaluator::install_defuse_subsystem() {
             idx = new DefUseIndex();
             defuse_index_ = idx;
             idx->build(*workspace_flat_, *workspace_pool_);
-            defuse_version_.store(1, std::memory_order_relaxed);
+            // Issue #1129 / #4109: monotonic bump (never reset to a
+            // hardcoded 1 — snapshots must stay comparable) + ride every
+            // non-invalid frame to the new defuse so the rebuild does not
+            // strand captures behind the re-climbing counter (materialize
+            // #4109 empties behind frames).
+            const auto ver = defuse_version_.fetch_add(1, std::memory_order_acq_rel) + 1;
+            {
+                std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> wlock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    wlock[ef_i] = std::unique_lock<std::shared_mutex>(
+                        env_frame_shards_[ef_i].mu); // Issue #3900
+                for (auto& fr : env_frames_) {
+                    if (fr.version_ != INVALID_VERSION)
+                        fr.version_ = ver;
+                }
+            }
             defuse_rebuild_count_++;
             defuse_affected_syms_.clear();
             // Issue #3638: cold build-from-scratch walks the whole tree =
@@ -807,7 +822,21 @@ void Evaluator::install_defuse_subsystem() {
         if (!affected_sym_ids.empty()) {
             if (workspace_flat_->size() == idx->flat_size_at_build_) {
                 idx->update_callers_for(*workspace_flat_, affected_sym_ids);
-                defuse_version_.store(1, std::memory_order_relaxed);
+                // Issue #1129 / #4109: monotonic bump + frame ride-up (see
+                // the cold-build site above) — a reset to 1 re-strands
+                // every capture once the counter re-climbs past the frame
+                // versions (materialize #4109 empties behind frames).
+                const auto ver = defuse_version_.fetch_add(1, std::memory_order_acq_rel) + 1;
+                {
+                    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> wlock;
+                    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                        wlock[ef_i] = std::unique_lock<std::shared_mutex>(
+                            env_frame_shards_[ef_i].mu); // Issue #3900
+                    for (auto& fr : env_frames_) {
+                        if (fr.version_ != INVALID_VERSION)
+                            fr.version_ = ver;
+                    }
+                }
                 ++defuse_incremental_updates_;
                 if (compiler_metrics_) {
                     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -822,7 +851,19 @@ void Evaluator::install_defuse_subsystem() {
 
         // Fallback: full rebuild (flat size changed or many affected syms)
         idx->build(*workspace_flat_, *workspace_pool_);
-        defuse_version_.store(1, std::memory_order_relaxed);
+        // Issue #1129 / #4109: monotonic bump + frame ride-up (see the
+        // cold-build site above).
+        const auto ver = defuse_version_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        {
+            std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> wlock;
+            for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                wlock[ef_i] =
+                    std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
+            for (auto& fr : env_frames_) {
+                if (fr.version_ != INVALID_VERSION)
+                    fr.version_ = ver;
+            }
+        }
         defuse_rebuild_count_++;
         ++defuse_full_rebuild_fallbacks_;
         // Issue #3638: full rebuild = defuse-axis full-scan fallback.
