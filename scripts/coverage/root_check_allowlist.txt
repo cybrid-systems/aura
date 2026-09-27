@@ -174,3 +174,4 @@ check_workspace_lock_stamp_4128.py
 check_character_literal_4129.py
 check_se_wal_join_4118.py
 check_replay_mid_last_stamped_4120.py
+check_temp_canary_bind_4124.py

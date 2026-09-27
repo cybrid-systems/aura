@@ -1002,11 +1002,22 @@ export struct TemporaryMovingLivePtrCanary {
     // Issue #4066: inventory entry was pushed by bind_temporary_moving_live_ptr
     // (resolve + note under one lock). Dtor still unnotes p_.
     void own_noted(void* p) noexcept { p_ = p; }
+    // Issue #4124: Soft-only observe. Under production Moving an unresolved
+    // note is a densify-old address that can land in the #3210 inventory /
+    // on the caller's stack after densify has already relocated (the late
+    // drain does not re-resolve it — UAF / stale EnvFrame·Closure). Every
+    // production Moving observe channel must use the bind contract instead
+    // (ASTArena::bind_temporary_moving_live_ptr or
+    // bind_temporary_moving_live_ptr_any_arena): inventory mutex +
+    // last_object_remap_ resolve + note, caller rewrites its copy from the
+    // bound return and unnotes that address. Soft / !moving_compact_enabled:
+    // one flag load, zero inventory traffic (the note itself is
+    // feature-gated — same one-load no-op as before).
     void arm_observe(void* p) noexcept {
-        if (!p || !moving_compact_enabled())
+        if (!p || moving_compact_enabled())
             return;
         p_ = p;
-        note_temporary_moving_live_ptr(p_);
+        note_temporary_moving_live_ptr(p_); // Soft: feature-gated no-op
     }
     TemporaryMovingLivePtrCanary(const TemporaryMovingLivePtrCanary&) = delete;
     TemporaryMovingLivePtrCanary& operator=(const TemporaryMovingLivePtrCanary&) = delete;
@@ -4353,21 +4364,74 @@ namespace live_arena_remap_detail {
         std::lock_guard<std::mutex> lock(live().mtx);
         std::erase(live().arenas, arena);
     }
-    inline bool resolves(void* p) noexcept {
+    // Issue #4124: resolve through every live arena and return the remap
+    // target (nullptr when no arena tracks p). resolves() keeps the bool
+    // shape the #4046 callers pin; the bind contract below needs the ptr.
+    inline void* resolve_ptr(void* p) noexcept {
         if (!p)
-            return false;
+            return nullptr;
         std::lock_guard<std::mutex> lock(live().mtx);
         for (ASTArena* arena : live().arenas) {
-            if (arena && arena->resolve_object_remap(p) != nullptr)
-                return true;
+            if (!arena)
+                continue;
+            if (void* neu = arena->resolve_object_remap(p))
+                return neu;
         }
-        return false;
+        return nullptr;
+    }
+    inline bool resolves(void* p) noexcept {
+        return resolve_ptr(p) != nullptr;
     }
 } // namespace live_arena_remap_detail
 
 // Issue #4046: native dispatch (other TU) asks every live arena.
 extern "C" int aura_any_live_arena_resolves_object(void* p) noexcept {
     return live_arena_remap_detail::resolves(p) ? 1 : 0;
+}
+
+// Issue #4124: bind contract for TUs that never hold an ASTArena* (JIT
+// NativeMovingCanary env cells; TW apply with no owning arena). Identical
+// #4066 mutex+remap+note contract to ASTArena::bind_temporary_moving_live_ptr,
+// but the resolve walks every live arena's last_object_remap_ (same #4046
+// walk as resolves()). Densify holds this same inventory mutex from the
+// live==0 re-check through recycle, so the binder either lands before the
+// window (the entry re-check drains / soft-gates on it) or blocks until the
+// relocated address is published and notes THAT — a non-bind note after
+// unlock would pin a densify-old address in the inventory and on the
+// caller's stack (UAF; the late drain does not re-resolve). The caller
+// rewrites its copy from the bound return and unnotes that address.
+// Soft / Off / !moving_compact_enabled: no lock, no note, *noted stays
+// false. noted may be nullptr.
+export inline void* bind_temporary_moving_live_ptr_any_arena(void* p, bool* noted) noexcept {
+    if (noted)
+        *noted = false;
+    if (!p || !moving_compact_enabled())
+        return p;
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    const bool watch =
+        g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed) != nullptr;
+    if (watch)
+        g_moving_canary_lock_waiters.fetch_add(1, std::memory_order_acq_rel);
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    if (watch)
+        g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
+    if (void* neu = live_arena_remap_detail::resolve_ptr(p))
+        p = neu;
+    inv.ptrs.push_back(p);
+    inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+    aura::core::densify_consistency::g_moving_temporary_canary_noted_total.fetch_add(
+        1, std::memory_order_relaxed);
+    if (noted)
+        *noted = true;
+    return p;
+}
+
+// Issue #4124: C bridge for the JIT TU (never imports the arena module).
+// Returns the bound address, or nullptr when not noted (disabled / null p).
+extern "C" void* aura_bind_temporary_moving_live_ptr_any_arena(void* p) noexcept {
+    bool noted = false;
+    void* bound = bind_temporary_moving_live_ptr_any_arena(p, &noted);
+    return noted ? bound : nullptr;
 }
 
 // Issue #685: aggregate auto-compact policy stats for observability.

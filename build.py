@@ -7834,6 +7834,22 @@ def cmd_lint():
             "Issue #3973 native moving canary env-note linter failed — run python3 scripts/check_native_moving_canary_env_note_3973.py"
         )
         return r
+    # Issue #4124: every production Moving observe channel must use the
+    # #4066 bind contract (inventory mutex + last_object_remap_ resolve +
+    # note, bound return, dtor unnotes the bound address). Gate pins: JIT
+    # NativeMovingCanary env cells bind via the extern "C" any-arena bridge
+    # and the dtor unnotes the stored bound addresses, the TW apply
+    # null-arena fallback binds instead of arm_observe, arm_observe is
+    # Soft-only, and the any-arena bind contract lives in arena.ixx with
+    # the same #3210 inventory (no second registry, no invented counter).
+    tcbd4124_script = ROOT / "scripts" / "check_temp_canary_bind_4124.py"
+    if not tcbd4124_script.exists():
+        fail(f"missing {tcbd4124_script}")
+        return 1
+    r = run([sys.executable, str(tcbd4124_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4124 temp-canary bind contract linter failed — run python3 scripts/check_temp_canary_bind_4124.py")
+        return r
     # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
     # composition-only — CI must pin densify_in_flight_for AND after
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
