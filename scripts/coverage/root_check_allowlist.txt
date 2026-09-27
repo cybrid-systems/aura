@@ -171,3 +171,4 @@ check_resolve_stamped_occupancy_4113.py
 check_join_fail_failfast_4114.py
 check_scope_join_sweep_4115.py
 check_workspace_lock_stamp_4128.py
+check_character_literal_4129.py

@@ -55,6 +55,15 @@ Token Lexer::advance() {
                     pos_ += 2;
                     return make_tok(TokenKind::HashLParen, "#(");
                 }
+                // Issue #4129: #\ character literals — named forms (#\space,
+                // #\newline, #\tab, ...), single-character forms (#\a, #\0,
+                // #\-), and optional hex #\xHH. A malformed literal (a bare
+                // hash + backslash at EOF, or an unknown long name) returns
+                // a TokenKind::Error whose text starts with "#\\" so the
+                // parser records a parse error instead of silently
+                // swallowing the token as a closing ')'.
+                if (next == '\\')
+                    return read_character();
             }
             return make_tok(TokenKind::Error, source_.substr(pos_++, 1));
     }
@@ -160,6 +169,100 @@ Token Lexer::read_number() {
         }
     }
     return make_tok(is_float ? TokenKind::Float : TokenKind::Integer, source_.substr(s, pos_ - s));
+}
+
+// Issue #4129: Scheme-style character literals.
+//   named:   #\space #\newline #\tab #\nul #\null #\alarm #\backspace
+//            #\linefeed #\vtab #\page #\return #\escape #\altmode
+//            #\delete #\rubout (case-insensitive; R7RS set + aliases)
+//   single:  #\a #\0 #\- #\( #\  — one non-alphabetic or lone character
+//   hex:     #\x41 / #\X41 (optionally; 'x' + >=1 hex digit)
+// The token text carries the DECIMAL CODE POINT: characters ride the same
+// "chars are integers" model the char primitives already use (char?,
+// char->integer, char=? are int-based; string-ref yields int code points).
+// No second character value model is introduced. Malformed literals return
+// a TokenKind::Error whose text starts with "#\\" — the parser records a
+// deferred parse error from that shape so the literal is never silently
+// consumed as a closing ')'.
+Token Lexer::read_character() {
+    const std::size_t start = pos_;
+    pos_ += 2; // consume the '#' and the backslash
+    if (pos_ >= source_.size())
+        return make_tok(TokenKind::Error, "#\\"); // bare #\ at EOF — malformed
+    auto hex_val = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F')
+            return 10 + (c - 'A');
+        return -1;
+    };
+    char c = source_[pos_];
+    // Hex form: #\xHH... — 'x'/'X' followed by at least one hex digit.
+    if ((c == 'x' || c == 'X') && pos_ + 1 < source_.size() && hex_val(source_[pos_ + 1]) >= 0) {
+        ++pos_;
+        int v = 0;
+        std::size_t digits = 0;
+        while (pos_ < source_.size() && digits < 6) {
+            int h = hex_val(source_[pos_]);
+            if (h < 0)
+                break;
+            v = (v << 4) | h;
+            ++pos_;
+            ++digits;
+        }
+        string_buf_ = std::to_string(v);
+        return make_tok(TokenKind::Character, string_buf_);
+    }
+    // Single-character form for non-alphabetic characters: #\0 #\- #\( #\ ...
+    if (!std::isalpha((unsigned char)c)) {
+        ++pos_;
+        string_buf_ = std::to_string(static_cast<unsigned char>(c));
+        return make_tok(TokenKind::Character, string_buf_);
+    }
+    // Alphabetic start: read the full name run, then named-form lookup.
+    const std::size_t ns = pos_;
+    while (pos_ < source_.size() &&
+           (std::isalnum((unsigned char)source_[pos_]) || source_[pos_] == '-'))
+        ++pos_;
+    std::string_view name = source_.substr(ns, pos_ - ns);
+    if (name.size() == 1) {
+        // Lone letter: #\a #\b ...
+        string_buf_ = std::to_string(static_cast<unsigned char>(name[0]));
+        return make_tok(TokenKind::Character, string_buf_);
+    }
+    // Named form lookup (case-insensitive).
+    std::string lower(name);
+    for (auto& ch : lower)
+        ch = static_cast<char>(std::tolower((unsigned char)ch));
+    int cp = -1;
+    if (lower == "nul" || lower == "null")
+        cp = 0;
+    else if (lower == "alarm")
+        cp = 7;
+    else if (lower == "backspace")
+        cp = 8;
+    else if (lower == "tab")
+        cp = 9;
+    else if (lower == "linefeed" || lower == "newline")
+        cp = 10;
+    else if (lower == "vtab")
+        cp = 11;
+    else if (lower == "page")
+        cp = 12;
+    else if (lower == "return")
+        cp = 13;
+    else if (lower == "escape" || lower == "altmode")
+        cp = 27;
+    else if (lower == "space")
+        cp = 32;
+    else if (lower == "delete" || lower == "rubout")
+        cp = 127;
+    if (cp < 0)
+        return make_tok(TokenKind::Error, source_.substr(start, pos_ - start)); // unknown name
+    string_buf_ = std::to_string(cp);
+    return make_tok(TokenKind::Character, string_buf_);
 }
 Token Lexer::read_identifier() {
     std::size_t s = pos_;

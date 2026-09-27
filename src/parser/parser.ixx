@@ -71,6 +71,11 @@ namespace detail {
         aura::ast::StringPool& pool;
         Lexer lex;             // constructed once in parse()
         std::size_t depth = 0; // recursion depth (matches old parse_depth_)
+        // Issue #4129: first malformed character literal seen (bare #\ at
+        // EOF, unknown #\name). Flushed by parse() into FlatParseResult so
+        // a malformed literal fails the form instead of being silently
+        // consumed by parse_list's recovery as a closing ')'.
+        std::string deferred_error;
     };
 
     // Free functions (forward declarations). Definitions live in
