@@ -931,8 +931,22 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         if (noted)
             tmp_pool.own_noted(pool);
     } else {
-        tmp_flat.arm_observe(cl_copy.flat);
-        tmp_pool.arm_observe(cl_copy.pool);
+        // Issue #4124: no owning arena — bind through every live arena's
+        // last_object_remap_ (the same #4066 mutex+remap+note contract)
+        // instead of an unresolved arm_observe note, so a Moving densify
+        // that already relocated cannot leave a densify-old address on the
+        // stack / in the canary inventory (the late drain does not
+        // re-resolve). arm_observe is Soft-only as of #4124.
+        bool noted = false;
+        void* flat = aura::ast::bind_temporary_moving_live_ptr_any_arena(cl_copy.flat, &noted);
+        cl_copy.flat = static_cast<aura::ast::FlatAST*>(flat);
+        if (noted)
+            tmp_flat.own_noted(flat);
+        noted = false;
+        void* pool = aura::ast::bind_temporary_moving_live_ptr_any_arena(cl_copy.pool, &noted);
+        cl_copy.pool = static_cast<aura::ast::StringPool*>(pool);
+        if (noted)
+            tmp_pool.own_noted(pool);
     }
     CompilerMetrics* metrics =
         compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;

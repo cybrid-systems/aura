@@ -939,6 +939,10 @@ void FlatHashTable::rebuild(uint64_t new_cap) {
 // Issue #4046: defined in the evaluator / arena TUs (not this extern "C" block).
 extern "C" void* aura_current_eval_identity(void) noexcept;
 extern "C" int aura_any_live_arena_resolves_object(void* p) noexcept;
+// Issue #4124: bind contract for the #3973 env-cell notes — inventory mutex
+// + last_object_remap_ resolve across every live arena + note of the BOUND
+// address. Returns the bound ptr, or nullptr when not noted (Soft / Off).
+extern "C" void* aura_bind_temporary_moving_live_ptr_any_arena(void* p) noexcept;
 
 extern "C" {
 
@@ -4471,23 +4475,54 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 // is their only observe channel and cannot false-positive a successful
 // rewrite. Cells are stable for the token's lifetime: capture / remount /
 // free all need the exclusive table lock and the dtor runs while this
-// frame still holds the shared lock, so the dtor re-walks the same cells
-// and unnotes exactly what the ctor noted (no snapshot allocation).
+// frame still holds the shared lock.
+// Issue #4124: the cell notes go through the #4066 bind contract —
+// aura_bind_temporary_moving_live_ptr_any_arena takes the #3210 inventory
+// mutex, resolves the cell through every live arena's last_object_remap_,
+// and notes the BOUND address. A raw note after a relocate would pin a
+// densify-old address in the inventory and keep it on this frame (the
+// late drain does not re-resolve it — UAF). The dtor unnotes exactly the
+// stored bound addresses (bound_inline / bound_spill): re-walking the
+// cells could not mirror the notes, because bind may have remapped
+// old→new while the cell still holds the densify-old value. Soft /
+// !Moving: the bridge returns nullptr without locking — one flag load
+// per cell, same zero-cost posture as before.
 namespace {
     struct NativeMovingCanary {
+        static constexpr size_t kInlineBoundCap = 32;
         void* p;
         size_t cid;
-        explicit NativeMovingCanary(size_t cid_) noexcept
+        size_t bound_n = 0;
+        void* bound_inline[kInlineBoundCap];
+        std::vector<void*> bound_spill;
+        explicit NativeMovingCanary(size_t cid_)
             : p(this)
             , cid(cid_) {
             aura_note_temporary_moving_live_ptr(p); // #3857 entry-gate presence bit
-            walk_env_cells_(/*note=*/true);
+            walk_env_cells_();
         }
         ~NativeMovingCanary() noexcept {
             aura_unnote_temporary_moving_live_ptr(p);
-            walk_env_cells_(/*note=*/false); // exact mirror of the ctor notes
+            // #4124: unnote the BOUND addresses the ctor stored, not the
+            // densify-old cell values (bind may have remapped old→new).
+            for (size_t i = 0; i < bound_n; ++i)
+                aura_unnote_temporary_moving_live_ptr(bound_inline[i]);
+            for (void* b : bound_spill)
+                aura_unnote_temporary_moving_live_ptr(b);
         }
-        void walk_env_cells_(bool note) noexcept {
+        void note_bound_(void* cell) noexcept {
+            void* b = aura_bind_temporary_moving_live_ptr_any_arena(cell);
+            if (!b)
+                return; // Soft / Off / null cell: bridge notes nothing
+            if (bound_n < kInlineBoundCap)
+                bound_inline[bound_n++] = b;
+            else
+                bound_spill.push_back(b);
+        }
+        // Issue #4124: note-only walk — the dtor unnotes the stored bound
+        // addresses above (bind may have remapped, so the cells no longer
+        // mirror what the inventory holds).
+        void walk_env_cells_() noexcept {
             const bool is_arena = cid < g_closure_is_arena.size() && g_closure_is_arena[cid] != 0;
             if (is_arena && cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
                 // Issue #1302: bound by the recorded freeable-env size.
@@ -4497,11 +4532,7 @@ namespace {
                 for (size_t i = 0; i < asz; ++i) {
                     if (env[i] == 0)
                         continue;
-                    void* v = reinterpret_cast<void*>(static_cast<std::uintptr_t>(env[i]));
-                    if (note)
-                        aura_note_temporary_moving_live_ptr(v);
-                    else
-                        aura_unnote_temporary_moving_live_ptr(v);
+                    note_bound_(reinterpret_cast<void*>(static_cast<std::uintptr_t>(env[i])));
                 }
                 return;
             }
@@ -4509,11 +4540,7 @@ namespace {
                 for (const int64_t cell : g_closure_envs[cid]) {
                     if (cell == 0)
                         continue;
-                    void* v = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
-                    if (note)
-                        aura_note_temporary_moving_live_ptr(v);
-                    else
-                        aura_unnote_temporary_moving_live_ptr(v);
+                    note_bound_(reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell)));
                 }
             }
         }

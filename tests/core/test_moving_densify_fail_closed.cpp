@@ -5646,6 +5646,203 @@ static void ac4066_soft_and_source() {
     aura::ast::reset_temporary_moving_live_ptrs_for_test();
 }
 
+// Issue #4124: temp canary must bind (mutex + remap + note) on every
+// production Moving observe channel. JIT NativeMovingCanary env cells and
+// the TW apply null-arena fallback now go through
+// bind_temporary_moving_live_ptr_any_arena (same #4066 contract, resolve
+// walks every live arena); arm_observe is Soft-only. Adversarial: a binder
+// that lands mid-window blocks on the inventory mutex and reads the
+// post-relocate address; a binder that lands before the window fail-closes
+// it (soft-gate, no recycle).
+extern "C" void* aura_bind_temporary_moving_live_ptr_any_arena(void* p) noexcept;
+
+std::atomic<int> g_ac4124_stage{0};
+
+void ac4124_before_recycle_hook() noexcept {
+    g_ac4124_stage.store(1, std::memory_order_release);
+    for (int i = 0; i < 8000000 &&
+                    aura::ast::g_moving_canary_lock_waiters.load(std::memory_order_acquire) == 0;
+         ++i)
+        std::this_thread::yield();
+    for (int i = 0; i < 64; ++i)
+        std::this_thread::yield();
+}
+
+static void ac4124_bind_any_blocks_then_remapped() {
+    std::println("\n--- #4124 AC1: any-arena bind blocks across recycle and reads its payload ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::g_moving_canary_before_recycle_hook.store(nullptr, std::memory_order_release);
+    aura::ast::g_moving_canary_lock_waiters.store(0, std::memory_order_relaxed);
+    g_ac4124_stage.store(0, std::memory_order_relaxed);
+
+    ASTArena arena(64 * 1024);
+    auto* a = arena.create<Pod16>(0x4124, 1, 2, 3);
+    auto* b = arena.create<Pod16>(0x1111, 4, 5, 6);
+    auto* c = arena.create<Pod16>(0x2222, 7, 8, 9);
+    CHECK(a && b && c, "4124 AC1: three small-pool objects");
+    void* raw = a;
+    void* slot_a = a;
+    void* slot_b = b;
+    void* slot_c = c;
+    arena.register_external_root_slot_for_densify(&slot_a);
+    arena.register_external_root_slot_for_densify(&slot_b);
+    arena.register_external_root_slot_for_densify(&slot_c);
+
+    std::atomic<void*> got{nullptr};
+    std::atomic<int> payload{-1};
+    std::atomic<bool> noted_flag{false};
+    std::thread peer([&] {
+        for (int i = 0; i < 8000000 && g_ac4124_stage.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::yield();
+        if (g_ac4124_stage.load(std::memory_order_acquire) != 1) {
+            g_ac4124_stage.store(9, std::memory_order_release);
+            return;
+        }
+        bool noted = false;
+        // The exact contract the JIT TU uses: no ASTArena* in hand.
+        void* bound = aura::ast::bind_temporary_moving_live_ptr_any_arena(raw, &noted);
+        noted_flag.store(noted, std::memory_order_release);
+        got.store(bound, std::memory_order_release);
+        payload.store(bound ? static_cast<Pod16*>(bound)->a : -1, std::memory_order_release);
+        if (noted)
+            aura::ast::unnote_temporary_moving_live_ptr(bound);
+        g_ac4124_stage.store(2, std::memory_order_release);
+    });
+
+    aura::ast::g_moving_canary_before_recycle_hook.store(&ac4124_before_recycle_hook,
+                                                         std::memory_order_release);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    aura::ast::g_moving_canary_before_recycle_hook.store(nullptr, std::memory_order_release);
+    peer.join();
+
+    CHECK(g_ac4124_stage.load() == 2, "4124 AC1: peer bound inside the pre-recycle hold");
+    CHECK(noted_flag.load(), "4124 AC1: bind noted under Moving");
+    CHECK(payload.load() == 0x4124, "4124 AC1: peer read its own payload, not a freelist sibling");
+    void* seen = got.load();
+    if (r.objects_moved > 0 && seen != raw) {
+        CHECK(arena.resolve_object_remap(raw) == seen,
+              "4124 AC1: moved window — bound address is the remap target");
+    } else if (r.objects_moved == 0) {
+        CHECK(seen == raw, "4124 AC1: no-move window keeps the unrecycled address");
+    }
+    CHECK(static_cast<Pod16*>(slot_a)->a == 0x4124,
+          "4124 AC1: slotted root still the peer payload");
+    // The extern "C" bridge the JIT TU consumes resolves the same key.
+    if (r.objects_moved > 0) {
+        void* bridge = aura_bind_temporary_moving_live_ptr_any_arena(raw);
+        CHECK(bridge == arena.resolve_object_remap(raw),
+              "4124 AC1: extern C bridge matches the remap target");
+        if (bridge)
+            aura::ast::unnote_temporary_moving_live_ptr(bridge);
+    }
+    aura::ast::g_moving_canary_lock_waiters.store(0, std::memory_order_relaxed);
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4124_bind_any_before_window_soft_gates() {
+    std::println("\n--- #4124 AC4: bind-any before the window fail-closes it ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    ASTArena arena(64 * 1024);
+    auto* a = arena.create<Pod16>(0x4124, 5, 5, 5);
+    auto* b = arena.create<Pod16>(9, 9, 9, 9);
+    CHECK(a && b, "4124 AC4: creates");
+    bool noted = false;
+    void* bound = aura::ast::bind_temporary_moving_live_ptr_any_arena(a, &noted);
+    CHECK(noted && bound == a, "4124 AC4: pre-window bind notes the live address");
+    void* slot = b;
+    arena.register_external_root_slot_for_densify(&slot);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "4124 AC4: no recycle while the any-arena canary is live");
+    CHECK(r.soft_gated && r.moving_blocked_precondition, "4124 AC4: window fail-closed");
+    CHECK(static_cast<Pod16*>(bound)->a == 0x4124, "4124 AC4: bound address still the object");
+    aura::ast::unnote_temporary_moving_live_ptr(bound);
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4124_arm_observe_soft_only() {
+    std::println("\n--- #4124 AC2: arm_observe never notes under production Moving ---");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    {
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* a = arena.create<Pod16>(0x4124, 1, 1, 1);
+        CHECK(a != nullptr, "4124 AC2: create under Moving");
+        std::vector<void*> snap;
+        aura::ast::TemporaryMovingLivePtrCanary c;
+        c.arm_observe(a);
+        aura::ast::snapshot_temporary_moving_live_ptrs(snap);
+        CHECK(snap.empty(), "4124 AC2: Moving arm_observe left the inventory untouched");
+        CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() ==
+                  noted0,
+              "4124 AC2: Moving arm_observe did not bump the noted counter");
+    }
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == noted0,
+          "4124 AC2: dtor unnote is a no-op (nothing was noted)");
+    MovingFlagGuard off(0);
+    ASTArena arena2(64 * 1024);
+    auto* s = arena2.create<Pod16>(7, 7, 7, 7);
+    aura::ast::TemporaryMovingLivePtrCanary c2;
+    c2.arm_observe(s);
+    std::vector<void*> snap2;
+    CHECK(aura::ast::snapshot_temporary_moving_live_ptrs(snap2) == 0,
+          "4124 AC2: Soft arm_observe stays a one-load no-op");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac4124_soft_and_source() {
+    std::println("\n--- #4124 AC3/AC5: Soft zero-cost preserved; bind-only source contract ---");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    {
+        MovingFlagGuard off(0);
+        ASTArena arena(64 * 1024);
+        auto* a = arena.create<Pod16>(3, 3, 3, 3);
+        bool noted = true;
+        void* got = aura::ast::bind_temporary_moving_live_ptr_any_arena(a, &noted);
+        CHECK(!noted && got == a, "4124 AC3: Off/Soft any-arena bind does not note");
+        CHECK(a->a == 3, "4124 AC3: Off payload intact");
+    }
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == noted0,
+          "4124 AC3: Off bind does not bump the canary counter");
+
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto jit = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(arena_src.find("Issue #4124") != std::string::npos, "4124 AC5: arena cites");
+    CHECK(arena_src.find("bind_temporary_moving_live_ptr_any_arena") != std::string::npos,
+          "4124 AC5: any-arena bind exists");
+    CHECK(arena_src.find("aura_bind_temporary_moving_live_ptr_any_arena") != std::string::npos,
+          "4124 AC5: extern C bridge exists");
+    CHECK(apply.find("bind_temporary_moving_live_ptr_any_arena") != std::string::npos,
+          "4124 AC5: apply fallback binds any-arena");
+    CHECK(apply.find("tmp_flat.arm_observe(cl_copy.flat)") == std::string::npos,
+          "4124 AC5: apply no longer raw-notes via arm_observe");
+    CHECK(jit.find("aura_bind_temporary_moving_live_ptr_any_arena") != std::string::npos,
+          "4124 AC5: JIT cells bind via the bridge");
+    CHECK(jit.find("bound_inline") != std::string::npos,
+          "4124 AC5: dtor unnotes the stored bound addresses");
+    CHECK(arena_src.find("class PostMovingCanaryRegistry") == std::string::npos,
+          "4124 AC3: no second registry");
+    CHECK(read_file("docs/design/4124-temp-canary-bind.md").empty(), "4124: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4124.cpp").empty(), "4124: no test_issue_4124.cpp");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
 static void ac4067_reset_face() {
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
     aura::compiler::MutationConcurrencyHealthSnapshot clean;
@@ -6652,6 +6849,12 @@ int run_test_moving_densify_fail_closed() {
     ac4066_peer_sees_unrecycled_or_remapped();
     ac4066_noted_before_recycle_does_not_move();
     ac4066_soft_and_source();
+
+    std::println("\n=== Issue #4124: temp canary must bind (remap+note under mutex) ===");
+    ac4124_bind_any_blocks_then_remapped();
+    ac4124_bind_any_before_window_soft_gates();
+    ac4124_arm_observe_soft_only();
+    ac4124_soft_and_source();
 
     std::println("\n=== Issue #4067: densify-throttle admit runs recover ===");
     ac4067_admit_clean_retry_clears_throttle();

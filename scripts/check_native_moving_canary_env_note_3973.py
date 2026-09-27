@@ -59,7 +59,7 @@ def _rows(jit: str, arena: str, test: str, build: str, allow: str) -> list[str]:
     if begin < 0:
         fails.append("AC1: canary struct not located")
         return fails
-    strct = jit[begin : begin + 3400]
+    strct = jit[begin : begin + 5600]
     must("g_closure_is_arena", "AC1 freeable-storage walk", strct)
     must("g_arena_closure_env_sizes", "AC1 #1302 size bound", strct)
     must("g_arena_closure_envs", "AC1 freeable cells", strct)
