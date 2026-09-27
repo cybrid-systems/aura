@@ -4880,7 +4880,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             // (count_emit_success false) does not overwrite a fail face.
             if (count_emit_success)
                 note_aot_reemit_audit_face(aura::compiler::CompilerMetrics::kAotLastReemitReasonOk);
-            if (sid != 0) {
+            // Issue #4126: only a real ScalarFn install may contribute a
+            // stable id to the remount walk inputs. A metric-only host
+            // true (or a skeleton stamp) leaves reemit_stable_ids alone —
+            // define B's install must not remap / MustDeopt-clear define
+            // A while A's g_jit_fns / AOT slot is still pre-mutate or
+            // null. The remap gate below is native_installed; this keeps
+            // the id list consistent with what that gate can honor.
+            if (sid != 0 && installed) {
                 reemit_names.emplace_back(name);
                 reemit_stable_ids.push_back(sid);
             }
@@ -4914,9 +4921,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 const bool installed = jit_fn_is_new_install(pre_fn, post_fn);
                 if (installed)
                     (void)register_stable_id_in_func_table(name, sid, pre_fn, post_fn);
-                // Host true stays a metric success even when it did not
-                // replace g_jit_fns (#4100). Remap waits for installed.
-                note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/true,
+                // Issue #4126: a host true that did not replace
+                // g_jit_fns is not a reemit success. count_emit_success=
+                // installed mirrors the default-LLVM arm so success_count
+                // — which feeds on_reemit_pipeline_call →
+                // last_reemit_success region coverage / force_jit
+                // only_covered heal — cannot be healed by a metric-only
+                // host true. Remap still waits for installed (#4100).
+                note_reemit(sid, preserved, /*count_emit_success=*/installed, /*count_llvm=*/true,
                             installed);
                 real_llvm_emit_success = true;
             }
