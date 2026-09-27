@@ -16489,4 +16489,15 @@ inline bool WorkspaceTree::can_write(std::uint32_t idx) {
     return !nodes_[idx].read_only;
 }
 
+// Issue #4127: module-linked shared helpers for the lockless atomic-batch
+// arms (evaluator_eval_flat.cpp). Definitions live in
+// evaluator_primitives_mutate.cpp (namespace primitives_detail, de-static'd);
+// declaring them at interface scope links ONE #2858 cascade + ONE kwarg parse
+// across both implementation TUs (no second marker channel).
+namespace primitives_detail {
+    void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
+                                           aura::ast::NodeId new_root, bool opt_out = false);
+    bool parse_no_auto_restamp_opt_out(Evaluator& ev, std::span<const types::EvalValue> args);
+} // namespace primitives_detail
+
 } // namespace aura::compiler

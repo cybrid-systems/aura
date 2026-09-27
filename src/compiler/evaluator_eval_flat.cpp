@@ -3022,11 +3022,17 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
         }
         // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
         // face) under Restricted/Strict. Soft/Off: one mode load.
-        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "batch :tweak-literal: mutation of MacroIntroduced requires "
-                "MacroSelfEvo capability (mutate:tweak-literal :allow-macro? #t)"});
+        if (effect_sandbox_mode() != 0) {
+            if (deny_macro_opt_out_without_mse(*this, node))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :tweak-literal: mutation of MacroIntroduced requires "
+                    "MacroSelfEvo capability (mutate:tweak-literal :allow-macro? #t)"});
+            // Issue #4127: MSE-validated allow — latch for the #3637 net
+            // (parity with the public hygiene_protected_error allow arm,
+            // #4035). Soft/Off early-out stays latch-free.
+            note_boundary_macro_allow_latch();
+        }
     }
     auto delta = as_int(a[1]);
     auto v = flat.get(node);
@@ -3233,7 +3239,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
     // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
     // define/lambda (parity with public mutate:set-body). Soft/Off: no parse
     // unless MacroIntroduced and global is false.
-    if (flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
+    // define/lambda (parity with public mutate:set-body). Soft/Off: no parse
+    // unless MacroIntroduced and global is false.
+    // Issue #4127: capture MI state for the install-site marker propagate
+    // (public parity: allow_macro_set_body && was_macro_set_body).
+    const bool target_was_macro =
+        flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id);
+    if (target_was_macro) {
         if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             record_hygiene_violation_attempt();
             note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
@@ -3251,6 +3264,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
                     aura::diag::ErrorKind::InternalError,
                     "batch :set-body: mutation of MacroIntroduced requires "
                     "MacroSelfEvo capability (mutate:set-body :allow-macro? #t)"});
+            // Issue #4127: MSE-validated allow — latch for the #3637 net
+            // (parity with the public reject_structural_macro_hygiene allow
+            // arms on the define + lambda, #4035). Soft/Off: latch-free.
+            note_boundary_macro_allow_latch();
         }
     }
     // Issue #1687: capture size before parse; re-resolve BOTH Define and
@@ -3271,12 +3288,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
             aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
                                    "batch :set-body: define body is not a Lambda after parse"});
     // Issue #3027: parsed body walk (parity with public set-body / #2792).
+    bool body_hit_macro = false; // Issue #4127: install-site propagate condition.
     {
         aura::ast::NodeId hit = aura::ast::NULL_NODE;
         flat.walk_subtree(pr.root, [&](aura::ast::NodeId id) {
             if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
                 hit = id;
         });
+        body_hit_macro = hit != aura::ast::NULL_NODE;
         if (hit != aura::ast::NULL_NODE) {
             if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
                 if (size_before_parse < flat.size())
@@ -3317,6 +3336,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
     } else {
         flat.set_child(lambda_id, 0, body_to_set);
     }
+    // Issue #4127: allowed MacroIntroduced set-body → propagate the marker
+    // onto the installed body (public mutate:set-body #3027 parity; default
+    // restamp — no :no-auto-restamp? on this prim).
+    if (target_was_macro || body_hit_macro)
+        primitives_detail::propagate_macro_introduced_marker(*this, flat, body_to_set);
     aura::ast::NodeId old_body =
         (flat.children(target).size() > 1) ? flat.children(target)[1] : aura::ast::NULL_NODE;
     flat.add_structural_mutation_log_entry(target, 1, old_body, body_to_set, "set-body");
@@ -3633,7 +3657,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     // public mutate:replace-subtree). Global flag is not required when
     // the kwarg is present. Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(target)) {
+    // Issue #4127: capture MI state for the install-site marker propagate
+    // (public parity: allow_macro_rs && target_was_macro at the #3061 arm).
+    const bool target_was_macro = flat.is_macro_introduced(target);
+    if (target_was_macro) {
         if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             record_hygiene_violation_attempt();
             note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
@@ -3643,11 +3670,17 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
         }
         // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
         // face) under Restricted/Strict. Soft/Off: one mode load.
-        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, target))
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "batch :replace-subtree: mutation of MacroIntroduced requires "
-                "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
+        if (effect_sandbox_mode() != 0) {
+            if (deny_macro_opt_out_without_mse(*this, target))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :replace-subtree: mutation of MacroIntroduced requires "
+                    "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
+            // Issue #4127: MSE-validated allow — latch for the #3637 net
+            // (parity with the public reject_structural_macro_hygiene allow
+            // arm, #4035). Soft/Off early-out stays latch-free.
+            note_boundary_macro_allow_latch();
+        }
     }
     auto new_code = string_heap_[code_idx];
     std::string summary =
@@ -3753,6 +3786,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     flat.mark_dirty_upward_fast(parent_id, aura::ast::FlatAST::kGeneralDirty);
     flat.add_mutation_subtree(pr.root, parent_id, child_idx, "<batch-captured>", "replace-subtree",
                               summary);
+    // Issue #4127: allowed MacroIntroduced target → propagate the marker /
+    // restamp onto the installed body (parity with public mutate:replace-subtree
+    // #3061 arm). Reaching install with target_was_macro implies allow (the
+    // gates above deny otherwise), and :no-auto-restamp? #t still suppresses.
+    if (target_was_macro)
+        primitives_detail::propagate_macro_introduced_marker(
+            *this, flat, pr.root, primitives_detail::parse_no_auto_restamp_opt_out(*this, a));
     return make_bool(true);
 }
 
@@ -4105,7 +4145,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
     // Issue #2801 / Issue #3061 / Issue #3213: dual-track :allow-macro?
     // before cycle / detach (parity with public mutate:move-node).
     // Soft/Off: no parse unless MacroIntroduced and global is false.
-    if (flat.is_macro_introduced(node)) {
+    // Issue #2801 / Issue #3061 / Issue #3213: dual-track :allow-macro?
+    // before cycle / detach (parity with public mutate:move-node).
+    // Soft/Off: no parse unless MacroIntroduced and global is false.
+    // Issue #4127: capture MI state for the install-site marker propagate
+    // (public parity: allow_macro_mv && (was_macro_mv || parent_was_macro_mv)).
+    const bool was_macro_mv = flat.is_macro_introduced(node);
+    const bool parent_was_macro_mv = flat.is_macro_introduced(new_parent);
+    if (was_macro_mv) {
         if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             flat.note_move_node_hygiene_reject();
             record_hygiene_violation_attempt();
@@ -4116,16 +4163,21 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         }
         // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
         // face) under Restricted/Strict. Soft/Off: one mode load.
-        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "batch :move-node: mutation of MacroIntroduced requires "
-                "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+        if (effect_sandbox_mode() != 0) {
+            if (deny_macro_opt_out_without_mse(*this, node))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :move-node: mutation of MacroIntroduced requires "
+                    "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+            // Issue #4127: MSE-validated allow — latch for the #3637 net
+            // (moved-node arm, public reject_structural parity #4035).
+            note_boundary_macro_allow_latch();
+        }
     }
     // Issue #3815: dest parent spine — same dual-track + #3652 MSE face as
     // insert-child / splice. Soft/Off: zero extra when parent is not
     // MacroIntroduced (single is_macro_introduced load).
-    if (flat.is_macro_introduced(new_parent)) {
+    if (parent_was_macro_mv) {
         if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             record_hygiene_violation_attempt();
             note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
@@ -4134,11 +4186,16 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
                 "batch :move-node: cannot move into MacroIntroduced parent without "
                 "public mutate:move-node :allow-macro? #t"});
         }
-        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, new_parent))
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "batch :move-node: mutation of MacroIntroduced requires "
-                "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+        if (effect_sandbox_mode() != 0) {
+            if (deny_macro_opt_out_without_mse(*this, new_parent))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :move-node: mutation of MacroIntroduced requires "
+                    "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+            // Issue #4127: MSE-validated allow — latch for the #3637 net
+            // (dest-parent arm, public reject_structural parity #4035).
+            note_boundary_macro_allow_latch();
+        }
     }
     if (node == new_parent)
         return std::unexpected(aura::diag::Diagnostic{
@@ -4189,6 +4246,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
             aura::diag::ErrorKind::InternalError,
             "batch :move-node: insert failed; node reattached (no dangling hole)"});
     }
+    // Issue #4127: allowed MacroIntroduced move OR hop under a
+    // MacroIntroduced parent → propagate marker / restamp (parity with the
+    // public mutate:move-node #3061/#3815 arm). Reaching install with either
+    // flag implies allow (the gates above deny otherwise).
+    if (was_macro_mv || parent_was_macro_mv)
+        primitives_detail::propagate_macro_introduced_marker(
+            *this, flat, node, primitives_detail::parse_no_auto_restamp_opt_out(*this, a));
     flat.add_mutation(node, "move-node", std::to_string(cur_parent), std::to_string(new_parent),
                       summary);
     flat.mark_dirty_upward_fast(new_parent);

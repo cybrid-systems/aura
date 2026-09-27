@@ -6726,6 +6726,348 @@ static void ac4106_read_trio() {
     aura::core::resource_quota::reset_process_resource_quota_for_test();
 }
 
+// ── Issue #4127: lockless atomic-batch allow arms drop MacroIntroduced and
+// skip the #3637 latch (public path does both) ──
+static void ac4127_1_replace_subtree_commit_marker() {
+    std::println("\n--- #4127 AC1+AC2: Restricted+MSE allowed batch commits, "
+                 "marker survives, net quiet ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    // Setup (set-code + eval + stamp) while sandbox is still Off.
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (* x 2)))\")").has_value(),
+          "4127 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4127 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4127 AC1: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "4127 AC1: LiteralInt");
+    const auto parent = ws->parent_of(lit);
+    CHECK(parent != aura::ast::NULL_NODE, "4127 AC1: parented LiteralInt");
+    std::uint32_t slot = 0;
+    bool found_slot = false;
+    {
+        auto pv = ws->get(parent);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == lit) {
+                slot = ci;
+                found_slot = true;
+                break;
+            }
+        }
+    }
+    CHECK(found_slot, "4127 AC1: slot found");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "4127 AC1: stamp MacroIntroduced");
+    CHECK(ws->is_macro_introduced(lit), "4127 AC1: marker set");
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    // Restricted + mutate grants (3301 helper) + explicit MacroSelfEvo
+    // (3542 AC2 arming) — ac3301_2 parity for a committing atomic-batch.
+    // Typed-audit production is deliberately NOT armed here: its admit
+    // gates (#2701/#2985/#2660) read process-global live counters that
+    // earlier members leave polluted (hold-budget/concurrency-health/
+    // security-schedule rejects); the #3637 net bumps its backstop
+    // counter on any unauthorized macro-dirty delta regardless of
+    // regime, so AC2 still pins the latch without the hard face
+    // (the hard face itself is exercised by ac3637_1).
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    const auto backstop0 =
+        cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed);
+    // Production-slate cleanup (ac3640 pattern + #2701/#3554 seams): earlier
+    // sections leave deny-storm ring evidence / stale live holds that the
+    // guard acquire's admission gates (#2587/#2701/#2660) read under
+    // production. Grants stay intact — only telemetry state is cleared.
+    aura::core::security_event::reset_security_event_ring_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_mutation_hold_budget_reject_for_test();
+    // ac4076 parity: live densify-fail from earlier members must not
+    // admit-reject this Guard (#2985 concurrency-health gate).
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test({});
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" \"4127-rs\" "
+        ":allow-macro? #t)) \"4127-AC1\" :allow-macro? #t)",
+        lit));
+    CHECK(r.has_value(), "4127 AC1: batch returns");
+    const auto new_root = ws->get(parent).child(slot);
+    CHECK(new_root != aura::ast::NULL_NODE && new_root != lit, "4127 AC1: replacement installed");
+    CHECK(ws->is_macro_introduced(new_root), "4127 AC1: installed root is_macro_introduced");
+    {
+        auto rv = ws->get(new_root);
+        // Call node layout: child(0) = callee Variable (+), then the args.
+        CHECK(rv.children.size() == 3, "4127 AC1: (+ 1 2) shape");
+        bool all_mi = ws->is_macro_introduced(new_root);
+        for (auto c : rv.children)
+            all_mi = all_mi && ws->is_macro_introduced(c);
+        CHECK(all_mi, "4127 AC1: cascade descendants MI (#2858)");
+    }
+    // Following mutate WITHOUT allow → hygiene-protected /
+    // hygiene-macro-introduced (marker survived the batch, so the installed
+    // root is default-deny again — the AC1 residual the fix closes).
+    // Atomic-batch probe (the issue's own repro shape): the #3301/#3652
+    // batch-level walk sees the installed MI root with no opt-out and
+    // denies before any sub-op. Pre-fix, the dropped marker would let
+    // this batch commit.
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    // Re-arm capability grants before the follow-up: the committed batch
+    // moved the mutation epoch, so the wrapper require_effect mid-join
+    // needs fresh binds (same re-arm pattern as ac4076).
+    grant_3301_production_mutate(cs);
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    auto follow = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"4127-follow\")) "
+        "\"4127-follow\")",
+        new_root));
+    CHECK(follow.has_value(), "4127 AC1: follow-up returns");
+    CHECK(merr_kind_3027(cs, *follow) == "hygiene-protected", "4127 AC1: naked mutate denied");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          "4127 AC1: hygiene-macro-introduced reason");
+    // AC2: the allow arm latched on the MSE success path → #3637 net stayed
+    // quiet (the propagate's kMacroExpansion dirty delta did not force-fail).
+    CHECK(cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed) ==
+              backstop0,
+          "4127 AC2: backstop counter flat on the allowed batch");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    apply_dev_audit_defaults();
+}
+
+static void ac4127_2_allow_denied_without_mse() {
+    std::println(
+        "\n--- #4127 AC3a: Restricted without MacroSelfEvo — lockless allow arm denies ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (* x 2)))\")").has_value(),
+          "4127 AC3a: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4127 AC3a: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4127 AC3a: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "4127 AC3a: LiteralInt");
+    const auto parent = ws->parent_of(lit);
+    CHECK(parent != aura::ast::NULL_NODE, "4127 AC3a: parented LiteralInt");
+    std::uint32_t slot = 0;
+    bool found_slot = false;
+    {
+        auto pv = ws->get(parent);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == lit) {
+                slot = ci;
+                found_slot = true;
+                break;
+            }
+        }
+    }
+    CHECK(found_slot, "4127 AC3a: slot found");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "4127 AC3a: stamp MacroIntroduced");
+    // Restricted + grants but NO MacroSelfEvo: the lockless allow arm must
+    // still deny at the #3652 MSE gate (#3542 face) — and with no half-write.
+    // ac3542_1 parity: revoke tenant-admin AFTER arming so #3144 strips
+    // MacroSelfEvo out of the kCapWildcard expansion (with TA live, the
+    // wildcard grant implies MSE and the deny face never fires).
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" \"4127-nse\" "
+        ":allow-macro? #t)) \"4127-AC3a\")",
+        lit));
+    CHECK(r.has_value(), "4127 AC3a: batch returns");
+    CHECK(merr_kind_3027(cs, *r) == "hygiene-protected",
+          "4127 AC3a: batch-level #3652 walk deny face");
+    CHECK(ws->get(parent).child(slot) == lit,
+          "4127 AC3a: no replacement installed (no half-write)");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
+          "4127 AC3a: capability deny counter bumped");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "4127 AC3a: SE deny reason");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4127_3_default_deny_unchanged() {
+    std::println("\n--- #4127 AC3b: no allow at all — lockless MI default-deny unchanged ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (* x 2)))\")").has_value(),
+          "4127 AC3b: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4127 AC3b: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4127 AC3b: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "4127 AC3b: LiteralInt");
+    const auto parent = ws->parent_of(lit);
+    CHECK(parent != aura::ast::NULL_NODE, "4127 AC3b: parented LiteralInt");
+    std::uint32_t slot = 0;
+    bool found_slot = false;
+    {
+        auto pv = ws->get(parent);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == lit) {
+                slot = ci;
+                found_slot = true;
+                break;
+            }
+        }
+    }
+    CHECK(found_slot, "4127 AC3b: slot found");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "4127 AC3b: stamp MacroIntroduced");
+    const auto hv0 = cs.evaluator().get_hygiene_violation_attempts();
+    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} "
+                                 "\"(+ 1 2)\" \"4127-deny\")) "
+                                 "\"4127-AC3b\")",
+                                 lit));
+    CHECK(r.has_value(), "4127 AC3b: batch returns");
+    CHECK(ws->get(parent).child(slot) == lit, "4127 AC3b: no replacement installed");
+    CHECK(cs.evaluator().get_hygiene_violation_attempts() > hv0,
+          "4127 AC3b: hygiene violation counter bumped");
+}
+
+static void ac4127_4_soft_paths_unchanged() {
+    std::println(
+        "\n--- #4127 AC4: Soft — non-MI batch unchanged; MI allow propagates without MSE ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        // Non-MacroIntroduced replace-subtree without allow commits in Soft
+        // (zero extra cost — the #3213 AC5 shape on the replace-subtree arm).
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "4127 AC4a: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4127 AC4a: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "4127 AC4a: workspace");
+        auto a = nth_lit_int(ws, 0);
+        CHECK(a != aura::ast::NULL_NODE, "4127 AC4a: LiteralInt");
+        CHECK(!ws->is_macro_introduced(a), "4127 AC4a: not MacroIntroduced");
+        const auto parent = ws->parent_of(a);
+        CHECK(parent != aura::ast::NULL_NODE, "4127 AC4a: parented");
+        auto r = cs.eval(std::format(
+            "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" "
+            "\"4127-soft-nm\")) \"4127-AC4a\")",
+            a));
+        CHECK(r.has_value(), "4127 AC4a: batch returns");
+        const auto new_root = ws->get(parent).child(0);
+        CHECK(new_root != a, "4127 AC4a: non-MI replacement commits (unchanged path)");
+        CHECK(!ws->is_macro_introduced(new_root), "4127 AC4a: non-MI install stays non-MI");
+    }
+    {
+        // MacroIntroduced target + :allow-macro? #t in Soft commits WITHOUT
+        // MacroSelfEvo (Soft: one mode load, MSE gate skipped) and the marker
+        // still propagates (public #3061 arm is not sandbox-gated).
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda (x) (* x 2)))\")").has_value(),
+              "4127 AC4b: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4127 AC4b: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "4127 AC4b: workspace");
+        auto lit = first_lit_int(ws);
+        CHECK(lit != aura::ast::NULL_NODE, "4127 AC4b: LiteralInt");
+        const auto parent = ws->parent_of(lit);
+        CHECK(parent != aura::ast::NULL_NODE, "4127 AC4b: parented LiteralInt");
+        std::uint32_t slot = 0;
+        bool found_slot = false;
+        {
+            auto pv = ws->get(parent);
+            for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == lit) {
+                    slot = ci;
+                    found_slot = true;
+                    break;
+                }
+            }
+        }
+        CHECK(found_slot, "4127 AC4b: slot found");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+              "4127 AC4b: stamp MacroIntroduced");
+        auto r = cs.eval(std::format(
+            "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" "
+            "\"4127-soft-mi\" :allow-macro? #t)) \"4127-AC4b\")",
+            lit));
+        CHECK(r.has_value(), "4127 AC4b: batch returns");
+        const auto new_root = ws->get(parent).child(slot);
+        CHECK(new_root != lit, "4127 AC4b: replacement installed");
+        CHECK(ws->is_macro_introduced(new_root),
+              "4127 AC4b: marker propagated in Soft (public parity)");
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4127_5_source_cite_no_artifacts() {
+    std::println("\n--- #4127 AC5: source-cite, public parity, net untouched, no artifacts ---");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto net = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto count_of = [](const std::string& hay, std::string_view needle) {
+        std::size_t n = 0, pos = 0;
+        while ((pos = hay.find(needle, pos)) != std::string::npos) {
+            ++n;
+            pos += needle.size();
+        }
+        return n;
+    };
+    CHECK(efl.find("Issue #4127") != std::string::npos, "4127 AC5: lockless cite");
+    CHECK(count_of(efl, "note_boundary_macro_allow_latch();") >= 5,
+          "4127 AC5: five latch sites (rs + sb + tweak + mv x2)");
+    CHECK(count_of(efl, "primitives_detail::propagate_macro_introduced_marker(") == 3,
+          "4127 AC5: three shared-cascade propagate sites (rs + sb + mv)");
+    CHECK(efl.find("primitives_detail::parse_no_auto_restamp_opt_out(*this, a)") !=
+              std::string::npos,
+          "4127 AC5: :no-auto-restamp? honored on the rs/mv propagates");
+    CHECK(ixx.find(
+              "void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,") !=
+              std::string::npos,
+          "4127 AC5: .ixx module-linked cascade declaration");
+    CHECK(ixx.find("bool parse_no_auto_restamp_opt_out(Evaluator& ev, "
+                   "std::span<const types::EvalValue> args);") != std::string::npos,
+          "4127 AC5: .ixx module-linked parse declaration");
+    CHECK(mut.find("static void propagate_macro_introduced_marker") == std::string::npos,
+          "4127 AC5: cascade definition de-static'd (external linkage)");
+    CHECK(mut.find("aura::ast::NodeId new_root, bool opt_out) {") != std::string::npos,
+          "4127 AC5: definition without default (default lives on the .ixx decl)");
+    CHECK(mut.find("if (allow_macro_rs && target_was_macro)") != std::string::npos,
+          "4127 AC5: public replace-subtree parity arm intact");
+    CHECK(mut.find("if (allow_macro_set_body && was_macro_set_body)") != std::string::npos,
+          "4127 AC5: public set-body parity arm intact");
+    CHECK(mut.find("if (allow_macro_mv && (was_macro_mv || parent_was_macro_mv))") !=
+              std::string::npos,
+          "4127 AC5: public move-node parity arm intact");
+    CHECK(net.find("ev_->get_allow_macro_mutate() || ev_->boundary_macro_allow_latched()") !=
+              std::string::npos,
+          "4127 AC5: #3637 net authority untouched");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_lockless_macro_allow_latch_4127") != std::string::npos,
+          "4127 AC5: build.py wires the linter");
+    CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                  .find("check_lockless_macro_allow_latch_4127.py") != std::string::npos,
+          "4127 AC5: root allowlist append");
+    CHECK(read_file("docs/design/4127-lockless-macro-allow-latch.md").empty(),
+          "4127 AC5: no docs/design/4127-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4127.cpp").empty(),
+          "4127 AC5: no test_issue_4127.cpp per #81934");
+    CHECK(read_file("tests/issues/test_issue_4127.cpp").empty(),
+          "4127 AC5: no tests/issues/test_issue_4127.cpp");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -6972,6 +7314,12 @@ int main() {
     std::println("\n=== Issue #4087: agent-body authority gap lifecycle (#4089 root fix) ---");
     ac4087_1_agent_body_write_query_schema2();
     ac4106_read_trio();
+    std::println("\n=== Issue #4127: lockless atomic-batch allow-arm marker + latch ===");
+    ac4127_1_replace_subtree_commit_marker();
+    ac4127_2_allow_denied_without_mse();
+    ac4127_3_default_deny_unchanged();
+    ac4127_4_soft_paths_unchanged();
+    ac4127_5_source_cite_no_artifacts();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

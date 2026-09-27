@@ -672,60 +672,6 @@ namespace {
         return std::nullopt;
     }
 
-    // Issue #2858: after allowed MacroIntroduced mutate, stamp the
-    // replacement root + descendants + kMacroExpansion dirty bit +
-    // provenance origin. Closed-loop hygiene for multi-round self-evo
-    // (replaces the #2037 root-only partial fix). opt_out suppresses
-    // the cascade for advanced callers (rare; default = restamp).
-    //
-    // Cascade walks the replacement subtree using FlatAST::walk_subtree
-    // (iterative DFS, bounded at 1024 nodes — same pattern as
-    // clone_macro_body at macro_expansion.cpp ~L1820). For each node:
-    //   - set_marker(MacroIntroduced)
-    //   - apply_macro_dirty_bits(kMacroExpansion) — per-node dirty bit
-    //   - record_macro_hygiene_provenance — stamp provenance
-    // Then mark_dirty_upward(new_root, kMacroExpansion) propagates
-    // the dirty bit up to ancestors for incremental cache
-    // invalidation. Bumps 3 counters: existing
-    // hygiene_mutate_marker_propagate_total (legacy per-call count) +
-    // new macro_mutate_auto_restamp_total (per allowed-mutate count) +
-    // new macro_mutate_auto_restamp_nodes (cascade fan-out).
-    static void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
-                                                  aura::ast::NodeId new_root,
-                                                  bool opt_out = false) {
-        if (opt_out)
-            return;
-        if (new_root == aura::ast::NULL_NODE || new_root >= flat.size())
-            return;
-
-        // Cascade: marker + dirty bit + provenance on root + descendants.
-        // Issue #4043: one join mid for the whole cascade, not a literal 0.
-        const auto hygiene_mid = typed_audit::join_audit_and_se_mid(0);
-        std::uint64_t stamped_count = 0;
-        flat.walk_subtree(new_root, [&](aura::ast::NodeId cur) {
-            flat.set_marker(cur, aura::ast::SyntaxMarker::MacroIntroduced);
-            flat.apply_macro_dirty_bits(
-                cur,
-                static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
-            aura::core::provenance::record_macro_hygiene_provenance(
-                static_cast<std::uint32_t>(cur), ev.capability_tenant_id(), hygiene_mid);
-            ++stamped_count;
-        });
-
-        // Mark dirty upward so incremental cache invalidation picks up
-        // the new macro subtree on the next typecheck / impact probe.
-        flat.mark_dirty_upward(
-            new_root,
-            static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
-
-        // Bump counters (issue #2858 AC3 metrics contract).
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->hygiene_mutate_marker_propagate_total.fetch_add(1, std::memory_order_relaxed);
-            m->macro_mutate_auto_restamp_total.fetch_add(1, std::memory_order_relaxed);
-            m->macro_mutate_auto_restamp_nodes.fetch_add(stamped_count, std::memory_order_relaxed);
-        }
-    }
-
     // Issue #373: parse `:allow-macro? #t` from a mutate:*
     // primitive's argument span. Returns the boolean value
     // if the kwarg is present (default #f if absent or the
@@ -804,36 +750,6 @@ namespace {
                 hit = id;
         });
         return hit;
-    }
-
-    // Issue #2858: parse `:no-auto-restamp? #t` from a mutate:*
-    // primitive's argument span. Returns true iff the kwarg is
-    // present AND its value is true. Default #f if absent. Used to
-    // opt out of the auto-restamp cascade for advanced callers
-    // (rare — default is to restamp on every allowed MacroIntroduced
-    // mutate). Same pattern as parse_allow_macro_opt_out above
-    // (linear keyword-table scan, ~10-30 entries, once per mutate call).
-    static bool parse_no_auto_restamp_opt_out(Evaluator& ev, std::span<const EvalValue> args) {
-        const auto& kt = ev.keyword_table();
-        std::size_t target_idx = std::string::npos;
-        for (std::size_t i = 0; i < kt.size(); ++i) {
-            if (kt[i] == ":no-auto-restamp?") {
-                target_idx = i;
-                break;
-            }
-        }
-        if (target_idx == std::string::npos)
-            return false;
-        for (std::size_t i = 0; i + 1 < args.size(); ++i) {
-            if (!is_keyword(args[i]))
-                continue;
-            if (as_keyword_idx(args[i]) != target_idx)
-                continue;
-            if (is_bool(args[i + 1]))
-                return as_bool(args[i + 1]);
-            return false;
-        }
-        return false;
     }
 
     // Issue #2859: RAII guard for validate_schema_on_commit flag.
@@ -10373,3 +10289,70 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
 // #3395 bare-int production reject gate); Soft keeps the bare-int path
 // (Issue #2186 compat). See scripts/coverage/checks/check_structural_
 // mutate_resolve_helper_3399.py for the source-cite gate.
+
+// Issue #4127: module-linked definitions for the #2858 cascade restamp and
+// the :no-auto-restamp? parse (declared in evaluator.ixx, namespace
+// primitives_detail). The lockless atomic-batch arms in
+// evaluator_eval_flat.cpp call these through the module interface so both
+// implementation TUs share ONE cascade + ONE kwarg parse — a file-local
+// mirror (#3650 deny-helper precedent) would duplicate the marker channel,
+// which #4127 explicitly rules out.
+namespace aura::compiler::primitives_detail {
+
+void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
+                                       aura::ast::NodeId new_root, bool opt_out) {
+    if (opt_out)
+        return;
+    if (new_root == aura::ast::NULL_NODE || new_root >= flat.size())
+        return;
+
+    // Cascade: marker + dirty bit + provenance on root + descendants.
+    // Issue #4043: one join mid for the whole cascade, not a literal 0.
+    const auto hygiene_mid = typed_audit::join_audit_and_se_mid(0);
+    std::uint64_t stamped_count = 0;
+    flat.walk_subtree(new_root, [&](aura::ast::NodeId cur) {
+        flat.set_marker(cur, aura::ast::SyntaxMarker::MacroIntroduced);
+        flat.apply_macro_dirty_bits(
+            cur, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+        aura::core::provenance::record_macro_hygiene_provenance(
+            static_cast<std::uint32_t>(cur), ev.capability_tenant_id(), hygiene_mid);
+        ++stamped_count;
+    });
+
+    // Mark dirty upward so incremental cache invalidation picks up
+    // the new macro subtree on the next typecheck / impact probe.
+    flat.mark_dirty_upward(
+        new_root, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+
+    // Bump counters (issue #2858 AC3 metrics contract).
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        m->hygiene_mutate_marker_propagate_total.fetch_add(1, std::memory_order_relaxed);
+        m->macro_mutate_auto_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        m->macro_mutate_auto_restamp_nodes.fetch_add(stamped_count, std::memory_order_relaxed);
+    }
+}
+
+bool parse_no_auto_restamp_opt_out(Evaluator& ev, std::span<const types::EvalValue> args) {
+    const auto& kt = ev.keyword_table();
+    std::size_t target_idx = std::string::npos;
+    for (std::size_t i = 0; i < kt.size(); ++i) {
+        if (kt[i] == ":no-auto-restamp?") {
+            target_idx = i;
+            break;
+        }
+    }
+    if (target_idx == std::string::npos)
+        return false;
+    for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+        if (!is_keyword(args[i]))
+            continue;
+        if (as_keyword_idx(args[i]) != target_idx)
+            continue;
+        if (is_bool(args[i + 1]))
+            return as_bool(args[i + 1]);
+        return false;
+    }
+    return false;
+}
+
+} // namespace aura::compiler::primitives_detail
