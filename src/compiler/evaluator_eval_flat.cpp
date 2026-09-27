@@ -20,6 +20,7 @@ module;
 #include "core/sandbox.hh"               // Issue #3132: is_sandbox_active
 #include "core/moving_densify_health.hh" // Issue #3421: g_last_objects_moved
 #include "core/lifetime_consistency_proof.hh" // Issue #3421: last_lifetime_consistency_would_allow
+#include "core/densify_consistency_report.h"  // Issue #4125: densify_in_flight_for (eval-keyed)
 
 module aura.compiler.evaluator;
 
@@ -379,6 +380,20 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
                                                          const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
+    // Issue #4125: an outermost densify in flight (Phase-5 Moving arm /
+    // sticky-recovery arm, #3894/#3955) must refuse apply and JIT native
+    // dispatch on the SAME Evaluator. Post-relocate the #3210 canary
+    // inventory mutex is released (release_workspace_then_drain_after_densify_)
+    // before the post-moving stale scan / RootRemap / remap pairing, so a
+    // peer fiber entering here notes densify-old stack copies and can miss
+    // the late canary drain. Steal is BoundarySafe-blocked (#4033); an
+    // already-running peer apply / native dispatch was not. Eval-keyed slot
+    // probe (#3894) reusing THIS refuse face (#3421/#3948) — no new query
+    // key, no second model. Sits before the #4006 seq-skip: in-flight has
+    // no published seq and must refuse even when the last consult noted
+    // green+quiet. Soft/Off never reaches this probe (gate above).
+    if (aura::core::densify_consistency::densify_in_flight_for(eval_id))
+        return true;
     ast::ASTArena* ar = arena ? arena : cl.owner_arena;
     // Issue #4006: seq-match quiet skip — no extra window atomics / remap walk.
     switch (densify_refuse_seq_skip(ar)) {

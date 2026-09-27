@@ -7850,6 +7850,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4124 temp-canary bind contract linter failed — run python3 scripts/check_temp_canary_bind_4124.py")
         return r
+    # Issue #4125: apply/JIT native dispatch must consult densify-in-flight
+    # on the SAME Evaluator inside the shared #3421/#3948 refuse predicate
+    # (gate-first, before the #4006 seq-skip; no new query key). Gate pins:
+    # the consult sits after production_defaults_active() and before the
+    # seq-skip, the extern "C" wrapper + JIT call site are unchanged, the
+    # admit (#3956) and steal (#4033) direct probes are unchanged, the
+    # ac4125_* runtime ACs (incl. the peer-worker soak) run before Results,
+    # and no docs/design/4125-* / test_issue_4125 exists.
+    adif4125_script = ROOT / "scripts" / "check_apply_densify_inflight_4125.py"
+    if not adif4125_script.exists():
+        fail(f"missing {adif4125_script}")
+        return 1
+    r = run([sys.executable, str(adif4125_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4125 apply/JIT densify-in-flight consult linter failed — run python3 scripts/check_apply_densify_inflight_4125.py"
+        )
+        return r
     # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
     # composition-only — CI must pin densify_in_flight_for AND after
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
