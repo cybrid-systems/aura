@@ -8705,6 +8705,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3772 ast ref stamp linter failed — run python3 scripts/check_ast_ref_stamp_3772.py")
         return r
+    # Issue #4128 (#2354 family): Soft --serve-async SIGABRT (EDEADLK) on
+    # define + call. WorkspaceUniqueIfNeeded raw-locked workspace_mtx_
+    # without stamping lock_order::on_acquire(Level::Workspace), so the
+    # nested aura_drop_jit_fn_native_for_define is_held(Workspace) probe
+    # read false and the eval-current relower path re-locked the
+    # non-recursive shared_mutex on the same thread. Gate pins: the ctor
+    # stamps on the owning branch, the dtor pairs the release, the move
+    # transfers the stamp, and the nested consumer keeps its already-held
+    # probe. Runtime doors live in test_fiber_concurrent_unit_batch.cpp
+    # (#4128 ACs).
+    wuls4128_script = ROOT / "scripts" / "check_workspace_lock_stamp_4128.py"
+    if not wuls4128_script.exists():
+        fail(f"missing {wuls4128_script}")
+        return 1
+    r = run([sys.executable, str(wuls4128_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4128 workspace lock stamp linter failed — run python3 scripts/check_workspace_lock_stamp_4128.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

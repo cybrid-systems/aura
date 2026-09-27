@@ -2038,14 +2038,54 @@ public:
         explicit WorkspaceUniqueIfNeeded(Evaluator& ev) {
             const bool outer_exclusive = ev.any_active_mutation_boundary();
             if (!outer_exclusive) {
+                // Issue #4128: stamp the Workspace depth like the canonical
+                // lock_workspace_unique() path. Nested helpers probe
+                // lock_order::is_held(Level::Workspace) to pick their
+                // already-held variant (aura_drop_jit_fn_native_for_define's
+                // ws_held arm); an unstamped hold left that probe false while
+                // this thread already owned the non-recursive shared_mutex, so
+                // (eval-current) → relower_dirty_defines_fn_ →
+                // relower_define_blocks → drop-jit-native re-locked
+                // workspace_mtx_ on the same thread and threw EDEADLK
+                // (std::system_error "Resource deadlock avoided") → SIGABRT
+                // under --serve-async set-code + eval-current.
+                aura::compiler::lock_order::on_acquire(
+                    aura::compiler::lock_order::Level::Workspace);
                 lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
                 owns_unique_ = true;
             }
         }
         WorkspaceUniqueIfNeeded(const WorkspaceUniqueIfNeeded&) = delete;
         WorkspaceUniqueIfNeeded& operator=(const WorkspaceUniqueIfNeeded&) = delete;
-        WorkspaceUniqueIfNeeded(WorkspaceUniqueIfNeeded&&) noexcept = default;
-        WorkspaceUniqueIfNeeded& operator=(WorkspaceUniqueIfNeeded&&) noexcept = default;
+        // Issue #4128: the move must transfer the depth stamp — a defaulted
+        // move would leave owns_unique_ true in the moved-from object and the
+        // dtor would drop a depth it no longer owns (release-imbalance).
+        WorkspaceUniqueIfNeeded(WorkspaceUniqueIfNeeded&& o) noexcept
+            : lock_(std::move(o.lock_))
+            , owns_unique_(std::exchange(o.owns_unique_, false)) {}
+        WorkspaceUniqueIfNeeded& operator=(WorkspaceUniqueIfNeeded&& o) noexcept {
+            if (this != &o) {
+                if (owns_unique_) {
+                    lock_.unlock();
+                    aura::compiler::lock_order::on_release(
+                        aura::compiler::lock_order::Level::Workspace);
+                }
+                lock_ = std::move(o.lock_);
+                owns_unique_ = std::exchange(o.owns_unique_, false);
+            }
+            return *this;
+        }
+        // Issue #4128: pair the depth stamp with the mutex release — mirror
+        // unlock_workspace_unique() (mutex first, then on_release) so
+        // is_held(Level::Workspace) tracks the physical hold for the whole
+        // critical section.
+        ~WorkspaceUniqueIfNeeded() {
+            if (owns_unique_) {
+                lock_.unlock();
+                aura::compiler::lock_order::on_release(
+                    aura::compiler::lock_order::Level::Workspace);
+            }
+        }
         [[nodiscard]] bool owns_unique_lock() const noexcept { return owns_unique_; }
     };
     // Observability: process-wide held OR this-thread TLS Guard depth.
