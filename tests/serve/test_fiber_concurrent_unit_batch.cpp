@@ -1255,6 +1255,110 @@ int run_1393_smoke() {
 }
 } // namespace aura_fiber_run_wave58_1393
 
+// ═════════════════════════════════════════════════════════════
+// Wave 59 (#4128): serve define+call — WorkspaceUniqueIfNeeded
+// lock_order depth stamp (EDEADLK SIGABRT fix).
+// ═════════════════════════════════════════════════════════════
+namespace aura_fiber_run_wave59_4128 {
+// @category: unit
+// @reason: Issue #4128 — Soft --serve-async SIGABRT "Resource deadlock
+// avoided" on set-code + eval-current. WorkspaceUniqueIfNeeded took
+// workspace_mtx_ via a raw unique_lock without stamping
+// lock_order::on_acquire(Level::Workspace), so the nested
+// aura_drop_jit_fn_native_for_define is_held(Workspace) probe read false,
+// re-locked the non-recursive shared_mutex on the same thread, and threw
+// std::system_error(EDEADLK) → terminate → SIGABRT (serve session dies,
+// client sees serve_session_timeout).
+//
+//   AC1: oneshot face unchanged — direct eval of define+call+display is ok
+//   AC2: serve face — set-code + eval-current returns ok, no EDEADLK abort
+//   AC3: multi-exec serve session alive — evals after eval-current still work
+//   AC4: source — WorkspaceUniqueIfNeeded stamps on_acquire(Workspace) when owning
+//   AC5: source — dtor pairs on_release(Workspace); move transfers the stamp
+
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+int run_4128_serve_define_call_alive_smoke() {
+    std::println("\n=== #4128: serve define+call alive (no EDEADLK SIGABRT) ===");
+
+    // AC1 — oneshot face unchanged: the same source evaluated directly
+    // (no set-code/eval-current wrapper) stays ok. Mirrors the issue's
+    // oneshot control (prints 1, exit 0).
+    {
+        CompilerService cs;
+        auto r = cs.eval("(begin (define (solve n) n) (display (solve 1)) (newline))");
+        CHECK(r.has_value(), "#4128 AC1: oneshot define+call+display ok");
+    }
+
+    // AC2 — serve face: the exact issue repro driven through the inner
+    // serve exec handler (exec_with_cache → eval): set-code the define,
+    // then eval-current. Pre-fix this threw EDEADLK on eval-current
+    // (relower → drop-jit-native re-locked workspace_mtx_).
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (solve n) n)\\n(display (solve 1))\\n(newline)\")")
+                  .has_value(),
+              "#4128 AC2: set-code ok");
+        auto ec = cs.eval("(eval-current)");
+        CHECK(ec.has_value(), "#4128 AC2: eval-current ok (no EDEADLK abort)");
+    }
+
+    // AC3 — multi-exec serve session stays alive: evals after the
+    // set-code + eval-current sequence keep working (client sees status ok
+    // and the process alive; the issue's serve_session_timeout stays gone).
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (solve n) n)\\n(display (solve 1))\\n(newline)\")")
+                  .has_value(),
+              "#4128 AC3: set-code ok");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4128 AC3: eval-current ok");
+        auto a = cs.eval("(+ 40 2)");
+        CHECK(a && is_int(*a) && as_int(*a) == 42, "#4128 AC3: session alive after eval-current");
+        CHECK(cs.eval("(define (solve2 n) (* n 2))").has_value(), "#4128 AC3: later define ok");
+        auto c = cs.eval("(solve2 21)");
+        CHECK(c && is_int(*c) && as_int(*c) == 42, "#4128 AC3: later call ok");
+    }
+
+    // AC4 — source-cite: WorkspaceUniqueIfNeeded stamps the Workspace depth
+    // on the owning path (fix shape: nested is_held probes stay true).
+    {
+        const auto src = read_file("src/compiler/evaluator.ixx");
+        CHECK(!src.empty(), "#4128 AC4: evaluator.ixx readable");
+        CHECK(src.find("Issue #4128: stamp the Workspace depth") != std::string::npos,
+              "#4128 AC4: ctor stamps on_acquire(Level::Workspace) when owning");
+    }
+
+    // AC5 — source-cite: the dtor pairs on_release and the move transfers
+    // the stamp (no release imbalance / double stamp-drop).
+    {
+        const auto src = read_file("src/compiler/evaluator.ixx");
+        CHECK(!src.empty(), "#4128 AC5: evaluator.ixx readable");
+        CHECK(src.find("~WorkspaceUniqueIfNeeded()") != std::string::npos,
+              "#4128 AC5: dtor pairs on_release(Level::Workspace)");
+        CHECK(src.find("std::exchange(o.owns_unique_, false)") != std::string::npos,
+              "#4128 AC5: move transfers the stamp");
+    }
+
+    std::println("\n=== #4128: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave59_4128
+
 int main() {
 
 
@@ -1500,8 +1604,16 @@ int main() {
 
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
     std::println("\n######## wave58_1393 ########");
     if (int rc = aura_fiber_run_wave58_1393::run_1393_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave59_4128 ########");
+    if (int rc = aura_fiber_run_wave59_4128::run_4128_serve_define_call_alive_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);
