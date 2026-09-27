@@ -55,8 +55,10 @@ def main() -> int:
     pwin = mut[ppos : ppos + 10000] if ppos >= 0 else ""
 
     lpos = flat.find("eval_flat_apply_mutate_move_node")
-    # Body through try_move_child (~3.3KB+)
-    lwin = flat[lpos : lpos + 4500] if lpos >= 0 else ""
+    # Body through try_move_child (~4.5KB+; widened for #4127 — the dual-track
+    # MI gate + #3637 latch blocks lengthen the pre-gate region but the pins
+    # (Issue #2803 cite + try_move_child) are unchanged).
+    lwin = flat[lpos : lpos + 7000] if lpos >= 0 else ""
 
     # AC1
     must("Issue #2803", "AC1", pwin)
