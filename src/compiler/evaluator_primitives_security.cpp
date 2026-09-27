@@ -813,6 +813,43 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (e.denied)
                         ++se_deny_count;
                 }
+                // Issue #4118: ring miss → SE WAL (lookup window, then
+                // scan-all retained segments) + overflow join — same mid
+                // semantics as query:security-audit (#3498/#3674/#3970).
+                // Gated on the #3556 hard face: Soft / WAL-off stays
+                // ring-only with zero extra I/O (AC2, one is_enabled()
+                // load max). Count truth: one durable row found for the
+                // mid; deny truth: rec->denied, and overflow rows join as
+                // denies only for the #3879 mutation_wal_append_miss
+                // stamp (their schema has no kind/denied fields —
+                // security-audit's overflow fill behaves the same).
+                const bool se_join_durable =
+                    ::aura::compiler::typed_audit::production_hard_face_active();
+                if (se_count == 0 && se_join_durable) {
+                    auto& se_wal = ::aura::core::security_event_wal::g_security_event_wal();
+                    if (se_wal.is_enabled()) {
+                        const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+                        auto rec = se_wal.find_recent_by_mutation_id(mid, win);
+                        if (rec) {
+                            se_count = 1; // wal-window join
+                        } else {
+                            rec = se_wal.find_by_mutation_id_scan_all_segments(mid);
+                            if (rec)
+                                se_count = 1; // wal-full-scan join
+                        }
+                        if (rec && rec->denied)
+                            ++se_deny_count;
+                    }
+                    if (se_count == 0) {
+                        if (const auto* ovr =
+                                ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
+                            se_count = 1; // overflow join (#3109/#3780)
+                            if (ovr->reason ==
+                                ::aura::core::security_event::kMutationWalAppendMissReason)
+                                ++se_deny_count;
+                        }
+                    }
+                }
                 insert_kv("replay-mid", static_cast<std::int64_t>(mid));
                 insert_kv("typed-mid-current",
                           static_cast<std::int64_t>(
@@ -831,10 +868,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 // Deny (Agents must not stop at a preceding EffectAllow).
                 insert_kv("last-se-wins-verdict",
                           static_cast<std::int64_t>(
-                              ::aura::core::security_event::forensic_effect_verdict_for_mid(mid)));
+                              ::aura::core::security_event::forensic_effect_verdict_for_mid(
+                                  mid, se_join_durable)));
                 insert_kv("wal-miss-deny",
-                          ::aura::core::security_event::forensic_mid_has_wal_append_miss(mid) ? 1
-                                                                                              : 0);
+                          ::aura::core::security_event::forensic_mid_has_wal_append_miss(
+                              mid, se_join_durable)
+                              ? 1
+                              : 0);
                 insert_kv("issue-3877", 3877);
             }
             // Issue #3090: production grant refused when prov.mutation_id == 0

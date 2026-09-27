@@ -8741,6 +8741,26 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4129 character literal reader linter failed — run python3 scripts/check_character_literal_4129.py")
         return r
+    # Issue #4118 (P0 obs): capability-effect-stats (#3143 replay face) and
+    # the #3877 forensic helpers only scanned the in-memory SE ring (1024).
+    # After ring_wrap_total advanced, Agent O(1) mid replay under-reported
+    # (se-count=0 / verdict None) even when the SE WAL (+ #3109/#3780
+    # overflow ring) still held the mid — dual-track residual vs
+    # query:security-audit's auto WAL+overflow scan. Gate pins: the _full
+    # joins declared in security_event.hh / defined in security_event_wal.hh
+    # (window → scan-all → overflow, miss row forces Deny, mid==0
+    # ring-only); the primitive's se-count join + verdict keys gated by
+    # production_hard_face_active() (Soft/WAL-off ring-only); no new
+    # query:* key / metrics bus / hash capacity. Runtime doors live in
+    # tests/core/test_audit_replay_join.cpp (ac20_se_wal_overflow_mid_join_4118).
+    sejoin4118_script = ROOT / "scripts" / "check_se_wal_join_4118.py"
+    if not sejoin4118_script.exists():
+        fail(f"missing {sejoin4118_script}")
+        return 1
+    r = run([sys.executable, str(sejoin4118_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4118 SE WAL mid-join linter failed — run python3 scripts/check_se_wal_join_4118.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

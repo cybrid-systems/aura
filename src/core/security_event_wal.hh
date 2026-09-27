@@ -613,6 +613,7 @@ inline void reset_security_event_wal_for_test() noexcept {
     g_security_event_wal().clear_for_test();
 }
 
+
 // Helper: fill disk record from a SecurityEvent + timestamp.
 inline SecurityEventWalRecord make_record(const SecurityEvent& ev,
                                           std::uint64_t timestamp_ms) noexcept {
@@ -819,5 +820,72 @@ struct SecurityEventWalStatsSnapshot {
 }
 
 } // namespace aura::core::security_event_wal
+
+// Issue #4118: the definitions live OUTSIDE security_event_wal so the
+// qualified namespace extension is well-formed (it must appear in a scope
+// that encloses aura::core::security_event).
+namespace aura::core::security_event { // extends the decl namespace from
+// core/security_event.hh (qualified form — an unqualified reopen inside
+// security_event_wal creates a NEW inner ns, GCC 13/14 verified)
+
+// Issue #4118: SE WAL / overflow join behind the #3877 forensic helpers
+// (declarations in core/security_event.hh). Same mid semantics as
+// query:security-audit's durable join (#3498/#3674/#3970): newest
+// retained row via the wal_mid_lookup_segments() window, then
+// scan-all retained segments, then the #3109/#3780 overflow ring.
+// The newest row is the same row security-audit surfaces; #3879
+// stamps the mutation_wal_append_miss Deny AFTER the effect row, so
+// when a miss exists on the mid it is the newest row. mid==0 stays
+// refuse-class ring-only (#3462/#3599) — the WAL never persisted it.
+[[nodiscard]] inline ForensicEffectVerdict
+forensic_effect_verdict_for_mid_full(std::uint64_t mid) noexcept {
+    if (mid == 0)
+        return ForensicEffectVerdict::None;
+    auto& se_wal = ::aura::core::security_event_wal::g_security_event_wal();
+    if (se_wal.is_enabled()) {
+        const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+        auto rec = se_wal.find_recent_by_mutation_id(mid, win);
+        if (!rec)
+            rec = se_wal.find_by_mutation_id_scan_all_segments(mid);
+        if (rec) {
+            if (std::string_view(rec->reason) == kMutationWalAppendMissReason)
+                return ForensicEffectVerdict::Deny; // #3877 miss forces Deny
+            const auto kind = static_cast<SecurityEventKind>(rec->kind);
+            if (kind == SecurityEventKind::EffectDeny || rec->denied)
+                return ForensicEffectVerdict::Deny;
+            if (kind == SecurityEventKind::EffectAllow)
+                return ForensicEffectVerdict::Allow;
+            return ForensicEffectVerdict::None;
+        }
+    }
+    // Overflow rows carry op/reason only (#3109) — the #3879 miss stamp
+    // is a Deny SE; any other reason keeps the verdict unset exactly
+    // like security-audit's overflow fill (reason surfaced, verdict not
+    // rewritten). In-memory scan only, no I/O.
+    if (const auto* ovr = ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
+        if (ovr->reason == kMutationWalAppendMissReason)
+            return ForensicEffectVerdict::Deny;
+    }
+    return ForensicEffectVerdict::None;
+}
+
+[[nodiscard]] inline bool forensic_mid_has_wal_append_miss_full(std::uint64_t mid) noexcept {
+    if (mid == 0)
+        return false;
+    auto& se_wal = ::aura::core::security_event_wal::g_security_event_wal();
+    if (se_wal.is_enabled()) {
+        const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+        auto rec = se_wal.find_recent_by_mutation_id(mid, win);
+        if (!rec)
+            rec = se_wal.find_by_mutation_id_scan_all_segments(mid);
+        if (rec)
+            return std::string_view(rec->reason) == kMutationWalAppendMissReason;
+    }
+    if (const auto* ovr = ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid))
+        return ovr->reason == kMutationWalAppendMissReason;
+    return false;
+}
+
+} // namespace aura::core::security_event
 
 #endif // AURA_CORE_SECURITY_EVENT_WAL_HH
