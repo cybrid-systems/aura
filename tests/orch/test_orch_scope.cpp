@@ -1190,6 +1190,56 @@ int run_test_orch_scope() {
         reset_all();
     }
 
+    // ── #4115: production join_all sweeps owed Reclaimed-pending ───────
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        std::println("\n--- #4115: orch:scope-join-all surfaces the end-of-join sweep ---");
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        const std::string prev_sb_s = prev_sb ? prev_sb : "";
+        reset_all();
+        CompilerService cs;
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        apply_production_audit_defaults();
+        cs.eval(R"((orch:scope-spawn "ac4115-a"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))", "schema-4115") ==
+                  4115,
+              "ac4115_scope: join-all hash carries schema-4115");
+        cs.eval(R"((orch:scope-spawn "ac4115-b"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
+                       "swept-cleaned") >= 0,
+              "ac4115_scope: swept-cleaned field present");
+        cs.eval(R"((orch:scope-spawn "ac4115-c"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
+                       "swept-still-pending") >= 0,
+              "ac4115_scope: swept-still-pending field present");
+        cs.eval(R"((orch:scope-spawn "ac4115-d"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
+                       "join-all-sweep-reclaimed-wired") == 1,
+              "ac4115_scope: wired sentinel");
+        ::setenv("AURA_SANDBOX", "off", 1);
+        apply_dev_audit_defaults();
+        cs.eval(R"((orch:scope-spawn "ac4115-soft-a"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
+                       "swept-cleaned") == 0,
+              "ac4115_scope: Soft end-of-join sweep stays zero (contract)");
+        cs.eval(R"((orch:scope-spawn "ac4115-soft-b"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
+                       "swept-still-pending") == 0,
+              "ac4115_scope: Soft still-pending stays zero");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim_src.find("\"swept-cleaned\"") != std::string::npos,
+              "4115: prim publishes swept-cleaned");
+        CHECK(prim_src.find("\"swept-still-pending\"") != std::string::npos,
+              "4115: prim publishes swept-still-pending");
+        CHECK(prim_src.find("query:4115") == std::string::npos, "4115: no new query key");
+        if (prev_sb_s.empty())
+            ::unsetenv("AURA_SANDBOX");
+        else
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        reset_all();
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

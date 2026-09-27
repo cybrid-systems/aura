@@ -8172,6 +8172,30 @@ def cmd_lint():
             "Issue #4114 FailFast join-fail production arm linter failed - run python3 scripts/check_join_fail_failfast_4114.py"
         )
         return r
+    # Issue #4115 (orch): production join_all / orch:scope-join-all left
+    # Scope-owned Reclaimed-pending handles unswept — hosts that never call
+    # orch:scope-sweep-reclaimed-pending / ensure_reclaimed_cleanup /
+    # abandon_reclaimed kept lifecycle=reclaimed-pending slots (name reuse
+    # denied) while quota-only recycle (#3529/#3841) could free arena with
+    # plane pending. Gate pins: AgentScope::join_all invokes
+    # sweep_reclaimed_pending once at end-of-join (production; Soft / Off
+    # zero-cost), the sweep keeps the ensure_reclaimed_cleanup SSOT (no
+    # second model), the join-all prim publishes swept-cleaned /
+    # swept-still-pending / schema-4115 with the #3467 settled-drop intact,
+    # #2661 no-early-free and #3841 must_wait faces unchanged, runtime ACs
+    # live in tests/orch/test_join_drain_reclaim.cpp +
+    # tests/orch/test_orch_scope.cpp, no AgentRegistry / new query key /
+    # docs-design invent.
+    sjs4115_script = ROOT / "scripts" / "check_scope_join_sweep_4115.py"
+    if not sjs4115_script.exists():
+        fail(f"missing {sjs4115_script}")
+        return 1
+    r = run([sys.executable, str(sjs4115_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4115 join_all reclaimed-pending sweep linter failed - run python3 scripts/check_scope_join_sweep_4115.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

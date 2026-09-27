@@ -105,6 +105,14 @@ inline constexpr int kJoinAllTreeSettledIssue = 3496;
 // stays local (#3496 AC1); tree=true folds children_ in the same
 // descendant order as cancel_all / directory_snapshot.
 inline constexpr int kJoinAllTreeJoinIssue = 3643;
+// Issue #4115: production join_all sweeps owed Reclaimed-pending handles
+// once at end-of-join (sweep_reclaimed_pending SSOT; Soft / Off
+// zero-cost). Closes the Scope-owned host-forget loop: hosts that never
+// call orch:scope-sweep-reclaimed-pending / ensure_reclaimed_cleanup /
+// abandon_reclaimed still drain Done bodies at join cadence while live
+// bodies keep must_wait (#2661) and quota-only recycle keeps must_wait
+// (#3841). No new registry, no new query key.
+inline constexpr int kJoinAllSweepReclaimedPendingIssue = 4115;
 // Issue #3497: production same-name spawn over a reclaimed-pending
 // handles_ slot is a typed deny (no emplace). Name-table put already
 // fail-closes; this is the scope-handle plane. Soft / Off: one
@@ -755,6 +763,18 @@ public:
                 fold(c->join_all(policy, fail, /*tree=*/true));
             }
         }
+        // Issue #4115: end-of-join sweep of Scope-owned Reclaimed-pending
+        // handles (production only — the sweep itself gates on
+        // production_defaults_active(); Soft / Off stay zero-cost, AC2).
+        // SSOT ensure_reclaimed_cleanup: bodies that exited since the join
+        // Timeout finish Done-path cleanup + compact (#3776); bodies still
+        // live stay still_pending with must_wait kept (#2661 no early
+        // free; #3841 quota-only recycle never clears must_wait). Children
+        // already swept inside their own recursive join_all, so each scope
+        // sweeps exactly once per join_all call. Sweep wait folds into the
+        // batch wait_us so pending age stays bounded by join cadence.
+        last_sweep_reclaimed_pending_ = sweep_reclaimed_pending();
+        wait_us_total += last_sweep_reclaimed_pending_.wait_us;
         if (!have)
             jr.status = serve::JoinStatus::Invalid; // empty scope, no tree walked
         jr.wait_us = wait_us_total;
@@ -1219,6 +1239,14 @@ public:
         // waiting for the next spawn / join_all (#3776).
         compact_done_husks_unlocked_();
         return out;
+    }
+
+    // Issue #4115: last join_all end-of-join Reclaimed-pending sweep
+    // outcome (production; Soft / Off all-zero). Observable without an
+    // explicit orch:scope-sweep-reclaimed-pending round-trip. Defined
+    // after the result struct so the declared return type resolves.
+    [[nodiscard]] SweepReclaimedPendingResult last_sweep_reclaimed_pending() const noexcept {
+        return last_sweep_reclaimed_pending_;
     }
 
     // Supervision root: cancel + best-effort drain + release before
@@ -1927,6 +1955,9 @@ private:
     // Issue #4022: last join_all RestartN spawn-admit denials + class.
     std::uint32_t last_restart_denied_ = 0;
     AgentDenyClass last_restart_deny_class_ = AgentDenyClass::None;
+    // Issue #4115: last join_all end-of-join Reclaimed-pending sweep
+    // outcome (production; Soft / Off all-zero).
+    SweepReclaimedPendingResult last_sweep_reclaimed_pending_{};
     // Taken only when mode_ == MutexGuarded. recursive so ~AgentScope
     // → cancel_all → join_all same-thread re-entry does not deadlock.
     mutable std::recursive_mutex api_mu_;

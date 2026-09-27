@@ -4672,6 +4672,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3643: :tree #t joins the whole subtree (default local,
             // #3496 AC1 — root join leaves descendants live).
             const auto jr = scope->join_all(policy, fail_pol, tree_join);
+            // Issue #4115: join_all ran the end-of-join Reclaimed-pending
+            // sweep (production; Soft / Off no-op). Capture the outcome
+            // before the #3467 settled-drop retires the slot.
+            const auto join_sweep = scope->last_sweep_reclaimed_pending();
             // Issue #3051: per-handle auto short-wait on the language
             // surface only (C++ join_all does not inject). Must run
             // before drop so handles_ are still live.
@@ -4850,6 +4854,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                  }()},
                 {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
                 {"issue-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
+                // Issue #4115: end-of-join sweep outcome (additive; Soft /
+                // Off stay 0). Live Reclaimed bodies stay still-pending
+                // (#2661) — observable without an explicit
+                // orch:scope-sweep-reclaimed-pending call.
+                {"swept-cleaned", make_int(static_cast<std::int64_t>(join_sweep.cleaned))},
+                {"swept-still-pending",
+                 make_int(static_cast<std::int64_t>(join_sweep.still_pending))},
+                {"schema-4115", make_int(aura::orch::kJoinAllSweepReclaimedPendingIssue)},
+                {"issue-4115", make_int(aura::orch::kJoinAllSweepReclaimedPendingIssue)},
+                {"join-all-sweep-reclaimed-wired", make_int(1)},
             };
             // Issue #3803: additive isolation-level / region-key-missing
             // on join hash (existing counter OK; no new query key name).
