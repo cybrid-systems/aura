@@ -1016,6 +1016,10 @@ static void ac2974_run_added_tests() {
 static void ac3206_set_prod(bool on) {
     aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
         on ? 1u : 0u, std::memory_order_relaxed);
+    // #3899: a production claim with the harden cache explicitly stored 0
+    // (reset_member_face's dev defaults) aborts the ABI gate — keep the
+    // cache in sync with the face (same shape as ac4050_set_prod below).
+    aura::core::cpp26::note_hot_contract_harden_armed(on);
 }
 
 // ── Issue #3206: residual Cancel/JoinDrain act under production ──

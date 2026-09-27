@@ -458,6 +458,17 @@ static void ac3429_1_unique_move_out_exclusive() {
     pcv_set_stale_span_exclusive_enabled(false);
     reset_pcv_hotpath_metrics_for_test();
     FlatAST flat;
+    // Pre-grow children_ past the loop's add_literal budget so the
+    // measured window crosses no capacity growth. Growth copies handles
+    // into the new live buffer while the retired buffer parks in the
+    // children_retired_ graveyard (#2959), so every live PCV storage is
+    // shared until its next write COWs — by design, to keep in-flight
+    // lock-free readers on pre-mutation data. This AC pins the
+    // no-snapshot exclusivity contract itself, so it must not be
+    // measured across a grow (capacity ladder 4→12→28→60→124→252;
+    // 160 throwaway leaves put every later add in the 252 window).
+    for (int i = 0; i < 160; ++i)
+        (void)flat.add_literal(100 + i);
     NodeId kids[4] = {flat.add_literal(1), flat.add_literal(2), flat.add_literal(3),
                       flat.add_literal(4)};
     auto root = flat.add_begin(std::span<const NodeId>(kids, 4));

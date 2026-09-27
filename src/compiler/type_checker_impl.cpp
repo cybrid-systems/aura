@@ -5957,8 +5957,12 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     if (callee_of_func.tag != NodeTag::Variable || callee_of_func.sym_id == INVALID_SYM)
         return std::nullopt;
     auto fname = pool.resolve(callee_of_func.sym_id);
-    static const std::unordered_set<std::string> arith = {"+", "-", "*", "/"};
-    if (!arith.count(std::string(fname)))
+    // Intentionally leaked (no destructor): the buckets of a function-local
+    // static set were observed freed mid-run by an OrchSchedHolder worker
+    // thread (ASAN heap-use-after-free in arith.count() — obs_facade
+    // rc=139 CI red; same class as the service.ixx tree_walker_only leak).
+    static const auto* const arith = new std::unordered_set<std::string>{"+", "-", "*", "/"};
+    if (!arith->count(std::string(fname)))
         return std::nullopt;
 
     // Variadic arith with 0 or 1 args
