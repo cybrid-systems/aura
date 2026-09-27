@@ -185,17 +185,32 @@ inline constexpr std::string_view kMutationWalAppendMissReason = "mutation_wal_a
 
 enum class ForensicEffectVerdict : std::uint8_t { None = 0, Allow = 1, Deny = 2 };
 
+// Issue #4118: SE WAL / overflow-extended mid join behind the helpers
+// below. Declared here; DEFINED in core/security_event_wal.hh (that
+// header includes this one — a definition here would be circular, so
+// every caller TU must include the WAL header as well). Semantics are
+// the query:security-audit durable join (#3498/#3674/#3970): lookup
+// window, then scan-all retained segments, then the #3109/#3780
+// overflow ring. Ring hits never reach these (zero extra I/O), and
+// allow_durable_join=false pins the Soft / WAL-off ring-only contract
+// (AC2 — the primitive passes its production/Full hard-face gate).
+[[nodiscard]] ForensicEffectVerdict
+forensic_effect_verdict_for_mid_full(std::uint64_t mid) noexcept;
+[[nodiscard]] bool forensic_mid_has_wal_append_miss_full(std::uint64_t mid) noexcept;
+
 [[nodiscard]] inline ForensicEffectVerdict
-forensic_effect_verdict_for_mid(std::uint64_t mid) noexcept {
+forensic_effect_verdict_for_mid(std::uint64_t mid, bool allow_durable_join = true) noexcept {
     auto& ring = g_security_event_ring();
     const auto head = ring.seq.load(std::memory_order_acquire);
     const auto max_i =
         head < kSecurityEventRingSize ? head : static_cast<std::uint64_t>(kSecurityEventRingSize);
     ForensicEffectVerdict last = ForensicEffectVerdict::None;
+    bool found = false;
     for (std::uint64_t i = 0; i < max_i; ++i) {
         const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
         if (e.mutation_id != mid)
             continue;
+        found = true;
         if (std::string_view(e.reason) == kMutationWalAppendMissReason)
             return ForensicEffectVerdict::Deny;
         if (last != ForensicEffectVerdict::None)
@@ -205,21 +220,33 @@ forensic_effect_verdict_for_mid(std::uint64_t mid) noexcept {
         else if (e.kind == SecurityEventKind::EffectAllow)
             last = ForensicEffectVerdict::Allow;
     }
+    // Issue #4118: ring has no row for mid but the SE WAL (or the
+    // overflow ring) still does — join it instead of reporting the wrap
+    // lie (verdict None after ring_wrap_total advances).
+    if (!found && allow_durable_join)
+        return forensic_effect_verdict_for_mid_full(mid);
     return last;
 }
 
-[[nodiscard]] inline bool forensic_mid_has_wal_append_miss(std::uint64_t mid) noexcept {
+[[nodiscard]] inline bool
+forensic_mid_has_wal_append_miss(std::uint64_t mid, bool allow_durable_join = true) noexcept {
     auto& ring = g_security_event_ring();
     const auto head = ring.seq.load(std::memory_order_acquire);
     const auto max_i =
         head < kSecurityEventRingSize ? head : static_cast<std::uint64_t>(kSecurityEventRingSize);
+    bool found = false;
     for (std::uint64_t i = 0; i < max_i; ++i) {
         const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
         if (e.mutation_id != mid)
             continue;
+        found = true;
         if (std::string_view(e.reason) == kMutationWalAppendMissReason)
             return true;
     }
+    // Issue #4118: same ring-miss → WAL/overflow join as the verdict
+    // helper above.
+    if (!found && allow_durable_join)
+        return forensic_mid_has_wal_append_miss_full(mid);
     return false;
 }
 

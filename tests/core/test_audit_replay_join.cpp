@@ -1166,6 +1166,166 @@ static void ac3970_source_cite() {
     CHECK(read_file("docs/design/3970-wal-full-scan.md").empty(), "3970: no docs/design/3970-*");
 }
 
+// ── #4118: capability-effect-stats / forensic mid replay joins SE WAL +
+// ── overflow after ring wrap (same mid semantics as query:security-audit)
+static void ac20_se_wal_overflow_mid_join_4118() {
+    std::println("\n--- #4118: SE WAL/overflow mid join after ring wrap ---");
+    reset_all();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto dir = fresh_wal_dir_3603("ac20-4118");
+    CHECK(ev.enable_security_event_wal(dir.string()), "4118: SE WAL enabled");
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    const auto ts = now_ms_3603();
+    // Legs land in WAL segment 0; 40 persisted fillers rotate ~10 segments
+    // so the legs sit PAST the wal_mid_lookup_segments() window (8) — the
+    // join must continue via find_by_mutation_id_scan_all_segments.
+    CHECK(persist_se_3603(4118001, "test:4118", "4118-wal-allow", ts),
+          "4118 AC1: Allow leg persisted");
+    append_se_3603(ring, /*deny=*/false, 4118001, "test:4118", "4118-wal-allow");
+    CHECK(aura::core::security_event_wal::persist_security_event(
+              aura::core::security_event::SecurityEventKind::EffectDeny, /*tenant=*/42, 4118002,
+              /*epoch=*/7, aura::compiler::security::kEffectMutate, "test:4118",
+              "mutation_wal_append_miss", /*denied=*/true, /*fiber=*/0, ts),
+          "4118 AC1: miss-Deny leg persisted");
+    append_se_3603(ring, /*deny=*/true, 4118002, "test:4118", "mutation_wal_append_miss");
+    for (std::uint64_t i = 0; i < 40; ++i) {
+        CHECK(persist_se_3603(9200 + i, "test:4118", "4118-filler", ts), "4118: filler persisted");
+        append_se_3603(ring, /*deny=*/false, 9200 + i, "test:4118", "4118-filler");
+    }
+    // Wrap the SE ring (1024) past both legs — ring-only appends.
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 700000 + i, "test:4118-wrap", "wrap");
+    std::size_t ring_hits = 0;
+    for (const auto& e : ring.ring)
+        if (e.mutation_id == 4118001 || e.mutation_id == 4118002)
+            ++ring_hits;
+    CHECK(ring_hits == 0, "4118 pre: both legs wrapped out of the in-memory ring");
+
+    // AC1: forensic helpers join the SE WAL after the wrap.
+    using aura::core::security_event::forensic_effect_verdict_for_mid;
+    using aura::core::security_event::forensic_mid_has_wal_append_miss;
+    using aura::core::security_event::ForensicEffectVerdict;
+    CHECK(forensic_effect_verdict_for_mid(4118001) == ForensicEffectVerdict::Allow,
+          "4118 AC1: wrapped-out Allow mid joins via SE WAL scan-all");
+    CHECK(!forensic_mid_has_wal_append_miss(4118001), "4118 AC1: Allow leg has no miss");
+    CHECK(forensic_effect_verdict_for_mid(4118002) == ForensicEffectVerdict::Deny,
+          "4118 AC1: miss Deny forces verdict Deny via SE WAL (#3877)");
+    CHECK(forensic_mid_has_wal_append_miss(4118002), "4118 AC1: wal-miss flag joins via SE WAL");
+
+    // AC1/AC4: capability-effect-stats reflects WAL truth (was
+    // se-count=0 / verdict None before the join).
+    auto se_cnt = cs.eval(
+        "(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118001) \"se-count\")");
+    CHECK(se_cnt && is_int(*se_cnt) && as_int(*se_cnt) >= 1,
+          "4118 AC4: se-count >= 1 via SE WAL after wrap");
+    auto verd = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118001) "
+                        "\"last-se-wins-verdict\")");
+    CHECK(verd && is_int(*verd) && as_int(*verd) == 1,
+          "4118 AC1: last-se-wins-verdict == Allow(1) via SE WAL");
+    auto verd2 = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118002) "
+                         "\"last-se-wins-verdict\")");
+    CHECK(verd2 && is_int(*verd2) && as_int(*verd2) == 2,
+          "4118 AC1: last-se-wins-verdict == Deny(2) for the miss leg");
+    auto missd = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118002) "
+                         "\"wal-miss-deny\")");
+    CHECK(missd && is_int(*missd) && as_int(*missd) == 1, "4118 AC1: wal-miss-deny=1 via SE WAL");
+
+    // AC4: security-audit parity — the same mid joins the same WAL row.
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4118001)");
+    bool parity = false, full1 = false;
+    for (const auto& ln : lines) {
+        if (ln.find("mutation_id=4118001") != std::string::npos)
+            parity = true;
+        if (ln.find("wal-full-scan-hit=1") != std::string::npos)
+            full1 = true;
+    }
+    CHECK(parity, "4118 AC4: security-audit mutation-id parity (same WAL row)");
+    CHECK(full1, "4118 AC1: legs past the lookup window → scan-all join");
+
+    // AC2: Soft + WAL on → the face stays ring-only (no fallback I/O;
+    // Soft contract unchanged).
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    auto soft_cnt = cs.eval(
+        "(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118001) \"se-count\")");
+    CHECK(soft_cnt && is_int(*soft_cnt) && as_int(*soft_cnt) == 0,
+          "4118 AC2: Soft face stays ring-only (se-count=0 despite WAL row)");
+    auto soft_verd = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118001) "
+                             "\"last-se-wins-verdict\")");
+    CHECK(soft_verd && is_int(*soft_verd) && as_int(*soft_verd) == 0,
+          "4118 AC2: Soft last-se-wins-verdict stays None(0)");
+    auto soft_miss = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118002) "
+                             "\"wal-miss-deny\")");
+    CHECK(soft_miss && is_int(*soft_miss) && as_int(*soft_miss) == 0,
+          "4118 AC2: Soft wal-miss-deny stays 0");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+
+    // AC1 overflow leg (#3780 recipe): fail-closed mutation-WAL miss
+    // stamps mid 4118003 in the overflow ring; SE WAL is disabled so the
+    // overflow row is the ONLY durable holder; the ring is wrapped past
+    // the compensating SE. Helpers + stats must join overflow-only.
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ev.set_capability_tenant_id(7);
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(4118003);
+    const auto mdir = fresh_wal_dir_3603("ac20b-4118");
+    CHECK(ev.enable_mutation_audit_wal(mdir.string()), "4118 AC1: mutation WAL enabled");
+    ev.disable_security_event_wal();
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        1, std::memory_order_relaxed);
+    CHECK(!ev.emit_mutation_audit(1, 0, "4118-miss", 1),
+          "4118 AC1: fail-closed emit returns false");
+    CHECK(aura::core::security_event_wal::wal_overflow_find_by_mid(4118003) != nullptr,
+          "4118 AC1: overflow row stamped for the miss mid");
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 800000 + i, "test:4118-wrap", "wrap");
+    ring_hits = 0;
+    for (const auto& e : ring.ring)
+        if (e.mutation_id == 4118003)
+            ++ring_hits;
+    CHECK(ring_hits == 0, "4118 pre: overflow mid wrapped out of the ring");
+    CHECK(forensic_effect_verdict_for_mid(4118003) == ForensicEffectVerdict::Deny,
+          "4118 AC1: miss verdict joins via overflow ring (WAL off)");
+    CHECK(forensic_mid_has_wal_append_miss(4118003),
+          "4118 AC1: wal-miss flag joins via overflow ring (WAL off)");
+    auto ovr_cnt = cs.eval(
+        "(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118003) \"se-count\")");
+    CHECK(ovr_cnt && is_int(*ovr_cnt) && as_int(*ovr_cnt) >= 1,
+          "4118 AC1: se-count >= 1 via overflow ring");
+    auto ovr_miss = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4118003) "
+                            "\"wal-miss-deny\")");
+    CHECK(ovr_miss && is_int(*ovr_miss) && as_int(*ovr_miss) == 1,
+          "4118 AC1: wal-miss-deny=1 via overflow ring");
+    // WAL-off ring-only: legs A/B are gone from every face (no join, no I/O).
+    CHECK(forensic_effect_verdict_for_mid(4118001) == ForensicEffectVerdict::None,
+          "4118 AC2: WAL-off verdict stays None for a wrapped-out mid");
+    CHECK(!forensic_mid_has_wal_append_miss(4118002),
+          "4118 AC2: WAL-off wal-miss flag stays false");
+
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(mdir);
+    std::filesystem::remove_all(dir);
+    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -1191,6 +1351,7 @@ int run_test_audit_replay_join() {
     ac19_wal_miss_typed_correlate_3879();
     ac3970_never_audited_still_miss();
     ac3970_source_cite();
+    ac20_se_wal_overflow_mid_join_4118();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
