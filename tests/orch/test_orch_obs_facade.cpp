@@ -629,6 +629,125 @@ int run_test_orch_obs_facade() {
               "3336 AC5: no docs/design/3336-* (#1655)");
     }
 
+    // ── #4116: production C++ agent_recv preference (#4001 twin) ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::agent_recv;
+        using aura::orch::agent_recv_result;
+        using aura::orch::agent_send;
+        using aura::orch::AgentHandle;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        std::println("\n--- #4116 AC1: production sites typed or annotated ---");
+        CHECK(read_file("src/orch/agent_spawn.h").find("kRecvTypedStatusIssue = 4001") !=
+                  std::string::npos,
+              "ac4116_1_production_sites_typed_or_annotated");
+        CHECK(read_file("src/orch/agent_spawn.h")
+                      .find("return agent_recv_result(h, wait, timeout_ms).message;") !=
+                  std::string::npos,
+              "4116 AC1: raw agent_recv is typed fall-through");
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp")
+                      .find("aura::orch::agent_recv_result(*hp, wait, timeout_ms)") !=
+                  std::string::npos,
+              "4116 AC1: Aura path uses agent_recv_result");
+
+        CompilerService cs4116;
+        CHECK(cs4116.eval(R"((orch:spawn-agent "4116-a" (lambda () 0) :attach-mailbox #t))")
+                  .has_value(),
+              "4116 setup: mailbox agent spawned");
+        auto* hp4116 = cs4116.evaluator().agent_names_->find("4116-a");
+        CHECK(hp4116 && hp4116->ok && hp4116->mailbox, "4116 setup: handle");
+
+        std::println("\n--- #4116 AC2: Soft quiet empty unchanged; hash keys unchanged ---");
+        apply_dev_audit_defaults();
+        const auto ok_h = cs4116.eval(R"((hash-ref (orch:agent-recv "4116-a" :wait #f) "ok"))");
+        CHECK(ok_h && is_bool(*ok_h) && !as_bool(*ok_h), "4116 AC2: hash ok key unchanged");
+        const auto empty_h =
+            cs4116.eval(R"((hash-ref (orch:agent-recv "4116-a" :wait #f) "empty"))");
+        CHECK(empty_h && is_bool(*empty_h) && as_bool(*empty_h),
+              "ac4116_2_soft_quiet_empty_unchanged");
+        AgentHandle h4116;
+        h4116.ok = true;
+        h4116.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        const auto recv_empty0 =
+            g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed);
+        auto soft_empty = agent_recv_result(h4116, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!soft_empty.ok && std::string_view(soft_empty.status) == "empty" &&
+                  !soft_empty.message.has_value(),
+              "4116 AC2: typed quiet empty is status=empty");
+        CHECK(g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed) ==
+                  recv_empty0 + 1,
+              "4116 AC2: quiet empty bumps recv_empty_total");
+        MailMessage msg4116;
+        msg4116.payload = "plain-4116";
+        CHECK(agent_send(h4116, std::move(msg4116)) == PushStatus::Ok, "4116 AC2: plain push Ok");
+        auto soft_got = agent_recv(h4116, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(soft_got.has_value() && soft_got->payload == "plain-4116",
+              "4116 AC2: Soft plain delivery unchanged");
+        CHECK(!agent_recv(h4116, /*wait=*/false, /*timeout_ms=*/0).has_value(),
+              "4116 AC2: raw wrapper stays payload-or-empty");
+
+        std::println("\n--- #4116 AC3: Guard-live typed recv-under-boundary ---");
+        apply_production_audit_defaults();
+        auto& ev4116 = cs4116.evaluator();
+        using Ev4116 = std::remove_reference_t<decltype(ev4116)>;
+        bool guard_ok4116 = true;
+        {
+            auto guard_r = Ev4116::MutationBoundaryGuard::try_acquire(ev4116, 1, &guard_ok4116);
+            CHECK(guard_r.has_value(), "4116 AC3: Guard try_acquire");
+            if (guard_r) {
+                auto guard = std::move(*guard_r);
+                const auto under = agent_recv_result(*hp4116, /*wait=*/true, /*timeout_ms=*/200);
+                CHECK(!under.ok && std::string_view(under.status) == "recv-under-boundary" &&
+                          !under.message.has_value(),
+                      "ac4116_3_guard_live_recv_under_boundary");
+                CHECK(std::string_view(under.status) != "closed", "4116 AC3: not Closed");
+                CHECK(hp4116->last_recv_boundary_reject, "4116 AC3: reject flag rides handle");
+                CHECK(!agent_recv(*hp4116, /*wait=*/true, /*timeout_ms=*/200).has_value(),
+                      "4116 AC3: raw recv stays nullopt (typed via status/flags)");
+            }
+        }
+
+        std::println("\n--- #4116 AC4: reused counters, no new mid-schema keys ---");
+        const auto recv_empty1 =
+            g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed);
+        bool guard_ok4116b = true;
+        {
+            auto guard_r4 = Ev4116::MutationBoundaryGuard::try_acquire(ev4116, 1, &guard_ok4116b);
+            if (guard_r4) {
+                auto guard4 = std::move(*guard_r4);
+                (void)agent_recv_result(*hp4116, /*wait=*/true, /*timeout_ms=*/0);
+            }
+        }
+        apply_dev_audit_defaults();
+        CHECK(g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed) ==
+                  recv_empty1 + 1,
+              "ac4116_4_reuses_existing_recv_counters");
+        CHECK(read_file("src/orch/agent_spawn.h").find("agent_recv_raw") == std::string::npos,
+              "4116 AC4: no invented recv_raw counter (#4001 no new query key)");
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp").find("schema-4001") ==
+                  std::string::npos,
+              "4116 AC4: no new hash schema key (Aura keys unchanged)");
+
+        std::println("\n--- #4116 AC5: linter + wiring ---");
+        const auto lint4116 =
+            read_file("scripts/coverage/checks/check_agent_recv_typed_preference_4001.py");
+        CHECK(!lint4116.empty() && lint4116.find("Issue #4001") != std::string::npos,
+              "ac4116_5_source_and_linter");
+        const auto build4116 = read_file("build.py");
+        CHECK(build4116.find("check_agent_recv_typed_preference_4001") != std::string::npos,
+              "4116 AC5: build.py wiring");
+        CHECK(build4116.find("check_agent_send_safe_preference_3336") != std::string::npos,
+              "4116 AC5: #3336 send twin retained");
+        CHECK(read_file("tests/orch/test_issue_4116.cpp").empty(),
+              "4116 AC5: no test_issue_4116.cpp (#81967)");
+        CHECK(read_file("docs/design/4116-agent-recv-typed-preference.md").empty(),
+              "4116 AC5: no docs/design/4116-* (#1655)");
+    }
+
     // ── #3565: steal-cleared held_ref is not a successful recv ──
     {
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
