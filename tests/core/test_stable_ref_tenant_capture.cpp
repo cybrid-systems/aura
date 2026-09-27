@@ -358,7 +358,10 @@ void ac3287_1_residual_lag_deny_surface() {
     if (qpos2 == std::string::npos)
         qpos2 = q.find("query:stable-ref-provenance", qpos + 1);
     CHECK(qpos2 != std::string::npos, "3287 AC1: stable-ref-provenance surface");
-    auto qwin = q.substr(qpos2, 3000);
+    // Issue #4106: production operand-resolve block widened the surface
+    // body — cite (+3493) and gate consult (+3974) sit past the old 3000
+    // window; 6000 matches the linter's widened slice.
+    auto qwin = q.substr(qpos2, 6000);
     CHECK(qwin.find("Issue #3287") != std::string::npos, "3287 AC1: surface cites #3287");
     CHECK(qwin.find("allow_query_stable_ref_export") != std::string::npos,
           "3287 AC1: surface consults torn gate");

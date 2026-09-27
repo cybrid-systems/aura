@@ -3844,7 +3844,11 @@ static void ac3230_1_production_stamp_before_layout() {
     auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
     CHECK(sr.has_value(), "3230 AC1: query:stable-ref returns");
     CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3230 AC1: stable-ref structured");
-    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") == 0, "3230 AC1: reason token");
+    // Issue #4106: the torn gate composes the #3425-order face — recovery
+    // hint first, then the budget-exceeded reason segment (query:stable-ref
+    // emit); assert the reason token travels in the composed cadr.
+    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") != std::string::npos,
+          "3230 AC1: reason token");
     auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
     CHECK(asr.has_value() && merr_kind_3027(cs, *asr) == "restamp-lag",
           "3230 AC1: as-stable-ref structured");
@@ -3999,7 +4003,8 @@ static void ac3487_1_latch_torn_restamp_lag() {
     auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
     CHECK(sr.has_value(), "3487 AC1: query:stable-ref returns");
     CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3487 AC1: stable-ref structured");
-    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") == 0, "3487 AC1: reason token");
+    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") != std::string::npos,
+          "3487 AC1: reason token");
     auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
     CHECK(ens.has_value() && merr_kind_3027(cs, *ens) == "restamp-lag",
           "3487 AC1: ensure-ref structured");
@@ -4165,7 +4170,8 @@ static void ac3259_2_outside_cone_query_lag() {
     auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
     CHECK(sr.has_value() && merr_kind_3027(cs, *sr) == "restamp-lag",
           "3259 AC2: stable-ref structured");
-    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") == 0, "3259 AC2: reason token");
+    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") != std::string::npos,
+          "3259 AC2: reason token");
     apply_dev_audit_defaults();
     clear_restamp_budget_nodes_override_for_test();
     aura::core::provenance::reset_provenance_enforcement_for_test();

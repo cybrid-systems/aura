@@ -1221,7 +1221,11 @@ static void ac3975_owner_scoped_expire_must_deopt_tw() {
     {
         const auto spos = ixx.find("void stamp_eval_core_joint_after_production_facade_");
         CHECK(spos != std::string::npos, "3975: stamp helper");
-        const auto swin = (spos == std::string::npos) ? std::string{} : ixx.substr(spos, 2800);
+        const auto swin = (spos == std::string::npos) ? std::string{} : ixx.substr(spos, 3600);
+        // Issue #4112/#4113: the occupancy consult widened the stamp body,
+        // pushing the #3975 os-path pins past the old 2800 window (bump at
+        // +2820, expire at +2891); 3600 covers them and the negative pin
+        // (no process table epoch bump) stays clean within the slice.
         CHECK(swin.find("if (os_table_bump)") != std::string::npos, "3975: os_table_bump branch");
         CHECK(swin.find("must_deopt_owner_live_closures_for_define_(name)") != std::string::npos,
               "3975: os path MustDeopt by define");
