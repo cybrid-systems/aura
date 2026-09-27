@@ -177,3 +177,4 @@ check_replay_mid_last_stamped_4120.py
 check_temp_canary_bind_4124.py
 check_apply_densify_inflight_4125.py
 check_jit_reemit_install_4126.py
+check_lockless_macro_allow_latch_4127.py

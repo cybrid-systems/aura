@@ -7886,6 +7886,21 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4126 JIT reemit install gate linter failed — run python3 scripts/check_jit_reemit_install_4126.py")
         return r
+    # Issue #4127: lockless atomic-batch allow arms latch the #3637 net and
+    # propagate MacroIntroduced through the SHARED #2858 cascade — one
+    # module-linked cascade/parse across both implementation TUs (no second
+    # marker channel), Soft/Off latch-free, net authority untouched, no
+    # docs/design/4127-* / tests/**/test_issue_4127*.
+    lmal4127_script = ROOT / "scripts" / "check_lockless_macro_allow_latch_4127.py"
+    if not lmal4127_script.exists():
+        fail(f"missing {lmal4127_script}")
+        return 1
+    r = run([sys.executable, str(lmal4127_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4127 lockless macro allow-latch linter failed — run python3 scripts/check_lockless_macro_allow_latch_4127.py"
+        )
+        return r
     # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
     # composition-only — CI must pin densify_in_flight_for AND after
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
