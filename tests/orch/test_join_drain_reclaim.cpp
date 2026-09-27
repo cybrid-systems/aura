@@ -3162,6 +3162,221 @@ static void ac3842_5_source_cite_linter_no_invent() {
           "3842 AC5: Aura orch:* auto-wait SSOT unchanged");
 }
 
+// ── Issue #4115: production join_all sweeps owed Reclaimed-pending ─────
+
+static void ac4115_1_join_all_sweep_records_still_pending() {
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4115 AC1: end-of-join sweep records live Reclaimed still-pending ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    // Body still live (!is_done) — join must not clean it (#2661).
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.name = "ac4115-live";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    const auto force0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
+    const auto swept = scope.last_sweep_reclaimed_pending();
+    CHECK(swept.still_pending == 1, "4115 AC1: join_all itself ran the sweep (still_pending=1)");
+    CHECK(swept.cleaned == 0, "4115 AC1: live body not cleaned during join");
+    CHECK(slot.must_wait_reclaimed || slot.reclaimed_deferred_cleanup,
+          "4115 AC1: slot still owed after end-of-join sweep (join keeps pending)");
+    CHECK(slot.reserved_memory_bytes == 4096 || slot.quota_recycled_pending,
+          "4115 AC1: #2661 no early body-stack free (quota may recycle via ensure SSOT only)");
+    CHECK(!fiber_owned->is_done(), "4115 AC1: body stack untouched while live");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == force0,
+          "4115 AC1: no new force path on fresh reclaim (ensure SSOT age gate)");
+    // Steal the never-started fiber so the scope dtor does not join it.
+    slot.fiber = nullptr;
+    apply_dev_audit_defaults();
+}
+
+static void ac4115_2_soft_join_all_no_sweep_zero_wait() {
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4115 AC2: Soft join_all runs no sweep, zero extra wait ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 1024;
+    h.name = "ac4115-soft";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
+    const auto swept = scope.last_sweep_reclaimed_pending();
+    CHECK(swept.cleaned == 0 && swept.still_pending == 0 && swept.skipped == 0 &&
+              swept.wait_us == 0,
+          "4115 AC2: Soft end-of-join sweep returns all zeros (no sweep)");
+    CHECK(slot.must_wait_reclaimed || slot.reclaimed_deferred_cleanup,
+          "4115 AC2: Soft leaves slot pending (deferred or must_wait)");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+          "4115 AC2: Soft no wait_reclaimed bump");
+    slot.fiber = nullptr;
+}
+
+static void ac4115_3_join_all_drains_deferred_done_name_reuse_ok() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::serve::Fiber;
+    using aura::serve::FiberState;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4115 AC3: join_all drains Done Reclaimed husk; name reuse unblocked ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    fiber_owned->set_state(FiberState::Done);
+    fiber_owned->note_body_exit_if_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 2048;
+    h.name = "ac4115-done";
+    // Deferred-only owed: join's production auto-wait arm skips it
+    // (must_wait false), so only the end-of-join sweep's Done arm drains.
+    h.must_wait_reclaimed = false;
+    h.reclaimed_deferred_cleanup = true;
+    (void)scope.adopt_handle_without_spec_for_test(std::move(h));
+    (void)scope.join_all(JoinPolicy{.primary_ms = 50, .drain_ms = 20});
+    const auto swept = scope.last_sweep_reclaimed_pending();
+    const auto live = scope.handles();
+    CHECK(swept.still_pending == 0, "4115 AC3: nothing still-pending (Done body drained)");
+    if (!live.empty()) {
+        CHECK(!live[0].must_wait_reclaimed && !live[0].reclaimed_deferred_cleanup,
+              "4115 AC3: pending flags cleared at join cadence (no host call)");
+        CHECK(live[0].reserved_memory_bytes == 0, "4115 AC3: reservation released");
+    } else {
+        CHECK(true, "4115 AC3: cleaned husk compacted (#3776)");
+    }
+    // Host-forget loop closed: same-name spawn is no longer denied.
+    AgentSpec again;
+    again.name = "ac4115-done";
+    again.body = [] {};
+    auto& re = scope.spawn(again);
+    CHECK(re.ok, "4115 AC3: name reuse admitted after end-of-join sweep");
+    apply_dev_audit_defaults();
+}
+
+static void ac4115_4_quota_recycle_must_wait_kept_through_sweep() {
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4115 AC4: quota-only recycle keeps must_wait through join_all sweep ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 8192;
+    h.name = "ac4115-quota";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
+    CHECK(slot.must_wait_reclaimed || slot.reclaimed_deferred_cleanup,
+          "4115 AC4: sweep leaves slot owed (quota-only recycle keeps pending)");
+    CHECK(slot.reserved_memory_bytes == 8192 || slot.quota_recycled_pending,
+          "4115 AC4: reservation owed while body live (#2661)");
+    CHECK(scope.last_sweep_reclaimed_pending().still_pending == 1,
+          "4115 AC4: sweep keeps live Reclaimed pending (no quota-driven cleanup)");
+    slot.fiber = nullptr;
+    apply_dev_audit_defaults();
+}
+
+static void ac4115_5_scope_soak_two_agents_pending_bounded_by_join() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4115 AC5: multi-agent soak — pending age bounded by join cadence ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    SchedRunner runner(sched);
+    AgentScope scope(sched);
+    auto run = std::make_shared<std::atomic<bool>>(true);
+    for (int i = 0; i < 2; ++i) {
+        AgentSpec a;
+        a.name = "ac4115-soak-" + std::to_string(i);
+        a.body = [run] {
+            while (run->load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(2);
+        };
+        auto& spawned = scope.spawn(a);
+        CHECK(spawned.ok && spawned.fiber, "4115 AC5: soak spawn ok");
+    }
+    CHECK(scope.size() == 2, "4115 AC5: two live before join");
+    (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
+    CHECK(scope.last_sweep_reclaimed_pending().still_pending == 2,
+          "4115 AC5: both live Reclaimed stay still-pending after short join");
+    CHECK(scope.size() == 2, "4115 AC5: no early free while bodies live (#2661)");
+    // Bodies exit → the NEXT join_all (join cadence) drains them without
+    // any explicit ensure / abandon / sweep host call.
+    run->store(false, std::memory_order_release);
+    (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 200});
+    CHECK(scope.last_sweep_reclaimed_pending().still_pending == 0,
+          "4115 AC5: nothing still-pending once bodies exited");
+    CHECK(scope.size() == 0, "4115 AC5: scope drained at join cadence");
+    CHECK(scope.handles().empty(), "4115 AC5: husks compacted (#3776)");
+    apply_dev_audit_defaults();
+}
+
+static void ac4115_6_source_cite_linter_no_invent() {
+    std::println("\n--- #4115 AC6: source-cite + linter wiring + no invent ---");
+    const auto scope_src = read_file("src/orch/agent_scope.h");
+    const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto build_src = read_file("build.py");
+    CHECK(scope_src.find("kJoinAllSweepReclaimedPendingIssue = 4115") != std::string::npos,
+          "4115 AC6: issue stamp constant");
+    CHECK(scope_src.find("last_sweep_reclaimed_pending_ = sweep_reclaimed_pending();") !=
+              std::string::npos,
+          "4115 AC6: join_all invokes the end-of-join sweep");
+    CHECK(scope_src.find("SweepReclaimedPendingResult last_sweep_reclaimed_pending()") !=
+              std::string::npos,
+          "4115 AC6: sweep outcome observable on the scope");
+    CHECK(scope_src.find("ensure_reclaimed_cleanup(h)") != std::string::npos,
+          "4115 AC6: sweep keeps the ensure SSOT (no second model)");
+    CHECK(prim_src.find("\"swept-cleaned\"") != std::string::npos &&
+              prim_src.find("\"swept-still-pending\"") != std::string::npos &&
+              prim_src.find("\"schema-4115\"") != std::string::npos,
+          "4115 AC6: join-all hash publishes the sweep outcome");
+    CHECK(build_src.find("check_scope_join_sweep_4115") != std::string::npos,
+          "4115 AC6: build.py wires the linter");
+    CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                  .find("check_scope_join_sweep_4115.py") != std::string::npos,
+          "4115 AC6: linter on the root check allowlist");
+    CHECK(read_file("tests/orch/test_issue_4115.cpp").empty(),
+          "4115 AC6: no test_issue_4115.cpp per #81934");
+    CHECK(read_file("docs/design/4115-join-all-sweep-reclaimed.md").empty(),
+          "4115 AC6: no docs/design/4115-* per #1655");
+    CHECK(prim_src.find("query:4115") == std::string::npos, "4115 AC6: no new query key");
+    CHECK(scope_src.find("class AgentRegistry") == std::string::npos &&
+              scope_src.find("struct AgentRegistry") == std::string::npos,
+          "4115 AC6: no AgentRegistry type (comment forbids ok)");
+}
+
 static void ac3924_aura_scope_sweep_prim() {
     std::println("\n--- #3924: Aura orch:scope-sweep-reclaimed-pending ---");
     const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
@@ -8226,6 +8441,14 @@ int run_test_join_drain_reclaim() {
     ac3842_4_spawn_registers_with_scope_lifetime();
     ac3842_5_source_cite_linter_no_invent();
     ac3924_aura_scope_sweep_prim();
+
+    std::println("\n=== Issue #4115: production join_all sweeps owed Reclaimed-pending ===");
+    ac4115_1_join_all_sweep_records_still_pending();
+    ac4115_2_soft_join_all_no_sweep_zero_wait();
+    ac4115_3_join_all_drains_deferred_done_name_reuse_ok();
+    ac4115_4_quota_recycle_must_wait_kept_through_sweep();
+    ac4115_5_scope_soak_two_agents_pending_bounded_by_join();
+    ac4115_6_source_cite_linter_no_invent();
 
     std::println("\n=== Issue #3905: orphan hard-reap keeps live Fiber ===");
     ac3905_1_reap_keeps_pending_handle_fiber();
