@@ -5584,6 +5584,20 @@ def cmd_lint():
             "Issue #3336 agent_send_safe preference linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_preference_3336.py"
         )
         return r
+    # Issue #4001 / #4116: production C++ agent_recv preference —
+    # agent_recv_result / agent_recv_safe or explicit // orch-raw-recv-ok.
+    # Guard-live nullopt≡empty dual-track; raw wrapper nullopt unchanged.
+    # Extends test_orch_obs_facade.cpp (#81967); no docs/design/ (#1655).
+    arp4001_script = COVERAGE_CHECKS / "check_agent_recv_typed_preference_4001.py"
+    if not arp4001_script.exists():
+        fail(f"missing {arp4001_script}")
+        return 1
+    r = run([sys.executable, str(arp4001_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4001 agent_recv typed preference linter failed — run python3 scripts/coverage/checks/check_agent_recv_typed_preference_4001.py"
+        )
+        return r
     # Issue #3014: surface agent body try_acquire reject on AgentHandle /
     # orch:agent-join hash (residual of #1880/#2006). Keys only on the
     # reject path. Extends test_fiber_orch_parallel_quota_batch.cpp
