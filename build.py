@@ -8761,6 +8761,27 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4118 SE WAL mid-join linter failed — run python3 scripts/check_se_wal_join_4118.py")
         return r
+    # Issue #4120 (P0 obs): capability-effect-stats (#3143 replay face)
+    # defaulted the empty-arg replay-mid to the TypeLinear proof stamp
+    # (then epoch). #4098/#3778: the proof stamp is NOT the session /
+    # TypedMid join key (steal/resume / boundary TLS clears) — sibling
+    # evolution-audit-decision already defaults to g_last_stamped_audit_mid
+    # (#3284/#3738). Gate pins: explicit int arg (incl. 0 refuse class,
+    # #3462/#3738) wins; omitted/non-int reads last_stamped then epoch;
+    # the proof stamp is not consulted in the default chain;
+    # typed-mid-current keeps publishing the proof stamp; no new query
+    # key / insert_kv row / hash capacity. Runtime doors live in
+    # tests/core/test_audit_replay_join.cpp (ac21_replay_mid_last_stamped_4120).
+    replay4120_script = ROOT / "scripts" / "check_replay_mid_last_stamped_4120.py"
+    if not replay4120_script.exists():
+        fail(f"missing {replay4120_script}")
+        return 1
+    r = run([sys.executable, str(replay4120_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4120 replay-mid last-stamped linter failed — run python3 scripts/check_replay_mid_last_stamped_4120.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

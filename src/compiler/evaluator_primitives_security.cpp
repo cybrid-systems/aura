@@ -793,12 +793,22 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // is empty (returns current typed_audit last_mid surface).
             {
                 std::uint64_t mid = 0;
-                if (!args.empty() && is_int(args[0]))
+                // Issue #3738/#4120: explicit 0 is a legal join key (refuse
+                // class, same as query:security-audit #3462). Omitted /
+                // non-int defaults to the session/TypedMid join key SSOT
+                // g_last_stamped_audit_mid — the TypeLinear proof stamp is
+                // NOT the SE/grant/trail join key (#4098/#3778; sibling
+                // evolution-audit-decision #3284/#3738). typed-mid-current
+                // below still publishes the proof stamp (typed-face
+                // observability, unchanged).
+                const bool filt_mid = !args.empty() && is_int(args[0]);
+                if (filt_mid)
                     mid = static_cast<std::uint64_t>(as_int(args[0]));
-                if (mid == 0)
-                    mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
-                if (mid == 0)
-                    mid = ::aura::core::current_mutation_epoch();
+                else {
+                    mid = typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+                    if (mid == 0)
+                        mid = ::aura::core::current_mutation_epoch();
+                }
                 // Issue #3599: stop at the epoch — 0 is legal under production
                 // refuse (mid-fallback-refused rows carry mid=0); the ring scan
                 // below then selects exactly the refuse class (same filter as

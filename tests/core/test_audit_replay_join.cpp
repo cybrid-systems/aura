@@ -154,6 +154,10 @@ static void ac4_query_audit_replay_join() {
     auto& ev = cs.evaluator();
     // Stamp a TypedMid so the query primitive reads it.
     aura::compiler::typed_audit::stamp_type_linear_commit_proof(123);
+    // Issue #4120: replay-mid defaults to the last-stamped SSOT, not the
+    // proof stamp; pin both faces so the join key and the typed
+    // observability key agree here.
+    aura::compiler::typed_audit::g_last_stamped_audit_mid.store(123, std::memory_order_relaxed);
 
     // Look for the joined audit keys in the query surface by checking the
     // source-cite surface (additive on query:capability-effect-stats).
@@ -171,9 +175,10 @@ static void ac4_query_audit_replay_join() {
     CHECK(src.find("const auto& args") != std::string::npos,
           "AC4: query:capability-effect-stats lambda names args (replay-mid join)");
 
-    // Issue #3599: live eval assertions — replay-mid is arg || TypedMid ||
-    // Mutation epoch with NO phantom 1; under the production epoch=0 matrix
-    // it reads 0 and the deny SE lands mid=0 (refuse class, #3462).
+    // Issue #3599: live eval assertions — replay-mid is arg ||
+    // last_stamped || Mutation epoch (#4120: NOT the proof stamp —
+    // typed-mid-current carries that face); under the production epoch=0
+    // matrix it reads 0 and the deny SE lands mid=0 (refuse class, #3462).
     ev.set_effect_sandbox_mode(1); // Restricted face: arms the deny gate.
     auto href_replay = [&](std::string_view key) -> std::int64_t {
         auto r = cs.eval(std::format(
@@ -184,6 +189,8 @@ static void ac4_query_audit_replay_join() {
     };
     // (a) TypedMid join: 123 stamped above -> replay-mid == 123.
     CHECK(href_replay("replay-mid") == 123, "3599 AC4: replay-mid == TypedMid (123)");
+    CHECK(href_replay("typed-mid-current") == 123,
+          "3599 AC4: typed-mid-current still publishes the proof stamp (#4120 AC2)");
     // (b) Production epoch=0 matrix: TypedMid=0 + Mutation epoch=0 -> 0 is
     // legal (refuse evidence); no phantom mid=1 invented.
     aura::compiler::typed_audit::reset_for_test();
@@ -1326,6 +1333,85 @@ static void ac20_se_wal_overflow_mid_join_4118() {
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
 }
 
+// ── #4120: empty-arg replay-mid defaults to last_stamped ──
+static void ac21_replay_mid_last_stamped_4120() {
+    std::println("\n--- #4120: empty-arg capability-effect-stats replay-mid = last_stamped ---");
+    reset_all();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    CompilerService cs;
+    constexpr std::uint64_t k4120Mid = 4120001;
+
+    // Arrange (issue repro): a boundary success stamped S into the
+    // last-stamped SSOT; the TypeLinear proof stamp diverged after
+    // (post-abort / steal-note clear per #4098 — the proof stamp is NOT
+    // the session join key, #3778). SE rows for S exist in the ring.
+    aura::compiler::typed_audit::g_last_stamped_audit_mid.store(k4120Mid,
+                                                                std::memory_order_relaxed);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(999999);
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    // Direct append (not append_se_3603): the shared helper leaves the
+    // denied flag at its default (true) — an allow row must carry
+    // denied=false so the #3877 verdict reads Allow(1).
+    append_security_event(ring, ::aura::core::security_event::SecurityEventKind::EffectAllow,
+                          /*tenant=*/42, /*mutation_id=*/k4120Mid, /*epoch=*/7,
+                          aura::compiler::security::kEffectMutate, "test:4120", "4120-allow",
+                          /*denied=*/false);
+
+    auto href_replay = [&](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:capability-effect-stats\") \"{}\")", key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+
+    // AC1: empty / non-int args → replay-mid == last_stamped, NOT the
+    // proof stamp first (old default read the proof stamp here and
+    // rejoined a diverged steal/resume face — non-joinable grant/SE/trail).
+    CHECK(href_replay("replay-mid") == static_cast<std::int64_t>(k4120Mid),
+          "4120 AC1: empty-arg replay-mid == last_stamped (not proof stamp)");
+    auto rm_str = cs.eval(
+        "(hash-ref (engine:metrics \"query:capability-effect-stats\" \"x\") \"replay-mid\")");
+    CHECK(rm_str && aura::compiler::types::is_int(*rm_str) &&
+              aura::compiler::types::as_int(*rm_str) == static_cast<std::int64_t>(k4120Mid),
+          "4120 AC1: non-int arg defaults to last_stamped too");
+
+    // AC2: typed-mid-current keeps publishing the proof stamp (typed-face
+    // observability key unchanged).
+    CHECK(href_replay("typed-mid-current") == 999999,
+          "4120 AC2: typed-mid-current still publishes the proof stamp");
+
+    // AC5: SE/grant joins succeed on the default mid.
+    CHECK(href_replay("se-count") >= 1, "4120 AC5: se-count joins SE.mutation_id == S");
+    CHECK(href_replay("last-se-wins-verdict") == 1, "4120 AC5: verdict Allow(1) via joined SE row");
+
+    // AC3: explicit mid=0 stays the legal refuse-class filter (parity
+    // #3462/#3738) — it must NOT be replaced by last_stamped.
+    auto rm0 =
+        cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 0) \"replay-mid\")");
+    CHECK(rm0 && aura::compiler::types::is_int(*rm0) && aura::compiler::types::as_int(*rm0) == 0,
+          "4120 AC3: explicit mid=0 stays refuse-class filter (not last_stamped)");
+
+    // AC4: production refuse path unchanged — cleared faces → replay-mid
+    // 0 (refuse class); no phantom mid=1, no resolve side effects on the
+    // pure-read query path.
+    aura::compiler::typed_audit::g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    CHECK(href_replay("replay-mid") == 0,
+          "4120 AC4: cleared faces → replay-mid 0 (no phantom mid=1)");
+
+    aura::compiler::typed_audit::g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -1352,6 +1438,7 @@ int run_test_audit_replay_join() {
     ac3970_never_audited_still_miss();
     ac3970_source_cite();
     ac20_se_wal_overflow_mid_join_4118();
+    ac21_replay_mid_last_stamped_4120();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
