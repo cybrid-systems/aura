@@ -6475,7 +6475,10 @@ static void ac4076_source_cite() {
     CHECK(ast.find("restore_marker_provenance") != std::string::npos, "4076: restore helper");
     const auto art = ast.find("abort_restore_dual_topology(std::size_t mutation_log_checkpoint");
     CHECK(art != std::string::npos, "4076: abort function");
-    const auto art_win = ast.substr(art, 900);
+    // Window covers the #2959 SoA-guard insertion between the signature
+    // and the restore calls (rollback_to_size + SoAWriteGuard +
+    // restore_children_locked now precede them inside the body).
+    const auto art_win = ast.substr(art, 1900);
     CHECK(art_win.find("restore_marker_provenance(std::move(markers))") != std::string::npos,
           "4076: abort restores marker and provenance");
     CHECK(art_win.find("restore_dirty_soa(std::move(dirty_soa_snapshot))") != std::string::npos,

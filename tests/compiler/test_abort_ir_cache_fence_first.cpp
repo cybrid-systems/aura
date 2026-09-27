@@ -1031,7 +1031,10 @@ static void ac3865_dirty_soa_restore_source_cite() {
     CHECK(ast.find("restore_dirty_soa") != std::string::npos, "3865: dirty SoA restore present");
     const auto art = ast.find("abort_restore_dual_topology(std::size_t mutation_log_checkpoint");
     CHECK(art != std::string::npos, "3865: abort_restore_dual_topology present");
-    const auto art_win = ast.substr(art, 700);
+    // Window covers the #2959 SoA-guard insertion between the signature
+    // and the restore calls (rollback_to_size + SoAWriteGuard +
+    // restore_children_locked now precede them inside the body).
+    const auto art_win = ast.substr(art, 1700);
     CHECK(art_win.find("restore_dirty_soa(std::move(dirty_soa_snapshot))") != std::string::npos,
           "3865: abort restore includes the dirty SoA restore");
     std::string mb;
