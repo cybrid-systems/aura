@@ -1013,6 +1013,11 @@ static std::uint32_t pop_retired_stable_func_id_locked(void* eval_ptr) noexcept 
     return 0;
 }
 
+// Issue #2606 soak (CI 0927): reset a recycled stable func_id's AOT slot to
+// the unowned pass-through state. Defined after the slot table (the array
+// and kMaxAotFuncs live in the anonymous namespace below).
+static void reset_recycled_aot_func_slot(std::uint32_t id) noexcept;
+
 // Returns stable func_id for (eval_owner, name). out_preserved: 1 if map
 // already held an entry (re-emit reuse), 0 if newly assigned.
 static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, const char* name,
@@ -1040,6 +1045,9 @@ static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, con
         id = pop_retired_stable_func_id_locked(eval_ptr);
     if (id != 0) {
         g_stable_func_id_pool_recycle_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2606 soak (CI 0927): a recycled binding must not inherit the
+        // retired registration's slot state — see the helper definition.
+        reset_recycled_aot_func_slot(id);
     } else {
         id = g_next_stable_func_id.fetch_add(1, std::memory_order_relaxed);
         if (auto pit = g_eval_to_id_pool.find(eval_ptr); pit != g_eval_to_id_pool.end()) {
@@ -1098,10 +1106,23 @@ static void clear_stable_func_id_map_for_eval_locked(void* eval_ptr) {
 }
 
 // Full clear (process teardown / tests). Resets id counter.
+// Issue #2606 soak (CI 0927): wipe every AOT slot's registration state.
+// Defined after the slot table (the array and kMaxAotFuncs live in the
+// anonymous namespace below).
+static void wipe_all_aot_func_slots() noexcept;
+
 static void clear_stable_func_id_map_all_locked() {
     g_eval_to_stable_func_id.clear();
     g_eval_to_id_pool.clear();
     g_next_stable_func_id.store(1, std::memory_order_relaxed);
+    // Issue #2606 soak (CI 0927): the counter reset re-issues fresh ids into
+    // the same id space the pre-clear bindings used. A slot left live from a
+    // pre-clear binding (fn_ptr + foreign owner) makes the cross-eval
+    // ownership filter classify the new binding's candidate as foreign-owned
+    // on every later reemit — the skip counter drifts within a single-eval
+    // soak. No binding survives the clear, so no slot registration may
+    // either; wipe the slots with the map (same shape as the slot teardown).
+    wipe_all_aot_func_slots();
 }
 
 // Last-call stats for tests + EDSL observability primitives.
@@ -1750,6 +1771,39 @@ void note_reload_rollback() noexcept {
 }
 
 } // namespace
+
+// Issue #2606 soak (CI 0927): a recycled binding must not inherit the retired
+// registration's slot state. Retire paths clear map bindings but leave the
+// slot as-is, so it can still read live (fn_ptr) with a foreign owner; the
+// cross-eval ownership filter then classifies every later reemit of the new
+// binding as foreign-owned and the skip counter drifts within a single-eval
+// soak. Reset the slot to the unowned pass-through state the filter documents
+// (owner==0 / no fn_ptr); the next emit stamps it under the current owner.
+// Same reset shape as the slot teardown (fn_ptr first, then generation,
+// owner, soft_stale).
+static void reset_recycled_aot_func_slot(std::uint32_t id) noexcept {
+    if (id == 0 || id >= kMaxAotFuncs)
+        return;
+    auto& slot = g_aot_func_slots[id];
+    slot.fn_ptr.store(0, std::memory_order_release);
+    slot.table_generation.store(0, std::memory_order_release);
+    slot.owner_eval.store(0, std::memory_order_release);
+    slot.soft_stale.store(0, std::memory_order_release);
+}
+
+// Issue #2606 soak (CI 0927): companion to the global map clear — the
+// counter reset hands fresh bindings the same ids the pre-clear generation
+// used, so live pre-clear slots must go with the map. See the declaration
+// site for the full rationale.
+static void wipe_all_aot_func_slots() noexcept {
+    for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
+        auto& slot = g_aot_func_slots[i];
+        slot.fn_ptr.store(0, std::memory_order_release);
+        slot.table_generation.store(0, std::memory_order_release);
+        slot.owner_eval.store(0, std::memory_order_release);
+        slot.soft_stale.store(0, std::memory_order_release);
+    }
+}
 
 // aura_aot_func_table_epoch lives in runtime_ssot.cpp.
 
