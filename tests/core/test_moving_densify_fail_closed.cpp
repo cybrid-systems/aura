@@ -6046,6 +6046,193 @@ static void ac4070_eval_drops_stack_densify_slots() {
     CHECK(eval_leaves_no_slots(1, "required"), "4070: pin-required path");
 }
 
+// Issue #4125: an outermost densify-in-flight (#3894/#3955 arm) must refuse
+// apply_closure and JIT native dispatch on the SAME Evaluator. Post-relocate
+// the #3210 canary inventory mutex is released before the post-moving stale
+// scan / RootRemap / remap pairing, so a peer fiber entering apply/native
+// dispatch notes densify-old stack copies and can miss the late canary
+// drain. Steal is BoundarySafe-blocked (#4033); an already-running peer
+// apply was not. Fix consults densify_in_flight_for(eval_id) inside the
+// shared #3421/#3948 refuse predicate, production gate first — no new
+// query key. The extern "C" wrapper is the face JIT native dispatch
+// already consults (#3948); the ACs drive that same face.
+extern "C" int aura_production_densify_stale_refuse(void* eval_id) noexcept;
+
+std::atomic<int> g_ac4125_stage{0};
+
+static void ac4125_4125_green_face_for(CompilerService& cs) {
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::core::moving_densify_health::publish_last_moving_densify_window(
+        /*had_moving_densify=*/true, /*pin_contract_held=*/true,
+        /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
+        /*root_remap_fail_total=*/0);
+    auto& ev = cs.evaluator();
+    auto p = aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof();
+    p.would_allow_commit = true;
+    aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(&ev, p);
+}
+
+// #4125 AC1: production apply/native-dispatch entry refuses while an
+// outermost densify is in flight on the same Evaluator; the refuse clears
+// when the arm drops; a warm #4006 seq-skip TLS cannot bypass it.
+static void ac4125_apply_dispatch_inflight_refuse() {
+    std::println("\n--- #4125 AC1: in-flight refuses apply/native dispatch entry ---");
+    ac4067_reset_face();
+    CompilerService cs;
+    ac4125_4125_green_face_for(cs);
+    auto& ev = cs.evaluator();
+    // Baseline: healthy window + green LCP + no in-flight — the shared face
+    // allows (and warms the seq-skip TLS on this consult).
+    CHECK(aura_production_densify_stale_refuse(&ev) == 0, "4125 AC1: baseline allow");
+    CHECK(aura_production_densify_stale_refuse(&ev) == 0, "4125 AC1: warm seq-skip still allows");
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard g(static_cast<const void*>(&ev));
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(static_cast<const void*>(&ev)),
+              "4125 AC1: in-flight armed");
+        CHECK(aura_production_densify_stale_refuse(&ev) != 0,
+              "4125 AC1: in-flight refuses the dispatch entry");
+    }
+    CHECK(aura_production_densify_stale_refuse(&ev) == 0,
+          "4125 AC1: refuse clears when the arm drops");
+    ac4067_reset_face();
+}
+
+// #4125 AC2: Soft/Off — the production gate is the first load in the shared
+// predicate, so an armed in-flight slot never adds a consult on Soft.
+static void ac4125_soft_off_zero_extra() {
+    std::println("\n--- #4125 AC2: Soft/Off gate-first, zero extra ---");
+    ac4067_reset_face();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard g(static_cast<const void*>(&ev));
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(static_cast<const void*>(&ev)),
+              "4125 AC2: in-flight armed (slot probe is always live)");
+        CHECK(aura_production_densify_stale_refuse(&ev) == 0,
+              "4125 AC2: Soft never reaches the consult");
+    }
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(static_cast<const void*>(&ev)),
+          "4125 AC2: arm cleared");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto gate =
+        apply.find("static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, "
+                   "const Closure& cl,");
+    CHECK(gate != std::string::npos, "4125 AC2: shared predicate located");
+    if (gate != std::string::npos) {
+        const auto body = apply.substr(gate, 2000);
+        const auto gpos = body.find("production_defaults_active()");
+        const auto ipos = body.find("densify_in_flight_for(eval_id)");
+        const auto spos = body.find("densify_refuse_seq_skip");
+        CHECK(gpos != std::string::npos && ipos != std::string::npos && gpos < ipos,
+              "4125 AC2: consult after the production gate");
+        CHECK(spos == std::string::npos || ipos < spos,
+              "4125 AC2: consult before the #4006 seq-skip");
+    }
+    ac4067_reset_face();
+}
+
+// #4125 AC3: try_acquire + steal_safety behavior unchanged — admit still
+// probes the slot directly (#3956 shape, same refuse reason) and the steal
+// victim hard-AND stays.
+static void ac4125_admit_steal_unchanged() {
+    std::println("\n--- #4125 AC3: try_acquire + steal_safety unchanged ---");
+    ac4067_reset_face();
+    CompilerService cs;
+    ac4125_4125_green_face_for(cs);
+    auto& ev = cs.evaluator();
+    bool ok = true;
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard g(static_cast<const void*>(&ev));
+        auto g1 = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+        CHECK(!g1.has_value(), "4125 AC3: in-flight still refuses admit (#3956 shape)");
+        if (!g1.has_value()) {
+            CHECK(g1.error().message.find("densify-in-flight") != std::string::npos,
+                  "4125 AC3: admit refuse reason stays densify-in-flight");
+        }
+    }
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(g2.has_value(), "4125 AC3: admit succeeds after the arm drops");
+    if (g2.has_value())
+        g2.value().reset();
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("AdmissionRejected: densify-in-flight") != std::string::npos,
+          "4125 AC3: admit refuse string intact");
+    const auto steal = read_file("src/serve/steal_safety.cpp");
+    CHECK(steal.find("densify_in_flight_for(victim_eval_id)") != std::string::npos,
+          "4125 AC3: steal victim hard-AND intact");
+    ac4067_reset_face();
+}
+
+// #4125 AC4: soak — outermost densify-in-flight + concurrent dispatch on a
+// peer worker thread, same Evaluator: every entry observation is refused
+// (never silent), and the abort-restore canary surface stays untouched.
+static void ac4125_peer_worker_soak() {
+    std::println("\n--- #4125 AC4: peer-worker soak never silent while in-flight ---");
+    ac4067_reset_face();
+    CompilerService cs;
+    ac4125_4125_green_face_for(cs);
+    auto& ev = cs.evaluator();
+    g_ac4125_stage.store(0, std::memory_order_relaxed);
+    std::atomic<int> peer_silent{0};
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard g(static_cast<const void*>(&ev));
+        g_ac4125_stage.store(1, std::memory_order_release);
+        std::thread peer([&] {
+            for (int i = 0; i < 8000000 && g_ac4125_stage.load(std::memory_order_acquire) != 1; ++i)
+                std::this_thread::yield();
+            for (int i = 0; i < 64; ++i)
+                if (aura_production_densify_stale_refuse(&ev) == 0)
+                    peer_silent.store(1, std::memory_order_release);
+            g_ac4125_stage.store(2, std::memory_order_release);
+        });
+        for (int i = 0; i < 8000000 && g_ac4125_stage.load(std::memory_order_acquire) != 2; ++i)
+            std::this_thread::yield();
+        peer.join();
+        CHECK(peer_silent.load(std::memory_order_acquire) == 0,
+              "4125 AC4: peer dispatch refused for the whole in-flight soak");
+    }
+    CHECK(aura_production_densify_stale_refuse(&ev) == 0,
+          "4125 AC4: entry green again after the arm drops");
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(static_cast<const void*>(&ev)),
+          "4125 AC4: in-flight cleared");
+    CHECK(aura::ast::g_moving_canary_lock_waiters.load(std::memory_order_relaxed) == 0,
+          "4125 AC4: abort-restore canary surface untouched (no waiters)");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    ac4067_reset_face();
+}
+
+// #4125 AC5: source-cite + wiring — shared-predicate consult, all arms
+// unchanged, no second model, no docs/design, no invented test file.
+static void ac4125_source_cite_and_wiring() {
+    std::println("\n--- #4125 AC5: source-cite + wiring, no second model ---");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(apply.find("Issue #4125") != std::string::npos, "4125: cite in the shared face");
+    CHECK(apply.find("aura::core::densify_consistency::densify_in_flight_for(eval_id)") !=
+              std::string::npos,
+          "4125: eval-keyed consult in the shared predicate");
+    CHECK(apply.find("#include \"core/densify_consistency_report.h\"") != std::string::npos,
+          "4125: include present");
+    int calls = 0;
+    for (auto pos = apply.find("production_apply_closure_densify_hard_refuse(");
+         pos != std::string::npos;
+         pos = apply.find("production_apply_closure_densify_hard_refuse(", pos + 1))
+        ++calls;
+    // 1 definition + 1 extern-C wrapper call + 4 apply_closure arms.
+    CHECK(calls >= 6, "4125: apply_closure arms route through the shared face");
+    CHECK(apply.find("production_apply_closure_densify_hard_refuse(nullptr, cl, eval_id)") !=
+              std::string::npos,
+          "4125: extern-C wrapper forwards to the shared face");
+    const auto jit = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit.find("aura_production_densify_stale_refuse(aura_current_eval_identity())") !=
+              std::string::npos,
+          "4125: JIT dispatch consults the same face (#3948 unchanged)");
+    CHECK(apply.find("schema-4125") == std::string::npos &&
+              apply.find("g_4125_") == std::string::npos,
+          "4125: no new query key / counter");
+    CHECK(read_file("docs/design/4125-apply-inflight.md").empty(), "4125: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4125.cpp").empty(), "4125: no test_issue file");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -6863,6 +7050,14 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Issue #4070: eval stack cover must not outlive the frame ===");
     ac4070_eval_drops_stack_densify_slots();
+
+    std::println("\n=== Issue #4125: apply/JIT consult densify-in-flight "
+                 "(#3894/#3955 residual; extends fail_closed per #81967) ===");
+    ac4125_apply_dispatch_inflight_refuse();
+    ac4125_soft_off_zero_extra();
+    ac4125_admit_steal_unchanged();
+    ac4125_peer_worker_soak();
+    ac4125_source_cite_and_wiring();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
