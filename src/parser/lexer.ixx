@@ -24,6 +24,7 @@ export enum class TokenKind {
     Ellipsis,
     Bool,
     HashLParen,
+    Character, // Issue #4129: #\ character literal; token text = decimal code point
     EndOfFile,
     Error
 };
@@ -47,6 +48,7 @@ private:
     Token read_string();
     Token read_number();
     Token read_identifier();
+    Token read_character();
     void skip_ws();
     Token make_tok(TokenKind k, std::string_view t);
     std::string_view source_;

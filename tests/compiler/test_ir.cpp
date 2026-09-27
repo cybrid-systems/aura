@@ -11,6 +11,7 @@
 import std;
 import aura.core;
 import aura.parser.parser;
+import aura.parser.lexer; // Issue #4129: direct Lexer/TokenKind access for reader ACs
 import aura.compiler.evaluator;
 import aura.compiler.ir;
 import aura.compiler.lowering;
@@ -424,6 +425,135 @@ bool test_keyword_intern_reuses_table_slot() {
     return true;
 }
 
+// ── Issue #4129: character literal reader ──────────────────────
+// Pre-fix, `#` (unless #t/#f/#() lexed as TokenKind::Error and
+// parse_list's error recovery consumed it as a closing ')': every
+// argument at/after a character literal was dropped — (equal? #\0 #\9)
+// matched zero-arg (equal?) → #t and (char->integer #\0) returned the
+// zero-arg 0 instead of 48.
+bool test_character_literal_4129() {
+    int passed = 0, failed = 0;
+    auto ac = [&](bool ok, int n, const char* label) {
+        if (ok) {
+            ++passed;
+            std::println("--- #4129 AC{}: {}", n, label);
+        } else {
+            ++failed;
+            std::println(std::cerr, "  FAIL: #4129 AC{}: {}", n, label);
+        }
+    };
+
+    // AC1 — tokenization: #\0 is a Character token carrying code point 48.
+    {
+        aura::parser::Lexer lex("#\\0");
+        auto t = lex.consume();
+        ac(t.kind == aura::parser::TokenKind::Character && std::string(t.text) == "48", 1,
+           "#0 lexes as Character token with code point 48");
+    }
+
+    // AC2 — named forms tokenize: #\space 32, #\newline 10, #\tab 9.
+    {
+        auto tok_of = [](std::string_view src) {
+            aura::parser::Lexer lex(src);
+            auto t = lex.consume();
+            // Copy the text out while the lexer (owner of the token text
+            // storage) is still alive — Token::text is a string_view.
+            return std::make_pair(t.kind, std::string(t.text));
+        };
+        auto [k1, v1] = tok_of("#\\space");
+        auto [k2, v2] = tok_of("#\\newline");
+        auto [k3, v3] = tok_of("#\\tab");
+        ac(k1 == aura::parser::TokenKind::Character && v1 == "32" &&
+               k2 == aura::parser::TokenKind::Character && v2 == "10" &&
+               k3 == aura::parser::TokenKind::Character && v3 == "9",
+           2, "named forms space/newline/tab carry 32/10/9");
+    }
+
+    // AC3 — single-char + hex forms: #\a 97, #\( 40, #- 45, #\x41 65.
+    {
+        auto tok_of = [](std::string_view src) {
+            aura::parser::Lexer lex(src);
+            auto t = lex.consume();
+            return std::make_pair(t.kind, std::string(t.text));
+        };
+        auto [k1, v1] = tok_of("#\\a");
+        auto [k2, v2] = tok_of("#\\(");
+        auto [k3, v3] = tok_of("#\\-");
+        auto [k4, v4] = tok_of("#\\x41");
+        ac(k1 == aura::parser::TokenKind::Character && v1 == "97" &&
+               k2 == aura::parser::TokenKind::Character && v2 == "40" &&
+               k3 == aura::parser::TokenKind::Character && v3 == "45" &&
+               k4 == aura::parser::TokenKind::Character && v4 == "65",
+           3, "single-char and hex forms carry the right code points");
+    }
+
+    // End-to-end faces through CompilerService.
+    {
+        aura::compiler::CompilerService cs;
+        auto evi = [&](const char* src) -> std::int64_t {
+            auto r = cs.eval(src);
+            return (r && aura::compiler::types::is_int(*r)) ? aura::compiler::types::as_int(*r)
+                                                            : std::int64_t{-1};
+        };
+
+        // AC4 — (char->integer #\0) is 48 (was the zero-arg 0).
+        ac(evi("(char->integer #\\0)") == 48, 4, "(char->integer #0) evaluates to 48");
+
+        // AC5 — (equal? #\0 #\9) is #f (was zero-arg #t); (equal? #\0 #\0) is #t.
+        auto e1 = cs.eval("(equal? #\\0 #\\9)");
+        auto e2 = cs.eval("(equal? #\\0 #\\0)");
+        ac(e1 && aura::compiler::types::is_bool(*e1) && !aura::compiler::types::as_bool(*e1) &&
+               e2 && aura::compiler::types::is_bool(*e2) && aura::compiler::types::as_bool(*e2),
+           5, "(equal? #0 #9) is #f and (equal? #0 #0) is #t");
+
+        // AC6 — named forms end-to-end.
+        ac(evi("(char->integer #\\space)") == 32 && evi("(char->integer #\\newline)") == 10 &&
+               evi("(char->integer #\\tab)") == 9,
+           6, "named forms end-to-end: 32/10/9");
+
+        // AC7 — a literal equals a string-fetched char (same int model).
+        auto c7 = cs.eval("(char=? #\\a (string-ref \"a\" 0))");
+        ac(c7 && aura::compiler::types::is_bool(*c7) && aura::compiler::types::as_bool(*c7), 7,
+           "(char=? #a (string-ref \"a\" 0)) is #t");
+
+        // AC8 — arguments after a literal are kept (no silent drop).
+        ac(evi("(+ 1 (char->integer #\\a))") == 98 &&
+               evi("(- (char->integer #\\9) (char->integer #\\0))") == 9,
+           8, "arguments after a character literal are kept (98 / 9)");
+    }
+
+    // AC9 — malformed literals are parse errors, never silence: bare #\ at
+    // EOF and unknown #\foobar fail the parse, and oneshot eval refuses.
+    {
+        aura::ast::ASTArena arena(4096);
+        auto a = arena.allocator();
+        aura::ast::FlatAST flat(a);
+        aura::ast::StringPool pool(a);
+        auto pr1 = aura::parser::parse_to_flat("#\\", flat, pool);
+        auto pr2 = aura::parser::parse_to_flat("(char->integer #\\foobar)", flat, pool);
+        aura::compiler::CompilerService cs;
+        auto ev = cs.eval("(char->integer #\\foobar)");
+        ac(!pr1.success && !pr1.errors.empty() && !pr2.success && !pr2.errors.empty() &&
+               !ev.has_value(),
+           9, "bare #\\ / unknown #foobar are parse errors; eval refuses");
+    }
+
+    // AC10 — non-character sources unchanged (one-shot behavior preserved).
+    {
+        aura::compiler::CompilerService cs;
+        auto r1 = cs.eval("(+ 1 2)");
+        auto r2 = cs.eval("(equal? #t #t)");
+        auto r3 = cs.eval("(vector-ref #(10 20) 1)");
+        ac(r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 3 &&
+               r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2) &&
+               r3 && aura::compiler::types::is_int(*r3) && aura::compiler::types::as_int(*r3) == 20,
+           10, "non-character sources unchanged (3 / #t / 20)");
+    }
+
+    std::println("=== Results: {} passed, {} failed", passed, failed);
+    return failed == 0;
+}
+
 int main() {
     // Full is the cold-start default (#2818). IR execute refuses unstamped
     // depth-0 under Full (#3224/#3414), so `(+ 1 2)` becomes
@@ -442,6 +572,8 @@ int main() {
     if (!test_sym_intern_pool_isolation())
         return 1;
     if (!test_keyword_intern_reuses_table_slot())
+        return 1;
+    if (!test_character_literal_4129())
         return 1;
 
     // Test cases: (input, expected_string)

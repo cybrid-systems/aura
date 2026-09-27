@@ -8723,6 +8723,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4128 workspace lock stamp linter failed — run python3 scripts/check_workspace_lock_stamp_4128.py")
         return r
+    # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
+    # TokenKind::Error and parse_list's error recovery consumed it as a
+    # closing ')': arguments at/after a character literal were dropped —
+    # (equal? #\0 #\9) matched zero-arg (equal?) and (char->integer #\0)
+    # returned the zero-arg 0 instead of 48. Gate pins: the lexer emits
+    # Character tokens for named/single-char/hex #\ forms (malformed ->
+    # "#\"-shaped Error), parse_expr lowers Character to its code point
+    # (the existing chars-are-integers model), and a malformed literal
+    # fails the form instead of being silently swallowed. Runtime doors
+    # live in tests/compiler/test_ir.cpp (test_character_literal_4129).
+    chr4129_script = ROOT / "scripts" / "check_character_literal_4129.py"
+    if not chr4129_script.exists():
+        fail(f"missing {chr4129_script}")
+        return 1
+    r = run([sys.executable, str(chr4129_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4129 character literal reader linter failed — run python3 scripts/check_character_literal_4129.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

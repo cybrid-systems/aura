@@ -26,6 +26,8 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
                     return "string literal '" + std::string(t.text) + "'";
                 case TokenKind::Bool:
                     return "boolean '" + std::string(t.text) + "'";
+                case TokenKind::Character: // Issue #4129
+                    return "character literal (code point " + std::string(t.text) + ")";
                 case TokenKind::LParen:
                     return "'('";
                 case TokenKind::RParen:
@@ -67,6 +69,7 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
                     if (tok.kind == TokenKind::LParen || tok.kind == TokenKind::Integer ||
                         tok.kind == TokenKind::Float || tok.kind == TokenKind::String ||
                         tok.kind == TokenKind::Identifier || tok.kind == TokenKind::Bool ||
+                        tok.kind == TokenKind::Character || // Issue #4129: restart at a literal
                         tok.kind == TokenKind::Quote || tok.kind == TokenKind::QuasiQuote ||
                         tok.kind == TokenKind::Unquote) {
                         break;
@@ -84,6 +87,19 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             }
         };
 
+        // Issue #4129: a malformed character literal must fail the form —
+        // surface the deferred diagnostic, clear the root, and force
+        // success=false so no caller evaluates a silently-truncated call.
+        auto flush_deferred_char_error = [&r, &s]() {
+            if (s.deferred_error.empty())
+                return;
+            if (r.error.empty())
+                r.error = s.deferred_error;
+            r.errors.push_back({s.deferred_error, aura::diag::SourceLocation{}});
+            r.root = NULL_NODE;
+            r.success = false;
+        };
+
         r.root = parse_expr(s);
         if (r.root == NULL_NODE) {
             auto tok = s.lex.peek();
@@ -92,6 +108,9 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             } else {
                 record_error("expected expression, reached end of input");
             }
+            // Issue #4129: surface a malformed character literal even when
+            // the top-level expression itself failed.
+            flush_deferred_char_error();
             // If we recovered but got nothing, return as failure
             if (r.root == NULL_NODE)
                 return r;
@@ -100,6 +119,7 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
         // Check for multiple top-level expressions
         auto next = s.lex.peek();
         if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {
+            flush_deferred_char_error();
             r.success = r.root != NULL_NODE;
             return r;
         }
@@ -127,6 +147,7 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
 
         r.root = s.flat.add_begin(exprs);
         r.success = !exprs.empty();
+        flush_deferred_char_error();
         return r;
     } catch (const std::bad_alloc&) {
         r.success = false;
@@ -160,6 +181,16 @@ NodeId parse_expr(ParserState& s) {
             auto v = std::stoll(std::string(tok.text));
             auto id = s.flat.add_literal(v);
             s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
+            s.flat.set_loc(id, tok.line, tok.column);
+            return id;
+        }
+        // Issue #4129: character literals evaluate to their code point —
+        // the same integer value the char primitives already use (char?,
+        // char->integer, char=? are int-based; string-ref yields int code
+        // points). No second character value model is introduced.
+        case TokenKind::Character: {
+            auto tok = s.lex.consume();
+            auto id = s.flat.add_literal(std::stoll(std::string(tok.text)));
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
         }
@@ -280,6 +311,14 @@ NodeId parse_expr(ParserState& s) {
         case TokenKind::LParen:
             s.lex.consume();
             return parse_list(s);
+        case TokenKind::Error:
+            // Issue #4129: malformed character literal (read_character
+            // emits an Error whose text starts with "#\\"). Record the
+            // deferred parse error instead of returning a silent
+            // NULL_NODE that parse_list would consume as a closing ')'.
+            if (tok.text.starts_with("#\\") && s.deferred_error.empty())
+                s.deferred_error = "malformed character literal '" + std::string(tok.text) + "'";
+            return NULL_NODE;
         default:
             return NULL_NODE;
     }
