@@ -42,6 +42,7 @@
 #include "orch/sched_runner_test_helper.h"
 
 #include "compiler/agent_name_table.h"
+#include "compiler/handoff_token_stash.hh"
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h"
 #include "compiler/typed_mutation_audit.h"
@@ -7941,6 +7942,210 @@ int run_test_join_drain_reclaim() {
         set_mode(SandboxMode::Off);
         apply_dev_audit_defaults();
         // #3797-wave CI: restore the WAL-off face this section pinned on.
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    }
+
+    // ── Issue #4117: document the session-local multi-agent domain vs the
+    // observe-only cross-Evaluator ceiling. README inventory subsection
+    // (src/orch/README.md) + adversarial test-lock of the #3273
+    // observation-only contract: Evaluator B join-via-token of A's token
+    // observes, but A keeps reservation/mailbox/name and is the only
+    // Done-path cleanup owner. No ownership move, no registry, no second
+    // orch model; session-local sufficiency stays an open product
+    // question (capability FAQ / oracle only).
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::agent_export_handoff;
+        using aura::orch::agent_import_handoff;
+        using aura::orch::AgentScope;
+        using aura::orch::AgentSpec;
+        using aura::orch::join_via_handoff;
+        using aura::orch::JoinViaTokenPolicy;
+
+        std::println(
+            "\n--- #4117 AC1: README inventory subsection (session-local vs cross-Evaluator) ---");
+        {
+            const auto orch_readme = read_file("src/orch/README.md");
+            CHECK(orch_readme.find("Multi-agent domain inventory") != std::string::npos,
+                  "4117 AC1: inventory subsection present");
+            CHECK(orch_readme.find("observation-only (#3273 ceiling)") != std::string::npos,
+                  "4117 AC1: join-via-token pinned observe-only");
+            CHECK(orch_readme.find("caller-passed spans") != std::string::npos,
+                  "4117 AC1: cross-scope directory = caller-passed spans");
+            CHECK(orch_readme.find("No global registry") != std::string::npos,
+                  "4117 AC1: no global registry stated");
+            CHECK(orch_readme.find("no ownership move") != std::string::npos,
+                  "4117 AC1: no ownership move stated");
+            CHECK(orch_readme.find("reservation-held-by-source") != std::string::npos,
+                  "4117 AC1: reservation-held-by-source stated");
+            CHECK(orch_readme.find("Open product question") != std::string::npos,
+                  "4117 AC1: session-local sufficiency left open for product");
+            CHECK(read_file("docs/design/4117-cross-evaluator-ceiling.md").empty(),
+                  "4117 AC1: no docs/design/4117-* per #1655");
+            CHECK(read_file("tests/orch/test_issue_4117.cpp").empty() &&
+                      read_file("tests/issues/test_issue_4117.cpp").empty(),
+                  "4117 AC1: no test_issue_4117.cpp per #81934");
+        }
+
+        // #3797-wave CI: the security-schedule posture gate denies
+        // production spawns while the audit WAL is off; the batch face
+        // leaves it off, so pin it on for the #4117 spawn blocks
+        // (disabled again at the end of this section).
+        std::filesystem::create_directories("build/test-wal-4117");
+        if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+            (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-4117"), nullptr, 0);
+
+        std::println(
+            "\n--- #4117 AC2: dual-Evaluator adversarial — B observes, A keeps ownership ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "src-4117-ac2";
+            std::atomic<bool> stop_4117{false};
+            spec.body = [&] {
+                while (!stop_4117.load(std::memory_order_acquire))
+                    ; // non-yielding live body (mirrors #3273 AC1/AC2)
+            };
+            auto& src = scope.spawn(spec);
+            CHECK(src.ok && src.fiber != nullptr, "4117 AC2: source spawn ok");
+            src.reserved_memory_bytes = 4117;
+            const auto src_fiber_id = src.fiber->id();
+            auto tok = agent_export_handoff(src);
+            // Evaluator B imports via the token (dual name-table) and
+            // observes the source-owned body through join_via_handoff.
+            CompilerService cs_b;
+            auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs_b), sched);
+            CHECK(proxy.reserved_memory_bytes == 0,
+                  "4117 AC2: proxy has zero reservation (no double-count)");
+            auto tok_obs = agent_export_handoff(proxy);
+            JoinViaTokenPolicy jp;
+            jp.timeout_ms = 20;
+            auto res = join_via_handoff(tok_obs, jp);
+            CHECK(res.status == JoinStatus::Timeout || res.status == JoinStatus::Ok,
+                  "4117 AC2: live body → Timeout or Ok (observe only)");
+            CHECK(res.observation_only, "4117 AC2: observation_only=true (no ownership move)");
+            CHECK(res.reservation_held_by_source,
+                  "4117 AC2: reservation-held-by-source on B's observation");
+            // B cannot Done-path cleanup A: proxy join is Invalid (source
+            // owns reclaim, #3930) and dropping the proxy releases nothing
+            // source-side (#2009).
+            auto jr = join_agent(proxy, JoinPolicy{.primary_ms = 20, .drain_ms = 20});
+            CHECK(jr.status == JoinStatus::Invalid,
+                  "4117 AC2: B join_agent(proxy) → Invalid (no Done-path cleanup)");
+            proxy = AgentHandle{};
+            CHECK(src.reserved_memory_bytes == 4117,
+                  "4117 AC2: source reservation still held after B observe+join+drop");
+            CHECK(src.mailbox != nullptr, "4117 AC2: source mailbox still attached");
+            CHECK(src.fiber && src.fiber->id() == src_fiber_id,
+                  "4117 AC2: source fiber identity preserved (no ownership move)");
+            CHECK(scope.find("src-4117-ac2") != nullptr,
+                  "4117 AC2: source name still resolves in A's scope");
+            // A's own Done-path cleanup stays the sole owner and works.
+            stop_4117.store(true, std::memory_order_release);
+            if (src.fiber)
+                src.fiber->request_cancel();
+            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+            CHECK(src.reserved_memory_bytes == 0,
+                  "4117 AC2: source join_agent reclaims (sole Done-path owner)");
+        }
+
+        std::println(
+            "\n--- #4117 AC3: Aura hash keys survive B's cross-Evaluator join-via-token ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            // Token creation on A runs under dev typing: bare-call evals
+            // with string literals are dev-typed (#3729 AC1 shape);
+            // production strict typing rejects them ("expected Any, got
+            // String").
+            apply_dev_audit_defaults();
+            CompilerService cs_a;
+            CompilerService cs_b2;
+            CHECK(cs_a.eval(R"((hash-ref (orch:scope-spawn "ac4117-src") "ok"))").has_value(),
+                  "4117 AC3: Evaluator A scope-spawn ac4117-src ok");
+            auto tok_v = cs_a.eval(R"((orch:agent-export-via-token "ac4117-src"))");
+            CHECK(tok_v && aura::compiler::types::is_string(*tok_v),
+                  "4117 AC3: export returns token string");
+            const auto idx = aura::compiler::types::as_string_idx(*tok_v);
+            const auto heap = cs_a.evaluator().string_heap();
+            CHECK(idx < heap.size() && !heap[idx].empty(),
+                  "4117 AC3: token interned in A's string heap");
+            const auto hash = std::string(heap[idx]);
+            // B's join runs under production + restricted so the #3273
+            // hash keys are observable (#3273 AC3 obsv2 shape — let-wrapped
+            // call, not a bare literal).
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto subst_token = [&](std::string s) {
+                const auto pos = s.find("TOKEN");
+                CHECK(pos != std::string::npos, "4117 AC3: TOKEN placeholder present");
+                s.replace(pos, 5, hash);
+                return s;
+            };
+            auto obs = cs_b2.eval(subst_token(R"(
+                (let ((r (orch:join-via-token "TOKEN" :timeout-ms 20)))
+                  (if (and (hash-ref r "observation-only")
+                           (string=? (hash-ref r "ownership") "source")
+                           (hash-ref r "reservation-held-by-source")
+                           (hash-has-key? r "schema-3273"))
+                      1 0))
+            )"));
+            CHECK(obs && is_int(*obs) && as_int(*obs) == 1,
+                  "4117 AC3: B join-via-token keeps observation-only / ownership=source / "
+                  "held-by-source");
+            // Source-side still-held check back on dev typing (send shape
+            // of the #3442 resolve): A's mailbox survives B's observation.
+            apply_dev_audit_defaults();
+            auto send_ok = cs_a.eval(R"(
+                (let ((m (orch:agent-send "ac4117-src" "ping-4117")))
+                  (if (hash-ref m "ok") 1 0))
+            )");
+            CHECK(send_ok && is_int(*send_ok) && as_int(*send_ok) == 1,
+                  "4117 AC3: A's mailbox still held after B's observation");
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            aura::orch::reset_all_agent_scopes_for_test();
+        }
+
+        std::println(
+            "\n--- #4117 AC4: ceiling locked — no ownership move / registry / second model ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto scopeh = read_file("src/orch/agent_scope.h");
+            CHECK(spawn.find("kHandoffObservationOnlyIssue = 3273") != std::string::npos,
+                  "4117 AC4: #3273 observation-only constant stays");
+            CHECK(spawn.find("observation_only = true") != std::string::npos,
+                  "4117 AC4: typed observation_only default unchanged");
+            CHECK(spawn.find("ownership_move") == std::string::npos &&
+                      spawn.find("take_ownership") == std::string::npos,
+                  "4117 AC4: no ownership-move surface (issue AC3)");
+            CHECK(prim.find("add_handoff_observation_only") != std::string::npos,
+                  "4117 AC4: existing Aura key helper reused");
+            CHECK(prim.find("\"observation-only\"") != std::string::npos &&
+                      prim.find("\"ownership\"") != std::string::npos &&
+                      prim.find("\"reservation-held-by-source\"") != std::string::npos,
+                  "4117 AC4: existing hash keys locked (no rename)");
+            CHECK(spawn.find("class AgentRegistry") == std::string::npos &&
+                      scopeh.find("class AgentRegistry") == std::string::npos &&
+                      prim.find("class AgentRegistry") == std::string::npos,
+                  "4117 AC4: no AgentRegistry (issue AC4)");
+            CHECK(prim.find("handoff-ownership-move") == std::string::npos &&
+                      prim.find("orch:adopt-token") == std::string::npos,
+                  "4117 AC4: no second orch model / ownership-move prim");
+        }
+
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+        // Restore the WAL-off face pinned above.
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     }
 

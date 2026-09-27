@@ -832,6 +832,41 @@ Soft / Off: those identity keys are absent (one load of
 `directory_snapshot` during `join_all` stays HardDeny under production
 (#2946 / #2777).
 
+### Multi-agent domain inventory: session-local vs cross-Evaluator (Issue #4117)
+
+Inventory of what the orch surface supports today, so hosts and Agents do
+not over-infer from a successful cross-Evaluator observation:
+
+1. **Session-local (one Evaluator) is the supported multi-agent domain.**
+   `AgentScope` + `orch:scope-spawn` over the three identity planes
+   (#3216) run long-lived multi-agent workloads — supervision
+   (`watch_all` / `join_all`), mailboxes, reservations — entirely inside
+   one Evaluator/session.
+2. **Cross-Evaluator `orch:join-via-token` / `join_via_handoff` is
+   observation-only (#3273 ceiling).** A successful join *observes* the
+   source-owned body: no ownership move, no source reservation release,
+   no mailbox detach, no name move into the importer table. Aura hashes
+   stay `observation-only` / `ownership="source"` /
+   `reservation-held-by-source` on every result. Hosts must not infer
+   ownership transfer from an observation; the source-side `join_agent` /
+   scope exit remains the only Done-path cleanup owner (imported proxies
+   are not a second join owner, #3930).
+3. **Cross-scope directory is caller-passed spans** (#3125 below):
+   `cross_scope_directory(std::span<AgentScope* const>)` merges only the
+   scopes the caller hands it, in the same process — no process-global
+   walk, no global directory service.
+4. **No global registry.** `AgentRegistry` / `global_agent_registry` /
+   `conduct_parallel` stay forbidden (MVP linter); no second orch model,
+   no saga layer on top of the handoff observation path.
+5. **Open product question:** whether session-local multi-agent is
+   sufficient for the product. A cross-Evaluator ownership-move design
+   would be an explicit follow-up product decision — this inventory asks
+   the question (capability FAQ / oracle only), it does not add the
+   capability.
+
+Regression: `tests/orch/test_join_drain_reclaim` (#4117 AC1–AC4 block
+after the #3273 block).
+
 ### `orch:cross-scope-directory` merge (Issue #3125)
 
 C++ helper that joins N per‑Scope directory snapshots into a single
