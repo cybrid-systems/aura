@@ -335,7 +335,17 @@ namespace detail {
                     append("(quote ");
                     if (v.children.empty())
                         append("()");
-                    else
+                    else if (auto qv = flat.get(v.child(0));
+                             qv.tag == NodeTag::LiteralInt && qv.int_value == 0 &&
+                             flat.marker(v.child(0)) != SyntaxMarker::BoolLiteral) {
+                        // Issue #4130: `()` parses to the nil sentinel (LiteralInt 0 —
+                        // parser add_literal(0), same encoding as unparse_proper_list's
+                        // list-tail break). Render the quoted nil as `()` so quoted
+                        // empty lists roundtrip as (quote ()) instead of the number
+                        // zero under quote. Serialization only — eval semantics of
+                        // nil are untouched.
+                        append("()");
+                    } else
                         emit(v.child(0), depth + 1, child_indent);
                     append(')');
                     return;
