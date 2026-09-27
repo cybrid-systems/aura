@@ -1174,6 +1174,145 @@ namespace {
         return true;
     }
 
+    // Issue #4126 adversarial fixtures: A keeps a PRE-MUTATE native while
+    // the host emit returns true WITHOUT installing; B installs a new
+    // ScalarFn in the same dirty batch (#4100 residual R1).
+    static std::atomic<int> g_ac4126_a_hits{0};
+    static std::atomic<int> g_ac4126_b_hits{0};
+    static std::int64_t ac4126_scalar_a(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+        g_ac4126_a_hits.fetch_add(1, std::memory_order_relaxed);
+        return 4126;
+    }
+    // Throwaway pre-mutate body for B — replaced by the batch emit, never
+    // called (a hit would fail the AC3 return-value check loudly).
+    static std::int64_t ac4126_scalar_b_pre(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+        return 0;
+    }
+    static std::int64_t ac4126_scalar_b(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+        g_ac4126_b_hits.fetch_add(1, std::memory_order_relaxed);
+        return 4127;
+    }
+
+    struct Emit4126Fixture {
+        std::atomic<std::uint32_t> a_metric_trues{0};
+        std::atomic<std::uint32_t> b_installs{0};
+    };
+
+    // Host emit face: metric-only true for A (g_jit_fns untouched →
+    // jit_fn_is_new_install sees pre_fn == post_fn), real new ScalarFn
+    // install for B.
+    static bool emit_fn_4126(const char* name, std::uint64_t /*region*/, void* userdata) {
+        auto* f = static_cast<Emit4126Fixture*>(userdata);
+        if (!name)
+            return false;
+        if (std::string_view(name) == "ac4126a") {
+            f->a_metric_trues.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        if (std::string_view(name) == "ac4126b") {
+            aura_register_fn_named("ac4126b", 4127, ac4126_scalar_b, 4, 1, 0);
+            f->b_installs.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
+    }
+
+    // Issue #4126: adversarial A-no-install + B-install dirty batch.
+    // A's metric-only host true must not enter reemit_stable_ids (remount
+    // walk inputs) nor count as reemit success (on_reemit_pipeline_call →
+    // last_reemit_success region coverage / force_jit only_covered heal).
+    // B remounts OK in the same batch.
+    bool test_4126_no_install_not_remount_id() {
+        std::println("\n--- #4126: A metric-only true + B install dirty batch ---");
+        // Source face: the walk gates the id push and host success on the
+        // ScalarFn install (#4126), keeping the #4100 remap gate intact.
+        const auto bridge = read_source("src/compiler/aura_jit_bridge.cpp");
+        CHECK(bridge.find("Issue #4126") != std::string::npos, "4126: bridge cites the residual");
+        CHECK(bridge.find("if (sid != 0 && installed)") != std::string::npos,
+              "4126: reemit id push gated on the ScalarFn install");
+        const auto host_arm = bridge.find("if (g_aot_emit_fn)");
+        CHECK(host_arm != std::string::npos, "4126: host arm present");
+        if (host_arm != std::string::npos) {
+            const auto win = bridge.substr(host_arm, 2200);
+            CHECK(win.find("/*count_emit_success=*/installed") != std::string::npos &&
+                      win.find("/*count_emit_success=*/true") == std::string::npos,
+                  "4126: host arm counts reemit success only on install");
+        }
+
+        // Post-store face: content latch clear so the batch reaches emit.
+        aura::compiler::hot_update_registry().note_ir_content_stored_for_native();
+        CHECK(!aura::compiler::hot_update_registry().ir_content_untrusted_for_native(),
+              "4126: stored latch is clear");
+        aura_hot_update_set_reemit_boundary_policy(0);
+        aura_set_aot_emit_region_mask(0);
+
+        // A: pre-mutate native installed; the batch emit returns true
+        // without replacing it (installed=false).
+        aura_register_fn_named("ac4126a", 4126, ac4126_scalar_a, 4, 1, 0);
+        const auto a_cl = aura_alloc_closure(4126);
+        CHECK(a_cl >= 0, "4126: A closure alloc");
+        aura_closure_set_name(a_cl, "ac4126a");
+        aura_closure_set_must_deopt(a_cl, 0);
+        aura_closure_set_env_gen(a_cl, aura_get_aot_live_env_frame_version());
+        std::int64_t args[1] = {1};
+        CHECK(aura_closure_call(a_cl, args, 1) == 4126, "4126: A warm call runs the native");
+        CHECK(g_ac4126_a_hits.load(std::memory_order_relaxed) == 1, "4126: A one warm hit");
+
+        // B: pre-mutate throwaway native so the closure exists before the
+        // batch; the emit replaces it with a new ScalarFn (installed=true).
+        aura_register_fn_named("ac4126b", 4127, ac4126_scalar_b_pre, 4, 1, 0);
+        const auto b_cl = aura_alloc_closure(4127);
+        CHECK(b_cl >= 0, "4126: B closure alloc");
+        aura_closure_set_name(b_cl, "ac4126b");
+        aura_closure_set_env_gen(b_cl, aura_get_aot_live_env_frame_version());
+        // Dirty batch: A MustDeopt over its pre-mutate native, B dirty with
+        // no fresh native.
+        aura_closure_set_must_deopt(a_cl, 1);
+        aura_closure_set_must_deopt(b_cl, 1);
+        CHECK(aura_closure_call(b_cl, args, 1) == 0,
+              "4126: B MustDeopt refuses the pre-mutate native");
+
+        aura::compiler::CompilerMetrics metrics{};
+        aura_set_aot_metrics(&metrics);
+        Emit4126Fixture fx;
+        ReemitFixture feed;
+        feed.candidates = {{"ac4126a", 1, false}, {"ac4126b", 1, false}};
+        aura_set_aot_emit_fn(&emit_fn_4126, &fx);
+        aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+        const auto epoch_before = read_aot_func_table_epoch();
+        const auto n = aura_reemit_aot_for_dirty(0);
+
+        // AC2: only B's install is a reemit success. A's metric-only true
+        // must not drive the on_reemit_pipeline_call coverage heal.
+        CHECK(n == 1, "4126 AC2: A metric-only true does not count as reemit success");
+        CHECK(metrics.aot_incremental_reemit_success_total.load(std::memory_order_relaxed) == 1,
+              "4126 AC2: success_total counts only the install");
+        CHECK(fx.a_metric_trues.load(std::memory_order_relaxed) == 1,
+              "4126: host emit face returned true for A exactly once");
+        // AC1/AC3: the commit ran for B, but the remount id list held only
+        // B's sid — A stays MustDeopt and refuses its pre-mutate native.
+        CHECK(read_aot_func_table_epoch() != epoch_before, "4126 AC3: B install committed");
+        CHECK(aura_closure_get_must_deopt(a_cl) == 1,
+              "4126 AC3: A stays MustDeopt (not in the remount id list)");
+        CHECK(aura_closure_call(a_cl, args, 1) == 0, "4126 AC3: A refuses the pre-mutate native");
+        CHECK(g_ac4126_a_hits.load(std::memory_order_relaxed) == 1,
+              "4126 AC3: A pre-mutate native not executed post-batch");
+        // AC3: B remounts OK — MustDeopt cleared, first call enters the
+        // freshly installed ScalarFn.
+        CHECK(aura_closure_get_must_deopt(b_cl) == 0, "4126 AC3: B remounted (MustDeopt clear)");
+        CHECK(aura_closure_call(b_cl, args, 1) == 4127, "4126 AC3: B call enters the new native");
+        CHECK(g_ac4126_b_hits.load(std::memory_order_relaxed) == 1,
+              "4126 AC3: B hit the post-install ScalarFn exactly once");
+
+        aura_free_closure(a_cl);
+        aura_free_closure(b_cl);
+        aura_set_reemit_candidate_fn(nullptr, nullptr);
+        aura_set_aot_emit_fn(nullptr, nullptr);
+        aura_set_aot_metrics(nullptr);
+        aura_hot_update_set_reemit_boundary_policy(0);
+        return true;
+    }
+
     // ── Main runner ────────────────────────────────────────────────
 
 } // namespace
@@ -1194,6 +1333,7 @@ int run_incremental_aot_closure_1480() {
     test_100_iter_stress();
     test_closure_bridge_refresh_pair_metric();
     test_4100_no_restamp_without_new_native();
+    test_4126_no_install_not_remount_id();
 
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();

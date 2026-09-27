@@ -7868,6 +7868,24 @@ def cmd_lint():
             "Issue #4125 apply/JIT densify-in-flight consult linter failed — run python3 scripts/check_apply_densify_inflight_4125.py"
         )
         return r
+    # Issue #4126: host emit true without a ScalarFn install must not enter
+    # the remount id list nor heal reemit success coverage (#4100 residual).
+    # Gate pins: note_reemit gates the reemit_stable_ids push on installed,
+    # the host arm passes count_emit_success=installed (mirroring the
+    # default-LLVM arm), the on_reemit_pipeline_call feed keeps success_count
+    # (no old key rename, no mid-struct metrics insert), the #4100
+    # native_installed commit/remap/remount ordering stays intact, the
+    # ac4126 adversarial A-no-install + B-install batch runs in the 1480
+    # runner before RUN_ALL_TESTS, and no docs/design/4126-* /
+    # tests/**/test_issue_4126* exists.
+    jri4126_script = ROOT / "scripts" / "check_jit_reemit_install_4126.py"
+    if not jri4126_script.exists():
+        fail(f"missing {jri4126_script}")
+        return 1
+    r = run([sys.executable, str(jri4126_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4126 JIT reemit install gate linter failed — run python3 scripts/check_jit_reemit_install_4126.py")
+        return r
     # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
     # composition-only — CI must pin densify_in_flight_for AND after
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
