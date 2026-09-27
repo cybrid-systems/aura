@@ -19,6 +19,10 @@
 //   AC13: deep nest unparse does not crash (depth cap / "...")
 //   AC14: null workspace → stable empty/error for :workspace
 //   AC15: cmake + coverage wiring
+//
+// Issue #4130: quoted empty list unparse — the nil sentinel (LiteralInt 0)
+// must render as (quote ()) in compact AND :pretty unparse, never (quote 0);
+// roundtrip table row pins AST stability, eval semantics untouched.
 
 #include "test_harness.hpp"
 
@@ -86,6 +90,12 @@ static bool has_angle_digit_fallback(std::string_view s) {
     return false;
 }
 
+// Issue #4130: the forbidden serialization — quoted nil rendered as the
+// number zero under quote. Compact and :pretty share one emitter.
+static bool has_quote_zero(std::string_view s) {
+    return s.find("(quote 0)") != std::string::npos;
+}
+
 static bool roundtrip_ok(CompilerService& cs, std::string_view src) {
     if (!set_code(cs, src))
         return false;
@@ -126,6 +136,7 @@ static constexpr RoundtripCase kRoundtripNoMutate[] = {
     {"(begin 1 2 3)", "begin"},
     {"(define y 0) (set! y 1)", "set!"},
     {"(quote (a b))", "quote"},
+    {"(quote ())", "quote empty list (#4130)"},
     {"(cons 1 2)", "cons (pair at runtime; source is call)"},
     // AC8 lambda dotted rest
     {"(lambda (a . rest) rest)", "lambda dotted"},
@@ -334,6 +345,71 @@ static void ac2966_4_source_cite() {
           "2966 AC4: no invent test_issue file");
 }
 
+// ── Issue #4130: quoted empty list renders (quote ()), never (quote 0) ──
+
+static void ac4130_1_pretty_unparse_empty_list() {
+    std::println("\n--- #4130 AC1: empty list unparse → (quote ()), never (quote 0) ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (f) (quote ()))"), "4130 AC1: set-code quoted empty list");
+    auto ws = workspace_source(cs);
+    auto pretty = eval_string(cs, "(current-source :workspace :pretty)");
+    CHECK(!ws.empty() && !pretty.empty(), "4130 AC1: both unparse modes produced source");
+    CHECK(!has_quote_zero(ws), "4130 AC1: compact unparse never (quote 0)");
+    CHECK(!has_quote_zero(pretty), "4130 AC1: pretty unparse never (quote 0)");
+    CHECK(ws.find("(quote ())") != std::string::npos,
+          "4130 AC1: compact unparse renders (quote ())");
+    CHECK(pretty.find("(quote ())") != std::string::npos,
+          "4130 AC1: pretty unparse renders (quote ())");
+}
+
+static void ac4130_2_call_site_roundtrip() {
+    std::println("\n--- #4130 AC2: quoted empty list call-site roundtrip ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (g lst) (if (null? lst) (quote ()) lst))"),
+          "4130 AC2: set-code call-site empty list");
+    auto ws = workspace_source(cs);
+    CHECK(!has_quote_zero(ws), "4130 AC2: call-site unparse never (quote 0)");
+    // Re-parse the unparse, unparse again → stable, still no (quote 0)
+    CHECK(set_code(cs, ws), "4130 AC2: re-parse unparse output");
+    auto again = workspace_source(cs);
+    CHECK(!has_quote_zero(again), "4130 AC2: second unparse never (quote 0)");
+    CHECK(again == ws, "4130 AC2: unparse stable across re-parse");
+}
+
+static void ac4130_3_eval_semantics_unchanged() {
+    std::println("\n--- #4130 AC3: eval semantics of quoted nil unchanged ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (f) (quote ()))"), "4130 AC3: set-code");
+    // Serialization fix only: (f) still evaluates to nil — observe via if/int.
+    auto r = cs.eval("(begin (eval-current) (if (null? (f)) 7 9))");
+    CHECK(r.has_value() && is_int(*r) && as_int(*r) == 7,
+          "4130 AC3: (null? (f)) true — nil eval semantics preserved");
+    auto ws = workspace_source(cs);
+    CHECK(!has_quote_zero(ws), "4130 AC3: post-eval unparse never (quote 0)");
+}
+
+static void ac4130_4_source_cite() {
+    std::println("\n--- #4130 AC4: source-cite + wiring + no design doc ---");
+    const auto unp = read_file("src/core/ast_unparse.ixx");
+    const auto t = read_file("tests/compiler/test_current_source_roundtrip.cpp");
+    const auto lint = read_file("scripts/check_empty_list_unparse_4130.py");
+    const auto build = read_file("build.py");
+    CHECK(unp.find("4130") != std::string::npos, "4130 AC4: unparse cites #4130");
+    CHECK(unp.find("nil sentinel") != std::string::npos,
+          "4130 AC4: nil-sentinel arm documented in unparse");
+    CHECK(t.find("ac4130_1_pretty_unparse_empty_list") != std::string::npos,
+          "4130 AC4: AC1 test present");
+    CHECK(t.find("quote empty list (#4130)") != std::string::npos,
+          "4130 AC4: roundtrip table row present");
+    CHECK(!lint.empty() && lint.find("4130") != std::string::npos, "4130 AC4: linter present");
+    CHECK(build.find("check_empty_list_unparse_4130") != std::string::npos,
+          "4130 AC4: build.py registration");
+    CHECK(read_file("docs/design/4130-empty-list-unparse.md").empty(),
+          "4130 AC4: no docs/design/4130-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4130.cpp").empty(),
+          "4130 AC4: no test_issue_4130 file per #81934");
+}
+
 static void ac_wiring() {
     std::println("\n--- #2921 AC15: source + cmake wiring ---");
     const auto self = read_file("tests/compiler/test_current_source_roundtrip.cpp");
@@ -365,6 +441,11 @@ int run_test_current_source_roundtrip() {
     ac2966_2_set_code_path_ok();
     ac2966_3_empty_set_code_fails();
     ac2966_4_source_cite();
+    std::println("\n=== Issue #4130: quoted empty list unparse (never (quote 0)) ===");
+    ac4130_1_pretty_unparse_empty_list();
+    ac4130_2_call_site_roundtrip();
+    ac4130_3_eval_semantics_unchanged();
+    ac4130_4_source_cite();
     std::println("\n=== #2921/#2966: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

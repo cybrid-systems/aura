@@ -7901,6 +7901,17 @@ def cmd_lint():
             "Issue #4127 lockless macro allow-latch linter failed — run python3 scripts/check_lockless_macro_allow_latch_4127.py"
         )
         return r
+    # Issue #4130: quoted empty list unparse — the nil sentinel (LiteralInt 0,
+    # parser add_literal(0)) renders as (quote ()) in every current-source
+    # mode (compact + :pretty), never (quote 0); eval semantics untouched.
+    elu4130_script = ROOT / "scripts" / "check_empty_list_unparse_4130.py"
+    if not elu4130_script.exists():
+        fail(f"missing {elu4130_script}")
+        return 1
+    r = run([sys.executable, str(elu4130_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4130 empty-list unparse linter failed — run python3 scripts/check_empty_list_unparse_4130.py")
+        return r
     # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
     # composition-only — CI must pin densify_in_flight_for AND after
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
