@@ -1597,6 +1597,27 @@ public:
         // emplace_back would leave children_[id] as a stale PCV
         // with leftover child ids — link_children then OOBs
         // parent_. Reset the existing slot instead.
+        // Issue #2959 fix: grow children_ via copy-then-swap. A plain
+        // emplace_back realloc frees the old buffer while lock-free get()
+        // readers may still be dereferencing it (they re-check the seqlock
+        // epoch only AFTER the column loads, so a free landing inside the
+        // assemble window is a use-after-free — the wandering
+        // test_flatast_atomic_lock_batch SIGSEGV faces, ASan-pinned in
+        // assemble_nodeview's children_[id] read). Handle copies take PCV
+        // refcounts (safe vs in-flight reader copies); the swap is a
+        // 3-word header exchange (children_ is never empty mid-growth);
+        // the old buffer moves to the graveyard — alive for in-flight
+        // readers, reclaimed at ~FlatAST / cap-erase under this exclusive
+        // section.
+        if (children_.size() == children_.capacity()) {
+            std::vector<PersistentChildVector<NodeId>> children_grown;
+            children_grown.reserve(children_.capacity() * 2 + 4);
+            children_grown.insert(children_grown.end(), children_.begin(), children_.end());
+            children_.swap(children_grown);
+            children_retired_.push_back(std::move(children_grown));
+            if (children_retired_.size() > kChildrenRetiredCap)
+                children_retired_.erase(children_retired_.begin());
+        }
         if (id < children_.size())
             children_[id] = PersistentChildVector<NodeId>{};
         else
@@ -1726,6 +1747,23 @@ public:
     // Heap std::vector (not pmr/arena): pmr::vector realloc was
     // leaving aliased PCV slots sharing one control block (#300).
     std::vector<PersistentChildVector<NodeId>> children_;
+    // Issue #2959 fix: graveyard for children_ buffers swapped out by
+    // restore_children_locked. Lock-free get() readers copy PCV handles
+    // out of the buffer without holding any lock (seqlock fast path);
+    // destroying the swapped-out buffer (and its PCV handles → Storage
+    // refcount drops) mid-copy raced those refcount ops — the deferred
+    // heap corruption behind the wandering test_flatast_atomic_lock_batch
+    // faces (rc=134/139 crash sites, #2443 AC1 dense-hits==0,
+    // #2439-family AC3 restores==0). Retired buffers stay alive until
+    // ~FlatAST, when the class lifetime contract (#2454) guarantees no
+    // readers remain. Carried by the move ctor/assign; copies start
+    // graveyard-empty (readers of the original are not readers of the
+    // copy).
+    std::vector<std::vector<PersistentChildVector<NodeId>>> children_retired_;
+    // Graveyard cap: the oldest retiree is destroyed only under a SoA
+    // exclusive section, orders of magnitude after any reader that
+    // sampled it can still be mid-assemble.
+    static constexpr std::size_t kChildrenRetiredCap = 32;
     // Issue #222: shared_mutex that guards structural mutations
     // (set_child / insert_child / remove_child). Acquired
     // exclusively via begin_structural_mutation() (the public
@@ -2727,6 +2765,22 @@ public:
     //   4. else → incremental dirty-node patch
     // Exclusive tag_arity_index_mtx_ for all map mutation.
     void ensure_tag_arity_index() noexcept {
+        // Issue #2959 fix: the lazy-build's column scans (is_dirty over the
+        // pmr dirty_ side-table, tag_[id]/children_[id].size() in
+        // tag_arity_index_insert_id) must exclude concurrent SoA column
+        // reallocators — add_node's reserve(), clear(), restore swap. The
+        // scans run under tag_arity_index_mtx_ only, which add_node never
+        // takes, so ASan flagged heap-use-after-free is_dirty ←
+        // ensure_tag_arity_index_unlocked racing add_node's dirty_.reserve()
+        // in the tag-arity member's concurrent reader/writer soak (3/3
+        // lanes). Shared SoA hold blocks exclusive reallocators for the
+        // scan; compact-internal rebuild paths that already run under a
+        // flatast exclusive section are protected by their caller. Lock
+        // order stays flatast → tag_arity everywhere; no path acquires
+        // them in reverse, and no caller enters this function holding
+        // flatast_mutex_ (query paths are lock-free; commit_atomic_batch
+        // holds structural only).
+        SoAReadGuard soa_read(this);
         // Fast path: shared probe — clean + built under shared lock.
         {
             std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get());
@@ -3168,6 +3222,7 @@ public:
         , float_val_(std::move(other.float_val_))
         , sym_id_(std::move(other.sym_id_))
         , children_(std::move(other.children_))
+        , children_retired_(std::move(other.children_retired_))
         , parent_(std::move(other.parent_))
         , incoming_parent_edges_(std::move(other.incoming_parent_edges_))
         , incoming_parent_index_dirty_(
@@ -3275,6 +3330,7 @@ public:
             float_val_ = std::move(other.float_val_);
             sym_id_ = std::move(other.sym_id_);
             children_ = std::move(other.children_);
+            children_retired_ = std::move(other.children_retired_);
             parent_ = std::move(other.parent_);
             incoming_parent_edges_ = std::move(other.incoming_parent_edges_);
             incoming_parent_index_dirty_.store(
@@ -3476,6 +3532,7 @@ public:
             float_val_ = other.float_val_;
             sym_id_ = other.sym_id_;
             children_ = other.children_;
+            children_retired_.clear();
             parent_ = other.parent_;
             incoming_parent_edges_ = other.incoming_parent_edges_;
             incoming_parent_index_dirty_.store(
@@ -5570,6 +5627,11 @@ public:
     // children_ (PCV COW); the snapshot is O(1) per node.
     // Returns std::pmr::vector to match children_'s allocator.
     std::vector<PersistentChildVector<NodeId>> snapshot_children() const {
+        // Issue #2959 fix: the copy reads the whole children_ buffer, so it
+        // must exclude SoA writers (restore_children swaps the buffer
+        // wholesale) — same reader discipline as get_soa_safe. Single-
+        // threaded callers pay one uncontended shared lock.
+        SoAReadGuard guard(this);
         return children_; // vector copy ctor; each PCV is shared_ptr copy
     }
 
@@ -5590,9 +5652,18 @@ public:
     // restore_children_locked() to avoid non-recursive deadlock.
     // generation_ is bumped once by StructuralMutationGuard dtor.
     void restore_children(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
+        // Issue #2959 fix: restore swaps the whole children_ buffer, so it
+        // must join the SoA writer discipline (Issue #3868) that add_node /
+        // clear follow: exclusive flatast_mutex_ + seqlock section. Holding
+        // only structural_mtx_ left lock-free get() readers sampling a
+        // stable even epoch straight across the buffer free — heap-UAF
+        // under ASan, torn views plain (the wandering batch faces).
+        // Canonical order: structural → SoA; restore_children_locked's
+        // helpers never call get(), so this is EDEADLK-free.
         StructuralMutationGuard guard(this);
         // Issue #2455: lock held for the restore critical section.
         contract_assert(static_cast<bool>(guard));
+        SoAWriteGuard soa(this);
         restore_children_locked(std::move(snapshot));
     }
 
@@ -5627,7 +5698,29 @@ public:
         if (snapshot.size() < children_.size()) {
             snapshot.resize(children_.size());
         }
-        children_ = std::move(snapshot);
+        // Issue #2959 fix: retire — never free — the old children_ buffer,
+        // and never publish an empty/shrunken children_ while doing it.
+        // Park the padded snapshot buffer in a fresh graveyard slot, then
+        // swap it with children_ in one O(1) header exchange: children_
+        // transitions old→new directly (torn lock-free reads yield a huge
+        // size, discarded by the seqlock retry — never a size-0 header,
+        // which surfaced as __GLIBCXX_ASSERTIONS 'Assertion __n < size'
+        // aborts in the batch reader threads). The old buffer + its PCV
+        // handles stay alive in the graveyard for in-flight readers; the
+        // SoAWriteGuard seqlock section (restore_children /
+        // abort_restore_dual_topology) makes followers retry against the
+        // swapped-in snapshot, and get_soa_safe readers block on the
+        // exclusive mutex.
+        children_retired_.push_back(std::move(snapshot));
+        children_retired_.back().swap(children_);
+        // Bound graveyard growth: destroy the oldest retiree only under the
+        // SoA exclusive section — get_soa_safe readers are blocked by it,
+        // and a fast-path reader sampled that many restores ago cannot
+        // still be mid-assemble (an assemble is a few column loads; a
+        // retiree here is superseded by kChildrenRetiredCap later
+        // restores).
+        if (children_retired_.size() > kChildrenRetiredCap)
+            children_retired_.erase(children_retired_.begin());
         dense_dirty_ = true; // Issue #3402: PCV snapshot is the source of truth
         if (post_size > pre_size)
             free_orphan_nodes_from(static_cast<NodeId>(pre_size));
@@ -5695,9 +5788,21 @@ public:
                                 std::vector<PersistentChildVector<NodeId>>&& children_snapshot,
                                 DirtySoaSnapshot&& dirty_soa_snapshot = {},
                                 MarkerProvenanceSnapshot&& markers = {}) {
+        // Issue #2959 fix: the children_ buffer swap + parent_/dirty/marker
+        // column restores must run under the SoA writer side (exclusive
+        // flatast_mutex_ + seqlock section) so lock-free get() readers retry
+        // and get_soa_safe blocks during the swap. The SoA section opens
+        // AFTER rollback_to_size: the rollback chain reads the AST via
+        // get() (mark_dirty_upward), whose get_soa_safe fallback would
+        // lock_shared the mutex this thread itself holds exclusively →
+        // EDEADLK (observed as std::system_error → terminate in the
+        // flatast batch). With the epoch still even during rollback, those
+        // internal reads behave exactly as pre-fix; the section covers the
+        // swap + rebuild + canary window.
         StructuralMutationGuard guard(this);
         contract_assert(static_cast<bool>(guard));
         const auto rolled = rollback_to_size(mutation_log_checkpoint);
+        SoAWriteGuard soa(this);
         restore_children_locked(std::move(children_snapshot));
         // Issue #3865: dirty SoA restored with the topology.
         restore_dirty_soa(std::move(dirty_soa_snapshot));
