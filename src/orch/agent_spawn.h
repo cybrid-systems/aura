@@ -186,6 +186,14 @@ inline constexpr int kRecvStealHandoffIssue = 4137;
 // Cross-Evaluator proxy shares mailbox with source — recv would dual-
 // consume. send/ask/reply stay allowed (liaison). No new query key.
 inline constexpr int kRecvProxyDeniedIssue = 4026;
+// Issue #4139: cross-Evaluator observe-only token join is NOT
+// reclaim-complete — an Ok result while the exported snapshot carries
+// source_must_wait_reclaimed leaves the source Evaluator owing the real
+// lifecycle close (ensure_reclaimed_cleanup / Scope sweep / join; mailbox
+// + quota + name all still held by the source). Observability only: the
+// handoff_join_via_token_source_pending_total counter bumps, ownership
+// never moves (no ownership-transfer saga, no process-global registry).
+inline constexpr int kJoinTokenSourcePendingIssue = 4139;
 // Issue #3566: mailbox BP note/decay isolation — named-scope hook must
 // not poison the process bucket or block quiet-tenant decay. Soft empty
 // / "-" stay process bucket. No new query key.
@@ -1063,6 +1071,15 @@ struct OrchModuleStats {
     // consumer reject). Soft/Off bump too (ownership typed reject).
     // Appended at struct END (#2906). Reuses query:orch-module-stats.
     std::atomic<std::uint64_t> recv_proxy_denied_total{0};
+    // Issue #4139: observe-only token join returned while the exported
+    // snapshot carried source_must_wait_reclaimed — the importer-visible
+    // result (Ok included) is NOT reclaim-complete; the source Evaluator
+    // still owes ensure_reclaimed_cleanup / Scope sweep / join (mailbox +
+    // quota + name stay held by the source). Bumps only when the pending
+    // flag is set — Soft/Off and the common pending=false path stay
+    // zero-cost (no atomic op). Appended at struct END (#2906). Reuses
+    // query:orch-module-stats.
+    std::atomic<std::uint64_t> handoff_join_via_token_source_pending_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -3494,6 +3511,20 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
 // observer vs C++ host handle waiter); the additive counter pair at
 // the end of OrchModuleStats is the observability surface per AC6.
 //
+// Issue #4139: observe-only means NOT reclaim-complete. A token join
+// that returns Ok (body exited) while the exported snapshot carried
+// source_must_wait_reclaimed / source_reclaimed_deferred leaves the
+// source Evaluator owing the real lifecycle close: reservation, mailbox
+// attach, and name-table slot are all still held by the SOURCE until it
+// runs ensure_reclaimed_cleanup (#3087) / Scope sweep (#3842/#4115) /
+// join. The importer-side belief "joined → done" is exactly the
+// closed-loop residual this issue observes: the helper now bumps
+// handoff_join_via_token_source_pending_total when a result carries the
+// pending-source snapshot so production hosts can alarm on the
+// belief-vs-owed gap. Documentation + observability only — ownership
+// never moves here (no ownership-transfer saga, no process-global
+// AgentRegistry; the ownership question is a product ask in #4139).
+//
 // Same shape as wait_reclaimed_body (#2924): read fiber pointer,
 // cooperative poll loop with host-thread sleep, deadline-driven
 // Timeout arm that preserves #2661 no-early-free (no source-side
@@ -3545,6 +3576,26 @@ handoff_source_gone(const std::shared_ptr<std::atomic<bool>>& live) noexcept {
         out.status = serve::JoinStatus::Invalid;
         return out;
     }
+    // Mirror source-side lifecycle flags from token (read-only observers
+    // set at export time). Importer sees what source has at export time
+    // (snapshot semantics — subsequent src-side writes are NOT reflected
+    // because the importer does not have the source handle). Issue #4139:
+    // mirrored BEFORE the source-gone gate so every post-validity result
+    // (including instant source-gone) carries the exported snapshot.
+    out.source_reclaimed_deferred = tok.source_reclaimed_deferred;
+    out.source_must_wait_reclaimed = tok.source_must_wait_reclaimed;
+
+    // Issue #4139: observe-only join returned while the source still owes
+    // reclaim cleanup (must_wait_reclaimed / deferred cleanup + mailbox +
+    // quota all still held by the source Evaluator). An Ok here is NOT
+    // reclaim-complete — the source side must still run
+    // ensure_reclaimed_cleanup (#3087) / Scope sweep (#3842/#4115) / join.
+    // One relaxed add only when the pending flag is set; Soft/Off and the
+    // common pending=false path stay zero-cost (no atomic op).
+    if (out.source_must_wait_reclaimed)
+        g_orch_module_stats.handoff_join_via_token_source_pending_total.fetch_add(
+            1, std::memory_order_relaxed);
+
     // Issue #4004: source-gone before any Fiber deref.
     if (handoff_source_gone(tok.source_live)) {
         out.status = serve::JoinStatus::Invalid;
@@ -3552,12 +3603,6 @@ handoff_source_gone(const std::shared_ptr<std::atomic<bool>>& live) noexcept {
         g_orch_module_stats.handoff_join_via_token_total.fetch_add(1, std::memory_order_relaxed);
         return out;
     }
-    // Mirror source-side lifecycle flags from token (read-only observers
-    // set at export time). Importer sees what source has at export time
-    // (snapshot semantics — subsequent src-side writes are NOT reflected
-    // because the importer does not have the source handle).
-    out.source_reclaimed_deferred = tok.source_reclaimed_deferred;
-    out.source_must_wait_reclaimed = tok.source_must_wait_reclaimed;
 
     g_orch_module_stats.handoff_join_via_token_total.fetch_add(1, std::memory_order_relaxed);
 

@@ -7579,6 +7579,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-4026", aura::orch::kRecvProxyDeniedIssue);
             insert_kv("issue-4026", aura::orch::kRecvProxyDeniedIssue);
             insert_kv("recv-proxy-denied-wired", 1);
+            // Issue #4139: observe-join source-pending counter (additive;
+            // append on existing query:orch-module-stats — no key rename,
+            // no new query:*).
+            insert_kv("handoff-join-via-token-source-pending-total",
+                      static_cast<std::int64_t>(os.handoff_join_via_token_source_pending_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-4139", aura::orch::kJoinTokenSourcePendingIssue);
+            insert_kv("issue-4139", aura::orch::kJoinTokenSourcePendingIssue);
+            insert_kv("handoff-join-source-pending-wired", 1);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
@@ -7670,6 +7679,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // reservation-held-by-source=#t under production so Agents cannot
     // confuse this with join_agent ownership. Cross-Eval stays an
     // explicit token pass; no plane merge (#3216), no registry.
+    // Issue #4139: observe-only join is NOT reclaim-complete — an
+    // ok/true status with source-must-wait-reclaimed=#t leaves the
+    // source Evaluator owing ensure_reclaimed_cleanup / Scope sweep /
+    // join (mailbox + quota still held by the source). Production
+    // observability: query:orch-module-stats exposes
+    // handoff-join-via-token-source-pending-total (bumped by the C++
+    // helper when the observe result carries a pending source snapshot;
+    // no key rename, no mid-struct insert).
     add("orch:join-via-token",
         [&ev, build_orch_hash, orch_keyword_key, add_handoff_token_present,
          add_handoff_observation_only](std::span<const EvalValue> a) -> EvalValue {

@@ -8394,6 +8394,31 @@ def cmd_lint():
             "Issue #4138 agent-join Scope compact linter failed - run python3 scripts/check_agent_join_scope_compact_4138.py"
         )
         return r
+    # Issue #4139 (orch): cross-Evaluator observe-only token join — hosts
+    # can believe reclaim closed when the source still owes cleanup.
+    # join_via_handoff / orch:join-via-token never take ownership, never
+    # release the source reservation, never detach the source mailbox, so
+    # an importer-visible Ok while the exported snapshot carries
+    # source_must_wait_reclaimed leaves the source Evaluator owing
+    # ensure_reclaimed_cleanup / Scope sweep / join. Gate pins: the
+    # snapshot mirror precedes the #4004 source-gone gate, the
+    # handoff_join_via_token_source_pending_total counter is appended at
+    # OrchModuleStats struct END (no mid-struct insert / no key rename)
+    # and guarded by the pending flag (Soft/Off + pending=false zero-cost),
+    # join_via_handoff stays a read-only observer (no ensure / release /
+    # detach / abandon calls), the Aura stats hash exposes the additive
+    # rows, no ownership-moving saga and no process-global AgentRegistry,
+    # and the runtime ACs live in tests/orch/test_join_drain_reclaim.cpp
+    # (no test_issue_4139.cpp per #81934, no docs/design/4139-* per
+    # #1655, no new query key).
+    jto4139_script = ROOT / "scripts" / "check_join_token_observe_4139.py"
+    if not jto4139_script.exists():
+        fail(f"missing {jto4139_script}")
+        return 1
+    r = run([sys.executable, str(jto4139_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4139 join-token observe-only linter failed - run python3 scripts/check_join_token_observe_4139.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

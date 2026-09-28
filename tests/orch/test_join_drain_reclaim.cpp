@@ -4226,6 +4226,324 @@ static void ac3999_2_source_cite() {
     CHECK(read_file("docs/design/3999-cancelled-reclaimed.md").empty(), "3999: no docs/design");
 }
 
+// ── Issue #4139: cross-Evaluator observe-only token join — belief vs
+// source-owed cleanup. join_via_handoff / orch:join-via-token never take
+// ownership, never release the source reservation, never detach the
+// source mailbox, so an importer-visible Ok is NOT reclaim-complete: the
+// source Evaluator still owes ensure_reclaimed_cleanup (#3087) / Scope
+// sweep (#3842/#4115) / join while must_wait_reclaimed /
+// reclaimed_deferred_cleanup + mailbox + quota stay held by the source.
+// Observability + documentation only (no ownership-transfer saga, no
+// process-global AgentRegistry): handoff_join_via_token_source_pending_total
+// bumps when an observe result carries a pending-source snapshot; Soft /
+// Off and the pending=false path stay zero-cost. Tests extend this file
+// per #81934; no docs/design/4139-* per #1655.
+
+// ac4139_1: cross-Evaluator soak — spawn on EvA, production join Timeout
+// arms must_wait + deferred cleanup, export mirrors the flags, import on
+// EvB, body exits, observe join returns the Ok face — the source handle
+// STILL owes cleanup (mailbox + reservation + must_wait) until EvA runs
+// ensure_reclaimed_cleanup.
+static void ac4139_1_cross_evaluator_soak_observe_not_reclaim_complete() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    using aura::orch::agent_export_handoff;
+    using aura::orch::agent_import_handoff;
+    using aura::orch::AgentSpec;
+    using aura::orch::join_via_handoff;
+    using aura::orch::spawn_agent_with_mailbox;
+    std::println("\n--- #4139 AC1: observe join Ok while source still owes cleanup ---");
+    // Production posture per #3433 AC1 (the must_wait arm needs production;
+    // force_wal reads sandbox mode at defaults-call time — pin WAL on).
+    const char* prev_sb_4139 = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_4139_s = prev_sb_4139 ? prev_sb_4139 : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    std::filesystem::create_directories("build/test-wal-4139");
+    const bool wal_on_4139 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_4139)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-4139"), nullptr, 0);
+
+    aura::serve::Scheduler sched(1);
+    SchedRunner runner(sched);
+    std::atomic<bool> stop_4139{false};
+    AgentSpec spec;
+    spec.name = "src-4139-ac1";
+    // #3433 fixture pattern: the body IGNORES the join drain cancel so it
+    // stays live through the production join (Timeout → defer + auto-wait
+    // arm) — a cooperative body would exit mid-join and the auto-wait
+    // would complete the Done-path cleanup before the AC pins the owed
+    // state. Exit is driven solely by the stop flag after the join.
+    spec.body = [&] {
+        while (!stop_4139.load(std::memory_order_acquire))
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    };
+    auto src = spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(src.ok && src.fiber && src.mailbox, "4139 AC1: src spawn ok");
+    const auto reserved_4139 = src.reserved_memory_bytes;
+    CHECK(reserved_4139 > 0, "4139 AC1: source reservation recorded");
+
+    // Production join Timeout → Reclaimed-defer + must_wait (#3433 arm).
+    const auto def0_4139 =
+        g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(std::memory_order_relaxed);
+    const auto jr = join_agent(src, JoinPolicy{.primary_ms = 50, .drain_ms = 0});
+    CHECK(jr.status == JoinStatus::Reclaimed, "4139 AC1: Timeout + live body → derived Reclaimed");
+    CHECK(src.reclaimed_deferred_cleanup, "4139 AC1: deferred cleanup pending on source");
+    CHECK(src.mailbox != nullptr, "4139 AC1: source mailbox still attached");
+    CHECK(src.reserved_memory_bytes == reserved_4139, "4139 AC1: source reservation still held");
+    if (aura::orch::production_reclaimed_must_wait())
+        CHECK(src.must_wait_reclaimed, "4139 AC1: production must_wait armed on source");
+    CHECK(g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(
+              std::memory_order_relaxed) == def0_4139 + 1,
+          "4139 AC1: deferred-cleanup counter bumps");
+
+    // Export on EvA mirrors the owed-cleanup flags (#3148 snapshot).
+    auto tok = agent_export_handoff(src);
+    CHECK(tok.mailbox != nullptr && tok.fiber != nullptr, "4139 AC1: token has live mailbox+fiber");
+    CHECK(tok.source_must_wait_reclaimed, "4139 AC1: token mirrors must_wait");
+    CHECK(tok.source_reclaimed_deferred, "4139 AC1: token mirrors deferred cleanup");
+    CHECK(tok.source_live && tok.source_live->load(std::memory_order_acquire),
+          "4139 AC1: source_live armed");
+    auto tok_obs = tok; // snapshot copy for the EvB observe join
+
+    // Import on EvB — proxy shares the mailbox, owns nothing.
+    CompilerService cs2;
+    auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
+    CHECK(proxy.ok && proxy.import_proxy, "4139 AC1: EvB proxy stamped");
+    CHECK(proxy.mailbox.get() == src.mailbox.get(), "4139 AC1: proxy shares source mailbox");
+    CHECK(proxy.reserved_memory_bytes == 0, "4139 AC1: proxy owns no reservation");
+
+    // Let the body exit; the SOURCE still owns the reclaim — the EvB
+    // observer can never reclaim for it.
+    stop_4139.store(true, std::memory_order_release);
+    for (int i = 0; i < 400 && src.fiber && !src.fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(src.fiber && src.fiber->is_done(), "4139 AC1: body exited on source");
+
+    // Observe join on EvB: body done but NOT reclaimed by the importer —
+    // the Ok face while the source still owes the cleanup.
+    const auto pend0_4139 = g_orch_module_stats.handoff_join_via_token_source_pending_total.load(
+        std::memory_order_relaxed);
+    aura::orch::JoinViaTokenPolicy jp;
+    jp.timeout_ms = 2000;
+    const auto res = join_via_handoff(tok_obs, jp);
+    CHECK(res.status == JoinStatus::Ok || res.status == JoinStatus::Reclaimed,
+          "4139 AC1: observe join sees the exited body (Ok/Reclaimed face)");
+    CHECK(res.observation_only && res.reservation_held_by_source,
+          "4139 AC1: result carries the observe-only contract");
+    CHECK(res.source_must_wait_reclaimed, "4139 AC1: result mirrors the pending-source snapshot");
+    CHECK(res.source_reclaimed_deferred, "4139 AC1: result mirrors deferred cleanup");
+    CHECK(g_orch_module_stats.handoff_join_via_token_source_pending_total.load(
+              std::memory_order_relaxed) == pend0_4139 + 1,
+          "4139 AC1: source-pending counter bumps on the pending observe");
+
+    // THE GAP: the importer got a terminal result — the source STILL owes
+    // the lifecycle close (closed-loop belief vs owed cleanup).
+    CHECK(src.reclaimed_deferred_cleanup,
+          "4139 AC1: source STILL owes deferred cleanup after the observe Ok");
+    CHECK(src.mailbox != nullptr, "4139 AC1: source mailbox still held after the observe Ok");
+    CHECK(src.reserved_memory_bytes == reserved_4139,
+          "4139 AC1: source reservation still held after the observe Ok");
+    if (aura::orch::production_reclaimed_must_wait())
+        CHECK(src.must_wait_reclaimed, "4139 AC1: source must_wait survives the observe Ok");
+
+    // EvA closes the loop: ensure_reclaimed_cleanup is the SSOT second
+    // wait — Ok completes the deferred cleanup (mailbox detach + quota
+    // release + flag clear).
+    const auto wr = ensure_reclaimed_cleanup(src);
+    CHECK(wr.status == JoinStatus::Ok, "4139 AC1: EvA ensure completes the cleanup");
+    CHECK(wr.cleanup_completed, "4139 AC1: cleanup completed by the ensure Ok path");
+    CHECK(!src.must_wait_reclaimed, "4139 AC1: must_wait cleared by ensure (#3110)");
+    CHECK(!src.reclaimed_deferred_cleanup, "4139 AC1: deferred cleanup completed");
+    CHECK(src.reserved_memory_bytes == 0, "4139 AC1: reservation released by ensure");
+
+    apply_dev_audit_defaults();
+    if (!wal_on_4139)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    if (!prev_sb_4139_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_4139_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+// ac4139_2: source Scheduler destroy invalidates the observe join
+// (#4004 source_live) — Invalid + source_gone with NO Fiber deref (no
+// UAF on the dangling token fiber pointer), observe-only contract
+// preserved on the invalid result, and a pending=false token does not
+// bump the source-pending counter (zero-cost arm).
+static void ac4139_2_source_sched_destroy_invalidates_observe_join() {
+    using aura::orch::agent_export_handoff;
+    using aura::orch::agent_import_handoff;
+    using aura::orch::AgentSpec;
+    using aura::orch::join_via_handoff;
+    using aura::orch::spawn_agent_with_mailbox;
+    std::println("\n--- #4139 AC2: source Scheduler destroy → observe join Invalid, no UAF ---");
+    apply_dev_audit_defaults();
+    std::shared_ptr<std::atomic<bool>> live_4139;
+    aura::orch::HandoffToken tok_keep;
+    {
+        aura::serve::Scheduler sched_a(1);
+        SchedRunner runner_a(sched_a);
+        std::atomic<bool> stop_4139b{false};
+        AgentSpec spec;
+        spec.name = "src-4139-ac2";
+        spec.body = [&] {
+            while (!stop_4139b.load(std::memory_order_acquire)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+        auto src = spawn_agent_with_mailbox(sched_a, std::move(spec));
+        CHECK(src.ok && src.fiber, "4139 AC2: src spawn ok");
+        auto tok = agent_export_handoff(src);
+        CHECK(tok.source_live && tok.source_live->load(std::memory_order_acquire),
+              "4139 AC2: source_live armed at export");
+        tok_keep = tok; // snapshot copy survives the source Scheduler scope
+        live_4139 = tok.source_live;
+        // Cross-Evaluator import on EvB before the destroy (proxy watch).
+        CompilerService cs2;
+        auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched_a);
+        CHECK(proxy.ok && proxy.import_proxy, "4139 AC2: EvB proxy stamped");
+        // Wind the source down cleanly, then destroy the source Scheduler.
+        stop_4139b.store(true, std::memory_order_release);
+        (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+    } // ~Scheduler stores false into source_live (#4004)
+    CHECK(live_4139 && !live_4139->load(std::memory_order_acquire),
+          "4139 AC2: source_live false after ~Scheduler");
+    const auto pend0_4139b = g_orch_module_stats.handoff_join_via_token_source_pending_total.load(
+        std::memory_order_relaxed);
+    aura::orch::JoinViaTokenPolicy jp;
+    jp.timeout_ms = 200;
+    const auto res = join_via_handoff(tok_keep, jp); // fiber dangles — must NOT deref
+    CHECK(res.status == JoinStatus::Invalid, "4139 AC2: observe join Invalid (source gone)");
+    CHECK(res.source_gone, "4139 AC2: source_gone typed on the result");
+    CHECK(res.observation_only && res.reservation_held_by_source,
+          "4139 AC2: observe-only contract survives the invalid path");
+    CHECK(g_orch_module_stats.handoff_join_via_token_source_pending_total.load(
+              std::memory_order_relaxed) == pend0_4139b,
+          "4139 AC2: pending=false token does not bump the source-pending counter");
+}
+
+// ac4139_3: proxy recv gate holds on the cross-Evaluator face —
+// agent_recv on the EvB proxy stays recv-proxy-denied (#4026 typed
+// deny, no consume) while the liaison send/ask faces stay Ok and the
+// source still owns the shared queue.
+static void ac4139_3_proxy_recv_denied_send_ask_ok() {
+    using aura::orch::agent_ask;
+    using aura::orch::agent_export_handoff;
+    using aura::orch::agent_import_handoff;
+    using aura::orch::agent_recv;
+    using aura::orch::agent_recv_result;
+    using aura::orch::agent_send;
+    using aura::orch::AgentSpec;
+    using aura::orch::join_via_handoff;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::mf_mailbox::MailMessage;
+    using aura::serve::mf_mailbox::PushStatus;
+    std::println("\n--- #4139 AC3: proxy recv denied; send/ask liaison stays Ok ---");
+    apply_dev_audit_defaults();
+    aura::serve::Scheduler sched(1);
+    AgentSpec spec;
+    spec.name = "src-4139-ac3";
+    spec.body = [] { /* idle: liaison face only */ };
+    auto src = spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(src.ok && src.mailbox, "4139 AC3: src spawn ok");
+    auto tok = agent_export_handoff(src);
+    auto tok_obs = tok;
+    CompilerService cs2;
+    auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
+    CHECK(proxy.ok && proxy.import_proxy, "4139 AC3: EvB proxy stamped");
+    CHECK(proxy.mailbox.get() == src.mailbox.get(), "4139 AC3: shared mailbox");
+
+    // Seed via the source send face.
+    MailMessage seeded;
+    seeded.payload = "4139-liaison-seed";
+    CHECK(agent_send(src, std::move(seeded)) == PushStatus::Ok, "4139 AC3: source send Ok");
+
+    // Proxy recv → typed deny, no consume, counter bumps (#4026 intact).
+    const auto denied0_4139 =
+        g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed);
+    const auto rec = agent_recv_result(proxy, /*wait=*/false, /*timeout_ms=*/0);
+    CHECK(std::string_view(rec.status) == "recv-proxy-denied", "4139 AC3: proxy recv typed deny");
+    CHECK(proxy.last_recv_proxy_denied, "4139 AC3: deny flag rides the proxy handle");
+    CHECK(g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed) ==
+              denied0_4139 + 1,
+          "4139 AC3: recv_proxy_denied_total +1");
+
+    // Liaison send through the proxy stays Ok.
+    MailMessage via_proxy;
+    via_proxy.payload = "4139-from-proxy";
+    CHECK(agent_send(proxy, std::move(via_proxy)) == PushStatus::Ok,
+          "4139 AC3: proxy send still Ok (liaison)");
+
+    // Ask through the proxy target — the ask send face routes via
+    // agent_send (allowed), the reply wait expires on the idle body
+    // ("timeout"), and the proxy recv deny never surfaces on the ask.
+    const auto ar = agent_ask(proxy, "4139-ping", /*timeout_ms=*/40);
+    CHECK(ar.status == "timeout", "4139 AC3: ask send-face lands, reply wait expires (not denied)");
+
+    // Source still owns the queue: seed + proxy liaison + ask payload in
+    // order — the deny consumed nothing.
+    const auto m1 = agent_recv(src, /*wait=*/false, /*timeout_ms=*/0);
+    const auto m2 = agent_recv(src, /*wait=*/false, /*timeout_ms=*/0);
+    const auto m3 = agent_recv(src, /*wait=*/false, /*timeout_ms=*/0);
+    CHECK(m1.has_value() && m1->payload == "4139-liaison-seed", "4139 AC3: seeded msg intact");
+    CHECK(m2.has_value() && m2->payload == "4139-from-proxy", "4139 AC3: proxy liaison msg");
+    CHECK(m3.has_value() && m3->payload.find("4139-ping") != std::string::npos,
+          "4139 AC3: ask payload reached the shared mailbox");
+
+    // Observe join on the same token still observes (no ownership moved).
+    aura::orch::JoinViaTokenPolicy jp;
+    jp.timeout_ms = 100;
+    const auto res = join_via_handoff(tok_obs, jp);
+    CHECK(res.observation_only && res.reservation_held_by_source,
+          "4139 AC3: observe-only contract preserved");
+    (void)join_agent(src, JoinPolicy{.primary_ms = 200, .drain_ms = 50});
+}
+
+// ac4139_4: source-cite + wiring — agent_spawn.h cites #4139 with the
+// counter at struct END + the NOT-reclaim-complete doc; the Aura prim
+// exposes the additive hash rows; build.py + the root check allowlist
+// wire the gate linter; no invented files / docs / query key / registry.
+static void ac4139_4_source_cite_linter_no_invent() {
+    std::println("\n--- #4139 AC4: source-cite + linter wiring + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto build_src = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    const auto test_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+    CHECK(spawn.find("Issue #4139") != std::string::npos, "4139 AC4: agent_spawn.h cites #4139");
+    const auto recv_pos = spawn.find("recv_proxy_denied_total{0};");
+    const auto pend_pos = spawn.find("handoff_join_via_token_source_pending_total{0};");
+    CHECK(recv_pos != std::string::npos && pend_pos != std::string::npos && recv_pos < pend_pos,
+          "4139 AC4: counter appended at struct END (after the #4026 counter)");
+    CHECK(spawn.find("NOT reclaim-complete") != std::string::npos,
+          "4139 AC4: observe-not-reclaim-complete doc present");
+    CHECK(spawn.find("kJoinTokenSourcePendingIssue = 4139") != std::string::npos,
+          "4139 AC4: issue stamp constant");
+    CHECK(aura::orch::kJoinTokenSourcePendingIssue == 4139, "4139 AC4: stamp value");
+    CHECK(prim.find("handoff-join-via-token-source-pending-total") != std::string::npos,
+          "4139 AC4: Aura stats hash exposes the counter");
+    CHECK(prim.find("schema-4139") != std::string::npos, "4139 AC4: schema-4139 wired");
+    CHECK(build_src.find("check_join_token_observe_4139") != std::string::npos,
+          "4139 AC4: linter registered in build.py");
+    CHECK(allow.find("check_join_token_observe_4139.py") != std::string::npos,
+          "4139 AC4: linter on the root check allowlist");
+    CHECK(test_self.find("#4139") != std::string::npos, "4139 AC4: test file cites #4139");
+    CHECK(read_file("tests/orch/test_issue_4139.cpp").empty(),
+          "4139 AC4: no test_issue_4139.cpp (per #81934)");
+    CHECK(read_file("docs/design/4139-join-token-observe.md").empty(),
+          "4139 AC4: no docs/design/4139-* (per #1655)");
+    CHECK(spawn.find("query:4139") == std::string::npos, "4139 AC4: no new query key");
+    CHECK(spawn.find("class AgentRegistry") == std::string::npos &&
+              spawn.find("struct AgentRegistry") == std::string::npos,
+          "4139 AC4: no process-global AgentRegistry");
+}
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -9183,6 +9501,12 @@ int run_test_join_drain_reclaim() {
     ac4138_3_must_wait_survives_compact();
     ac4138_4_soft_append_only();
     ac4138_5_source_cite_linter_no_invent();
+
+    std::println("\n=== Issue #4139: observe-only token join — source owes cleanup ===");
+    ac4139_1_cross_evaluator_soak_observe_not_reclaim_complete();
+    ac4139_2_source_sched_destroy_invalidates_observe_join();
+    ac4139_3_proxy_recv_denied_send_ask_ok();
+    ac4139_4_source_cite_linter_no_invent();
 
     std::println("\n=== Issue #3905: orphan hard-reap keeps live Fiber ===");
     ac3905_1_reap_keeps_pending_handle_fiber();
