@@ -190,3 +190,4 @@ check_join_token_observe_4139.py
 check_densify_health_headroom_4140.py
 check_r7rs_string_compare_4175.py
 check_capability_effect_headroom_4141.py
+check_wal_miss_refuse_next_4142.py

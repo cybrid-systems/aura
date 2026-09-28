@@ -6702,6 +6702,27 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 // already loaded above. Still observe-only.
                 nin.typed_outcome = static_cast<std::uint8_t>(typed_outcome);
                 nin.last_se_denied = last_se_denied != 0;
+                // Issue #4142: refuse + append-miss faces feed the fold.
+                // Production/Full only — the leading (A || B) && guard
+                // short-circuits so Soft / WAL-off never reaches the
+                // forensic join (zero-cost ring-only contract kept).
+                // Sources, in order: (a) the newest same-mid row is the
+                // #3838 compensating overflow-refuse PostureObserve
+                // (denied=false — the #4064 deny arm never sees it) or a
+                // #3879 mutation_wal_append_miss row reached through the
+                // #3149/#3498/#3970 ring/WAL/overflow fills; (b) the
+                // #4118/#3877 durable join helper; (c) post-wrap all-miss
+                // (typed + se + window) while #3838 refuse counters are
+                // live — the thinning this issue closes. No new query
+                // key: suggested-next stays the single observable.
+                nin.wal_miss_refuse_evidence =
+                    (production_defaults_active() || get_strategy() == AuditStrategy::Full) &&
+                    (last_se_reason_str == "mutation_wal_append_miss" ||
+                     last_se_reason_str == "overflow-refuse" ||
+                     ::aura::core::security_event::forensic_mid_has_wal_append_miss(join_mid) ||
+                     (se_mid_miss != 0 && typed_miss != 0 && wal_lookup_window_miss != 0 &&
+                      ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+                          std::memory_order_relaxed) > 0));
                 const auto next = decide_evolution_suggested_next(nin);
                 insert_kv_str("suggested-next", evolution_suggested_next_cstr(next));
                 insert_kv("suggested-next-code", static_cast<std::int64_t>(next));

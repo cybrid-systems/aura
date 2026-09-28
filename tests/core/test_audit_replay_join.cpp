@@ -41,6 +41,11 @@
 //        is mutation_wal_append_miss and wal-lookup-window-miss=1.
 //   AC14 (#3734): check_and_record_effect fail-closed before body unchanged.
 //   AC15 (#3734): Soft/WAL-off emit miss does not push overflow.
+//   AC23 (#4142): WAL append-fail / overflow-refuse thinning — the
+//        #3838 compensating SE is denied=false and a post-wrap mid has
+//        no row at all, so suggested-next must fold inspect-deny from
+//        miss/refuse evidence alone. Soft + mid=0 contracts unchanged;
+//        fail-closed refuse + compensating SE kept; no new query key.
 
 #include "test_harness.hpp"
 
@@ -1476,6 +1481,226 @@ static void ac22_grant_node_join_after_wrap_4135() {
     reset_all();
 }
 
+// ── AC23 (#4142): long-run WAL append-fail + overflow-refuse thins the
+// mid forensic payload — the ring observe face is a denied=false
+// PostureObserve ("overflow-refuse", #3838) and a post-wrap mid may have
+// no row at all, so the #4064 deny arm never fires. suggested-next must
+// fold inspect-deny from miss/refuse evidence alone (never "ok"); Soft
+// and mid=0 contracts unchanged; fail-closed refuse kept; no new query
+// key (suggested-next stays the single observable).
+static void ac23_wal_miss_refuse_next_4142() {
+    std::println("\n--- #4142 AC23: miss/refuse-only evidence folds inspect-deny ---");
+    reset_all();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    const auto next_of = [&](std::uint64_t mid) -> std::pair<std::int64_t, std::string> {
+        auto code = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" " +
+                            std::to_string(mid) + ") \"suggested-next-code\")");
+        auto name = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" " +
+                            std::to_string(mid) + ") \"suggested-next\")");
+        std::string s;
+        if (name && is_string(*name)) {
+            auto heap = ev.string_heap();
+            const auto sidx = as_string_idx(*name);
+            if (sidx < heap.size())
+                s = heap[sidx];
+        }
+        return {code && is_int(*code) ? as_int(*code) : -1, s};
+    };
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::WalOverflowRecord;
+
+    // AC1: fresh refuse-only mid — the #3838 compensating PostureObserve
+    // is denied=false, so the #4064 deny arm never sees it. Before #4142
+    // the fold reached "ok"; now it must say inspect-deny (code 7).
+    append_security_event(ring, SecurityEventKind::PostureObserve,
+                          /*tenant=*/42, /*mutation_id=*/4142001, /*epoch=*/7,
+                          aura::compiler::security::kEffectMutate, "test:4142", "overflow-refuse",
+                          /*denied=*/false, /*fiber=*/0);
+    {
+        const auto [code, name] = next_of(4142001);
+        CHECK(code == 7 && name == "inspect-deny",
+              "4142 AC1: refuse-only mid folds suggested-next=inspect-deny");
+    }
+
+    // AC2: fresh append-miss mid (denied=true EffectDeny) — the #4064
+    // arm already covers it; pin the face plus the #4118 join + the
+    // security-audit mutation-id filter so the refuse arm never
+    // regresses the miss arm.
+    append_security_event(ring, SecurityEventKind::EffectDeny,
+                          /*tenant=*/42, /*mutation_id=*/4142002, /*epoch=*/7,
+                          aura::compiler::security::kEffectMutate, "test:4142",
+                          "mutation_wal_append_miss", /*denied=*/true, /*fiber=*/0);
+    CHECK(aura::core::security_event::forensic_mid_has_wal_append_miss(4142002),
+          "4142 AC2: forensic_mid_has_wal_append_miss on the ring miss row");
+    {
+        const auto lines = query_audit_lines(
+            cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4142002)");
+        bool miss_row = false;
+        for (const auto& ln : lines)
+            if (ln.find("mutation_id=4142002") != std::string::npos &&
+                ln.find("reason=\"mutation_wal_append_miss\"") != std::string::npos)
+                miss_row = true;
+        CHECK(miss_row, "4142 AC2: security-audit mutation-id filter shows the miss row");
+        const auto [code, name] = next_of(4142002);
+        CHECK(code == 7 && name == "inspect-deny",
+              "4142 AC2: append-miss mid folds suggested-next=inspect-deny");
+    }
+
+    // AC3: fill the overflow ring to capacity under fail-closed — the
+    // #3838 wrap-refuse bumps the counter, older overflow mids are
+    // preserved, and the refused new mid keeps ONLY the compensating SE
+    // (ring observe ≠ full WAL row — the thinning).
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    // #4018: under the Restricted hard face the tenant-filtered queries
+    // authorize against the evaluator tenant (ac20 phase-2 recipe).
+    ev.set_capability_tenant_id(42);
+    for (std::size_t i = 0; i < aura::core::security_event_wal::kWalOverflowRingCapacity; ++i) {
+        WalOverflowRecord ovr{};
+        ovr.mid = 4142030 + static_cast<std::uint64_t>(i);
+        ovr.tenant_id = 42;
+        ovr.epoch = 7;
+        ovr.op = "test:4142";
+        ovr.reason = "4142-fill";
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_push(ovr),
+              "4142 AC3: overflow fill push accepted");
+    }
+    CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
+          "4142 AC3: overflow ring at capacity");
+    WalOverflowRecord refused{};
+    refused.mid = 4142999;
+    refused.tenant_id = 42;
+    refused.epoch = 7;
+    refused.op = "test:4142";
+    refused.reason = "4142-refused";
+    const auto refuse_before =
+        aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+            std::memory_order_relaxed);
+    CHECK(!aura::core::security_event_wal::wal_overflow_ring_push(refused),
+          "4142 AC3: fail-closed refuse declines the overwrite");
+    CHECK(aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+              std::memory_order_relaxed) == refuse_before + 1,
+          "4142 AC3: wrap-refuse counter bumped");
+    CHECK(aura::core::security_event_wal::wal_overflow_find_by_mid(4142030) != nullptr,
+          "4142 AC3: older overflow mid preserved (no overwrite)");
+    CHECK(aura::core::security_event_wal::wal_overflow_find_by_mid(4142999) == nullptr,
+          "4142 AC3: refused mid stored nowhere but the SE ring");
+    {
+        bool saw_refuse_se = false;
+        for (const auto& e : ring.ring)
+            if (e.mutation_id == 4142999 && std::string_view(e.reason) == "overflow-refuse")
+                saw_refuse_se = true;
+        CHECK(saw_refuse_se, "4142 AC3: compensating PostureObserve joins the SE ring");
+        const auto lines = query_audit_lines(
+            cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4142999)");
+        bool thin = false;
+        for (const auto& ln : lines)
+            if (ln.find("mutation_id=4142999") != std::string::npos &&
+                ln.find("reason=\"overflow-refuse\"") != std::string::npos)
+                thin = true;
+        CHECK(thin, "4142 AC3: security-audit exposes the refuse row (ring observe)");
+        const auto [code, name] = next_of(4142999);
+        CHECK(code == 7 && name == "inspect-deny",
+              "4142 AC3: refused mid folds suggested-next=inspect-deny");
+    }
+
+    // AC4: SE ring wrap past the refuse mid with no WAL persist — every
+    // mid-scoped face misses while the refuse counter is live. The fold
+    // must not report the false-green "ok" (suggested-next stays
+    // inspect-deny off the all-miss arm).
+    const auto dir4142 = fresh_wal_dir_3603("ac23-4142");
+    CHECK(ev.enable_security_event_wal(dir4142.string()), "4142 AC4: SE WAL enabled");
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_security_event(ring, SecurityEventKind::EffectDeny,
+                              /*tenant=*/42, /*mutation_id=*/4143000 + i, /*epoch=*/7,
+                              aura::compiler::security::kEffectMutate, "test:4142-wrap", "wrap",
+                              /*denied=*/true, /*fiber=*/0);
+    {
+        std::size_t hits = 0;
+        for (const auto& e : ring.ring)
+            if (e.mutation_id == 4142999)
+                ++hits;
+        CHECK(hits == 0, "4142 AC4: refuse mid wrapped out of the SE ring");
+        const auto [code, name] = next_of(4142999);
+        CHECK(code == 7 && name == "inspect-deny",
+              "4142 AC4: post-wrap all-miss + live refuse counter stays inspect-deny");
+        auto tmiss = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" "
+                             "4142999) \"typed-trail-miss\")");
+        auto smiss = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" "
+                             "4142999) \"se-mid-miss\")");
+        CHECK(tmiss && is_int(*tmiss) && as_int(*tmiss) == 1,
+              "4142 AC4: typed-trail-miss=1 on the wrapped mid");
+        CHECK(smiss && is_int(*smiss) && as_int(*smiss) == 1,
+              "4142 AC4: se-mid-miss=1 on the wrapped mid");
+    }
+
+    // AC5: Soft + mid=0 contracts — Soft stays soft-observe with zero
+    // extra overflow push; mid=0 production stays none (never invent
+    // trail Success; the mid=0 refuse face is mid-fallback-refused).
+    // Pure-fold pins: the bit alone yields InspectDeny; without it an
+    // all-green fold stays Ok; mid=0 wins even with the bit set.
+    ev.disable_security_event_wal();
+    std::filesystem::remove_all(dir4142);
+    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        const auto wrap_before =
+            aura::core::security_event_wal::wal_overflow_ring_wrap_total().load(
+                std::memory_order_relaxed);
+        const auto refuse_before_soft =
+            aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+                std::memory_order_relaxed);
+        const auto [code, name] = next_of(4142001);
+        CHECK(code == 1 && name == "soft-observe",
+              "4142 AC5: Soft refuse-only mid stays soft-observe");
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_wrap_total().load(
+                  std::memory_order_relaxed) == wrap_before &&
+                  aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+                      std::memory_order_relaxed) == refuse_before_soft,
+              "4142 AC5: Soft fold pushes nothing (zero extra overflow push)");
+    }
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    {
+        const auto [code, name] = next_of(0);
+        CHECK(code == 0 && name == "none",
+              "4142 AC5: mid=0 stays none (never invent trail Success)");
+    }
+    using aura::compiler::typed_audit::decide_evolution_suggested_next;
+    using aura::compiler::typed_audit::EvolutionSuggestedNext;
+    using aura::compiler::typed_audit::EvolutionSuggestedNextInput;
+    {
+        EvolutionSuggestedNextInput nin{};
+        nin.production_defaults = true;
+        nin.join_mid = 4142999;
+        nin.wal_miss_refuse_evidence = true;
+        CHECK(decide_evolution_suggested_next(nin) == EvolutionSuggestedNext::InspectDeny,
+              "4142 AC5: pure fold — miss/refuse bit alone yields InspectDeny");
+        nin.wal_miss_refuse_evidence = false;
+        CHECK(decide_evolution_suggested_next(nin) == EvolutionSuggestedNext::Ok,
+              "4142 AC5: pure fold — all-green without the bit stays Ok");
+        nin.join_mid = 0;
+        nin.wal_miss_refuse_evidence = true;
+        CHECK(decide_evolution_suggested_next(nin) == EvolutionSuggestedNext::None,
+              "4142 AC5: pure fold — mid=0 stays None even with the bit set");
+    }
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_all();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -1502,6 +1727,7 @@ int run_test_audit_replay_join() {
     ac20_se_wal_overflow_mid_join_4118();
     ac21_replay_mid_last_stamped_4120();
     ac22_grant_node_join_after_wrap_4135();
+    ac23_wal_miss_refuse_next_4142();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
