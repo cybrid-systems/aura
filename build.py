@@ -9053,6 +9053,30 @@ def cmd_lint():
             "Issue #4143 sticky recovery clear-ordering linter failed — run python3 scripts/check_moving_sticky_recovery_4143.py"
         )
         return r
+    # Issue #4144: EnvFrame binding-cell densify-tracked aliases (lasting
+    # slot remap). The densify-entry known-roots walk covered closures_ map
+    # flat/pool slots (#3647) but never walked env_frames_: a live frame's
+    # own pool_ member is a raw densify-tracked StringPool* touched only by
+    # the observe-only #3210 temp canary and the steal-time #3479 elevation,
+    # so between densify and the next steal a moved pool left a densify-old
+    # alias reachable from EnvFrame walks / cell lookup. Gate pins: the
+    # densify-entry walk registers &fr.pool_ as a lasting void** slot under
+    # env_frame_shards_ shared locks (same scan shape as
+    # refresh_stale_frames_after_steal), locks release before slot
+    # registration, the slot is the cover (slot XOR canary, #3368 — no
+    # dual-note), the #2889 registration SSOT and the #3569 window-end
+    # consume stay unchanged, and the #4144 counter is additive-only.
+    # Runtime doors live in test_moving_densify_fail_closed.cpp (#4144 ACs).
+    epf4144_script = ROOT / "scripts" / "check_envframe_pool_slot_remap_4144.py"
+    if not epf4144_script.exists():
+        fail(f"missing {epf4144_script}")
+        return 1
+    r = run([sys.executable, str(epf4144_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4144 EnvFrame pool slot remap linter failed — run python3 scripts/check_envframe_pool_slot_remap_4144.py"
+        )
+        return r
     # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
     # TokenKind::Error and parse_list's error recovery consumed it as a
     # closing ')': arguments at/after a character literal were dropped —

@@ -7829,6 +7829,41 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         aura::core::densify_consistency::g_moving_closure_slots_registered_total.fetch_add(
             closure_slots, std::memory_order_relaxed);
     }
+    // Issue #4144: live EnvFrame binding-cell densify-tracked aliases. The
+    // binding EvalValues themselves hold closure/cell IDs that resolve
+    // through the closures_ map slots above (#3647), but a live frame's own
+    // pool_ member is a raw densify-tracked StringPool* that no prior cover
+    // remapped: the #3210 temp canary is observe-only (its inventory can
+    // miss the frame) and the #3479 elevation runs at steal time only
+    // (refreshed > 0 + production), so between densify and the next steal a
+    // moved pool left a densify-old alias reachable from EnvFrame walks /
+    // cell lookup (lookup_by_intern / bindings_with_names resolve through
+    // pool_). env_frames_ is a deque — element references are stable across
+    // appends (frames die in place via INVALID_VERSION; no mid-window reset
+    // under the densify-in-flight guard), so &fr.pool_ is a lasting void**
+    // slot for the window: the slot is the cover (slot XOR canary, #3368 —
+    // no dual-note). Shared shard locks, same scan shape as
+    // refresh_stale_frames_after_steal (#3900); released BEFORE registration
+    // — no arena lock is ever taken under the shard locks.
+    std::size_t envframe_pool_slots = 0;
+    {
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> ef_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            ef_lock[ef_i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
+        for (auto& fr : env_frames_) {
+            if (fr.version_ == INVALID_VERSION)
+                continue;
+            if (fr.pool_) {
+                known_slots.push_back(
+                    const_cast<void**>(reinterpret_cast<const void**>(&fr.pool_)));
+                ++envframe_pool_slots;
+            }
+        }
+    }
+    if (envframe_pool_slots > 0) {
+        aura::core::densify_consistency::g_moving_envframe_pool_slots_registered_total.fetch_add(
+            envframe_pool_slots, std::memory_order_relaxed);
+    }
     if (!known_slots.empty()) {
         for (void** slot : known_slots)
             arena_group_->register_external_root_slot_for_densify_all(slot);
