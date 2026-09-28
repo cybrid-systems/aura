@@ -193,6 +193,32 @@ namespace {
         return nullptr;
     }
 
+    // Issue #4138: plane-detecting resolve for orch:agent-join — same
+    // #3442 walk (name-table first, then session-local scope), plus a
+    // resolve-plane out-param so the join prim can run the Scope compact
+    // once after Done-path cleanup on a Scope-owned handle (three-plane
+    // hygiene; #3776 compact sites did not cover the single-join path).
+    // Name-table hits leave *scope_hit null — the table already erases
+    // reclaimable-clean slots on find (#3598). Pointer walk only; no new
+    // atomic, no new query key, no second registry.
+    aura::orch::AgentHandle* resolve_aura_agent(Evaluator& ev, const std::string& name,
+                                                aura::orch::AgentScope** scope_hit) {
+        if (scope_hit)
+            *scope_hit = nullptr;
+        if (ev.agent_names_) {
+            if (auto* h = ev.agent_names_->find(name))
+                return h;
+        }
+        if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev))) {
+            if (auto* h = scope->find(name)) {
+                if (scope_hit)
+                    *scope_hit = scope;
+                return h;
+            }
+        }
+        return nullptr;
+    }
+
     // Issue #1717: RAII swap of evaluator workspace onto a temporary
     // WorkspaceTree child. Restores flat/pool and delete_child on scope exit
     // (exception-safe; closes the bare-swap UAF / leak window).
@@ -3665,10 +3691,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
 
             aura::orch::AgentHandle* hp = nullptr;
+            // Issue #4138: non-null only when resolve_aura_agent hit the
+            // Scope plane — name-table joins need no compact (#3598
+            // erases clean slots on find).
+            aura::orch::AgentScope* join_scope = nullptr;
             if (types::is_string(a[0])) {
                 auto name = heap_str_from(ev.string_heap_, a[0]);
                 // Issue #3442: name-table first, then session-local scope find.
-                hp = resolve_aura_agent(ev, name);
+                // Issue #4138: plane-detecting overload (see resolve comment).
+                hp = resolve_aura_agent(ev, name, &join_scope);
             }
             // Join-by-id is intentionally not supported (name-keyed).
             if (!hp) {
@@ -3835,6 +3866,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
                 add_deny_class(kv, hp->body_deny_class(), {}, 0, /*emit_retry=*/false);
             }
+            // Issue #4138: Scope-owned single join — after join_agent's
+            // Done-path cleanup (and the #2970/#3051 auto-wait arm above),
+            // retire reclaimable-clean husks ONCE under ScopeEnterGuard so
+            // handles_ / specs_ / restart vectors match directory/find
+            // emptiness (three-plane hygiene). Production only — the
+            // compact gates on production_defaults_active, so Soft / Off
+            // stay append-only (#3776 AC5). Pending (#2661/#3467) and live
+            // slots never match the husk predicate. MUST run after the last
+            // hp dereference: compact resizes handles_, invalidating hp.
+            if (join_scope)
+                join_scope->compact_after_single_join();
             // Issue #3216: name-table plane (production-only intern).
             add_identity_plane(kv, "name-table");
             return build_orch_hash(kv);

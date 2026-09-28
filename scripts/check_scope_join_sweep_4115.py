@@ -100,8 +100,18 @@ def main() -> int:
     # -- AC2: Soft/Off zero-cost contract --
     if "production_defaults_active()" not in scope:
         fails.append("AC2: sweep production gate missing")
-    sweep_call = scope.find("last_sweep_reclaimed_pending_ = sweep_reclaimed_pending();")
-    if sweep_call < 0 or "Soft / Off" not in scope_raw[max(0, sweep_call - 1200) : sweep_call]:
+    # Issue #4138: window the RAW text with the RAW occurrence — the
+    # stripped-text position drifts as comment blocks above join_all grow
+    # (e.g. the #4138 stamp), which pushed this window off the contract
+    # comment it documents. Same intent, same-coordinate slice.
+    sweep_needle = "last_sweep_reclaimed_pending_ = sweep_reclaimed_pending();"
+    sweep_call = scope.find(sweep_needle)
+    sweep_call_raw = scope_raw.find(sweep_needle)
+    if (
+        sweep_call < 0
+        or sweep_call_raw < 0
+        or "Soft / Off" not in scope_raw[max(0, sweep_call_raw - 1200) : sweep_call_raw]
+    ):
         fails.append("AC2: join_all sweep must document the Soft/Off zero-cost contract")
     if "ac4115_2_soft_join_all_no_sweep_zero_wait" not in join_test:
         fails.append("AC2: Soft zero-wait runtime AC missing from the join-drain test")

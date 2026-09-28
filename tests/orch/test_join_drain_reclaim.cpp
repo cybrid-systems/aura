@@ -3636,6 +3636,265 @@ static void ac4136_3_source_cite_linter_no_invent() {
     CHECK(spawn_src.find("query:4136") == std::string::npos, "4136 AC4: no new query key");
 }
 
+// Issue #4138: orch:agent-join (single-join path) leaves a reclaimable-clean
+// Done husk in the Scope after join_agent's Done-path cleanup — the #3776
+// compact sites (spawn / join_all / watch_all) do not cover it, so long-run
+// high-churn multi-agent hosts accumulated ghosts in handles_ / specs_ /
+// restart vectors until a later compact site. Fix: the join prim calls
+// AgentScope::compact_after_single_join() once under ScopeEnterGuard when
+// the resolve hit the Scope plane (#4138); name-table joins need no compact
+// (#3598 erases clean slots on find). Soft / Off stay append-only; pending
+// (#2661/#3467) and live slots never match the husk predicate.
+static void ac4138_1_single_join_soak_scope_compact() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::JoinPolicy;
+    using aura::serve::FiberState;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #4138 AC1: single-join soak — Scope compact runs, no join_all ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    constexpr int N = 8;
+    for (int i = 0; i < N; ++i) {
+        AgentSpec a;
+        a.name = "4138-soak-" + std::to_string(i);
+        // Non-yielding body (no SchedRunner) — force Done below, mirroring
+        // the #3776 harness; join_agent then runs the real Done-path cleanup.
+        a.body = [] {
+            for (;;) {
+            }
+        };
+        auto& h = scope.spawn(a);
+        CHECK(h.ok && h.fiber, "4138 AC1: spawn ok");
+        if (h.fiber)
+            h.fiber->set_state(FiberState::Done);
+        // The exact orch:agent-join sequence on the Scope plane:
+        // resolve (scope find) → join_agent → compact_after_single_join.
+        auto* hp = scope.find(a.name);
+        CHECK(hp != nullptr, "4138 AC1: resolve finds Scope-owned handle");
+        const auto jr = join_agent(*hp, JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+        CHECK(jr.status == JoinStatus::Ok, "4138 AC1: single join Ok");
+        scope.compact_after_single_join();
+        CHECK(scope.handles().empty(),
+              "4138 AC1: handles_ bounded (compact ran) after single join");
+    }
+    CHECK(scope.size() == 0, "4138 AC1: live size 0 after N single joins");
+    CHECK(scope.find("4138-soak-0") == nullptr, "4138 AC1: joined name resolves-miss");
+    auto snap = scope.directory_snapshot({});
+    CHECK(snap.entries.empty(), "4138 AC1: directory empty for joined names");
+    apply_dev_audit_defaults();
+}
+
+static void ac4138_2_restart_watch_indices_aligned() {
+    using aura::orch::AgentFailureAction;
+    using aura::orch::AgentFailurePolicy;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::JoinPolicy;
+    using aura::orch::StallPolicy;
+    using aura::serve::FiberState;
+    std::println("\n--- #4138 AC2: RestartN watch after single joins — indices aligned ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    for (int i = 0; i < 6; ++i) {
+        AgentSpec a;
+        a.name = "4138-idx-" + std::to_string(i);
+        a.body = [] {
+            for (;;) {
+            }
+        };
+        auto& h = scope.spawn(a);
+        CHECK(h.ok && h.fiber, "4138 AC2: spawn ok");
+        if (h.fiber)
+            h.fiber->set_state(FiberState::Done);
+        auto* hp = scope.find(a.name);
+        CHECK(hp != nullptr, "4138 AC2: resolve");
+        (void)join_agent(*hp, JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+        scope.compact_after_single_join();
+    }
+    // One live agent remains — handles_ and the parallel RestartN vectors
+    // (specs_ / restart_counts_ / consecutive_stall_counts_) must hold
+    // exactly one aligned slot (no ghost indices from the joined husks).
+    AgentSpec live;
+    live.name = "4138-idx-live";
+    live.body = [] {
+        for (;;) {
+        }
+    };
+    auto& lh = scope.spawn(live);
+    CHECK(lh.ok && lh.fiber, "4138 AC2: live spawn ok");
+    CHECK(scope.handles().size() == 1,
+          "4138 AC2: raw handles_ tight — indices aligned with live agents");
+    CHECK(scope.size() == 1, "4138 AC2: live size 1");
+    // ReportOnly policy watch: walks the compacted index space in-bounds
+    // (specs_[i] body-clock read included) and never cancels — the total is
+    // deterministic regardless of coop/stall state; done==0 is deterministic
+    // for a never-finished body.
+    AgentFailurePolicy p;
+    p.on_stall = AgentFailureAction::ReportOnly;
+    p.on_join_fail = AgentFailureAction::ReportOnly;
+    const auto wr = scope.watch_all(/*stall_timeout_ms=*/0, p);
+    CHECK(wr.alive + wr.done + wr.stalled + wr.closed == 1,
+          "4138 AC2: watch walked exactly one (live) index — no ghosts");
+    CHECK(wr.done == 0, "4138 AC2: no Done ghost in the watch walk");
+    // Second walk stays aligned (idempotent — vectors unchanged by the walk).
+    const auto wr2 = scope.watch_all(0, StallPolicy::ReportOnly);
+    CHECK(wr2.alive + wr2.done + wr2.stalled + wr2.closed == 1, "4138 AC2: second watch aligned");
+    apply_dev_audit_defaults();
+}
+
+static void ac4138_3_must_wait_survives_compact() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::JoinPolicy;
+    using aura::serve::FiberState;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #4138 AC3: must_wait pending survives the single-join compact ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    apply_production_audit_defaults();
+    std::filesystem::create_directories("build/test-wal-4138");
+    const bool wal_on_4138 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_4138)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-4138"), nullptr, 0);
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    AgentSpec s;
+    s.name = "4138-pending";
+    s.attach_mailbox = true;
+    s.body = [] {
+        for (;;) {
+        }
+    };
+    auto& h = scope.spawn(s);
+    CHECK(h.ok && h.fiber, "4138 AC3: spawn");
+    JoinPolicy policy;
+    policy.primary_ms = 50;
+    policy.drain_ms = 0;
+    const auto jr = join_agent(h, policy);
+    CHECK(jr.status == JoinStatus::Reclaimed, "4138 AC3: single join Reclaimed");
+    CHECK(h.reclaimed_deferred_cleanup || h.must_wait_reclaimed, "4138 AC3: pending flags set");
+    // The #4138 compact runs on the single-join path — the pending slot
+    // must NOT compact away (#2661 no early free / #3467 name still owed /
+    // #3497 pending-walk still denies same-name).
+    scope.compact_after_single_join();
+    CHECK(scope.size() == 1, "4138 AC3: pending still live-counted after compact");
+    CHECK(scope.handles().size() == 1, "4138 AC3: pending still in raw handles_");
+    CHECK(scope.find("4138-pending") != nullptr, "4138 AC3: pending name still resolves (#3467)");
+    auto& h2 = scope.spawn(s);
+    CHECK(!h2.ok, "4138 AC3: same-name still denied (#3497 pending walk)");
+    if (h.fiber) {
+        h.fiber->request_cancel();
+        h.fiber->set_state(FiberState::Done);
+        h.fiber->note_body_exit_if_reclaimed();
+        h.finish_reclaimed_cleanup_on_dtor();
+    }
+    apply_dev_audit_defaults();
+    if (!wal_on_4138)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac4138_4_soft_append_only() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::JoinPolicy;
+    using aura::serve::FiberState;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #4138 AC4: Soft single join stays append-only (no compact) ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    AgentSpec a;
+    a.name = "4138-soft";
+    a.body = [] {
+        for (;;) {
+        }
+    };
+    auto& h = scope.spawn(a);
+    CHECK(h.ok && h.fiber, "4138 AC4: Soft spawn ok");
+    if (h.fiber)
+        h.fiber->set_state(FiberState::Done);
+    const auto jr = join_agent(h, JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+    CHECK(jr.status == JoinStatus::Ok, "4138 AC4: Soft join Ok");
+    // The #4138 entry point is callable in Soft — it must be a no-op
+    // (production gate inside compact_done_husks_unlocked_, #3776 AC5).
+    scope.compact_after_single_join();
+    CHECK(scope.handles().size() == 1, "4138 AC4: Soft keeps the husk in handles_ (append-only)");
+    CHECK(scope.size() == 1, "4138 AC4: Soft size is raw append-only");
+    apply_dev_audit_defaults();
+}
+
+static void ac4138_5_source_cite_linter_no_invent() {
+    std::println("\n--- #4138 AC5: source-cite + linter wiring + no invent ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto scopeh = read_file("src/orch/agent_scope.h");
+    const auto build_src = read_file("build.py");
+
+    // Window the orch:agent-join prim body: from its add( to the next
+    // add("orch:agent-wait-reclaimed" (the prim that follows it).
+    const auto start = prim.find("add(\"orch:agent-join\",");
+    CHECK(start != std::string::npos, "4138 AC5: orch:agent-join prim located");
+    const auto next_prim = prim.find("add(\"orch:agent-wait-reclaimed\",", start);
+    CHECK(next_prim != std::string::npos, "4138 AC5: prim window end located");
+    const std::string body = (start != std::string::npos && next_prim != std::string::npos)
+                                 ? prim.substr(start, next_prim - start)
+                                 : std::string{};
+    CHECK(body.find("resolve_aura_agent(ev, name, &join_scope)") != std::string::npos,
+          "4138 AC5: join prim uses the plane-detecting resolve");
+    CHECK(body.find("join_scope->compact_after_single_join()") != std::string::npos,
+          "4138 AC5: join prim runs the Scope compact once");
+    // Ordering: the compact must sit AFTER the last hp-> dereference in the
+    // prim body (compact resizes handles_ and invalidates hp).
+    const auto last_hp = body.rfind("hp->");
+    const auto compact_call = body.find("join_scope->compact_after_single_join()");
+    CHECK(last_hp != std::string::npos && compact_call != std::string::npos &&
+              compact_call > last_hp,
+          "4138 AC5: compact runs after the last hp deref (resize invalidates hp)");
+    CHECK(body.find("query:4138") == std::string::npos, "4138 AC5: no new query key");
+
+    // agent_scope.h: new entry point + stamp + SSOT compact under the guard.
+    CHECK(scopeh.find("compact_after_single_join()") != std::string::npos,
+          "4138 AC5: AgentScope::compact_after_single_join exists");
+    CHECK(scopeh.find("kScopeJoinDoneHuskCompactIssue = 4138") != std::string::npos,
+          "4138 AC5: stamp");
+    CHECK(scopeh.find("ScopeEnterGuard g(this, \"compact_after_single_join\")") !=
+              std::string::npos,
+          "4138 AC5: compact under ScopeEnterGuard");
+    // resolve_aura_agent plane overload + 2-arg #3442 shape retained.
+    CHECK(prim.find("aura::orch::AgentScope** scope_hit") != std::string::npos,
+          "4138 AC5: plane-detecting resolve overload exists");
+    CHECK(prim.find("aura::orch::AgentHandle* resolve_aura_agent(Evaluator& ev, "
+                    "const std::string& name)") != std::string::npos,
+          "4138 AC5: 2-arg #3442 resolve signature retained");
+
+    // No invent / no docs / no test_issue file / linter wiring.
+    CHECK(scopeh.find("class AgentRegistry") == std::string::npos &&
+              prim.find("class AgentRegistry") == std::string::npos,
+          "4138 AC5: no process-global AgentRegistry");
+    CHECK(build_src.find("check_agent_join_scope_compact_4138") != std::string::npos,
+          "4138 AC5: build.py wires the linter");
+    CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                  .find("check_agent_join_scope_compact_4138.py") != std::string::npos,
+          "4138 AC5: linter on the root check allowlist");
+    CHECK(read_file("tests/orch/test_issue_4138.cpp").empty(),
+          "4138 AC5: no test_issue_4138.cpp per #81934");
+    CHECK(read_file("docs/design/4138-agent-join-scope-compact.md").empty(),
+          "4138 AC5: no docs/design/4138-* per #1655");
+    // Self-hosting: the AC block is defined and dispatched in this file.
+    const auto test_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+    CHECK(test_self.find("ac4138_1_single_join_soak_scope_compact()") != std::string::npos,
+          "4138 AC5: AC1 defined and called");
+}
+
 static void ac3924_aura_scope_sweep_prim() {
     std::println("\n--- #3924: Aura orch:scope-sweep-reclaimed-pending ---");
     const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
@@ -8917,6 +9176,13 @@ int run_test_join_drain_reclaim() {
     ac4136_1_sweep_handles_releases_after_body_exit();
     ac4136_2_soft_sweep_noop_zero_wait();
     ac4136_3_source_cite_linter_no_invent();
+
+    std::println("\n=== Issue #4138: orch:agent-join Done husk runs Scope compact ===");
+    ac4138_1_single_join_soak_scope_compact();
+    ac4138_2_restart_watch_indices_aligned();
+    ac4138_3_must_wait_survives_compact();
+    ac4138_4_soft_append_only();
+    ac4138_5_source_cite_linter_no_invent();
 
     std::println("\n=== Issue #3905: orphan hard-reap keeps live Fiber ===");
     ac3905_1_reap_keeps_pending_handle_fiber();
