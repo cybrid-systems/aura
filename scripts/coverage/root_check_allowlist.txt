@@ -194,3 +194,4 @@ check_wal_miss_refuse_next_4142.py
 check_moving_sticky_recovery_4143.py
 check_envframe_pool_slot_remap_4144.py
 check_soft_autowire_unreachable_4145.py
+check_facade_cone_jit_drop_4146.py

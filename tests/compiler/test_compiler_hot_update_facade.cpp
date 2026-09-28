@@ -1386,6 +1386,140 @@ static void ac4073_stale_epoch_try_jit_does_not_invoke() {
           "4073: stale last_seen_epoch_ does not invoke the cached ScalarFn");
 }
 
+// Issue #4146: production facade cone JIT drop — #3749 evicted the root
+// define only, so under owner-scoped multi-eval (C clocks frozen by design,
+// #2841/#2951/#3605) a caller D of mutated F kept executing pre-mutate
+// JIT/AOT native targeting F. The same cone that receives IR body-dirty
+// (#3474 called_by BFS ∪ #3823 node-dep) must also drop jit_cache_ +
+// AuraJIT native per dependent, MustDeopt owner live closures named d
+// (#3975 walk), and feed the #3373 production dirty ring. Soft / Off
+// unchanged (facade-success path only). No process table epoch bump; no
+// second closure table.
+static void ac4146_production_facade_cone_jit_drop() {
+    std::println("\n--- #4146: production facade cone JIT drop ---");
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #4146") != std::string::npos, "4146: service.ixx cites #4146");
+    CHECK(ixx.find("drop_cone_jit_after_production_facade_") != std::string::npos,
+          "4146 AC1: cone drop helper declared");
+    {
+        const auto hpos = ixx.find("void drop_cone_jit_after_production_facade_");
+        CHECK(hpos != std::string::npos, "4146 AC1: cone helper definition");
+        // Issue #4112-style windowing: pins are measured on the RAW file
+        // (comments included) — MustDeopt/bump sit at +4297/+4430, so 5200
+        // covers the full helper body.
+        const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 5200);
+        CHECK(hwin.find("jit_cache_.erase(dependent)") != std::string::npos,
+              "4146 AC1: per-dependent jit_cache_ erase");
+        CHECK(hwin.find("aura_drop_jit_fn_native_for_define(dependent.c_str())") !=
+                  std::string::npos,
+              "4146 AC1: per-dependent native drop");
+        CHECK(hwin.find("jit_.invalidate(dependent.c_str())") != std::string::npos,
+              "4146 AC1: per-dependent AuraJIT invalidate");
+        CHECK(hwin.find("jit_.invalidate_prefix(dependent.c_str())") != std::string::npos,
+              "4146 AC1: per-dependent prefix invalidate");
+        CHECK(hwin.find("std::unique_lock cache_write(jit_cache_mtx_)") != std::string::npos,
+              "4146 AC1: same jit_cache_mtx_ window as #1378/#3749");
+        CHECK(hwin.find("dit->second.called_by") != std::string::npos,
+              "4146 AC2: called_by BFS cone (#3474 shape)");
+        CHECK(hwin.find("node_dep_graph_.dependents(encode_fn_node") != std::string::npos,
+              "4146 AC2: node-dep union (#3823 shape)");
+        CHECK(hwin.find("must_deopt_owner_live_closures_for_define_(dependent)") !=
+                  std::string::npos,
+              "4146 AC3: owner-scoped MustDeopt per dependent");
+        CHECK(hwin.find("aura_aot_last_table_bump_owner_scoped() != 0") != std::string::npos,
+              "4146 AC3: MustDeopt gated on owner-scoped freeze");
+        CHECK(hwin.find("bump_closures_apply_epoch_public()") != std::string::npos,
+              "4146 AC3: TLS apply epoch bumped after cone MustDeopt");
+        CHECK(hwin.find("aura_production_dirty_ring_push(dependent.c_str()") != std::string::npos,
+              "4146 AC4: cone names feed production dirty ring");
+        CHECK(hwin.find("aura_aot_bump_func_table_epoch") == std::string::npos,
+              "4146 AC5: no process-wide table epoch bump (#2951 owner scope)");
+    }
+    {
+        const auto epos = ixx.find("void evict_jit_cache_after_production_facade_");
+        const auto ewin = (epos == std::string::npos) ? std::string{} : ixx.substr(epos, 1200);
+        CHECK(ewin.find("drop_cone_jit_after_production_facade_(name)") != std::string::npos,
+              "4146 AC1: root eviction fans out into the cone drop");
+    }
+    CHECK(svc.find("drop_cone_jit_after_production_facade_") == std::string::npos,
+          "4146 AC6: Soft path does not call the cone drop (facade-success only)");
+    CHECK(svc.find("evict_jit_cache_after_production_facade_(name)") != std::string::npos,
+          "4146 AC6: production sites still evict after facade (#3749 kept)");
+    CHECK(svc.find("Issue #491 + #1378: erase jit_cache_ AND jit_.invalidate") != std::string::npos,
+          "4146 AC6: Soft same-lock erase+invalidate block intact");
+    CHECK(read_file("tests/compiler/test_issue_4146.cpp").empty(),
+          "4146 AC7: no test_issue_4146.cpp");
+    CHECK(read_file("docs/design/4146-cone-jit-drop.md").empty(),
+          "4146 AC7: no docs/design/4146-*");
+    CHECK(svc.find("schema-4146") == std::string::npos &&
+              ixx.find("schema-4146") == std::string::npos,
+          "4146 AC7: no new query key");
+
+    // Runtime AC: owner-scoped multi-eval — caller D of mutated F loses its
+    // jit_cache_ entry, live D MustDeopts, unrelated G stays native.
+    apply_production_audit_defaults();
+    {
+        CompilerService cs_a;
+        CompilerService cs_b;
+        void* owner = &cs_a.evaluator();
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        CHECK(cs_a.eval("(define (ac4146_F x) (+ x 1))").has_value(), "4146: define F");
+        CHECK(cs_a.eval("(define (ac4146_D x) (ac4146_F x))").has_value(), "4146: define caller D");
+        CHECK(cs_b.eval("(define (ac4146_G x) (+ x 10))").has_value(), "4146: peer G");
+        // Explicit cone edge (#3474 fixture shape) so the BFS union is
+        // deterministic: D calls F.
+        cs_a.public_record_dependency("ac4146_D", "ac4146_F");
+        CHECK(cs_a.public_dep_graph_has_edge("ac4146_D", "ac4146_F"), "4146: D calls F edge");
+        cs_a.public_jit_cache_insert_dummy_for_test("ac4146_F");
+        cs_a.public_jit_cache_insert_dummy_for_test("ac4146_D");
+        CHECK(cs_a.public_jit_cache_contains("ac4146_D"), "4146: dependent dummy seeded");
+        auto dr = cs_a.eval("ac4146_D");
+        const auto cid_d = dr && is_closure(*dr) ? as_closure_id(*dr) : 0;
+        auto gr_b = cs_b.eval("ac4146_G");
+        const auto cid_g_peer = gr_b && is_closure(*gr_b) ? as_closure_id(*gr_b) : 0;
+        const auto h0 = cross_eval_hard_owner_scoped_total_v_read();
+        cs_a.public_invalidate_function("ac4146_F");
+        const auto h1 = cross_eval_hard_owner_scoped_total_v_read();
+        if (h1 > h0 && aura_aot_state_map_size() > 1) {
+            CHECK(!cs_a.public_jit_cache_contains("ac4146_F"),
+                  "4146 AC1: root F jit_cache_ dropped (#3749 kept)");
+            CHECK(!cs_a.public_jit_cache_contains("ac4146_D"),
+                  "4146 AC1: dependent D jit_cache_ dropped (cone)");
+            cs_a.public_jit_cache_insert_dummy_for_test("ac4146_G");
+            CHECK(cs_a.public_jit_cache_contains("ac4146_G"),
+                  "4146 AC5: unrelated owner G not over-injured");
+            if (aura_aot_last_table_bump_owner_scoped() != 0 && cid_d != 0) {
+                auto snap_d = cs_a.evaluator().find_active_closure(cid_d);
+                CHECK(snap_d.has_value(), "4146 AC3: D still registered");
+                if (snap_d)
+                    CHECK(snap_d->must_deopt_before_next_call,
+                          "4146 AC3: live D MustDeopt under owner-scoped freeze");
+            }
+            if (cid_g_peer != 0) {
+                std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+                auto got_g = cs_b.evaluator().apply_closure(cid_g_peer, args);
+                CHECK(got_g.has_value() && is_int(*got_g) && as_int(*got_g) == 11,
+                      "4146 AC5: peer G still applies (no over-injury)");
+            }
+        } else {
+            std::println(
+                "  [4146] single-state / global fallback — live owner-scope branch skipped");
+        }
+    }
+    apply_dev_audit_defaults();
+    {
+        // Soft parity: Soft BFS remains the sole cascade when the facade is
+        // not taken; the dependent dummy is still erased by Soft itself.
+        CompilerService cs;
+        cs.public_jit_cache_insert_dummy_for_test("ac4146_soft");
+        CHECK(cs.public_jit_cache_contains("ac4146_soft"), "4146 AC6: Soft dummy seeded");
+        cs.public_invalidate_function("ac4146_soft");
+        CHECK(!cs.public_jit_cache_contains("ac4146_soft"), "4146 AC6: Soft erase unchanged");
+    }
+}
+
 int run_test_issue_3112() {
     std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
@@ -1453,6 +1587,11 @@ int run_test_issue_3112() {
     // Issue #4073: try_jit_execute must not run a ScalarFn whose
     // last_seen_epoch_ is behind current_mutation_epoch.
     ac4073_stale_epoch_try_jit_does_not_invoke();
+
+    // Issue #4146: production facade cone JIT drop — dependents of a
+    // facade-invalidated root lose jit_cache_/native too (owner-scoped
+    // MustDeopt by name); Soft / Off unchanged.
+    ac4146_production_facade_cone_jit_drop();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {

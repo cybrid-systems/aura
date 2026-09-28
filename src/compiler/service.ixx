@@ -15112,6 +15112,119 @@ public:
             jit_.invalidate_prefix(name.c_str());
             metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #4146: the facade owns the whole dirty cone, not just the
+        // root — fan the eviction out to every dependent that receives
+        // IR body-dirty below (#3474/#3823 union), or an owner-scoped
+        // caller keeps executing pre-mutate native targeting the root.
+        drop_cone_jit_after_production_facade_(name);
+    }
+
+    // Issue #4146: production facade cone JIT drop. The #3188/#3345/#3474/
+    // #3823 early-return marks every dependent IR body-dirty, but #3749
+    // dropped jit_cache_ + AuraJIT native for the ROOT define only. Under
+    // owner-scoped multi-eval the C clocks are intentionally frozen
+    // (#2841/#2951/#3605) and dual-fresh only covers live closure views, so
+    // a caller D of mutated F could keep executing pre-mutate JIT/AOT
+    // native that still targets F while root F was fail-closed. Mirror the
+    // Soft #491/#1378 per-dependent teardown for the same cone that
+    // receives IR body-dirty: called_by BFS (#3474) ∪ node-dep dependents
+    // (#3823). Same lock shape as the root drop (#4100): jit_cache_.erase
+    // under jit_cache_mtx_, native drop outside, then AuraJIT invalidate +
+    // prefix. Owner-scoped multi-eval MustDeopts live closures named d via
+    // the #3975 name-precise walk (epochs will not save them) and bumps the
+    // TLS apply epoch; cone names feed the #3373 production dirty ring so
+    // BoundaryExit reemit covers callers. Soft / Off never reach this
+    // (facade-success path only). No process-wide table epoch bump (#2951
+    // owner scope); no second closure table.
+    void drop_cone_jit_after_production_facade_(const std::string& name) {
+        std::vector<std::string> dependents;
+        {
+            using aura::compiler::lock_order::Level;
+            using aura::compiler::lock_order::OrderedSharedLock;
+            OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+            std::deque<std::string> bfs;
+            std::unordered_set<std::string> visited;
+            bfs.push_back(name);
+            visited.insert(name);
+            while (!bfs.empty()) {
+                auto current = bfs.front();
+                bfs.pop_front();
+                auto dit = dep_graph_.find(current);
+                if (dit == dep_graph_.end())
+                    continue;
+                for (const auto& caller : dit->second.called_by) {
+                    if (!visited.insert(caller).second)
+                        continue;
+                    dependents.push_back(caller);
+                    bfs.push_back(caller);
+                }
+            }
+            // Issue #3823 union: node-dep dependents (Soft-erased / node-only
+            // callers the string called_by walk cannot see). Same decode walk
+            // as mark_node_dep_dependents_body_dirty_.
+            using aura::compiler::dirty::decode_block_dep_node;
+            using aura::compiler::dirty::decode_fn_slot;
+            using aura::compiler::dirty::encode_fn_node;
+            using aura::compiler::dirty::is_block_dep_node;
+            using aura::compiler::dirty::is_fn_node;
+            const auto slot_it = dep_name_to_slot_.find(name);
+            if (slot_it != dep_name_to_slot_.end()) {
+                const auto* deps = node_dep_graph_.dependents(encode_fn_node(slot_it->second));
+                if (deps) {
+                    for (const auto n : *deps) {
+                        std::uint32_t slot = UINT32_MAX;
+                        if (is_fn_node(n))
+                            slot = decode_fn_slot(n);
+                        else if (is_block_dep_node(n))
+                            slot = decode_block_dep_node(n).caller_slot;
+                        else
+                            continue;
+                        if (slot >= dep_slot_to_name_.size())
+                            continue;
+                        const auto& nm = dep_slot_to_name_[slot];
+                        if (nm.empty() || !visited.insert(nm).second)
+                            continue;
+                        dependents.push_back(nm);
+                    }
+                }
+            }
+        }
+        for (const auto& dependent : dependents) {
+            if (dependent.empty() || dependent == name)
+                continue;
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                if (jit_cache_.erase(dependent) > 0)
+                    metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            }
+            aura_drop_jit_fn_native_for_define(dependent.c_str());
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                jit_.invalidate(dependent.c_str());
+                jit_.invalidate_prefix(dependent.c_str());
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Issue #3373: cone name feeds the production candidate ring so
+            // BoundaryExit / reemit covers callers. Ring is bounded and the
+            // pipeline is idempotent on duplicates.
+            if (aura_production_defaults_active_probe() != 0)
+                aura_production_dirty_ring_push(dependent.c_str(), 1ULL << 1, 0);
+        }
+        // Issue #3975 shape: under owner-scoped multi-eval the process C
+        // clocks did not advance, so epoch checks cannot retire a live
+        // closure named d — name-precise MustDeopt each dependent (no second
+        // table), then bump the TLS apply epoch so owner apply_closure
+        // observes the new flags. Global-bump path already retired
+        // generation-behind closures via expire_stale_live_closures_.
+        if (aura_aot_last_table_bump_owner_scoped() != 0) {
+            for (const auto& dependent : dependents) {
+                if (dependent.empty() || dependent == name)
+                    continue;
+                must_deopt_owner_live_closures_for_define_(dependent);
+            }
+            if (!dependents.empty())
+                evaluator_.bump_closures_apply_epoch_public();
+        }
     }
 
     // Issue #2304 / #2366 / #2501 / #2541: post-bump epoch invariant walk.
