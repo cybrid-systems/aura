@@ -88,7 +88,9 @@ int run_test_mse_session_live_grants_3774() {
         const auto tenant = std::uint64_t{17};
         bump_mutation_epoch();
         const auto mid = current_mutation_epoch();
-        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+        // Issue #4133: seed TenantAdmin on the CALLER tenant (default 0) —
+        // the MSE fence is caller-only now.
+        CHECK(g_capability_registry().grant(std::uint64_t{0}, "tenant-admin", Effect::TenantAdmin,
                                             make_grant_provenance(mid, false, 0, 0)),
               "3774 AC1: TA bootstrap under Off");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
@@ -119,7 +121,8 @@ int run_test_mse_session_live_grants_3774() {
         const auto tenant = std::uint64_t{18};
         bump_mutation_epoch();
         const auto mid = current_mutation_epoch();
-        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+        // Issue #4133: caller-side TA bootstrap (caller-only MSE fence).
+        CHECK(g_capability_registry().grant(std::uint64_t{0}, "tenant-admin", Effect::TenantAdmin,
                                             make_grant_provenance(mid, false, 0, 0)),
               "3774 AC2: TA bootstrap under Off");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
@@ -146,7 +149,8 @@ int run_test_mse_session_live_grants_3774() {
         const auto tenant = std::uint64_t{19};
         bump_mutation_epoch();
         const auto mid = current_mutation_epoch();
-        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+        // Issue #4133: caller-side TA bootstrap (caller-only MSE fence).
+        CHECK(g_capability_registry().grant(std::uint64_t{0}, "tenant-admin", Effect::TenantAdmin,
                                             make_grant_provenance(mid, false, 0, 0)),
               "3774 AC3: TA bootstrap under Off");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
@@ -168,7 +172,8 @@ int run_test_mse_session_live_grants_3774() {
         reset_all();
         bump_mutation_epoch();
         const auto mid2 = current_mutation_epoch();
-        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+        // Issue #4133: caller-side TA bootstrap (caller-only MSE fence).
+        CHECK(g_capability_registry().grant(std::uint64_t{0}, "tenant-admin", Effect::TenantAdmin,
                                             make_grant_provenance(mid2, false, 0, 0)),
               "3774 AC3b: TA bootstrap under Off");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);

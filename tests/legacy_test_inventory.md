@@ -1676,7 +1676,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_inner_expand_marker.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3151 + expand_inner_macros passes
 - `tests/compiler/test_macro_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_macro_reflect_batch.cpp — batch driver for macro+reflect+self-evo family.
 - `tests/compiler/test_macro_restamp_after_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2019 + restamp_macro_introduced_generations
-- `tests/compiler/test_macro_self_evo_capability.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2023; MacroSelfEvoPolicy + check_macro_self_evo
+- `tests/compiler/test_macro_self_evo_capability.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2023; MacroSelfEvoPolicy + check_macro_self_evo
 - `tests/compiler/test_macro_self_evo_reexpand_chokepoint.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3132 in evaluator_eval_flat.cpp — chokepoint at
 - `tests/compiler/test_move_node_hygiene.cpp` (—) [domain_suite, theme_compiler] — Issue #3815 — also gate MacroIntroduced new_parent spine (insert-child
 - `tests/core/test_node_meta_gap.cpp` (—) [domain_suite, theme_core] — AC1: gap entry tag is 0x0C sentinel and is_gap == true

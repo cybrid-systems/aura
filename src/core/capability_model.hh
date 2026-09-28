@@ -1886,8 +1886,8 @@ struct CapabilityRegistry {
 
         std::lock_guard<std::mutex> lock(mtx);
         // Issue #3029: production Restricted/Strict requires TenantAdmin
-        // (or "tenant-admin" / "capability") on the caller or the target
-        // tenant. Soft/Off (sandbox_mode==Off) is zero-cost.
+        // (or "tenant-admin" / "capability") on the CALLER principal.
+        // Soft/Off (sandbox_mode==Off) is zero-cost.
         // Issue #3145 AC4: caller_principal is the explicit principal
         // (Evaluator::capability_tenant_id_); fallback to default_tenant
         // only for legacy direct callers.
@@ -1909,15 +1909,16 @@ struct CapabilityRegistry {
                 const auto caller = caller_principal != 0
                                         ? caller_principal
                                         : default_tenant.load(std::memory_order_acquire);
-                // Issue #3904 posture: this fence stays caller-OR-target
-                // (#3029 contract) — asymmetric with grant_cross_tenant's
-                // caller-only fence (#3800). Option A (caller-only) was
-                // implemented and empirically rejected: under multi-fiber
-                // chaos load the Guard composition change yielded non-zero
-                // mailbox hold/defer starvation (delta 2-8) against the
-                // #2554 PR deployment contract of 0. Revisit caller-only
-                // when the chaos workload adapts to the deny semantics.
-                if (!has_admin(caller) && !has_admin(tenant)) {
+                // Issue #4133: caller-only TenantAdmin — aligned with
+                // grant_cross_tenant's caller-only fence (#3800). This
+                // supersedes #3904's caller-OR-target posture: under
+                // caller-OR-target a non-TA caller could mint MacroSelfEvo
+                // onto a TA-holding target via the registry API, widening
+                // privilege-mint power scoped to the TARGET's admin bit.
+                // Target-only TA is deny; the same-tenant self-mint still
+                // requires caller TA (no target-TA shortcut). SE reason
+                // string + deny counter stay stable (#3029 contract).
+                if (!has_admin(caller)) {
                     auto& met = g_capability_effect_metrics();
                     met.capability_macro_self_evo_grant_deny_total.fetch_add(
                         1, std::memory_order_relaxed);

@@ -1,32 +1,24 @@
 #!/usr/bin/env python3
-"""Issue #3904 — MSE TA fence posture: caller-OR-target documented.
+"""Issue #3904 — MSE TA fence posture (SUPERSEDED by #4133).
 
-Residual: grant_macro_self_evo's fence allows installing MacroSelfEvo
-policy when either the caller OR the target tenant holds TenantAdmin
-(#3029 contract) — asymmetric with grant_cross_tenant's caller-only
-fence (#3800). A non-TA caller naming an admin tenant as MSE target
-can install policy on that target.
+grant_macro_self_evo's fence originally allowed installing MacroSelfEvo
+policy when either the caller OR the target tenant held TenantAdmin
+(#3029 contract), asymmetric with grant_cross_tenant's caller-only fence
+(#3800). Issue #4133 flipped the fence to CALLER-ONLY, closing the
+non-TA-caller → TA-target registry mint face. This linter now pins the
+SUPERSEDING contract: capability_model.hh cites Issue #4133 at the fence
+and the caller-only fence is present (the caller-OR-target line is gone).
 
-Landed (Option B — the issue's sanctioned alternative): the fence
-stays caller-OR-target (zero behavior change) and the asymmetry is
-documented as intended posture in capability_model.hh. Option A
-(caller-only) was implemented first and empirically rejected: under
-multi-fiber chaos load the Guard composition change yielded non-zero
-mailbox hold/defer starvation (delta 2-8) against the #2554 PR
-deployment contract of 0. Revisit caller-only when the chaos workload
-adapts to the deny semantics.
-
-  AC1  posture: capability_model.hh cites "Issue #3904 posture" at
-      the fence and the caller-OR-target fence is preserved.
+  AC1  supersession: capability_model.hh cites "Issue #4133" and the
+      caller-only fence (`if (!has_admin(caller)) {`) is present.
   AC2  test-wired: test_tenant_isolation_enforcement.cpp carries the
-      #3904 behavioral ACs (non-TA caller + TA target → allow,
-      documented; TA caller → allow; neither → deny; Soft/Off
-      zero-cost).
+      flipped #4133 behavioral AC (non-TA caller + TA target → deny) and
+      the unchanged #3904-era arms (TA caller → allow; neither → deny).
   AC3  no-invent: no docs/design/3904-*, no tests/issues/
       test_issue_3904.cpp, no tests/core/test_issue_3904.cpp.
 
 Exit 0 only when all ACs pass. `--self-test` runs the detector over an
-inline stale fixture (caller-only fence, no posture cite) and must
+inline stale fixture (caller-OR-target fence, no #4133 cite) and must
 flag it.
 """
 
@@ -36,22 +28,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "src" / "core" / "capability_model.hh"
 TEST = ROOT / "tests" / "core" / "test_tenant_isolation_enforcement.cpp"
-CITE = "Issue #3904 posture"
-FENCE = "if (!has_admin(caller) && !has_admin(tenant)) {"
+CITE = "Issue #4133"
+FENCE = "if (!has_admin(caller)) {"
+OLD_FENCE = "has_admin(caller) && !has_admin(tenant)"
 
 
-def ac1_posture() -> bool:
+def ac1_superseded_posture() -> bool:
     text = SITE.read_text()
-    ok = CITE in text and FENCE in text
-    print("AC(posture): " + ("PASS" if ok else "FAIL"))
+    ok = CITE in text and FENCE in text and OLD_FENCE not in text
+    print("AC(superseded-posture): " + ("PASS" if ok else "FAIL"))
     return ok
 
 
 def ac2_test_wired() -> bool:
     text = TEST.read_text()
     ok = (
-        all(f"3904 AC{n}" in text for n in range(1, 6))
-        and "ac3904_1_target_ta_allow_non_ta_caller_documented" in text
+        "ac4133_1_target_ta_non_ta_caller_denied" in text
+        and "ac3904_2_caller_with_ta_allow_unchanged" in text
         and "ac3904_3_neither_ta_denied" in text
     )
     print("AC(test-wired): " + ("PASS" if ok else "FAIL"))
@@ -73,9 +66,9 @@ def ac3_no_invent() -> bool:
 
 
 def self_test() -> int:
-    fixture = "if (!has_admin(caller)) {\n"  # caller-only: posture cite missing
-    flagged = CITE not in fixture
-    print("self-test: " + ("PASS — caller-only fence without posture cite detected" if flagged else "FAIL"))
+    fixture = "if (!has_admin(caller) && !has_admin(tenant)) {\n"  # stale dual fence
+    flagged = OLD_FENCE in fixture and CITE not in fixture
+    print("self-test: " + ("PASS — caller-OR-target fence without #4133 cite detected" if flagged else "FAIL"))
     return 0 if flagged else 1
 
 
@@ -83,7 +76,7 @@ def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     results = [
-        ac1_posture(),
+        ac1_superseded_posture(),
         ac2_test_wired(),
         ac3_no_invent(),
     ]
