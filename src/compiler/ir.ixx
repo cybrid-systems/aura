@@ -418,6 +418,12 @@ export enum class PrimId : std::uint8_t {
     // Type predicates
     PairP,
     NullP,
+    // Issue #4175: R7RS string comparison completion. Appended after the
+    // original 44 entries (not beside StringLt) so existing PrimId numeric
+    // values stay stable for already-compiled artifacts and caches.
+    StringGt,
+    StringGe,
+    StringLe,
 };
 
 // Names for each PrimId, indexed by enum value.
@@ -431,10 +437,11 @@ export constexpr std::string_view kPrimNames[] = {
     "vector-ref",    "vector-set!",    "vector-length",  "vector?",       "make-vector",
     "import",        "char=?",         "char<?",         "char->integer", "integer->char",
     "quotient",      "remainder",      "length",         "list-ref",      "reverse",
-    "raise",         "error?",         "pair?",          "null?",
+    "raise",         "error?",         "pair?",          "null?",         "string>?",
+    "string>=?",     "string<=?",
 };
 
-static_assert(std::size(kPrimNames) == 44, "kPrimNames must have exactly one entry per PrimId");
+static_assert(std::size(kPrimNames) == 47, "kPrimNames must have exactly one entry per PrimId");
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
 export constexpr std::uint32_t pack_pair(std::uint32_t hi, std::uint32_t lo) {

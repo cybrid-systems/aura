@@ -779,6 +779,10 @@ static std::uint32_t lower_flat_expr(
                         {"substring", PrimId::Substring},
                         {"string=?", PrimId::StringEq},
                         {"string<?", PrimId::StringLt},
+                        // Issue #4175: complete the R7RS string comparison suite.
+                        {"string>?", PrimId::StringGt},
+                        {"string>=?", PrimId::StringGe},
+                        {"string<=?", PrimId::StringLe},
                         {"number->string", PrimId::NumberToString},
                         {"string->number", PrimId::StringToNumber},
                         {"display", PrimId::Display},
