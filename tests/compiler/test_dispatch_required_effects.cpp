@@ -1218,6 +1218,148 @@ static void ac4110_4_unarmed_face_no_tenant_load() {
           "4110 AC4: mode-1 unarmed allowed");
 }
 
+// ── Issue #4134: fail-closed aura_jit_owner_check_isolation when the owner
+// Evaluator is unwired. The unwired hook (strong def and light-link stub)
+// returned 1 (allow) — an audit/forensics hole and a footgun for any caller
+// that trusts the return for access. The hook now denies (0) when unwired:
+// the #4093/#4094 gates decide the access skip locally on stamp mismatch
+// (unchanged), the IsolationDeny SE is best-effort (needs the owner's
+// record_audit path; the existing tenant-isolation counter
+// tenant_boundary_violation_prevented_total is the observable), and
+// Soft/Off face 0 keeps the zero-cost contract (sandbox_mode stub stays 0 →
+// gates never arm). Light-link binaries shadow the strong owner hooks with
+// the weak stubs (#4036 rationale), so the direct hook calls below exercise
+// the fail-closed stub; the strong-def shape is source-cited.
+static void ac4134_source_cite() {
+    std::println(
+        "\n--- #4134 cite: fail-closed isolation hook (strong + stub), zero-cost intact ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto iso = svc.find("extern \"C\" int aura_jit_owner_check_isolation(");
+    CHECK(iso != std::string::npos, "4134 cite: strong isolation hook present");
+    if (iso != std::string::npos) {
+        const auto win = svc.substr(iso, 1000);
+        const auto unwired = win.find("if (!owner) {");
+        const auto deny = win.find("return 0;");
+        CHECK(unwired != std::string::npos && deny != std::string::npos && deny > unwired,
+              "4134 cite: unwired owner denies (0) — no false-allow");
+        CHECK(win.find("return 1;") == std::string::npos,
+              "4134 cite: no unwired allow (1) remains in the strong def");
+        CHECK(win.find("owner->check_workspace_isolation(") != std::string::npos,
+              "4134 cite: owner-wired routing intact (#4093 deny path)");
+        CHECK(win.find("tenant_boundary_violation_prevented_total") != std::string::npos,
+              "4134 cite: best-effort deny observable via the existing isolation counter");
+    }
+    CHECK(svc.find("Issue #4134: fail-closed") != std::string::npos,
+          "4134 cite: rationale documented at the hook");
+    const auto req = svc.find("extern \"C\" int aura_jit_owner_require_effect(");
+    CHECK(req != std::string::npos &&
+              svc.substr(req, 320).find("if (!owner)\n        return 0;") != std::string::npos,
+          "4134 cite: require_effect sibling stays fail-closed unwired");
+    const auto stub = read_file("src/compiler/aura_jit_prim_dispatch_stub.cpp");
+    const auto stub_iso = stub.find("aura_jit_owner_check_isolation(std::uint64_t, std::uint64_t");
+    CHECK(stub_iso != std::string::npos &&
+              stub.substr(stub_iso, 200).find("return 0;") != std::string::npos,
+          "4134 cite: weak isolation stub denies (0)");
+    CHECK(stub.substr(stub_iso, 200).find("return 1;") == std::string::npos,
+          "4134 cite: weak isolation stub no longer allows (1)");
+    const auto stub_mode = stub.find("aura_jit_owner_sandbox_mode(void) noexcept");
+    CHECK(stub_mode != std::string::npos &&
+              stub.substr(stub_mode, 200).find("return 0;") != std::string::npos,
+          "4134 cite: sandbox_mode stub stays 0 (gates never arm light-link)");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("if (slot_tenant == caller_tenant)") != std::string::npos &&
+              rt.find("aura_jit_owner_check_isolation(caller_tenant, slot_tenant") !=
+                  std::string::npos,
+          "4134 cite: jit_tenant_gate skip semantics untouched (#4110 AC7 shape)");
+    CHECK(rt.find("Issue #4134") != std::string::npos,
+          "4134 cite: gate comment documents the fail-closed hook return");
+}
+
+static void ac4134_1_owner_wired_deny_unchanged() {
+    std::println("\n--- #4134 AC1: foreign access still skipped with the face armed ---");
+    reset_all();
+    constexpr std::uint64_t tenant_a = 4134;
+    constexpr std::uint64_t tenant_b = 4135;
+    constexpr int kStrictFace = 2;
+    const auto cid_a = aura_alloc_closure_tenant(4134, tenant_a);
+    CHECK(cid_a >= 0, "4134 AC1: A alloc closure");
+    aura_closure_capture_checked(cid_a, 0, 3134, tenant_a, kStrictFace);
+    CHECK(aura_closure_env_get(cid_a, 0) == 3134, "4134 AC1: A capture lands");
+    // Face armed, foreign stamp: the gate still skips the access (the local
+    // stamp compare is untouched) and production links route the deny
+    // through the owner's check_workspace_isolation (#4094 AC1 semantics;
+    // #4134 flipped only the unwired hook return).
+    aura_closure_capture_checked(cid_a, 0, 999, tenant_b, kStrictFace);
+    CHECK(aura_closure_env_get(cid_a, 0) == 3134, "4134 AC1: B foreign capture still skipped");
+}
+
+static void ac4134_2_unwired_hook_denies() {
+    std::println("\n--- #4134 AC2: unwired isolation hook returns 0 (deny) ---");
+    reset_all();
+    // Light-link: the weak stub IS the hook (no owner Evaluator wired). The
+    // stub allowed (1) before #4134; callers honoring the return can no
+    // longer false-allow.
+    CHECK(aura_jit_owner_check_isolation(4135, 4134, kEffectMutate, "jit-tenant") == 0,
+          "4134 AC2: unwired hook denies a foreign pair");
+    CHECK(aura_jit_owner_check_isolation(0, 0, kEffectMutate, "jit-tenant") == 0,
+          "4134 AC2: unwired hook denies regardless of stamps");
+}
+
+static void ac4134_3_soft_zero_cost() {
+    std::println("\n--- #4134 AC3: Soft/Off face 0 keeps the zero-cost contract ---");
+    reset_all();
+    constexpr std::uint64_t tenant_a = 4134;
+    constexpr std::uint64_t tenant_b = 4135;
+    const auto cid_a = aura_alloc_closure_tenant(4134, tenant_a);
+    CHECK(cid_a >= 0, "4134 AC3: A alloc closure");
+    aura_closure_capture_checked(cid_a, 0, 3134, tenant_a, 0);
+    CHECK(aura_closure_env_get(cid_a, 0) == 3134, "4134 AC3: A capture lands");
+    // Face 0 (mode 0): the seam never arms the gate — the capture proceeds
+    // across principals without consulting g_closure_tenants (the face
+    // probe precedes the stamp load; the #4093 AC3 zero-cost shape on the
+    // closure seam).
+    aura_closure_capture_checked(cid_a, 0, 999, tenant_b, 0);
+    CHECK(aura_closure_env_get(cid_a, 0) == 999,
+          "4134 AC3: Soft capture lands across principals (shared)");
+    // The hash gate stays a probe when unarmed: no skip, no deny, no load.
+    const auto hash_a = aura_hash_alloc_tenant(4134);
+    CHECK(hash_a >= 0, "4134 AC3: A alloc hash");
+    const auto hidx_a = static_cast<std::uint64_t>(hash_a) >> 6;
+    CHECK(!aura_hash_gate_checked(hidx_a, tenant_b, 0, "hash-set!"),
+          "4134 AC3: unarmed hash gate is probe-only");
+}
+
+static void ac4134_4_require_effect_precedes_store() {
+    std::println("\n--- #4134 AC4: unwired require_effect deny still precedes the store ---");
+    reset_all();
+    // Unwired owner → require_effect denies (0); the JIT mutate chokes run
+    // BEFORE any heap store (cite below), so no silent write.
+    CHECK(aura_jit_owner_require_effect(kEffectMutate, "hash-set!") == 0,
+          "4134 AC4: unwired require_effect denies hash-set!");
+    CHECK(aura_jit_owner_require_effect(kEffectMutate, "cell-set!") == 0,
+          "4134 AC4: unwired require_effect denies cell-set!");
+    // Runtime proof: the deny precedes the store — the C-ABI hash-set!
+    // stores nothing (light-link stub denies the Mutate before the write).
+    const auto hash_b = aura_hash_alloc_tenant(4134);
+    CHECK(hash_b >= 0, "4134 AC4: alloc hash for choke drive");
+    const auto kp = aura_alloc_pair_tenant(7, 8, 4134);
+    CHECK(kp != 0, "4134 AC4: alloc pair for choke drive");
+    CHECK(aura_hash_set(hash_b, kp) == 0, "4134 AC4: denied hash-set! rc 0");
+    CHECK(aura_hash_ref(hash_b, 7) == 11, "4134 AC4: no entry stored (not-found sentinel)");
+    // The choke lines sit upstream of the stores in the runtime source.
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto choke = rt.find("aura_jit_owner_require_effect(aura::compiler::security::"
+                               "kEffectMutate, \"hash-set!\") == 0");
+    CHECK(choke != std::string::npos, "4134 AC4: hash-set! Mutate choke present");
+    if (choke != std::string::npos) {
+        const auto store = rt.find("aura_hash_set_checked(hash_val, pair_val", choke);
+        CHECK(store != std::string::npos, "4134 AC4: hash-set! store downstream of the choke");
+    }
+    const auto choke_cell = rt.find("aura_jit_owner_require_effect(aura::compiler::security::"
+                                    "kEffectMutate, \"cell-set!\") == 0");
+    CHECK(choke_cell != std::string::npos, "4134 AC4: cell-set! Mutate choke present");
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -2877,6 +3019,13 @@ int run_test_dispatch_required_effects() {
     ac4110_2_tree_walker_agrees();
     ac4110_3_foreign_tree_walker_gate();
     ac4110_4_unarmed_face_no_tenant_load();
+
+    // ── Issue #4134: fail-closed aura_jit_owner_check_isolation unwired ──
+    ac4134_source_cite();
+    ac4134_1_owner_wired_deny_unchanged();
+    ac4134_2_unwired_hook_denies();
+    ac4134_3_soft_zero_cost();
+    ac4134_4_require_effect_precedes_store();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

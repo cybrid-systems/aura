@@ -8739,6 +8739,22 @@ def cmd_lint():
             "Issue #4094 closure capture tenant linter failed — run python3 scripts/check_closure_capture_tenant_4094.py"
         )
         return r
+    # Issue #4134 (P1 sec): the JIT owner isolation hook returned allow (1)
+    # when the owner Evaluator was unwired (strong def + light-link stub).
+    # The #4093/#4094 gates skip access locally so heap access stayed
+    # skipped, but the IsolationDeny SE / fiber+Mutation-epoch audit record
+    # was lost on an armed face without an owner, and any caller trusting
+    # the return would false-allow. The hook now fails closed unwired
+    # (deny 0); SE emission is best-effort via the existing tenant-isolation
+    # counter; Soft/Off face-0 zero-cost contract intact.
+    jof4134_script = ROOT / "scripts" / "check_jit_owner_failclosed_4134.py"
+    if not jof4134_script.exists():
+        fail(f"missing {jof4134_script}")
+        return 1
+    r = run([sys.executable, str(jof4134_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4134 JIT owner fail-closed linter failed — run python3 scripts/check_jit_owner_failclosed_4134.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

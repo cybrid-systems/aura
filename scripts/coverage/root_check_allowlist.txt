@@ -182,3 +182,4 @@ check_empty_list_unparse_4130.py
 check_oneshot_sigterm_4131.py
 check_export_name_unparse_4132.py
 check_mse_caller_only_ta_4133.py
+check_jit_owner_failclosed_4134.py

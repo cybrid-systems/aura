@@ -425,6 +425,10 @@ extern "C" std::int64_t aura_hash_remove(std::int64_t hash_val, std::int64_t key
 extern "C" int aura_jit_owner_sandbox_mode(void) noexcept;
 extern "C" int aura_jit_owner_check_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
                                               std::uint16_t bits, const char* op) noexcept;
+// Issue #3720: owner Mutate choke for the JIT hash/cell C ABI (strong def
+// in service.ixx, weak fail-closed stub in aura_jit_prim_dispatch_stub.cpp;
+// unwired owner → 0 = deny, no silent write).
+extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept;
 // Issue #4093: explicit-context checked seams (#4036 aura_free_closure_checked
 // shape) — light-link test binaries shadow the strong owner hooks with weak
 // fail-closed stubs, so tests drive the gate with explicit caller/face. Same

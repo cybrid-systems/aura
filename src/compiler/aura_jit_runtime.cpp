@@ -5189,8 +5189,11 @@ static bool jit_tenant_gate_armed(int sandbox_mode) {
 // walk on the JIT heap path) and the deny is fired through the owner's
 // check_workspace_isolation for the IsolationDeny SE record (fiber id +
 // Mutation epoch, #2388 single record_audit path); the hook return is not
-// consulted for the access decision. slot_tenant == caller (incl. 0 == 0,
-// same as the #4057 pair arm) passes without a boundary round-trip.
+// consulted for the access decision. Issue #4134: the hook itself now fails
+// closed when the owner is unwired (return 0) so callers honoring the
+// return cannot false-allow; the local skip decision is unchanged.
+// slot_tenant == caller (incl. 0 == 0, same as the #4057 pair arm) passes
+// without a boundary round-trip.
 static bool jit_tenant_gate(std::uint64_t slot_tenant, std::uint64_t caller_tenant,
                             const char* op) {
     if (slot_tenant == caller_tenant)
