@@ -9137,6 +9137,30 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4147 residual-force re-arm linter failed — run python3 scripts/check_residual_force_rearm_4147.py")
         return r
+    # Issue #4148: JIT-native drop must-deopt belt. drop_jit_fn_native_for_
+    # define_locked (#4083, behind the #4100 facade / #1514 Soft relower /
+    # abort-force / #4146 cone callers) cleared g_jit_fns / by-name /
+    # overflow / closure-cache for define F but never armed
+    # g_closure_must_deopt — under owner-scoped hard invalidate (C-bridge +
+    # table frozen, dual-fresh green) leave-native depended only on the null
+    # fn until a remount/reemit restored a pointer. Gate pins: the MustDeopt
+    # arm lives inside the name-matching walk (same jit_key_matches_define
+    # predicate), peer resize+store shape (#2503/#3060), #4083 teardown +
+    # lock shape unchanged, clear stays the remount-heal dual-fresh SSOT
+    # (#2128), no second closure table, no process-wide epoch bump (#2951).
+    # Soft BFS callers get the fail-closed set; empty walk = no extra work.
+    # Runtime doors live in tests/compiler/test_must_deopt_before_next_call.cpp
+    # (ac4148_*).
+    jdm4148_script = ROOT / "scripts" / "check_jit_drop_must_deopt_4148.py"
+    if not jdm4148_script.exists():
+        fail(f"missing {jdm4148_script}")
+        return 1
+    r = run([sys.executable, str(jdm4148_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4148 JIT-drop must-deopt belt linter failed — run python3 scripts/check_jit_drop_must_deopt_4148.py"
+        )
+        return r
     # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
     # TokenKind::Error and parse_list's error recovery consumed it as a
     # closing ')': arguments at/after a character literal were dropped —
