@@ -66,7 +66,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_ir_closure_jit_misc_batch (23 members) ===");
+    std::println("=== test_ir_closure_jit_misc_batch (24 members) ===");
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     const struct {
         const char* name;
@@ -89,6 +89,12 @@ int main() {
         {"test_jit_interpreter_equivalence_oracle", run_test_jit_interpreter_equivalence_oracle},
         {"test_jit_macro_deopt_hygiene", run_test_jit_macro_deopt_hygiene},
         {"test_live_closure_stable_id_only", run_test_live_closure_stable_id_only},
+        // Issue #4148: restore this member to the isolate table — the Aug 23
+        // fork-isolate rewrite dropped it (extern decl + #if 0 body kept), so
+        // its #2128/#3247/#3572/#3977 ACs — and the new #4148 drop-MustDeopt
+        // belt ACs — never executed in CI. Same restore precedent as #3636
+        // (region_priority_deopt_throttle) and #3607.
+        {"test_must_deopt_before_next_call", run_test_must_deopt_before_next_call},
 
         {"test_named_closure_stable_id_at_create", run_test_named_closure_stable_id_at_create},
         {"test_partial_recompile_single_evict", run_test_partial_recompile_single_evict},

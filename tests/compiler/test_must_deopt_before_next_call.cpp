@@ -17,6 +17,9 @@ extern "C" std::uint64_t aura_deopt_count(void);
 // Issue #3572: deopt-pending consult ABI (impl in aura_jit_bridge.cpp;
 // weak stub in aura_jit_bridge_stub.cpp for light-link test binaries).
 extern "C" int aura_jit_is_deopt_pending(const char* name);
+// Issue #4148: JIT-native drop teardown ABI (impl in aura_jit_runtime;
+// production facade / Soft partial-relower / abort-force callers).
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
 
 #include <cstdint>
 #include <fstream>
@@ -79,7 +82,12 @@ int run_test_must_deopt_before_next_call() {
               "must_deopt path");
         CHECK(eval.find("must_deopt_before_next_call") != std::string::npos, "TW apply path");
         CHECK(met.find("must_deopt_before_next_call_total") != std::string::npos, "metrics");
-        CHECK(::aura::test::aura_cxx_string_has(q, "schema-2128"), "query schema");
+        // Issue #3736 merged the reemit-stats register (duplicate builder
+        // removed) and dropped the #2128 schema key with it; the surviving
+        // query SSOT is the single "query:aot-incremental-reemit-stats"
+        // register (evaluator_primitives_obs_eval.cpp).
+        CHECK(::aura::test::aura_cxx_string_has(q, "query:aot-incremental-reemit-stats"),
+              "query schema (register SSOT post-#3736)");
     }
 
     // ── AC1: flag → force deopt on aura_closure_call ──
@@ -235,7 +243,11 @@ int run_test_must_deopt_before_next_call() {
         auto build = read_file("build.py");
         auto script = read_file("scripts/coverage/checks/check_must_deopt_getter_sticky_3247.py");
         CHECK(!rt.empty(), "3247: runtime readable");
-        const auto g = rt.find("aura_get_closure_must_deopt_before_next_call");
+        // Issue #4148: anchor at the definition signature — a comment above
+        // the getter (landed while this member was dark after the Aug-23
+        // isolate rewrite dropped it) mentions the name first and broke the
+        // window anchors. Contract unchanged.
+        const auto g = rt.find("extern \"C\" int aura_get_closure_must_deopt_before_next_call");
         CHECK(g != std::string::npos, "3247: getter present");
         if (g != std::string::npos) {
             const auto body = rt.substr(g > 400 ? g - 400 : 0, 900);
@@ -261,7 +273,11 @@ int run_test_must_deopt_before_next_call() {
             // (`g_closure_must_deopt[cid] = 0` at +5902, bridge_epochs at
             // +6161; CI run 35602271991 family). Same growth the #3247
             // coverage linter took in 415d1d33b; assertions unchanged.
-            const auto body = rt.substr(call, 6500);
+            // Issue #4148 re-measure (member restored to the isolate table
+            // after the Aug-23 rewrite dropped it): prologue growth while
+            // the member was dark put the bridge_epochs store at +6597 —
+            // window now 8000.
+            const auto body = rt.substr(call, 8000);
             CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
                   "3247 AC2: call path still clears under exclusive");
             CHECK(body.find("g_closure_bridge_epochs[cid] = 0") != std::string::npos,
@@ -353,6 +369,83 @@ int run_test_must_deopt_before_next_call() {
         CHECK(aura_jit_is_deopt_pending("no_such_fn_3572") == 0,
               "3572 AC2: unstamped name reads not-pending (named precision)");
         CHECK(aura_jit_is_deopt_pending(nullptr) == 0, "3572 AC2: null name safe");
+    }
+
+    // ── Issue #4148: JIT-native drop arms MustDeopt on matching live closures ──
+    // drop_jit_fn_native_for_define_locked cleared g_jit_fns / by-name /
+    // overflow / closure-cache for define F but left live name-matching
+    // closures without MustDeopt — under owner-scoped hard invalidate
+    // (C-bridge + table frozen, dual-fresh green) leave-native depended
+    // only on the null fn until a remount/reemit restored a pointer.
+    // Peer shape: #2503 remount-fail / #3060 drain arm MustDeopt; the
+    // clear stays the remount-heal dual-fresh SSOT (#2128).
+    {
+        std::println("\n--- #4148 AC1: drop sets MustDeopt on the matching live named closure ---");
+        auto cid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cid >= 0, "4148: alloc");
+        aura_closure_set_name(cid, "drop_md_4148_fn");
+        aura_closure_set_must_deopt(cid, 0);
+        CHECK(aura_closure_get_must_deopt(cid) == 0, "4148: flag clear before drop");
+        aura_drop_jit_fn_native_for_define("drop_md_4148_fn");
+        CHECK(aura_closure_get_must_deopt(cid) == 1,
+              "ac4148_1_drop: MustDeopt armed on matching live closure");
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1,
+              "ac4148_1_drop: sticky getter observes the belt (no consume)");
+        CHECK(aura_closure_get_must_deopt(cid) == 1,
+              "ac4148_1_drop: flag still set after getter probes (#3247 parity)");
+
+        std::println("\n--- #4148 AC2: name# prefix matches; foreign names stay clear ---");
+        auto pid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(pid >= 0, "4148: alloc name# variant");
+        aura_closure_set_name(pid, "drop_md_4148_fn#2");
+        auto fxid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(fxid >= 0, "4148: alloc foreign name");
+        aura_closure_set_name(fxid, "drop_md_4148_foreign");
+        aura_drop_jit_fn_native_for_define("drop_md_4148_fn");
+        CHECK(aura_closure_get_must_deopt(pid) == 1,
+              "ac4148_2_prefix: name# closure armed by base-define drop");
+        CHECK(aura_closure_get_must_deopt(fxid) == 0,
+              "ac4148_2_precision: non-matching closure untouched (empty walk for it)");
+        aura_free_closure(pid);
+        aura_free_closure(fxid);
+
+        std::println("\n--- #4148 AC3: next call consumes the belt (force-deopt, fn null) ---");
+        const auto deopt0 = aura_deopt_count();
+        std::int64_t args[1] = {0};
+        (void)aura_closure_call(cid, args, 0);
+        CHECK(aura_closure_get_must_deopt(cid) == 0,
+              "ac4148_3_call: belt consumed by the force-deopt transaction");
+        CHECK(aura_deopt_count() > deopt0,
+              "ac4148_3_call: deopt counter advanced (leave-native belt real)");
+        aura_free_closure(cid);
+    }
+    {
+        std::println("\n--- #4148 AC4: source contract + gate ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto fn =
+            rt.find("static void drop_jit_fn_native_for_define_locked(std::string_view name)");
+        CHECK(fn != std::string::npos, "4148: drop helper present");
+        if (fn != std::string::npos) {
+            const auto win = rt.substr(fn, 3600);
+            CHECK(win.find("Issue #4148") != std::string::npos,
+                  "4148 AC4: rationale cited inside the drop walk");
+            CHECK(win.find("g_closure_must_deopt[cid] = 1") != std::string::npos,
+                  "4148 AC4: MustDeopt armed inside the name-matching walk");
+            CHECK(win.find("g_closure_must_deopt.resize(g_closure_func_ids.size(), 0)") !=
+                      std::string::npos,
+                  "4148 AC4: peer resize shape (column sized before store)");
+            CHECK(win.find("jit_key_matches_define") != std::string::npos,
+                  "4148 AC4: same name/name# predicate reused (no second model)");
+            CHECK(win.find("invalidate_closure_cache_for") != std::string::npos,
+                  "4148 AC4: existing teardown intact (additive fix)");
+        }
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_jit_drop_must_deopt_4148.py") != std::string::npos,
+              "4148 AC4: linter registered in build.py");
+        CHECK(!read_file("scripts/check_jit_drop_must_deopt_4148.py").empty(),
+              "4148 AC4: gate linter present");
+        CHECK(read_file("tests/compiler/test_issue_4148.cpp").empty(), "4148: no invent");
+        CHECK(read_file("docs/design/4148-jit-drop-must-deopt.md").empty(), "4148: no docs/design");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

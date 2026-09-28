@@ -4384,6 +4384,21 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
                     g_jit_fns_overflow.erase(oit);
                 }
             }
+            // Issue #4148: dropping the ScalarFn left live name-matching
+            // closures with only a null fn — under owner-scoped hard
+            // invalidate (C-bridge + table frozen, dual-fresh green,
+            // #2841/#2951/#3605) leave-native depended on the null slot
+            // alone until a remount/reemit restored a pointer. Peer shape
+            // (#2503 remount-fail / #3060 drain): MustDeopt=1 so the next
+            // aura_closure_call force-deopts even if a stale fn pointer
+            // were hypothetically restored. Clear stays the remount-heal
+            // dual-fresh SSOT (#2128); Soft BFS / partial-relower callers
+            // get the fail-closed set (no matching live cids = empty walk,
+            // zero extra work). Same jit_key_matches_define predicate —
+            // no second closure table.
+            if (g_closure_must_deopt.size() <= cid)
+                g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+            g_closure_must_deopt[cid] = 1;
         }
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
     }
