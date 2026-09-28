@@ -8419,6 +8419,29 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4139 join-token observe-only linter failed - run python3 scripts/check_join_token_observe_4139.py")
         return r
+    # Issue #4140 (observability, P1): query:arena-moving-densify-health
+    # planned_keys underheadroom — live insert_kv 79 (+2 #4140 stamps)
+    # against planned 84 gave live+8=87 > 84, the one Agent facade missing
+    # from the #3339 headroom CI. Gate pins: planned 96 via
+    # query_hash_capacity_for(kArenaMovingDensifyHealthPlannedKeys) (no
+    # magic 84), the bounded local insert_kv lambda keeps the
+    # overflowed=true contract into query_hash_finish, append-only stamps
+    # at handler end (no key rename), densify pinned in
+    # check_agent_decision_facade_headroom_3339.py (planned < actual + 8
+    # fails the gate), Soft/Off unchanged (no query rename), and the
+    # runtime ACs live in tests/compiler/test_engine_metrics_facade.cpp
+    # (no test_issue_4140.cpp per #81934, no docs/design/4140-* per
+    # #1655, no new query key).
+    dsh4140_script = ROOT / "scripts" / "check_densify_health_headroom_4140.py"
+    if not dsh4140_script.exists():
+        fail(f"missing {dsh4140_script}")
+        return 1
+    r = run([sys.executable, str(dsh4140_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4140 densify-health headroom linter failed - run python3 scripts/check_densify_health_headroom_4140.py"
+        )
+        return r
     # Issue #4175 (correctness): R7RS string comparison suite — string>?,
     # string>=?, string<=? were unbound (string=? / string<? present), so
     # aura-build kernel modules using string>? tie-breaks failed with

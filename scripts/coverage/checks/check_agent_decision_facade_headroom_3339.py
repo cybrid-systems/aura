@@ -13,11 +13,19 @@ joins the same headroom CI so orch growth cannot silently drop Agent keys.
 Issue #3882: CI fails when live keys + 8 > planned for posture / playbook /
 evolution-snapshot / orch-module (same pin list as AC1). No new check file.
 
+Issue #4140: query:arena-moving-densify-health (obs jit) joins the same
+headroom CI — live 79 (+2 #4140 stamps) sat under planned 84 < live+8;
+planned raised to 96 via kArenaMovingDensifyHealthPlannedKeys. The densify
+handler checks overflow via its bounded local insert_kv lambda (overflowed
+flag into query_hash_finish), not insert_kv_checked — same hash-overflow
+contract.
+
 Contract (one row per AC):
   AC1  planned >= actual + 8 on evolution-audit-decision /
        security-posture / type-linear-commit-health /
        type-linear-evolution-snapshot / reload-recovery-playbook /
-       reload-recovery-state (#3846) / orch-module-stats (#3807)
+       reload-recovery-state (#3846) / orch-module-stats (#3807) /
+       arena-moving-densify-health (#4140)
   AC2  tests under production_defaults assert hash-overflow is absent
   AC3  +20 dummy keys without raising planned would fail AC1 on
        evolution-audit-decision
@@ -129,6 +137,7 @@ def main() -> int:
     ref = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
+    obsjit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
     lint3020 = _read("scripts/coverage/checks/check_query_hash_overflow_3020.py")
     build = _read("build.py")
@@ -148,6 +157,9 @@ def main() -> int:
         ("query:reload-recovery-state", mut, "kReloadRecoveryStatePlannedKeys"),
         # Issue #3807: primary Agent soak surface (~390 live / planned 512)
         ("query:orch-module-stats", agent, "kOrchModuleStatsPlannedKeys"),
+        # Issue #4140: densify-health joins the Agent decision headroom gate
+        # (live 79 + 2 stamps; planned 84 < live+8 → raised to 96)
+        ("query:arena-moving-densify-health", obsjit, "kArenaMovingDensifyHealthPlannedKeys"),
     ]
 
     evo_planned = 0
@@ -169,7 +181,14 @@ def main() -> int:
         elif planned < actual + HEADROOM:
             fails.append(f"AC1: {query} planned {planned} < actual {actual} + {HEADROOM} headroom")
         must("query_hash_capacity_for", f"AC1 {query} capacity helper", block)
-        must("insert_kv_checked", f"AC1 {query} checked insert", block)
+        if query == "query:arena-moving-densify-health":
+            # Issue #4140: densify probes via a bounded local insert_kv
+            # lambda that stamps overflowed on a full table (same
+            # hash-overflow contract into query_hash_finish).
+            must("bool overflowed = false", f"AC1 {query} overflowed flag", block)
+            must("overflowed = true", f"AC1 {query} bounded insert", block)
+        else:
+            must("insert_kv_checked", f"AC1 {query} checked insert", block)
         must("query_hash_finish", f"AC1 {query} finish", block)
         if query == "query:evolution-audit-decision":
             evo_planned = planned
@@ -187,6 +206,9 @@ def main() -> int:
             must('insert_kv("residual-force-auto-heal-wired"', "AC1/#3846/#3847 heal wired", block)
             must('insert_kv("schema-3096"', "AC1/#3846/#3847 schema-3096", block)
             must('insert_kv("issue-3096"', "AC1/#3846/#3847 issue-3096", block)
+        if query == "query:arena-moving-densify-health":
+            must('insert_kv("schema-4140"', "AC1/#4140 densify schema-4140", block)
+            must('insert_kv("issue-4140"', "AC1/#4140 densify issue-4140", block)
         if query == "query:orch-module-stats":
             must("insert_kv_checked", "AC1 orch insert_kv_checked", block)
             must("query_hash_finish", "AC1 orch query_hash_finish", block)
@@ -206,6 +228,7 @@ def main() -> int:
     must("3882 AC1: CI pins playbook", "AC1/#3882 playbook pin test", test)
     must("3882 AC1: CI pins evolution", "AC1/#3882 evolution pin test", test)
     must("3882 AC1: CI pins orch", "AC1/#3882 orch pin test", test)
+    must("ac4140_2_no_overflow", "AC2/#4140 densify production overflow test", test)
 
     if evo_actual > 0 and evo_planned >= (evo_actual + 20) + HEADROOM:
         fails.append(
