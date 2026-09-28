@@ -1556,9 +1556,15 @@ static void ac3248_1_fail_exits_auto_heal() {
     CHECK(reg.residual_force_auto_heal_total() >= heal0 + 1,
           "ac3248_1_fail: 256 fail exits auto-heal once");
     const auto heal1 = reg.residual_force_auto_heal_total();
+    // Issue #4147: the heal above is a no-op here (nothing reemits —
+    // residual unchanged), so the one-shot cap re-arms: the next 256-exit
+    // window re-fires exactly one heal instead of sticking forever.
+    // Budget must be empty for the #3096 gate; re-drain deterministically.
+    reg.exhaust_retry_for_test();
     (void)drive_outermost_fail_exits(ev, 256);
-    CHECK(reg.residual_force_auto_heal_total() == heal1,
-          "ac3248_1_fail: same mask does not double-heal");
+    CHECK(reg.residual_force_auto_heal_total() == heal1 + 1,
+          "ac3248_1_fail: same mask does not double-heal mid-window; #4147 no-op re-arm re-fires "
+          "once next window");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     clear_recovery_idle(reg);
     aura_hot_update_reset_residual_force_observe_for_test();

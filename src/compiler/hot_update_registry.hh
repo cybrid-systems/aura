@@ -292,7 +292,9 @@ public:
     // bits age past threshold with exhausted retry budget. Lifetime
     // counter (auto-heal fired) + per-mask-generation cap flag (set to
     // residual mask at fire time; reset on mask change in
-    // observe_residual_force_stale). Soft / Off is early-returned in
+    // observe_residual_force_stale). Issue #4147: also cleared after a
+    // no-op heal (residual unchanged vs the armed generation) so the
+    // next age window can retry. Soft / Off is early-returned in
     // observe_residual_force_stale before the auto-heal check, so these
     // counters stay at 0 under Soft / Off (zero-cost contract).
     [[nodiscard]] std::uint64_t residual_force_auto_heal_total() const noexcept;
@@ -1014,7 +1016,9 @@ private:
     // Issue #3096: production-only bounded auto-heal state. Lifetime
     // counter (auto-heal fired) + per-mask-generation cap flag (set to
     // residual mask at fire time; reset on mask change in
-    // observe_residual_force_stale). Soft / Off is early-returned in
+    // observe_residual_force_stale). Issue #4147: also cleared after a
+    // no-op heal (residual unchanged vs the armed generation) so the
+    // next age window can retry. Soft / Off is early-returned in
     // observe_residual_force_stale before the auto-heal check, so both
     // stay at 0 under Soft / Off (zero-cost contract preserved).
     std::atomic<std::uint64_t> residual_force_auto_heal_total_{0};
