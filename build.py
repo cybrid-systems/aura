@@ -9031,6 +9031,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4128 workspace lock stamp linter failed — run python3 scripts/check_workspace_lock_stamp_4128.py")
         return r
+    # Issue #4143: sticky densify-off recovery cleared the trap BEFORE the
+    # densify retry, so between the clear and the unified-green publish (or
+    # on the #3884 LCP-deny re-arm path) moving_compact_enabled() read true
+    # while cover could still be incomplete — a concurrent Phase-5 /
+    # auto-arm Moving or a peer try_acquire could admit relocate under
+    # incomplete cover (UAF / miss-remap window). Gate pins: no pre-clear in
+    # the recovery body (clear follows the retry compact), the recovery
+    # entrant gates on the feature flag while agents stay sticky-gated, the
+    # LCP-deny path keeps the blocked publish with no clear→re-arm exchange,
+    # and the recovery-reason clear is unified-green gated with
+    # sticky_cleared resolved post-publish. Runtime doors live in
+    # test_moving_densify_fail_closed.cpp (#4143 ACs).
+    msr4143_script = ROOT / "scripts" / "check_moving_sticky_recovery_4143.py"
+    if not msr4143_script.exists():
+        fail(f"missing {msr4143_script}")
+        return 1
+    r = run([sys.executable, str(msr4143_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4143 sticky recovery clear-ordering linter failed — run python3 scripts/check_moving_sticky_recovery_4143.py"
+        )
+        return r
     # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
     # TokenKind::Error and parse_list's error recovery consumed it as a
     # closing ')': arguments at/after a character literal were dropped —
