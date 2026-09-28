@@ -3378,6 +3378,264 @@ static void ac4115_6_source_cite_linter_no_invent() {
           "4115 AC6: no AgentRegistry type (comment forbids ok)");
 }
 
+// ── Issue #4136: caller-passed sweep_handles for raw host vectors ─────
+
+// Issue #4136 fixture helper: one throwaway Soft-mode mailbox spawn.
+// The security-schedule commit posture (#4011 lineage) clears its
+// commit-not-ready latch via the next mutate's re-proof after a
+// Soft-mode switch - production-soak blocks followed only by flag
+// resets still deny the next production admit. Run one dev-mode spawn
+// after the production soak so later production blocks (ac4097) find a
+// clean posture (mirrors the HEAD sequencing where soft/dev ACs
+// separate the production blocks).
+static void soft_prime_4136() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    SchedRunner runner(sched);
+    AgentSpec a;
+    a.name = "ac4136-prime";
+    a.attach_mailbox = true;
+    a.body = [] {};
+    auto h = spawn_agent_with_mailbox(sched, std::move(a));
+    CHECK(h.ok && h.fiber, "4136 prime: soft spawn ok");
+    if (h.ok && h.fiber) {
+        const auto jr = join_agent(h, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
+        CHECK(jr.status == JoinStatus::Ok, "4136 prime: soft join Ok");
+    }
+}
+
+static void ac4136_1_sweep_handles_releases_after_body_exit() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    std::println("\n--- #4136 AC1+AC2: raw-vector soak - sweep plane + no-sweep plane ---");
+    // Soft prime first: clear any security-schedule commit latch left by
+    // the preceding production block (ac4115_5 soak) so this AC's
+    // production spawns admit deterministically.
+    soft_prime_4136();
+    // Production arming per the #3433/#4097 fixture pattern: the
+    // must-wait face needs AURA_SANDBOX != off + the probe on
+    // (production_reclaimed_must_wait); force_wal reads the sandbox mode
+    // at defaults-call time, so pin the audit WAL on for the production
+    // spawn/join window - the security-schedule posture otherwise denies
+    // production admits with commit-not-ready.
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    std::filesystem::create_directories("build/test-wal-4136");
+    const bool wal_on_4136 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_4136)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-4136"), nullptr, 0);
+    Scheduler sched(4);
+    SchedRunner runner(sched);
+    // RAW host vector - no AgentScope, no name-table resolve: the exact
+    // bypass plane the issue names. Handles live outside any Scope.
+    std::vector<AgentHandle> handles;
+    handles.reserve(4);
+    auto run = std::make_shared<std::atomic<bool>>(true);
+    auto make_spec = [run](int i) {
+        AgentSpec a;
+        a.name = "ac4136-soak-" + std::to_string(i);
+        a.attach_mailbox = true;
+        a.body = [run] {
+            while (run->load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(2);
+        };
+        return a;
+    };
+    for (int i = 0; i < 4; ++i) {
+        // Admission can intermittently hit the security-schedule
+        // commit-not-ready latch under production posture; the documented
+        // recovery is a Soft-mode switch + mutate (#4011 lineage), so
+        // soft-prime and re-arm before retrying the soak spawn.
+        AgentHandle spawned;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            spawned = spawn_agent_with_mailbox(sched, make_spec(i));
+            if (spawned.ok && spawned.fiber)
+                break;
+            std::println("  4136 AC1 spawn diag (attempt {}): ok={} fiber={} error={}", attempt,
+                         spawned.ok, spawned.fiber != nullptr, spawned.error);
+            soft_prime_4136();
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+        }
+        handles.push_back(std::move(spawned));
+        CHECK(handles.back().ok && handles.back().fiber, "4136 AC1: soak spawn ok");
+    }
+    CHECK(handles.size() == 4, "4136 AC1: four handles held in the raw host vector");
+    // Deterministic body entry: the mailbox attach happens at body start
+    // (spawn defers mb->attach to the fiber body), so wait until every
+    // fiber has attached before joining — otherwise a short join can
+    // race a not-yet-scheduled fiber. 10s budget rides out load spikes.
+    for (int i = 0; i < 2000; ++i) {
+        bool all_attached = true;
+        for (const auto& h : handles)
+            if (!h.fiber || h.fiber->mailbox() == nullptr)
+                all_attached = false;
+        if (all_attached)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (const auto& h : handles)
+        CHECK(h.fiber && h.fiber->mailbox() != nullptr, "4136 AC1: mailbox attached at body entry");
+    std::println("  4136 AC1 diag: production_reclaimed_must_wait={} AURA_SANDBOX was {}",
+                 aura::orch::production_reclaimed_must_wait(),
+                 prev_sb_s.empty() ? std::string("(unset)") : prev_sb_s);
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    const auto ua0 =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    // drain_ms=0 (cancel-only): the residual hard-reclaim deadline falls
+    // back to 30s (instead of drain*8=80ms), so the Scheduler reaper
+    // cannot detach fiber mailboxes inside this AC's window; the batch
+    // auto-wait budget (drain*8) expires immediately - exactly the
+    // no-sweep host_forget fire the issue's AC2 pins.
+    (void)aura::orch::join_agents(handles, JoinPolicy{.primary_ms = 20, .drain_ms = 0});
+    for (const auto& h : handles) {
+        if (!h.fiber) {
+            CHECK(false, "4136 AC1: short join derived Reclaimed per handle (no fiber)");
+            continue;
+        }
+        CHECK(h.last_join_status == JoinStatus::Reclaimed,
+              "4136 AC1: short join derived Reclaimed per handle");
+        CHECK(h.must_wait_reclaimed, "4136 AC1: production Timeout armed must_wait");
+        CHECK(h.reclaimed_deferred_cleanup, "4136 AC1: Reclaimed-defer pending");
+        CHECK(h.reserved_memory_bytes > 0, "4136 AC1: reservation still owed");
+        CHECK(h.mailbox != nullptr, "4136 AC1: mailbox still attached");
+        CHECK(!h.fiber->is_done(), "4136 AC1: body still live after short join");
+    }
+    // NO sweep_handles call yet - the join's bounded batch auto-wait
+    // expired with the bodies live, so the #3220 host-forget risk
+    // counter fires on the soak alone (issue AC2 metrics).
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) >
+              hf0,
+          "4136 AC2: host_forget_reclaimed_risk_total fires without sweep");
+    // Dtor path (issue AC2) on the second pair while bodies live:
+    // under-account bump + mailbox detach + reservation release, body
+    // stack untouched (#2661 / #3012 / #3297 / #3880). NO sweep for
+    // these two - the destructor ordering is what releases them.
+    for (std::size_t i = 2; i < handles.size(); ++i) {
+        Fiber* raw = handles[i].fiber;
+        handles[i].finish_reclaimed_cleanup_on_dtor();
+        if (!raw) {
+            CHECK(false, "4136 AC2: #2661 no early free while body live (no fiber)");
+            continue;
+        }
+        CHECK(!raw->is_done(), "4136 AC2: #2661 no early free while body live");
+        CHECK(handles[i].reserved_memory_bytes == 0, "4136 AC2: dtor released the reservation");
+        CHECK(raw->mailbox() == nullptr, "4136 AC2: dtor detached the mailbox (#3880)");
+    }
+    CHECK(g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed) ==
+              ua0 + 2,
+          "4136 AC2: dtor under-account bumps per owed handle (#3297)");
+    // Bodies exit - the host never touches a Scope or a name table; for
+    // the first pair the caller-passed sweep is the only drain plane.
+    run->store(false, std::memory_order_release);
+    for (int i = 0; i < 400; ++i) {
+        bool all_done = true;
+        for (const auto& h : handles)
+            if (h.fiber && !h.fiber->is_done())
+                all_done = false;
+        if (all_done)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (const auto& h : handles)
+        CHECK(h.fiber && h.fiber->is_done(), "4136 AC1/AC2: bodies exited normally");
+    // Caller-passed sweep (issue AC1) over the first pair only - the
+    // same SSOT as ensure_reclaimed_cleanup releases reservation/mailbox
+    // and clears must_wait without relying on destructor ordering.
+    const std::span<AgentHandle> swept(handles.data(), 2);
+    const auto swept_out = aura::orch::sweep_handles(swept);
+    CHECK(swept_out.cleaned == 2, "4136 AC1: sweep cleaned both owed slots");
+    CHECK(swept_out.still_pending == 0, "4136 AC1: nothing still-pending after sweep");
+    CHECK(swept_out.skipped == 0, "4136 AC1: no skipped handles (both reclaimed-pending)");
+    for (std::size_t i = 0; i < 2; ++i) {
+        CHECK(handles[i].reserved_memory_bytes == 0, "4136 AC1: reservation released");
+        CHECK(!handles[i].must_wait_reclaimed && !handles[i].reclaimed_deferred_cleanup,
+              "4136 AC1: must_wait cleared");
+        CHECK(handles[i].fiber && handles[i].fiber->mailbox() == nullptr,
+              "4136 AC1: mailbox detached from the fiber");
+    }
+    apply_dev_audit_defaults();
+    if (!wal_on_4136)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().disable();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+    // Soft prime so later production blocks (ac4097) find a clean
+    // security-schedule commit posture.
+    soft_prime_4136();
+}
+
+static void ac4136_2_soft_sweep_noop_zero_wait() {
+    std::println("\n--- #4136 AC3: Soft / Off — sweep_handles is a zero-wait no-op ---");
+    apply_dev_audit_defaults();
+    auto fiber1 = std::make_unique<Fiber>([] {});
+    fiber1->mark_reclaimed();
+    auto fiber2 = std::make_unique<Fiber>([] {});
+    fiber2->mark_reclaimed();
+    std::vector<AgentHandle> handles;
+    handles.reserve(2);
+    for (auto* f : {fiber1.get(), fiber2.get()}) {
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = f;
+        h.reserved_memory_bytes = 1024;
+        h.name = "ac4136-soft";
+        h.must_wait_reclaimed = true;
+        h.reclaimed_deferred_cleanup = true;
+        handles.push_back(std::move(h));
+    }
+    const auto w0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    const auto swept = aura::orch::sweep_handles(handles);
+    CHECK(swept.cleaned == 0 && swept.still_pending == 0 && swept.skipped == 0 &&
+              swept.wait_us == 0,
+          "4136 AC3: Soft sweep_handles returns all zeros (production gate)");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == w0,
+          "4136 AC3: Soft no wait_reclaimed bump (zero wait)");
+    for (const auto& h : handles) {
+        CHECK(h.must_wait_reclaimed && h.reclaimed_deferred_cleanup,
+              "4136 AC3: Soft leaves owed flags untouched");
+        CHECK(h.reserved_memory_bytes == 1024, "4136 AC3: Soft leaves reservation owed");
+        CHECK(!h.fiber->is_done(), "4136 AC3: Soft touches nothing (#2661)");
+    }
+}
+
+static void ac4136_3_source_cite_linter_no_invent() {
+    std::println("\n--- #4136 AC4: source-cite + linter wiring + no invent ---");
+    const auto spawn_src = read_file("src/orch/agent_spawn.h");
+    const auto build_src = read_file("build.py");
+    CHECK(spawn_src.find("sweep_handles(std::span<AgentHandle>") != std::string::npos,
+          "4136 AC4: caller-passed sweep_handles entry point exists");
+    CHECK(spawn_src.find("Issue #4136") != std::string::npos,
+          "4136 AC4: agent_spawn.h cites Issue #4136");
+    CHECK(spawn_src.find("ensure_reclaimed_cleanup(h)") != std::string::npos,
+          "4136 AC4: sweep keeps the ensure SSOT (no second model)");
+    CHECK(spawn_src.find("class AgentRegistry") == std::string::npos &&
+              spawn_src.find("struct AgentRegistry") == std::string::npos,
+          "4136 AC4: no process-global AgentRegistry");
+    CHECK(build_src.find("check_caller_sweep_4136") != std::string::npos,
+          "4136 AC4: build.py wires the linter");
+    CHECK(
+        read_file("scripts/coverage/root_check_allowlist.txt").find("check_caller_sweep_4136.py") !=
+            std::string::npos,
+        "4136 AC4: linter on the root check allowlist");
+    CHECK(read_file("tests/orch/test_issue_4136.cpp").empty(),
+          "4136 AC4: no test_issue_4136.cpp per #81934");
+    CHECK(read_file("docs/design/4136-caller-sweep-handles.md").empty(),
+          "4136 AC4: no docs/design/4136-* per #1655");
+    CHECK(spawn_src.find("query:4136") == std::string::npos, "4136 AC4: no new query key");
+}
+
 static void ac3924_aura_scope_sweep_prim() {
     std::println("\n--- #3924: Aura orch:scope-sweep-reclaimed-pending ---");
     const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
@@ -8654,6 +8912,11 @@ int run_test_join_drain_reclaim() {
     ac4115_4_quota_recycle_must_wait_kept_through_sweep();
     ac4115_5_scope_soak_two_agents_pending_bounded_by_join();
     ac4115_6_source_cite_linter_no_invent();
+
+    std::println("\n=== Issue #4136: caller-passed sweep_handles drains raw host vectors ===");
+    ac4136_1_sweep_handles_releases_after_body_exit();
+    ac4136_2_soft_sweep_noop_zero_wait();
+    ac4136_3_source_cite_linter_no_invent();
 
     std::println("\n=== Issue #3905: orphan hard-reap keeps live Fiber ===");
     ac3905_1_reap_keeps_pending_handle_fiber();

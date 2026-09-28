@@ -8331,6 +8331,28 @@ def cmd_lint():
             "Issue #4115 join_all reclaimed-pending sweep linter failed - run python3 scripts/check_scope_join_sweep_4115.py"
         )
         return r
+    # Issue #4136 (orch): closed-loop bypass — bare AgentHandle vectors
+    # miss the Reclaimed sweep after a production Timeout. join_agents
+    # re-derives Reclaimed + must_wait and bounded auto-waits, but the
+    # Scope-owned sweep (#3842/#4115) and name-table find/put recycle
+    # (#3564/#3644) never run for raw host vectors, so reservation /
+    # mailbox / name stay owed until ~AgentHandle. Gate pins:
+    # sweep_handles(std::span<AgentHandle>) is the caller-passed drain
+    # over the host's own storage with the SAME ensure_reclaimed_cleanup
+    # SSOT (no second cleanup model), Soft/Off stays a zero-cost
+    # production-gate no-op, #2661 no-early-free and the #3934 must_wait
+    # faces are unchanged, and the runtime ACs live in
+    # tests/orch/test_join_drain_reclaim.cpp (no test_issue_4136.cpp per
+    # #81934, no docs/design/4136-* per #1655, no process-global
+    # AgentRegistry).
+    cs4136_script = ROOT / "scripts" / "check_caller_sweep_4136.py"
+    if not cs4136_script.exists():
+        fail(f"missing {cs4136_script}")
+        return 1
+    r = run([sys.executable, str(cs4136_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4136 caller-passed handle sweep linter failed - run python3 scripts/check_caller_sweep_4136.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

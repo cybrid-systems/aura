@@ -3827,6 +3827,82 @@ maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
     return out;
 }
 
+// Issue #4136: caller-passed Reclaimed sweep for raw host vectors. The
+// existing drain planes are all ownership-bound: AgentScope::
+// sweep_reclaimed_pending (#3842, also join_all end-of-join #4115) only
+// drains Scope-owned handles_, and name-table find/put recycle
+// (#3564/#3644) only runs for hosts that resolve by name. A production
+// host that keeps a bare std::vector<AgentHandle> (or moves handles out
+// of a Scope) never hits either plane: after join_agent / join_agents
+// re-derive Reclaimed + must_wait (#3433/#3012/#3110) and the bounded
+// auto-wait (#3087/#3595/#3631) expires with the body still live, the
+// reservation / mailbox / name stay owed until an explicit
+// ensure_reclaimed_cleanup / the #3334 abandon helper / ~AgentHandle.
+// This is the closed-loop bypass for the production C++ long-run path
+// that does not use Scope or name resolve.
+//
+// sweep_handles gives that host a one-call drain over its OWN storage:
+// same SSOT as ensure_reclaimed_cleanup (no second cleanup model), no
+// process-global AgentRegistry (the caller keeps ownership; the span is
+// never reordered / erased — no #3776 compaction here), and the same
+// per-handle arms as the Scope sweep:
+//   - Soft / Off: one production gate up front → zero wait / zero
+//     per-handle work (identical contract to sweep_reclaimed_pending).
+//   - must_wait_reclaimed → ensure_reclaimed_cleanup (#3087 SSOT): body
+//     already exited → Done-path complete_agent_join_cleanup
+//     (reservation released, mailbox detached, must_wait cleared
+//     #3467); body still live → Timeout, everything stays owed
+//     (#2661 no early free, #3146 flag stays host-visible). Issue
+//     #3841: the ensure Timeout arm's quota-only recycle keeps
+//     must_wait set — the slot stays honestly pending.
+//   - deferred-only + Done body → wait_reclaimed_body(nullopt): the
+//     rare must_wait=false husk (the auto-wait arm skips it) still
+//     drains without a new force path.
+//   - neither flag → skipped (not reclaimed-pending).
+struct SweepHandlesResult {
+    std::uint32_t cleaned = 0;       // Done-path cleanup completed
+    std::uint32_t still_pending = 0; // must_wait / deferred still owed
+    std::uint32_t skipped = 0;       // not reclaimed-pending
+    std::uint64_t wait_us = 0;
+};
+
+[[nodiscard]] inline SweepHandlesResult sweep_handles(std::span<AgentHandle> handles) noexcept {
+    SweepHandlesResult out;
+    // Soft / Off: zero-cost — no ensure loop, no force path, no getenv
+    // (mirror AgentScope::sweep_reclaimed_pending's single gate).
+    if (!production_defaults_active())
+        return out;
+    for (auto& h : handles) {
+        if (!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup) {
+            ++out.skipped;
+            continue;
+        }
+        if (h.must_wait_reclaimed) {
+            // SSOT second-wait (#3087/#3245): ensure requires must_wait.
+            // Body already exited → Done-path cleanup; still live →
+            // Timeout with everything owed (#2661 / #3146).
+            auto wr = ensure_reclaimed_cleanup(h);
+            out.wait_us += wr.wait_us;
+            if (wr.cleanup_completed || (!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup)) {
+                ++out.cleaned;
+            } else {
+                ++out.still_pending;
+            }
+        } else if (h.fiber && h.fiber->is_done()) {
+            auto wr = wait_reclaimed_body(h, /*timeout_ms=*/std::nullopt);
+            out.wait_us += wr.wait_us;
+            if (wr.cleanup_completed || (!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup)) {
+                ++out.cleaned;
+            } else {
+                ++out.still_pending;
+            }
+        } else {
+            ++out.still_pending;
+        }
+    }
+    return out;
+}
+
 // Issue #3334: production long-lived C++ hosts that keep AgentHandle in
 // vectors / hand it across components and must free the name / quota
 // slot without an indefinite body wait. One bounded second wait (default
