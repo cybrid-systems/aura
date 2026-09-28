@@ -4,6 +4,9 @@
 //          Issue #2685 — sequential / multi-define dual spawn → distinct ids.
 //          Issue #3394 — thread-fiber workers are joinable + drained at
 //          ~Evaluator (spawn-abandon dtor race).
+//          Issue #4131 — oneshot SIGTERM stubbornness: an ancestor's SIG_IGN
+//          for TERM leaks across execve; the oneshot face resets TERM to
+//          SIG_DFL so the host timeout SIGTERM is always honored.
 //
 //   AC1: fiber:spawn returns positive int (never -1 / #f on success)
 //   AC2: fiber:join returns payload 1
@@ -14,13 +17,21 @@
 //   AC7: concurrent dual-name rebind from two fibers no crash / both bound (#2686)
 //   AC8: spawn-abandon + dtor drain stress — no detached worker outlives
 //        ~CompilerService (#3394)
+//   AC9: #4131 oneshot dies on SIGTERM despite inherited SIG_IGN (bounded)
+//   AC10: #4131 ordinary oneshot unchanged (clean exit 0)
+//   AC11: #4131 default-disposition SIGTERM still prompt (no TERM handler)
+//   AC12: #4131 source-cite: main.cpp oneshot reset; no sigaction(SIGTERM)
 
 #include "test_harness.hpp"
 
+#include <chrono>
+#include <csignal>
+#include <cstdio>
 #include <fstream>
 #include <print>
 #include <string>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 
 import std;
@@ -277,6 +288,176 @@ static void ac8_spawn_abandon_dtor_drain() {
           "AC8: Evaluator declares drain_thread_fibers member");
 }
 
+// ── #4131: oneshot SIGTERM stubbornness ──
+// POSIX carries an ancestor's SIG_IGN for TERM across execve, so a harness
+// that ignored SIGTERM leaves the exec'd aura oneshot TERM-immune (only
+// killpg(SIGKILL) reclaims a hung eval spin). The oneshot fallthrough in
+// main.cpp resets TERM to SIG_DFL; these ACs pin the runtime contract.
+static std::string aura_bin_path_4131() {
+    char self[4096];
+    const ssize_t n = ::readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (n <= 0)
+        return {};
+    self[n] = '\0';
+    std::string dir(self);
+    const auto slash = dir.find_last_of('/');
+    if (slash != std::string::npos)
+        dir.resize(slash);
+    for (const auto& cand : {dir + "/aura", dir + "/../aura"}) {
+        if (::access(cand.c_str(), X_OK) == 0)
+            return cand;
+    }
+    return {};
+}
+
+static std::string write_4131_program(const char* name, const std::string& body) {
+    const auto path = std::string("/tmp/") + name + "." + std::to_string(::getpid()) + ".aura";
+    std::ofstream out(path);
+    if (!out)
+        return {};
+    out << body;
+    return path;
+}
+
+// fork + exec `aura file`; when ignore_term, the fork-child sets SIGTERM to
+// SIG_IGN before exec (the #4131 harness shape — SIG_IGN survives execve).
+static pid_t spawn_4131_oneshot(const std::string& bin, const std::string& file, bool ignore_term) {
+    // Flush before fork: the child inherits a COPY of the unflushed stdout
+    // buffer and its freopen() flush would re-emit it (duplicated suite
+    // output under piped/fully-buffered runs).
+    ::fflush(nullptr);
+    const pid_t pid = ::fork();
+    if (pid != 0)
+        return pid;
+    if (ignore_term)
+        ::signal(SIGTERM, SIG_IGN);
+    ::freopen("/dev/null", "w", stdout);
+    ::freopen("/dev/null", "w", stderr);
+    ::execl(bin.c_str(), bin.c_str(), file.c_str(), static_cast<char*>(nullptr));
+    ::_exit(127);
+}
+
+// Block until /proc/<pid>/exe names the aura image (basename /aura, NOT a
+// repo path that merely contains "/aura") or the deadline expires.
+static bool wait_4131_executed(pid_t pid, int deadline_ms) {
+    const auto link = "/proc/" + std::to_string(pid) + "/exe";
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(deadline_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        char buf[512];
+        const ssize_t n = ::readlink(link.c_str(), buf, sizeof(buf) - 1);
+        if (n > 5) {
+            buf[n] = '\0';
+            const std::string exe(buf);
+            if (exe.compare(exe.size() - 5, 5, "/aura") == 0)
+                return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+// SIGTERM then reap within deadline_ms: WTERMSIG on signal death, 0 on a
+// clean exit, -1 on timeout (child SIGKILLed) or wait error.
+static int term_4131_and_reap(pid_t pid, int deadline_ms) {
+    ::kill(pid, SIGTERM);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(deadline_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        int st = 0;
+        if (::waitpid(pid, &st, WNOHANG) == pid)
+            return WIFSIGNALED(st) ? WTERMSIG(st) : 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    ::kill(pid, SIGKILL);
+    ::waitpid(pid, nullptr, 0);
+    return -1;
+}
+
+// Reap within deadline_ms without signalling: exit code, else -1 (SIGKILL).
+static int wait_4131_exit(pid_t pid, int deadline_ms) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(deadline_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        int st = 0;
+        if (::waitpid(pid, &st, WNOHANG) == pid)
+            return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    ::kill(pid, SIGKILL);
+    ::waitpid(pid, nullptr, 0);
+    return -1;
+}
+
+static void ac9_oneshot_sigterm_inherited_ignore() {
+    std::println("\n--- #4131 AC9: oneshot honors SIGTERM despite inherited SIG_IGN ---");
+    const auto bin = aura_bin_path_4131();
+    CHECK(!bin.empty(), "AC9: aura binary resolved beside the test binary");
+    if (bin.empty())
+        return;
+    const auto spin =
+        write_4131_program("aura_4131_spin", "(while (lambda () #t) (lambda () 1))\n");
+    CHECK(!spin.empty(), "AC9: spin program written");
+    if (spin.empty())
+        return;
+    const pid_t pid = spawn_4131_oneshot(bin, spin, /*ignore_term=*/true);
+    CHECK(pid > 0, "AC9: oneshot child spawned");
+    if (pid <= 0)
+        return;
+    CHECK(wait_4131_executed(pid, 15000), "AC9: child reached the aura image (SIG_IGN inherited)");
+    // Settle past the exec→first-statement window so the TERM lands after
+    // main's disposition reset (the reset is what the AC exercises).
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const int sig = term_4131_and_reap(pid, 8000);
+    CHECK(sig == SIGTERM, "AC9: SIGTERM reclaimed the oneshot (bounded, no SIGKILL)");
+}
+
+static void ac10_ordinary_program_unchanged() {
+    std::println("\n--- #4131 AC10: ordinary oneshot unchanged ---");
+    const auto bin = aura_bin_path_4131();
+    CHECK(!bin.empty(), "AC10: aura binary resolved");
+    if (bin.empty())
+        return;
+    const auto prog = write_4131_program("aura_4131_add", "(display (+ 1 2))\n");
+    CHECK(!prog.empty(), "AC10: ordinary program written");
+    if (prog.empty())
+        return;
+    const pid_t pid = spawn_4131_oneshot(bin, prog, /*ignore_term=*/false);
+    CHECK(pid > 0, "AC10: child spawned");
+    if (pid <= 0)
+        return;
+    const int rc = wait_4131_exit(pid, 30000);
+    CHECK(rc == 0, "AC10: ordinary (+ 1 2) oneshot exits 0");
+}
+
+static void ac11_oneshot_sigterm_default_still_prompt() {
+    std::println("\n--- #4131 AC11: default-disposition SIGTERM still prompt ---");
+    const auto bin = aura_bin_path_4131();
+    CHECK(!bin.empty(), "AC11: aura binary resolved");
+    if (bin.empty())
+        return;
+    const auto spin =
+        write_4131_program("aura_4131_spin2", "(while (lambda () #t) (lambda () 1))\n");
+    CHECK(!spin.empty(), "AC11: spin program written");
+    if (spin.empty())
+        return;
+    const pid_t pid = spawn_4131_oneshot(bin, spin, /*ignore_term=*/false);
+    CHECK(pid > 0, "AC11: child spawned");
+    if (pid <= 0)
+        return;
+    CHECK(wait_4131_executed(pid, 15000), "AC11: child reached the aura image");
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const int sig = term_4131_and_reap(pid, 8000);
+    CHECK(sig == SIGTERM, "AC11: TERM still prompt without inherited ignore");
+}
+
+static void ac12_source_cite() {
+    std::println("\n--- #4131 AC12: source-cite + placement ---");
+    const auto main_src = read_file("src/main.cpp");
+    CHECK(main_src.find("::signal(SIGTERM, SIG_DFL)") != std::string::npos,
+          "AC12: oneshot resets TERM to SIG_DFL (inherited SIG_IGN hardening)");
+    CHECK(main_src.find("#4131") != std::string::npos, "AC12: main.cpp cites #4131");
+    CHECK(main_src.find("::sigaction(SIGTERM") == std::string::npos,
+          "AC12: no SIGTERM handler installed — prompt default death; serve face untouched");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -289,7 +470,12 @@ int run_test_fiber_spawn_cli() {
     ac6_dual_define_distinct_ids();
     ac7_concurrent_dual_rebind();
     ac8_spawn_abandon_dtor_drain();
-    std::println("\n=== #2656/#2685/#2686/#3394: {} passed, {} failed ===", g_passed, g_failed);
+    ac9_oneshot_sigterm_inherited_ignore();
+    ac10_ordinary_program_unchanged();
+    ac11_oneshot_sigterm_default_still_prompt();
+    ac12_source_cite();
+    std::println("\n=== #2656/#2685/#2686/#3394/#4131: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
