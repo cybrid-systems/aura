@@ -8755,6 +8755,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4134 JIT owner fail-closed linter failed — run python3 scripts/check_jit_owner_failclosed_4134.py")
         return r
+    # Issue #4135 (P2 sec): grant mint paths passed node_id=0 into
+    # make_grant_provenance, so blame/replay could not answer which workspace
+    # node authorized a Mutate/MSE/session grant without correlating a
+    # separate mutate audit row. The NodeId-gate allow path now notes the
+    # target node on the boundary TLS (clear_boundary_audit_mid lifecycle)
+    # and all six grant mint faces read it (EffectProvenance.node_id ->
+    # CapabilityGrant.bound_node_id); paths without a node keep 0 (honest
+    # unset), Soft/Off unchanged (no compulsory node invent).
+    gnp4135_script = ROOT / "scripts" / "check_grant_node_provenance_4135.py"
+    if not gnp4135_script.exists():
+        fail(f"missing {gnp4135_script}")
+        return 1
+    r = run([sys.executable, str(gnp4135_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4135 grant node provenance linter failed — run python3 scripts/check_grant_node_provenance_4135.py"
+        )
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

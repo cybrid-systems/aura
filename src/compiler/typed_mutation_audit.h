@@ -2865,6 +2865,21 @@ inline void note_boundary_audit_tenant(std::uint64_t tenant) noexcept {
     g_tls_boundary_audit_tenant = tenant;
 }
 
+// Issue #4135: same TLS lifetime as g_tls_boundary_audit_mid. The concrete
+// NodeId noted when a NodeId gate (require_effect_for_node_id) allows so
+// grant mints stamp EffectProvenance.node_id (join mid+node+tenant+fiber+
+// epoch on the grant row). 0 stays 0 — honest unset: paths without a node
+// context keep 0 (no compulsory node invent).
+inline thread_local std::uint32_t g_tls_boundary_target_node = 0;
+
+[[nodiscard]] inline std::uint32_t current_boundary_target_node() noexcept {
+    return g_tls_boundary_target_node;
+}
+
+inline void note_boundary_target_node(std::uint32_t node) noexcept {
+    g_tls_boundary_target_node = node;
+}
+
 // Purpose: drop last TypeLinearCommitProof + densify-pending inject on abort
 // Pre: call after abort_restore_dual_topology / hard force-rollback
 // Post: stamp=0, would_allow=0, linear_ok=0, outcome=Reject when a face
@@ -4502,6 +4517,7 @@ inline void clear_boundary_audit_mid() noexcept {
     g_tls_boundary_audit_mid = 0;
     g_tls_boundary_audit_noted = false;
     g_tls_boundary_audit_tenant = 0;
+    g_tls_boundary_target_node = 0;
     g_tls_composite_batch_join_mid = 0;
     clear_mid_fallback_refuse_se_tls();
 }
