@@ -2753,6 +2753,15 @@ int main(int argc, char* argv[]) {
     // Issue #2772: multi-process child via (shell …) needs *exported*
     // AURA_BIN (or rely on process-seed + (aura-executable-path)).
     // Accept file paths and -e EXPR as sugar; keep stdin pipe default.
+    // Issue #4131: an ancestor that ignored SIGTERM (daemonized holder,
+    // nohup-style batch runner) leaks SIG_IGN into this image — POSIX
+    // carries ignored dispositions across execve, so a hung oneshot
+    // (pathological list recursion / while spin) then survives the
+    // host's timeout SIGTERM and only killpg(SIGKILL) reclaims it.
+    // Oneshot faces reset TERM to default here so `aura file.aura`
+    // always honors SIGTERM promptly. --serve/--serve-async return from
+    // earlier branches and manage their own lifecycle — untouched.
+    ::signal(SIGTERM, SIG_DFL);
     auto print_denseness_usage = [&](const char* prog) {
         std::println(std::cerr, "usage: {} [options] [file.aura …]", prog);
         std::println(std::cerr, "       {} -e '(+ 1 2)'", prog);

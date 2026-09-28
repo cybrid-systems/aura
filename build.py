@@ -7912,6 +7912,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4130 empty-list unparse linter failed — run python3 scripts/check_empty_list_unparse_4130.py")
         return r
+    # Issue #4131: Soft oneshot survived the aura-build Soft verify timeout
+    # SIGTERM (palindrome-linked-list / ugly-number) until killpg(SIGKILL).
+    # POSIX carries an ancestor's SIG_IGN for TERM across execve, so a
+    # harness ancestor that ignored SIGTERM left the oneshot TERM-immune —
+    # no handler anywhere in src/ ever touched TERM. Gate pins: the oneshot
+    # fallthrough resets TERM to SIG_DFL (after the serve branches return;
+    # serve face untouched), src/ has exactly that one SIGTERM site (no
+    # handler), and the runtime doors live in test_fiber_spawn_cli.cpp
+    # (#4131 AC9..AC12: inherited-SIG_IGN oneshot dies on TERM, ordinary
+    # program unchanged, default-disposition TERM prompt).
+    ost4131_script = ROOT / "scripts" / "check_oneshot_sigterm_4131.py"
+    if not ost4131_script.exists():
+        fail(f"missing {ost4131_script}")
+        return 1
+    r = run([sys.executable, str(ost4131_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4131 oneshot SIGTERM reset gate linter failed — run python3 scripts/check_oneshot_sigterm_4131.py")
+        return r
     # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
     # composition-only — CI must pin densify_in_flight_for AND after
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
