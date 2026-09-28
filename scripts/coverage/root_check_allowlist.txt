@@ -186,3 +186,4 @@ check_jit_owner_failclosed_4134.py
 check_grant_node_provenance_4135.py
 check_caller_sweep_4136.py
 check_agent_join_scope_compact_4138.py
+check_join_token_observe_4139.py
