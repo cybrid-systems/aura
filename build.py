@@ -8442,6 +8442,29 @@ def cmd_lint():
             "Issue #4140 densify-health headroom linter failed - run python3 scripts/check_densify_health_headroom_4140.py"
         )
         return r
+    # Issue #4141 (observability, P1): query:capability-effect-stats
+    # planned_keys headroom — live insert_kv 177 (+2 #4141 stamps) against
+    # planned 186 left headroom 9 (live+8 = 185, one additive key from the
+    # #3339 breach). Gate pins: planned 192 via
+    # query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys) (no
+    # magic 186), the bounded local insert_kv lambda keeps the
+    # overflowed=true contract into query_hash_finish, append-only stamps
+    # at handler end (no key rename), capability-effect-stats pinned in
+    # check_agent_decision_facade_headroom_3339.py (planned < actual + 8
+    # fails the gate), Soft/Off unchanged (no query rename), and the
+    # runtime ACs live in tests/compiler/test_engine_metrics_facade.cpp
+    # (no test_issue_4141.cpp per #81934, no docs/design/4141-* per
+    # #1655, no new query key).
+    ceh4141_script = ROOT / "scripts" / "check_capability_effect_headroom_4141.py"
+    if not ceh4141_script.exists():
+        fail(f"missing {ceh4141_script}")
+        return 1
+    r = run([sys.executable, str(ceh4141_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4141 capability-effect headroom linter failed - run python3 scripts/check_capability_effect_headroom_4141.py"
+        )
+        return r
     # Issue #4175 (correctness): R7RS string comparison suite — string>?,
     # string>=?, string<=? were unbound (string=? / string<? present), so
     # aura-build kernel modules using string>? tie-breaks failed with
