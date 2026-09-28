@@ -175,6 +175,13 @@ inline constexpr int kRecvHeldRefAfterStealIssue = 3565;
 // payload-or-empty (nullopt) for existing callers. Soft empty quiet.
 // No new query key.
 inline constexpr int kRecvTypedStatusIssue = 4001;
+// Issue #4137: steal×held_ref face of the recv preference family. Post-
+// steal stale held_ref is typed "handoff-required" on agent_recv_result /
+// agent_recv_safe; the raw payload-or-empty wrapper's nullopt coincides
+// with last_recv_stale_handoff == true (documented dual-track, no new
+// counter — reuses held_ref_post_steal_check_total /
+// held_ref_stale_after_steal_total).
+inline constexpr int kRecvStealHandoffIssue = 4137;
 // Issue #4026: agent_recv on import_proxy is typed-deny (Soft+prod).
 // Cross-Evaluator proxy shares mailbox with source — recv would dual-
 // consume. send/ask/reply stay allowed (liaison). No new query key.
@@ -4656,6 +4663,8 @@ struct RecvResult {
         // C++ hosts see nullopt. The signal rides the handle so the Aura
         // orch:agent-recv typed handoff-required (#3565 AC2) still fires.
         // Consume-side counters already bumped by the mailbox gate.
+        // Issue #4137: steal×held_ref face — typed here; the raw wrapper
+        // dual-track (nullopt ≡ last_recv_stale_handoff) is doc-pinned.
         h.last_recv_stale_handoff = true;
         h.last_recv_boundary_reject = false;
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
@@ -4708,6 +4717,11 @@ struct RecvResult {
 
 // Payload-or-empty wrapper. Production Guard-live / stale still nullopt;
 // check agent_recv_result / last_recv_* flags before wait-retry.
+// Issue #4137: post-steal stale held_ref nullopt coincides with
+// last_recv_stale_handoff == true (raw dual-track documented). Hosts
+// that do not read the flag / held_ref_stale_after_steal_total must use
+// agent_recv_result / agent_recv_safe — the steal face is typed
+// "handoff-required", never quiet empty (busy-loop bait).
 [[nodiscard]] inline std::optional<serve::mf_mailbox::MailMessage>
 agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
     return agent_recv_result(h, wait, timeout_ms).message;
