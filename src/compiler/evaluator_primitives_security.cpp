@@ -742,8 +742,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
+            // Issue #4141: planned_keys >= live insert_kv + 8 (#3339 Agent
+            // decision headroom contract). Live was 177 (+2 #4141 stamps =
+            // 179) against planned 186 — headroom 9, one additive key from
+            // breach. Raise to 192 and raise planned with every appended
+            // batch.
+            constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 192;
             auto* ht =
-                FlatHashTable::create(query_hash_capacity_for(186)); // #3339: 177 live + 8 (#3971)
+                FlatHashTable::create(query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -1286,6 +1292,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-3971", kProcessSeTenantJoinIssue);
                 insert_kv("issue-3971", kProcessSeTenantJoinIssue);
             }
+            // Issue #4141: planned headroom pin joins the #3339 CI
+            // (check_agent_decision_facade_headroom_3339.py). Additive
+            // stamps at handler end only — no key renames.
+            insert_kv("schema-4141", 4141);
+            insert_kv("issue-4141", 4141);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 

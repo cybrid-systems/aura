@@ -20,12 +20,19 @@ handler checks overflow via its bounded local insert_kv lambda (overflowed
 flag into query_hash_finish), not insert_kv_checked — same hash-overflow
 contract.
 
+Issue #4141: query:capability-effect-stats (Agent security stats facade)
+joins the same headroom CI — live 177 (+2 #4141 stamps) against planned
+186 left headroom 9, one additive key from the live+8=185 breach; planned
+raised to 192 via kCapabilityEffectStatsPlannedKeys. Same bounded local
+insert_kv lambda / overflowed flag contract as densify (#4140).
+
 Contract (one row per AC):
   AC1  planned >= actual + 8 on evolution-audit-decision /
        security-posture / type-linear-commit-health /
        type-linear-evolution-snapshot / reload-recovery-playbook /
        reload-recovery-state (#3846) / orch-module-stats (#3807) /
-       arena-moving-densify-health (#4140)
+       arena-moving-densify-health (#4140) /
+       capability-effect-stats (#4141)
   AC2  tests under production_defaults assert hash-overflow is absent
   AC3  +20 dummy keys without raising planned would fail AC1 on
        evolution-audit-decision
@@ -160,6 +167,10 @@ def main() -> int:
         # Issue #4140: densify-health joins the Agent decision headroom gate
         # (live 79 + 2 stamps; planned 84 < live+8 → raised to 96)
         ("query:arena-moving-densify-health", obsjit, "kArenaMovingDensifyHealthPlannedKeys"),
+        # Issue #4141: capability-effect-stats joins the Agent decision
+        # headroom gate (live 177 + 2 stamps; planned 186 left headroom 9,
+        # one additive key from breach → raised to 192)
+        ("query:capability-effect-stats", sec, "kCapabilityEffectStatsPlannedKeys"),
     ]
 
     evo_planned = 0
@@ -181,10 +192,11 @@ def main() -> int:
         elif planned < actual + HEADROOM:
             fails.append(f"AC1: {query} planned {planned} < actual {actual} + {HEADROOM} headroom")
         must("query_hash_capacity_for", f"AC1 {query} capacity helper", block)
-        if query == "query:arena-moving-densify-health":
-            # Issue #4140: densify probes via a bounded local insert_kv
-            # lambda that stamps overflowed on a full table (same
-            # hash-overflow contract into query_hash_finish).
+        if query in ("query:arena-moving-densify-health", "query:capability-effect-stats"):
+            # Issues #4140/#4141: densify + capability-effect probe via
+            # bounded local insert_kv lambdas that stamp overflowed on a
+            # full table (same hash-overflow contract into
+            # query_hash_finish).
             must("bool overflowed = false", f"AC1 {query} overflowed flag", block)
             must("overflowed = true", f"AC1 {query} bounded insert", block)
         else:
@@ -209,6 +221,10 @@ def main() -> int:
         if query == "query:arena-moving-densify-health":
             must('insert_kv("schema-4140"', "AC1/#4140 densify schema-4140", block)
             must('insert_kv("issue-4140"', "AC1/#4140 densify issue-4140", block)
+        if query == "query:capability-effect-stats":
+            must('insert_kv("schema-2707"', "AC1/#4141 legacy schema-2707", block)
+            must('insert_kv("schema-4141"', "AC1/#4141 capability-effect schema-4141", block)
+            must('insert_kv("issue-4141"', "AC1/#4141 capability-effect issue-4141", block)
         if query == "query:orch-module-stats":
             must("insert_kv_checked", "AC1 orch insert_kv_checked", block)
             must("query_hash_finish", "AC1 orch query_hash_finish", block)
@@ -229,6 +245,7 @@ def main() -> int:
     must("3882 AC1: CI pins evolution", "AC1/#3882 evolution pin test", test)
     must("3882 AC1: CI pins orch", "AC1/#3882 orch pin test", test)
     must("ac4140_2_no_overflow", "AC2/#4140 densify production overflow test", test)
+    must("ac4141_2_no_overflow", "AC2/#4141 capability-effect production overflow test", test)
 
     if evo_actual > 0 and evo_planned >= (evo_actual + 20) + HEADROOM:
         fails.append(
@@ -262,7 +279,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #3339/#3807/#3846/#3882 Agent decision facade headroom — all AC rows satisfied")
+    print("OK: Issue #3339/#3807/#3846/#3882/#4140/#4141 Agent decision facade headroom — all AC rows satisfied")
     return 0
 
 

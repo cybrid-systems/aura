@@ -198,6 +198,10 @@ int main() {
             // Issue #4140: densify-health joins the production_defaults
             // overflow hard-fail set (same #3339 headroom contract).
             "query:arena-moving-densify-health",
+            // Issue #4141: capability-effect-stats joins the
+            // production_defaults overflow hard-fail set (same #3339
+            // headroom contract).
+            "query:capability-effect-stats",
         };
         for (const char* q : kFacades) {
             const auto expr = std::format("(engine:metrics \"{}\")", q);
@@ -329,6 +333,62 @@ int main() {
               "ac4140_5_no_invent: no test_issue_4140.cpp");
         CHECK(read_file("docs/design/4140-densify-headroom.md").empty(),
               "ac4140_5_no_invent: no docs/design/4140-*");
+    }
+
+    // ── Issue #4141: capability-effect-stats joins #3339 headroom ──
+    // planned 186 sat at headroom 9 (177 live; live+8 = 185, one additive
+    // key from breach); raised to 192 and pinned in the #3339 CI. Runs
+    // before :prefix catalog dump.
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        std::println("\n--- #4141: capability-effect-stats planned_keys headroom pin ---");
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        reset_for_test();
+        apply_production_audit_defaults();
+
+        const auto cexpr = std::format("(engine:metrics \"{}\")", "query:capability-effect-stats");
+        CHECK(is_hash_expr(cs, cexpr),
+              "4141 AC1: capability-effect-stats is hash under production");
+        CHECK(hash_int(cs, cexpr, "hash-overflow") != 1,
+              "ac4141_2_no_overflow: capability-effect hash-overflow absent");
+        CHECK(hash_int(cs, cexpr, "overflow") != 1,
+              "ac4141_2_no_overflow: capability-effect overflow!=1");
+        CHECK(hash_int(cs, cexpr, "schema") == 1565,
+              "4141 AC1: schema stamp preserved (no rename)");
+        CHECK(hash_int(cs, cexpr, "mid-join-zero-deny") != -1,
+              "4141 AC1: mid-join-zero-deny preserved (no rename)");
+        CHECK(hash_int(cs, cexpr, "schema-4141") == 4141, "4141 AC1: schema-4141 additive stamp");
+        CHECK(hash_int(cs, cexpr, "issue-4141") == 4141, "4141 AC1: issue-4141 additive stamp");
+
+        const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(sec.find("kCapabilityEffectStatsPlannedKeys = 192") != std::string::npos,
+              "ac4141_1_headroom: kCapabilityEffectStatsPlannedKeys = 192");
+        CHECK(sec.find("query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys)") !=
+                  std::string::npos,
+              "ac4141_1_headroom: capacity helper consumes the planned constant");
+        const auto headroom =
+            read_file("scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py");
+        CHECK(headroom.find("query:capability-effect-stats") != std::string::npos,
+              "ac4141_1_headroom: #3339 CI pins capability-effect-stats");
+        CHECK(headroom.find("kCapabilityEffectStatsPlannedKeys") != std::string::npos,
+              "ac4141_1_headroom: #3339 CI pins the capability-effect planned constant");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura_query_hash_reset_overflow_for_test();
+        const auto soft_ho =
+            hash_int(cs, "(engine:metrics \"query:capability-effect-stats\")", "hash-overflow");
+        CHECK(soft_ho != 1, "ac4141_4_soft: Soft path still no overflow");
+        CHECK(sec.find("query:capability-effect-stats-v2") == std::string::npos &&
+                  sec.find("query:capability-effect-stats2") == std::string::npos,
+              "ac4141_4_soft: no capability-effect query rename (Soft/Off unchanged)");
+        CHECK(read_file("tests/compiler/test_issue_4141.cpp").empty(),
+              "ac4141_5_no_invent: no test_issue_4141.cpp");
+        CHECK(read_file("docs/design/4141-capability-effect-headroom.md").empty(),
+              "ac4141_5_no_invent: no docs/design/4141-*");
     }
 
     // Issue #3499: production full-primitives posture carries both 2534
