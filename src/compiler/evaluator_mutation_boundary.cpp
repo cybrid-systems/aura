@@ -7871,21 +7871,22 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
     // (a) always re-register known roots so a subsequent densify (here or at
     // the next outermost boundary) has the full inventory in-window.
     out.roots_registered = register_known_moving_densify_root_slots();
-    // (b) clear sticky densify-off when armed — Agent-visible recovery path
-    // (distinct from #2905 auto-clear on unified green densify).
-    if (out.sticky_was_on) {
-        aura::ast::clear_moving_incomplete_remap_sticky_densify_off_reason(
-            aura::ast::kStickyClearRecovery);
-        out.sticky_cleared = !aura::ast::moving_incomplete_remap_sticky_densify_off();
-        if (out.sticky_cleared) {
-            aura::core::densify_consistency::g_moving_sticky_cleared_via_recovery_total.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-    }
-    // (c) optional one-shot Moving densify under the same Moving-enabled rules
-    // as densify entry. Skip when Moving still disabled (pref/env off) or no
-    // arena_group — Soft / AURA_ARENA_MOVING_COMPACT=0 stay zero densify work.
-    if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled()) {
+    // (b) Issue #4143: sticky is NOT cleared at entry. The old pre-clear
+    // opened a UAF / miss-remap race window: between the clear and the
+    // unified-green publish (or on the #3884 LCP-deny re-arm path),
+    // moving_compact_enabled() read true while pin / LCP cover could still
+    // be incomplete, so a concurrent Phase-5 / auto-arm Moving or a peer
+    // try_acquire (which also enters this recover via the densify throttle)
+    // could admit relocate under incomplete cover. The trap now stays armed
+    // through the whole recovery — every other admit path sees
+    // moving_compact_enabled()==0 until a green window publishes (tail).
+    // (c) optional one-shot Moving densify. Issue #4143: gate on the feature
+    // flag (pref/env), NOT the sticky-gated moving_compact_enabled() — the
+    // armed sticky must not block the authorized recovery entrant (mirrors
+    // live_compact(Moving) #3123 AC3). Skip when Moving still disabled
+    // (pref/env off) or no arena_group — Soft / AURA_ARENA_MOVING_COMPACT=0
+    // stay zero densify work.
+    if (retry_densify && arena_group_ && aura::ast::moving_compact_feature_enabled()) {
         // Issue #3238: recovery densify under a live Guard must drop
         // linear_fast_path and dirty-root revalidate before relocate.
         // Issue #3361: helper runs the revalidate itself given `this`.
@@ -7917,24 +7918,16 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
         }
         out.densify_retried = true;
         if (densify_entry_lcp_blocked) {
-            // Issue #3884: step (b) already cleared sticky so
-            // moving_compact_enabled() could admit this one-shot. LCP
-            // reject must re-arm the trap — otherwise auto-arm Moving
-            // relocates under reject LCP after Guard unlock (UAF /
-            // miss-remap). Healthy densify still clears (#2905/#3128).
-            // Issue #3974: this re-arm is the abort×sticky×retry_densify×
-            // LCP-deny soak contract — success is not a hot-path
-            // guarantee. Published window stays would_allow_mutate=false
-            // with objects_moved=0; Guard abort restores linear_roots.
-            if (out.sticky_was_on) {
-                const auto prev = aura::ast::g_moving_incomplete_remap_sticky_densify_off.exchange(
-                    1, std::memory_order_acq_rel);
-                if (prev == 0) {
-                    aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                out.sticky_cleared = false;
-            }
+            // Issue #4143: sticky was never cleared at entry, so the LCP
+            // reject needs no re-arm — the Issue #3884 clear→re-arm cycle
+            // is gone and the trap stays armed continuously, so no
+            // Moving-admit window ever opens. The Issue #3974
+            // abort×sticky×retry_densify×LCP-deny contract still holds:
+            // success is not a hot-path guarantee, the published window
+            // stays would_allow_mutate=false with objects_moved=0, and
+            // Guard abort restores linear_roots. Healthy densify still
+            // clears (#2905/#3128).
+            out.sticky_cleared = false;
             // Skip compact_all_moving_pinned; publish blocked window with
             // objects_moved==0 (mirrors #3200 soft-gate blocked publish).
             out.pin_contract_held = false;
@@ -7963,13 +7956,36 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
                 static_cast<std::uint64_t>(compact_r.objects_moved_total),
                 static_cast<std::uint64_t>(compact_r.untracked_kept_total), root_fail,
                 static_cast<std::uint64_t>(compact_r.external_roots_prep_registered_total));
+            // Issue #4143: clear the recovery sticky only AFTER the retry
+            // published a unified-green window (pin held ∧ ¬incomplete ∧
+            // untracked==0 ∧ root_fail==0 — same surface as
+            // compute_moving_unified_success / live_compact #3123 healthy).
+            // Until this publish, Moving admit stayed sticky-gated closed,
+            // so no concurrent relocate ran under incomplete cover.
+            if (out.sticky_was_on &&
+                aura::core::moving_densify_health::compute_moving_unified_success(
+                    compact_r.moving_blocked_precondition_any, compact_r.pin_contract_held,
+                    static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total),
+                    static_cast<std::uint64_t>(compact_r.root_remap_closure_capture_fail_total),
+                    static_cast<std::uint64_t>(compact_r.objects_moved_total),
+                    static_cast<std::uint64_t>(compact_r.untracked_kept_total))) {
+                aura::ast::clear_moving_incomplete_remap_sticky_densify_off_reason(
+                    aura::ast::kStickyClearRecovery);
+            }
         }
         aura::core::densify_consistency::g_moving_densify_retry_after_recovery_total.fetch_add(
             1, std::memory_order_relaxed);
-        // Clean recovery densify also auto-clears sticky via live_compact /
-        // Phase-5 path; keep sticky_cleared accurate if densify re-armed it.
-        if (aura::ast::moving_incomplete_remap_sticky_densify_off()) {
-            out.sticky_cleared = false;
+    }
+    // Issue #4143: sticky_cleared resolves POST-publish (the old entry-time
+    // clear made it true before any retry outcome existed). True only when
+    // the green publish actually lifted the trap; deny / incomplete /
+    // blocked / no-retry recoveries keep it false with sticky armed —
+    // Moving admit stays closed until a healthy window publishes.
+    if (out.sticky_was_on) {
+        out.sticky_cleared = !aura::ast::moving_incomplete_remap_sticky_densify_off();
+        if (out.sticky_cleared) {
+            aura::core::densify_consistency::g_moving_sticky_cleared_via_recovery_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
     }
     // Success: sticky trap lifted (or never armed) AND when densify retried,

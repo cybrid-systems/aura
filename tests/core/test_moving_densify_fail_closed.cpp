@@ -4539,6 +4539,9 @@ static void ac3782_3_eval_keyed_consult_and_soft_off() {
 }
 
 // ── Issue #3884: sticky recover re-arms on LCP reject; auto-arm consults LCP ──
+// Issue #4143 supersedes the #3884 clear→re-arm cycle: sticky is never
+// cleared at entry, so the LCP-deny path has nothing to re-arm — the trap
+// stays armed continuously and the Moving-admit window cannot open.
 static void ac3884_1_recover_rearms_sticky_on_lcp_reject() {
     const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(mut.find("Issue #3884") != std::string::npos, "ac3884_1: mut cites #3884");
@@ -4547,15 +4550,16 @@ static void ac3884_1_recover_rearms_sticky_on_lcp_reject() {
     const auto win = mut.substr(anchor, 5500);
     CHECK(win.find("if (densify_entry_lcp_blocked)") != std::string::npos,
           "ac3884_1: LCP skip branch present");
-    CHECK(win.find("g_moving_incomplete_remap_sticky_densify_off.exchange") != std::string::npos,
-          "ac3884_1: LCP reject re-arms sticky");
-    CHECK(win.find("out.sticky_was_on") != std::string::npos, "ac3884_1: re-arm gated on was-on");
+    CHECK(win.find("g_moving_incomplete_remap_sticky_densify_off.exchange") == std::string::npos,
+          "ac3884_1: no clear→re-arm exchange (#4143 closes the window)");
+    CHECK(win.find("out.sticky_was_on") != std::string::npos,
+          "ac3884_1: green clear still gated on sticky_was_on");
     CHECK(win.find("out.sticky_cleared = false") != std::string::npos,
-          "ac3884_1: sticky_cleared stays false on re-arm");
-    const auto rearm = win.find("g_moving_incomplete_remap_sticky_densify_off.exchange");
+          "ac3884_1: sticky_cleared stays false on deny");
     const auto compact = win.find("arena_group_->compact_all_moving_pinned()");
-    CHECK(rearm != std::string::npos && compact != std::string::npos && rearm < compact,
-          "ac3884_1: re-arm precedes skip-compact (no relocate under reject)");
+    const auto clear = win.find("clear_moving_incomplete_remap_sticky_densify_off_reason");
+    CHECK(compact != std::string::npos && clear != std::string::npos && compact < clear,
+          "ac3884_1: sticky clear follows the retry compact (#4143 ordering)");
 }
 
 static void ac3884_2_auto_arm_consults_lcp_before_moving() {
@@ -4624,7 +4628,7 @@ static void ac3974_1_abort_restore_canary() {
             std::memory_order_relaxed);
     const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
     CHECK(rec.sticky_was_on, "3974 AC1: recover saw sticky");
-    CHECK(!rec.sticky_cleared, "3974 AC1: LCP deny re-armed sticky (cleared=false)");
+    CHECK(!rec.sticky_cleared, "3974 AC1: deny keeps sticky_cleared=false (#4143: never cleared)");
     CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
           "3974 AC1: sticky still on after LCP-deny recover");
     CHECK(!rec.success, "3974 AC1: recover success is not a hot-path guarantee");
@@ -4753,8 +4757,9 @@ static void ac3974_4_source_cite_no_invent() {
     std::println("\n--- #3974 AC4: source-cite + no invent ---");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(mb.find("Issue #3974") != std::string::npos, "3974 AC4: recover cites #3974");
-    CHECK(mb.find("g_moving_incomplete_remap_sticky_densify_off.exchange") != std::string::npos,
-          "3974 AC4: LCP deny re-arm retained");
+    CHECK(mb.find("g_moving_incomplete_remap_sticky_densify_off.exchange") == std::string::npos,
+          "3974 AC4: no clear→re-arm exchange (#4143 closes the window at the source)");
+    CHECK(mb.find("Issue #4143") != std::string::npos, "3974 AC4: #4143 supersession cited");
     CHECK(mb.find("schema-3974") == std::string::npos, "3974 AC4: no new query key");
     CHECK(read_file("tests/core/test_issue_3974.cpp").empty(), "3974 AC4: no test_issue_3974.cpp");
     CHECK(read_file("docs/design/3974-sticky-recover-soak.md").empty(),
@@ -4771,6 +4776,144 @@ static void ac3884_3_soft_off_and_no_invent() {
     CHECK(read_file("tests/core/test_issue_3884.cpp").empty(), "ac3884_3: no test_issue_3884.cpp");
     CHECK(read_file("docs/design/3884-sticky-recover-lcp.md").empty(),
           "ac3884_3: no docs/design/3884-*");
+}
+
+// ── Issue #4143: sticky recovery clears only after a green publish ────────
+// The #3884 clear→re-arm left a window where moving_compact_enabled() read
+// true while cover was still incomplete; #4143 keeps the trap armed through
+// the retry (the recovery entrant gates on the feature flag) and clears
+// only after the published window is unified-green.
+static void ac4143_1_deny_recover_never_drops_sticky() {
+    std::println("\n--- #4143 AC1: LCP-deny recover keeps sticky armed (no clear→re-arm) ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    auto& ev = cs.evaluator();
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    const auto arm_total0 = aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+        std::memory_order_relaxed);
+    {
+        auto p = aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof();
+        p.would_allow_commit = false;
+        aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(&ev, p);
+    }
+    const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+    CHECK(rec.sticky_was_on, "4143 AC1: recover saw sticky");
+    CHECK(rec.densify_retried, "4143 AC1: retry admitted the one-shot consult");
+    CHECK(!rec.sticky_cleared, "4143 AC1: deny keeps sticky_cleared=false");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "4143 AC1: sticky still armed after LCP-deny recover");
+    CHECK(aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+              std::memory_order_relaxed) == arm_total0,
+          "4143 AC1: no clear→re-arm cycle (sticky arm total unchanged)");
+    CHECK(aura::ast::moving_compact_enabled() == 0,
+          "4143 AC1: Moving admit stays sticky-gated closed");
+    const auto hs = aura::core::moving_densify_health::snapshot();
+    CHECK(!hs.would_allow_mutate, "4143 AC1: published window stays closed");
+    CHECK(hs.objects_moved == 0, "4143 AC1: deny publishes objects_moved=0");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac4143_2_green_retry_clears_post_publish() {
+    std::println("\n--- #4143 AC2: retry clears sticky only after a green publish ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    auto& ev = cs.evaluator();
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    const auto arm_total0 = aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+        std::memory_order_relaxed);
+    const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+    CHECK(rec.densify_retried, "4143 AC2: retry densify ran under the feature gate");
+    CHECK(aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+              std::memory_order_relaxed) == arm_total0,
+          "4143 AC2: no re-arm churn (sticky arm total unchanged)");
+    if (rec.success) {
+        CHECK(rec.sticky_cleared, "4143 AC2: sticky_cleared resolved post-publish");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "4143 AC2: green publish lifted the trap");
+        CHECK(aura::ast::moving_compact_enabled() == 1,
+              "4143 AC2: admit reopens only after the green publish");
+    } else {
+        CHECK(!rec.sticky_cleared, "4143 AC2: non-green retry keeps the trap armed");
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "4143 AC2: fail-closed until a healthy window publishes");
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac4143_3_source_cite_clear_after_retry() {
+    std::println("\n--- #4143 AC3: recovery body clears sticky after the retry compact ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #4143") != std::string::npos, "4143 AC3: recover cites #4143");
+    const auto fn = mb.find("Evaluator::recover_moving_sticky_densify_off");
+    CHECK(fn != std::string::npos, "4143 AC3: recover function present");
+    const auto win = mb.substr(fn, 8500);
+    const auto compact = win.find("arena_group_->compact_all_moving_pinned()");
+    const auto clear = win.find("clear_moving_incomplete_remap_sticky_densify_off_reason");
+    CHECK(compact != std::string::npos && clear != std::string::npos && compact < clear,
+          "4143 AC3: sticky clear follows the retry compact (no pre-clear window)");
+    CHECK(win.find("moving_compact_feature_enabled()") != std::string::npos,
+          "4143 AC3: recovery entrant gates on the feature flag (sticky stays armed)");
+    CHECK(win.find("register_known_moving_densify_root_slots()") != std::string::npos,
+          "4143 AC3: root re-registration preserved (#2935 face)");
+    CHECK(win.find("compute_moving_unified_success") != std::string::npos,
+          "4143 AC3: green clear uses the unified-success SSOT predicate");
+    CHECK(win.find("g_moving_incomplete_remap_sticky_densify_off.exchange") == std::string::npos,
+          "4143 AC3: no clear→re-arm exchange in the recovery body");
+    // Comment-stripped body: the sticky-gated moving_compact_enabled() must
+    // be gone from the recovery gate (prose mentions don't count).
+    std::string code_only;
+    for (std::size_t pos = 0; pos < win.size();) {
+        const auto nl = win.find('\n', pos);
+        const auto stop = (nl == std::string::npos) ? win.size() : nl;
+        std::string line = win.substr(pos, stop - pos);
+        const auto cmt = line.find("//");
+        if (cmt != std::string::npos)
+            line.resize(cmt);
+        code_only += line;
+        code_only += '\n';
+        pos = (nl == std::string::npos) ? win.size() : nl + 1;
+    }
+    CHECK(code_only.find("moving_compact_enabled()") == std::string::npos,
+          "4143 AC3: recovery gate no longer sticky-gated (code-only check)");
+}
+
+static void ac4143_4_wiring_no_invent() {
+    std::println("\n--- #4143 AC4: wiring + no invented model ---");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #4143") != std::string::npos, "4143 AC4: mut cites #4143");
+    CHECK(mut.find("kStickyClearRecovery") != std::string::npos,
+          "4143 AC4: recovery-reason clear retained (green publish only)");
+    CHECK(read_file("tests/core/test_issue_4143.cpp").empty(), "4143 AC4: no test_issue_4143.cpp");
+    CHECK(read_file("docs/design/4143-sticky-recovery-window.md").empty(),
+          "4143 AC4: no docs/design/4143-*");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("g_moving_incomplete_remap_sticky_densify_off{0}") != std::string::npos,
+          "4143 AC4: sticky SSOT unchanged in arena.ixx (no second model)");
+    const auto health = read_file("src/core/moving_densify_health.hh");
+    CHECK(health.find("compute_moving_unified_success") != std::string::npos,
+          "4143 AC4: unified-success predicate is the green SSOT");
 }
 
 
@@ -4929,9 +5072,9 @@ static void ac3647_3_soft_zero_work_and_gating() {
           "3647 AC3: known-roots hook inside production auto-arm (Moving only)");
     CHECK(arena_src.find("live_compact(LiveCompactMode::Moving)") != std::string::npos,
           "3647 AC3: hook arm requests Moving densify");
-    CHECK(mb.find("if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled())") !=
-              std::string::npos,
-          "3647 AC3: recovery densify stays behind moving gate");
+    CHECK(mb.find("moving_compact_feature_enabled()") != std::string::npos,
+          "3647 AC3: recovery densify stays feature-gated "
+          "(#4143: sticky no longer gates the recovery entrant)");
 }
 
 // AC4: no new pin / GC in the walk; slot XOR canary preserved (#3368) —
@@ -7058,6 +7201,13 @@ int run_test_moving_densify_fail_closed() {
     ac4125_admit_steal_unchanged();
     ac4125_peer_worker_soak();
     ac4125_source_cite_and_wiring();
+
+    std::println("\n=== Issue #4143: sticky recovery clears only after green publish "
+                 "(#3884/#3974 residual; extends fail_closed per #81967) ===");
+    ac4143_1_deny_recover_never_drops_sticky();
+    ac4143_2_green_retry_clears_post_publish();
+    ac4143_3_source_cite_clear_after_retry();
+    ac4143_4_wiring_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
