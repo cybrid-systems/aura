@@ -9077,6 +9077,29 @@ def cmd_lint():
             "Issue #4144 EnvFrame pool slot remap linter failed — run python3 scripts/check_envframe_pool_slot_remap_4144.py"
         )
         return r
+    # Issue #4145: Soft value-only intermediate auto-wire must be unreachable
+    # under production required (dual-track allocate residual of
+    # #3156/#3306). note_intermediate_create_auto_wire_ was the last
+    # value-only seam: a direct/future caller reaching it under required
+    # registered a value-only densify root (observability only, NOT safe
+    # cover per #3017) — soak invariant value_only_total==0 broken and
+    # sticky-off until recovery. Gate pins: the helper carries the
+    # required-face guard (fail-closed into the #3156 uncovered inventory
+    # arm before any value-only registration), exactly one live auto_wire_
+    # call site remains (the Soft/Off fallback behind with_cover_'s
+    # required arm), the #3306 pre-move soak OR-clause and counter exports
+    # stay unchanged, and the runtime doors live in
+    # test_moving_densify_fail_closed.cpp (#4145 ACs).
+    saw4145_script = ROOT / "scripts" / "check_soft_autowire_unreachable_4145.py"
+    if not saw4145_script.exists():
+        fail(f"missing {saw4145_script}")
+        return 1
+    r = run([sys.executable, str(saw4145_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4145 soft auto-wire unreachability linter failed — run python3 scripts/check_soft_autowire_unreachable_4145.py"
+        )
+        return r
     # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
     # TokenKind::Error and parse_list's error recovery consumed it as a
     # closing ')': arguments at/after a character literal were dropped —
