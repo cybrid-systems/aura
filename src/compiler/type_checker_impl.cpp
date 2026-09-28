@@ -4023,6 +4023,12 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("substring", {String, Int, Int}, String);
     register_primitive("string=?", {String, String}, Bool);
     register_primitive("string<?", {String, String}, Bool);
+    // Issue #4175: R7RS string comparison completion — same (String, String)
+    // -> Bool domain as string=? / string<?. Left unbound, aura-build kernel
+    // modules using string>? tie-breaks failed typecheck (orch.aura select-best).
+    register_primitive("string>?", {String, String}, Bool);
+    register_primitive("string>=?", {String, String}, Bool);
+    register_primitive("string<=?", {String, String}, Bool);
     register_primitive("number->string", {Int}, String);
     register_primitive("string-index", {String, String, Int}, Int);
     register_primitive("string->number", {String}, Dyn);

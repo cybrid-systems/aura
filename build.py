@@ -8419,6 +8419,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4139 join-token observe-only linter failed - run python3 scripts/check_join_token_observe_4139.py")
         return r
+    # Issue #4175 (correctness): R7RS string comparison suite — string>?,
+    # string>=?, string<=? were unbound (string=? / string<? present), so
+    # aura-build kernel modules using string>? tie-breaks failed with
+    # "unbound variable: string>?" (aura/orch.aura:26 select-best). Gate pins
+    # the full registration chain in lockstep: ir.ixx PrimId append-only
+    # StringGt/StringGe/StringLe + kPrimNames (47), aura_jit.cpp mirror enum
+    # + drift asserts (44/45/46), service.ixx kPrimNameTable, lowering_impl
+    # prim_call_map, type_checker typed (String, String) -> Bool rows, and
+    # the evaluator registrations beside string<?. Runtime ACs live in
+    # tests/compiler/test_primcall_narg.cpp (no test_issue_4175.cpp per
+    # #81934, no docs/design/4175-* per #1655).
+    rsc4175_script = ROOT / "scripts" / "check_r7rs_string_compare_4175.py"
+    if not rsc4175_script.exists():
+        fail(f"missing {rsc4175_script}")
+        return 1
+    r = run([sys.executable, str(rsc4175_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4175 R7RS string-compare linter failed - run python3 scripts/check_r7rs_string_compare_4175.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

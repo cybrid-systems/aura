@@ -782,6 +782,62 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(to_str(a[0]) < to_str(a[1]));
         },
         pure_general(2, "(string string) -> bool", "Lexicographic string less-than."));
+    // Issue #4175: complete the R7RS string comparison suite — string>?,
+    // string>=?, string<=? mirror the string<? registration shape (same
+    // string domain, lexicographic compare, 2-arg minimum). Left unbound,
+    // aura-build kernel modules using string>? tie-breaks failed with
+    // "unbound variable: string>?" (aura/orch.aura select-best).
+    register_prim(
+        add, ev, "string>?",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_bool(false);
+            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    return (idx < string_heap.size()) ? string_heap[idx] : "";
+                }
+                if (is_int(v))
+                    return std::to_string(as_int(v));
+                return "";
+            };
+            return make_bool(to_str(a[0]) > to_str(a[1]));
+        },
+        pure_general(2, "(string string) -> bool", "Lexicographic string greater-than."));
+    register_prim(
+        add, ev, "string>=?",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_bool(false);
+            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    return (idx < string_heap.size()) ? string_heap[idx] : "";
+                }
+                if (is_int(v))
+                    return std::to_string(as_int(v));
+                return "";
+            };
+            return make_bool(to_str(a[0]) >= to_str(a[1]));
+        },
+        pure_general(2, "(string string) -> bool", "Lexicographic string greater-or-equal."));
+    register_prim(
+        add, ev, "string<=?",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_bool(false);
+            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    return (idx < string_heap.size()) ? string_heap[idx] : "";
+                }
+                if (is_int(v))
+                    return std::to_string(as_int(v));
+                return "";
+            };
+            return make_bool(to_str(a[0]) <= to_str(a[1]));
+        },
+        pure_general(2, "(string string) -> bool", "Lexicographic string less-or-equal."));
     register_prim(
         add, ev, "string->number",
         [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {

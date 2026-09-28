@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**428** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**431** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 54 primitives (13%)
-- **core**: 342 primitives (80%)
+- **core**: 345 primitives (80%)
 - **internal-observable**: 31 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -136,7 +136,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (234)
+## Core builtins (237)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -336,8 +336,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string-join` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-ref` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string<=?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string=?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string>=?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string>?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `substring` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `suggest-annotation-at` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -636,7 +639,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (342)
+### Core builtins (must remain primitive) (345)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -928,8 +931,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string-length` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-pool:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `string-ref` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string<=?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string=?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string>=?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string>?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `substring` — `src/compiler/evaluator_primitives_pair.cpp`
 - `suggest-annotation-at` — `src/compiler/evaluator_primitives_eval.cpp`

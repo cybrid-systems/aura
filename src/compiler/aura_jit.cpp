@@ -121,6 +121,9 @@ enum : uint32_t {
     PrimErrorP = 41,
     PrimPairP = 42,
     PrimNullP = 43,
+    PrimStringGt = 44,
+    PrimStringGe = 45,
+    PrimStringLe = 46,
 };
 // Compile-time lockstep with ir.ixx PrimId enum.
 // If you add/remove/reorder a PrimId entry, both sides must change together.
@@ -170,6 +173,9 @@ static_assert(PrimRaise == 40, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimErrorP == 41, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimPairP == 42, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimNullP == 43, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringGt == 44, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringGe == 45, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringLe == 46, "PrimId drift: aura_jit.cpp vs ir.ixx");
 
 // Opcode enum values (must match ir.ixx IROpcode)
 //

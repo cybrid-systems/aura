@@ -187,3 +187,4 @@ check_grant_node_provenance_4135.py
 check_caller_sweep_4136.py
 check_agent_join_scope_compact_4138.py
 check_join_token_observe_4139.py
+check_r7rs_string_compare_4175.py
