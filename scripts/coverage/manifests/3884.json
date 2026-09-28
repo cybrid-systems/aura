@@ -1,15 +1,16 @@
 {
   "issue": 3884,
-  "title": "sticky recover re-arms on LCP reject; auto-arm consults densify-entry LCP",
+  "title": "sticky recover keeps trap armed through LCP reject (#4143 supersedes the clear→re-arm); auto-arm consults densify-entry LCP",
   "checks": [
     {
       "ac": "AC1",
       "path": "src/compiler/evaluator_mutation_boundary.cpp",
       "contains": [
         "Issue #3884",
-        "g_moving_incomplete_remap_sticky_densify_off.exchange",
+        "Issue #4143",
         "out.sticky_was_on",
-        "densify_entry_lcp_blocked"
+        "densify_entry_lcp_blocked",
+        "out.sticky_cleared = false;"
       ]
     },
     {

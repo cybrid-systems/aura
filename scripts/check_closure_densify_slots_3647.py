@@ -12,7 +12,8 @@
 # AC3: Moving-window-only gating — Phase-5 flush calls the register helper
 #      inside moving_compact_enabled(); the arena known-roots hook fires
 #      inside the production auto-arm Moving arm; recovery densify stays
-#      behind moving_compact_enabled().
+#      feature-gated (#4143: moving_compact_feature_enabled — the armed
+#      sticky no longer gates the recovery entrant, only agents/auto-arm).
 # AC4: Lock discipline — the closures walk collects under shared
 #      closures_mtx_ and the walk precedes slot registration (no arena lock
 #      under closures_mtx_); no new pin/GC API in the walk.
@@ -122,8 +123,8 @@ def _rows(mb: str, hdr: str, arena_src: str, test: str, build: str) -> list[str]
     )
     must("live_compact(LiveCompactMode::Moving)", "AC3 hook arm requests Moving", arena_src)
     must(
-        "if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled())",
-        "AC3 recovery gate",
+        "if (retry_densify && arena_group_ && aura::ast::moving_compact_feature_enabled())",
+        "AC3 recovery gate (#4143: feature-flagged, sticky stays armed)",
         mb,
     )
 
