@@ -89,6 +89,27 @@ struct EmitFixture {
     std::atomic<std::uint32_t> ok{0};
 };
 
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+extern "C" std::int64_t aura_lookup_fn_by_name(const char* name, std::int64_t* out_local_count,
+                                               std::int64_t* out_arg_count,
+                                               std::int64_t* out_env_count);
+
+// Issue #4126: a host emit true that does not replace g_jit_fns is not a
+// reemit success (count_emit_success=installed). The success-path ACs
+// below pin a REAL reemit success, so the fixture installs a fresh
+// ScalarFn per emit; the body toggles against the name's current pointer
+// so repeated drains of the same candidate stay distinct installs.
+static std::int64_t handshake_body_a(std::int64_t*, std::uint32_t) {
+    return 2114;
+}
+static std::int64_t handshake_body_b(std::int64_t*, std::uint32_t) {
+    return 2115;
+}
+static std::atomic<std::uint32_t> handshake_body_seq{0};
+
 static bool emit_fn(const char* name, std::uint64_t /*region*/, void* userdata) {
     auto* f = static_cast<EmitFixture*>(userdata);
     f->calls.fetch_add(1, std::memory_order_relaxed);
@@ -96,6 +117,14 @@ static bool emit_fn(const char* name, std::uint64_t /*region*/, void* userdata) 
         return false;
     if (f->fail_names.count(name))
         return false;
+    std::int64_t locals = 0, args = 0, env = 0;
+    const auto cur = aura_lookup_fn_by_name(name, &locals, &args, &env);
+    auto* body =
+        (cur == static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&handshake_body_a)))
+            ? &handshake_body_b
+            : &handshake_body_a;
+    const auto n = handshake_body_seq.fetch_add(1, std::memory_order_relaxed);
+    aura_register_fn_named(name, static_cast<std::int64_t>(211400 + (n & 1u)), body, 0, 0, 0);
     f->ok.fetch_add(1, std::memory_order_relaxed);
     return true;
 }

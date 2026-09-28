@@ -97,6 +97,43 @@ static bool emit_ok(const char* /*name*/, std::uint64_t /*region*/, void* /*ud*/
     return true;
 }
 
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+extern "C" std::int64_t aura_lookup_fn_by_name(const char* name, std::int64_t* out_local_count,
+                                               std::int64_t* out_arg_count,
+                                               std::int64_t* out_env_count);
+
+// Issue #4126: a host emit true that leaves g_jit_fns unchanged is not a
+// reemit success (count_emit_success=installed). The success-advancing ACs
+// (AC4 #2035, AC9 #2162, soak #3573, #3751, #3636 AC8) pin a REAL reemit
+// success, so this arm installs a fresh ScalarFn per emit; the body
+// toggles against the name's current pointer so soak rounds stay distinct
+// installs. emit_ok remains the metric-only arm for members that pin the
+// #4126 no-install / would-reemit face.
+static std::int64_t install_body_a(std::int64_t*, std::uint32_t) {
+    return 4126;
+}
+static std::int64_t install_body_b(std::int64_t*, std::uint32_t) {
+    return 4127;
+}
+static std::atomic<std::uint32_t> install_body_seq{0};
+
+static bool emit_install_ok(const char* name, std::uint64_t /*region*/, void* /*ud*/) {
+    if (!name || !*name)
+        return false;
+    std::int64_t locals = 0, args = 0, env = 0;
+    const auto cur = aura_lookup_fn_by_name(name, &locals, &args, &env);
+    auto* body =
+        (cur == static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&install_body_a)))
+            ? &install_body_b
+            : &install_body_a;
+    const auto n = install_body_seq.fetch_add(1, std::memory_order_relaxed);
+    aura_register_fn_named(name, static_cast<std::int64_t>(412600 + (n & 1u)), body, 0, 0, 0);
+    return true;
+}
+
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2035 ---");
     auto reg = read_file("src/compiler/hot_update_registry.hh");
@@ -178,7 +215,7 @@ static void ac4_reemit_when_wired() {
     feed.regions = {1}; // Performance region
     feed.cursor = 0;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
-    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_set_aot_emit_fn(&emit_install_ok, nullptr);
 
     const auto trig0 = reg.snapshot().cascade_reemit_trigger_total;
     const auto cand0 = reg.snapshot().reemit_candidates_total;
@@ -355,7 +392,7 @@ static void ac9_recovery_metrics_and_idempotent() {
     feed.regions = {0};
     feed.cursor = 0;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
-    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_set_aot_emit_fn(&emit_install_ok, nullptr);
 
     const auto succ0 = href(cs, "boundary-reemit-success-total");
     const auto thr0 = href(cs, "boundary-reemit-throttled-total");
@@ -1125,7 +1162,7 @@ static void ac_soak_3573_mutate_reemit_hygiene() {
     feed.regions = {1};
     feed.cursor = 0;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
-    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_set_aot_emit_fn(&emit_install_ok, nullptr);
 
     // #2845 hygiene contract: the soak must not produce NEW fail-path
     // stamps. The proof's would_allow_native field itself is process-
@@ -1196,7 +1233,7 @@ static void ac3751_production_facade_feeds_dirty_ring() {
 
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura_hot_update_set_reemit_boundary_policy(0);
-    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_set_aot_emit_fn(&emit_install_ok, nullptr);
     aura_production_dirty_ring_reset_for_test();
     (void)aura_install_production_dirty_iterator();
     auto& reg = hot_update_registry();
@@ -1280,7 +1317,7 @@ static void ac3636_scoped_storm() {
     feed3636.regions = {0, 1}; // B proceeds; A attributed → defers
     feed3636.cursor = 0;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed3636);
-    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_set_aot_emit_fn(&emit_install_ok, nullptr);
     const auto scope_skips0 = reg.reemit_soft_storm_region_skips();
     const auto throttle_skips0 = reg.snapshot().reemit_throttle_skips_total;
     (void)aura_reemit_aot_for_dirty(0);
