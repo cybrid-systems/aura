@@ -478,6 +478,83 @@ static void ac3459_5_source_cite_no_new_key() {
           "AC6: no tests/issues/test_issue_3459.cpp");
 }
 
+// ── Issue #4133: grant_macro_self_evo TA fence is caller-only (#3800
+// alignment) — direct registry mint face checks.
+static void ac4133_1_registry_caller_only_fence() {
+    std::println("\n--- #4133 AC1/AC2: registry mint — caller-only TA fence ---");
+    // AC1: target-only TA must NOT authorize a non-TA caller's mint.
+    reset_all();
+    constexpr std::uint64_t caller_t = 4133;
+    constexpr std::uint64_t target_t = 4134;
+    // Seed explicit TA on the TARGET while the registry is Off (no
+    // fences), then flip to production — the deny must come from the
+    // caller-only fence, not a setup-time TA denial.
+    aura::core::capability::EffectProvenance prov_ta{};
+    prov_ta.epoch = 1;
+    prov_ta.mutation_id = 1;
+    g_capability_registry().grant(target_t, "ta-4134", aura::core::capability::Effect::TenantAdmin,
+                                  prov_ta);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    aura::core::bump_mutation_epoch(1);
+    const auto m = aura::core::current_mutation_epoch();
+    const auto denies0 = aura::core::capability::g_capability_effect_metrics()
+                             .capability_macro_self_evo_grant_deny_total.load();
+    aura::core::capability::EffectProvenance prov{};
+    prov.epoch = m;
+    prov.mutation_id = m;
+    const bool landed = g_capability_registry().grant_macro_self_evo(target_t, MacroSelfEvoPolicy{},
+                                                                     prov, caller_t);
+    CHECK(!landed, "4133 AC1: target-only TA → mint denied (caller-only fence)");
+    bool saw_mse = false;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(target_t);
+        if (it != g_capability_registry().by_tenant.end())
+            for (const auto& g : it->second)
+                if ((static_cast<std::uint16_t>(g.effects) &
+                     static_cast<std::uint16_t>(aura::core::capability::Effect::MacroSelfEvo)) != 0)
+                    saw_mse = true;
+    }
+    CHECK(!saw_mse, "4133 AC1: no MSE bit lands on the TA target");
+    CHECK(aura::core::capability::g_capability_effect_metrics()
+                  .capability_macro_self_evo_grant_deny_total.load() > denies0,
+          "4133 AC1: macro-self-evo-grant-needs-tenant-admin deny counter bumped");
+
+    // AC2: caller TA → mint to a foreign (TA-less) target still lands.
+    reset_all();
+    g_capability_registry().grant(caller_t, "ta-4133", aura::core::capability::Effect::TenantAdmin,
+                                  prov_ta);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    aura::core::bump_mutation_epoch(1);
+    const auto m2 = aura::core::current_mutation_epoch();
+    aura::core::capability::EffectProvenance prov2{};
+    prov2.epoch = m2;
+    prov2.mutation_id = m2;
+    const bool landed2 = g_capability_registry().grant_macro_self_evo(
+        target_t, MacroSelfEvoPolicy{}, prov2, caller_t);
+    CHECK(landed2, "4133 AC2: caller TA → foreign mint lands");
+    reset_all();
+}
+
+static void ac4133_2_source_cite_stable_surface() {
+    std::println("\n--- #4133 AC3: stable deny surface + caller-only fence source-cite ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #4133") != std::string::npos, "AC3: capability_model cites #4133");
+    CHECK(cap.find("if (!has_admin(caller)) {") != std::string::npos,
+          "AC3: caller-only fence present");
+    CHECK(cap.find("has_admin(caller) && !has_admin(tenant)") == std::string::npos,
+          "AC3: caller-OR-target fence removed (superseded)");
+    CHECK(cap.find("macro-self-evo-grant-needs-tenant-admin") != std::string::npos,
+          "AC3: SE reason string stays stable");
+    CHECK(cap.find("capability_macro_self_evo_grant_deny_total") != std::string::npos,
+          "AC3: deny counter name stays stable");
+    CHECK(read_file("docs/design/4133-mse-caller-only-ta.md").empty(),
+          "AC3: no docs/design/4133-*");
+    CHECK(read_file("tests/core/test_issue_4133.cpp").empty(), "AC3: no invented test file");
+}
+
 } // namespace
 
 int main() {
@@ -493,6 +570,8 @@ int main() {
     ac3459_3_no_explicit_ta_denied();
     ac3459_4_off_synthesis_contract();
     ac3459_5_source_cite_no_new_key();
+    ac4133_1_registry_caller_only_fence();
+    ac4133_2_source_cite_stable_surface();
     reset_all();
     if (g_failed)
         return 1;

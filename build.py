@@ -7722,9 +7722,9 @@ def cmd_lint():
             "Issue #3903 correlate tenant passthrough linter failed — run python3 scripts/check_correlate_tenant_passthrough_3903.py"
         )
         return r
-    # Issue #3904: MSE TA fence posture — the caller-OR-target fence
-    # (#3029) is documented as intended (Option A caller-only rejected
-    # on chaos PR starvation evidence); contract unchanged.
+    # Issue #3904: MSE TA fence posture — superseded by #4133: the fence
+    # is caller-only now (aligned with grant_cross_tenant #3800); the
+    # linter pins the superseding contract.
     mtc3904_script = ROOT / "scripts" / "check_mse_ta_posture_3904.py"
     if not mtc3904_script.exists():
         fail(f"missing {mtc3904_script}")
@@ -7734,6 +7734,19 @@ def cmd_lint():
         fail("Issue #3904 MSE TA posture linter failed — run python3 scripts/check_mse_ta_posture_3904.py")
         return r
         fail("Issue #3904 MSE TA posture linter failed — run python3 scripts/check_mse_ta_posture_3904.py")
+        return r
+    # Issue #4133: MSE caller-only TA fence — grant_macro_self_evo mint
+    # requires TenantAdmin on the CALLER principal only (target-only TA is
+    # deny); SE reason + deny counter stay stable.
+    mtc4133_script = ROOT / "scripts" / "check_mse_caller_only_ta_4133.py"
+    if not mtc4133_script.exists():
+        fail(f"missing {mtc4133_script}")
+        return 1
+    r = run([sys.executable, str(mtc4133_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4133 MSE caller-only TA fence linter failed — run python3 scripts/check_mse_caller_only_ta_4133.py"
+        )
         return r
     ocr3941_script = ROOT / "scripts" / "check_orch_residuals_3941.py"
     if not ocr3941_script.exists():

@@ -429,31 +429,156 @@ static void ac3126_admin_fence_locked() {
     }
 }
 
-// ── Issue #3904: MSE TA fence posture — caller-OR-target documented ──
-static void ac3904_1_target_ta_allow_non_ta_caller_documented() {
-    std::println("\n--- #3904 AC1: non-TA caller + TA target → allow (posture documented) ---");
+// ── Issue #4133: MSE TA fence caller-only — supersedes #3904's
+// caller-OR-target posture (aligned with grant_cross_tenant #3800).
+static void ac4133_1_target_ta_non_ta_caller_denied() {
+    std::println("\n--- #4133 AC1: non-TA caller + TA target → deny (caller-only fence) ---");
     reset_all();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     // Target tenant 42 holds TenantAdmin; caller 7 holds nothing. Under the
-    // #3029 caller-OR-target fence this authorizes the grant (Option B:
-    // behavior preserved; the Option A caller-only variant was rejected —
-    // chaos PR starvation delta 2-8, see the fence posture comment).
+    // #4133 caller-only fence the TARGET's admin bit must NOT authorize the
+    // mint (least-privilege; supersedes the #3904 caller-OR-target posture —
+    // a non-TA caller could mint MSE onto a TA-holding target via the
+    // registry API). SE reason macro-self-evo-grant-needs-tenant-admin +
+    // deny counter stay stable.
     grant_tenant_admin_mid(42);
 
     const auto deny0 =
         aura::core::capability::g_capability_effect_metrics()
             .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
-    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+    const bool landed = aura::core::capability::g_capability_registry().grant_macro_self_evo(
         /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
         /*prov_in=*/aura::core::capability::make_grant_provenance(2, true, 0, 0),
         /*caller_principal=*/7);
     const auto deny1 =
         aura::core::capability::g_capability_effect_metrics()
             .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
-    CHECK(deny1 == deny0, "3904 AC1: OR fence — target TA authorizes (behavior preserved)");
+    CHECK(!landed, "4133 AC1: caller-only fence — target TA does not authorize (deny)");
+    CHECK(deny1 == deny0 + 1,
+          "4133 AC1: deny counter bumped (macro-self-evo-grant-needs-tenant-admin)");
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(!aura::core::capability::g_capability_registry().find_grant(42, "macro-self-evo", g),
+          "4133 AC1: no MSE policy lands on the TA target");
+    reset_all();
+}
+
+static void ac4133_2_caller_ta_mint_foreign_target_lands() {
+    std::println("\n--- #4133 AC2: caller holds TA → mint to foreign target lands ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    grant_tenant_admin_mid(7); // caller 7 holds TenantAdmin; target 42 does not
+    const bool landed = aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(5, true, 0, 0),
+        /*caller_principal=*/7);
+    CHECK(landed, "4133 AC2: TA caller → foreign MSE mint lands");
     aura::core::capability::CapabilityGrant g{};
     CHECK(aura::core::capability::g_capability_registry().find_grant(42, "macro-self-evo", g),
-          "3904 AC1: MSE policy lands on the TA target (documented posture)");
+          "4133 AC2: MSE row present on target");
+    reset_all();
+}
+
+static void ac4133_3_soft_off_zero_cost_unchanged() {
+    std::println("\n--- #4133 AC3: Soft/Off allows without TA lookup cost ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    const auto deny0 =
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+    const bool landed = aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/7, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(6, true, 0, 0),
+        /*caller_principal=*/7); // no TA anywhere — Soft passes through
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(landed &&
+              aura::core::capability::g_capability_registry().find_grant(7, "macro-self-evo", g),
+          "4133 AC3: Soft/Off grant lands (no fence consult)");
+    CHECK(aura::core::capability::g_capability_effect_metrics()
+                  .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed) ==
+              deny0,
+          "4133 AC3: deny counter untouched under Soft/Off (zero-cost)");
+    reset_all();
+}
+
+static void ac4133_4_concurrent_ta_revoke_mint_deny_table_unchanged() {
+    std::println("\n--- #4133 AC4: concurrent TA revoke vs MSE mint — deny, table unchanged ---");
+    reset_all();
+    // Seed caller TA while Off, then arm production; the fence and the
+    // by_tenant write run under the registry mtx, so a concurrent revoke
+    // cannot land between check and write (TOCTOU closure).
+    grant_tenant_admin_mid(7);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    const auto mid = aura::core::capability::make_grant_provenance(7, true, 0, 0).epoch;
+    constexpr int kIters = 64;
+    std::atomic<int> allows{0};
+    std::atomic<int> denies{0};
+    std::atomic<bool> go{false};
+    std::atomic<bool> revoked{false};
+    std::thread revoker([&] {
+        while (!go.load(std::memory_order_acquire)) {
+        }
+        aura::core::capability::g_capability_registry().revoke(7, "tenant-admin");
+        revoked.store(true, std::memory_order_release);
+    });
+    std::thread minter([&] {
+        while (!go.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < kIters; ++i) {
+            const bool ok = aura::core::capability::g_capability_registry().grant_macro_self_evo(
+                /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
+                /*prov_in=*/aura::core::capability::make_grant_provenance(mid, true, 0, 0),
+                /*caller_principal=*/7);
+            (ok ? allows : denies).fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    go.store(true, std::memory_order_release);
+    revoker.join();
+    minter.join();
+    CHECK(allows.load() + denies.load() == kIters,
+          "4133 AC4: every mint resolved atomically (no torn fence state)");
+    // Post-join: caller TA is gone — a final mint must deny and leave the
+    // target's live MSE row count unchanged (denied mint writes nothing).
+    auto count_live_mse = []() -> int {
+        int n = 0;
+        std::lock_guard<std::mutex> lock(aura::core::capability::g_capability_registry().mtx);
+        const auto it = aura::core::capability::g_capability_registry().by_tenant.find(42);
+        if (it != aura::core::capability::g_capability_registry().by_tenant.end())
+            for (const auto& gr : it->second)
+                if (!gr.revoked &&
+                    (static_cast<std::uint16_t>(gr.effects) &
+                     static_cast<std::uint16_t>(aura::core::capability::Effect::MacroSelfEvo)) != 0)
+                    ++n;
+        return n;
+    };
+    const auto rows0 = count_live_mse();
+    const bool final_landed = aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(mid, true, 0, 0),
+        /*caller_principal=*/7);
+    CHECK(!final_landed, "4133 AC4: post-revoke mint denies");
+    CHECK(count_live_mse() == rows0, "4133 AC4: denied mint leaves the table unchanged");
+    CHECK(revoked.load(), "4133 AC4: revoke landed during the chaos window");
+    reset_all();
+}
+
+static void ac4133_5_prim_mse_seed_refuses_with_base_grant() {
+    std::println(
+        "\n--- #4133 AC5: security:grant-effect! MSE seed refuses when base grant refused ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    // Evaluator principal (default 0) holds no TA → the high-risk base
+    // grant_effect_capability refuses (#3088 AC5 shape); the #3459/#2023
+    // MSE seed must not land either (one refuse surface).
+    const auto r =
+        cs.eval(std::format("(security:grant-effect! \"macro-self-evo\" {})",
+                            static_cast<int>(aura::compiler::security::kEffectMacroSelfEvo)));
+    CHECK(r && (is_error(*r) || (is_bool(*r) && !as_bool(*r))),
+          "4133 AC5: grant-effect! refuses under Restricted without caller TA");
+    CHECK(!aura::core::capability::g_capability_registry()
+               .macro_self_evo_policy(cs.evaluator().capability_tenant_id())
+               .has_value(),
+          "4133 AC5: no MSE policy seeded after refusal");
     reset_all();
 }
 
@@ -519,10 +644,12 @@ static void ac3904_4_soft_off_zero_cost_unchanged() {
 static void ac3904_5_source_cite() {
     std::println("\n--- #3904 AC5: posture source-cite + no invent ---");
     const auto cap = read_file("src/core/capability_model.hh");
-    CHECK(cap.find("Issue #3904 posture") != std::string::npos,
-          "3904 AC5: fence posture comment cites #3904");
-    CHECK(cap.find("if (!has_admin(caller) && !has_admin(tenant)) {") != std::string::npos,
-          "3904 AC5: caller-OR-target fence preserved (Option B)");
+    CHECK(cap.find("Issue #4133") != std::string::npos,
+          "3904 AC5: fence cites superseding #4133 caller-only contract");
+    CHECK(cap.find("if (!has_admin(caller)) {") != std::string::npos,
+          "3904 AC5: caller-only fence present (#4133)");
+    CHECK(cap.find("has_admin(caller) && !has_admin(tenant)") == std::string::npos,
+          "3904 AC5: caller-OR-target fence removed (superseded)");
     std::ifstream docs("docs/design/3904-mse-ta-caller-only.md");
     if (!docs.good())
         docs.open("../docs/design/3904-mse-ta-caller-only.md");
@@ -5444,7 +5571,11 @@ int main() {
     }
 
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
-    ac3904_1_target_ta_allow_non_ta_caller_documented();
+    ac4133_1_target_ta_non_ta_caller_denied();
+    ac4133_2_caller_ta_mint_foreign_target_lands();
+    ac4133_3_soft_off_zero_cost_unchanged();
+    ac4133_4_concurrent_ta_revoke_mint_deny_table_unchanged();
+    ac4133_5_prim_mse_seed_refuses_with_base_grant();
     ac3904_2_caller_with_ta_allow_unchanged();
     ac3904_3_neither_ta_denied();
     ac3904_4_soft_off_zero_cost_unchanged();

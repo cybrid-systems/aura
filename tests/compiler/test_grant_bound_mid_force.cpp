@@ -200,8 +200,9 @@ int run_test_grant_bound_mid_force() {
         const auto tenant = std::uint64_t{31};
         aura::core::bump_mutation_epoch();
         const auto mid = aura::core::current_mutation_epoch();
-        // Seed TenantAdmin on the target tenant (#3029 fence).
-        g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+        // Seed TenantAdmin on the CALLER tenant (default 0) — the #4133
+        // caller-only MSE fence supersedes the #3029 target-TA posture.
+        g_capability_registry().grant(std::uint64_t{0}, "tenant-admin", Effect::TenantAdmin,
                                       make_grant_provenance(mid, false, 0, 0));
         EffectProvenance prov;
         prov.mutation_id = mid;
