@@ -3605,6 +3605,25 @@ private:
         if (!p)
             return;
         intermediate_creates_.push_back(p);
+        // Issue #4145: the value-only dual-track (dual of the #3156
+        // with_cover_ both-null arm) is unreachable under production
+        // required. A new allocate/create site, a gate bypass, or a
+        // Soft/required latch race that reached this helper under
+        // required previously left a value-only densify root — soak
+        // invariant value_only_total==0 broken and sticky-off until
+        // recovery. Fail-closed into the same #3156 inventory arm:
+        // the push_back above feeds has_unpinned_intermediate_creates_()
+        // so the next pre-move gate blocks (sticky-off, no relocate)
+        // and the uncovered counter names the residual caller.
+        // register_external_root_for_densify / note_general_object_create_auto_wire
+        // / value-only bump stay required-face unreachable (AC1); Soft /
+        // Off keeps the zero-cost auto-wire contract below (single
+        // required-active relaxed load + branch, AC2).
+        if (aura::core::lifetime::general_object_pin_required_active()) {
+            g_intermediate_create_uncovered_under_required_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return;
+        }
         aura::core::lifetime::note_general_object_create_auto_wire();
         register_external_root_for_densify(p);
         g_intermediate_create_value_only_total.fetch_add(1, std::memory_order_relaxed);

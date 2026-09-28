@@ -5063,6 +5063,140 @@ static void ac4144_3_source_cite_and_wiring() {
 }
 
 
+// ── Issue #4145: Soft value-only auto-wire unreachable under required ──
+// (dual-track allocate residual of #3156/#3306). note_intermediate_create_
+// auto_wire_ was the last value-only seam: a direct/future caller reaching
+// it under production required previously registered a value-only densify
+// root (soak invariant value_only_total==0 broken, sticky-off until
+// recovery). #4145 arms the helper itself: under required it fail-closes
+// into the same #3156 uncovered inventory and never touches the value-only
+// arm. Soft / Off keeps the zero-cost auto-wire contract.
+static void ac4145_1_required_value_only_unreachable_fail_closed() {
+    std::println("\n--- #4145 AC1: under required, no value-only growth; uncovered "
+                 "leftover fail-closes the pre-move gate ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    const auto vo0 =
+        aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed);
+    const auto unc0 = aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+        std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    constexpr std::int32_t kMagic = 0x4145;
+    auto* leftover = create_uncovered_leftover(arena, kMagic, 2, 3, 4);
+    CHECK(leftover != nullptr, "4145 AC1: uncovered leftover allocated under required");
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) >= unc0 + 1,
+          "4145 AC1: residual caller named by the uncovered counter (#3156 arm)");
+    CHECK(aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed) == vo0,
+          "4145 AC1: soak invariant — value-only total did not grow under required");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    std::println("4145 probe: moved={} soft_gated={} blocked_pre={}", r.objects_moved, r.soft_gated,
+                 r.moving_blocked_precondition);
+    CHECK(r.moving_blocked_precondition,
+          "4145 AC1: uncovered leftover fail-closes the pre-move gate");
+    CHECK(r.objects_moved == 0,
+          "4145 AC1: no relocate while the leftover is uncovered (payload intact)");
+    CHECK(leftover->a == kMagic, "4145 AC1: leftover payload intact across the blocked window");
+    CHECK(aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed) == vo0,
+          "4145 AC1: value-only total still did not grow through the blocked window");
+}
+
+static void ac4145_2_soft_value_only_contract_retained() {
+    std::println("\n--- #4145 AC2: Soft / Off keeps the value-only auto-wire contract ---");
+    RequiredPinGuard pins_off(0);
+    ASTArena arena(64 * 1024);
+    auto* p = arena.create<Pod16>(0x4145, 5, 6, 7);
+    CHECK(p != nullptr, "4145 AC2: Soft create succeeds (zero-cost, no note)");
+    const auto vo0 =
+        aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed);
+    const auto unc0 = aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+        std::memory_order_relaxed);
+    const auto wire0 = aura::core::lifetime::general_object_pin_auto_wire_total_v_read();
+    arena.note_intermediate_create_with_cover_(p, nullptr, nullptr);
+    CHECK(aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed) ==
+              vo0 + 1,
+          "4145 AC2: Soft both-null still falls through to value-only auto-wire");
+    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() > wire0,
+          "4145 AC2: Soft auto-wire note still fires (#2597 wire surface)");
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) == unc0,
+          "4145 AC2: face separation — uncovered arm silent on Soft");
+}
+
+static void ac4145_3_guard_source_cite_unreachable() {
+    std::println("\n--- #4145 AC3: auto_wire_ guard ordered before the value-only arm ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    const auto fn = ixx.find("void note_intermediate_create_auto_wire_(void* p) noexcept");
+    CHECK(fn != std::string::npos, "4145 AC3: auto_wire_ helper present");
+    const auto win = ixx.substr(fn, 2600);
+    std::string code_only;
+    for (std::size_t pos = 0; pos < win.size();) {
+        const auto nl = win.find('\n', pos);
+        const auto stop = (nl == std::string::npos) ? win.size() : nl;
+        std::string line = win.substr(pos, stop - pos);
+        const auto cmt = line.find("//");
+        if (cmt != std::string::npos)
+            line.resize(cmt);
+        code_only += line;
+        code_only += '\n';
+        pos = (nl == std::string::npos) ? win.size() : nl + 1;
+    }
+    CHECK(win.find("Issue #4145") != std::string::npos, "4145 AC3: guard cites #4145");
+    const auto guard = code_only.find("general_object_pin_required_active()");
+    CHECK(guard != std::string::npos, "4145 AC3: required-face guard present in auto_wire_");
+    const auto unc = code_only.find("g_intermediate_create_uncovered_under_required_total");
+    CHECK(unc != std::string::npos,
+          "4145 AC3: guard fail-closes into the #3156 uncovered inventory arm");
+    const auto root = code_only.find("register_external_root_for_densify(p)");
+    CHECK(root != std::string::npos && guard < root,
+          "4145 AC3: value-only densify root registration is behind the guard");
+    const auto vo = code_only.find("g_intermediate_create_value_only_total.fetch_add");
+    CHECK(vo != std::string::npos && guard < vo,
+          "4145 AC3: value-only bump is behind the guard (Soft-only)");
+}
+
+static void ac4145_4_single_residual_site_and_wiring() {
+    std::println("\n--- #4145 AC4: single Soft residual call site + SSOT + wiring ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    std::string code_only;
+    for (std::size_t pos = 0; pos < ixx.size();) {
+        const auto nl = ixx.find('\n', pos);
+        const auto stop = (nl == std::string::npos) ? ixx.size() : nl;
+        std::string line = ixx.substr(pos, stop - pos);
+        const auto cmt = line.find("//");
+        if (cmt != std::string::npos)
+            line.resize(cmt);
+        code_only += line;
+        code_only += '\n';
+        pos = (nl == std::string::npos) ? ixx.size() : nl + 1;
+    }
+    const std::string call = "note_intermediate_create_auto_wire_(p);";
+    std::size_t sites = 0;
+    for (auto at = code_only.find(call); at != std::string::npos; at = code_only.find(call, at + 1))
+        ++sites;
+    CHECK(sites == 1, "4145 AC4: exactly one live auto_wire_ call site (the Soft fallback)");
+    const auto wc = code_only.find("void note_intermediate_create_with_cover_");
+    CHECK(wc != std::string::npos, "4145 AC4: with_cover_ dispatcher present");
+    const auto req = code_only.find("general_object_pin_required_active()", wc);
+    const auto fallback = code_only.find(call, wc);
+    CHECK(req != std::string::npos && fallback != std::string::npos && req < fallback,
+          "4145 AC4: required arm precedes the Soft fallback in with_cover_");
+    CHECK(code_only.find("intermediate_create_value_only_total_v_read() > 0") != std::string::npos,
+          "4145 AC4: #3306 pre-move soak OR-clause intact");
+    CHECK(read_file("tests/core/test_issue_4145.cpp").empty(), "4145 AC4: no test_issue_4145.cpp");
+    CHECK(read_file("docs/design/4145-soft-autowire-unreachable.md").empty(),
+          "4145 AC4: no docs/design/4145-*");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_soft_autowire_unreachable_4145.py") != std::string::npos,
+          "4145 AC4: linter wired in build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(allow.find("check_soft_autowire_unreachable_4145.py") != std::string::npos,
+          "4145 AC4: linter on the root check allowlist");
+}
+
+
 // ── Issue #3783: alloc-path auto-arm Moving publishes densify health ──
 static void ac3783_1_auto_arm_publishes_before_soft_fallback() {
     const auto arena = read_file("src/core/arena.ixx");
@@ -7360,6 +7494,13 @@ int run_test_moving_densify_fail_closed() {
     ac4144_1_pool_slot_registered_and_remapped();
     ac4144_2_no_dual_note_slot_xor();
     ac4144_3_source_cite_and_wiring();
+
+    std::println("\n=== Issue #4145: Soft value-only auto-wire unreachable under "
+                 "production required (#3156/#3306 dual-track allocate residual) ===");
+    ac4145_1_required_value_only_unreachable_fail_closed();
+    ac4145_2_soft_value_only_contract_retained();
+    ac4145_3_guard_source_cite_unreachable();
+    ac4145_4_single_residual_site_and_wiring();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
