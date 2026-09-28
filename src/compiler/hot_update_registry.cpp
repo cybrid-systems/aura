@@ -884,6 +884,19 @@ void HotUpdateRegistry::reset_residual_force_observe_for_test() noexcept {
 // no-ops when residual==0 (#2952 — re-promote owns clear), so this face
 // clears covered demotion bits after the same 256-exit gate (production
 // only; never Soft wholesale). Caps one-shot per force-mask generation.
+//
+// Issue #4147: a no-op heal (decide_and_reemit returned n==0,
+// coverage-verify deferred / disabled, only_covered shrank nothing) must
+// not leave the per-generation cap sticky — the playbook is observe-only,
+// so nothing else would ever shrink residual. After the ResidualForceHeal
+// pass the residual path re-reads residual_force_mask() and clears
+// residual_force_auto_heal_last_mask_ when it still equals the armed
+// generation, so a later 256-exit BoundaryExit window can retry (at most
+// one in-flight heal per window — the age reset above still gates). A
+// shrunk / cleared residual re-arms via the prev != gen branch on the
+// next observe. The FallBackJit path cannot no-op: its covered clear
+// always changes the face, so no re-arm is needed there. Still no
+// playbook auto-execution.
 void HotUpdateRegistry::observe_residual_force_stale() noexcept {
     if (aura_production_defaults_active_probe() == 0)
         return; // Soft / Off: zero extra walk
@@ -947,6 +960,20 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
             // auto-heal is ResidualForceHeal (not Cascade dirty). Storm-clear
             // / drain still use CoverageVerify via the default argument.
             (void)maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal);
+            // Issue #4147: re-arm the one-shot cap when the heal was a
+            // no-op. If the residual mask is unchanged vs the armed
+            // generation, the cap above would block every later retry
+            // while the Agent never acts on the observe-only playbook —
+            // sticky force-JIT (fail-closed, but zero-downtime re-promote
+            // dead until manual intervention). Clear the armed mask so the
+            // next 256-exit age window can retry; the age reset above
+            // still bounds this to at most one in-flight heal per window.
+            // A shrunk / cleared residual keeps the cap armed — the
+            // prev != gen branch re-arms the new generation on the next
+            // observe. Not playbook auto-execution: only the existing
+            // bounded heal window re-opens.
+            if (residual_force_mask() == gen)
+                residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
             return;
         }
         // Issue #3814: residual empty + force sticky (FallBackJit).

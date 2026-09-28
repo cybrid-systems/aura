@@ -9120,6 +9120,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4146 facade cone JIT drop linter failed — run python3 scripts/check_facade_cone_jit_drop_4146.py")
         return r
+    # Issue #4147: residual-force auto-heal re-arm. `observe_residual_force_stale`
+    # re-reads residual_force_mask() after the ResidualForceHeal pass and clears
+    # residual_force_auto_heal_last_mask_ when the heal was a no-op (unchanged
+    # vs the armed generation) so a later 256-exit BoundaryExit window can
+    # retry — Agent-miss no longer leaves a sticky force-JIT; playbook stays
+    # observe-only (#2953/#3026). Window / storm / budget gates unchanged; Soft
+    # / Off still zero-cost. Runtime doors live in
+    # tests/compiler/test_issue_3096.cpp (ac4147_*) + test_reload_recovery_query.cpp
+    # (ac3248_1 restated).
+    rfr4147_script = ROOT / "scripts" / "check_residual_force_rearm_4147.py"
+    if not rfr4147_script.exists():
+        fail(f"missing {rfr4147_script}")
+        return 1
+    r = run([sys.executable, str(rfr4147_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4147 residual-force re-arm linter failed — run python3 scripts/check_residual_force_rearm_4147.py")
+        return r
     # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
     # TokenKind::Error and parse_list's error recovery consumed it as a
     # closing ')': arguments at/after a character literal were dropped —
