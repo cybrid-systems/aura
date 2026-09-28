@@ -181,3 +181,23 @@ extern "C" __attribute__((weak)) void* aura_current_eval_identity(void) noexcept
 extern "C" __attribute__((weak)) int aura_any_live_arena_resolves_object(void* /*p*/) noexcept {
     return 0;
 }
+// Issue #4124: NativeMovingCanary (aura_jit_runtime.cpp) calls the extern
+// "C" bridge aura_bind_temporary_moving_live_ptr_any_arena, whose strong
+// definition lives in arena.ixx (module unit — bind under the #3210
+// inventory mutex after last_object_remap_ resolution). test_concurrent
+// compiles neither arena.ixx nor its consumers, so asan-build fails at
+// link without a stub. NULL is exactly the documented no-arena fallback:
+// the canary skips bind and proceeds unnoted (no Moving densify here).
+extern "C" __attribute__((weak)) void*
+aura_bind_temporary_moving_live_ptr_any_arena(void* /*p*/) noexcept {
+    return nullptr;
+}
+// Issue #4110: runtime_ssot.cpp's aura_hash_stamp_new_table_owner (the
+// hash stamp helper) consults aura_jit_owner_capability_tenant, whose
+// strong definition lives in service.ixx (module unit). test_shape /
+// test_shape_profiler_concurrency compile runtime_ssot.cpp + these stubs
+// without service.ixx — stub returns tenant 0 (no principal), matching
+// the unstamped resize default the tables already use.
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_owner_capability_tenant(void) noexcept {
+    return 0;
+}

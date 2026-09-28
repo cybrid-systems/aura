@@ -1234,8 +1234,17 @@ add_executable(test_jit_concurrent_compile tests/compiler/test_jit_concurrent_co
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
     src/compiler/tl_arena_tls.cpp
-    src/compiler/runtime_ssot.cpp)
+    # Issue #4128 asan-build: weak stubs for the C bridges the JIT TUs
+    # (compiled into aura_test_objects) reference — no-arena /
+    # no-principal fallbacks, overridden by the strong definitions in
+    # the same library.
+    src/compiler/test_concurrent_stubs.cpp)
 target_include_directories(test_jit_concurrent_compile PRIVATE src)
+# Issue #4128 asan-build: link the shared test-objects library (same as
+# test_jit_metrics above) so the C bridges these TUs reference resolve
+# against their strong definitions; the weak stubs in
+# test_concurrent_stubs.cpp stay as fallback for any not covered there.
+target_link_libraries(test_jit_concurrent_compile PRIVATE aura_test_objects)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
@@ -1263,14 +1272,17 @@ add_executable(test_jit_consistency tests/compiler/test_jit_consistency.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
     src/compiler/tl_arena_tls.cpp
-    src/compiler/runtime_ssot.cpp)
+    src/compiler/runtime_ssot.cpp
+    # Issue #4128 asan-build: weak stubs for C bridges whose strong
+    # definitions live in TUs this target does not compile.
+    src/compiler/test_concurrent_stubs.cpp)
 target_include_directories(test_jit_consistency PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_sources(test_jit_consistency PRIVATE src/core/contract_handler.cpp)
-target_link_libraries(test_jit_consistency PRIVATE stdc++ stdc++exp pthread aura-reflect)
+target_link_libraries(test_jit_consistency PRIVATE stdc++ stdc++exp pthread aura-reflect aura_test_objects)
 if(LLVM_FOUND)
     target_include_directories(test_jit_consistency PRIVATE ${LLVM_INCLUDE_DIRS})
     target_link_libraries(test_jit_consistency PRIVATE ${llvm_libs})
