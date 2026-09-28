@@ -7912,6 +7912,18 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4130 empty-list unparse linter failed — run python3 scripts/check_empty_list_unparse_4130.py")
         return r
+    # Issue #4132: export names unparse — the Export case renders the stored
+    # name children (add_export's PersistentChildVector), never the empty
+    # params side-table, so (export n1 n2) round-trips in every
+    # current-source mode (compact + :pretty); serialization only.
+    enu4132_script = ROOT / "scripts" / "check_export_name_unparse_4132.py"
+    if not enu4132_script.exists():
+        fail(f"missing {enu4132_script}")
+        return 1
+    r = run([sys.executable, str(enu4132_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4132 export-name unparse linter failed — run python3 scripts/check_export_name_unparse_4132.py")
+        return r
     # Issue #4131: Soft oneshot survived the aura-build Soft verify timeout
     # SIGTERM (palindrome-linked-list / ugly-number) until killpg(SIGKILL).
     # POSIX carries an ancestor's SIG_IGN for TERM across execve, so a

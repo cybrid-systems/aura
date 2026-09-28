@@ -23,6 +23,10 @@
 // Issue #4130: quoted empty list unparse — the nil sentinel (LiteralInt 0)
 // must render as (quote ()) in compact AND :pretty unparse, never (quote 0);
 // roundtrip table row pins AST stability, eval semantics untouched.
+//
+// Issue #4132: export names survive unparse — the Export case renders the
+// stored name children (never the empty params side-table), so
+// (export pick-best) round-trips through every current-source mode.
 
 #include "test_harness.hpp"
 
@@ -96,6 +100,13 @@ static bool has_quote_zero(std::string_view s) {
     return s.find("(quote 0)") != std::string::npos;
 }
 
+// Issue #4132: the forbidden serialization — the Export case read its
+// (never-populated) params side-table, so every named export collapsed
+// to an empty `(export)` in every current-source mode.
+static bool has_empty_export(std::string_view s) {
+    return s.find("(export)") != std::string::npos;
+}
+
 static bool roundtrip_ok(CompilerService& cs, std::string_view src) {
     if (!set_code(cs, src))
         return false;
@@ -137,6 +148,8 @@ static constexpr RoundtripCase kRoundtripNoMutate[] = {
     {"(define y 0) (set! y 1)", "set!"},
     {"(quote (a b))", "quote"},
     {"(quote ())", "quote empty list (#4130)"},
+    // Issue #4132: module-level export names survive the roundtrip
+    {"(export pick-best)", "export names (#4132)"},
     {"(cons 1 2)", "cons (pair at runtime; source is call)"},
     // AC8 lambda dotted rest
     {"(lambda (a . rest) rest)", "lambda dotted"},
@@ -410,6 +423,82 @@ static void ac4130_4_source_cite() {
           "4130 AC4: no test_issue_4130 file per #81934");
 }
 
+// ── Issue #4132: export names survive current-source unparse (never empty (export)) ──
+
+static void ac4132_1_unparse_preserves_export_names() {
+    std::println(
+        "\n--- #4132 AC1: export names unparse → (export pick-best), never empty (export) ---");
+    CompilerService cs;
+    CHECK(
+        set_code(cs, "(export pick-best) (define (pick-best xs) (if (null? xs) -999999 (car xs)))"),
+        "4132 AC1: set-code export-bearing module");
+    auto ws = workspace_source(cs);
+    auto pretty = eval_string(cs, "(current-source :workspace :pretty)");
+    auto cur = default_source(cs);
+    CHECK(!ws.empty() && !pretty.empty(), "4132 AC1: both unparse modes produced source");
+    CHECK(!has_empty_export(ws), "4132 AC1: compact unparse never emits empty (export)");
+    CHECK(!has_empty_export(pretty), "4132 AC1: pretty unparse never emits empty (export)");
+    CHECK(!has_empty_export(cur), "4132 AC1: default current-source never emits empty (export)");
+    CHECK(ws.find("(export pick-best)") != std::string::npos,
+          "4132 AC1: compact unparse preserves (export pick-best)");
+    CHECK(pretty.find("(export pick-best)") != std::string::npos,
+          "4132 AC1: pretty unparse preserves (export pick-best)");
+}
+
+static void ac4132_2_export_roundtrip_reparse() {
+    std::println("\n--- #4132 AC2: export-name module re-parse roundtrip ---");
+    CompilerService cs;
+    CHECK(
+        set_code(cs, "(export pick-best) (define (pick-best xs) (if (null? xs) -999999 (car xs)))"),
+        "4132 AC2: set-code export-bearing module");
+    auto ws = workspace_source(cs);
+    CHECK(ws.find("(export pick-best)") != std::string::npos,
+          "4132 AC2: first unparse preserves (export pick-best)");
+    CHECK(!has_empty_export(ws), "4132 AC2: first unparse never empty (export)");
+    CHECK(set_code(cs, ws), "4132 AC2: re-parse unparse output");
+    auto again = workspace_source(cs);
+    CHECK(!has_empty_export(again), "4132 AC2: second unparse never empty (export)");
+    CHECK(again == ws, "4132 AC2: unparse stable across re-parse");
+}
+
+static void ac4132_3_storage_and_eval_unchanged() {
+    std::println("\n--- #4132 AC3: export names stored pre-unparse; eval semantics unchanged ---");
+    CompilerService cs;
+    CHECK(
+        set_code(cs, "(export pick-best) (define (pick-best xs) (if (null? xs) -999999 (car xs)))"),
+        "4132 AC3: set-code export-bearing module");
+    // Serialization-face contract: the workspace AST owns the Export node with
+    // its name children before any unparse — eval-current behaves as before.
+    auto r = cs.eval("(begin (eval-current) (if (= (pick-best (quote (3 4))) 3) 7 9))");
+    CHECK(r.has_value() && is_int(*r) && as_int(*r) == 7,
+          "4132 AC3: (pick-best (quote (3 4))) → 3 — eval semantics preserved");
+    auto ws_after = workspace_source(cs);
+    CHECK(!has_empty_export(ws_after) && ws_after.find("(export pick-best)") != std::string::npos,
+          "4132 AC3: post-eval unparse still preserves (export pick-best)");
+}
+
+static void ac4132_4_source_cite() {
+    std::println("\n--- #4132 AC4: source-cite + wiring + no design doc ---");
+    const auto unp = read_file("src/core/ast_unparse.ixx");
+    const auto t = read_file("tests/compiler/test_current_source_roundtrip.cpp");
+    const auto lint = read_file("scripts/check_export_name_unparse_4132.py");
+    const auto build = read_file("build.py");
+    CHECK(unp.find("4132") != std::string::npos, "4132 AC4: unparse cites #4132");
+    CHECK(unp.find("params side-table") != std::string::npos,
+          "4132 AC4: children-not-params arm documented in unparse");
+    CHECK(t.find("ac4132_1_unparse_preserves_export_names") != std::string::npos,
+          "4132 AC4: AC1 test present");
+    CHECK(t.find("export names (#4132)") != std::string::npos,
+          "4132 AC4: roundtrip table row present");
+    CHECK(!lint.empty() && lint.find("4132") != std::string::npos, "4132 AC4: linter present");
+    CHECK(build.find("check_export_name_unparse_4132") != std::string::npos,
+          "4132 AC4: build.py registration");
+    CHECK(read_file("docs/design/4132-export-name-unparse.md").empty(),
+          "4132 AC4: no docs/design/4132-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4132.cpp").empty(),
+          "4132 AC4: no test_issue_4132 file per #81934");
+}
+
 static void ac_wiring() {
     std::println("\n--- #2921 AC15: source + cmake wiring ---");
     const auto self = read_file("tests/compiler/test_current_source_roundtrip.cpp");
@@ -446,6 +535,11 @@ int run_test_current_source_roundtrip() {
     ac4130_2_call_site_roundtrip();
     ac4130_3_eval_semantics_unchanged();
     ac4130_4_source_cite();
+    std::println("\n=== Issue #4132: export names survive current-source unparse ===");
+    ac4132_1_unparse_preserves_export_names();
+    ac4132_2_export_roundtrip_reparse();
+    ac4132_3_storage_and_eval_unchanged();
+    ac4132_4_source_cite();
     std::println("\n=== #2921/#2966: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

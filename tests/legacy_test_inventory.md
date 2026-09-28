@@ -1282,7 +1282,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_constraint_solver_surface_cross_delta.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2028; solve_delta_occurrence +
 - `tests/compiler/test_constraint_system_solve_delta_cross_delta_task2.cpp` (—) [domain_suite, theme_compiler] — test_constraint_system_solve_delta_cross_delta_task2.cpp
 - `tests/core/test_coverage_holes_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1816 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_current_source_roundtrip.cpp` (—) [domain_suite, theme_compiler] — AC1: dual-workspace bare vs :workspace
+- `tests/compiler/test_current_source_roundtrip.cpp` (—) [large, domain_suite, theme_compiler] — AC1: dual-workspace bare vs :workspace
 - `tests/compiler/test_dce_elided_deopt_meta.cpp` (—) [domain_suite, theme_compiler] — AC1: Elide CastOp with narrow_evidence under production → forced deopt
 - `tests/compiler/test_dead_coercion_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_dead_coercion_batch.cpp
 - `tests/compiler/test_dead_coercion_decision_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_dead_coercion_decision_invalidate.cpp -- source-cite AC for Issue #3560
