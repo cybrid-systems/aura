@@ -1414,6 +1414,68 @@ static void ac21_replay_mid_last_stamped_4120() {
 
 } // namespace
 
+// ── AC22 (#4135): typed trail wrap → SE/WAL still replays mid+tenant+fiber+
+// epoch, and the grant row minted under a NodeId-gate keeps bound_node_id
+// (the mid+node grant join survives the typed-trail wrap; #4135).
+static void ac22_grant_node_join_after_wrap_4135() {
+    std::println("\n--- #4135 AC22: wrap keeps SE/WAL replay + grant node join ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    // Soft audit face for the gate+mint phase — the production audit face
+    // fail-closes require_effect without a held capability (#3640 face), so
+    // the NodeId gate must run before the production face is armed.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(42);
+    // NodeId-gate allow notes node 41352 (#4135) — the same gate-allow
+    // shape the #3415 AC4 Soft arm drives.
+    CHECK(ev.require_effect_for_node_id(aura::compiler::security::kEffectMutate,
+                                        "mutate:replace-type", 41352),
+          "AC22: NodeId gate allows (node noted)");
+    constexpr std::uint64_t mid = 41352;
+    ev.grant_effect_session(42, "mut-4135-wrap", aura::compiler::security::kEffectMutate, mid,
+                            /*single_use=*/false);
+    // Production audit face for the WAL/wrap/replay phase (ac6 shape).
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto dir = fresh_wal_dir_3603("ac22");
+    CHECK(ev.enable_security_event_wal(dir.string()), "AC22: SE WAL enabled");
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    const auto ts = now_ms_3603();
+    CHECK(persist_se_3603(mid, "test:4135", "4135-target", ts), "AC22: TARGET SE persisted");
+    // Wrap the typed trail (256) + SE ring (1024) with ring-only appends
+    // (ac6 shape — the WAL window stays tight around TARGET).
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 7000 + i, "test:4135-wrap", "wrap");
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 41352)");
+    bool saw_row = false, typed_miss1 = false, miss0 = false;
+    for (const auto& ln : lines) {
+        if (ln.find("mutation_id=41352") == std::string::npos)
+            continue;
+        saw_row = true;
+        if (ln.find("typed-trail-miss=1") != std::string::npos)
+            typed_miss1 = true;
+        if (ln.find("wal-lookup-window-miss=0") != std::string::npos)
+            miss0 = true;
+    }
+    CHECK(saw_row, "AC22: SE/WAL still replay mid+tenant+fiber+epoch after wrap");
+    CHECK(typed_miss1, "AC22: query:security-audit reports typed-trail-miss=1 after wrap");
+    CHECK(miss0, "AC22: in-window WAL hit keeps the mid+tenant+fiber+epoch join");
+    // The grant row minted under the gate keeps the node — mid+node join
+    // survives the wrap (EffectProvenance.node_id → bound_node_id, #4135).
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(aura::core::capability::g_capability_registry().find_grant(42, "mut-4135-wrap", g),
+          "AC22: grant row found after wrap");
+    CHECK(g.bound_node_id == 41352, "AC22: grant row node survives the wrap (mid+node join)");
+    CHECK(g.bound_mutation_id == mid, "AC22: grant row joins the replayed SE by mid");
+    ev.disable_security_event_wal();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_all();
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -1439,6 +1501,7 @@ int run_test_audit_replay_join() {
     ac3970_source_cite();
     ac20_se_wal_overflow_mid_join_4118();
     ac21_replay_mid_last_stamped_4120();
+    ac22_grant_node_join_after_wrap_4135();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

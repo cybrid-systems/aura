@@ -3996,6 +3996,182 @@ static void ac4038_6_source_cite() {
           "AC6: no docs/design/");
 }
 
+// ── Issue #4135: NodeId-gated grant faces stamp EffectProvenance.node_id ──
+
+// AC1: under a real MutationBoundary + NodeId-gate allow, the session grant
+// row joins mid+node (bound_node_id == the gated mutate target).
+static void ac4135_1_session_grant_node_under_gate_boundary() {
+    std::println("\n--- #4135 AC1: NodeId-gate allow joins node on the session grant row ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 41351;
+    ev.set_capability_tenant_id(tenant);
+    // NodeId gate allow (#3415 AC4 Soft pattern) notes the target node on
+    // the boundary TLS in this TU — the same TU grant_effect_session mints in.
+    constexpr std::uint32_t node = 77;
+    CHECK(ev.require_effect_for_node_id(kEffectMutate, "mutate:replace-type", node),
+          "4135 AC1: NodeId gate allows under Soft");
+    {
+        bool ok = false;
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(ok, "4135 AC1: MutationBoundaryGuard entered");
+        ev.grant_effect_session(tenant, "mut-4135-node", kEffectMutate, mid,
+                                /*single_use=*/false);
+    }
+    bool found = false;
+    std::uint32_t bound_node = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& gr : it->second) {
+                if (gr.name == "mut-4135-node") {
+                    found = true;
+                    bound_node = gr.bound_node_id;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "4135 AC1: session grant row found (mid-exit revoke flag is fine)");
+    CHECK(bound_node == node,
+          "4135 AC1: grant row bound_node_id == NodeId-gate target (mid+node join)");
+    reset_all();
+}
+
+// AC2: a grant minted with no NodeId-gate context keeps node_id=0 (honest
+// unset — no context, no stamp; the TLS shares the boundary lifecycle).
+static void ac4135_2_grant_without_node_context_stamps_zero() {
+    std::println("\n--- #4135 AC2: no NodeId context joins node_id=0 ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 41352;
+    ev.set_capability_tenant_id(tenant);
+    // Explicit lifecycle reset (mid/tenant/node share clear_boundary_audit_mid)
+    // so a stray note from an earlier AC on this thread cannot leak in.
+    ev.clear_boundary_audit_mid_for_test();
+    ev.grant_effect_session(tenant, "mut-4135-nonode", kEffectMutate,
+                            /*provenance_mutation_id=*/current_mutation_epoch(),
+                            /*single_use=*/false);
+    bool found = false;
+    std::uint32_t bound_node = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& gr : it->second) {
+                if (gr.name == "mut-4135-nonode") {
+                    found = true;
+                    bound_node = gr.bound_node_id;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "4135 AC2: session grant row found");
+    CHECK(bound_node == 0, "4135 AC2: grant without NodeId context stamps node_id=0");
+    reset_all();
+}
+
+// AC3: the MSE policy seed inside security:grant-effect! joins the
+// NodeId-gate node (the prim TU reads the same noted-node context).
+static void ac4135_3_mse_seed_stamps_gate_node() {
+    std::println("\n--- #4135 AC3: MSE policy seed joins NodeId-gate node ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 41353;
+    ev.set_capability_tenant_id(tenant);
+    constexpr std::uint32_t node = 78;
+    CHECK(ev.require_effect_for_node_id(kEffectMutate, "mutate:replace-type", node),
+          "4135 AC3: NodeId gate allows (node noted)");
+    (void)cs.eval("(security:grant-effect! \"macro-self-evo\" 1)");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
+          "4135 AC3: MSE policy row found");
+    CHECK(g.bound_node_id == node, "4135 AC3: MSE row bound_node_id == gated node");
+    reset_all();
+}
+
+// AC4: Soft/Off unchanged — the Soft mid-invent arm (prov.mutation_id==0 ->
+// epoch observe stamp) must NOT spill into the node axis (no compulsory
+// node invent; node stays honest-0 without a gate).
+static void ac4135_4_soft_off_no_node_invent() {
+    std::println("\n--- #4135 AC4: Soft mid-invent arm does not invent node ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 41354;
+    ev.set_capability_tenant_id(tenant);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.grant_effect_session(tenant, "mut-4135-softinvent", kEffectMutate,
+                            /*provenance_mutation_id=*/0, /*single_use=*/false);
+    bool found = false;
+    std::uint32_t bound_node = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& gr : it->second) {
+                if (gr.name == "mut-4135-softinvent") {
+                    found = true;
+                    bound_node = gr.bound_node_id;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "4135 AC4: Soft session grant row found");
+    CHECK(bound_node == 0,
+          "4135 AC4: Soft/Off unchanged — mid-invent arm leaves node_id=0 (no invent)");
+    reset_all();
+}
+
+// AC5: source-cite — gate-allow note present, all six mint faces read the
+// boundary node TLS, clear lifecycle covers it; no new test file per #81934.
+static void ac4135_5_source_cite() {
+    std::println("\n--- #4135 AC5: source-cite ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("typed_audit::note_boundary_target_node(static_cast<std::uint32_t>(node_id))") !=
+              std::string::npos,
+          "4135 AC5: NodeId-gate allow notes the target node");
+    CHECK(sec.find("make_grant_provenance(mid, force_bind, node, fiber)") != std::string::npos,
+          "4135 AC5: grant mint faces stamp the noted node");
+    CHECK(sec.find("const auto node = typed_audit::current_boundary_target_node();") !=
+              std::string::npos,
+          "4135 AC5: mint faces read the boundary node TLS");
+    CHECK(sec.find("/*node_id=*/0, fiber") == std::string::npos,
+          "4135 AC5: literal node_id=0 mint shape removed");
+    const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(prim.find("const auto node = typed_audit::current_boundary_target_node();") !=
+              std::string::npos,
+          "4135 AC5: MSE seed face reads the boundary node TLS");
+    const auto audit = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(audit.find("g_tls_boundary_target_node = 0;") != std::string::npos,
+          "4135 AC5: boundary clear covers the node TLS");
+    CHECK(read_file("tests/core/test_issue_4135.cpp").empty(),
+          "4135 AC5: no tests/**/test_issue_4135.cpp (per #81934)");
+}
+
 int run_test_inert_session_mid_3723() {
     std::println("=== Issue #3723: inert MutationBoundaryGuard does not publish session mid ===");
     // Issue #4038: host-cohort revoke + provenance stale-row skip + epoch-0
@@ -4039,6 +4215,12 @@ int run_test_inert_session_mid_3723() {
     ac3992_3_source_cite();
     ac3964_1_dual_eval_distinct_session_mids();
     ac3964_2_source_cite();
+    // Issue #4135: NodeId-gated grant faces stamp EffectProvenance.node_id.
+    ac4135_1_session_grant_node_under_gate_boundary();
+    ac4135_2_grant_without_node_context_stamps_zero();
+    ac4135_3_mse_seed_stamps_gate_node();
+    ac4135_4_soft_off_no_node_invent();
+    ac4135_5_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

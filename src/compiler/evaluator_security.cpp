@@ -268,7 +268,8 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
         // boundary Soft keeps the epoch stamp and a cascade-empty production
         // resolve returns 0 → the #3090 grant-mid-refused policy fires.
         const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
-        auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
+        const auto node = typed_audit::current_boundary_target_node();
+        auto prov = make_grant_provenance(mid, force_bind, node, fiber);
         // Issue #3436: single_use / session_bound now carry the caller's
         // lifetime (forced single_use on the plain string path; wrapper
         // lifetime on the grant_effect_* mirrors) instead of sticky false.
@@ -957,6 +958,12 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
     }
     if (existing == 0)
         ref = make_stamped_ref(node_id); // #3724 occupancy after allow
+    // Issue #4135: the NodeId-gate allow is the concrete-node context. Note
+    // the gated node on the boundary TLS (same lifetime as the boundary mid)
+    // so grant mints inside this mutate join mid+node on the grant row
+    // (EffectProvenance.node_id → CapabilityGrant.bound_node_id). Deny and
+    // node==0 paths keep the TLS unset (honest 0, no compulsory node invent).
+    typed_audit::note_boundary_target_node(static_cast<std::uint32_t>(node_id));
     return true;
 }
 
@@ -1146,7 +1153,8 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // boundary Soft keeps the epoch stamp and a cascade-empty production
     // resolve returns 0 → the #3090 grant-mid-refused policy fires.
     const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
-    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
+    const auto node = typed_audit::current_boundary_target_node();
+    auto prov = make_grant_provenance(mid, force_bind, node, fiber);
     // Issue #2882: production default single-use override. Under production
     // defaults (sandbox_mode_ != 0 || effect_sandbox_mode() != 0) any grant
     // touching a high-risk effect (Mutate | MacroSelfEvo | TenantAdmin |
@@ -1322,7 +1330,8 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     // boundary Soft keeps the epoch stamp and a cascade-empty production
     // resolve returns 0 → the #3090 grant-mid-refused policy fires.
     const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
-    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
+    const auto node = typed_audit::current_boundary_target_node();
+    auto prov = make_grant_provenance(mid, force_bind, node, fiber);
     // Bump the durable high-risk counter when this durable override touches
     // a high-risk effect bit (Mutate / MacroSelfEvo / TenantAdmin / Syscall).
     // Non-high-risk durable grants are tracked only via capability_grant_total.
@@ -1470,7 +1479,8 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
     // boundary Soft keeps the epoch stamp and a cascade-empty production
     // resolve returns 0 → the #3090 grant-mid-refused policy fires.
     const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
-    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
+    const auto node = typed_audit::current_boundary_target_node();
+    auto prov = make_grant_provenance(mid, force_bind, node, fiber);
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
@@ -1590,7 +1600,8 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     // boundary Soft keeps the epoch stamp and a cascade-empty production
     // resolve returns 0 → the #3090 grant-mid-refused policy fires.
     const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
-    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
+    const auto node = typed_audit::current_boundary_target_node();
+    auto prov = make_grant_provenance(mid, force_bind, node, fiber);
     // Issue #3801: Soft/Off may leave zero → force 1 observe stamp (#2493).
     // Production force_bind: leave 0 (grant refuse / join-0) — no phantom 1.
     if (prov.mutation_id == 0 && !force_bind)

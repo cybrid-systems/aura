@@ -283,7 +283,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // make_grant_provenance(mid=0) rows miss that key and survived
             // until retain K=64 (the dual-track leak).
             const auto mid = typed_audit::join_audit_and_se_mid(0);
-            auto prov = make_grant_provenance(mid, force_bind, /*node=*/0, fiber);
+            const auto node = typed_audit::current_boundary_target_node();
+            auto prov = make_grant_provenance(mid, force_bind, node, fiber);
             // Issue #3145 AC4: forward this Evaluator's principal
             // (capability_tenant_id_, restored by TenantScope) as the
             // explicit caller so the #3029 admin fence resolves the real
