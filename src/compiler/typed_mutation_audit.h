@@ -212,6 +212,12 @@ struct EvolutionSuggestedNextInput {
     // 2 Rollback, 3 Error). last_se_denied is the same-mid SE denied bit.
     std::uint8_t typed_outcome = 0;
     bool last_se_denied = false;
+    // Issue #4142: the mid's forensic payload thinned to WAL append-miss /
+    // overflow-refuse evidence — the #3838 compensating refuse row is a
+    // denied=false PostureObserve and a post-wrap all-miss mid has no row
+    // at all, so neither reaches the last_se_denied arm. Folded from
+    // already-loaded faces by the caller; never set under Soft / mid=0.
+    bool wal_miss_refuse_evidence = false;
 };
 
 // Pure: same input → same output. No atomics / WAL / mutate.
@@ -224,6 +230,14 @@ decide_evolution_suggested_next(const EvolutionSuggestedNextInput& in) noexcept 
     // Issue #4064: a green schedule / commit / densify / playbook must not
     // call a rollback or SE deny "ok". Observe only — no playbook, no reemit.
     if (in.typed_outcome == 2 || in.typed_outcome == 3 || in.last_se_denied)
+        return EvolutionSuggestedNext::InspectDeny;
+    // Issue #4142: miss/refuse-only evidence must not fold to "ok" either —
+    // a refused overflow mid's newest SE is a denied=false PostureObserve
+    // ("overflow-refuse") and a wrapped-out mid may have no row at all, so
+    // the #4064 deny arm never fires for exactly the long-run WAL stress
+    // this residue describes. Observe only — still no playbook / reemit;
+    // the Soft + mid=0 short-circuits above are untouched.
+    if (in.wal_miss_refuse_evidence)
         return EvolutionSuggestedNext::InspectDeny;
     if (in.schedule_would_deny || in.posture_degraded)
         return EvolutionSuggestedNext::ScheduleDeny;

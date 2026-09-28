@@ -9090,6 +9090,28 @@ def cmd_lint():
             "Issue #4120 replay-mid last-stamped linter failed — run python3 scripts/check_replay_mid_last_stamped_4120.py"
         )
         return r
+    # Issue #4142 (P1 obs): long-run WAL append-fail + overflow-refuse
+    # thins the mid forensic payload — the #3838 compensating SE is a
+    # denied=false PostureObserve and a post-wrap mid may have no row at
+    # all, so query:evolution-audit-decision's suggested-next folded the
+    # residue to "ok" exactly when durability was being tested. Gate
+    # pins: the #3246 fold gains one additive miss/refuse bit
+    # (wal_miss_refuse_evidence → InspectDeny) with Soft + mid=0
+    # short-circuits first; the handler computes it production/Full-only
+    # from the refuse/append-miss row reasons, the #4118/#3877 forensic
+    # join, and the post-wrap all-miss + live #3838 refuse-counter arm;
+    # no new query key / metrics bus / hash capacity (suggested-next
+    # stays the single observable); fail-closed refuse + compensating SE
+    # kept. Runtime doors live in tests/core/test_audit_replay_join.cpp
+    # (ac23_wal_miss_refuse_next_4142).
+    missrefuse4142_script = ROOT / "scripts" / "check_wal_miss_refuse_next_4142.py"
+    if not missrefuse4142_script.exists():
+        fail(f"missing {missrefuse4142_script}")
+        return 1
+    r = run([sys.executable, str(missrefuse4142_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4142 WAL miss/refuse fold linter failed — run python3 scripts/check_wal_miss_refuse_next_4142.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
