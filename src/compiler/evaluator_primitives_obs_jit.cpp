@@ -12324,7 +12324,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             totals.moving_blocked_precondition_total =
                 aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
             const auto s = mdh::snapshot(totals);
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(84));
+            // Issue #4140: planned_keys >= live insert_kv + 8 (#3339 Agent
+            // decision headroom contract). Live was 79 (+2 #4140 stamps =
+            // 81); planned 84 sat under live+8=87, so the next additive
+            // batch could overflow without CI catching it. Raise to 96 and
+            // raise planned with every appended batch.
+            constexpr std::size_t kArenaMovingDensifyHealthPlannedKeys = 96;
+            auto* ht = FlatHashTable::create(
+                query_hash_capacity_for(kArenaMovingDensifyHealthPlannedKeys));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -12532,6 +12539,11 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pin-or-guard-soft-gate-wired", 1);
             insert_kv("schema-3200", mdh::kMovingPinGuardSoftGateIssue);
             insert_kv("issue-3200", mdh::kMovingPinGuardSoftGateIssue);
+            // Issue #4140: planned headroom pin joins the #3339 CI
+            // (check_agent_decision_facade_headroom_3339.py). Additive
+            // stamps at handler end only — no key renames.
+            insert_kv("schema-4140", 4140);
+            insert_kv("issue-4140", 4140);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }

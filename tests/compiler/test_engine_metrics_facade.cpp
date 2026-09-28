@@ -188,10 +188,16 @@ int main() {
         apply_production_audit_defaults();
 
         const char* kFacades[] = {
-            "query:evolution-audit-decision",  "query:security-posture",
-            "query:type-linear-commit-health", "query:type-linear-evolution-snapshot",
-            "query:reload-recovery-playbook",  "query:reload-recovery-state",
+            "query:evolution-audit-decision",
+            "query:security-posture",
+            "query:type-linear-commit-health",
+            "query:type-linear-evolution-snapshot",
+            "query:reload-recovery-playbook",
+            "query:reload-recovery-state",
             "query:orch-module-stats",
+            // Issue #4140: densify-health joins the production_defaults
+            // overflow hard-fail set (same #3339 headroom contract).
+            "query:arena-moving-densify-health",
         };
         for (const char* q : kFacades) {
             const auto expr = std::format("(engine:metrics \"{}\")", q);
@@ -267,6 +273,62 @@ int main() {
         CHECK(read_file("tests/compiler/test_issue_3339.cpp").empty(), "ac3339_5_no_invent");
         CHECK(read_file("docs/design/3339-agent-decision-facade-headroom.md").empty(),
               "3339 AC5: no docs/design/3339-*");
+    }
+
+    // ── Issue #4140: arena-moving-densify-health joins #3339 headroom ──
+    // planned 84 sat under live+8 (79+8=87); raised to 96 and pinned in
+    // the #3339 CI. Runs before :prefix catalog dump.
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        std::println("\n--- #4140: densify-health planned_keys headroom pin ---");
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        reset_for_test();
+        apply_production_audit_defaults();
+
+        const auto dexpr =
+            std::format("(engine:metrics \"{}\")", "query:arena-moving-densify-health");
+        CHECK(is_hash_expr(cs, dexpr), "4140 AC1: densify-health is hash under production");
+        CHECK(hash_int(cs, dexpr, "hash-overflow") != 1,
+              "ac4140_2_no_overflow: densify hash-overflow absent");
+        CHECK(hash_int(cs, dexpr, "overflow") != 1, "ac4140_2_no_overflow: densify overflow!=1");
+        CHECK(hash_int(cs, dexpr, "would-allow-mutate") != -1,
+              "4140 AC1: would-allow-mutate decision key present");
+        CHECK(hash_int(cs, dexpr, "schema-4140") == 4140, "4140 AC1: schema-4140 additive stamp");
+        CHECK(hash_int(cs, dexpr, "issue-4140") == 4140, "4140 AC1: issue-4140 additive stamp");
+        CHECK(hash_int(cs, dexpr, "schema-2619") == 2619,
+              "4140 AC1: schema-2619 preserved (no rename)");
+        CHECK(hash_int(cs, dexpr, "moving-window-green") != -1,
+              "4140 AC1: moving-window-green preserved (no rename)");
+
+        const auto obsjit = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        CHECK(obsjit.find("kArenaMovingDensifyHealthPlannedKeys = 96") != std::string::npos,
+              "ac4140_1_headroom: kArenaMovingDensifyHealthPlannedKeys = 96");
+        CHECK(obsjit.find("query_hash_capacity_for(kArenaMovingDensifyHealthPlannedKeys)") !=
+                  std::string::npos,
+              "ac4140_1_headroom: capacity helper consumes the planned constant");
+        const auto headroom =
+            read_file("scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py");
+        CHECK(headroom.find("query:arena-moving-densify-health") != std::string::npos,
+              "ac4140_1_headroom: #3339 CI pins densify");
+        CHECK(headroom.find("kArenaMovingDensifyHealthPlannedKeys") != std::string::npos,
+              "ac4140_1_headroom: #3339 CI pins the densify planned constant");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura_query_hash_reset_overflow_for_test();
+        const auto soft_ho =
+            hash_int(cs, "(engine:metrics \"query:arena-moving-densify-health\")", "hash-overflow");
+        CHECK(soft_ho != 1, "ac4140_4_soft: Soft path still no overflow");
+        CHECK(obsjit.find("query:arena-moving-densify-health-v2") == std::string::npos &&
+                  obsjit.find("query:arena-moving-densify-health2") == std::string::npos,
+              "ac4140_4_soft: no densify query rename (Soft/Off unchanged)");
+        CHECK(read_file("tests/compiler/test_issue_4140.cpp").empty(),
+              "ac4140_5_no_invent: no test_issue_4140.cpp");
+        CHECK(read_file("docs/design/4140-densify-headroom.md").empty(),
+              "ac4140_5_no_invent: no docs/design/4140-*");
     }
 
     // Issue #3499: production full-primitives posture carries both 2534
