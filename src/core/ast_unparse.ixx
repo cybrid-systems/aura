@@ -378,10 +378,25 @@ namespace detail {
                     return;
                 }
                 case NodeTag::Export: {
+                    // Issue #4132: export names live in `children` — the parser's
+                    // add_export keeps the parsed symbol NodeIds in a
+                    // PersistentChildVector and never populates `params` (that
+                    // side-table belongs to define-module-style builders). Reading
+                    // the params side-table here always emitted an empty `(export)`
+                    // and dropped every name in every current-source mode (compact
+                    // and :pretty alike). Render each child's symbol instead: the
+                    // children are Variable nodes, so resolve their sym_id (generic
+                    // emit as the fallback for any non-symbol child). Serialization
+                    // only — re-parsing (export n1 n2) rebuilds the identical
+                    // children encoding via add_export.
                     append("(export");
-                    for (auto pid : v.params) {
+                    for (auto cid : v.children) {
+                        const auto child = flat.get(cid);
                         append(' ');
-                        append(pool.resolve(pid));
+                        if (child.tag == NodeTag::Variable)
+                            append(pool.resolve(child.sym_id));
+                        else
+                            emit(cid, depth + 1, child_indent);
                     }
                     append(')');
                     return;

@@ -180,3 +180,4 @@ check_jit_reemit_install_4126.py
 check_lockless_macro_allow_latch_4127.py
 check_empty_list_unparse_4130.py
 check_oneshot_sigterm_4131.py
+check_export_name_unparse_4132.py
