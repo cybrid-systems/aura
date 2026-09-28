@@ -74,7 +74,14 @@ def main() -> int:
     ask_b = _block(agent, 'add("orch:agent-ask"', 'add("orch:agent-reply"')
     send_b = _block(agent, 'add("orch:agent-send"', 'add("orch:agent-recv"')
     recv_b = _block(agent, 'add("orch:agent-recv"', 'add("orch:agent-touch"')
-    must("resolve_aura_agent(ev, name)" in join_b, "AC1: agent-join uses resolve")
+    # Issue #4138: agent-join resolves via the plane-detecting overload
+    # (same #3442 walk + scope_hit out-param) so a Scope-owned Done husk
+    # compacts once after Done-path cleanup; the other prims keep the
+    # 2-arg form.
+    must(
+        "resolve_aura_agent(ev, name)" in join_b or "resolve_aura_agent(ev, name, &join_scope)" in join_b,
+        "AC1: agent-join uses resolve",
+    )
     must("resolve_aura_agent(ev, name)" in ask_b, "AC1: agent-ask uses resolve")
     must("resolve_aura_agent(ev, name)" in send_b, "AC1: agent-send uses resolve")
     must("resolve_aura_agent(ev, name)" in recv_b, "AC1: agent-recv uses resolve")

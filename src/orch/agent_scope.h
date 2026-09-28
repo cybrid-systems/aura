@@ -124,6 +124,15 @@ inline constexpr int kScopeSpawnPendingNameIssue = 3497;
 // find/directory already skip them (#3598). Soft/Off stay append-only
 // (zero compact cost; #3497 AC2/AC3 green).
 inline constexpr int kScopeDoneHuskCompactIssue = 3776;
+// Issue #4138: single-join compact — orch:agent-join (or a C++ host
+// joining one Scope-owned handle) retires Done-path husks once after
+// Done-path cleanup so handles_ / specs_ / restart vectors match
+// directory/find emptiness (three-plane hygiene; the name-table plane
+// already erases clean slots on find, #3598). Soft / Off stay
+// append-only (compact gates on production_defaults_active, #3776 AC5);
+// Reclaimed-pending (#2661/#3467) and live slots never match the husk
+// predicate and are never compacted away.
+inline constexpr int kScopeJoinDoneHuskCompactIssue = 4138;
 // Issue #3803: AgentScope N-agents ≠ concurrent mutate — join/workflow
 // hash surfaces isolation-level / region-key-missing from specs_ region_keys
 // (decide_isolation SSOT). Spawning N scope agents without ≥2 distinct
@@ -1247,6 +1256,22 @@ public:
     // after the result struct so the declared return type resolves.
     [[nodiscard]] SweepReclaimedPendingResult last_sweep_reclaimed_pending() const noexcept {
         return last_sweep_reclaimed_pending_;
+    }
+
+    // Issue #4138: single-join compact — the Aura orch:agent-join prim
+    // (and C++ hosts joining one Scope-owned handle) calls this once
+    // after join_agent's Done-path cleanup so a reclaimable-clean Done
+    // husk does not linger in handles_ / specs_ / restart_counts_ /
+    // consecutive_stall_counts_ until the next spawn / join_all /
+    // watch_all compact site (#3776). Same SSOT compact + ScopeEnterGuard
+    // as the join_all / watch_all call sites — no second model, no new
+    // registry. Production only (compact_done_husks_unlocked_ gates on
+    // production_defaults_active); Soft / Off stay append-only. Pending
+    // (must_wait / #2661/#3467) and live slots never match
+    // is_done_path_husk_ and are never compacted away.
+    void compact_after_single_join() noexcept {
+        ScopeEnterGuard g(this, "compact_after_single_join");
+        compact_done_husks_unlocked_();
     }
 
     // Supervision root: cancel + best-effort drain + release before

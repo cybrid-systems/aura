@@ -8367,6 +8367,33 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4136 caller-passed handle sweep linter failed - run python3 scripts/check_caller_sweep_4136.py")
         return r
+    # Issue #4138 (orch): three-plane hygiene — the Aura orch:agent-join
+    # single-join path left a reclaimable-clean Done husk in Scope
+    # handles_ / specs_ / restart vectors after Done-path cleanup (the
+    # #3776 compact sites — spawn / join_all / watch_all — did not cover
+    # single joins, while find/directory already skip husks and the
+    # name-table plane erases on find, #3598). Gate pins: the join prim
+    # resolves via the plane-detecting resolve_aura_agent overload (same
+    # #3442 walk, 2-arg signature retained) and calls
+    # AgentScope::compact_after_single_join() once after Done-path
+    # cleanup, under ScopeEnterGuard, reusing the
+    # compact_done_husks_unlocked_ SSOT (no second model); the compact
+    # runs after the last hp-> dereference (resize invalidates hp);
+    # #2661/#3467 pending slots and live slots never compact away; Soft /
+    # Off stays append-only; runtime ACs live in
+    # tests/orch/test_join_drain_reclaim.cpp (no test_issue_4138.cpp per
+    # #81934, no docs/design/4138-* per #1655, no process-global
+    # AgentRegistry, no new query key).
+    ajsc4138_script = ROOT / "scripts" / "check_agent_join_scope_compact_4138.py"
+    if not ajsc4138_script.exists():
+        fail(f"missing {ajsc4138_script}")
+        return 1
+    r = run([sys.executable, str(ajsc4138_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4138 agent-join Scope compact linter failed - run python3 scripts/check_agent_join_scope_compact_4138.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the
