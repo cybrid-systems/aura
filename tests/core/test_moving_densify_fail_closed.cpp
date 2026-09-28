@@ -54,6 +54,7 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.core.arena;
+import aura.core.ast;
 import aura.core.lifetime_pin;
 import aura.core.envframe_lifetime;
 
@@ -4916,6 +4917,151 @@ static void ac4143_4_wiring_no_invent() {
           "4143 AC4: unified-success predicate is the green SSOT");
 }
 
+// ── Issue #4144: EnvFrame binding-cell pool aliases get lasting slot remap ──
+// The densify-entry known-roots walk covered closures_ map flat/pool slots
+// (#3647) but never walked env_frames_: a live frame's own pool_ member is
+// a raw densify-tracked StringPool* whose only covers were the observe-only
+// #3210 temp canary (inventory can miss the frame) and the steal-time #3479
+// elevation (refreshed > 0 + production) — a moved pool left a densify-old
+// alias in the frame until the next steal. #4144 registers &fr.pool_ as a
+// lasting window slot (deque element stability + window-end slot consume),
+// so a green Moving window remaps the frame with it.
+static void ac4144_1_pool_slot_registered_and_remapped() {
+    std::println(
+        "\n--- #4144 AC1: frame pool_ slot registers and remaps across a green Moving window ---");
+    aura::core::densify_consistency::reset_moving_envframe_pool_slots_registered_for_test();
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    // Two alias classes in one standalone window arena (the proven
+    // ac4068/ac4124 shape): fr0/fr1 alias real StringPools (kept-large,
+    // address-stable per #3600 — the walk registers them, no spurious
+    // rewrite), fr2/fr3 alias small-pool referents type-punned into pool_
+    // (the movable class — a green window must rewrite the frame's own
+    // pool_ member to the remap target).
+    ASTArena pool_arena(64 * 1024);
+    auto* pool0 = pool_arena.create<aura::ast::StringPool>(pool_arena.allocator());
+    auto* pool1 = pool_arena.create<aura::ast::StringPool>(pool_arena.allocator());
+    auto* pod2 = pool_arena.create<Pod16>(0x4144, 1, 2, 3);
+    auto* pod3 = pool_arena.create<Pod16>(0x4145, 4, 5, 6);
+    CHECK(pool0 != nullptr && pool1 != nullptr && pod2 != nullptr && pod3 != nullptr,
+          "4144 AC1: arena-created referents");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto fid0 = ev.alloc_env_frame();
+    const auto fid1 = ev.alloc_env_frame();
+    const auto fid2 = ev.alloc_env_frame();
+    const auto fid3 = ev.alloc_env_frame();
+    CHECK(fid0 != aura::compiler::NULL_ENV_ID && fid1 != aura::compiler::NULL_ENV_ID &&
+              fid2 != aura::compiler::NULL_ENV_ID && fid3 != aura::compiler::NULL_ENV_ID,
+          "4144 AC1: frames allocated");
+    auto& fr0 = ev.env_frame_mut(fid0);
+    auto& fr1 = ev.env_frame_mut(fid1);
+    auto& fr2 = ev.env_frame_mut(fid2);
+    auto& fr3 = ev.env_frame_mut(fid3);
+    fr0.pool_ = pool0;
+    fr1.pool_ = pool1;
+    fr2.pool_ = reinterpret_cast<const aura::ast::StringPool*>(pod2);
+    fr3.pool_ = reinterpret_cast<const aura::ast::StringPool*>(pod3);
+    // Phase 1 — densify-entry walk: the production path registers the
+    // &fr.pool_ lasting slots (counted by the #4144 counter row).
+    (void)ev.register_known_moving_densify_root_slots();
+    CHECK(aura::core::densify_consistency::moving_envframe_pool_slots_registered_total_v_read() >=
+              4,
+          "4144 AC1: entry walk counted the EnvFrame pool slots");
+    // Phase 2 — green standalone window: the frames' own pool_ members are
+    // the registered slots (exact production shape).
+    pool_arena.register_external_root_slot_for_densify(
+        const_cast<void**>(reinterpret_cast<const void**>(&fr0.pool_)));
+    pool_arena.register_external_root_slot_for_densify(
+        const_cast<void**>(reinterpret_cast<const void**>(&fr1.pool_)));
+    pool_arena.register_external_root_slot_for_densify(
+        const_cast<void**>(reinterpret_cast<const void**>(&fr2.pool_)));
+    pool_arena.register_external_root_slot_for_densify(
+        const_cast<void**>(reinterpret_cast<const void**>(&fr3.pool_)));
+    const auto r = pool_arena.live_compact(LiveCompactMode::Moving);
+    std::println("4144 probe: moved={} uncovered={} stale={} soft_gated={} blocked_pre={}",
+                 r.objects_moved, r.uncovered_moved_count, r.post_moving_stale_count, r.soft_gated,
+                 r.moving_blocked_precondition);
+    CHECK(r.objects_moved > 0, "4144 AC1: Moving window relocated the movable referents");
+    CHECK(r.uncovered_moved_count == 0,
+          "4144 AC1: moved referents are slot-covered (no uncovered relocation)");
+    CHECK(r.post_moving_stale_count == 0, "4144 AC1: zero post-moving stale known ptrs");
+    // Movable aliases: the lasting slot rewrite fired on the frame member
+    // and names the same object (not a freelist sibling).
+    CHECK(static_cast<const void*>(fr2.pool_) == pool_arena.resolve_object_remap(pod2) &&
+              reinterpret_cast<Pod16*>(const_cast<aura::ast::StringPool*>(fr2.pool_))->a == 0x4144,
+          "4144 AC1: frame 2 pool_ rewritten to the remap target (lasting slot)");
+    CHECK(static_cast<const void*>(fr3.pool_) == pool_arena.resolve_object_remap(pod3) &&
+              reinterpret_cast<Pod16*>(const_cast<aura::ast::StringPool*>(fr3.pool_))->a == 0x4145,
+          "4144 AC1: frame 3 pool_ rewritten to the remap target (lasting slot)");
+    // Kept-large aliases: address-stable (#3600) — registered slot, no
+    // spurious rewrite, alias stays valid.
+    CHECK(fr0.pool_ == pool0, "4144 AC1: kept-large pool alias untouched (address-stable)");
+    CHECK(fr1.pool_ == pool1, "4144 AC1: kept-large pool alias untouched (address-stable)");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4144_2_no_dual_note_slot_xor() {
+    std::println("\n--- #4144 AC2: slot XOR canary — pool slots are the cover, no dual-note ---");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fn = mut.find("std::size_t Evaluator::register_known_moving_densify_root_slots()");
+    CHECK(fn != std::string::npos, "4144 AC2: densify-entry walk present");
+    const auto win = mut.substr(fn, 9500);
+    CHECK(win.find("Issue #4144") != std::string::npos, "4144 AC2: walk cites #4144");
+    std::string code_only;
+    for (std::size_t pos = 0; pos < win.size();) {
+        const auto nl = win.find('\n', pos);
+        const auto stop = (nl == std::string::npos) ? win.size() : nl;
+        std::string line = win.substr(pos, stop - pos);
+        const auto cmt = line.find("//");
+        if (cmt != std::string::npos)
+            line.resize(cmt);
+        code_only += line;
+        code_only += '\n';
+        pos = (nl == std::string::npos) ? win.size() : nl + 1;
+    }
+    CHECK(code_only.find("note_post_moving_live_ptr_canary_all(") == std::string::npos,
+          "4144 AC2: no post-moving canary dual-note on known slots (#3368)");
+    CHECK(code_only.find("note_ffi_opaque_alias_densify_cover(") == std::string::npos,
+          "4144 AC2: no FFI alias dual-note on known slots (#3368)");
+    CHECK(code_only.find("reinterpret_cast<const void**>(&fr.pool_)") != std::string::npos,
+          "4144 AC2: pool_ registered as a lasting void** slot");
+    CHECK(code_only.find("INVALID_VERSION") != std::string::npos,
+          "4144 AC2: dead frames (INVALID_VERSION) skipped in the walk");
+}
+
+static void ac4144_3_source_cite_and_wiring() {
+    std::println("\n--- #4144 AC3: SSOT preserved + wiring ---");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #4144") != std::string::npos, "4144 AC3: mut cites #4144");
+    CHECK(mut.find("arena_group_->register_external_root_slot_for_densify_all(slot)") !=
+              std::string::npos,
+          "4144 AC3: #2889 registration SSOT retained (no second registry)");
+    CHECK(mut.find("moving_envframe_pool_slots_registered_total_v_read()") == std::string::npos,
+          "4144 AC3: counter is additive-only (never read to gate densify)");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("external_root_slots_for_densify_.clear();") != std::string::npos,
+          "4144 AC3: window-end slot consume SSOT unchanged (#3569 contract)");
+    CHECK(arena.find("*slot = it->second;") != std::string::npos,
+          "4144 AC3: slot rewrite walk unchanged (this-window remap keys only)");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    CHECK(hdr.find("g_moving_envframe_pool_slots_registered_total{0}") != std::string::npos,
+          "4144 AC3: additive counter row in densify_consistency_report.h");
+    CHECK(hdr.find("reset_moving_envframe_pool_slots_registered_for_test") != std::string::npos,
+          "4144 AC3: counter test reset helper present");
+    CHECK(read_file("tests/core/test_issue_4144.cpp").empty(), "4144 AC3: no test_issue_4144.cpp");
+    CHECK(read_file("docs/design/4144-envframe-pool-slot-remap.md").empty(),
+          "4144 AC3: no docs/design/4144-*");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_envframe_pool_slot_remap_4144.py") != std::string::npos,
+          "4144 AC3: linter wired in build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(allow.find("check_envframe_pool_slot_remap_4144.py") != std::string::npos,
+          "4144 AC3: linter on the root check allowlist");
+}
+
 
 // ── Issue #3783: alloc-path auto-arm Moving publishes densify health ──
 static void ac3783_1_auto_arm_publishes_before_soft_fallback() {
@@ -7208,6 +7354,12 @@ int run_test_moving_densify_fail_closed() {
     ac4143_2_green_retry_clears_post_publish();
     ac4143_3_source_cite_clear_after_retry();
     ac4143_4_wiring_no_invent();
+
+    std::println("\n=== Issue #4144: EnvFrame pool_ aliases get lasting slot remap "
+                 "(#3647 sibling; extends fail_closed per #81967) ===");
+    ac4144_1_pool_slot_registered_and_remapped();
+    ac4144_2_no_dual_note_slot_xor();
+    ac4144_3_source_cite_and_wiring();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
