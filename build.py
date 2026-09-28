@@ -9100,6 +9100,26 @@ def cmd_lint():
             "Issue #4145 soft auto-wire unreachability linter failed — run python3 scripts/check_soft_autowire_unreachable_4145.py"
         )
         return r
+    # Issue #4146 (JIT/AOT hot-update residual): production facade cone JIT
+    # drop. #3749 evicted jit_cache_ / AuraJIT native for the ROOT define
+    # only, so under owner-scoped multi-eval (C clocks frozen by design,
+    # #2841/#2951/#3605) a caller D of mutated F kept executing pre-mutate
+    # native targeting F. Gate pins: drop_cone_jit_after_production_facade_
+    # walks the same cone that receives IR body-dirty (#3474 called_by BFS ∪
+    # #3823 node-dep), drops per-dependent jit_cache_ + native + prefix under
+    # the #1378 jit_cache_mtx_ window, MustDeopts owner live closures named d
+    # gated on the owner-scoped freeze (#3975), feeds the #3373 production
+    # dirty ring, and never bumps the process table epoch (#2951). Soft / Off
+    # unchanged. Runtime doors live in
+    # tests/compiler/test_compiler_hot_update_facade.cpp (ac4146_*).
+    cone4146_script = ROOT / "scripts" / "check_facade_cone_jit_drop_4146.py"
+    if not cone4146_script.exists():
+        fail(f"missing {cone4146_script}")
+        return 1
+    r = run([sys.executable, str(cone4146_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4146 facade cone JIT drop linter failed — run python3 scripts/check_facade_cone_jit_drop_4146.py")
+        return r
     # Issue #4129: character literal reader. `#` (unless #t/#f/#() lexed as
     # TokenKind::Error and parse_list's error recovery consumed it as a
     # closing ')': arguments at/after a character literal were dropped —
