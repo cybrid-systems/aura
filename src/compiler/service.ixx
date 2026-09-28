@@ -43,6 +43,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/post_compact_lifecycle.hh" // Issue #2436: post-compact IR dirty sync step
 #include "core/workspace_epoch.hh" // Issue #1964 cycle 2b: current_mutation_epoch / bump_mutation_epoch
+#include "core/workspace_isolation.hh" // Issue #4134: existing tenant-isolation counter (fail-closed deny)
 #include "jit_typed_mutation_stats.h"
 #include "typed_mutation_audit.h" // Issue #1884: TypeProp ↔ invariant correlation
 #include "linear_occurrence_mutate_stats.h"
@@ -436,12 +437,25 @@ extern "C" int aura_jit_owner_sandbox_mode(void) noexcept {
 // check_workspace_isolation (fiber id + Mutation epoch, #2388 single
 // record_audit path — no second audit writer). Returns 1 on allow,
 // 0 on deny (the JIT access is skipped by the caller).
+// Issue #4134: fail-closed — an unwired owner must NOT false-allow. The
+// #4093/#4094 JIT gates decide the access skip locally on stamp mismatch
+// and never consult this return, but any caller that honors it now gets
+// deny (same shape as the fail-closed siblings aura_jit_owner_require_effect
+// / aura_jit_owner_sandbox_mode). The IsolationDeny SE needs the owner's
+// record_audit path, so emission is best-effort: unwired, the existing
+// tenant-isolation counter tenant_boundary_violation_prevented_total is the
+// observable (no new mid-metrics key).
 extern "C" int aura_jit_owner_check_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
                                               std::uint16_t bits, const char* op) noexcept {
     auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
     auto* owner = owner_evaluator(prims);
-    if (!owner)
-        return 1;
+    if (!owner) {
+        // Issue #4134: fail-closed — unwired owner denies (see above).
+        using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+        g_tenant_isolation_metrics().tenant_boundary_violation_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return 0;
+    }
     return owner->check_workspace_isolation(target_tenant, ref_tenant, bits,
                                             op ? std::string_view(op) : "jit-tenant")
                ? 1

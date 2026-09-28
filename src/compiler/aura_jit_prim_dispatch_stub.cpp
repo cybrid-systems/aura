@@ -50,11 +50,14 @@ extern "C" __attribute__((weak)) int aura_jit_owner_sandbox_mode(void) noexcept 
 }
 
 // Issue #4093: light-link fallback — no owner Evaluator → no isolation
-// record. Only reachable when a strong sandbox hook arms the face; allow
-// (1) keeps light-link JIT behavior unchanged.
+// record. Issue #4134: fail-closed — the stub denies (0) so callers that
+// honor the return cannot false-allow (same shape as the require_effect /
+// sandbox_mode stubs above). The #4093/#4094 gates decide the access skip
+// locally and never consult the return, so light-link JIT behavior is
+// unchanged.
 extern "C" __attribute__((weak)) int
 aura_jit_owner_check_isolation(std::uint64_t, std::uint64_t, std::uint16_t, const char*) noexcept {
-    return 1;
+    return 0;
 }
 
 // Do not stub aura_set/get_storm_eval_context here. This TU is in
