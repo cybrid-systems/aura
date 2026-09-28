@@ -5598,6 +5598,20 @@ def cmd_lint():
             "Issue #4001 agent_recv typed preference linter failed — run python3 scripts/coverage/checks/check_agent_recv_typed_preference_4001.py"
         )
         return r
+    # Issue #4137: production C++ agent_recv steal×held_ref face —
+    # raw nullopt ≡ last_recv_stale_handoff documented; steal soak typed
+    # handoff-required; BP storm stays typed, never silent Closed.
+    # Extends test_orch_obs_facade.cpp (#81934); no docs/design/ (#1655).
+    ars4137_script = COVERAGE_CHECKS / "check_agent_recv_steal_handoff_4137.py"
+    if not ars4137_script.exists():
+        fail(f"missing {ars4137_script}")
+        return 1
+    r = run([sys.executable, str(ars4137_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4137 agent_recv steal handoff linter failed — run python3 scripts/coverage/checks/check_agent_recv_steal_handoff_4137.py"
+        )
+        return r
     # Issue #3014: surface agent body try_acquire reject on AgentHandle /
     # orch:agent-join hash (residual of #1880/#2006). Keys only on the
     # reject path. Extends test_fiber_orch_parallel_quota_batch.cpp

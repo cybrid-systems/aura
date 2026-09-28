@@ -1295,6 +1295,170 @@ int run_test_orch_obs_facade() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 
+    // ── #4137: steal×held_ref — raw agent_recv empty-shaped vs typed
+    // handoff-required (steal face of the #3336/#4001 preference family) ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::agent_recv;
+        using aura::orch::agent_recv_result;
+        using aura::orch::agent_send;
+        using aura::orch::AgentHandle;
+        using aura::orch::maybe_revalidate_held_ref_after_attach;
+        using aura::orch::stamp_mail_message_handoff_completed;
+        using aura::serve::Fiber;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        std::println("\n--- #4137 AC1: steal×handoff soak — typed handoff-required + counters ---");
+        apply_production_audit_defaults();
+        AgentHandle h4137;
+        h4137.ok = true;
+        h4137.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        MailMessage seed4137;
+        seed4137.payload = "stable-ref:31:1";
+        stamp_mail_message_handoff_completed(seed4137, 31);
+        CHECK(agent_send(h4137, std::move(seed4137)) == PushStatus::Ok,
+              "4137 AC1: stamped seed push Ok");
+        // Steal the owning fiber: advance steal_seq (#3967 guard), then run
+        // the #3942 attach-time revalidation walk on the fiber's own thread.
+        Fiber owner4137([] {});
+        Fiber* prev_fiber4137 = aura::serve::g_current_fiber;
+        aura::serve::g_current_fiber = &owner4137;
+        owner4137.note_steal_complete_for_held_ref();
+        const auto checks4137_0 =
+            g_mf_mailbox_stats.held_ref_post_steal_check_total.load(std::memory_order_relaxed);
+        const auto stale4137_0 =
+            g_mf_mailbox_stats.held_ref_stale_after_steal_total.load(std::memory_order_relaxed);
+        maybe_revalidate_held_ref_after_attach(*h4137.mailbox);
+        aura::serve::g_current_fiber = prev_fiber4137;
+        CHECK(g_mf_mailbox_stats.held_ref_post_steal_check_total.load(std::memory_order_relaxed) ==
+                  checks4137_0 + 1,
+              "4137 AC1: held_ref_post_steal_check_total bumped by the steal walk");
+        CHECK(g_mf_mailbox_stats.held_ref_stale_after_steal_total.load(std::memory_order_relaxed) >=
+                  stale4137_0 + 1,
+              "4137 AC1: held_ref_stale_after_steal_total bumped (stamp cleared)");
+        auto soak4137 = agent_recv_result(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!soak4137.ok && std::string_view(soak4137.status) == "handoff-required" &&
+                  !soak4137.message.has_value(),
+              "ac4137_1_steal_soak_handoff_required_and_counters");
+        CHECK(h4137.last_recv_stale_handoff, "4137 AC1: stale flag rides the handle");
+        h4137.last_recv_stale_handoff = false;
+        // Re-handoff: freshly stamped message passes the gate → typed Ok.
+        MailMessage rehandoff4137;
+        rehandoff4137.payload = "stable-ref:32:1";
+        stamp_mail_message_handoff_completed(rehandoff4137, 32);
+        CHECK(agent_send(h4137, std::move(rehandoff4137)) == PushStatus::Ok,
+              "4137 AC1: re-handoff push Ok");
+        auto healed4137 = agent_recv_result(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(healed4137.ok && std::string_view(healed4137.status) == "ok" &&
+                  healed4137.message.has_value() &&
+                  healed4137.message->payload == "stable-ref:32:1",
+              "4137 AC1: re-handoff delivers typed Ok");
+
+        std::println("\n--- #4137 AC2: raw nullopt coincides with last_recv_stale_handoff ---");
+        MailMessage seed4137b;
+        seed4137b.payload = "stable-ref:33:1";
+        stamp_mail_message_handoff_completed(seed4137b, 33);
+        CHECK(agent_send(h4137, std::move(seed4137b)) == PushStatus::Ok, "4137 AC2: seed push Ok");
+        Fiber* prev_fiber4137b = aura::serve::g_current_fiber;
+        aura::serve::g_current_fiber = &owner4137;
+        owner4137.note_steal_complete_for_held_ref();
+        maybe_revalidate_held_ref_after_attach(*h4137.mailbox);
+        aura::serve::g_current_fiber = prev_fiber4137b;
+        auto raw_stale4137 = agent_recv(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!raw_stale4137.has_value() && h4137.last_recv_stale_handoff,
+              "ac4137_2_raw_nullopt_coincides_with_stale_flag");
+        h4137.last_recv_stale_handoff = false;
+        auto raw_quiet4137 = agent_recv(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!raw_quiet4137.has_value() && !h4137.last_recv_stale_handoff,
+              "4137 AC2: quiet-empty nullopt keeps the flag false (bidirectional)");
+
+        std::println("\n--- #4137 AC3: BP storm unrelated — held_ref path stays typed ---");
+        MailMessage seed4137c;
+        seed4137c.payload = "stable-ref:34:1";
+        stamp_mail_message_handoff_completed(seed4137c, 34);
+        CHECK(agent_send(h4137, std::move(seed4137c)) == PushStatus::Ok, "4137 AC3: seed push Ok");
+        Fiber* prev_fiber4137c = aura::serve::g_current_fiber;
+        aura::serve::g_current_fiber = &owner4137;
+        owner4137.note_steal_complete_for_held_ref();
+        maybe_revalidate_held_ref_after_attach(*h4137.mailbox);
+        aura::serve::g_current_fiber = prev_fiber4137c;
+        // Producer BP storm on the same handle: fill to high-water with the
+        // self-throttle budget engaged. Unrelated to the held_ref recv face.
+        h4137.producer_bp_budget = 2;
+        int bp_seen4137 = 0;
+        for (int i = 0; i < 128 && !h4137.producer_throttled; ++i) {
+            MailMessage storm4137;
+            storm4137.payload = std::format("bp-storm-4137-{}", i);
+            if (agent_send(h4137, std::move(storm4137)) == PushStatus::Backpressure)
+                ++bp_seen4137;
+        }
+        CHECK(bp_seen4137 >= 2 && h4137.producer_throttled,
+              "4137 AC3: BP storm engaged producer throttle");
+        auto storm_recv4137 = agent_recv_result(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!storm_recv4137.ok && std::string_view(storm_recv4137.status) == "handoff-required",
+              "ac4137_3_bp_storm_held_ref_stays_typed");
+        CHECK(std::string_view(storm_recv4137.status) != "closed",
+              "4137 AC3: no silent Closed for the handoff miss");
+        h4137.last_recv_stale_handoff = false;
+        // Queue not poisoned: queued storm messages still drain as Ok.
+        auto drain4137 = agent_recv_result(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(drain4137.ok && drain4137.message.has_value() &&
+                  drain4137.message->payload == "bp-storm-4137-0",
+              "4137 AC3: queued storm message drains after the typed deny");
+        // Drain the rest of the storm backlog so the Soft face below starts
+        // from a quiet mailbox (storm messages are plain — all deliver Ok;
+        // the terminating read is quiet empty, status="empty").
+        for (;;) {
+            auto tail4137 = agent_recv_result(h4137, /*wait=*/false, /*timeout_ms=*/0);
+            if (!tail4137.ok)
+                break;
+        }
+        h4137.producer_bp_budget = 0;
+
+        std::println("\n--- #4137 AC4: Soft unchanged + no invent + wiring ---");
+        apply_dev_audit_defaults();
+        MailMessage seed4137d;
+        seed4137d.payload = "stable-ref:35:1";
+        stamp_mail_message_handoff_completed(seed4137d, 35);
+        CHECK(agent_send(h4137, std::move(seed4137d)) == PushStatus::Ok, "4137 AC4: seed push Ok");
+        Fiber* prev_fiber4137d = aura::serve::g_current_fiber;
+        aura::serve::g_current_fiber = &owner4137;
+        owner4137.note_steal_complete_for_held_ref();
+        maybe_revalidate_held_ref_after_attach(*h4137.mailbox);
+        aura::serve::g_current_fiber = prev_fiber4137d;
+        // #3942 hook is production-only: no production defaults → stamp kept.
+        auto soft4137 = agent_recv_result(h4137, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(soft4137.ok && soft4137.message.has_value() &&
+                  soft4137.message->payload == "stable-ref:35:1",
+              "4137 AC4: Soft delivers revalidated-held_ref payload (#3111 AC3)");
+        const auto spawn4137 = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn4137.find("kRecvStealHandoffIssue = 4137") != std::string::npos,
+              "4137 AC4: issue stamp");
+        CHECK(spawn4137.find("Issue #4137: post-steal stale held_ref nullopt coincides") !=
+                  std::string::npos,
+              "4137 AC4: raw-wrapper coincidence documented (AC2 lint leg)");
+        CHECK(spawn4137.find("prod ? \"handoff-required\" : \"empty\"") != std::string::npos,
+              "4137 AC4: steal face typed status arm");
+        const auto lint4137 =
+            read_file("scripts/coverage/checks/check_agent_recv_steal_handoff_4137.py");
+        CHECK(!lint4137.empty() && lint4137.find("Issue #4137") != std::string::npos,
+              "ac4137_4_source_and_linter");
+        const auto build4137 = read_file("build.py");
+        CHECK(build4137.find("check_agent_recv_steal_handoff_4137") != std::string::npos,
+              "4137 AC4: build.py wiring");
+        CHECK(build4137.find("check_agent_recv_typed_preference_4001") != std::string::npos,
+              "4137 AC4: #4001 Guard-face twin retained");
+        CHECK(read_file("tests/orch/test_issue_4137.cpp").empty(),
+              "4137 AC4: no test_issue_4137.cpp (#81934)");
+        CHECK(read_file("docs/design/4137-recv-steal-handoff.md").empty(),
+              "4137 AC4: no docs/design/4137-* (#1655)");
+        apply_dev_audit_defaults();
+    }
+
     std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642+#3733+#4001: {}/{} "
                  "checks passed ===",
                  g_passed, g_passed + g_failed);
