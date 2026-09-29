@@ -475,8 +475,9 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
 
 // Issue #119: add a joiner fiber to a target's wait list.
 // Returns true on success, false if the target fiber can't
-// be found. The target may be in any state except Done —
-// callers should check `fiber_by_id(id)->is_done()` first.
+// be found — or if the target is already Done (#4230 done-face
+// re-check; callers treat false as already-done/vanished and
+// re-check is_done() / fall through to the result fetch).
 bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
     if (!joiner)
         return false;
@@ -485,6 +486,25 @@ bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
         return false;
     ::aura::compiler::lock_order::AuditedMutexLock lock(
         joiner_map_mutex_, ::aura::compiler::lock_order::Level::Joiner);
+    // Issue #4230: register-after-notify lost-wake closure. The old shape
+    // trusted the caller's pre-lock is_done() probe: between that probe and
+    // this critical section, the target could complete and on_fiber_done
+    // could run its joiner-notify pass with our entry STILL ABSENT from
+    // joiner_map_ — the write-1-to-joiner-eventfd wake never fires, the
+    // joiner parks in BlockingIO forever, and under sustained sequential
+    // (fiber:join (fiber:spawn ...)) load the serve-async sock stalls past
+    // the client's raw_line budget (measured: 64 sequential oneshots ok,
+    // then a serve_session_timeout mid-batch). The re-check below runs
+    // INSIDE the same mutex on_fiber_done's notify pass holds, so the two
+    // critical sections are mutually exclusive: either the notify pass
+    // already ran (the mutex chain publishes the worker's
+    // state_.store(Done, release), which is sequenced-before
+    // notify_fiber_done — we observe Done here and return false, caller
+    // fetches the ready result instead of parking), or it runs strictly
+    // after we release with our entry present and the wake fires. No
+    // interleaving can leave a registered joiner unwoken.
+    if (target->is_done())
+        return false;
     auto& list = joiner_map_[target_fiber_id];
     // Idempotent: if the joiner is already in the list, skip.
     for (auto* f : list) {
