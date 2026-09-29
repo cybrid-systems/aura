@@ -215,8 +215,21 @@ void emit_status_line(std::string line) {
 // The second eval-current is the fast replay, so both records are in
 // the pipe before that read. Capture exec stdout and put it on the
 // status object — one write is the whole turn.
+//
+// Issue #4229 (sock_score_collapse): capture-setup failure (dup/pipe/
+// dup2 under fd pressure — the same sustained-load class as the #4176
+// eventfd budget) used to run the exec with the LIVE stdout and return
+// an empty display. Two failure faces: (a) status=ok with a silently
+// empty display — the host scores hits=0 for every explorer while the
+// same source oneshot scores >0 (the reported sock_score_collapse);
+// (b) program output interleaved into the JSON protocol stream. The
+// contract is now fail-loud: setup failure returns nullopt WITHOUT
+// running the exec, and the exec loops emit an explicit transient
+// error line so the client can retry — never a silent ok with empty
+// display.
 template <typename Fn>
-auto capture_stdout_during(Fn&& fn) -> std::pair<std::invoke_result_t<Fn>, std::string> {
+auto capture_stdout_during(Fn&& fn)
+    -> std::optional<std::pair<std::invoke_result_t<Fn>, std::string>> {
     using R = std::invoke_result_t<Fn>;
     std::fflush(stdout);
     const int saved = ::dup(STDOUT_FILENO);
@@ -228,13 +241,18 @@ auto capture_stdout_during(Fn&& fn) -> std::pair<std::invoke_result_t<Fn>, std::
             ::close(fds[0]);
         if (fds[1] >= 0)
             ::close(fds[1]);
-        return {std::forward<Fn>(fn)(), {}};
+        // Issue #4229: capture setup failed — do NOT run the exec with
+        // the live stdout (protocol corruption) and do NOT return a
+        // silent empty display (sock_score_collapse). The caller emits
+        // an explicit transient error.
+        return std::nullopt;
     }
     if (::dup2(fds[1], STDOUT_FILENO) < 0) {
         ::close(saved);
         ::close(fds[0]);
         ::close(fds[1]);
-        return {std::forward<Fn>(fn)(), {}};
+        // Issue #4229: same fail-loud contract as the dup/pipe arm.
+        return std::nullopt;
     }
     ::close(fds[1]);
     std::string captured;
@@ -286,7 +304,7 @@ auto capture_stdout_during(Fn&& fn) -> std::pair<std::invoke_result_t<Fn>, std::
     } finish(saved, fds[0], drain);
     R result = std::forward<Fn>(fn)();
     finish.finish();
-    return {std::move(result), std::move(captured)};
+    return std::make_pair(std::move(result), std::move(captured));
 }
 
 std::string status_line_ok(std::string_view session, std::string_view value,
@@ -966,14 +984,23 @@ void run_serve_async(int num_workers) {
                             // forever (host polls the sock with no reply: the
                             // permanent-stall shape this issue reports).
                             try {
-                                auto [r, display] =
+                                auto captured =
                                     capture_stdout_during([&] { return cs.exec_with_cache(code); });
-                                if (r) {
-                                    emit_status_line(
-                                        status_line_ok(nsid, fmt_val(*r, cs), display));
+                                if (!captured) {
+                                    // Issue #4229: capture setup failed —
+                                    // explicit transient error; the exec did
+                                    // NOT run, so the client can retry.
+                                    emit_status_line(status_line_error(
+                                        nsid, "serve stdout capture unavailable (transient)", ""));
                                 } else {
-                                    emit_status_line(
-                                        status_line_error(nsid, r.error().format(), display));
+                                    auto [r, display] = std::move(*captured);
+                                    if (r) {
+                                        emit_status_line(
+                                            status_line_ok(nsid, fmt_val(*r, cs), display));
+                                    } else {
+                                        emit_status_line(
+                                            status_line_error(nsid, r.error().format(), display));
+                                    }
                                 }
                             } catch (const std::exception& e) {
                                 emit_status_line(status_line_error(
@@ -1090,35 +1117,45 @@ void run_serve_async(int num_workers) {
                         // exec must surface as a status error, never unwind
                         // the session fiber.
                         try {
-                            auto [result, display] =
+                            auto captured =
                                 capture_stdout_during([&] { return cs.exec_with_cache(code); });
-                            if (result) {
-                                try {
-                                    auto& v = *result;
-                                    // Check if closure
-                                    if (is_closure(v)) {
-                                        if (display.empty()) {
-                                            emit_status_line(std::format(
-                                                "{{\"session\":\"{}\",\"status\":\"closure\","
-                                                "\"value\":\"#<procedure>\"}}",
-                                                json_escape(sid)));
-                                        } else {
-                                            emit_status_line(std::format(
-                                                "{{\"session\":\"{}\",\"status\":\"closure\","
-                                                "\"value\":\"#<procedure>\",\"display\":\"{}\"}}",
-                                                json_escape(sid), json_escape(display)));
-                                        }
-                                    } else {
-                                        emit_status_line(
-                                            status_line_ok(sid, fmt_val(v, cs), display));
-                                    }
-                                } catch (const std::bad_alloc&) {
-                                    emit_status_line(
-                                        status_line_error(sid, "out of memory", display));
-                                }
+                            if (!captured) {
+                                // Issue #4229: capture setup failed —
+                                // explicit transient error; the exec did
+                                // NOT run, so the client can retry.
+                                emit_status_line(status_line_error(
+                                    sid, "serve stdout capture unavailable (transient)", ""));
                             } else {
-                                auto& d = result.error();
-                                emit_status_line(status_line_error(sid, d.format(), display));
+                                auto [result, display] = std::move(*captured);
+                                if (result) {
+                                    try {
+                                        auto& v = *result;
+                                        // Check if closure
+                                        if (is_closure(v)) {
+                                            if (display.empty()) {
+                                                emit_status_line(std::format(
+                                                    "{{\"session\":\"{}\",\"status\":\"closure\","
+                                                    "\"value\":\"#<procedure>\"}}",
+                                                    json_escape(sid)));
+                                            } else {
+                                                emit_status_line(std::format(
+                                                    "{{\"session\":\"{}\",\"status\":\"closure\","
+                                                    "\"value\":\"#<procedure>\",\"display\":\"{}\"}"
+                                                    "}",
+                                                    json_escape(sid), json_escape(display)));
+                                            }
+                                        } else {
+                                            emit_status_line(
+                                                status_line_ok(sid, fmt_val(v, cs), display));
+                                        }
+                                    } catch (const std::bad_alloc&) {
+                                        emit_status_line(
+                                            status_line_error(sid, "out of memory", display));
+                                    }
+                                } else {
+                                    auto& d = result.error();
+                                    emit_status_line(status_line_error(sid, d.format(), display));
+                                }
                             }
                         } catch (const std::exception& e) {
                             emit_status_line(status_line_error(

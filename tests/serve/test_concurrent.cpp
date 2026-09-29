@@ -2646,6 +2646,68 @@ static bool test_issue_4176_source_cite() {
     return true;
 }
 
+// ── Issue #4229: serve-async silent empty CASE display (sock_score_collapse)
+// ═══════════════════════════════════════════════════════════
+// Under Soft --serve-async after sustained set-code load (the #4176
+// fd-pressure class), capture_stdout_during's dup/pipe/dup2 setup could
+// fail and the exec still ran with the LIVE stdout: the client saw
+// status=ok with a silently empty display — hits=0 for every explorer
+// including the oneshot-green baseline (the reported
+// sock_score_collapse) — and program output interleaved into the JSON
+// protocol stream. Fix contract: capture-setup failure is fail-loud —
+// the exec does NOT run, and the session exec loops emit an explicit
+// transient error line so the client can retry.
+
+// ── #4229 AC1-AC3: capture honesty source-cite (serve_async.cpp).
+static bool test_issue_4229_capture_honesty() {
+    std::println("\n--- #4229 AC1: stdout capture fail-loud contract (serve_async.cpp) ---");
+    auto read_file = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string();
+    };
+    const auto serve_src = read_file("src/serve/serve_async.cpp");
+    CHECK(!serve_src.empty(), "#4229 AC1: serve_async source readable");
+    // AC1: capture_stdout_during returns optional (nullopt = setup
+    // failed) and both setup-failure arms cite #4229.
+    CHECK(serve_src.find("std::optional<std::pair<std::invoke_result_t<Fn>, std::string>>") !=
+              std::string::npos,
+          "#4229 AC1: capture_stdout_during returns optional (fail-loud shape)");
+    CHECK(serve_src.find("Issue #4229: capture setup failed") != std::string::npos,
+          "#4229 AC1: setup-failure arms cite #4229");
+    // The old silent fallback executed the exec with the live stdout and
+    // returned an empty display — must be gone.
+    CHECK(serve_src.find("return {std::forward<Fn>(fn)(), {}};") == std::string::npos,
+          "#4229 AC1: silent live-stdout fallback removed");
+    // AC2: both exec loops (named + default session) emit the transient
+    // error line.
+    {
+        constexpr auto kNeedle = "\"serve stdout capture unavailable (transient)\"";
+        int hits = 0;
+        for (std::size_t pos = serve_src.find(kNeedle); pos != std::string::npos;
+             pos = serve_src.find(kNeedle, pos + 1))
+            ++hits;
+        CHECK(hits == 2, "#4229 AC2: both exec loops emit the transient error (found " +
+                             std::to_string(hits) + " sites)");
+    }
+    // AC3: the exec body runs exactly once — only on the successful
+    // capture path (setup failure must NOT execute user code).
+    {
+        constexpr auto kExec = "R result = std::forward<Fn>(fn)();";
+        int execs = 0;
+        for (std::size_t pos = serve_src.find(kExec); pos != std::string::npos;
+             pos = serve_src.find(kExec, pos + 1))
+            ++execs;
+        CHECK(execs == 1, "#4229 AC3: exec runs only on the successful capture path");
+    }
+    return true;
+}
+
 int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
@@ -2822,6 +2884,7 @@ int main() {
     run_test("test_issue_4176_join_wake_protocol", test_issue_4176_join_wake_protocol);
     run_test("test_issue_4176_fd_budget_oneshots", test_issue_4176_fd_budget_oneshots);
     run_test("test_issue_4176_source_cite", test_issue_4176_source_cite);
+    run_test("test_issue_4229_capture_honesty", test_issue_4229_capture_honesty);
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);

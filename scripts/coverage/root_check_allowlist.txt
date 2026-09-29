@@ -218,3 +218,4 @@ check_mailbox_holder_bound_4160.py
 check_filter_prim_infer_standard.py
 check_rejecthard_bit_coverage_4161.py
 check_query_free_slot_4162.py
+check_serve_async_capture_honesty_4229.py
