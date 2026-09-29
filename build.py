@@ -9612,6 +9612,30 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4162 query free-slot guard linter failed — run python3 scripts/check_query_free_slot_4162.py")
         return r
+    # Issue #4163 (query index): free_orphan_nodes_from (#1299/#1300)
+    # zeroes node_gen_ WITHOUT clearing parent_, so the tag_arity_index
+    # prune (#484 parent-based orphan arm) and insert_node's parent-based
+    # orphan check left free-slot tombstones servable in (tag,arity)
+    # buckets — the query:pattern index fast path could hand a recycled
+    # NodeId to the production schema-2 QueryResult (later mutate resolve
+    # fails stale-ref; same poisoned multi-round failure mode as #4162,
+    # one layer deeper). Gate pins: insert_node skips free slots before
+    # the #484 check (covers rebuild_full / append_nodes / sync re-insert),
+    # prune is_stale treats free slots as stale regardless of parent_
+    # (clearing tag_arity_indexed_key_), and the fast-path serve loop
+    # skips free slots between the range and macro-introduced checks
+    # (warm bucket + quiet sync path never re-prunes).
+    # Runtime door: test_query_index_composite.cpp #4163 ACs.
+    qisl4163_script = ROOT / "scripts" / "check_query_index_free_slot_4163.py"
+    if not qisl4163_script.exists():
+        fail(f"missing {qisl4163_script}")
+        return 1
+    r = run([sys.executable, str(qisl4163_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4163 tag_arity_index free-slot linter failed — run python3 scripts/check_query_index_free_slot_4163.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

@@ -3686,6 +3686,15 @@ void register_workspace_query_primitives(
                 for (aura::ast::NodeId id : bucket) {
                     if (id >= flat.size())
                         continue;
+                    // Issue #4163: skip free-list tombstones (#261/#1299 —
+                    // node_gen_==0). A warm bucket can still hold a freed
+                    // id: free_orphan_nodes_from leaves parent_ set (the
+                    // #484 parent-based checks cannot catch it) and the
+                    // quiet sync path (same size+gen) never re-prunes, so
+                    // the serve loop is the last line of defense before a
+                    // recycled NodeId reaches the schema-2 QueryResult.
+                    if (flat.is_free_slot(id))
+                        continue;
                     if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                         // Issue #458 / #1501 / #1609 / #1636 / #1892: MANDATE
                         // force-skip MacroIntroduced on query:pattern hot path

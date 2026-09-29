@@ -78,6 +78,13 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     // from the composite index (AC2).
     if (id >= flat.size())
         return;
+    // Issue #4163: skip free-list tombstones (#261/#1299 — node_gen_==0).
+    // free_orphan_nodes_from tombstones WITHOUT clearing parent_, so a
+    // recycled slot with a stale parent_ passes the #484 parent-based
+    // orphan check below and would re-enter the (tag,arity) bucket on
+    // rebuild_full / append_nodes / sync_after_mutation re-insert.
+    if (flat.is_free_slot(id))
+        return;
     // Issue #484: skip orphan nodes. After mutate:replace-pattern,
     // the OLD matched child gets parent_ cleared by set_child —
     // it's no longer reachable from the workspace root. Such
@@ -158,6 +165,16 @@ void Evaluator::tag_arity_index_prune_stale_entries(const aura::ast::FlatAST& fl
     const auto root = flat.root;
     auto is_stale = [&](aura::ast::NodeId id) {
         if (id >= flat.size()) {
+            if (id < tag_arity_indexed_key_.size())
+                tag_arity_indexed_key_[id] = kTagArityKeyNone;
+            return true;
+        }
+        // Issue #4163: free-list tombstones (#261/#1299 — node_gen_==0)
+        // are stale regardless of parent_: free_orphan_nodes_from does
+        // not clear parent_, so the parent-based orphan arm below never
+        // sees them and recycled NodeIds would stay servable in
+        // (tag,arity) buckets across syncs.
+        if (flat.is_free_slot(id)) {
             if (id < tag_arity_indexed_key_.size())
                 tag_arity_indexed_key_[id] = kTagArityKeyNone;
             return true;
