@@ -9543,6 +9543,31 @@ def cmd_lint():
             "Issue #4161 RejectHard bit coverage linter failed — run python3 scripts/check_rejecthard_bit_coverage_4161.py"
         )
         return r
+    # Issue #4162 (query): Agent-facing query:* full-scan walks iterated
+    # id < flat.size() and matched via FlatAST::get(id) WITHOUT
+    # is_free_slot / is_live_node. free_orphan_nodes_from (rollback,
+    # #1299/#1300) zeroes node_gen_ only, so under Production defaults the
+    # #4088/#3286 schema-2 auto-upgrade stamped epoch-fresh tombstone
+    # NodeIds into QueryResults; every later mutate resolve failed
+    # stale-ref (poisoned multi-round Agent memory). Gate pins: the
+    # #1299/#1300 free-slot skip sits before flat.get(id) in query:filter /
+    # query:calls / query:node-type / query:defines-by-marker (filter's
+    # guard also precedes the #425/#2525 hygiene gate),
+    # stamp_query_result_full_provenance refuses non-live ids via
+    # flat.is_live_node before the #3198 export-gate consult, and
+    # allow_query_stable_ref_export returns false for free slots before
+    # the eager/torn ladder (export_ref / export_ref_safe /
+    # stamp_query_stable_ref_export inherit the refusal). Read-side
+    # freshness already refuses tombstones
+    # (query_result_is_fresh_with_refs is_live_node → StaleByEpoch).
+    # Runtime door: test_query_result_full_provenance.cpp ac4162_* ACs.
+    qfsl4162_script = ROOT / "scripts" / "check_query_free_slot_4162.py"
+    if not qfsl4162_script.exists():
+        fail(f"missing {qfsl4162_script}")
+        return 1
+    r = run([sys.executable, str(qfsl4162_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4162 query free-slot guard linter failed — run python3 scripts/check_query_free_slot_4162.py")
         return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held

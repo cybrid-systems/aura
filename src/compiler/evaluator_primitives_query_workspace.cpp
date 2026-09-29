@@ -121,6 +121,10 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
         return true;
     for (std::size_t i = 0; i < qr.match_count; ++i) {
         const auto nid = qr.matches[i].node_id;
+        // Issue #4162: refuse free/ghost orphan slots (#1299/#1300 —
+        // tag_ survives the free; live-node face). Fail-closed.
+        if (!flat.is_live_node(static_cast<aura::ast::NodeId>(nid)))
+            return false;
         // Issue #3198: do not layout-stamp a lagging gen into schema-2.
         if (!ev.allow_query_stable_ref_export(nid))
             return false;
@@ -152,7 +156,6 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
                                      : aura::core::kQueryResultMatchSchema2;
     }
     aura::core::note_query_result_full_provenance();
-    (void)flat;
     return true;
 }
 
@@ -1546,6 +1549,12 @@ void register_workspace_query_primitives(
             const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
             EvalValue result = make_void();
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #4162: skip free/ghost orphan slots (#1299/#1300
+                // pattern) — free_orphan_nodes_from leaves tag_ in place,
+                // so a tombstone Call must not match and get stamped into
+                // the production schema-2 QueryResult.
+                if (flat.is_free_slot(id))
+                    continue;
                 auto v = flat.get(id);
                 if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
                     continue;
@@ -1888,6 +1897,13 @@ void register_workspace_query_primitives(
                 result = make_void();
                 filter_hygiene_skips = 0;
                 for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    // Issue #4162: skip free/ghost orphan slots (#1299/#1300
+                    // pattern) BEFORE hygiene/predicate evaluation —
+                    // free_orphan_nodes_from leaves tag_ in place, so a
+                    // tombstone must not match (or pollute hygiene-skip
+                    // counters) in the production schema-2 QueryResult.
+                    if (flat.is_free_slot(id))
+                        continue;
                     // Issue #425 / #2525: hygiene gate (production default ON).
                     // Drop MacroIntroduced nodes BEFORE predicate evaluation so
                     // the predicate list doesn't have to repeat (:marker "User").
@@ -2138,6 +2154,12 @@ void register_workspace_query_primitives(
 
             EvalValue result = make_void();
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #4162: skip free/ghost orphan slots (#1299/#1300
+                // pattern) — free_orphan_nodes_from leaves tag_ in place,
+                // so a tombstone must not match by tag in the production
+                // schema-2 QueryResult.
+                if (flat.is_free_slot(id))
+                    continue;
                 if (flat.get(id).tag == target_tag) {
                     auto pid = ws.pairs.size();
                     ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
@@ -2508,6 +2530,12 @@ void register_workspace_query_primitives(
             const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
             EvalValue result = make_void();
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #4162: skip free/ghost orphan slots (#1299/#1300
+                // pattern) — free_orphan_nodes_from leaves tag_/marker_ in
+                // place, so a tombstone Define must not match in the
+                // production schema-2 QueryResult.
+                if (flat.is_free_slot(id))
+                    continue;
                 auto v = flat.get(id);
                 if (v.tag == aura::ast::NodeTag::Define && v.marker == target) {
                     auto pid = ws.pairs.size();

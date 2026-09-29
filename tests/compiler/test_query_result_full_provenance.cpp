@@ -3295,6 +3295,226 @@ void test_ac4113_4_source_cite() {
     expect_true("4113 AC4: no test_issue_4113.cpp", !f_new.good());
 }
 
+// ═══════════ Issue #4162: free/ghost orphan slots in query:* walks ═══════════
+// free_orphan_nodes_from zeroes node_gen_ only — tag_/marker_/children_ stay
+// in place, so every Agent-facing size() walk that matches via flat.get(id)
+// without is_free_slot packs tombstone NodeIds into the production schema-2
+// QueryResult (auto-upgrade #4088/#3286). The tombstones look epoch-fresh
+// and every later mutate resolve fails stale-ref. The read side already
+// refuses them (query_result_is_fresh_with_refs is_live_node →
+// StaleByEpoch, #1299/#1300); this ship closes the write side: the four
+// full-scan walks (query:filter / query:calls / query:node-type /
+// query:defines-by-marker), the stamp helper (stamp_query_result_full_
+// provenance refuses non-live ids) and the export gate
+// (allow_query_stable_ref_export refuses free slots).
+
+static std::int64_t count_4162_matches(CompilerService& cs, const char* bind_name, const char* prim,
+                                       const char* label) {
+    expect_true(std::string(label) + ": bind query result",
+                cs.eval(std::string("(define ") + bind_name + " " + prim + ")").has_value());
+    auto n = cs.eval(std::string("(length (hash-ref ") + bind_name + " \"matches\"))");
+    expect_true(std::string(label) + ": match count readable", n.has_value() && is_int(*n));
+    return n && is_int(*n) ? as_int(*n) : -1;
+}
+
+void test_ac4162_1_prod_filter_skips_ghost_define() {
+    std::print("AC4162/AC1 -- production query:filter skips free/ghost orphan Define\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    // Fresh CompilerService per production probe (#4088 zone rationale --
+    // pre-existing cumulative production-eval fragility in this binary).
+    // Predicate syntax is the canonical (query:where ...) form.
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4162 AC1: set-code",
+        cs.eval("(set-code \"(begin (define f4162 (lambda (x) x)) (f4162 1))\")").has_value());
+    expect_true("4162 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    const auto count0 =
+        count_4162_matches(cs, "q4162f0", "(query:filter (query:where :node-type \"Define\"))",
+                           "4162 AC1: pre-ghost filter");
+    expect_true("4162 AC1: live Define matches exist", count0 >= 1);
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4162 AC1: workspace flat", flat != nullptr);
+    // Append a Define ghost (tag_/marker_ User survive free_orphan_nodes_
+    // from -- only node_gen_ is zeroed) and free it: the tombstone must NOT
+    // join the walk (#1299/#1300 skip pattern).
+    const auto ghost = flat->add_raw_node(aura::ast::NodeTag::Define);
+    (void)flat->free_orphan_nodes_from(ghost);
+    expect_true("4162 AC1: ghost slot is free", flat->is_free_slot(ghost));
+    const auto count1 =
+        count_4162_matches(cs, "q4162f1", "(query:filter (query:where :node-type \"Define\"))",
+                           "4162 AC1: post-ghost filter");
+    expect_eq_i64("4162 AC1: tombstone Define not matched (count unchanged)", count0, count1);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4162_2_prod_calls_skip_ghost_call() {
+    std::print("AC4162/AC2 -- production query:calls skips free/ghost orphan Call\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4162 AC2: set-code",
+        cs.eval("(set-code \"(begin (define c4162 (lambda (x) x)) (c4162 1))\")").has_value());
+    expect_true("4162 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    const auto count0 =
+        count_4162_matches(cs, "q4162c0", "(query:calls)", "4162 AC2: pre-ghost calls");
+    expect_true("4162 AC2: live Call matches exist", count0 >= 1);
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4162 AC2: workspace flat", flat != nullptr);
+    // Call ghost with non-empty children (callee slot 0) — the pre-fix
+    // walk matched tag == Call && !children.empty() on the tombstone.
+    const auto callee = flat->root;
+    const auto ghost = flat->add_call(callee, std::span<const aura::ast::NodeId>{});
+    (void)flat->free_orphan_nodes_from(ghost);
+    expect_true("4162 AC2: ghost slot is free", flat->is_free_slot(ghost));
+    const auto count1 =
+        count_4162_matches(cs, "q4162c1", "(query:calls)", "4162 AC2: post-ghost calls");
+    expect_eq_i64("4162 AC2: tombstone Call not matched (count unchanged)", count0, count1);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4162_3_prod_node_type_skips_ghost_define() {
+    std::print("AC4162/AC3 -- production query:node-type skips free/ghost orphan\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4162 AC3: set-code",
+        cs.eval("(set-code \"(begin (define n4162 (lambda (x) x)) (n4162 1))\")").has_value());
+    expect_true("4162 AC3: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    const auto count0 = count_4162_matches(cs, "q4162n0", "(query:node-type \"Define\")",
+                                           "4162 AC3: pre-ghost node-type");
+    expect_true("4162 AC3: live Define matches exist", count0 >= 1);
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4162 AC3: workspace flat", flat != nullptr);
+    const auto ghost = flat->add_raw_node(aura::ast::NodeTag::Define);
+    (void)flat->free_orphan_nodes_from(ghost);
+    expect_true("4162 AC3: ghost slot is free", flat->is_free_slot(ghost));
+    const auto count1 = count_4162_matches(cs, "q4162n1", "(query:node-type \"Define\")",
+                                           "4162 AC3: post-ghost node-type");
+    expect_eq_i64("4162 AC3: tombstone not matched by tag (count unchanged)", count0, count1);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4162_4_prod_defines_by_marker_skips_ghost() {
+    std::print("AC4162/AC4 -- production query:defines-by-marker skips free/ghost orphan\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "4162 AC4: set-code",
+        cs.eval("(set-code \"(begin (define m4162 (lambda (x) x)) (m4162 1))\")").has_value());
+    expect_true("4162 AC4: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    const auto count0 = count_4162_matches(cs, "q4162m0", "(query:defines-by-marker \"User\")",
+                                           "4162 AC4: pre-ghost defines-by-marker");
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4162 AC4: workspace flat", flat != nullptr);
+    // Marker survives the free (reset_node_slot never runs on the ghost):
+    // pre-fix the User-marker tombstone joined the walk (count1 = count0+1);
+    // post-fix the counts must stay equal.
+    const auto ghost = flat->add_raw_node(aura::ast::NodeTag::Define); // marker User default
+    (void)flat->free_orphan_nodes_from(ghost);
+    expect_true("4162 AC4: ghost slot is free", flat->is_free_slot(ghost));
+    const auto count1 = count_4162_matches(cs, "q4162m1", "(query:defines-by-marker \"User\")",
+                                           "4162 AC4: post-ghost defines-by-marker");
+    expect_eq_i64("4162 AC4: tombstone Define not matched (count unchanged)", count0, count1);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4162_5_stamp_and_export_refuse_tombstone() {
+    std::print("AC4162/AC5 -- stamp/export gate refuses free slots; tombstone not Fresh\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::kQueryResultMatchSchema2Prod;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4162 AC5: set-code",
+                cs.eval("(set-code \"(define t4162s (lambda (x) x))\")").has_value());
+    expect_true("4162 AC5: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    expect_true("4162 AC5: workspace flat", flat != nullptr);
+    const auto live = flat->add_literal_float(4.5);
+    const auto ghost = flat->add_literal_float(8.5);
+    (void)flat->free_orphan_nodes_from(ghost);
+    // Export gate: a tombstone must never export as a fresh stable ref —
+    // allow_query_stable_ref_export refuses free slots (defense-in-depth
+    // behind the walk guards: post-fix walks never emit free ids, but
+    // stamp_query_result_full_provenance / export_ref must still refuse
+    // one arriving by any other route).
+    expect_true("4162 AC5: export gate refuses tombstone (prod)",
+                !ev.allow_query_stable_ref_export(ghost));
+    expect_true("4162 AC5: export gate still allows live node (prod)",
+                ev.allow_query_stable_ref_export(live));
+    // Freshness-with-refs on the workspace flat (TU-proven pattern): a held
+    // schema-2 match whose node is later freed must NOT read Fresh.
+    aura::core::QueryResult qr{};
+    const bool ok = qr.push_match_full(static_cast<std::uint32_t>(live), flat->node_gen_for(live),
+                                       flat->wrap_epoch(),
+                                       /*cow_epoch_at_capture=*/0, /*tenant_id=*/0, /*fiber_id=*/0,
+                                       /*mutation_id_at_capture=*/0, /*boundary_pinned=*/0);
+    expect_true("4162 AC5: push_match_full ok", ok);
+    qr.matches[0].reserved = kQueryResultMatchSchema2Prod;
+    using aura::compiler::query_result_decode::query_result_is_fresh_with_refs;
+    expect_true("4162 AC5: live match is Fresh pre-free",
+                query_result_is_fresh_with_refs(qr, *flat, 0, 0) ==
+                    aura::core::QueryResultFreshness::Fresh);
+    (void)flat->free_orphan_nodes_from(live);
+    expect_true("4162 AC5: tombstone match NOT Fresh (StaleByEpoch)",
+                query_result_is_fresh_with_refs(qr, *flat, 0, 0) ==
+                    aura::core::QueryResultFreshness::StaleByEpoch);
+    // Soft face: the export-gate tombstone refusal is unconditional (same
+    // face as the #1299 walk skips — not a production-only gate).
+    apply_dev_audit_defaults();
+    expect_true("4162 AC5: export gate refuses tombstone (Soft)",
+                !ev.allow_query_stable_ref_export(ghost));
+}
+
+void test_ac4162_6_source_cite() {
+    std::print("AC4162/AC6 -- source-cite: guards + stamp/export refusal in production TUs\n");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_sec("src/compiler/evaluator_security.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string sec((std::istreambuf_iterator<char>(f_sec)), std::istreambuf_iterator<char>());
+    expect_true("4162 AC6: query_workspace.cpp readable", !qws.empty());
+    expect_true("4162 AC6: evaluator_security.cpp readable", !sec.empty());
+    // All four full-scan walks carry the is_free_slot skip + #4162 cite,
+    // plus the stamp-helper refusal (5 cites in the query TU).
+    const std::string skip_tok = "Issue #4162: skip free/ghost orphan slots";
+    const std::string refuse_tok = "Issue #4162: refuse free/ghost orphan slots";
+    std::size_t guard_hits = 0;
+    for (std::size_t pos = 0; (pos = qws.find(skip_tok, pos)) != std::string::npos;
+         pos += skip_tok.size())
+        ++guard_hits;
+    for (std::size_t pos = 0; (pos = qws.find(refuse_tok, pos)) != std::string::npos;
+         pos += refuse_tok.size())
+        ++guard_hits;
+    expect_eq_i64("4162 AC6: 4 walk guards + stamp refusal cite #4162", 5,
+                  static_cast<std::int64_t>(guard_hits));
+    expect_true("4162 AC6: stamp helper refuses non-live ids",
+                qws.find("flat.is_live_node(static_cast<aura::ast::NodeId>(nid))") !=
+                    std::string::npos);
+    // Export gate refuses free slots in the security TU.
+    expect_true("4162 AC6: export gate refuses free slots (is_free_slot)",
+                sec.find("ws->is_free_slot(id)") != std::string::npos);
+    expect_true("4162 AC6: security TU cites #4162", sec.find("Issue #4162") != std::string::npos);
+    // No per-issue test file (per #81934 the family test is extended).
+    {
+        std::ifstream f("tests/compiler/test_issue_4162.cpp");
+        expect_true("4162 AC6: no tests/compiler/test_issue_4162.cpp", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -3433,8 +3653,20 @@ int main() {
     test_ac4113_2_allowed_cross_grant_target_ok();
     test_ac4113_3_soft_zero_extra_consult();
     test_ac4113_4_source_cite();
+    // Issue #4162: end-of-dispatch zone — each probe uses a fresh
+    // CompilerService (#4088 rationale) and runs AFTER every previously
+    // dispatched AC so a pre-existing cumulative production-eval fragility
+    // cannot block the existing ACs (the #3389/#3827 skip pattern,
+    // inverted: the new probes self-isolate at the tail).
+    test_ac4162_1_prod_filter_skips_ghost_define();
+    test_ac4162_2_prod_calls_skip_ghost_call();
+    test_ac4162_3_prod_node_type_skips_ghost_define();
+    test_ac4162_4_prod_defines_by_marker_skips_ghost();
+    test_ac4162_5_stamp_and_export_refuse_tombstone();
+    test_ac4162_6_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
+    std::print("All #4162 query free-slot AC tests PASSED\n");
     return 0;
 }

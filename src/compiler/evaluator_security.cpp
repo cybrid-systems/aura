@@ -2202,6 +2202,14 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
+    // Issue #4162: free/ghost orphan slots (node_gen_ == 0 after
+    // rollback's free_orphan_nodes_from) never export as fresh stable
+    // refs — the tombstone NodeId would be stamped epoch-fresh into
+    // schema-2 QueryResults and every later mutate resolve fails
+    // stale-ref. Same live-node face as query_result_is_fresh_with_refs
+    // (#1299/#1300 read side).
+    if (ws->is_free_slot(id))
+        return false;
     const bool ov = aura::ast::restamp_hot_cone_held_overflow();
     if (!ov)
         if (ws->node_eagerly_restamped(id))
