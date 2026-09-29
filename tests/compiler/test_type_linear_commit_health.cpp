@@ -3049,6 +3049,179 @@ static void ac3591_3_epoch_arm_and_soft() {
     CHECK(lint.find("classify_elision_decisions") != std::string::npos, "3591 AC3: classifier");
 }
 
+// ── Issue #4152: commit_deferred green republish needs steal/last-look fence ──
+static void ac4152_1_gen_advance_refuses() {
+    std::println("\n--- #4152 AC1: steal gen advance between defer and commit refuses green ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    // Arm the deferred green exactly as the outermost persist defer does:
+    // fence inputs frozen from the live SSOTs at arm time.
+    typed_audit::g_tls_deferred_outermost_green_would_allow = 1;
+    typed_audit::g_tls_deferred_outermost_green_linear_ok = 1;
+    typed_audit::g_tls_deferred_outermost_green_invalidate_gen =
+        typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    typed_audit::g_tls_deferred_outermost_green_live_goals = 0;
+    typed_audit::g_tls_deferred_outermost_green_fp = 0;
+    typed_audit::g_tls_deferred_outermost_green_linear_roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    typed_audit::g_tls_deferred_outermost_green_mid = 0;
+    CHECK(typed_audit::deferred_outermost_green_pending(), "4152 AC1: defer armed");
+    // Concurrent steal/densify success advances invalidate_gen and drops
+    // the green face while the defer is still pending.
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "4152 AC1: steal invalidate fired");
+    const auto advanced = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(advanced != typed_audit::g_tls_deferred_outermost_green_invalidate_gen,
+          "4152 AC1: gen advanced past defer arm");
+    CHECK(!typed_audit::commit_deferred_outermost_green_proof(),
+          "4152 AC1: commit refuses on gen advance (no grant)");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "4152 AC1: outcome Reject");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0 &&
+              typed_audit::last_proof_linear_ok_v_read() == 0,
+          "4152 AC1: deny face published (would_allow=0, linear_ok=0)");
+    CHECK(typed_audit::g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire) != advanced,
+          "4152 AC1: green_bind_gen NOT rebound over the steal");
+    CHECK(!typed_audit::deferred_outermost_green_pending(), "4152 AC1: deferred TLS dropped");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4152_2_last_look_drift_refuses() {
+    std::println("\n--- #4152 AC2: re-run last-look catches truth drift at commit ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::g_tls_deferred_outermost_green_would_allow = 1;
+    typed_audit::g_tls_deferred_outermost_green_linear_ok = 1;
+    typed_audit::g_tls_deferred_outermost_green_invalidate_gen =
+        typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    typed_audit::g_tls_deferred_outermost_green_live_goals = 0;
+    typed_audit::g_tls_deferred_outermost_green_fp = 0;
+    // Frozen linear roots deliberately drifted past the live walk: the
+    // re-run #3346 last-look at commit must catch it even though the
+    // invalidate gen still matches.
+    typed_audit::g_tls_deferred_outermost_green_linear_roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind()) + 7;
+    typed_audit::g_tls_deferred_outermost_green_mid = 0;
+    CHECK(!typed_audit::commit_deferred_outermost_green_proof(),
+          "4152 AC2: commit refuses on last-look drift");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "4152 AC2: outcome Reject");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0,
+          "4152 AC2: would_allow face stays 0");
+    CHECK(typed_audit::g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire) == 0,
+          "4152 AC2: no green rebind on refuse");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4152_3_happy_commits_and_rebinds() {
+    std::println("\n--- #4152 AC3: fence passes when nothing drifted; green commits ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::g_tls_deferred_outermost_green_would_allow = 1;
+    typed_audit::g_tls_deferred_outermost_green_linear_ok = 1;
+    typed_audit::g_tls_deferred_outermost_green_invalidate_gen =
+        typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    typed_audit::g_tls_deferred_outermost_green_live_goals = 0;
+    typed_audit::g_tls_deferred_outermost_green_fp = 0;
+    typed_audit::g_tls_deferred_outermost_green_linear_roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    typed_audit::g_tls_deferred_outermost_green_mid = 0;
+    // #4011: a latched remount-last-zero strip retires on the deferred
+    // green publish — the fence must not break that contract.
+    typed_audit::g_remount_last_zero_strip_face.store(1, std::memory_order_release);
+    CHECK(typed_audit::commit_deferred_outermost_green_proof(),
+          "4152 AC3: deferred green commits (grant proceeds)");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeStamped,
+          "4152 AC3: outcome Stamped");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 1 &&
+              typed_audit::last_proof_linear_ok_v_read() == 1,
+          "4152 AC3: green face published");
+    CHECK(typed_audit::g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire) ==
+              typed_audit::rehydrate_miss_invalidate_gen_v_read(),
+          "4152 AC3: green rebinds invalidate gen");
+    CHECK(typed_audit::g_remount_last_zero_strip_face.load(std::memory_order_acquire) == 0,
+          "4152 AC3: remount latch retired (#4011 preserved)");
+    CHECK(!typed_audit::deferred_outermost_green_pending(), "4152 AC3: deferred TLS dropped");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4152_4_soft_no_defer_no_fence() {
+    std::println("\n--- #4152 AC4: Soft/Off never defers; fence not consulted ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    CHECK(!typed_audit::deferred_outermost_green_pending(), "4152 AC4: Soft never arms defer");
+    CHECK(!typed_audit::commit_deferred_outermost_green_proof(),
+          "4152 AC4: commit returns false when unarmed");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "4152 AC4: no spurious Reject/Stamped (zero-cost path)");
+    reset_for_test();
+}
+
+static void ac4152_5_guard_happy_no_false_refuse() {
+    std::println("\n--- #4152 AC5: real Guard persist->defer->commit stays green ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4152 AC5: warm");
+    (void)cs.eval("(typecheck-current)");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "4152 AC5: success stays true");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+          "4152 AC5: proof not Reject (fence did not false-refuse)");
+    CHECK(!typed_audit::deferred_outermost_green_pending(),
+          "4152 AC5: deferred TLS fully consumed by the guard");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4152_6_source_cite_fence_order() {
+    std::println("\n--- #4152 AC6: source-cite fence ordering in the header ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(typed_audit::kDeferredGreenStealFenceIssue == 4152, "4152 AC6: issue constant");
+    const auto fn = h.find("[[nodiscard]] inline bool commit_deferred_outermost_green_proof");
+    const auto fence =
+        h.find("g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=", fn);
+    const auto lastlook =
+        h.find("stamp_last_look_live_matches(g_tls_deferred_outermost_green_live_goals", fn);
+    const auto reject =
+        h.find("publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);", fn);
+    const auto green = h.find("publish_last_proof_face(true, true);", fn);
+    CHECK(fn != std::string::npos && fence != std::string::npos && lastlook != std::string::npos &&
+              fence < green && lastlook < green,
+          "4152 AC6: fence (gen compare + re-run last-look) precedes the green republish");
+    CHECK(reject != std::string::npos && green != std::string::npos && reject < green,
+          "4152 AC6: refuse path stamps Reject before any green publish");
+    const auto arm = h.find("if ((!publish_green_face && p.would_allow_commit && p.linear_ok)");
+    const auto freeze = h.find("g_tls_deferred_outermost_green_invalidate_gen =", arm);
+    CHECK(arm != std::string::npos && freeze != std::string::npos,
+          "4152 AC6: defer arm freezes the fence inputs");
+    const auto drop = h.find("inline void drop_deferred_outermost_green_proof");
+    CHECK(drop != std::string::npos && h.find("g_tls_deferred_outermost_green_invalidate_gen = 0;",
+                                              drop) != std::string::npos,
+          "4152 AC6: drop clears the fence inputs with the bits");
+    CHECK(read_file("tests/compiler/test_issue_4152.cpp").empty(), "4152: no invent");
+    CHECK(read_file("docs/design/4152-deferred-green-steal-fence.md").empty(),
+          "4152: no docs/design");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -3244,6 +3417,14 @@ int run_test_type_linear_commit_health() {
     ac4030_1_source_grant_after_deferred_commit();
     ac4030_2_last_look_recover_fail_still_note_3440();
     ac4030_3_soft_grant_in_persist();
+    // Issue #4152: deferred-green republish steal/last-look fence.
+    std::println("\n=== Issue #4152: commit_deferred steal/last-look fence ===");
+    ac4152_1_gen_advance_refuses();
+    ac4152_2_last_look_drift_refuses();
+    ac4152_3_happy_commits_and_rebinds();
+    ac4152_4_soft_no_defer_no_fence();
+    ac4152_5_guard_happy_no_false_refuse();
+    ac4152_6_source_cite_fence_order();
     // Issue #3614: outermost persist gated behind linear deny + drain
     // (#3472 residual — order, not a missing restore).
     std::println("\n=== Issue #3614: drain+linear gate before outermost persist ===");

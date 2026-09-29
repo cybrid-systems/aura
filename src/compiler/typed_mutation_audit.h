@@ -3452,6 +3452,21 @@ inline constexpr int kOutermostGreenAfterPostPersistDenyIssue = 3984;
 inline constexpr int kTypeExportGrantAlignDeferredGreenIssue = 4030;
 inline thread_local std::uint8_t g_tls_deferred_outermost_green_would_allow{0};
 inline thread_local std::uint8_t g_tls_deferred_outermost_green_linear_ok{0};
+// Issue #4152: steal/last-look fence inputs frozen at defer arm. The two
+// deferred bits alone prove nothing after a concurrent steal/densify
+// success — invalidate_fast_path_before_steal_densify_restamp advances
+// g_rehydrate_miss_invalidate_gen and drops the green face while the
+// persist defer is still pending. commit_deferred_outermost_green_proof
+// re-runs the #3346 stamp last-look against the frozen truth AND requires
+// invalidate_gen == gen-at-defer-arm before republishing green; mismatch
+// → refuse (drop TLS, stamp Reject, no #4030 grant). No second proof
+// model: every input below mirrors an existing SSOT at arm time.
+inline constexpr int kDeferredGreenStealFenceIssue = 4152;
+inline thread_local std::uint64_t g_tls_deferred_outermost_green_invalidate_gen{0};
+inline thread_local std::uint64_t g_tls_deferred_outermost_green_live_goals{0};
+inline thread_local std::uint64_t g_tls_deferred_outermost_green_fp{0};
+inline thread_local std::uint64_t g_tls_deferred_outermost_green_linear_roots{0};
+inline thread_local std::uint64_t g_tls_deferred_outermost_green_mid{0};
 inline std::atomic<std::uint8_t> g_inject_linear_synth_after_persist_for_test{0};
 // Issue #4063: one-shot. The post-persist amend append consumes this by
 // arming inject_fail_remaining, so the pre-persist allow row is not the
@@ -3461,6 +3476,14 @@ inline std::atomic<std::uint8_t> g_inject_post_persist_amend_append_fail_for_tes
 inline void drop_deferred_outermost_green_proof() noexcept {
     g_tls_deferred_outermost_green_would_allow = 0;
     g_tls_deferred_outermost_green_linear_ok = 0;
+    // Issue #4152: the fence inputs share the deferred TLS lifetime —
+    // every drop site (Guard commit/refuse, #3472 belt, persist-reject,
+    // reset_for_test) clears them together with the bits.
+    g_tls_deferred_outermost_green_invalidate_gen = 0;
+    g_tls_deferred_outermost_green_live_goals = 0;
+    g_tls_deferred_outermost_green_fp = 0;
+    g_tls_deferred_outermost_green_linear_roots = 0;
+    g_tls_deferred_outermost_green_mid = 0;
 }
 
 [[nodiscard]] inline bool deferred_outermost_green_pending() noexcept {
@@ -3474,6 +3497,34 @@ inline void drop_deferred_outermost_green_proof() noexcept {
 [[nodiscard]] inline bool commit_deferred_outermost_green_proof() noexcept {
     const bool commit = deferred_outermost_green_pending();
     if (commit) {
+        // Issue #4152: steal/last-look fence before republishing green.
+        // A concurrent steal/densify success between the persist defer
+        // and this commit advanced invalidate_gen and cleared the green
+        // face (invalidate_fast_path_before_steal_densify_restamp); the
+        // naive publish below would rebind green_bind_gen to the
+        // advanced gen (#3032), masking the steal and shipping a
+        // half-green proof over a drifted Occurrence fingerprint /
+        // linear_root_count. Production/Full: re-run the #3346 stamp
+        // last-look against the frozen defer-arm truth (CS consult rides
+        // g_tls_stamp_last_look_tc when present; the live linear roots
+        // walk + mid abort authority still apply at Guard commit) AND
+        // require invalidate_gen == gen-at-defer-arm. Mismatch → drop
+        // the deferred TLS, publish the deny face, stamp Reject — no
+        // green rebind, no #4030 grant. Soft/Off never defers (the arm
+        // is unreachable) and stamp_last_look_live_matches early-outs,
+        // so the fence stays zero-cost there.
+        if (stamp_last_look_hard() &&
+            (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
+                 g_tls_deferred_outermost_green_invalidate_gen ||
+             !stamp_last_look_live_matches(g_tls_deferred_outermost_green_live_goals,
+                                           g_tls_deferred_outermost_green_fp,
+                                           g_tls_deferred_outermost_green_linear_roots,
+                                           g_tls_deferred_outermost_green_mid))) {
+            drop_deferred_outermost_green_proof();
+            publish_last_proof_face(false, false);
+            publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+            return false;
+        }
         // Issue #4011 / #4081: this green publish is the remount-last-zero
         // retire. publish_last_proof_face clears the latch. The live stamp
         // must not have cleared it already.
@@ -3578,6 +3629,16 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     if ((!publish_green_face && p.would_allow_commit && p.linear_ok) || defer_remount_reproof) {
         g_tls_deferred_outermost_green_would_allow = 1;
         g_tls_deferred_outermost_green_linear_ok = 1;
+        // Issue #4152: freeze the steal/last-look fence inputs at defer
+        // arm so the Guard commit can detect a concurrent steal/densify
+        // restamp (gen advance) or a drifted live truth and refuse the
+        // republish instead of rebinding green over the drift.
+        g_tls_deferred_outermost_green_invalidate_gen =
+            g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire);
+        g_tls_deferred_outermost_green_live_goals = p.live_goal_count;
+        g_tls_deferred_outermost_green_fp = p.goal_fingerprint;
+        g_tls_deferred_outermost_green_linear_roots = p.linear_root_count;
+        g_tls_deferred_outermost_green_mid = p.audit_mid;
         publish_last_proof_face(false, false);
     } else {
         publish_last_proof_face(p.would_allow_commit, p.linear_ok);

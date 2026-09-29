@@ -9104,6 +9104,31 @@ def cmd_lint():
             "Issue #4151 macro child walk gate linter failed — run python3 scripts/check_macro_child_walk_gate_4151.py"
         )
         return r
+    # Issue #4152 (P1 typed-mutation): commit_deferred_outermost_green_proof
+    # republished observer-visible green from the two deferred TLS bits
+    # alone — publish_last_proof_face's green path re-binds green_bind_gen
+    # to the CURRENT invalidate_gen, so a concurrent steal/densify success
+    # between the persist defer and the Guard commit (gen advance + face
+    # clear) was masked and a half-green TypeLinearCommitProof shipped over
+    # a drifted Occurrence fingerprint / linear_root_count, with the #4030
+    # grant riding along. The commit now re-runs the #3346 stamp last-look
+    # against the truth frozen at defer arm and requires invalidate_gen ==
+    # gen-at-defer-arm; mismatch → drop TLS + deny face + Reject + return
+    # false (no grant). Soft/Off never defers — fence zero-cost. Gate pins
+    # the fence ordering, the freeze/clear pairing, the preserved
+    # #3984/#4011/#4030 contracts, the single invalidate-gen SSOT, and the
+    # extended tests. Runtime doors live in test_type_linear_commit_health.cpp
+    # (#4152 ACs).
+    dgsf4152_script = ROOT / "scripts" / "check_deferred_green_steal_fence_4152.py"
+    if not dgsf4152_script.exists():
+        fail(f"missing {dgsf4152_script}")
+        return 1
+    r = run([sys.executable, str(dgsf4152_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4152 deferred-green steal fence linter failed — run python3 scripts/check_deferred_green_steal_fence_4152.py"
+        )
+        return r
     # Issue #4176: Soft --serve-async unix sock stalled permanently after a
     # long sequence of sequential fiber:spawn+mutate:rebind+fiber:join
     # oneshots (host raw_line timeout; Soft alive in ep_poll, near-zero
