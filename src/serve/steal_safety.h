@@ -37,6 +37,9 @@
 
 #include <atomic>
 #include <cstdint>
+// Issue #4159: std::getenv for the AURA_CHAOS_SOAK_HARD_GATE deploy arm
+// term in the production concurrency Ready residual gate below.
+#include <cstdlib>
 
 namespace aura::serve {
 
@@ -237,6 +240,45 @@ inline constexpr int kStealSafetyProductionResidualZeroIssue = 3134;
     }
     return 0u;
 }
+
+// Issue #4159: production concurrency Ready deploy residual-zero hard gate —
+// machine-checkable continuous deploy AND over #2722/#2755. The RELEASE
+// soak was env-opt-in per deploy and the #2722 coverage linter proved only
+// command PRESENCE, so a deploy could ship a Soft-green soak while the
+// named residuals (rearm_race / lifetime_proof / envframe_lag) grew
+// between RELEASE runs. Mandatory on the Ready face: the deploy gate
+// (build.py cmd_production_concurrency_ready_gate_4159 + release.yml)
+// consults this accessor. Readiness poll, not hot path: one getenv per
+// consult (deploy cadence) + the same relaxed loads as the SSOT reader.
+inline std::atomic<std::uint32_t> g_steal_safety_production_concurrency_ready_gate_wired{1};
+inline constexpr int kStealSafetyProductionConcurrencyReadyGateIssue = 4159;
+
+// Issue #4159 deploy AND (existing latches/bits only — no new residual bus):
+//   1. #3195 Ready latch — aura_runtime_require_production_multi_worker
+//      success (aura_runtime_multi_worker_production_latched);
+//   2. soak arm — AURA_CHAOS_SOAK_HARD_GATE=1 (the env
+//      cmd_chaos_soak_hard_gate_2722 sets for the deploy run);
+//   3. residual-zero SSOT — #3134/#3195 readiness poll (also clears the
+//      sticky bit on recovery),
+//   4. sticky-fail == 0 — #3162 face, read AFTER the poll so a recovery
+//      poll wipes the stale bit (sticky semantics unchanged).
+// NOT Soft-as-vuln: unlatched (Soft) → 0 even with the soak armed — a
+// Soft-green soak can never satisfy the deploy AND.
+[[nodiscard]] inline std::uint32_t
+steal_safety_production_concurrency_ready_gate_v_read() noexcept {
+    const char* soak_env = std::getenv("AURA_CHAOS_SOAK_HARD_GATE");
+    const bool soak_armed = soak_env != nullptr && soak_env[0] == '1';
+    // SSOT poll first: it may clear the sticky bit when residuals recovered
+    // (per-query readiness poll — #3162 contract).
+    const bool residual_zero = steal_safety_production_residual_zero_v_read() == 1;
+    const bool sticky_clear =
+        g_steal_safety_production_residual_sticky_fail.load(std::memory_order_relaxed) == 0;
+    return (aura_runtime_multi_worker_production_latched() != 0 && soak_armed && residual_zero &&
+            sticky_clear)
+               ? 1u
+               : 0u;
+}
+
 // Issue #2954: per-Fiber decision protocol (replaces process-wide mutex).
 // contention_total bumps when try_begin_steal_decision CAS fails (same
 // victim concurrent decision). per_fiber_wired=1 when Ok path uses Fiber

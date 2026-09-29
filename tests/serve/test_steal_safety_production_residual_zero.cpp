@@ -797,10 +797,109 @@ int run_test_steal_safety_production_residual_zero() {
         CHECK(ss_h.find("DensifyBusy") == std::string::npos, "3894 AC2: no DensifyBusy bit");
     }
 
-    std::println(
-        "\n=== #3134/#3288/#3385/#3586/#3590/#3592/#3950 production-readiness residual-zero: {} "
-        "passed, {} failed ===",
-        g_passed, g_failed);
+    // ── AC18 (Issue #4159): production concurrency Ready deploy residual
+    //    gate — the machine-checkable continuous deploy AND. Closes the
+    //    #2722/#2755 residual: the RELEASE-only soak hard gate was opt-in
+    //    per deploy and the coverage linter proved only command PRESENCE,
+    //    so a deploy could ship a Soft-green soak while the named
+    //    residuals grew between RELEASE runs. The deploy-AND accessor
+    //    AND-s (1) the #3195 multi-worker Ready latch, (2) the soak hard
+    //    gate arm (AURA_CHAOS_SOAK_HARD_GATE=1, the env
+    //    cmd_chaos_soak_hard_gate_2722 sets), (3) the residual-zero SSOT,
+    //    (4) sticky-clear. Soft-green soak can never satisfy the AND (not
+    //    Soft-as-vuln); skipping the soak arm fails the gate; a residual
+    //    bump fail-closes + sets sticky. No new residual bus (existing
+    //    latches/bits only); #3162/#3195 sticky faces unchanged.
+    {
+        std::println("\n--- AC18: production concurrency Ready deploy residual gate (#4159) ---");
+        auto sh = read_file("src/serve/steal_safety.h");
+        auto build = read_file("build.py");
+        auto release = read_file(".github/workflows/release.yml");
+        CHECK(sh.find("#include <cstdlib>") != std::string::npos,
+              "AC18: cstdlib included for the soak-arm getenv");
+        auto gate_pos = sh.find("steal_safety_production_concurrency_ready_gate_v_read()");
+        CHECK(gate_pos != std::string::npos, "AC18: deploy-AND accessor declared");
+        auto gate_win = sh.substr(gate_pos > 1500 ? gate_pos - 1500 : 0, 3000);
+        must_inline(gate_win, "Issue #4159");
+        must_inline(gate_win, "AURA_CHAOS_SOAK_HARD_GATE");
+        must_inline(gate_win, "aura_runtime_multi_worker_production_latched() != 0");
+        must_inline(gate_win, "steal_safety_production_residual_zero_v_read() == 1");
+        must_inline(gate_win, "g_steal_safety_production_residual_sticky_fail.load");
+        must_inline(sh, "g_steal_safety_production_concurrency_ready_gate_wired{1}");
+        must_inline(sh, "kStealSafetyProductionConcurrencyReadyGateIssue = 4159");
+        // Continuous deploy wiring: build.py deploy gate AND + table row +
+        // release.yml step (machine-checked on every gate by
+        // scripts/check_chaos_ready_residual_gate_4159.py).
+        must_inline(build, "def cmd_production_concurrency_ready_gate_4159(");
+        must_inline(
+            build,
+            R"("production-concurrency-ready-gate-4159": cmd_production_concurrency_ready_gate_4159,)");
+        must_inline(release, "production-concurrency-ready-gate-4159");
+        CHECK(sh.find("g_4159_") == std::string::npos, "AC18: no g_4159_* residual bus");
+        CHECK(sh.find("schema-4159") == std::string::npos, "AC18: no new query key");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "docs" / "design" /
+                                       "4159-chaos-ready-residual-gate.md"),
+              "AC18: no docs/design/4159-* per #1655");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_4159.cpp"),
+              "AC18: no tests/serve/test_issue_4159.cpp per #81934");
+
+        // Live AND semantics (existing latches/bits only).
+        using aura::serve::clear_production_abi_selfcheck_for_test;
+        using aura::serve::clear_steal_safety_transaction_for_test;
+        using aura::serve::g_steal_safety_production_residual_sticky_fail;
+        using aura::serve::g_steal_safety_residual_envframe_lag_total;
+        using aura::serve::set_production_multi_worker_latched_for_test;
+        using aura::serve::steal_safety_production_concurrency_ready_gate_v_read;
+        using aura::serve::steal_safety_production_residual_sticky_fail_v_read;
+
+        clear_steal_safety_transaction_for_test();
+        clear_production_abi_selfcheck_for_test();
+        g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+        set_production_multi_worker_latched_for_test(false);
+        ::setenv("AURA_CHAOS_SOAK_HARD_GATE", "1", 1);
+
+        // (a) Soft-green soak: unlatched + soak armed + residuals 0 → 0.
+        CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 0,
+              "AC18: Soft-green soak cannot satisfy the deploy AND (not Soft-as-vuln)");
+
+        // (b) Latched but NO soak arm → 0 (deploy cannot skip the soak term).
+        set_production_multi_worker_latched_for_test(true);
+        ::unsetenv("AURA_CHAOS_SOAK_HARD_GATE");
+        CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 0,
+              "AC18: deploy cannot skip the SOAK hard-gate arm");
+
+        // (c) Full AND green: latch ∧ soak arm ∧ residual-zero ∧ sticky-clear.
+        ::setenv("AURA_CHAOS_SOAK_HARD_GATE", "1", 1);
+        CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 1,
+              "AC18: full deploy AND green under the latched face + armed soak env");
+
+        // (d) Residual bump fail-closes the AND + sets sticky (#3195 face).
+        g_steal_safety_residual_envframe_lag_total.store(1, std::memory_order_relaxed);
+        CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 0,
+              "AC18: residual bump fail-closes the deploy AND");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 1,
+              "AC18: residual under latch sets sticky");
+
+        // (e) Recovery poll wipes sticky → AND green again (#3162 face).
+        g_steal_safety_residual_envframe_lag_total.store(0, std::memory_order_relaxed);
+        CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 1,
+              "AC18: recovery poll wipes sticky → deploy AND green again");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 0,
+              "AC18: sticky cleared by the SSOT readiness poll");
+
+        // Cleanup: restore process state for any later AC / re-run.
+        ::unsetenv("AURA_CHAOS_SOAK_HARD_GATE");
+        g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+        set_production_multi_worker_latched_for_test(false);
+        clear_steal_safety_transaction_for_test();
+        clear_production_abi_selfcheck_for_test();
+    }
+
+    std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592/#3950/#4159 production-readiness "
+                 "residual-zero: {} "
+                 "passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

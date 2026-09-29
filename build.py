@@ -9484,6 +9484,26 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4158 edge-free hold quarantine linter failed — run python3 scripts/check_edge_free_hold_4158.py")
         return r
+    # Issue #4159 (P0: chaos residual-zero hard gate not mandatory on
+    # production concurrency Ready): the RELEASE-only
+    # AURA_CHAOS_SOAK_HARD_GATE arm was opt-in per deploy and the #2722
+    # coverage linter proved only command PRESENCE — a deploy could ship a
+    # Soft-green soak while the named residuals grew between RELEASE runs.
+    # The deploy-AND accessor (steal_safety.h) + the deploy gate command
+    # (cmd_production_concurrency_ready_gate_4159) + the release.yml step
+    # make the AND machine-checkable and mandatory; this linter proves the
+    # wiring continuously on every gate run. Runtime door:
+    # test_steal_safety_production_residual_zero.cpp (#4159 AC18).
+    crrg4159_script = ROOT / "scripts" / "check_chaos_ready_residual_gate_4159.py"
+    if not crrg4159_script.exists():
+        fail(f"missing {crrg4159_script}")
+        return 1
+    r = run([sys.executable, str(crrg4159_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4159 production concurrency Ready residual gate linter failed — run python3 scripts/check_chaos_ready_residual_gate_4159.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
@@ -23714,6 +23734,103 @@ def cmd_chaos_soak_residual_zero_2755_coverage():
     return 0
 
 
+def cmd_production_concurrency_ready_gate_4159():
+    """Issue #4159 (P0): production concurrency Ready deploy residual-zero
+    hard gate — the machine-checkable continuous deploy AND over
+    #2722/#2755. The RELEASE soak hard gate was env-opt-in per deploy and
+    the coverage linter proved only command PRESENCE, so a deploy could
+    ship a Soft-green soak while the named residuals (rearm_race /
+    lifetime_proof / envframe_lag) grew between RELEASE runs — missing
+    machine-checkable continuous proof of the I3/I6 arms (not
+    Soft-as-vuln).
+
+    This command IS the deploy AND (all terms reuse existing latches/bits;
+    no new residual bus):
+      1. aura_runtime_require_production_multi_worker — the #3195 Ready
+         latch, consulted by the deploy-AND accessor through
+         aura_runtime_multi_worker_production_latched().
+      2. cmd_chaos_soak_hard_gate_2722() — the RELEASE SOAK hard gate runs
+         here (residual arms hard-zero at end-of-run per #2755).
+      3+4. steal_safety_production_residual_zero_v_read() == 1 AND
+         sticky-fail == 0 under the latched face + armed soak env —
+         proven at deploy time by the residual-zero runtime face
+         (test_steal_safety_production_residual_zero, #4159 AC18) run
+         under AURA_CHAOS_SOAK_HARD_GATE=1 +
+         AURA_PRODUCTION_CONCURRENCY_GATE=1. Soft (unlatched) returns 0
+         from steal_safety_production_concurrency_ready_gate_v_read()
+         even with the soak armed — a Soft-green soak can never satisfy
+         the deploy AND.
+
+    Soft / PR soak remains non-gating (#2722 AC5 / #2755 AC2 unchanged);
+    #3162/#3195 sticky faces and the #4158 edge-free hold contract are
+    not weakened. release.yml runs this gate after the 2722 coverage row
+    and before release-asset upload; the static rows run on EVERY
+    build.py gate via scripts/check_chaos_ready_residual_gate_4159.py —
+    continuous proof, not RELEASE-only.
+    """
+    print(f"{B}=== production concurrency Ready residual-zero deploy gate (#4159) ==={N}")
+    # Static deploy-AND contract first — fast fail on missing wire-up.
+    script = ROOT / "scripts" / "check_chaos_ready_residual_gate_4159.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("production concurrency Ready residual gate (#4159) static contract failed")
+        return r
+    ok("production concurrency Ready residual gate (#4159) static contract clean")
+
+    # Term 2: the RELEASE chaos SOAK hard gate itself (full soak; residual
+    # arms hard-zero at end-of-run per #2755).
+    rc = cmd_chaos_soak_hard_gate_2722()
+    if rc != 0:
+        return rc
+
+    # Terms 3+4: residual-zero SSOT + sticky-clear under the latched face,
+    # proven at deploy time by the residual-zero runtime face under the
+    # armed env (the #4159 AC18 block flips the env/latch per sub-case and
+    # restores; the outer env arms the deploy face for the whole binary).
+    bin_path = BUILD / "test_steal_safety_production_residual_zero"
+    if not bin_path.exists():
+        if not (BUILD / "CMakeCache.txt").exists():
+            ok(
+                "residual-zero runtime face skipped (no CMakeCache; static "
+                "deploy-AND contract only) — run after ./build.py build"
+            )
+            return 0
+        info("building test_steal_safety_production_residual_zero…")
+        nproc = os.cpu_count() or 4
+        r = run(
+            [
+                "cmake",
+                "--build",
+                str(BUILD),
+                "--target",
+                "test_steal_safety_production_residual_zero",
+                "-j",
+                str(nproc),
+            ],
+            cwd=ROOT,
+        )
+        if r != 0:
+            fail("build test_steal_safety_production_residual_zero failed")
+            return r
+    env = os.environ.copy()
+    env["AURA_CHAOS_SOAK_HARD_GATE"] = "1"
+    env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1"
+    info("deploy face env: AURA_CHAOS_SOAK_HARD_GATE=1 AURA_PRODUCTION_CONCURRENCY_GATE=1")
+    r = subprocess.run([str(bin_path)], cwd=ROOT, env=env)
+    if r.returncode != 0:
+        fail(
+            "production concurrency Ready residual gate (#4159) FAILED — "
+            "residual-zero SSOT / sticky / deploy-AND face red under the "
+            "armed env; release blocked"
+        )
+        return r.returncode
+    ok("production concurrency Ready residual gate (#4159) GREEN — deploy AND proven")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -25367,6 +25484,7 @@ def main():
         "chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,
         "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
         "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,
+        "production-concurrency-ready-gate-4159": cmd_production_concurrency_ready_gate_4159,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-hot-residual-3007": cmd_dead_coercion_hot_residual_3007_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
