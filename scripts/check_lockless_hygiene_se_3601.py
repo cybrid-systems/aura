@@ -6,9 +6,12 @@
 # #3543 SE path instead of staying counters-only.
 #
 #  AC1: every record_hygiene_violation_attempt() deny site in
-#       evaluator_eval_flat.cpp pairs (within 3 lines) with
-#       note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)
-#       — 16/16 sites (10 fixed by #3601, 6 pre-existing).
+#       evaluator_eval_flat.cpp pairs (within 3 lines) with a last-limit
+#       reason stamp — note_hygiene_last_limit_reason(
+#       kHygieneLimitReasonMacroIntroduced), or at the MSE allow-arm deny
+#       helper note_capability_deny_last_reason (the #3304 companion API;
+#       unified sentinel 7, per-fiber slot un-armed) per Issue #4149 —
+#       16/16 sites (10 fixed by #3601, 6 pre-existing).
 #  AC2: evaluator_eval_flat.cpp cites Issue #3601 at the fix site.
 #  AC3: no parallel #3543 SE emit — the lockless deny sites must not grow
 #       their own MacroHygiene emit_security_event_durable (the #3543 note
@@ -109,15 +112,25 @@ def run_checks() -> list[str]:
             failures.append(label)
 
     # AC1: pairing invariant — every record_hygiene_violation_attempt() deny
-    # site is followed within 3 lines by the kHygieneLimitReasonMacroIntroduced
-    # stamp (16/16: 10 fixed by #3601 + 6 pre-existing).
+    # site is followed within 3 lines by a last-limit reason stamp
+    # (16/16: 10 fixed by #3601 + 6 pre-existing). Issue #4149: the MSE
+    # allow-arm deny helper stamps via the #3304 companion API
+    # note_capability_deny_last_reason (capability atomic + the unified
+    # process-global sentinel 7; the per-fiber slot stays un-armed per the
+    # #4034/#4078 boundary) — a capability miss is not a structural
+    # macro-introduced default-deny — so the window accepts all three
+    # forms; every other site keeps 4.
     lines = body(FLAT).split("\n")
     call_idx = [i for i, ln in enumerate(lines) if "record_hygiene_violation_attempt();" in ln]
     if len(call_idx) < 16:
         failures.append(f"3601 AC1: expected >=16 deny sites, found {len(call_idx)}")
     for i in call_idx:
         window = "\n".join(lines[i + 1 : i + 6])
-        if "note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)" not in window:
+        if (
+            "note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)" not in window
+            and "note_hygiene_last_limit_reason(macro_exp::kHygieneLimitReasonCapabilityDeny)" not in window
+            and "note_capability_deny_last_reason(" not in window
+        ):
             failures.append(f"3601 AC1: deny site at line {i + 1} missing reason stamp within 3 lines")
 
     # AC5: no design doc, no standalone issue test (#1655 / #81934).
