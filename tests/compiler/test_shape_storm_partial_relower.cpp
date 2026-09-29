@@ -48,7 +48,11 @@ using aura::compiler::should_partial_relower;
 using aura::compiler::should_partial_relower_storm_aware;
 using aura::compiler::storm_level_has_global;
 using aura::compiler::storm_level_has_shape;
+using aura::compiler::dirty::bump_residual_castop_persist_content_epoch;
+using aura::compiler::dirty::encode_block_dep_node;
+using aura::compiler::dirty::note_residual_castop_sites;
 using aura::compiler::dirty::reset_residual_castop_persist_for_test;
+using aura::compiler::dirty::residual_castop_persist_fresh;
 using aura::compiler::dirty::residual_castop_persist_size;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -420,6 +424,157 @@ static void ac3986_shape_flip_empty_persist_forces_full() {
     reset_partial_relower_threshold_for_test();
 }
 
+// ── Issue #4157: Shape-flip fail-closed unless persist is freshly same-define attributed ──
+//   AC1: source-cite + wiring — consult cites #4157 + consults fresh();
+//        dirty_propagation carries the content-epoch model (stamp on
+//        note, bump on densify + both store sites, reset in for_test);
+//        no tests/**/test_issue_4157.cpp (per #81934); no docs/design/4157-*
+//        (per #1655).
+//   AC2: stale persist (noted pre-store; a real store cycle bumps the
+//        content epoch while the persist survives nonempty) + Shape flip
+//        over an adaptive-full window → production peel forced full.
+//   AC3: fresh control — re-note stamps fresh; the identical window does
+//        NOT trip the #4157 fail-closed (no forced-full delta; the
+//        #3618 same-define attribution stays the final proof).
+//   AC4: Soft keeps Shape widen with a stale persist (zero persist
+//        consult); reset_for_test re-zeroes the epochs (isolation).
+static void ac4157_shape_flip_stale_persist_fails_closed() {
+    std::println("\n--- #4157: Shape-flip stale persist fails closed ---");
+    reset_partial_relower_threshold_for_test();
+    clear_storm();
+    reset_residual_castop_persist_for_test();
+    CHECK(aura::compiler::dirty::kResidualCastopFreshPersistIssue == 4157, "4157: issue stamp");
+
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(svc.find("Issue #4157") != std::string::npos, "4157 AC1: consult cites #4157");
+    CHECK(svc.find("residual_castop_persist_fresh()") != std::string::npos,
+          "4157 AC1: consult consults freshness");
+    CHECK(svc.find("residual_castop_persist_size() == 0") != std::string::npos,
+          "4157 AC1: #3986 empty row retained");
+    CHECK(dirty.find("kResidualCastopFreshPersistIssue = 4157") != std::string::npos,
+          "4157 AC1: epoch stamp in dirty_propagation");
+    CHECK(dirty.find("bump_residual_castop_persist_content_epoch") != std::string::npos,
+          "4157 AC1: epoch bump helper defined");
+    CHECK(dirty.find("t_residual_castop_write_epoch = t_residual_castop_content_epoch") !=
+              std::string::npos,
+          "4157 AC1: note stamps the content epoch");
+    CHECK(read_file("tests/compiler/test_issue_4157.cpp").empty(), "4157: no test_issue_4157.cpp");
+    CHECK(read_file("docs/design/4157-shape-flip-persist-fresh.md").empty(),
+          "4157: no docs/design");
+
+    // AC2/AC3: live peel — stale persist fails closed, fresh keeps partial.
+    {
+        apply_production_audit_defaults();
+        reset_residual_castop_persist_for_test();
+        CHECK(residual_castop_persist_size() == 0, "4157 AC2: persist empty at entry");
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x)
+  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9)))))))))
+")
+)")
+                  .has_value(),
+              "4157 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4157 AC2: eval");
+        if (!cs.get_define_v2("f"))
+            (void)cs.eval("(compile:cache-define \"f\")");
+        CHECK(cs.get_define_v2("f") != nullptr, "4157 AC2: f cached");
+        const auto nblocks =
+            cs.get_define_v2("f")->irs.empty() ? 0 : cs.get_define_v2("f")->irs[0].blocks.size();
+        CHECK(nblocks >= 9, "4157 AC2: nested-if lowered enough blocks");
+
+        // Arm the persist with f's own block-0 encoding (#3986 AC2 shape):
+        // nonempty + same-define attributable, stamped fresh by the note.
+        const auto blk = encode_block_dep_node(0, 0, 0);
+        const aura::compiler::dirty::NodeId blocks[] = {blk};
+        note_residual_castop_sites({}, blocks);
+        CHECK(residual_castop_persist_size() > 0, "4157 AC2: persist armed nonempty");
+        CHECK(residual_castop_persist_fresh(), "4157 AC2: armed persist is fresh");
+
+        // Real store cycle: mark f fully dirty (no storm → adaptive full →
+        // full relower) and relower. store_define_v2 bumps the content
+        // epoch AFTER the persist was noted → nonempty + stale.
+        cs.public_mark_define_dirty("f");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        CHECK(residual_castop_persist_size() > 0, "4157 AC2: persist survives the store");
+        CHECK(!residual_castop_persist_fresh(), "4157 AC2: store bumped the epoch (stale)");
+
+        // Flip window (identical arithmetic to #3986 AC1): 9 dirty at mid
+        // density is adaptive-full; Shape's 2× window flips it. The stale
+        // persist must fail closed — full, with the #3986 distinguisher.
+        constexpr std::size_t kFlipDirty = 9;
+        std::size_t marked = 0;
+        for (std::uint32_t i = 0; i < kFlipDirty; ++i) {
+            if (cs.mark_block_dirty_v2("f", 0, i))
+                ++marked;
+        }
+        CHECK(marked == kFlipDirty, "4157 AC2: flip window marked");
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(storm_level_has_shape() && !storm_level_has_global(), "4157 AC2: Shape-only");
+        auto d = decide_workload_adaptive_partial_relower(marked, nblocks, 0, 0, false);
+        const bool would_be_full = !d.want_partial;
+        apply_shape_storm_partial_preference(d, marked);
+        CHECK(would_be_full && d.shape_flipped_full_to_partial,
+              "4157 AC2: 9 dirty at mid density is adaptive-full then Shape-flip");
+        const auto forced0 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto forced1 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        std::println("  4157 AC2: marked={} stale forced {}→{}", marked, forced0, forced1);
+        CHECK(forced1 > forced0, "4157 AC2: stale persist + Shape flip → production peel full");
+        CHECK(cs.eval("(f 0)").has_value(), "4157 AC2: f still evaluable");
+
+        // AC3 fresh control: re-note the same site — the stamp re-proves
+        // freshness; the identical window must NOT trip the #4157
+        // fail-closed (no forced-full delta from the consult).
+        clear_storm();
+        note_residual_castop_sites({}, blocks);
+        CHECK(residual_castop_persist_fresh(), "4157 AC3: re-note stamps fresh");
+        CHECK(residual_castop_persist_size() > 0, "4157 AC3: persist still nonempty");
+        std::size_t marked2 = 0;
+        for (std::uint32_t i = 0; i < kFlipDirty; ++i) {
+            if (cs.mark_block_dirty_v2("f", 0, i))
+                ++marked2;
+        }
+        CHECK(marked2 == kFlipDirty, "4157 AC3: identical flip window marked");
+        aura_hot_update_set_shape_storm_active(1);
+        const auto forced2 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto forced3 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        std::println("  4157 AC3: fresh forced {}→{}", forced2, forced3);
+        CHECK(forced3 == forced2,
+              "4157 AC3: fresh persist keeps Shape partial (no #4157 fail-closed)");
+        CHECK(cs.eval("(f 0)").has_value(), "4157 AC3: f still evaluable");
+        clear_storm();
+        apply_dev_audit_defaults();
+        reset_residual_castop_persist_for_test();
+    }
+
+    // AC4: Soft keeps Shape widen with a stale persist (zero persist
+    // consult); reset_for_test re-zeroes the epochs (isolation).
+    {
+        apply_dev_audit_defaults();
+        const auto blk = encode_block_dep_node(0, 0, 0);
+        const aura::compiler::dirty::NodeId blocks[] = {blk};
+        note_residual_castop_sites({}, blocks);
+        bump_residual_castop_persist_content_epoch();
+        CHECK(!residual_castop_persist_fresh(), "4157 AC4: stale armed under Soft");
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(should_partial_relower_storm_aware(8),
+              "4157 AC4: Soft Shape+8 still partial (zero persist consult, stale persist)");
+        clear_storm();
+        reset_residual_castop_persist_for_test();
+        CHECK(residual_castop_persist_fresh(), "4157 AC4: reset re-zeroes epochs");
+        CHECK(residual_castop_persist_size() == 0, "4157 AC4: reset clears persist");
+    }
+    reset_partial_relower_threshold_for_test();
+}
+
 // ── Issue #4091: result-shape flip dirties the result cone, not every block ──
 //   AC1: multiple cached defines; flipping one define's result shape leaves
 //        the other defines' dirty_block_count() at 0.
@@ -591,6 +746,7 @@ int run_test_shape_storm_partial_relower() {
     ac4_lineage_and_source();
     ac3070_hysteresis_and_forced_thr();
     ac3986_shape_flip_empty_persist_forces_full();
+    ac4157_shape_flip_stale_persist_fails_closed();
     ac4091_shape_flip_dirty_cone();
     ac4108_stable_sync_side_index();
 

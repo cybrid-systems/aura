@@ -5598,6 +5598,14 @@ public:
         // skip the live mutation/bridge/defuse/soa write.
         entry.abort_map_invalid = false;
         entry.content_stored_this_epoch = true;
+        // Issue #4157: stored content is a new AST/IR epoch — residual
+        // CastOp persist noted before this store holds NodeIds the
+        // rebuilt source_to_ir_map can mis-attribute. Invalidate persist
+        // freshness so the #3986 Shape-flip fail-closed treats it as
+        // unproven. Production/Full only (Soft/Off never consult the
+        // flip gate).
+        if (aura::compiler::dirty::residual_castop_persist_active())
+            aura::compiler::dirty::bump_residual_castop_persist_content_epoch();
         // Issue #2033 / #2111 / #2183: unified restamp after successful store.
         restamp_cache_entry_live_(entry);
         ack_peer_ir_stale_on_restamp_(entry, name);
@@ -6237,10 +6245,25 @@ public:
         // widen (zero extra persist consult when not production).
         if (d.shape_flipped_full_to_partial) {
             const bool production = aura::compiler::typed_audit::production_hard_face_active();
-            if (production && aura::compiler::dirty::residual_castop_persist_size() == 0) {
-                d.want_partial = false;
-                d.reason_bits |= kAdaptiveReasonFull;
-                d.reason_bits &= ~kAdaptiveReasonPartial;
+            if (production) {
+                // Issue #3986: persist empty = unknown cone. Issue #4157:
+                // nonempty alone is not proof — persist noted before the
+                // latest densify/store holds NodeIds the rebuilt
+                // source_to_ir_map can mis-attribute (the #4155
+                // false-positive shape: #3618 fail-closes an attribution
+                // FAILURE, not a stale-alias SUCCESS). Fail-closed full
+                // unless the persist is FRESH (write epoch == content
+                // epoch — noted after the latest densify/store); the
+                // peel's #3618 same-define attribution stays the final
+                // proof. Soft/Off keep Shape widen (zero persist consult).
+                if (aura::compiler::dirty::residual_castop_persist_size() == 0 ||
+                    !aura::compiler::dirty::residual_castop_persist_fresh()) {
+                    d.want_partial = false;
+                    d.reason_bits |= kAdaptiveReasonFull;
+                    d.reason_bits &= ~kAdaptiveReasonPartial;
+                } else {
+                    d.shape_flipped_full_to_partial = false;
+                }
             } else {
                 d.shape_flipped_full_to_partial = false;
             }
@@ -7240,6 +7263,12 @@ public:
                         // Issue #3481: per-fn re-lower rewrote AST/IR for this
                         // function — content is stored this epoch.
                         it->second.content_stored_this_epoch = true;
+                        // Issue #4157: same content-epoch invalidation as
+                        // store_define_v2 — the per-fn re-lower rewrote
+                        // AST/IR after the persist was noted. Production/Full
+                        // only (Soft/Off never consult the flip gate).
+                        if (aura::compiler::dirty::residual_castop_persist_active())
+                            aura::compiler::dirty::bump_residual_castop_persist_content_epoch();
                         // Issue #2181 AC2: after successful partial, desync must be 0.
                         if (it->second.soa_mod.count_block_instr_dirty_desync() != 0) {
                             metrics_.soa_dirty_desync_force_full_total.fetch_add(
@@ -14550,9 +14579,7 @@ public:
     // Issue #4228: Soft oneshot prelude calls this after require so
     // Soft TW Lambda cells (std/math preds) win TopCellLoad over IR
     // function-cache MakeClosure high-bit stubs.
-    void sync_soft_export_cells_for_ir() {
-        sync_soft_tw_export_cells_into_ir_value_bindings_();
-    }
+    void sync_soft_export_cells_for_ir() { sync_soft_tw_export_cells_into_ir_value_bindings_(); }
 
     // Issue #272 Cycle 2: test hook for needs_tree_walker_fallback on defines.
     [[nodiscard]] bool public_needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
