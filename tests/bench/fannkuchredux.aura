@@ -1,0 +1,210 @@
+; ── fannkuch-redux — Computer Language Benchmarks Game ──
+;
+; Port of https://benchmarksgame-team.pages.debian.net/benchmarksgame/
+;         description/fannkuchredux.html
+;         (classic single-threaded reference: perm/perm1/count arrays,
+;          plain-changes generation via prefix rotations)
+;
+; Algorithm: enumerate all n! permutations of 1..n in plain-changes order
+; (each level r rotates the prefix perm1[0..r] left by one, count[r] times).
+; For each permutation, repeatedly reverse the first k elements where k is
+; the first element's value (0-based: reverse perm[0..k] inclusive), until
+; the first element is 1 (0-based 0); count the flips. Track the maximum
+; flip count and the checksum (sum of flips over all permutations).
+;
+; Usage:
+;   N=7 ./build-gcc16/aura < tests/bench/fannkuchredux.aura
+;       N = permutation size (default 7, the canonical check size).
+;       Official game sizes are 10…12; interpreted evaluation makes those
+;       impractical (n=10 alone is 3.6M permutations × 22.2M flips total).
+;   CHECKSUM=1 N=7 …   additionally prints the checksum after the
+;       Pfannkuchen line (matches CHECKSUM=1 in the C reference used to
+;       verify this port; the classic game output does not include it).
+;
+; Output (byte-identical to the C reference):
+;   the first 30 permutations, one per line, in generation order —
+;     1234567 / 2134567 / 2314567 / 3214567 / 3124567 / 1324567 / 2341567 / …
+;   then
+;     Pfannkuchen(7) = 16
+;   Reference results (all verified against the C program):
+;     n:      1   2   3   4   5    6    7     8      9       10
+;     max:    0   1   2   4   7   10   16    22     30      38
+;     cksum:  0   1   2   9 265 2115 18508 180260 1911505 22169434
+;   Verified byte-identical to the C reference for n = 1…9.
+;   Interpreted wall-clock + peak RSS (build-gcc16, 2026-09-28) — the
+;   driver loop is stack-flat (see below), so the ceilings are TIME and
+;   MEMORY, not stack:
+;     n=7  1.8s /  132 MB   (default — the canonical check size)
+;     n=8   16s /  860 MB
+;     n=9  ~3min / 4.7 GB   (large machine only)
+;     n=10 est. ~45min / est. 40+ GB → OOM long before it finishes;
+;         the official game size is unreachable interpreted (same policy
+;         as fasta.aura's N=50 default)
+;
+; WHY ONLY `while` LOOPS — no named-let anywhere. Aura's named-let has no
+; tail-call optimization: every iteration is a real recursive C++ call and
+; the stack dies at ~450 iterations (see binarytrees_array.aura). fannkuch
+; iterates n! times (5040 at the default n=7), so every loop must be the
+; closure-form `while`, whose primitive is a genuine C++ for(;;) in
+; evaluator_primitives_control.cpp — apply_closure returns before the next
+; iteration, so the C++ stack never grows. Same policy as revcomp.aura.
+;
+; WHY PRIMITIVE-ONLY LOOP BODIES — the vanish bug (nbody.aura): while-body
+; statements that evaluate several USER-function calls in one expression
+; tree silently return EMPTY partway through a long loop. Every hot loop
+; below uses only primitives (vector-ref/vector-set!/set!/arithmetic),
+; never a user call, so the hot path can't vanish. The only user function
+; in the file, get-n, runs exactly once at startup.
+;
+; WHY NO break — the while primitive has no break; the C reference's two
+; early exits are emulated with flags:
+;   - the advance loop's `if (--count[r] > 0) break;` → `advanced` flag in
+;     the loop condition,
+;   - the outer for(;;)'s `if (r == n) break;` → `done` flag.
+;
+; WHY 3 PRE-ALLOCATED VECTORS + TOP-LEVEL SCALARS — the program allocates
+; exactly three vectors (perm, perm1, cnt) once at startup and reuses them
+; for all n! iterations; permutation lines are printed digit-by-digit with
+; display (no string-append in the hot path), so program-level allocation
+; after startup is zero. That does NOT make the port allocation-free: the
+; evaluator itself accumulates ~13–26 KB per permutation across the ~40
+; closure applications (pred + body) each one costs — Aura has no running
+; GC, so this is never freed and RSS grows linearly to the numbers quoted
+; above (132 MB at n=7, OOM territory well before n=10). The zero program
+; allocation keeps the constant small; the no-GC limit still bounds n.
+;
+; All mutable state lives in top-level scalars written via set!
+; (revcomp.aura's proven pattern). No internal define inside function
+; bodies, and no define whose initializer reads a set!-mutated variable
+; (both known-empty evaluation bugs — see revcomp.aura's notes).
+
+(begin
+  ; ── config ──
+  (define (get-n)
+    (let ((s (getenv "N")))
+      (if (string? s) (string->number s) 7)))
+  (define n (get-n))
+
+  ; ── state: perm/perm1/cnt are the C reference's three arrays ──
+  (define perm  (make-vector n 0))   ; working copy for the flip count
+  (define perm1 (make-vector n 0))   ; generator's current permutation
+  (define cnt   (make-vector n 0))   ; rotations remaining per level
+
+  ; perm1 = 0..n-1
+  (define i 0)
+  (while (lambda () (< i n))
+    (lambda ()
+      (vector-set! perm1 i i)
+      (set! i (+ i 1))))
+
+  ; ── main-loop state (all top-level scalars, mutated via set!) ──
+  (define r n)          ; current plain-changes level
+  (define max-flips 0)
+  (define checksum 0)
+  (define perm-count 0)
+  (define flips 0)
+  (define k 0)          ; current flip prefix length (value of perm[0])
+  (define t 0)          ; swap temporary
+  (define a 0)          ; reversal inner indices
+  (define b 0)
+  (define p0 0)         ; rotation temporary
+  (define advanced #f)  ; advance-loop break flag
+  (define done #f)      ; main-loop break flag
+
+  ; ── main loop: reset levels → print/count flips → advance ──
+  (while (lambda () (not done))
+    (lambda ()
+      ; (A) descend: cnt[r-1] = r, r-1, … down to r = 1
+      (while (lambda () (> r 1))
+        (lambda ()
+          (vector-set! cnt (- r 1) r)
+          (set! r (- r 1))))
+
+      ; (B) print the first 30 permutations (perm1 is untouched by the
+      ; flip count, which works on a copy, so printing here equals the
+      ; C reference's in-loop print). Digits are displayed one at a
+      ; time — no string building, and n=10's "10" prints as two chars
+      ; exactly like the C printf("%d").
+      (if (< perm-count 30)
+        (begin
+          (set! i 0)
+          (while (lambda () (< i n))
+            (lambda ()
+              (display (+ (vector-ref perm1 i) 1))
+              (set! i (+ i 1))))
+          (newline))
+        #t)
+      (set! perm-count (+ perm-count 1))
+
+      ; (C) flip count for this permutation (first element 1 → 0 flips,
+      ; matching the C reference's skip). perm = copy of perm1, then
+      ; reverse perm[0..k] until perm[0] = 0.
+      (if (not (= (vector-ref perm1 0) 0))
+        (begin
+          (set! i 0)
+          (while (lambda () (< i n))
+            (lambda ()
+              (vector-set! perm i (vector-ref perm1 i))
+              (set! i (+ i 1))))
+          (set! flips 0)
+          (set! k (vector-ref perm 0))
+          (while (lambda () (not (= k 0)))
+            (lambda ()
+              ; reverse perm[0..k]: middle pairs first, then the end
+              ; pair — disjoint index sets, same as the C reference.
+              (set! a 1)
+              (set! b (- k 1))
+              (while (lambda () (< a b))
+                (lambda ()
+                  (set! t (vector-ref perm a))
+                  (vector-set! perm a (vector-ref perm b))
+                  (vector-set! perm b t)
+                  (set! a (+ a 1))
+                  (set! b (- b 1))))
+              (set! t (vector-ref perm k))
+              (vector-set! perm k (vector-ref perm 0))
+              (vector-set! perm 0 t)
+              (set! flips (+ flips 1))
+              (set! k (vector-ref perm 0))))
+          (if (> flips max-flips)
+            (set! max-flips flips)
+            #t)
+          (set! checksum (+ checksum flips)))
+        #t)
+
+      ; (D) generate next permutation: rotate perm1[0..r] left by one;
+      ; when cnt[r] runs out, ascend a level. `advanced` emulates the
+      ; C reference's `if (--count[r] > 0) break;`.
+      (set! advanced #f)
+      (while (lambda () (and (< r n) (not advanced)))
+        (lambda ()
+          (set! p0 (vector-ref perm1 0))
+          (set! i 0)
+          (while (lambda () (< i r))
+            (lambda ()
+              (vector-set! perm1 i (vector-ref perm1 (+ i 1)))
+              (set! i (+ i 1))))
+          (vector-set! perm1 r p0)
+          (vector-set! cnt r (- (vector-ref cnt r) 1))
+          (if (> (vector-ref cnt r) 0)
+            (set! advanced #t)
+            (set! r (+ r 1)))))
+
+      ; all n! permutations exhausted when the outermost level unwinds
+      (if (>= r n)
+        (set! done #t)
+        #t)))
+
+  ; ── output ──
+  (display "Pfannkuchen(")
+  (display n)
+  (display ") = ")
+  (display max-flips)
+  (newline)
+  ; The outermost expression's value is echoed when non-void, so the final
+  ; if ends in (display "") — void, prints nothing — instead of #t.
+  (if (string? (getenv "CHECKSUM"))
+    (begin
+      (display checksum)
+      (newline))
+    (display "")))
