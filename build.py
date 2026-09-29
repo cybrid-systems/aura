@@ -9679,6 +9679,32 @@ def cmd_lint():
             "Issue #4163 tag_arity_index free-slot linter failed — run python3 scripts/check_query_index_free_slot_4163.py"
         )
         return r
+    # Issue #4165 (P1): same-tenant multi-Agent code-as-memory had no
+    # Agent-scoped isolation beyond Guard + epoch. Fiberless production
+    # Agent entry stamped fiber_id 0, which permanently skipped the hard
+    # InvalidFiber freshness check, so a same-tenant foreign Agent's held
+    # QueryResult / StableNodeRef resolved through the shared
+    # workspace_flat_ authority with no deny. Gate pins:
+    # agent_scoped_fiber_id in the security TU (explicit fiber > #2151
+    # override > live fiber > production per-Evaluator 0x41650000-band
+    # mint, Soft keeps legacy 0) with stamp_stable_ref /
+    # make_stamped_safe_ref routed through it; resolve sites wired
+    # (resolve_mutate_node_arg, query:result-fresh?, query:result-matches,
+    # query:stable-ref-provenance); the hard InvalidFiber face kept
+    # verbatim and InvalidFiber = 3 unchanged. Deploy contract: one fiber
+    # (or tenant) per Agent. Runtime door: test_stable_ref_provenance_
+    # fiber_cow.cpp ac4165_1..5 + test_tenant_isolation_enforcement.cpp
+    # ac4165_agent_fiber_isolation.
+    afbi4165_script = ROOT / "scripts" / "check_agent_fiber_isolation_4165.py"
+    if not afbi4165_script.exists():
+        fail(f"missing {afbi4165_script}")
+        return 1
+    r = run([sys.executable, str(afbi4165_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4165 agent fiber isolation linter failed — run python3 scripts/check_agent_fiber_isolation_4165.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

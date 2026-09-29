@@ -2160,7 +2160,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     using aura::compiler::query_result_decode::resolve_query_result_match;
                     auto hr = resolve_query_result_match(
                         a[0], string_heap, pairs, *ws, ev.capability_tenant_id(),
-                        static_cast<std::uint64_t>(aura_fiber_current_id()),
+                        // Issue #4165: Agent-scoped fiber resolve (mint when
+                        // fiberless production entry) on the provenance face.
+                        static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()),
                         "query:stable-ref-provenance",
                         parse_query_result_match_index(a, ev.keyword_table()));
                     if (hr.kind != HashNodeKind::Ok)

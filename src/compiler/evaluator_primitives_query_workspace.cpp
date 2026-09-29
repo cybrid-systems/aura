@@ -4289,9 +4289,12 @@ void register_workspace_query_primitives(
                                                                            ws.pairs, qr))
             return mev("bad-arg", "query:result-fresh?: not a QueryResult hash");
         if (aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #4165: Agent-scoped fiber resolve (per-Evaluator mint
+            // when entry is fiberless) — cross-Agent freshness deny composes
+            // with the stamps the security TU now produces.
             const auto fr = query_result_is_fresh_with_refs(
                 qr, *ws.workspace_flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()));
+                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()));
             return make_bool(fr == aura::core::QueryResultFreshness::Fresh);
         }
         const auto live_gen = static_cast<std::uint64_t>(ws.workspace_flat->generation());
@@ -4351,9 +4354,11 @@ void register_workspace_query_primitives(
             // closed the same way resolve_query_result_match does.
             if (!decoded)
                 return mev("bad-arg", "query:result-matches: not a QueryResult hash");
+            // Issue #4165: Agent-scoped fiber resolve — same face as
+            // query:result-fresh? above (per-Evaluator mint when fiberless).
             const auto fr = query_result_is_fresh_with_refs(
                 qr, *ws.workspace_flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()));
+                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()));
             if (fr != aura::core::QueryResultFreshness::Fresh)
                 return mev("stale-ref", "query:result-matches: QueryResult not fresh");
             return matches;

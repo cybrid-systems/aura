@@ -32,6 +32,12 @@ import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
 
+#include "core/workspace_epoch.hh" // Issue #4165: QueryResult + schema-2 reserved
+// FRESHNESS_ONLY: omit the g_hash_tables-linked decode/resolve
+// templates (not needed here - the freshness validator is self-contained).
+#define AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
+#include "compiler/query_result_decode.hh" // Issue #4165: freshness SSOT (post-module)
+
 using aura::ast::FlatAST;
 using aura::ast::NodeId;
 using aura::ast::NULL_NODE;
@@ -661,6 +667,68 @@ static void ac3904_5_source_cite() {
 }
 
 } // namespace
+
+// ── Issue #4165: Agent-scoped fiber isolation (same-tenant multi-Agent) ──
+// The #2151 override face: a stamp made under fiber A (42) must not resolve
+// under fiber B (43) once the resolve side honors the same Agent-scoped
+// resolution as the stamp side; the same fiber stays fresh; Soft fiberless
+// stamps keep the legacy 0 face (no new soft face).
+static void ac4165_agent_fiber_isolation() {
+    std::println("\n--- #4165: Agent-scoped fiber stamp/resolve (override 42 vs 43) ---");
+    using aura::compiler::query_result_decode::query_result_is_fresh_with_refs;
+    using aura::core::QueryResultFreshness;
+    reset_all();
+    aura::core::capability::set_effect_fiber_id_override(42);
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f4165 (lambda (z) 3))\")").has_value(),
+              "4165: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4165: eval");
+        auto* flat = cs.evaluator().workspace_flat();
+        CHECK(flat != nullptr, "4165: workspace live");
+        aura::ast::NodeId nid = 0;
+        for (aura::ast::NodeId i = 1; flat && i < flat->size(); ++i) {
+            if (flat->is_live_node(i)) {
+                nid = i;
+                break;
+            }
+        }
+        CHECK(nid != 0, "4165: live node found");
+        if (flat && nid != 0) {
+            auto& ev = cs.evaluator();
+            // Stamp face: explicit 0 falls through to the Agent-scoped
+            // resolution → override 42 wins (fiber A).
+            const auto st = ev.make_stamped_safe_ref(nid, /*workspace_id=*/0, /*fiber_id=*/0);
+            CHECK(st.fiber_id == 42, "4165: stamp honors override 42 (fiber A)");
+            const auto genA = flat->node_gen_for(nid);
+            const auto wrapA = flat->wrap_epoch();
+            const auto cowA = flat->workspace_cow_epoch();
+            aura::core::QueryResult qrA;
+            CHECK(qrA.push_match_full(nid, genA, wrapA, cowA, /*tenant=*/0, /*fiber=*/42, 0, 0),
+                  "4165: fiber-A match pushed");
+            qrA.matches[0].reserved = aura::core::kQueryResultMatchSchema2;
+            // Resolve face under fiber B (43): A's stamp denies.
+            aura::core::capability::set_effect_fiber_id_override(43);
+            CHECK(ev.agent_scoped_fiber_id() == 43, "4165: resolve honors override 43 (fiber B)");
+            CHECK(query_result_is_fresh_with_refs(qrA, *flat, ev.capability_tenant_id(),
+                                                  ev.agent_scoped_fiber_id()) ==
+                      QueryResultFreshness::InvalidFiber,
+                  "4165: fiber-A stamp denies InvalidFiber under fiber B (same tenant)");
+            // Same fiber stays fresh.
+            aura::core::capability::set_effect_fiber_id_override(42);
+            CHECK(query_result_is_fresh_with_refs(qrA, *flat, ev.capability_tenant_id(),
+                                                  ev.agent_scoped_fiber_id()) ==
+                      QueryResultFreshness::Fresh,
+                  "4165: fiber-A stamp stays fresh under fiber A");
+            // Soft legacy face: no override, no live fiber → stamp 0.
+            aura::core::capability::set_effect_fiber_id_override(0);
+            const auto st0 = ev.make_stamped_safe_ref(nid, /*workspace_id=*/0, /*fiber_id=*/0);
+            CHECK(st0.fiber_id == 0, "4165: Soft fiberless stamp keeps legacy 0");
+        }
+    }
+    aura::core::capability::set_effect_fiber_id_override(0);
+    reset_all();
+}
 
 int main() {
     reset_all();
@@ -5580,6 +5648,7 @@ int main() {
     ac3904_3_neither_ta_denied();
     ac3904_4_soft_off_zero_cost_unchanged();
     ac3904_5_source_cite();
+    ac4165_agent_fiber_isolation();
 
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,

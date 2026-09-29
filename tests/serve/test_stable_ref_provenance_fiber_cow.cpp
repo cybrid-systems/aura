@@ -47,6 +47,12 @@ import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.compiler.service;
 
+#include "core/workspace_epoch.hh" // Issue #4165: QueryResult + schema-2 reserved
+// FRESHNESS_ONLY: omit the g_hash_tables-linked decode/resolve
+// templates (not needed here - the freshness validator is self-contained).
+#define AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
+#include "compiler/query_result_decode.hh" // Issue #4165: freshness SSOT (post-module)
+
 namespace {
 
 using aura::ast::NodeId;
@@ -1316,6 +1322,202 @@ static void ac4106_5_no_docs_linter_wired() {
     aura::core::resource_quota::reset_process_resource_quota_for_test();
 }
 
+// ── #4165 ACs — same-tenant multi-Agent Agent-scoped fiber isolation ──
+// Production Agent entry that runs fiberless stamped fiber_id 0 on every
+// export, which permanently skipped the InvalidFiber freshness check (the
+// current_fiber_id != 0 gate): two same-tenant Agents shared one
+// workspace_flat_ authority with no Agent-scoped deny beyond Guard + epoch.
+// Evaluator::agent_scoped_fiber_id mints a stable per-Evaluator Agent-band
+// fiber (0x41650000+) under the production face so cross-Agent held
+// QueryResult / StableNodeRef memory denies while the same Agent stays
+// fresh. Dispatched in the armed pristine block (before the stress suites
+// exhaust the process-global production budget, #1547).
+static void ac4165_1_prod_fiberless_entry_stamps_agent_band() {
+    std::println("\n=== #4165 AC1: production fiberless Agent entry stamps Agent-band fiber ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    // Library-side arm (#3640): the stamp/mint TU (evaluator_security.cpp)
+    // must see the production face, not just the test TU's copy.
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    CHECK(cs.eval("(set-code \"(define a4165 (lambda (x) 1))\")").has_value(),
+          "4165 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4165 AC1: eval");
+    CHECK(cs.eval("(define q4165 (query :find \"a4165\" :as-query-result #t))").has_value(),
+          "4165 AC1: bind QueryResult hash");
+    auto fid = cs.eval("(hash-ref q4165 \"fiber-id\")");
+    CHECK(fid && is_int(*fid), "4165 AC1: fiber-id key present");
+    const auto fid_v = fid && is_int(*fid) ? as_int(*fid) : -1;
+    CHECK(fid_v >= 0x41650000LL,
+          "4165 AC1: fiber stamped in the Agent band (never 0 when entry is fiberless)");
+    auto tid = cs.eval("(hash-ref q4165 \"tenant-id\")");
+    CHECK(tid && is_int(*tid), "4165 AC1: tenant-id key present");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4165_2_same_agent_requery_fresh() {
+    std::println("\n=== #4165 AC2: same-Agent re-resolve stays fresh under its own mint ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    CHECK(cs.eval("(set-code \"(define a4165b (lambda (x) 1))\")").has_value(),
+          "4165 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4165 AC2: eval");
+    CHECK(cs.eval("(define q4165b (query :find \"a4165b\" :as-query-result #t))").has_value(),
+          "4165 AC2: bind QueryResult hash");
+    // Same Evaluator resolves its own held hash through the schema-2
+    // operand face (#3395) — freshness via its own minted fiber id.
+    auto sr = cs.eval("(query:stable-ref q4165b)");
+    CHECK(sr && is_hash(*sr), "4165 AC2: same-Agent schema-2 resolve stays fresh");
+    auto fresh = cs.eval("(query:result-fresh? q4165b)");
+    CHECK(fresh && is_bool(*fresh) && as_bool(*fresh),
+          "4165 AC2: query:result-fresh? #t for the Agent's own mint");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4165_3_cross_agent_same_tenant_deny() {
+    std::println(
+        "\n=== #4165 AC3: held QueryResult from Agent A denies under Agent B (same tenant) ===");
+    using aura::compiler::query_result_decode::query_result_is_fresh_with_refs;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService csA;
+    CompilerService csB;
+    csA.evaluator().arm_production_audit_defaults_for_test();
+    csB.evaluator().arm_production_audit_defaults_for_test();
+    // Same tenant, no fiber minted for either Agent (fiberless entry).
+    csA.evaluator().set_capability_tenant_id(7);
+    csB.evaluator().set_capability_tenant_id(7);
+    const auto mintA = csA.evaluator().agent_scoped_fiber_id();
+    const auto mintB = csB.evaluator().agent_scoped_fiber_id();
+    CHECK(mintA >= 0x41650000u && mintB >= 0x41650000u,
+          "4165 AC3: both Agents minted in the Agent band");
+    CHECK(mintA != mintB, "4165 AC3: per-Evaluator mints differ (Agent-scoped)");
+    CHECK(csA.eval("(set-code \"(define b4165 (lambda (y) 2))\")").has_value(),
+          "4165 AC3: A set-code");
+    CHECK(csA.eval("(eval-current)").has_value(), "4165 AC3: A eval");
+    CHECK(csB.eval("(set-code \"(define b4165 (lambda (y) 2))\")").has_value(),
+          "4165 AC3: B set-code");
+    CHECK(csB.eval("(eval-current)").has_value(), "4165 AC3: B eval");
+    auto* flatB = csB.evaluator().workspace_flat();
+    CHECK(flatB != nullptr, "4165 AC3: B workspace live");
+    aura::ast::NodeId nid = 0;
+    for (aura::ast::NodeId i = 1; flatB && i < flatB->size(); ++i) {
+        if (flatB->is_live_node(i)) {
+            nid = i;
+            break;
+        }
+    }
+    CHECK(nid != 0, "4165 AC3: live node found on B");
+    if (flatB && nid != 0) {
+        const auto genB = flatB->node_gen_for(nid);
+        const auto wrapB = flatB->wrap_epoch();
+        const auto cowB = flatB->workspace_cow_epoch();
+        // A-held memory: node identity matches B's authority, fiber = A's mint.
+        aura::core::QueryResult qrX;
+        CHECK(qrX.push_match_full(nid, genB, wrapB, cowB, /*tenant=*/7, /*fiber=*/mintA, 0, 0),
+              "4165 AC3: foreign-stamped match pushed");
+        qrX.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        CHECK(query_result_is_fresh_with_refs(qrX, *flatB, /*tenant=*/7, mintB) ==
+                  QueryResultFreshness::InvalidFiber,
+              "4165 AC3: Agent A's held QueryResult denies InvalidFiber under Agent B");
+        // Same-Agent arm: B's own mint resolves its own stamp fresh.
+        aura::core::QueryResult qrOwn;
+        CHECK(qrOwn.push_match_full(nid, genB, wrapB, cowB, /*tenant=*/7, /*fiber=*/mintB, 0, 0),
+              "4165 AC3: own-stamped match pushed");
+        qrOwn.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        CHECK(query_result_is_fresh_with_refs(qrOwn, *flatB, /*tenant=*/7, mintB) ==
+                  QueryResultFreshness::Fresh,
+              "4165 AC3: Agent B's own mint stays fresh");
+        // The issue's hole — a fiber-0 stamp used to skip the check entirely;
+        // under a non-zero Agent-scoped current it must deny again.
+        aura::core::QueryResult qrZero;
+        CHECK(qrZero.push_match_full(nid, genB, wrapB, cowB, /*tenant=*/7, /*fiber=*/0, 0, 0),
+              "4165 AC3: zero-stamped match pushed");
+        qrZero.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        CHECK(query_result_is_fresh_with_refs(qrZero, *flatB, /*tenant=*/7, mintB) ==
+                  QueryResultFreshness::InvalidFiber,
+              "4165 AC3: fiber-0 stamp no longer skips the Agent-scoped check");
+    }
+    csA.evaluator().disarm_production_audit_defaults_for_test();
+    csB.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4165_4_source_cite() {
+    std::println("\n=== #4165 AC4: source-cite — mint + stamp/resolve wiring ===");
+    auto read_src = [](const char* rel) {
+        std::ifstream f(rel);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    const auto sec = read_src("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("agent_scoped_fiber_id") != std::string::npos,
+          "4165 AC4: Agent-scoped resolution defined in the security TU");
+    CHECK(sec.find("kAgentFiberStampBand") != std::string::npos,
+          "4165 AC4: Agent band constant present");
+    CHECK(sec.find("g_agent_fiber_stamp_seq") != std::string::npos,
+          "4165 AC4: per-process mint sequence present");
+    const auto ixx = read_src("src/compiler/evaluator.ixx");
+    CHECK(ixx.find("agent_scoped_fiber_id() const noexcept") != std::string::npos,
+          "4165 AC4: evaluator.ixx declares the resolution");
+    CHECK(ixx.find("agent_fiber_id_ = 0") != std::string::npos,
+          "4165 AC4: per-Evaluator mint member present");
+    const auto mut = read_src("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("ev.agent_scoped_fiber_id()") != std::string::npos,
+          "4165 AC4: resolve_mutate_node_arg resolves Agent-scoped");
+    const auto qws = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
+    size_t hits = 0;
+    for (auto p = qws.find("ev.agent_scoped_fiber_id()"); p != std::string::npos;
+         p = qws.find("ev.agent_scoped_fiber_id()", p + 1))
+        ++hits;
+    CHECK(hits >= 2, "4165 AC4: result-fresh? + result-matches resolve Agent-scoped");
+    const auto qprov = read_src("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(qprov.find("ev.agent_scoped_fiber_id()") != std::string::npos,
+          "4165 AC4: stable-ref-provenance resolves Agent-scoped");
+    const auto dec = read_src("src/compiler/query_result_decode.hh");
+    CHECK(dec.find("current_fiber_id != 0 && m.fiber_id != current_fiber_id") != std::string::npos,
+          "4165 AC4: hard InvalidFiber face kept (no weakening)");
+    const auto epoch = read_src("src/core/workspace_epoch.hh");
+    CHECK(epoch.find("InvalidFiber = 3") != std::string::npos,
+          "4165 AC4: InvalidFiber enum value unchanged");
+}
+
+static void ac4165_5_no_docs_linter_wired() {
+    std::println("\n=== #4165 AC5: no docs/design/, linter wired, no invented test ===");
+    {
+        std::ifstream f("docs/design/4165-agent-fiber-isolation.md");
+        CHECK(!f.good(), "4165 AC5: no docs/design/4165-*");
+    }
+    {
+        std::ifstream f("tests/core/test_issue_4165.cpp");
+        CHECK(!f.good(), "4165 AC5: no tests/core/test_issue_4165.cpp (#81934)");
+    }
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_agent_fiber_isolation_4165") != std::string::npos,
+          "4165 AC5: linter wired into build.py");
+    std::ifstream f_allow("scripts/coverage/root_check_allowlist.txt");
+    std::string allow((std::istreambuf_iterator<char>(f_allow)), std::istreambuf_iterator<char>());
+    CHECK(allow.find("check_agent_fiber_isolation_4165.py") != std::string::npos,
+          "4165 AC5: root allowlist carries the linter");
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -1329,6 +1531,12 @@ int main() {
     ac4106_3_recycled_slot_never_rebound();
     ac4106_4_soft_stable_ref_still_mints();
     ac4106_5_no_docs_linter_wired();
+    // #4165 ACs (5) — same-tenant multi-Agent Agent-scoped fiber isolation.
+    ac4165_1_prod_fiberless_entry_stamps_agent_band();
+    ac4165_2_same_agent_requery_fresh();
+    ac4165_3_cross_agent_same_tenant_deny();
+    ac4165_4_source_cite();
+    ac4165_5_no_docs_linter_wired();
     // ORIG ACs (9)
     ac1_orig();
     ac2_orig();
