@@ -9047,6 +9047,30 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4149 hygiene limit stamp linter failed — run python3 scripts/check_hygiene_limit_stamp_4149.py")
         return r
+    # Issue #4176: Soft --serve-async unix sock stalled permanently after a
+    # long sequence of sequential fiber:spawn+mutate:rebind+fiber:join
+    # oneshots (host raw_line timeout; Soft alive in ep_poll, near-zero
+    # CPU). Two root causes: (1) wrong-wake join protocol hole — the
+    # stdin-event wait_map_ broadcast (and wake_waiting_session_fibers)
+    # resumed fibers parked mid-join, the join primitive erased the
+    # pending result slot and returned void, the orphaned child kept the
+    # denseness body mutex, and the next spawn deadlocked the worker →
+    # permanent no-reply stall; (2) fd leak — on_fiber_done never closed
+    # the done fiber's wake eventfd (+1 fd per spawn until ~Scheduler),
+    # so long serves hit RLIMIT_NOFILE. Gate pins: the spurious-wake
+    # join loop, both BlockingIO broadcast gates, the eventfd close, the
+    # fiber:spawn #f degrade, and the session exec catch. Runtime doors
+    # live in tests/serve/test_concurrent.cpp (#4176 ACs).
+    sajw4176_script = ROOT / "scripts" / "check_serve_async_join_wake_4176.py"
+    if not sajw4176_script.exists():
+        fail(f"missing {sajw4176_script}")
+        return 1
+    r = run([sys.executable, str(sajw4176_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4176 serve-async join wake linter failed — run python3 scripts/check_serve_async_join_wake_4176.py"
+        )
+        return r
     # Issue #4143: sticky densify-off recovery cleared the trap BEFORE the
     # densify retry, so between the clear and the unified-green publish (or
     # on the #3884 LCP-deny re-arm path) moving_compact_enabled() read true

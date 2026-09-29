@@ -711,6 +711,15 @@ public:
     FiberState state() const { return state_.load(std::memory_order_acquire); }
     void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
     int eventfd() const { return eventfd_; }
+    // Issue #4176: close the wake eventfd as soon as the fiber is done.
+    // Completed fibers stay owned by the Scheduler (owned_fibers_, per
+    // #3905/#2468) until ~Scheduler, and ~Fiber only runs then — without
+    // an explicit close at on_fiber_done every fiber ever spawned leaked
+    // one eventfd for the process lifetime (+1 fd per serve-async
+    // oneshot; long Soft serves eventually hit RLIMIT_NOFILE). Defined
+    // in fiber.cpp (unistd.h is not included here). Idempotent; ~Fiber's
+    // `if (eventfd_ >= 0) ::close` stays as the backstop.
+    void close_eventfd() noexcept;
     // Issue #2467: is_done() now strictly requires state_==Done.
     // Previously returned true for force-reclaimed fibers too
     // (Issue #2227 conflated semantics) — but that let joiners

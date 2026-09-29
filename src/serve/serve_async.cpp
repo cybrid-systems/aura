@@ -752,6 +752,15 @@ void run_serve_async(int num_workers) {
             Fiber* f = sess ? sess->fiber : nullptr;
             if (!f || f->is_done())
                 continue;
+            // Issue #4176: skip fibers parked in fiber:join (BlockingIO).
+            // A join park's only wake protocol is the target's on_fiber_done
+            // eventfd write; a direct enqueue here resumes the joiner early,
+            // the join primitive erases the pending result slot, and the
+            // next denseness spawn deadlocks on the body mutex (worker
+            // stuck → permanent sock stall). Plain session parks use
+            // Explicit and stay enqueue-wakeable.
+            if (f->last_yield_reason() == YieldReason::BlockingIO)
+                continue;
             if (f->state() != FiberState::Waiting || f->is_queued())
                 continue;
             int wid = 0;
@@ -950,13 +959,25 @@ void run_serve_async(int num_workers) {
                         if (!code.empty()) {
                             auto& cs = cs_for(sess);
                             aura::messaging::g_current_compiler_service = &cs;
-                            auto [r, display] =
-                                capture_stdout_during([&] { return cs.exec_with_cache(code); });
-                            if (r) {
-                                emit_status_line(status_line_ok(nsid, fmt_val(*r, cs), display));
-                            } else {
-                                emit_status_line(
-                                    status_line_error(nsid, r.error().format(), display));
+                            // Issue #4176: a C++ exception escaping exec (e.g.
+                            // fiber spawn failure at fd exhaustion) must emit a
+                            // status error line and keep the session fiber
+                            // alive — an unwound session fiber stops replying
+                            // forever (host polls the sock with no reply: the
+                            // permanent-stall shape this issue reports).
+                            try {
+                                auto [r, display] =
+                                    capture_stdout_during([&] { return cs.exec_with_cache(code); });
+                                if (r) {
+                                    emit_status_line(
+                                        status_line_ok(nsid, fmt_val(*r, cs), display));
+                                } else {
+                                    emit_status_line(
+                                        status_line_error(nsid, r.error().format(), display));
+                                }
+                            } catch (const std::exception& e) {
+                                emit_status_line(status_line_error(
+                                    nsid, std::string("exec exception: ") + e.what(), ""));
                             }
                         }
                     }
@@ -1064,33 +1085,44 @@ void run_serve_async(int num_workers) {
                         }
                         auto& cs = cs_for(sess);
                         aura::messaging::g_current_compiler_service = &cs;
-                        auto [result, display] =
-                            capture_stdout_during([&] { return cs.exec_with_cache(code); });
-                        if (result) {
-                            try {
-                                auto& v = *result;
-                                // Check if closure
-                                if (is_closure(v)) {
-                                    if (display.empty()) {
-                                        emit_status_line(std::format(
-                                            "{{\"session\":\"{}\",\"status\":\"closure\","
-                                            "\"value\":\"#<procedure>\"}}",
-                                            json_escape(sid)));
+                        // Issue #4176: same session-survival contract as the
+                        // named-session loop above — an exception escaping
+                        // exec must surface as a status error, never unwind
+                        // the session fiber.
+                        try {
+                            auto [result, display] =
+                                capture_stdout_during([&] { return cs.exec_with_cache(code); });
+                            if (result) {
+                                try {
+                                    auto& v = *result;
+                                    // Check if closure
+                                    if (is_closure(v)) {
+                                        if (display.empty()) {
+                                            emit_status_line(std::format(
+                                                "{{\"session\":\"{}\",\"status\":\"closure\","
+                                                "\"value\":\"#<procedure>\"}}",
+                                                json_escape(sid)));
+                                        } else {
+                                            emit_status_line(std::format(
+                                                "{{\"session\":\"{}\",\"status\":\"closure\","
+                                                "\"value\":\"#<procedure>\",\"display\":\"{}\"}}",
+                                                json_escape(sid), json_escape(display)));
+                                        }
                                     } else {
-                                        emit_status_line(std::format(
-                                            "{{\"session\":\"{}\",\"status\":\"closure\","
-                                            "\"value\":\"#<procedure>\",\"display\":\"{}\"}}",
-                                            json_escape(sid), json_escape(display)));
+                                        emit_status_line(
+                                            status_line_ok(sid, fmt_val(v, cs), display));
                                     }
-                                } else {
-                                    emit_status_line(status_line_ok(sid, fmt_val(v, cs), display));
+                                } catch (const std::bad_alloc&) {
+                                    emit_status_line(
+                                        status_line_error(sid, "out of memory", display));
                                 }
-                            } catch (const std::bad_alloc&) {
-                                emit_status_line(status_line_error(sid, "out of memory", display));
+                            } else {
+                                auto& d = result.error();
+                                emit_status_line(status_line_error(sid, d.format(), display));
                             }
-                        } else {
-                            auto& d = result.error();
-                            emit_status_line(status_line_error(sid, d.format(), display));
+                        } catch (const std::exception& e) {
+                            emit_status_line(status_line_error(
+                                sid, std::string("exec exception: ") + e.what(), ""));
                         }
 
                     } else if (cmd == "session") {

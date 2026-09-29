@@ -418,6 +418,14 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
         ::aura::compiler::lock_order::AuditedMutexLock lock(
             wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
         wait_map_.erase(evfd);
+        // Issue #4176: close the done fiber's wake eventfd here. The
+        // epoll interest is gone and joiner wakes use the JOINERS' own
+        // fds — this fd is never read or written again. Completed
+        // fibers stay owned until ~Scheduler (#3905), so without this
+        // every fiber ever spawned leaked one fd for the process
+        // lifetime (+1 per serve-async oneshot; long Soft serves hit
+        // RLIMIT_NOFILE). Idempotent (stores -1; ~Fiber backstop safe).
+        fiber->close_eventfd();
     }
 
     // Issue #119: remove the fiber from its worker's registry.
@@ -987,6 +995,18 @@ void Scheduler::run() {
                         if (!fiber)
                             continue;
                         if (!owned_fibers_end_contains(fiber))
+                            continue;
+                        // Issue #4176: never stdin-broadcast a fiber
+                        // parked in fiber:join (BlockingIO). A join
+                        // park's only wake protocol is the target's
+                        // on_fiber_done eventfd write; a broadcast wake
+                        // resumes the joiner early, the join primitive
+                        // erases the pending result slot, and the next
+                        // denseness spawn deadlocks on the body mutex
+                        // (worker stuck → sock stall, IO thread idle in
+                        // ep_poll). Plain session parks use Explicit
+                        // and stay broadcast-woken.
+                        if (fiber->last_yield_reason() == YieldReason::BlockingIO)
                             continue;
                         if (fiber->state() == FiberState::Waiting)
                             enqueue_parked(fiber);

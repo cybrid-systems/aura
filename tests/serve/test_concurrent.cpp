@@ -8,6 +8,8 @@
 #include <execinfo.h>
 #include <cstring>
 #include <cstdio>
+#include <dirent.h>
+#include <fstream>
 
 #include "compiler/messaging_bridge.h"
 #include "serve/fiber.h"
@@ -2448,6 +2450,202 @@ static void ew_install_fatal_handlers() {
     ::signal(SIGILL, ew_fatal_handler);
 }
 
+// ═══════════════════════════════════════════════════════════
+// ── Issue #4176: serve-async sequential spawn+join sock stall ──
+// ═══════════════════════════════════════════════════════════
+// Root causes fixed under #4176:
+//   1. Wrong-wake join protocol hole — a spurious eventfd wake
+//      (stdin-event broadcast across wait_map_, recycled wake fds)
+//      made the messaging fiber:join primitive treat the wake as
+//      target-done: it erased the pending result slot and returned
+//      void; the orphaned child kept the denseness body mutex and the
+//      next spawn deadlocked the worker → permanent sock stall with
+//      the IO thread idle in ep_poll. Fix: join loop re-parks on
+//      spurious wakes + BlockingIO fibers are excluded from wake
+//      broadcasts; session exec loops emit a status error instead of
+//      unwinding the session fiber.
+//   2. fd leak — completed fibers stayed owned until ~Scheduler while
+//      their wake eventfd stayed open: +1 fd per spawn forever; long
+//      Soft serves hit RLIMIT_NOFILE. Fix: on_fiber_done closes the
+//      done fiber's eventfd.
+
+// ── #4176 AC1: join wake protocol — a spurious eventfd wake does not
+// lose the join, and on_fiber_done's joiner wake still fires after the
+// child's own eventfd is closed at done (fd budget change).
+static bool test_issue_4176_join_wake_protocol() {
+    std::println("\n--- #4176 AC1: join wake protocol (spurious wake re-parks; joiner wake after "
+                 "child fd close) ---");
+
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::YieldReason;
+
+    Scheduler sched(2);
+    std::atomic<bool> child_go{false};
+    std::atomic<bool> child_done{false};
+    std::atomic<bool> joiner_finished{false};
+    std::atomic<int> joiner_parks{0};
+    Fiber* child_f = nullptr;
+    Fiber* joiner_f = nullptr;
+
+    // Child: parks on a flag via Explicit yields (cooperative wait),
+    // then completes — its eventfd is closed by on_fiber_done (#4176).
+    sched.spawn([&]() {
+        child_f = aura::serve::g_current_fiber;
+        while (!child_go.load(std::memory_order_acquire)) {
+            Fiber::yield(YieldReason::Explicit);
+        }
+        child_done.store(true, std::memory_order_release);
+    });
+
+    // Joiner: mirrors the messaging.cpp fiber:join wait loop (#4176
+    // shape): predicate re-checked after EVERY wake; spurious wakes
+    // re-register and re-park. Escapes: done / reclaimed.
+    sched.spawn([&]() {
+        joiner_f = aura::serve::g_current_fiber;
+        while (!child_done.load(std::memory_order_acquire)) {
+            if (child_f == nullptr) {
+                Fiber::yield(YieldReason::Explicit);
+                continue;
+            }
+            if (sched.add_joiner(child_f->id(), aura::serve::g_current_fiber)) {
+                joiner_parks.fetch_add(1, std::memory_order_relaxed);
+                Fiber::yield(YieldReason::BlockingIO);
+                sched.remove_joiner(child_f->id(), aura::serve::g_current_fiber);
+            }
+        }
+        joiner_finished.store(true, std::memory_order_release);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    CHECK(wait_for_atomic(joiner_parks, 1),
+          "#4176 AC1: joiner parked on the join (add_joiner + BlockingIO)");
+    CHECK(joiner_f != nullptr, "#4176 AC1: joiner fiber observed");
+    CHECK(joiner_f != nullptr && joiner_f->eventfd() >= 0,
+          "#4176 AC1: joiner has a live wake eventfd");
+
+    // Spurious wake class (stdin-broadcast / recycled wake fd): write 1
+    // to the PARKED joiner's eventfd while the child is still running.
+    uint64_t one = 1;
+    const ssize_t w = (joiner_f != nullptr) ? ::write(joiner_f->eventfd(), &one, sizeof(one)) : -1;
+    CHECK(w == static_cast<ssize_t>(sizeof(one)), "#4176 AC1: spurious wake write armed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    CHECK(!child_done.load(), "#4176 AC1: child still running at spurious wake");
+    CHECK(!joiner_finished.load(),
+          "#4176 AC1: spurious wake did not finish the joiner (re-parked)");
+
+    // Release the child. on_fiber_done closes the CHILD's eventfd
+    // (#4176) and writes the JOINER's eventfd — the join must complete.
+    child_go.store(true, std::memory_order_release);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!joiner_finished.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(joiner_finished.load(),
+          "#4176 AC1: joiner finished after child done (joiner wake post child-fd close)");
+    CHECK(child_f != nullptr && child_f->is_done(), "#4176 AC1: child observed done");
+
+    sched.stop();
+    t.join();
+    return true;
+}
+
+// ── #4176 AC2: fd budget — 256 sequential spawn oneshots must not
+// grow the fd table (the reported stall hit RLIMIT_NOFILE after
+// ~60-100 denseness joins of the same class).
+static bool test_issue_4176_fd_budget_oneshots() {
+    std::println("\n--- #4176 AC2: fd budget across 256 sequential spawn oneshots ---");
+
+    auto count_fds = []() -> int {
+        DIR* d = ::opendir("/proc/self/fd");
+        if (d == nullptr)
+            return -1;
+        int n = 0;
+        while (::readdir(d) != nullptr)
+            ++n;
+        ::closedir(d);
+        return n - 3; // ".", "..", and the opendir handle's own fd
+    };
+
+    constexpr int N = 256;
+    std::atomic<int> done{0};
+
+    aura::serve::Scheduler sched(2);
+    std::thread t([&sched]() { sched.run(); });
+
+    // Warm-up oneshot so the baseline includes steady-state scheduler fds.
+    sched.spawn([&done]() { done.fetch_add(1); });
+    wait_for_atomic(done, 1);
+    const int base = count_fds();
+    CHECK(base > 0, "#4176 AC2: /proc/self/fd readable");
+
+    for (int i = 0; i < N; ++i) {
+        sched.spawn([&done]() { done.fetch_add(1); });
+        wait_for_atomic(done, i + 2);
+    }
+
+    const int after = count_fds();
+    sched.stop();
+    t.join();
+
+    CHECK(after > 0, "#4176 AC2: /proc/self/fd readable after loop");
+    // Without the #4176 on_fiber_done close this is +N (+256); with it,
+    // flat (+2 slack for measurement noise).
+    CHECK(after <= base + 2, "#4176 AC2: no per-fiber fd growth across 256 oneshots (base " +
+                                 std::to_string(base) + " -> after " + std::to_string(after) + ")");
+    return true;
+}
+
+// ── #4176 AC3: source-cite — wake-protocol gates, fd budget, degrade.
+static bool test_issue_4176_source_cite() {
+    std::println("\n--- #4176 AC3: source-cite (join loop, broadcast gates, eventfd close, spawn "
+                 "degrade, exec catch) ---");
+    auto read_file = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string();
+    };
+    const auto messaging = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    const auto sched_src = read_file("src/serve/scheduler.cpp");
+    const auto serve_src = read_file("src/serve/serve_async.cpp");
+    const auto fiber_h = read_file("src/serve/fiber.h");
+    CHECK(!messaging.empty(), "#4176 AC3: messaging source readable");
+    CHECK(!sched_src.empty(), "#4176 AC3: scheduler source readable");
+    CHECK(!serve_src.empty(), "#4176 AC3: serve_async source readable");
+    CHECK(!fiber_h.empty(), "#4176 AC3: fiber.h source readable");
+    // Join wait loop: spurious-wake tolerant + reclaimed escape.
+    CHECK(messaging.find("Issue #4176: the BlockingIO park is a *wait") != std::string::npos,
+          "#4176 AC3: fiber:join loop cites #4176 wake protocol");
+    CHECK(messaging.find("target->is_reclaimed()") != std::string::npos,
+          "#4176 AC3: fiber:join loop escapes on reclaimed target");
+    // Stdin broadcast gate (scheduler IO loop).
+    CHECK(sched_src.find("Issue #4176: never stdin-broadcast a fiber") != std::string::npos &&
+              sched_src.find("fiber->last_yield_reason() == YieldReason::BlockingIO") !=
+                  std::string::npos,
+          "#4176 AC3: scheduler stdin broadcast skips BlockingIO joiners");
+    // Direct session-fiber enqueue gate (serve_async reader wake).
+    CHECK(serve_src.find("Issue #4176: skip fibers parked in fiber:join") != std::string::npos,
+          "#4176 AC3: wake_waiting_session_fibers skips BlockingIO joiners");
+    // fd budget: done fiber's eventfd closed at on_fiber_done.
+    CHECK(sched_src.find("fiber->close_eventfd();") != std::string::npos &&
+              fiber_h.find("void close_eventfd() noexcept;") != std::string::npos,
+          "#4176 AC3: on_fiber_done closes the done fiber's eventfd");
+    // Spawn degrade at scheduler failure (#2656 #f contract preserved).
+    CHECK(messaging.find("bool spawn_failed = false;") != std::string::npos &&
+              messaging.find("catch (const std::exception&)") != std::string::npos,
+          "#4176 AC3: fiber:spawn degrades to #f at scheduler failure");
+    // Session exec loops catch escaping exceptions (clear error; session
+    // fiber survives).
+    CHECK(serve_src.find("exec exception: ") != std::string::npos,
+          "#4176 AC3: session exec loops catch escaping exceptions");
+    return true;
+}
+
 int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
@@ -2621,6 +2819,9 @@ int main() {
     run_test("test_gc_sweep_no_callback", test_gc_sweep_no_callback);
     run_test("test_gc_collect_hook", test_gc_collect_hook);
     run_test("test_gc_heap_mutex_hook", test_gc_heap_mutex_hook);
+    run_test("test_issue_4176_join_wake_protocol", test_issue_4176_join_wake_protocol);
+    run_test("test_issue_4176_fd_budget_oneshots", test_issue_4176_fd_budget_oneshots);
+    run_test("test_issue_4176_source_cite", test_issue_4176_source_cite);
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
