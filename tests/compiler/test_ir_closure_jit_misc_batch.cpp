@@ -37,6 +37,7 @@ static int isolate(const char* name, int (*fn)()) {
 }
 
 extern int run_test_anonymous_residual_stable_id_policy();
+extern int run_test_apply_closure_envframe_soa();
 extern int run_test_aura_jit_unused_fn_lock();
 extern int run_test_closure_call_must_deopt_toctou();
 extern int run_test_comprehensive_live_closure_expire();
@@ -66,7 +67,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_ir_closure_jit_misc_batch (24 members) ===");
+    std::println("=== test_ir_closure_jit_misc_batch (25 members) ===");
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     const struct {
         const char* name;
@@ -77,6 +78,13 @@ int main() {
         // stable-id suite (#2977/#2978/#2980/#3607 remount domains) ran in
         // no binary since. Restore it so its ACs execute in CI.
         {"test_anonymous_residual_stable_id_policy", run_test_anonymous_residual_stable_id_policy},
+        // Issue #4169: restore this member to the isolate table — the wave-8
+        // (#1978) rename dropped the file's target wiring entirely (no
+        // add_executable member line anywhere in CMakeLists.txt), so its
+        // #1660/#3832/#3867 runtime ACs — and the new #4169 seq-stable TLS
+        // ACs — were never executed in CI. Same restore precedent as
+        // #3607/#4148/#3636.
+        {"test_apply_closure_envframe_soa", run_test_apply_closure_envframe_soa},
         {"test_aura_jit_unused_fn_lock", run_test_aura_jit_unused_fn_lock},
         {"test_closure_call_must_deopt_toctou", run_test_closure_call_must_deopt_toctou},
         {"test_comprehensive_live_closure_expire", run_test_comprehensive_live_closure_expire},

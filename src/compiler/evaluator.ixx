@@ -5260,11 +5260,13 @@ private:
     }
     std::array<ClosuresShard, kClosuresShardCount> closures_shards_;
     // Issue #3832: epoch-local TLS cache of last-N Closure copies for
-    // apply_closure happy path. Bumped on densify/erase/unique-write so
-    // cached copies cannot outlive map mutations; densify also keys TLS
-    // on g_last_window_seq. Hot apply under N workers skips process-wide
-    // closures_mtx_ shared_lock on cache hit (tombstone / densify-stale
-    // refuse unchanged on the copied Closure).
+    // apply_closure happy path. Bumped on erase/unique-write so cached
+    // copies cannot outlive map mutations; a densify publish re-stamps the
+    // slot's g_last_window_seq without dropping it
+    // (#4169 seq-stable hits survive — no shard shared_lock storm). Hot
+    // apply under N workers skips process-wide closures_mtx_ shared_lock
+    // on cache hit (tombstone / densify-stale refuse unchanged on the
+    // copied Closure).
     inline static constexpr int kApplyClosureTlsCacheIssue = 3832;
     inline static constexpr std::size_t kApplyClosureTlsCacheSlots = 8;
     mutable std::atomic<std::uint64_t> closures_apply_epoch_{1};
