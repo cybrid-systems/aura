@@ -4061,6 +4061,289 @@ static void ac4032_3_soft_zero_force_unlock() {
           "4032 AC3: stamp present; Soft path unchanged");
 }
 
+// ── Issue #4158: P0 edge-free outermost hold — bounded quarantine + ──
+// structured admit refuse. The #3859 quarantine face only counted; the
+// holder kept workspace_mtx_ forever while join hung and steal/GC/mailbox
+// starved (the #3764/#3826 busy-path peer dispose rarely fires under Agent
+// load — every worker sits inside its own body). The quarantine latch now
+// disposes the foreign holder (Reclaimed/Done; never unlocking the foreign
+// unique_lock) via the mailbox-reachable inbody-window poll face, and both
+// Guard admission chains refuse new mutates with the structured
+// edge-free-hold-unsupported reason while the face is live.
+static void ac4158_1_source_and_order() {
+    std::println("\n--- #4158 AC1: quarantine dispose face + structured refuse ordering ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    // Quarantine-age escalation in the inbody-window poll (the mailbox SLO
+    // poll face): counter bump + foreign-only dispose + sticky, one window.
+    const auto q = fc.find("g_hold_budget_no_edge_quarantine_total.fetch_add");
+    CHECK(q != std::string::npos, "4158 AC1: #3859 quarantine bump present");
+    if (q != std::string::npos) {
+        const auto win = fc.substr(q, 1600);
+        CHECK(win.find("Issue #4158") != std::string::npos, "4158 AC1: escalation cites #4158");
+        CHECK(win.find("dispose_no_edge_holder") != std::string::npos,
+              "4158 AC1: quarantine-age dispose wired");
+        CHECK(win.find("steal_safety_production_residual_zero_v_read") != std::string::npos,
+              "4158 AC1: sticky armed via SSOT reader (no second model)");
+        CHECK(win.find("!(cur && cur->id() == fid)") != std::string::npos,
+              "4158 AC1: foreign-only (same-fiber force_release already ran)");
+    }
+    CHECK(mhb.find("kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4") != std::string::npos,
+          "4158 AC1: #3859 quarantine SLO multiple unchanged");
+    // Structured refuse in BOTH admission chains, before the #2701 budget
+    // gate, live-scoped on the no-edge probe.
+    const auto occ1 = emb.find("AdmissionRejected: edge-free-hold-unsupported");
+    const auto occ2 = occ1 == std::string::npos
+                          ? std::string::npos
+                          : emb.find("AdmissionRejected: edge-free-hold-unsupported", occ1 + 1);
+    CHECK(occ1 != std::string::npos && occ2 != std::string::npos,
+          "4158 AC1: refuse wired in try_acquire AND try_acquire_for_region");
+    const auto bud1 = emb.find("AdmissionRejected: mutation-hold-budget");
+    const auto bud2 = bud1 == std::string::npos
+                          ? std::string::npos
+                          : emb.find("AdmissionRejected: mutation-hold-budget", bud1 + 1);
+    CHECK(bud1 != std::string::npos && bud2 != std::string::npos,
+          "4158 AC1: budget gates still present");
+    CHECK(occ1 < bud1 && occ2 < bud2, "4158 AC1: quarantine refuse precedes budget (both chains)");
+    CHECK(emb.find("hold_budget_no_edge_quarantine_total_v_read() != 0") != std::string::npos,
+          "4158 AC1: quarantine-age predicate");
+    CHECK(emb.find("aura_mutation_hold_no_edge_still_held() != 0") != std::string::npos,
+          "4158 AC1: live-scoped predicate (holder exit disarms)");
+    CHECK(emb.find("aura_runtime_multi_worker_production_latched() != 0") != std::string::npos,
+          "4158 AC1: latch-gated (Soft / unlatched never fires)");
+    // Foreign-thread no-unlock contract intact (#4032/#3826/#3859 face).
+    CHECK(fc.find("Never drops unique_lock from this thread") != std::string::npos,
+          "4158 AC1: dispose stays unlock-free (#3764 face)");
+    CHECK(emb.find("foreign — re-arm cancel only") != std::string::npos,
+          "4158 AC1: force_release foreign arm unchanged (#3826 face)");
+    // No second model / no invent.
+    CHECK(mhb.find("g_4158_") == std::string::npos && fc.find("g_4158_") == std::string::npos &&
+              emb.find("g_4158_") == std::string::npos,
+          "4158 AC1: no new counters");
+    CHECK(read_file("tests/serve/test_issue_4158.cpp").empty(), "4158 AC1: no invent");
+    CHECK(read_file("docs/design/4158-edge-free-hold-quarantine.md").empty(),
+          "4158 AC1: no docs/design");
+    CHECK(build.find("check_edge_free_hold_4158") != std::string::npos,
+          "4158 AC1: build.py wires linter");
+    CHECK(allow.find("check_edge_free_hold_4158.py") != std::string::npos,
+          "4158 AC1: allowlist row present");
+}
+
+static void ac4158_2_quarantine_dispose_runtime() {
+    std::println("\n--- #4158 AC2: mailbox-poll face drives bounded quarantine dispose ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    using aura::serve::StealSafetyDecision;
+    using aura::serve::YieldReason;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "4158 AC2: reject_enabled under production");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "4158 AC2: SLO configured");
+    // 30×SLO edge-free body: the quarantine latch fires at first_seen +
+    // 4×(2×SLO) = 16ms (default inbody bound = 2×SLO), well inside the body.
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 30 * 1000;
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    std::atomic<int> reclaimed_seen{0};
+    std::atomic<int> mid_steal_ok{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // edge-free: no cooperative / JIT / eval_flat edge
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "4158 AC2: holder spawned");
+    // Arm the cancel clock directly (header atomics, #3859 AC2 pattern) so
+    // every inbody-window poll exceeds and the quarantine clock starts on
+    // the first exceeded poll. armed_fiber must match the live holder.
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(holder->id(), std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(guard_held.load() == 1 || body_done.load() == 1, "4158 AC2: holder entered or finished");
+    std::thread peer([&]() {
+        for (int i = 0; i < 900 && body_done.load(std::memory_order_acquire) == 0; ++i) {
+            if (guard_held.load(std::memory_order_acquire) != 0) {
+                // Mailbox SLO poll face ONLY (multi_fiber_mailbox.h polls
+                // aura_hold_budget_poll_inbody_window under backpressure).
+                // No busy_path call: its #3826 foreign dispose at 2×SLO
+                // would mask the #4158 quarantine-age face under test.
+                (void)aura::serve::aura_hold_budget_poll_inbody_window();
+                if (holder->is_reclaimed())
+                    reclaimed_seen.store(1, std::memory_order_release);
+                // A foreign dispose must never make a held mutation stealable.
+                Fiber probe([]() {}, /*stack_size=*/64 * 1024);
+                probe.set_yield_reason(YieldReason::Explicit);
+                probe.publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/true, /*defuse=*/0);
+                if (aura::serve::steal_safety_transaction(&probe) == StealSafetyDecision::Ok)
+                    mid_steal_ok.store(1, std::memory_order_relaxed);
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    });
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    CHECK(jr.status == JoinStatus::Reclaimed || jr.status == JoinStatus::Cancelled ||
+              jr.status == JoinStatus::Ok || holder->is_done() || holder->is_reclaimed(),
+          "4158 AC2: bounded quarantine — join did not hang");
+    for (int i = 0; i < 300 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    peer.join();
+    sched.stop();
+    io.join();
+    CHECK(aura::compiler::hold_budget_no_edge_quarantine_total_v_read() >= 1,
+          "4158 AC2: quarantine latch fired (face explicit)");
+    CHECK(reclaimed_seen.load() == 1 || holder->is_reclaimed() || holder->is_done(),
+          "4158 AC2: quarantine-age dispose marked holder (Reclaimed/Done)");
+    CHECK(mid_steal_ok.load() == 0, "4158 AC2: foreign dispose never made held mutation stealable");
+    CHECK(body_done.load() == 1 || holder->is_done() || holder->is_reclaimed(),
+          "4158 AC2: body finished or fail-closed");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+}
+
+static void ac4158_3_admit_refuse_structured() {
+    std::println(
+        "\n--- #4158 AC3: live quarantine face denies with structured edge-free reason ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::clear_agent_throttle_for_mailbox_starvation(); // #2587 quiet
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "4158 AC3: SLO configured");
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 30 * 1000;
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    std::atomic<int> face_live{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // edge-free spin
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "4158 AC3: holder spawned");
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(holder->id(), std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::thread peer([&]() {
+        while (face_live.load(std::memory_order_acquire) == 0 &&
+               body_done.load(std::memory_order_acquire) == 0) {
+            if (guard_held.load(std::memory_order_acquire) != 0)
+                (void)aura::serve::aura_hold_budget_poll_inbody_window();
+            if (aura::compiler::hold_budget_no_edge_quarantine_total_v_read() > 0)
+                face_live.store(1, std::memory_order_release);
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    });
+    for (int i = 0; i < 1000 && face_live.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(face_live.load() == 1, "4158 AC3: quarantine face went live within bound");
+    CHECK(guard_held.load() == 1, "4158 AC3: holder still inside body (face live mid-spin)");
+    // Structured refuse while the face is live — the new gate precedes the
+    // #2701 budget gate, so the deny names the edge-free starvation (not the
+    // generic budget reason) and no redundant holder-degrade fires.
+    auto g1 = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, nullptr);
+    CHECK(!g1.has_value(), "4158 AC3: admit refused while quarantine face live");
+    CHECK(!g1.has_value() &&
+              g1.error().message.find("edge-free-hold-unsupported") != std::string::npos,
+          "4158 AC3: structured AdmissionRejected: edge-free-hold-unsupported");
+    for (int i = 0; i < 300 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    peer.join();
+    sched.stop();
+    io.join();
+    // Live-scoped: holder exit drops held → the refuse disarms (any later
+    // deny must not name the edge-free face).
+    aura::serve::clear_steal_safety_transaction_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, nullptr);
+    const bool g2_edge_free =
+        !g2.has_value() &&
+        g2.error().message.find("edge-free-hold-unsupported") != std::string::npos;
+    CHECK(!g2_edge_free, "4158 AC3: refuse live-scoped — disarms after holder exit");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+}
+
+static void ac4158_4_linter_selftest() {
+    std::println("\n--- #4158 AC4: gate linter self-test ---");
+    int rc =
+        std::system("python3 scripts/check_edge_free_hold_4158.py --self-test > /dev/null 2>&1");
+    if (rc != 0)
+        rc = std::system(
+            "python3 ../scripts/check_edge_free_hold_4158.py --self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "4158 AC4: linter --self-test passes");
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -4210,6 +4493,12 @@ int run_test_mailbox_hold_starvation_hard() {
     std::println("\n=== Issue #4032: exotic no-poll host body (Ready sticky / join Reclaimed) ===");
     ac4032_1_exotic_no_poll_ready_or_reclaimed();
     ac4032_3_soft_zero_force_unlock();
+    std::println("\n=== Issue #4158: P0 edge-free outermost hold — bounded quarantine + structured "
+                 "refuse ===");
+    ac4158_1_source_and_order();
+    ac4158_2_quarantine_dispose_runtime();
+    ac4158_3_admit_refuse_structured();
+    ac4158_4_linter_selftest();
     std::println(
         "\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588 + #3613: {} passed, {} failed ===",
         g_passed, g_failed);
