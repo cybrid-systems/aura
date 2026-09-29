@@ -67,6 +67,10 @@ using aura::compiler::macro_exp::set_hygiene_depth_cap;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+// Issue #4150: strong-bindable full reset — the legacy C-bridge name binds a
+// weak jit-bridge no-op stub in light-link test executables.
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_full(void) noexcept;
+
 using NameMap = std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                                    std::equal_to<>>;
 
@@ -656,7 +660,7 @@ int run_test_concurrent_clone_hygiene_depth() {
                                       aura_test_grant_prov());
         g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         aura::ast::ASTArena src_arena;
         StringPool sp(src_arena.allocator());
         FlatAST src(src_arena.allocator());
@@ -672,7 +676,7 @@ int run_test_concurrent_clone_hygiene_depth() {
             ok_n.store(0, std::memory_order_relaxed);
             null_n.store(0, std::memory_order_relaxed);
             shared.clear();
-            aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+            aura_test_reset_macro_hygiene_last_limit_reason_full();
             std::thread winner([&]() {
                 aura::ast::ASTArena ta;
                 StringPool tp(ta.allocator());
@@ -778,7 +782,7 @@ int run_test_concurrent_clone_hygiene_depth() {
     std::println("\n=== Issue #3787: sticky last_limit 8/9/10 vs deny_all ===");
     {
         std::println("\n--- #3787 AC1: peer global sticky 9 does not deny_all ---");
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         g_macro_hygiene_last_limit_reason.store(kHygieneLimitReasonNameMapShared,
                                                 std::memory_order_relaxed);
         CHECK(!inner_expand_production_limit_deny(),
@@ -791,12 +795,12 @@ int run_test_concurrent_clone_hygiene_depth() {
         const auto* rs = hygiene_last_limit_reason_string();
         CHECK(rs && std::string_view(rs) == "name-map-shared",
               "3787 AC3: stable string after real deny");
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
     }
     {
         std::println("\n--- #3787 AC2: successful expand clears this-fiber sticky 9 ---");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared);
         CHECK(inner_expand_production_limit_deny_all(), "3787 AC2: armed before expand");
         aura::ast::ASTArena sa, ta;
@@ -812,7 +816,7 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(later != NULL_NODE, "3787 AC2: expand succeeds");
         CHECK(!inner_expand_production_limit_deny_all(),
               "3787 AC2: success clears this-fiber sticky 9 for deny_all");
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
     }
     {
         std::println("\n--- #3787 AC4: source-cite + Soft contract + no invent ---");
@@ -832,7 +836,7 @@ int run_test_concurrent_clone_hygiene_depth() {
         std::println("\n--- #3574 AC1: depth-limit reason + provenance counter ---");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_hygiene_runtime_caps_for_test();
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         constexpr int kCap = 4;
         CHECK(set_hygiene_depth_cap(kCap), "3574 AC1: runtime cap=4");
         aura::ast::ASTArena sa, ta;
@@ -940,7 +944,7 @@ int run_test_concurrent_clone_hygiene_depth() {
                                       aura_test_grant_prov());
         g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         aura_test_reset_macro_clone_same_flat_reject_for_test();
         NameMap y;
         std::vector<std::unique_ptr<NameMap>> pads;
@@ -970,7 +974,7 @@ int run_test_concurrent_clone_hygiene_depth() {
               "3981 AC2: reason name-map-shared");
         aura_test_release_name_map_clone(&y);
         aura_test_release_name_map_clone(x);
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         FlatAST tgt2(ta.allocator());
         StringPool tp2(ta.allocator());
         auto later = clone_macro_body(tgt2, tp2, src, sp, pr.root, nullptr, &y,
@@ -1005,7 +1009,7 @@ int run_test_concurrent_clone_hygiene_depth() {
                                       aura_test_grant_prov());
         g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         aura_test_reset_macro_clone_same_flat_reject_for_test();
         aura::ast::ASTArena sa, ta;
         StringPool sp(sa.allocator());
@@ -1048,7 +1052,7 @@ int run_test_concurrent_clone_hygiene_depth() {
                                       aura_test_grant_prov());
         g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
 
         constexpr std::uint32_t kFiberA = 0x403401u;
         constexpr std::uint32_t kFiberB = 0x403402u;
@@ -1083,7 +1087,7 @@ int run_test_concurrent_clone_hygiene_depth() {
               "4034 AC1: fiber A stamp retained (no cross-clear)");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_capability_effects_for_test();
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
     }
     {
         std::println("\n--- #4034 AC2: Restricted after ceiling leftover — reset-free success ---");
@@ -1104,7 +1108,7 @@ int run_test_concurrent_clone_hygiene_depth() {
         // Simulate prior ceiling leftover on the dashboard atomic only (fiber clean).
         // Pre-#4034: deny() read global → second expand permanently NULL_NODE until
         // aura_test_reset_macro_hygiene_last_limit_reason_for_test(). Do NOT call it.
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
         g_macro_hygiene_last_limit_reason.store(kHygieneLimitReasonDepthLimit,
                                                 std::memory_order_relaxed);
         CHECK(!inner_expand_production_limit_deny(),
@@ -1127,7 +1131,7 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(inner_expand_production_limit_deny(), "4034 AC2: own-fiber ceiling still denies");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_capability_effects_for_test();
-        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
     }
     {
         std::println("\n--- #4034 AC3: source-cite + Soft contract + no invent ---");

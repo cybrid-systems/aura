@@ -433,6 +433,10 @@ void reset_hygiene_runtime_caps_for_test() noexcept {
 
 static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept;
 
+// Issue #4150: fiber-preferring effective read for the Agent string/query
+// face (defined beside the map below).
+[[nodiscard]] static std::uint8_t hygiene_last_limit_reason_effective() noexcept;
+
 [[nodiscard]] static const char* hygiene_limit_reason_string_for(std::uint8_t code) noexcept {
     switch (code) {
         case 1:
@@ -529,8 +533,16 @@ void note_hygiene_last_limit_reason(std::uint8_t code) noexcept {
 }
 
 const char* hygiene_last_limit_reason_string() noexcept {
-    return hygiene_limit_reason_string_for(
-        g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed));
+    // Issue #4150: the Agent string face prefers this fiber's
+    // FiberHygieneStats.last_limit_reason — the same #4034/#4078
+    // expand-deny authority as aura_hygiene_expand_deny_blocks_eval —
+    // instead of the process-global last-writer-wins atomic that a peer
+    // fiber's deny can overwrite before dashboards sample the string.
+    // The process atomic stays the dashboard aggregate and the fallback
+    // when the fiber slot is 0 (e.g. the #4149 mutate capability-deny
+    // stamps only the process sentinel). Same string face — no rename;
+    // Soft/Off unchanged (plain reads only).
+    return hygiene_limit_reason_string_for(hygiene_last_limit_reason_effective());
 }
 
 // Combine hard ceiling + process runtime + optional capability depth.
@@ -828,6 +840,25 @@ inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexc
 static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     ensure_fiber_hygiene_slot(fiber_id).last_limit_reason = code;
+}
+
+// Issue #4150: fiber-preferring effective read for the Agent string/query
+// face. Per-fiber FiberHygieneStats.last_limit_reason is the expand-deny
+// authority (#4034/#4078); the process global is the dashboard aggregate
+// (last-writer-wins) and the fallback when this fiber's slot is 0 (the
+// #4149 mutate capability-deny deliberately stamps only the process
+// sentinel). Quiet map read — no query-counter bump (mirrors the #4078
+// blocks_eval consult; get_fiber_hygiene_metrics would bump it).
+[[nodiscard]] static std::uint8_t hygiene_last_limit_reason_effective() noexcept {
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    {
+        std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+        if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
+            if (const auto fr = it->second.last_limit_reason; fr != 0)
+                return fr;
+        }
+    }
+    return g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
 }
 inline void bump_fiber_hygiene_on_violation(std::uint32_t fiber_id) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
@@ -1296,7 +1327,12 @@ extern "C" void aura_test_arm_nested_clone_steal_inject(void) noexcept {
 }
 // Issue #3029: Agent-stable hygiene limit reason (ceiling / depth / pass).
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexcept {
-    return g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+    // Issue #4150: the Agent query face (last-hygiene-limit-reason key,
+    // schema-3029 — name unchanged) samples the same fiber-preferring
+    // effective reason as the string API: this fiber's slot first (the
+    // #4034/#4078 authority), process atomic as dashboard aggregate /
+    // slot-0 fallback (#4149 boundary).
+    return hygiene_last_limit_reason_effective();
 }
 // Issue #3543: typed SE emit counter (query:macro-hygiene-stats additive).
 extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read(void) noexcept {
@@ -1342,13 +1378,29 @@ extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept {
                ? 1
                : 0;
 }
-extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {
+// Issue #4150: static impl — a same-TU call to a static function binds
+// directly and cannot be interposed. The extern "C" wrappers below are
+// weak-stubbed in libaura_jit_light_test_objects.so: light-link test
+// executables bind the no-op stub over the strong definition, and a
+// wrapper that tail-calls the legacy symbol by name would be interposed
+// to that same stub (observed: reset silently did nothing).
+static void reset_macro_hygiene_last_limit_reason_impl() noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     // Issue #3787: also clear per-fiber sticky 8/9/10 so host tests that
     // share fiber_id 0 do not keep deny_all armed after reset.
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     for (auto& [_, slot] : g_fiber_hygiene_map)
         slot.last_limit_reason = 0;
+}
+
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {
+    reset_macro_hygiene_last_limit_reason_impl();
+}
+
+// Issue #4150: strong-bindable full-reset alias for light-link test
+// executables — fresh symbol the stub does not shadow, same impl body.
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_full(void) noexcept {
+    reset_macro_hygiene_last_limit_reason_impl();
 }
 // Issue #2807: unquote-splicing boundary recognition metric.
 extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept {

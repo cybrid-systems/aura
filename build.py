@@ -9066,6 +9066,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4149 hygiene limit stamp linter failed — run python3 scripts/check_hygiene_limit_stamp_4149.py")
         return r
+    # Issue #4150: hygiene_last_limit_reason_string() and the query
+    # last-hygiene-limit-reason key still read the process-global LWW
+    # atomic while the per-fiber FiberHygieneStats.last_limit_reason is
+    # the #4034/#4078 expand-deny authority — both Agent faces now ride
+    # the fiber-preferring effective read (slot first, process atomic as
+    # the slot-0 fallback / dashboard aggregate). Gate pins the faces,
+    # the quiet fiber consult, the intact fiber-authoritative enforce
+    # surface, and the unchanged query key. Runtime doors live in
+    # test_hygiene_mutate_closed_loop.cpp (#4150 ACs).
+    hllf4150_script = ROOT / "scripts" / "check_hygiene_last_limit_fiber_4150.py"
+    if not hllf4150_script.exists():
+        fail(f"missing {hllf4150_script}")
+        return 1
+    r = run([sys.executable, str(hllf4150_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4150 hygiene last-limit fiber linter failed — run python3 scripts/check_hygiene_last_limit_fiber_4150.py"
+        )
+        return r
     # Issue #4176: Soft --serve-async unix sock stalled permanently after a
     # long sequence of sequential fiber:spawn+mutate:rebind+fiber:join
     # oneshots (host raw_line timeout; Soft alive in ep_poll, near-zero
