@@ -34,6 +34,14 @@
 //   #3355 AC3: #3293 SIGABRT fixture retained
 //   #3355 AC4: linter enumerates one-arg SoA single-mark; naked prod fails
 //   #3355 AC5: linter after #3293; no docs/design; no test_issue_*.cpp
+//
+//   #4168 AC1: Soft → pretend_amortized=1 + HP claim refused (dashboard keys);
+//              Soft observe counters kept (residual still trips)
+//   #4168 AC2: Soft smoke residual==0 does not claim HP amortization
+//   #4168 AC3: production face clears pretend + grants HP; env=0 flips the
+//              #3201 abort face only (honesty face keyed on production face)
+//   #4168 AC4: source-cite + dashboard keys + top-level linter + allowlist;
+//              no docs/design/; no test_issue_*.cpp
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -55,6 +63,11 @@ import aura.compiler.ir_soa;
 import aura.compiler.service;
 import aura.compiler.value;
 
+// Issue #4168: the honesty probes consult the same C probe as
+// ir_dirty_batch_only_hard (#3201). Under light linking this may be the weak
+// stub (returns 0) — ac4168_3 handles both link faces.
+extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
+
 namespace {
 
 using aura::compiler::CompilerService;
@@ -71,6 +84,8 @@ using aura::compiler::g_unified_dirty_ir_single_total;
 using aura::compiler::g_unified_dirty_last_sources;
 using aura::compiler::ir_dirty_batch_only_hard;
 using aura::compiler::ir_dirty_batch_only_production_smoke_wired;
+using aura::compiler::ir_dirty_hp_amortization_ready;
+using aura::compiler::ir_dirty_soft_pretend_amortized;
 using aura::compiler::IRFunctionSoA;
 using aura::compiler::IRModuleV2;
 using aura::compiler::kInvSrcIrSoaBatch;
@@ -79,6 +94,7 @@ using aura::compiler::kIrSoaBatchDirtyDisciplineIssue;
 using aura::compiler::kIrSoaBatchOnlyHardAbortIssue;
 using aura::compiler::kIrSoaBatchOnlyProductionDefaultIssue;
 using aura::compiler::kIrSoaMultiViaSingleBanIssue;
+using aura::compiler::kIrSoaSoftPretendAmortizedIssue;
 using aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke;
 using aura::compiler::kUnifiedDirtyFenceIssue;
 using aura::compiler::types::as_int;
@@ -1079,6 +1095,118 @@ static void ac3489_5_source_and_linter() {
     CHECK(read_file("tests/compiler/test_issue_3489.cpp").empty(), "3489 AC4: no invent");
 }
 
+// ── Issue #4168: Soft dirty/batch-only honesty (pretend amortized) ──
+// Soft/Off skip permanent dirty-bit writes and env=0 can force the #3201
+// abort off, so Soft counters read "green" while incremental lower/opt may
+// re-scan whole modules. Dashboard must surface pretend_amortized=1 and
+// refuse HP readiness claims; observe counters and batch APIs unchanged.
+static void ac4168_1_soft_pretends() {
+    std::println("\n--- #4168 AC1: Soft → pretend_amortized=1 + HP claim refused ---");
+    CHECK(kIrSoaSoftPretendAmortizedIssue == 4168, "4168 AC1: issue stamp");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(ir_dirty_soft_pretend_amortized(), "4168 AC1: Soft → pretend_amortized");
+    CHECK(!ir_dirty_hp_amortization_ready(), "4168 AC1: Soft → HP claim refused");
+    // Query/dashboard face (query:soa-dirty-stats) under Soft.
+    CompilerService cs;
+    CHECK(href(cs, "schema-4168") == 4168, "4168 AC1: schema-4168 on dashboard");
+    CHECK(href(cs, "ir-dirty-pretend-amortized") == 1, "4168 AC1: dashboard pretend=1");
+    CHECK(href(cs, "ir-dirty-hp-amortization-ready") == 0, "4168 AC1: dashboard HP refuse");
+    CHECK(href(cs, "ir-dirty-honesty-wired") == 1, "4168 AC1: honesty wired sentinel");
+    // Soft observe counters are kept (#2774/#2936 untouched).
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    fn.mark_block_dirty(2);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) ==
+              r0 + 1,
+          "4168 AC1: Soft observe counters kept (residual still trips)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4168_2_residual_zero_not_hp_proof() {
+    std::println("\n--- #4168 AC2: Soft smoke residual==0 does not claim HP amortization ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    // Quiet batch-only workload: residual multi-via-single stays 0 — the
+    // #2936 Soft smoke reads "green". That alone must NOT grant the HP
+    // amortization claim (#4168): cone/permanent bits were skipped.
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t ids[] = {0, 1, 2, 3};
+    fn.mark_blocks_dirty(ids);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) >= r0,
+          "4168 AC2: residual counters readable (observe face kept)");
+    CompilerService cs;
+    CHECK(href(cs, "ir-dirty-hp-amortization-ready") == 0,
+          "4168 AC2: residual==0 Soft smoke does not claim HP amortization");
+    CHECK(href(cs, "ir-dirty-pretend-amortized") == 1,
+          "4168 AC2: dashboard pretend_amortized stays 1 under Soft");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4168_3_production_face_grants() {
+    std::println("\n--- #4168 AC3: production face clears pretend + grants HP ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "4168 AC3: production face armed");
+    // env=0 flips only the #3201 abort face; the honesty face is keyed on
+    // the production face alone — env=0 must not fake an HP grant.
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(!ir_dirty_batch_only_hard(), "4168 AC3: env=0 abort face off");
+    const bool strong_probe = aura_production_defaults_active_probe != nullptr &&
+                              aura_production_defaults_active_probe() != 0;
+    if (strong_probe) {
+        CHECK(!ir_dirty_soft_pretend_amortized(), "4168 AC3: production probe → pretend cleared");
+        CHECK(ir_dirty_hp_amortization_ready(), "4168 AC3: production face → HP readiness granted");
+    } else {
+        // Light-link weak stub (may return 0): honesty refuse face stays
+        // honest — linter-enforced (mirrors #3201 AC1's strong-probe caveat).
+        std::println("    (light-link weak probe; refuse face stays honest — linter-enforced)");
+        CHECK(ir_dirty_soft_pretend_amortized(), "4168 AC3: weak probe → refuse stays honest");
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+}
+
+static void ac4168_4_source_and_linter() {
+    std::println("\n--- #4168 AC4: source-cite + dashboard keys + top-level linter ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/check_ir_dirty_soft_pretend_amortized_4168.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(soa.find("kIrSoaSoftPretendAmortizedIssue = 4168") != std::string::npos,
+          "4168 AC4: issue stamp");
+    CHECK(soa.find("ir_dirty_soft_pretend_amortized") != std::string::npos &&
+              soa.find("ir_dirty_hp_amortization_ready") != std::string::npos,
+          "4168 AC4: honesty probes exported");
+    CHECK(soa.find("aura_production_defaults_active_probe") != std::string::npos,
+          "4168 AC4: reuses single C probe (no second model)");
+    CHECK(obs.find("ir-dirty-pretend-amortized") != std::string::npos &&
+              obs.find("ir-dirty-hp-amortization-ready") != std::string::npos &&
+              obs.find("schema-4168") != std::string::npos,
+          "4168 AC4: dashboard keys on query:soa-dirty-stats");
+    CHECK(!lint.empty() && lint.find("Issue #4168") != std::string::npos,
+          "4168 AC4: top-level ship linter present");
+    CHECK(build.find("check_ir_dirty_soft_pretend_amortized_4168") != std::string::npos,
+          "4168 AC4: build.py registers linter");
+    CHECK(allow.find("check_ir_dirty_soft_pretend_amortized_4168.py") != std::string::npos,
+          "4168 AC4: allowlist row");
+    CHECK(t.find("ac4168_1_soft_pretends") != std::string::npos &&
+              t.find("ac4168_3_production_face_grants") != std::string::npos,
+          "4168 AC4: ACs dispatched");
+    CHECK(read_file("tests/compiler/test_issue_4168.cpp").empty(),
+          "4168 AC4: no invent test file per #81967");
+    CHECK(read_file("docs/design/4168-soft-dirty-batch-only-honesty.md").empty(),
+          "4168 AC4: no docs/design/4168-* per #1655");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -1131,9 +1259,14 @@ int run_test_batch_dirty_discipline() {
     ac3489_2_batch_one_ensure();
     ac3489_3_soft_single_remains();
     ac3489_5_source_and_linter();
-    std::println(
-        "\n=== #2615/#2681/#2773/#2774/#2936/#3201/#3293/#3355/#3489: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== Issue #4168: Soft dirty/batch-only honesty (pretend amortized) ===");
+    ac4168_1_soft_pretends();
+    ac4168_2_residual_zero_not_hp_proof();
+    ac4168_3_production_face_grants();
+    ac4168_4_source_and_linter();
+    std::println("\n=== #2615/#2681/#2773/#2774/#2936/#3201/#3293/#3355/#3489/#4168: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

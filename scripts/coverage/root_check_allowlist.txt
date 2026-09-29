@@ -225,3 +225,4 @@ check_query_index_free_slot_4163.py
 check_ref_layout_gen_paint_4164.py
 check_agent_fiber_isolation_4165.py
 check_hot_contract_pack_face_4167.py
+check_ir_dirty_soft_pretend_amortized_4168.py

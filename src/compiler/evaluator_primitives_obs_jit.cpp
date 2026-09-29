@@ -987,6 +987,21 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"ir-dirty-batch-only-production-smoke-wired",
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
+                // Issue #4168: Soft/Off honesty — the dashboard reports
+                // pretend-amortized=1 and refuses the HP readiness claim
+                // (hp-amortization-ready=0) whenever the production face is
+                // inactive; residual==0 alone is NOT an HP amortization proof
+                // (#2936 Soft smoke stays observe-only). Soft observe counters
+                // and Production batch APIs are unchanged.
+                {"schema-4168", make_int(4168)},
+                {"issue-4168", make_int(4168)},
+                {"ir-dirty-pretend-amortized",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::ir_dirty_soft_pretend_amortized() ? 1 : 0))},
+                {"ir-dirty-hp-amortization-ready",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::ir_dirty_hp_amortization_ready() ? 1 : 0))},
+                {"ir-dirty-honesty-wired", make_int(1)},
                 // Issue #2682: Moving densify unified success gate.
                 // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
                 // used by Phase-5 outermost exit, AdaptiveCompactResult
