@@ -9199,6 +9199,28 @@ def cmd_lint():
             "Issue #4229 serve-async capture honesty linter failed — run python3 scripts/check_serve_async_capture_honesty_4229.py"
         )
         return r
+    # Issue #4230: Soft --serve-async sequential (fiber:join (fiber:spawn
+    # (lambda () 7))) oneshots: 16/32/48/64 all ok, then a 96-batch failed
+    # mid-batch with the client's 8s serve_session_timeout on the SAME
+    # session. Residual register-after-notify lost wake after #4176: the
+    # joiner's caller-side is_done() probe races the target's on_fiber_done
+    # notify pass — if the pass runs between the probe and the
+    # joiner_map_ registration, it observes an empty joiner list, the
+    # joiner-eventfd wake never fires, and the joiner parks in BlockingIO
+    # forever (session fiber stops replying; sock stalls past the raw_line
+    # budget). Gate pins: add_joiner re-checks the done face UNDER
+    # joiner_map_mutex_ before registering and returns false on Done
+    # (callers honor the refusal as already-done: Fiber::join re-checks
+    # is_done() → Ok; the messaging loop breaks to the result fetch).
+    # Runtime doors live in tests/serve/test_concurrent.cpp (#4230 ACs).
+    fjdf4230_script = ROOT / "scripts" / "check_fiber_join_done_face_4230.py"
+    if not fjdf4230_script.exists():
+        fail(f"missing {fjdf4230_script}")
+        return 1
+    r = run([sys.executable, str(fjdf4230_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4230 fiber join done-face linter failed — run python3 scripts/check_fiber_join_done_face_4230.py")
+        return r
     # Issue #4143: sticky densify-off recovery cleared the trap BEFORE the
     # densify retry, so between the clear and the unified-green publish (or
     # on the #3884 LCP-deny re-arm path) moving_compact_enabled() read true

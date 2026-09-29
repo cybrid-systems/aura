@@ -2708,6 +2708,187 @@ static bool test_issue_4229_capture_honesty() {
     return true;
 }
 
+// ── Issue #4230: serve-async sequential spawn+join serve timeout (>64) ──
+// ═══════════════════════════════════════════════════════════
+// Measured Soft --serve-async sequential (fiber:join (fiber:spawn
+// (lambda () 7))) oneshots: 16/32/48/64 all ok (~1.5s each on Soft tip
+// e34f879), then a 96-batch failed at i=7 with the client's 8s
+// serve_session_timeout after a successful 64-batch on the SAME session.
+// #4176 closed the wrong-wake join hole (spurious wake re-park) and the
+// eventfd fd budget; the residual lost-wake is the register-after-notify
+// window: the joiner's caller-side is_done() probe races the target's
+// on_fiber_done notify pass. If the notify pass runs BETWEEN the probe and
+// Scheduler::add_joiner's joiner_map_ registration, the pass observes an
+// EMPTY joiner list (the joiner has not registered yet), the
+// write-1-to-joiner-eventfd wake never fires, and the joiner parks in
+// BlockingIO forever — the session fiber stops replying, the sock stalls
+// past the client's raw_line budget. Fix: Scheduler::add_joiner re-checks
+// the target's done face INSIDE the joiner_map_mutex_ critical section
+// before registering; on Done it returns false and the caller fetches the
+// ready result instead of parking. The two critical sections are mutually
+// exclusive, so no interleaving can leave a registered joiner unwoken.
+
+// ── #4230 AC1: done-face door — add_joiner on a DONE target returns
+// false (the caller then fetches the ready result; before the fix it
+// returned true and the caller parked forever with no wake coming).
+static bool test_issue_4230_add_joiner_done_face() {
+    std::println("\n--- #4230 AC1: add_joiner done-face re-check (register-after-notify door) ---");
+
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+
+    Scheduler sched(2);
+    std::thread t([&sched]() { sched.run(); });
+
+    std::atomic<bool> child_started{false};
+    Fiber* child_f = nullptr;
+    sched.spawn([&]() {
+        child_f = aura::serve::g_current_fiber;
+        child_started.store(true, std::memory_order_release);
+        // Return immediately — the worker stores Done and on_fiber_done's
+        // notify pass runs right after.
+    });
+    CHECK(wait_for_atomic(child_started, true), "#4230 AC1: child started");
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (child_f == nullptr && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(child_f != nullptr, "#4230 AC1: child fiber observed");
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (child_f != nullptr && !child_f->is_done() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(child_f != nullptr && child_f->is_done(), "#4230 AC1: child done before the join probe");
+
+    // Prober: mirrors the messaging fiber:join caller — probe first, then
+    // register. The child is ALREADY done, so the register call must be
+    // refused (done-face re-check under joiner_map_mutex_) — the pre-fix
+    // shape returned true here and the real joiner parked forever.
+    std::atomic<bool> probe_done{false};
+    std::atomic<bool> register_refused{false};
+    sched.spawn([&]() {
+        const bool registered = sched.add_joiner(static_cast<std::uint64_t>(child_f->id()),
+                                                 aura::serve::g_current_fiber);
+        register_refused.store(!registered, std::memory_order_release);
+        probe_done.store(true, std::memory_order_release);
+    });
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!probe_done.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(probe_done.load(), "#4230 AC1: prober finished (no park on a done target)");
+    CHECK(register_refused.load(),
+          "#4230 AC1: add_joiner on a done target returns false (done-face re-check)");
+
+    sched.stop();
+    t.join();
+    return true;
+}
+
+// ── #4230 AC2: sequential spawn+join oneshots — 200 (fiber:join
+// (fiber:spawn ...)) cycles through Fiber::join on one scheduler; every
+// join must complete Ok (a lost register-after-notify wake parks the
+// driver forever and the deadline check below fails).
+static bool test_issue_4230_sequential_join_oneshots() {
+    std::println("\n--- #4230 AC2: 200 sequential spawn+join oneshots all Ok ---");
+
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+
+    constexpr int N = 200;
+    Scheduler sched(2);
+    std::thread t([&sched]() { sched.run(); });
+
+    std::atomic<bool> driver_done{false};
+    std::atomic<int> joins_ok{0};
+    std::atomic<int> value_total{0};
+    sched.spawn([&]() {
+        for (int i = 0; i < N; ++i) {
+            std::atomic<int>* slot = new std::atomic<int>(0);
+            Fiber* child = sched.spawn([slot]() { slot->store(7, std::memory_order_release); });
+            const JoinResult r = Fiber::join(child, std::nullopt);
+            if (r.status == JoinStatus::Ok && child->is_done() &&
+                slot->load(std::memory_order_acquire) == 7) {
+                joins_ok.fetch_add(1, std::memory_order_relaxed);
+                value_total.fetch_add(slot->load(std::memory_order_acquire),
+                                      std::memory_order_relaxed);
+            }
+            delete slot;
+        }
+        driver_done.store(true, std::memory_order_release);
+    });
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    while (!driver_done.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(driver_done.load(), "#4230 AC2: driver finished 200 spawn+join oneshots (no lost wake)");
+    CHECK(joins_ok.load() == N, "#4230 AC2: all 200 joins returned Ok with the child's value (ok " +
+                                    std::to_string(joins_ok.load()) + "/" + std::to_string(N) +
+                                    ")");
+    CHECK(value_total.load() == 7 * N,
+          "#4230 AC2: child bodies all ran to Done before join returned");
+
+    sched.stop();
+    t.join();
+    return true;
+}
+
+// ── #4230 AC3: source-cite — done-face re-check under joiner_map_mutex_,
+// caller-side already-done handling, runtime doors.
+static bool test_issue_4230_source_cite() {
+    std::println("\n--- #4230 AC3: source-cite (add_joiner done face, joiner wake protocol) ---");
+    auto read_file = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string();
+    };
+    const auto sched_src = read_file("src/serve/scheduler.cpp");
+    const auto fiber_src = read_file("src/serve/fiber.cpp");
+    const auto messaging = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(!sched_src.empty(), "#4230 AC3: scheduler source readable");
+    CHECK(!fiber_src.empty(), "#4230 AC3: fiber source readable");
+    CHECK(!messaging.empty(), "#4230 AC3: messaging source readable");
+    // The done-face re-check lives INSIDE add_joiner's joiner_map_mutex_
+    // critical section (after the lock, before the registration).
+    {
+        const auto idx = sched_src.find("bool Scheduler::add_joiner");
+        const auto end = sched_src.find("// Issue #119: remove a joiner", idx);
+        const std::string region = (idx != std::string::npos && end != std::string::npos)
+                                       ? sched_src.substr(idx, end - idx)
+                                       : std::string();
+        CHECK(!region.empty(), "#4230 AC3: add_joiner region readable");
+        CHECK(region.find("Issue #4230: register-after-notify lost-wake closure") !=
+                  std::string::npos,
+              "#4230 AC3: add_joiner cites #4230 (register-after-notify lost wake)");
+        CHECK(region.find("joiner_map_mutex_") != std::string::npos &&
+                  region.find("if (target->is_done())") != std::string::npos &&
+                  region.find("return false;") != std::string::npos,
+              "#4230 AC3: done-face re-check runs under joiner_map_mutex_ before registering");
+        const auto lock_pos = region.find("AuditedMutexLock");
+        const auto done_pos = region.find("if (target->is_done())");
+        CHECK(lock_pos != std::string::npos && done_pos != std::string::npos && done_pos > lock_pos,
+              "#4230 AC3: re-check is ordered after the joiner_map_mutex_ acquire");
+    }
+    // Fiber::join caller: add_joiner false → re-check is_done → Ok (the
+    // register-after-notify refusal is honored as already-done, not
+    // Invalid).
+    CHECK(fiber_src.find("if (!g_scheduler->add_joiner(target->id(), g_current_fiber))") !=
+                  std::string::npos &&
+              fiber_src.find("if (target->is_done())") != std::string::npos,
+          "#4230 AC3: Fiber::join treats add_joiner false as already-done via is_done re-check");
+    // Messaging fiber:join loop: add_joiner false → break → result fetch.
+    CHECK(messaging.find("g_scheduler->add_joiner(static_cast<std::uint64_t>(fid)") !=
+              std::string::npos,
+          "#4230 AC3: messaging join loop registers via Scheduler::add_joiner");
+    return true;
+}
+
 int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
@@ -2885,6 +3066,9 @@ int main() {
     run_test("test_issue_4176_fd_budget_oneshots", test_issue_4176_fd_budget_oneshots);
     run_test("test_issue_4176_source_cite", test_issue_4176_source_cite);
     run_test("test_issue_4229_capture_honesty", test_issue_4229_capture_honesty);
+    run_test("test_issue_4230_add_joiner_done_face", test_issue_4230_add_joiner_done_face);
+    run_test("test_issue_4230_sequential_join_oneshots", test_issue_4230_sequential_join_oneshots);
+    run_test("test_issue_4230_source_cite", test_issue_4230_source_cite);
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
