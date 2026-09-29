@@ -213,6 +213,57 @@ inline std::size_t sweep_production_hot_residual_castops(aura::ir::IRFunction& f
     return count_identity_castops(f);
 }
 
+// Issue #4172: post-peel residual-undermark verification (before JIT
+// lower). Under the production hard face with the #3347 undermark latch
+// pending, the peel cone may have missed persisted CastOp sites. After a
+// successful peel: a full relower re-runs the DeadCoercion fold over the
+// fresh body (every block was just re-lowered to the current type view —
+// the #3689 mixed-IR hazard cannot reopen); a partial peel counts
+// survivors only (its blocks were already DCE'd during the peel; scanning
+// stale clean blocks would reopen #3689). Unannotated survivors under a
+// hard density face (hard env OR production) arm the existing #3699 /
+// #2459 density gate reject so the mutate commit fails closed. Soft /
+// Off: face disarmed — observe-only, zero extra, commit may succeed.
+inline std::size_t verify_residual_undermark_post_peel_4172(std::vector<aura::ir::IRFunction>& irs,
+                                                            bool want_partial,
+                                                            const aura::core::TypeRegistry* reg,
+                                                            std::uint64_t epoch = 0) noexcept {
+    if (!aura::compiler::typed_audit::production_hard_face_active())
+        return 0; // Soft / Off: verification face disarmed (#4172 Soft observe).
+    if (!aura::compiler::dirty::residual_castop_undermark_pending())
+        return 0; // Quiet: no undermark latch → no verification cost.
+    aura::compiler::castop_density::g_residual_undermark_reelide_attempts_total.fetch_add(
+        1, std::memory_order_relaxed);
+    std::size_t unannotated_leftover = 0;
+    for (auto& rf : irs) {
+        if (!want_partial) {
+            aura::compiler::DeadCoercionEliminationPass dce(reg);
+            if (epoch != 0)
+                dce.set_pipeline_epoch(epoch);
+            dce.run_function(rf);
+            aura::compiler::castop_density::note_residual_undermark_reelide(dce.eliminated_count());
+        }
+        for (const auto& blk : rf.blocks) {
+            for (const auto& ins : blk.instructions) {
+                if (ins.opcode != aura::ir::IROpcode::CastOp)
+                    continue;
+                // #3699 AC4 lineage: annotated (narrow_evidence-backed)
+                // leftover keeps the density-keep path — only unannotated
+                // survivors drive the reject.
+                if (ins.narrow_evidence == 0)
+                    ++unannotated_leftover;
+            }
+        }
+    }
+    if (unannotated_leftover > 0 && aura::compiler::castop_density::force_jit_path_enabled()) {
+        // Still residual + density hard → reject commit (reuse the
+        // existing #3699/#2459 density gate pending; no streak hop — the
+        // undermark latch already proves the cone missed the sites).
+        aura::compiler::castop_density::note_residual_undermark_hard_reject(unannotated_leftover);
+    }
+    return unannotated_leftover;
+}
+
 // Issue #2611: re-export dce deopt-meta counter names for query/docs lineage.
 // Authority lives in dce_elided_deopt_meta.h (stamp at CastOp elision).
 inline constexpr int kDceElidedDeoptMetaSchema = 2611;

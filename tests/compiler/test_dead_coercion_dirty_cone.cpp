@@ -30,6 +30,10 @@
 #include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/dce_elided_deopt_meta.h"
+// Issue #4172: castop_density helpers live in a plain header (names not
+// re-exported through the compiler modules) — include directly, same
+// shape as test_castop_density_closed_loop.cpp / test_castop_density_hard.cpp.
+#include "compiler/castop_density_policy.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -2060,6 +2064,229 @@ static void ac4155_4_source_cite_and_wiring() {
 
 } // namespace
 
+// ── Issue #4172: residual-undermark post-peel verification (before JIT lower) ──
+
+// Non-identity CastOp survivor: type_id 9 has no producing slot (Rule 1
+// cannot fire) and the caller picks the narrow_evidence column (0 =
+// unannotated → #4172 reject driver; >0 = annotated → #3699 AC4 keep).
+// Designated initializers — the IRInstruction aggregate field order is
+// {opcode, operands, source_ast_node_id, type_id, shape_id, ...,
+// narrow_evidence, ...}; positional init would land narrow_ev in type_id
+// (observed: AC4 counted an "annotated" survivor whose evidence column
+// was still 0).
+static IRFunction make_4172_survivor_fn(std::uint32_t narrow_ev) {
+    IRFunction fn;
+    fn.name = "fn_4172_survivor";
+    fn.local_count = 4;
+    fn.entry_block = 0;
+    BasicBlock b0;
+    b0.id = 0;
+    b0.instructions = {
+        IRInstruction{.opcode = IROpcode::ConstI64, .operands = {2, 7, 0, 0}, .type_id = 1},
+        IRInstruction{.opcode = IROpcode::CastOp,
+                      .operands = {3, 2, 0, 0},
+                      .type_id = 9,
+                      .narrow_evidence = narrow_ev},
+        IRInstruction{.opcode = IROpcode::Return, .operands = {3, 0, 0, 0}},
+    };
+    fn.blocks.push_back(std::move(b0));
+    return fn;
+}
+
+// Seeds a production persist site and arms the #3347 undermark latch via
+// the C ABI remirror (added>0). The latch lives ONLY in the C ABI wrapper
+// (dirty_propagation.ixx aura_force_residual_castop_undermark_into_cone →
+// note_residual_castop_undermark_pending) — the C++-level force returns
+// the added count without latching, same route the #3347 ACs take.
+// Caller must hold the production face.
+static void arm_4172_undermark_latch() {
+    reset_residual_castop_persist_for_test();
+    clear_residual_castop_undermark_pending();
+    constexpr aura::compiler::dirty::NodeId kRes = 7172;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    (void)mirror_type_affected_to_cascade({});
+    CHECK(aura_force_residual_castop_undermark_into_cone() >= 1,
+          "4172 setup: undermark remirror latched");
+    CHECK(aura_residual_castop_undermark_pending() != 0, "4172 setup: C ABI pending latch");
+    CHECK(residual_castop_undermark_pending(), "4172 setup: dirty pending latch");
+}
+
+static void ac4172_1_production_hard_reject() {
+    std::println(
+        "\n--- #4172 AC1: Production undermark + unannotated survivor → density gate reject ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    arm_4172_undermark_latch();
+
+    std::vector<IRFunction> irs;
+    irs.push_back(make_4172_survivor_fn(/*narrow_ev=*/0));
+    const auto rej0 = aura::compiler::castop_density::residual_undermark_reject_total();
+    const auto left = aura::compiler::opt_registry::verify_residual_undermark_post_peel_4172(
+        irs, /*want_partial=*/false, /*reg=*/nullptr);
+    CHECK(left >= 1, "4172 AC1: unannotated survivor counted");
+    CHECK(aura::compiler::castop_density::density_gate_reject_pending(),
+          "4172 AC1: existing density gate reject armed");
+    CHECK(aura::compiler::castop_density::residual_undermark_reject_total() == rej0 + 1,
+          "4172 AC1: reject counter bumped");
+
+    clear_residual_castop_undermark_pending();
+    reset_residual_castop_persist_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4172_2_full_peel_reelides_identity() {
+    std::println("\n--- #4172 AC2: full peel re-runs the fold — identity survivors eliminated ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    arm_4172_undermark_latch();
+
+    std::vector<IRFunction> irs;
+    irs.push_back(make_two_block_identity_typed());
+    const auto elided0 = aura::compiler::castop_density::residual_undermark_reelide_elided_total();
+    const auto left = aura::compiler::opt_registry::verify_residual_undermark_post_peel_4172(
+        irs, /*want_partial=*/false, /*reg=*/nullptr);
+    CHECK(left == 0, "4172 AC2: identity survivors re-elided before JIT lower");
+    CHECK(aura::compiler::castop_density::residual_undermark_reelide_elided_total() > elided0,
+          "4172 AC2: re-run elided count bumped");
+    CHECK(!aura::compiler::castop_density::density_gate_reject_pending(),
+          "4172 AC2: no reject when the re-run eliminates");
+
+    clear_residual_castop_undermark_pending();
+    reset_residual_castop_persist_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4172_3_soft_disarmed() {
+    std::println("\n--- #4172 AC3: Soft / Off — face disarmed, commit may succeed ---");
+    SoftAuditScope soft;
+    reset_residual_castop_persist_for_test();
+    clear_residual_castop_undermark_pending();
+    // Soft never persists (observe-only) so the latch cannot arm.
+    constexpr aura::compiler::dirty::NodeId kSoft = 7173;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "4172 AC3: Soft does not persist");
+    std::vector<IRFunction> irs;
+    irs.push_back(make_4172_survivor_fn(/*narrow_ev=*/0));
+    const auto rej0 = aura::compiler::castop_density::residual_undermark_reject_total();
+    const auto left = aura::compiler::opt_registry::verify_residual_undermark_post_peel_4172(
+        irs, /*want_partial=*/false, /*reg=*/nullptr);
+    CHECK(left == 0, "4172 AC3: Soft face returns 0 (disarmed)");
+    CHECK(!aura::compiler::castop_density::density_gate_reject_pending(),
+          "4172 AC3: Soft arms no reject — commit may succeed");
+    CHECK(aura::compiler::castop_density::residual_undermark_reject_total() == rej0,
+          "4172 AC3: Soft observe-only counters");
+    reset_residual_castop_persist_for_test();
+}
+
+static void ac4172_4_annotated_leftover_keeps() {
+    std::println("\n--- #4172 AC4: annotated leftover keeps the density path (#3699 AC4) ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    arm_4172_undermark_latch();
+
+    // Partial-peel arm: survivors are counted as-is (no re-run), so the
+    // narrow_evidence column survives to the count — the exact #3699 AC4
+    // carve-out shape (annotated blame keeps the density path).
+    std::vector<IRFunction> irs;
+    irs.push_back(make_4172_survivor_fn(/*narrow_ev=*/5));
+    const auto left = aura::compiler::opt_registry::verify_residual_undermark_post_peel_4172(
+        irs, /*want_partial=*/true, /*reg=*/nullptr);
+    CHECK(left == 0, "4172 AC4: annotated survivor not counted");
+    CHECK(!aura::compiler::castop_density::density_gate_reject_pending(),
+          "4172 AC4: no reject for annotated leftover");
+
+    clear_residual_castop_undermark_pending();
+    reset_residual_castop_persist_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4172_5_partial_counts_without_reelide() {
+    std::println("\n--- #4172 AC5: partial peel counts survivors without re-running DCE (no #3689 "
+                 "reopen) ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    arm_4172_undermark_latch();
+
+    const auto elided0 = aura::compiler::castop_density::residual_undermark_reelide_elided_total();
+    std::vector<IRFunction> irs;
+    irs.push_back(make_4172_survivor_fn(/*narrow_ev=*/0));
+    const auto left = aura::compiler::opt_registry::verify_residual_undermark_post_peel_4172(
+        irs, /*want_partial=*/true, /*reg=*/nullptr);
+    CHECK(left >= 1, "4172 AC5: partial peel counts survivor");
+    CHECK(aura::compiler::castop_density::density_gate_reject_pending(),
+          "4172 AC5: reject armed (density hard via production)");
+    CHECK(aura::compiler::castop_density::residual_undermark_reelide_elided_total() == elided0,
+          "4172 AC5: no DCE re-run on partial peel");
+
+    clear_residual_castop_undermark_pending();
+    reset_residual_castop_persist_for_test();
+    aura::compiler::castop_density::reset_density_gate_reject_pending_for_test();
+    aura::compiler::castop_density::reset_residual_undermark_reject_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4172_6_schema_and_source() {
+    std::println("\n--- #4172 AC6: schema + source-cite + wiring ---");
+    CHECK(aura::compiler::castop_density::kResidualUndermarkRejectIssue == 4172,
+          "4172 AC6: issue constant");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(pol.find("note_residual_undermark_hard_reject") != std::string::npos,
+          "4172 AC6: policy reject helper");
+    CHECK(pol.find("g_density_gate_reject_pending.store(1, std::memory_order_release)") !=
+              std::string::npos,
+          "4172 AC6: reuses existing #3699 gate pending");
+    CHECK(pol.find("reset_residual_undermark_reject_for_test") != std::string::npos,
+          "4172 AC6: reset-for-test hygiene");
+    CHECK(opt.find("verify_residual_undermark_post_peel_4172") != std::string::npos,
+          "4172 AC6: verifier in optimization_passes");
+    CHECK(opt.find("#4172") != std::string::npos, "4172 AC6: verifier cites issue");
+    CHECK(opt.find("force_jit_path_enabled") != std::string::npos,
+          "4172 AC6: density hard gates the reject");
+    CHECK(svc.find("residual_undermark_face_4172") != std::string::npos,
+          "4172 AC6: relower arms the face");
+    CHECK(svc.find("verify_residual_undermark_post_peel_4172") != std::string::npos,
+          "4172 AC6: relower post-peel verification wired");
+    CHECK(!read_file("scripts/check_residual_undermark_jit_4172.py").empty(),
+          "4172 AC6: source-cite linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_residual_undermark_jit_4172") != std::string::npos,
+          "4172 AC6: build.py wires the linter");
+    CHECK(read_file("tests/compiler/test_issue_4172.cpp").empty(),
+          "4172 AC6: no test_issue_4172.cpp");
+    CHECK(read_file("docs/design/4172-residual-undermark-jit.md").empty(),
+          "4172 AC6: no docs/design");
+}
+
 int run_test_dead_coercion_dirty_cone() {
     // Issue #3698 batch: isolate densify-consistency state at member entry
     // (upstream fail-close members bump the sticky process-global counter,
@@ -2114,9 +2341,16 @@ int run_test_dead_coercion_dirty_cone() {
     ac4155_2_stale_ids_cannot_drive_remirror();
     ac4155_3_empty_persist_and_soft_zero_cost();
     ac4155_4_source_cite_and_wiring();
+    ac4172_1_production_hard_reject();
+    ac4172_2_full_peel_reelides_identity();
+    ac4172_3_soft_disarmed();
+    ac4172_4_annotated_leftover_keeps();
+    ac4172_5_partial_counts_without_reelide();
+    ac4172_6_schema_and_source();
     reset_residual_castop_persist_for_test();
     std::println(
-        "\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689/#4154/#4155: {} "
+        "\n=== "
+        "#2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689/#4154/#4155/#4172: {} "
         "passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;

@@ -58,7 +58,10 @@ def main() -> int:
     # attribution reconsult + peer peel-set block pushed them past
     # 32000. #3975-#3988 wave grew it again: last-look anchors now sit
     # at +36375/+36435 — grow with the function, assertions unchanged.
-    rel = svc[rel_pos : rel_pos + 38000] if rel_pos >= 0 else ""
+    # #4172 pre-JIT residual-undermark face (entry arm + per-entry
+    # persist force + post-peel verification on both peel branches)
+    # grew the body again: anchors now sit past 38000.
+    rel = svc[rel_pos : rel_pos + 42000] if rel_pos >= 0 else ""
 
     must("Issue #3348", "AC1 cite", rel)
     must("initial_block_mirror_edges", "AC1 block snapshot", rel)
