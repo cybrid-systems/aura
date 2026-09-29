@@ -9178,6 +9178,27 @@ def cmd_lint():
             "Issue #4176 serve-async join wake linter failed — run python3 scripts/check_serve_async_join_wake_4176.py"
         )
         return r
+    # Issue #4229: Soft --serve-async set-code/eval returned status=ok with a
+    # silently empty CASE display after sustained set-code load
+    # (sock_score_collapse): capture_stdout_during's dup/pipe/dup2 setup
+    # failure ran the exec with the LIVE stdout and returned an empty
+    # display, so the host scored hits=0 for every explorer while the same
+    # source oneshot scored >0 (and program output interleaved into the
+    # JSON protocol stream). Gate pins: the fail-loud capture contract —
+    # optional return, nullopt on setup failure WITHOUT running the exec,
+    # the silent fallback gone, both exec loops emitting the explicit
+    # transient error line, and a single exec site. Runtime door lives in
+    # tests/serve/test_concurrent.cpp (#4229 ACs).
+    sacha4229_script = ROOT / "scripts" / "check_serve_async_capture_honesty_4229.py"
+    if not sacha4229_script.exists():
+        fail(f"missing {sacha4229_script}")
+        return 1
+    r = run([sys.executable, str(sacha4229_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4229 serve-async capture honesty linter failed — run python3 scripts/check_serve_async_capture_honesty_4229.py"
+        )
+        return r
     # Issue #4143: sticky densify-off recovery cleared the trap BEFORE the
     # densify retry, so between the clear and the unified-green publish (or
     # on the #3884 LCP-deny re-arm path) moving_compact_enabled() read true
