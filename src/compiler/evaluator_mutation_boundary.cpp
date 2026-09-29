@@ -365,6 +365,36 @@ extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() n
     return tc->try_occurrence_hard_face_full_solve_recover();
 }
 
+// Issue #4170: post-recover solve-status re-sample for commit_readiness's
+// #3108 re-gate. A real full-solve recover that reached SOLVED stamps
+// last_delta_solve_status_ = SOLVED on the live commit TC (type_checker.ixx),
+// so the pre-recover CommitReadinessInput snapshot is stale — re-read it
+// here. Stateless validity gate: a test override never touches the live TC
+// (its "true" must not inherit the TC's SOLVED default — #2962 AC1 / #3108
+// fail-closed stays snapshot-driven), and no live commit TC means there is
+// nothing to re-read. Both return the 0xFF sentinel; callers keep their
+// snapshot.
+extern "C" std::uint8_t aura_typed_audit_recover_live_solve_status() noexcept {
+    if (g_tls_test_recover_fn != nullptr)
+        return kAuraTypedAuditSolveStatusUnknown;
+    void* tc_handle = aura_typed_audit_current_commit_type_checker();
+    if (tc_handle == nullptr)
+        return kAuraTypedAuditSolveStatusUnknown;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    return static_cast<std::uint8_t>(tc->last_delta_solve_status());
+}
+
+// Issue #4170: test-only seed for the live-path ACs — stamps the delta solve
+// status a prior TIMEOUT/CONFLICT delta solve would have left. Production
+// code paths never call this.
+extern "C" void aura_typed_audit_test_seed_commit_solve_status(int status) noexcept {
+    void* tc_handle = aura_typed_audit_current_commit_type_checker();
+    if (tc_handle == nullptr)
+        return;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    tc->note_last_delta_solve_status_for_test(static_cast<aura::compiler::SolveResult>(status));
+}
+
 // Test-only: install / clear a recover fn override. Production code paths
 // never call these — only test suites (test_typed_audit_commit_readiness_*,
 // test_partial_cone_commit_gate, test_type_linear_commit_health) that

@@ -108,6 +108,15 @@ extern "C" __attribute__((weak)) void* aura_typed_audit_current_commit_type_chec
     return nullptr;
 }
 
+// Issue #4170: post-recover solve-status re-sample — light-link sentinel
+// (kAuraTypedAuditSolveStatusUnknown; callers keep their snapshot).
+extern "C" __attribute__((weak)) std::uint8_t
+aura_typed_audit_recover_live_solve_status() noexcept {
+    return 0xFF;
+}
+extern "C" __attribute__((weak)) void
+aura_typed_audit_test_seed_commit_solve_status(int /*status*/) noexcept {}
+
 // Issue #3547: light-link has no TLS Evaluator / workspace FlatAST.
 extern "C" __attribute__((weak)) std::uint32_t
 aura_tls_workspace_type_id(std::uint32_t /*node*/) noexcept {

@@ -2911,6 +2911,15 @@ export struct TypeChecker {
     [[nodiscard]] SolveResult last_delta_solve_status() const noexcept {
         return last_delta_solve_status_;
     }
+
+    // Issue #4170: test-only seed — stamps the status a prior TIMEOUT/CONFLICT
+    // delta solve would have left so commit_readiness's stale-snapshot hazard
+    // (recover SOLVED re-gated on the pre-recover fill) is reproducible
+    // without driving a real solver timeout. Production never calls this;
+    // reach it via aura_typed_audit_test_seed_commit_solve_status (C ABI).
+    void note_last_delta_solve_status_for_test(SolveResult s) noexcept {
+        last_delta_solve_status_ = s;
+    }
     // Issue #3203: Soft TIMEOUT/CONFLICT never exports durable TypeIds.
     // Quiet SOLVED: compare last_delta_solve_status_ first (no extra atomic).
     // Issue #3237: query:type residual-face gate lives on Evaluator.
@@ -3212,6 +3221,13 @@ export struct TypeChecker {
             const auto full = solve_delta_cs_.solve(&unresolved);
             // Issue #2962: only SOLVED counts as recover success (commit gate).
             if (full == SolveResult::SOLVED) {
+                // Issue #4170: the full solve does not touch the delta solve
+                // status tracker, so recover SOLVED used to leave
+                // last_delta_solve_status_ at the pre-recover TIMEOUT/CONFLICT
+                // — commit_readiness's #3108 re-gate then false-rejected the
+                // legitimate recover off the stale snapshot. Stamp SOLVED so
+                // the post-recover live status matches the recover outcome.
+                last_delta_solve_status_ = SolveResult::SOLVED;
                 solve_delta_cs_.note_full_solve_cleared_truncation();
                 // Clear engine-local truncate stamp so next fidelity proof
                 // does not re-observe half-green truncate (#2842 fingerprint).

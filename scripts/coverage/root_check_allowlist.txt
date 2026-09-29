@@ -229,3 +229,4 @@ check_ir_dirty_soft_pretend_amortized_4168.py
 check_apply_closure_tls_seq_4169.py
 check_blame_ok_vacuous_4171.py
 check_residual_undermark_jit_4172.py
+check_recover_solve_status_4170.py

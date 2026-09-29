@@ -123,6 +123,18 @@ extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() n
 extern "C" void aura_typed_audit_test_install_recover_override(bool (*fn)(void* ctx) noexcept,
                                                                void* ctx) noexcept;
 extern "C" void aura_typed_audit_test_clear_recover_override() noexcept;
+// Issue #4170: post-recover solve-status re-sample for commit_readiness's
+// #3108 re-gate. Encoding matches CommitReadinessInput.solve_status:
+// 0=SOLVED, 1=CONFLICT, 2=TIMEOUT; the sentinel below means "no live recover
+// status available" (test override installed / no live commit TC) — callers
+// keep their pre-recover snapshot. Strong def in
+// evaluator_mutation_boundary.cpp; weak stub in test_concurrent_stubs.cpp.
+inline constexpr std::uint8_t kAuraTypedAuditSolveStatusUnknown = 0xFF;
+extern "C" std::uint8_t aura_typed_audit_recover_live_solve_status() noexcept;
+// Issue #4170: test-only seed — stamps the commit TC's delta solve status a
+// prior TIMEOUT/CONFLICT delta solve would have left so the stale-snapshot
+// hazard is reproducible without driving a real solver timeout.
+extern "C" void aura_typed_audit_test_seed_commit_solve_status(int status) noexcept;
 
 namespace aura::compiler {
 // Issue #3170 AC3 source-cite: clear_occurrence_persist_buffer bumps this
@@ -4129,7 +4141,13 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
 [[nodiscard]] inline bool region_type_cross_talk_face_hit() noexcept;
 
 // Pure decision table (AC5: identical inputs → identical output; no atomics).
-[[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept {
+// Issue #4170: mutable-by-value body of commit_readiness — the post-recover
+// re-sample refreshes solve_status in place ahead of each #3108 re-gate (a
+// const-reference parameter gated real recover on the stale pre-recover
+// snapshot — false reject). By-value parameter: callers' input is never
+// mutated; #2728's pinned commit_readiness signature stays intact below.
+[[nodiscard]] inline CommitReadiness
+commit_readiness_mutable_4170(CommitReadinessInput in) noexcept {
     CommitReadiness r;
     auto set = [&](std::string_view reason, bool allow, std::uint32_t bp) {
         r.force_reason = reason;
@@ -4194,6 +4212,19 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             // true only when its solve() returned SOLVED — no need to
             // re-sample a possibly-stale in.solve_status here.
             bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            // Issue #4170: recover SOLVED now stamps last_delta_solve_status_ =
+            // SOLVED on the live commit TC, so the pre-recover in.solve_status
+            // snapshot is stale for the live path — a real full-solve recover
+            // after a TIMEOUT/CONFLICT delta solve was hard-rejected here
+            // (false reject). Re-sample the live status; hermetic override /
+            // no live TC keep the snapshot (0xFF sentinel) so the #3108
+            // fail-closed semantics are unchanged. With the stamp, recover
+            // true on the live path implies stamped SOLVED — the forced-false
+            // branch below can no longer follow the recover-side truncation
+            // clear (the issue's half-clean CS asymmetry is closed).
+            if (const auto live_status = aura_typed_audit_recover_live_solve_status();
+                live_status != kAuraTypedAuditSolveStatusUnknown)
+                in.solve_status = live_status;
             // Issue #3108: re-gate recover on solve_status==SOLVED (0).
             // Restored 2026-09-02: dropping this re-gate broke #2962 AC1
             // (override recover "success" under CONFLICT must hard-reject,
@@ -4262,6 +4293,11 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             // close of #2962 under steal × dual-Evaluator). Quiet path
             // (no face) never reaches here → zero extra solve cost.
             bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            // Issue #4170: re-sample post-recover live solve status (see step
+            // 2); sentinel keeps the #3108 snapshot for override / no-TC paths.
+            if (const auto live_status = aura_typed_audit_recover_live_solve_status();
+                live_status != kAuraTypedAuditSolveStatusUnknown)
+                in.solve_status = live_status;
             // Issue #3108: second re-gate (cone/empty hard-face recover).
             if (recovered && in.solve_status != 0) {
                 g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
@@ -4308,6 +4344,11 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         // nullptr / no TLS → recover fn returns false → hard reject with
         // force_reason refined_drift (code 15).
         bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+        // Issue #4170: re-sample post-recover live solve status (see step 2);
+        // sentinel keeps the #3108 snapshot for override / no-TC paths.
+        if (const auto live_status = aura_typed_audit_recover_live_solve_status();
+            live_status != kAuraTypedAuditSolveStatusUnknown)
+            in.solve_status = live_status;
         // Issue #3623: #3108 SOLVED re-gate — same two lines as cone
         // (step 2) and cone/empty (step 6). The refined_drift face
         // recovered in #2911 without the override-recover re-gate, so a
@@ -4353,6 +4394,14 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
 
     // 7) ok — clean SOLVED + linear + blame + !truncated + no face hit.
     return (set("ok", true, 10000), r);
+}
+
+// Issue #4170: thin by-value delegate — the pinned #2728/#3108/#3623 contract
+// surface keeps the original commit_readiness signature and call sites while
+// the recover re-sample mutates its own by-value copy (see
+// commit_readiness_mutable_4170 above).
+[[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept {
+    return commit_readiness_mutable_4170(in);
 }
 
 // Fill hard flags from live audit process state (still pure w.r.t. inputs
