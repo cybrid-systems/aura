@@ -1494,6 +1494,9 @@ inline constexpr std::uint32_t kAdaptiveReasonFull = 1u << 7;
 inline constexpr std::uint32_t kAdaptiveReasonSkipClean = 1u << 8;
 // Issue #2212: Shape storm widened thr / forced partial preference.
 inline constexpr std::uint32_t kAdaptiveReasonShapeStormPartial = 1u << 9;
+// Issue #4156: AdaptiveThrPolicy risk clamp — a correctness-risk fallback
+// (MapInconsistent / DesyncForceFull) narrowed the effective partial thr.
+inline constexpr std::uint32_t kAdaptiveReasonAdaptiveThrRisk = 1u << 10;
 // Issue #3986: Shape-storm flip of adaptive-full → partial with empty
 // DeadCoercion persist is unknown cone under production (service consult).
 inline constexpr int kShapeStormEmptyPersistIssue = 3986;
@@ -1587,6 +1590,13 @@ struct AdaptiveRelowerDecision {
     return adaptive_last_reason_atomic().load(std::memory_order_relaxed);
 }
 
+// Issue #4156: the #2248 AdaptiveThrPolicy face is defined further below
+// (after the storm helpers); the decision core consults it so every peel
+// entry (should_partial_relower_workload*, consult_workload_adaptive_)
+// shares one wired threshold — closing the pre-#4156 dual-track.
+[[nodiscard]] inline std::uint32_t current_adaptive_partial_thr() noexcept;
+inline bool adaptive_thr_frozen() noexcept;
+
 // Issue #2127: workload-aware partial/full decision.
 // total_blocks=0 → density unknown (0 bp); base thr from #2032/#2112.
 // Pure aside from process-wide last-decision atomics (metrics).
@@ -1625,6 +1635,23 @@ struct AdaptiveRelowerDecision {
                                           deopt_storm_active, d.dirty_density_bp, forced, &reason);
     if (agent_cap > 0 && d.effective_threshold > agent_cap)
         d.effective_threshold = agent_cap;
+    // Issue #4156: close the #2248 dual-track — the AdaptiveThrPolicy face
+    // now feeds this decision with inverted polarity. Correctness-risk
+    // fallbacks (MapInconsistent / DesyncForceFull) LOWER the effective
+    // partial window (prefer full sooner); clean windows recover toward
+    // base. Neutral state (face == #2112 default, bad_window_count == 0)
+    // and the AURA_ADAPTIVE_THR=0 freeze keep the decision unchanged
+    // (#2112 / #2127 / #3987 unchanged; Soft/Off zero-cost). Inverted
+    // polarity never raises the face above base, so Agents following
+    // adaptive-thr-current cannot widen partial.
+    if (!adaptive_thr_frozen()) {
+        const std::uint32_t risk_thr = current_adaptive_partial_thr();
+        if (risk_thr < kDefaultPartialRelowerThreshold &&
+            d.effective_threshold > static_cast<std::size_t>(risk_thr)) {
+            d.effective_threshold = static_cast<std::size_t>(risk_thr);
+            reason |= kAdaptiveReasonAdaptiveThrRisk;
+        }
+    }
     if (dirty_count == 0) {
         d.want_partial = false;
         reason |= kAdaptiveReasonSkipClean;
@@ -1716,25 +1743,35 @@ inline void apply_shape_storm_partial_preference(AdaptiveRelowerDecision& d,
 // ── Issue #2248: Agent-driven adaptive relower threshold from
 // fallback-reason telemetry (refine #2112 / #2127 / #2190).
 //
-// AdaptiveThrPolicy: closed-loop controller that raises the partial
+// AdaptiveThrPolicy: closed-loop controller that LOWERS the partial
 // cost threshold when correctness-risk fallback reasons appear (e.g.
-// MapInconsistent / DesyncForceFull from #2181 / #2193), and decays
-// back toward base when the window is clean (Ok partial successes).
+// MapInconsistent / DesyncForceFull from #2181 / #2193), and recovers
+// toward base when the window is clean (Ok partial successes).
 //
-// AC1: sustained bad reasons raise current_thr (measurable via query).
-// AC2: clean window decays (no permanent ratchet).
-// AC3: env override AURA_ADAPTIVE_THR=0 freezes at base.
+// Issue #4156 inverted polarity + wiring: the pre-#4156 face RAISED
+// current_thr under risk while the peel path never read it — a
+// dual-track where Agents trusting adaptive-thr-current would WIDEN
+// partial exactly when correctness risk says prefer full. The face now
+// narrows under risk and decide_workload_adaptive_partial_relower
+// clamps the effective thr to it (kAdaptiveReasonAdaptiveThrRisk).
+//
+// AC1: sustained bad reasons lower current_thr (measurable via query).
+// AC2: clean window recovers toward base (no permanent narrowing, and
+//      never above base — Agents cannot widen partial via this face).
+// AC3: env override AURA_ADAPTIVE_THR=0 freezes at base (zero-cost
+//      Soft/Off: note early-returns, clamp skipped).
 // AC5: StormLevel still ORs (caller uses
 //      should_partial_relower_workload_storm_aware + adaptive check).
 struct AdaptiveThrPolicy {
-    std::uint32_t base_partial_cost_thr = 8;             // #2112 default
-    std::uint32_t current_thr = 8;                       // raised under bad reasons
-    std::uint32_t bad_window_count = 0;                  // MapInconsistent + DesyncForceFull
-    std::uint32_t bad_window_cap = 50;                   // prevent unbounded growth
-    std::uint32_t clean_window_count = 0;                // Ok successes for decay
-    static constexpr std::uint32_t kStepBp = 250;        // +25% per bad event (basis points)
-    static constexpr std::uint32_t kMaxRatioBp = 2500;   // cap at 2.5x base
-    static constexpr std::uint32_t kCleanDecayAfter = 5; // decay after 5 clean
+    std::uint32_t base_partial_cost_thr = 8; // #2112 default (pinned by check_adaptive_thr_4156.py)
+    std::uint32_t current_thr = 8;           // #4156: lowered under bad reasons, <= base always
+    std::uint32_t bad_window_count = 0;      // MapInconsistent + DesyncForceFull
+    std::uint32_t bad_window_cap = 50;       // prevent unbounded growth
+    std::uint32_t clean_window_count = 0;    // Ok successes for recovery
+    static constexpr std::uint32_t kStepBp = 250; // 25% of base per event (per-mille arithmetic)
+    static constexpr std::uint32_t kMinRatioBp =
+        250; // #4156 floor: 0.25x base under sustained risk
+    static constexpr std::uint32_t kCleanDecayAfter = 5; // recover one step after 5 clean
 };
 
 inline AdaptiveThrPolicy& adaptive_thr_policy_singleton() noexcept {
@@ -1754,10 +1791,11 @@ inline bool adaptive_thr_frozen() noexcept {
 
 // Update policy based on a fallback reason. Correctness-risk reasons
 // (MapInconsistent=7 / DesyncForceFull=6 per RelowerFallbackReason ABI)
-// bump bad_window_count + raise current_thr. Ok=0 decays. Uses int ABI
-// so this module does not depend on observability_metrics.h.
+// bump bad_window_count + lower current_thr (#4156 inverted polarity).
+// Ok=0 recovers toward base. Uses int ABI so this module does not
+// depend on observability_metrics.h.
 // Threshold / ParseFail / RelowerReject / Other / NoSource / EmptyIr
-// are neutral (neither raise nor decay).
+// are neutral (neither lower nor recover).
 inline constexpr int kRelowerFbOk = 0;
 inline constexpr int kRelowerFbDesyncForceFull = 6;
 inline constexpr int kRelowerFbMapInconsistent = 7;
@@ -1771,34 +1809,39 @@ inline void note_relower_fallback_for_adaptive(int r) noexcept {
     const bool is_correctness_risk =
         r == kRelowerFbMapInconsistent || r == kRelowerFbDesyncForceFull;
     if (is_correctness_risk) {
-        // AC1: raise threshold.
+        // AC1 (#4156 inverted polarity): LOWER the threshold — a
+        // correctness-risk fallback means partial relowering just
+        // misfired, so the peel path must prefer full sooner.
         if (p.bad_window_count < p.bad_window_cap)
             ++p.bad_window_count;
-        // Raise current_thr by kStepBp basis points per bad event.
-        const std::uint64_t raised =
-            static_cast<std::uint64_t>(p.current_thr) +
+        // Lower current_thr by kStepBp per-mille of base per bad event,
+        // floored at kMinRatioBp of base (never 0: some partial stays).
+        const std::uint64_t step =
             (static_cast<std::uint64_t>(p.base_partial_cost_thr) * AdaptiveThrPolicy::kStepBp) /
-                1000;
-        const std::uint64_t max_thr =
-            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * AdaptiveThrPolicy::kMaxRatioBp) /
             1000;
-        p.current_thr = raised > max_thr ? static_cast<std::uint32_t>(max_thr)
-                                         : static_cast<std::uint32_t>(raised);
+        const std::uint64_t min_thr =
+            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * AdaptiveThrPolicy::kMinRatioBp) /
+            1000;
+        const std::uint64_t narrowed = static_cast<std::uint64_t>(p.current_thr) > step
+                                           ? static_cast<std::uint64_t>(p.current_thr) - step
+                                           : 0;
+        p.current_thr = narrowed < min_thr ? static_cast<std::uint32_t>(min_thr)
+                                           : static_cast<std::uint32_t>(narrowed);
         // Reset clean window counter.
         p.clean_window_count = 0;
     } else if (r == kRelowerFbOk) {
-        // AC2: clean window decay.
+        // AC2: clean window recovers one step toward base (and never
+        // above base — Agents cannot widen partial via this face).
         ++p.clean_window_count;
         if (p.clean_window_count >= AdaptiveThrPolicy::kCleanDecayAfter) {
-            // Decay 1 step toward base.
-            if (p.current_thr > p.base_partial_cost_thr) {
-                const std::int64_t lower = static_cast<std::int64_t>(p.current_thr) -
-                                           (static_cast<std::int64_t>(p.base_partial_cost_thr) *
+            if (p.current_thr < p.base_partial_cost_thr) {
+                const std::uint64_t step = (static_cast<std::uint64_t>(p.base_partial_cost_thr) *
                                             AdaptiveThrPolicy::kStepBp) /
-                                               1000;
-                p.current_thr = lower < static_cast<std::int64_t>(p.base_partial_cost_thr)
+                                           1000;
+                const std::uint64_t raised = static_cast<std::uint64_t>(p.current_thr) + step;
+                p.current_thr = raised > p.base_partial_cost_thr
                                     ? p.base_partial_cost_thr
-                                    : static_cast<std::uint32_t>(lower);
+                                    : static_cast<std::uint32_t>(raised);
             }
             if (p.bad_window_count > 0)
                 --p.bad_window_count;

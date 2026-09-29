@@ -197,6 +197,13 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.7
+    env:
+      # Coverage sweep on GH runners: the 14-worker parallel burst SIGKILLs the
+      # stdlib oneshot trio's freshly-forked interpreter children (guest-global
+      # memory pressure waves; issue #4176 diagnosis, #4152-verified safe
+      # value). The interpreter-spawn lane (AURA_COVERAGE_LANE_JOBS=2) + one
+      # SIGKILL-retry alone were insufficient on CI hardware.
+      AURA_GATE_JOBS: "6"
     steps:
     - uses: actions/checkout@v7
 

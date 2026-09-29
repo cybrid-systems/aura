@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -251,9 +252,10 @@ static void ac5_regression_pure() {
 }
 
 
-// AC (Issue #2248): Agent-driven adaptive relower threshold from
-// fallback-reason telemetry. AC1 (bad reasons raise thr), AC2
-// (clean window decays), AC3 (env override freezes).
+// AC (Issue #2248, polarity superseded by #4156): Agent-driven adaptive
+// relower threshold from fallback-reason telemetry. AC1 (bad reasons
+// LOWER thr — prefer full sooner), AC2 (clean window recovers toward
+// base), AC3 (env override freezes).
 void ac2248_agent_driven_adaptive_thr() {
     std::println("\n--- AC #2248: Agent-driven adaptive thr ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
@@ -292,24 +294,102 @@ void ac2248_agent_driven_adaptive_thr() {
     CHECK(q.find("adaptive-thr-wired") != std::string::npos, "wired sentinel");
     CHECK(q.find("schema-2248") != std::string::npos, "schema-2248 lineage");
     CHECK(q.find("issue-2248") != std::string::npos, "issue-2248 lineage");
-    // Runtime smoke (AC1): reset, inject 20 MapInconsistent, thr should rise.
+    // Runtime smoke (AC1, #4156 inverted polarity): reset, inject 20
+    // MapInconsistent, thr must LOWER (peel prefers full sooner).
     aura::compiler::reset_adaptive_thr_for_test();
     const auto base_thr = aura::compiler::current_adaptive_partial_thr();
     aura::compiler::inject_adaptive_thr_bad_for_test(20);
-    const auto raised_thr = aura::compiler::current_adaptive_partial_thr();
-    CHECK(raised_thr > base_thr, "AC1: raised_thr > base after 20 bad events");
-    CHECK(raised_thr <= (base_thr * 25) / 10, "AC1: raised_thr <= 2.5x base (cap)");
-    // AC2: clean window decay.
-    const auto peak_thr = raised_thr;
+    const auto narrowed_thr = aura::compiler::current_adaptive_partial_thr();
+    CHECK(narrowed_thr < base_thr, "AC1: narrowed_thr < base after 20 bad events (#4156)");
+    CHECK(narrowed_thr >= (base_thr * 25) / 100, "AC1: narrowed_thr >= 0.25x base (floor)");
+    // AC2: clean window recovers toward base (no permanent narrowing,
+    // never above base — Agents cannot widen partial via this face).
+    const auto floor_thr = narrowed_thr;
     for (int i = 0; i < 30; ++i) {
         // Ok=0 per RelowerFallbackReason ABI (avoid observability_metrics.h dep).
         aura::compiler::note_relower_fallback_for_adaptive(/*Ok*/ 0);
     }
-    const auto decayed_thr = aura::compiler::current_adaptive_partial_thr();
-    CHECK(decayed_thr < peak_thr, "AC2: decayed_thr < peak after clean window");
-    CHECK(decayed_thr >= base_thr, "AC2: decayed_thr >= base (no ratchet below base)");
+    const auto recovered_thr = aura::compiler::current_adaptive_partial_thr();
+    CHECK(recovered_thr > floor_thr, "AC2: recovered_thr > floor after clean window");
+    CHECK(recovered_thr <= base_thr, "AC2: recovered_thr <= base (no ratchet above base)");
     // Restore for downstream tests.
     aura::compiler::reset_adaptive_thr_for_test();
+}
+
+// AC (Issue #4156): close the #2248 dual-track. The adaptive face feeds
+// the peel decision core with inverted polarity: correctness-risk
+// fallbacks (MapInconsistent / DesyncForceFull) LOWER the effective
+// partial thr (prefer full sooner); the neutral state and the
+// AURA_ADAPTIVE_THR=0 freeze keep decisions unchanged; inverted polarity
+// never raises the face above base, so Agents following
+// adaptive-thr-current cannot widen partial.
+void ac4156_adaptive_thr_feeds_peel_inverted() {
+    std::println("\n--- #4156 AC: adaptive thr feeds peel (inverted polarity) ---");
+    // Source-cite: decision core consults the face; reason bit + floor
+    // constant exist; consult documents the inherited clamp.
+    const auto irc = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(irc.find("Issue #4156") != std::string::npos, "4156: cite in ir_cache_pure.ixx");
+    CHECK(irc.find("kAdaptiveReasonAdaptiveThrRisk") != std::string::npos, "4156: risk reason bit");
+    CHECK(irc.find("kMinRatioBp") != std::string::npos, "4156: floor constant");
+    CHECK(svc.find("Issue #4156") != std::string::npos, "4156: consult cites inherited clamp");
+    CHECK(!std::ifstream("tests/compiler/test_issue_4156.cpp").good(),
+          "4156: no test_issue_4156.cpp");
+    CHECK(!std::ifstream("docs/design/4156-adaptive-thr-dual-track.md").good(),
+          "4156: no docs/design/");
+
+    // AC1: neutral state unchanged (#2112/#2127/#3987 faces), risk narrows.
+    aura::compiler::reset_adaptive_thr_for_test();
+    reset_partial_relower_threshold_for_test();
+    const auto base_thr = aura::compiler::current_adaptive_partial_thr();
+    const auto neutral = aura::compiler::decide_workload_adaptive_partial_relower(5, 64);
+    CHECK(neutral.want_partial, "4156 AC1: 5/64 dirty partial at neutral state");
+    CHECK((neutral.reason_bits & aura::compiler::kAdaptiveReasonAdaptiveThrRisk) == 0,
+          "4156 AC1: neutral decision carries no risk bit");
+    aura::compiler::inject_adaptive_thr_bad_for_test(3);
+    const auto narrowed = aura::compiler::current_adaptive_partial_thr();
+    CHECK(narrowed < base_thr, "4156 AC1: face narrowed below base after risk");
+    const auto risk = aura::compiler::decide_workload_adaptive_partial_relower(5, 64);
+    CHECK(risk.effective_threshold < neutral.effective_threshold,
+          "4156 AC1: risk narrows effective thr");
+    CHECK(!risk.want_partial, "4156 AC1: peel prefers full under correctness risk");
+    CHECK((risk.reason_bits & aura::compiler::kAdaptiveReasonAdaptiveThrRisk) != 0,
+          "4156 AC1: risk reason bit set");
+    // AC2: clean window recovers the decision (no permanent narrowing).
+    for (int i = 0; i < 30; ++i) {
+        aura::compiler::note_relower_fallback_for_adaptive(/*Ok*/ 0);
+    }
+    CHECK(aura::compiler::current_adaptive_partial_thr() == base_thr,
+          "4156 AC2: clean window recovers face to base");
+    const auto healed = aura::compiler::decide_workload_adaptive_partial_relower(5, 64);
+    CHECK(healed.want_partial && healed.effective_threshold == neutral.effective_threshold,
+          "4156 AC2: decision restored after recovery");
+    // AC3: Ok-only flood never raises the face above base (an Agent
+    // following adaptive-thr-current cannot widen partial).
+    aura::compiler::reset_adaptive_thr_for_test();
+    for (int i = 0; i < 100; ++i) {
+        aura::compiler::note_relower_fallback_for_adaptive(/*Ok*/ 0);
+    }
+    CHECK(aura::compiler::current_adaptive_partial_thr() == base_thr,
+          "4156 AC3: face never exceeds base");
+    const auto calm = aura::compiler::decide_workload_adaptive_partial_relower(5, 64);
+    CHECK(calm.want_partial && calm.effective_threshold == neutral.effective_threshold,
+          "4156 AC3: clean-only face leaves peel window unchanged");
+    // AC4: AURA_ADAPTIVE_THR=0 freeze keeps the decision unchanged
+    // (zero-cost Soft/Off: note early-returns, clamp skipped).
+    aura::compiler::reset_adaptive_thr_for_test();
+    aura::compiler::inject_adaptive_thr_bad_for_test(3);
+    CHECK(aura::compiler::current_adaptive_partial_thr() < base_thr,
+          "4156 AC4: face narrowed before freeze");
+    ::setenv("AURA_ADAPTIVE_THR", "0", /*overwrite*/ 1);
+    aura::compiler::note_relower_fallback_for_adaptive(/*Ok*/ 0);
+    const auto frozen = aura::compiler::decide_workload_adaptive_partial_relower(5, 64);
+    ::unsetenv("AURA_ADAPTIVE_THR");
+    CHECK(frozen.want_partial && frozen.effective_threshold == neutral.effective_threshold,
+          "4156 AC4: frozen env keeps the neutral peel window");
+    // Restore for downstream tests.
+    aura::compiler::reset_adaptive_thr_for_test();
+    reset_partial_relower_threshold_for_test();
 }
 
 static bool file_exists_cwd_3582(const char* rel) {
@@ -448,6 +528,7 @@ int run_test_adaptive_partial_relower_threshold() {
     ac3101_storm_exit_clears_force();
     ac3987_quiet_cap_storm_exit_stays();
     ac2248_agent_driven_adaptive_thr();
+    ac4156_adaptive_thr_feeds_peel_inverted();
     ac3582_1_forced_visible_on_existing_face();
     ac3582_2_clear_restores_adaptive();
     ac3582_3_storm_alternation_monotonic();

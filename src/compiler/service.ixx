@@ -6216,6 +6216,10 @@ public:
     // feeds #2127 thr adaptation; shape_storm no longer lowers thr.
     // Issue #2190: after Shape preference, apply StormLevel Global gate
     // (prefer full under Global/Both; Shape-only does not force full).
+    // Issue #4156: the #2248 AdaptiveThrPolicy risk clamp (inverted
+    // polarity — MapInconsistent / DesyncForceFull narrow partial) is
+    // applied inside decide_workload_adaptive_partial_relower, so this
+    // consult and every peel entry share the wired threshold.
     AdaptiveRelowerDecision
     consult_workload_adaptive_partial_(std::size_t dirty_n, std::size_t total_blocks = 0) noexcept {
         auto& reg = hot_update_registry();
