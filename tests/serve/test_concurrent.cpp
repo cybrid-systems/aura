@@ -2904,6 +2904,222 @@ static bool test_issue_4230_source_cite() {
     return true;
 }
 
+// ── Issue #4231: Soft --serve-async sock/holder death mid set-code
+// scoring batch (serve_sock_death_mid_setcode_batch) ═════════════
+// Measured Soft tip a9ddd94 (--serve-async, Soft Ready denseness
+// #4047/#4048, workers=1): after a host_parallel propose (64), the Soft
+// unix sock vanished and/or the holder PID changed mid set-code explorer
+// scoring; the host cold-restarted repeatedly (~14s attach each) and
+// often finished no_gain_cause=sock_transient (all explorers hits=0).
+// Distinct from #4229 (sock alive, empty CASE) and #4230 (sequential
+// spawn+join timeout). Two holder-death faces ship here:
+//   (a) a C++ exception escaping ANY fiber body crossed the ucontext
+//       resume boundary into the worker dispatch loop — no unwinding
+//       contract there, so the escape landed in std::terminate and the
+//       whole holder died (sock deleted by process teardown, holder
+//       respawned, remaining explorers collapsed to zeros). Under a
+//       64-explorer batch on one shared Soft Evaluator, one throwing
+//       denseness/scoring fiber was enough for a cold death.
+//   (b) protocol status writes to a closed stdout reader raised SIGPIPE
+//       (default disposition = silent process death, no FATAL line)
+//       during host restart thrash.
+// Fix: (a) the trampoline contains body exceptions — counter bump +
+// stderr notice, the fiber still reaches Done, the holder serves the
+// remaining explorers; (b) serve-async + bench install SIGPIPE SIG_IGN
+// so a dead reader degrades to an EPIPE write failure. The
+// fiber:join defuse_version-mutated WARN is observability-only (the
+// audited joiner path re-checks and resumes; no teardown there).
+
+// ── #4231 AC1: a throwing fiber body (std + non-standard type) is
+// contained at the trampoline — the fiber reaches Done, the process
+// survives, and the contained-exception counter bumps once per body.
+static bool test_issue_4231_body_exception_contained() {
+    std::println("\n--- #4231 AC1: throwing fiber body contained at the trampoline ---");
+
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+
+    Scheduler sched(2);
+    std::thread t([&sched]() { sched.run(); });
+
+    const auto before = Fiber::fiber_body_exception_total();
+
+    // std::exception body — pre-fix the escape crossed the resume
+    // boundary and std::terminate killed the whole test process
+    // (the holder-death shape this issue reports).
+    std::atomic<bool> thrower_started{false};
+    Fiber* thrower = nullptr;
+    sched.spawn([&]() {
+        thrower = aura::serve::g_current_fiber;
+        thrower_started.store(true, std::memory_order_release);
+        throw std::runtime_error("#4231 AC1 probe: body throws std::runtime_error");
+    });
+    CHECK(wait_for_atomic(thrower_started, true), "#4231 AC1: thrower started");
+    CHECK(thrower != nullptr, "#4231 AC1: thrower fiber observed");
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (thrower != nullptr && !thrower->is_done() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(thrower != nullptr && thrower->is_done(),
+          "#4231 AC1: thrower fiber reached Done (no std::terminate)");
+    CHECK(Fiber::fiber_body_exception_total() == before + 1,
+          "#4231 AC1: contained-exception counter bumped once (std::runtime_error)");
+
+    // Non-standard exception body — the catch(...) arm must contain it
+    // too (library internals may throw non-std types).
+    std::atomic<bool> thrower2_started{false};
+    Fiber* thrower2 = nullptr;
+    sched.spawn([&]() {
+        thrower2 = aura::serve::g_current_fiber;
+        thrower2_started.store(true, std::memory_order_release);
+        throw 42; // non-standard exception type
+    });
+    CHECK(wait_for_atomic(thrower2_started, true), "#4231 AC1: non-std thrower started");
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (thrower2 != nullptr && !thrower2->is_done() &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(thrower2 != nullptr && thrower2->is_done(),
+          "#4231 AC1: non-std thrower fiber reached Done");
+    CHECK(Fiber::fiber_body_exception_total() == before + 2,
+          "#4231 AC1: counter bumped for the non-standard throw too");
+
+    sched.stop();
+    t.join();
+    return true;
+}
+
+// ── #4231 AC2: holder survival — after a contained body exception the
+// same scheduler still runs later fibers to completion (the worker
+// dispatch loop is not wedged; the batch's remaining explorers score).
+static bool test_issue_4231_holder_survives_thrown_body() {
+    std::println("\n--- #4231 AC2: holder serves remaining fibers after a thrown body ---");
+
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+
+    Scheduler sched(2);
+    std::thread t([&sched]() { sched.run(); });
+
+    // First body throws (contained).
+    std::atomic<bool> thrower_started{false};
+    sched.spawn([&]() {
+        thrower_started.store(true, std::memory_order_release);
+        throw std::runtime_error("#4231 AC2 probe: contained before the survivors");
+    });
+    CHECK(wait_for_atomic(thrower_started, true), "#4231 AC2: thrower started");
+
+    // Survivors: 32 spawn+join oneshots must all complete Ok with their
+    // values — the contained exception left the worker loop serviceable.
+    constexpr int N = 32;
+    std::atomic<int> joins_ok{0};
+    std::atomic<bool> driver_done{false};
+    sched.spawn([&]() {
+        for (int i = 0; i < N; ++i) {
+            std::atomic<int>* slot = new std::atomic<int>(0);
+            Fiber* child = sched.spawn([slot, i]() { slot->store(i, std::memory_order_release); });
+            const JoinResult r = Fiber::join(child, std::nullopt);
+            if (r.status == JoinStatus::Ok && child->is_done() &&
+                slot->load(std::memory_order_acquire) == i) {
+                joins_ok.fetch_add(1, std::memory_order_relaxed);
+            }
+            delete slot;
+        }
+        driver_done.store(true, std::memory_order_release);
+    });
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (!driver_done.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(driver_done.load(), "#4231 AC2: survivor driver finished (worker loop serviceable)");
+    CHECK(joins_ok.load() == N, "#4231 AC2: all 32 survivors joined Ok with values (ok " +
+                                    std::to_string(joins_ok.load()) + "/" + std::to_string(N) +
+                                    ")");
+
+    sched.stop();
+    t.join();
+    return true;
+}
+
+// ── #4231 AC3: source-cite — trampoline containment region, counter +
+// accessor, no rethrow into the worker loop.
+static bool test_issue_4231_source_cite() {
+    std::println("\n--- #4231 AC3: source-cite (trampoline containment, counter) ---");
+    auto read_file = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string();
+    };
+    const auto fiber_src = read_file("src/serve/fiber.cpp");
+    const auto fiber_hdr = read_file("src/serve/fiber.h");
+    CHECK(!fiber_src.empty(), "#4231 AC3: fiber source readable");
+    CHECK(!fiber_hdr.empty(), "#4231 AC3: fiber header readable");
+    {
+        const auto idx = fiber_src.find("void Fiber::trampoline");
+        const auto end = fiber_src.find("// ── Issue #1584: structured Fiber::join", idx);
+        const std::string region = (idx != std::string::npos && end != std::string::npos)
+                                       ? fiber_src.substr(idx, end - idx)
+                                       : std::string();
+        CHECK(!region.empty(), "#4231 AC3: trampoline region readable");
+        CHECK(region.find("Issue #4231") != std::string::npos,
+              "#4231 AC3: trampoline cites #4231 (body-exception containment)");
+        CHECK(region.find("try {") != std::string::npos &&
+                  region.find("catch (const std::exception& e)") != std::string::npos &&
+                  region.find("catch (...)") != std::string::npos,
+              "#4231 AC3: both catch arms wrap the fiber body");
+        CHECK(region.find("fiber_body_exception_total_.fetch_add") != std::string::npos,
+              "#4231 AC3: containment bumps the process-wide counter");
+        CHECK(region.find("throw;") == std::string::npos,
+              "#4231 AC3: no rethrow into the worker dispatch loop");
+        CHECK(region.find("FiberState::Done") != std::string::npos,
+              "#4231 AC3: contained fiber still reaches Done");
+    }
+    CHECK(fiber_hdr.find("fiber_body_exception_total()") != std::string::npos,
+          "#4231 AC3: header declares the contained-exception accessor");
+    CHECK(fiber_hdr.find("static std::atomic<std::uint64_t> fiber_body_exception_total_;") !=
+              std::string::npos,
+          "#4231 AC3: header declares the counter member");
+    return true;
+}
+
+// ── #4231 AC4: source-cite — serve-async + bench install SIGPIPE
+// SIG_IGN (holder survives a closed stdout reader; EPIPE path instead).
+static bool test_issue_4231_sigpipe_containment() {
+    std::println("\n--- #4231 AC4: source-cite (SIGPIPE SIG_IGN in serve-async) ---");
+    auto read_file = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string();
+    };
+    const auto serve_src = read_file("src/serve/serve_async.cpp");
+    CHECK(!serve_src.empty(), "#4231 AC4: serve_async source readable");
+    std::size_t hits = 0;
+    for (auto pos = serve_src.find("::signal(SIGPIPE, SIG_IGN)"); pos != std::string::npos;
+         pos = serve_src.find("::signal(SIGPIPE, SIG_IGN)", pos + 1))
+        ++hits;
+    CHECK(hits == 2, "#4231 AC4: run_serve_async + bench both install SIG_IGN (found " +
+                         std::to_string(hits) + "/2)");
+    CHECK(serve_src.find("Issue #4231: serve-async writes protocol status lines") !=
+              std::string::npos,
+          "#4231 AC4: run_serve_async cites #4231 (holder-survival rationale)");
+    CHECK(serve_src.find("Issue #4231: same holder-survival contract as run_serve_async") !=
+              std::string::npos,
+          "#4231 AC4: bench entry cites #4231 (parity)");
+    return true;
+}
+
 int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
@@ -3084,6 +3300,11 @@ int main() {
     run_test("test_issue_4230_add_joiner_done_face", test_issue_4230_add_joiner_done_face);
     run_test("test_issue_4230_sequential_join_oneshots", test_issue_4230_sequential_join_oneshots);
     run_test("test_issue_4230_source_cite", test_issue_4230_source_cite);
+    run_test("test_issue_4231_body_exception_contained", test_issue_4231_body_exception_contained);
+    run_test("test_issue_4231_holder_survives_thrown_body",
+             test_issue_4231_holder_survives_thrown_body);
+    run_test("test_issue_4231_source_cite", test_issue_4231_source_cite);
+    run_test("test_issue_4231_sigpipe_containment", test_issue_4231_sigpipe_containment);
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);

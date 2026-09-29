@@ -1918,7 +1918,30 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
     Fiber* self = g_current_fiber;
     if (self) {
         self->set_state(FiberState::Running);
-        self->func_();
+        // Issue #4231: a C++ exception escaping a fiber body must never
+        // cross the fiber boundary into the worker dispatch loop. The
+        // ucontext resume path has no unwinding contract, so the escape
+        // reached std::terminate and killed the WHOLE serve-async holder
+        // (Soft --serve-async: serve.sock vanished and the holder PID
+        // changed mid set-code scoring batch — one throwing denseness/
+        // explorer fiber cold-deathed the process and all 64 explorers
+        // collapsed to sock_transient). The throw and this catch share the
+        // fiber's own stack (no swapcontext in between), so the RAII unwind
+        // through the body is well-defined; contain here, record the
+        // contract violation, and let the holder serve the remaining
+        // explorers — degrade to a contained fiber failure, never process
+        // death.
+        try {
+            self->func_();
+        } catch (const std::exception& e) {
+            fiber_body_exception_total_.fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr, "fiber[%lu]: #4231 body exception contained: %s\n",
+                         static_cast<unsigned long>(self->id_), e.what());
+        } catch (...) {
+            fiber_body_exception_total_.fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr, "fiber[%lu]: #4231 body exception contained (non-standard type)\n",
+                         static_cast<unsigned long>(self->id_));
+        }
         // Function returned — fiber is done. Rebind if ucontext/sanitizer
         // dropped TLS during the body (ubsan-smoke member-call-on-null).
         if (!g_current_fiber)
@@ -1930,6 +1953,14 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
     }
     // Yield back to worker's loop context
     Fiber::yield();
+}
+
+// Issue #4231: process-wide contained body-exception total (tests /
+// metrics). One bump per fiber body whose exception was contained at the
+// trampoline instead of terminating the holder.
+std::atomic<std::uint64_t> Fiber::fiber_body_exception_total_{0};
+std::uint64_t Fiber::fiber_body_exception_total() noexcept {
+    return fiber_body_exception_total_.load(std::memory_order_relaxed);
 }
 
 // ── Issue #1584: structured Fiber::join ─────────────────
