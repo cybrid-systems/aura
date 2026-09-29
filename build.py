@@ -9522,6 +9522,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4160 mailbox holder bound linter failed — run python3 scripts/check_mailbox_holder_bound_4160.py")
         return r
+    # Issue #4161 (P1: StealInvariant RejectHard bit coverage not asserted
+    # on every hard soak sample): #3001 requires the soak to fail closed
+    # when a residual arm grows without matching RejectHard bits, but the
+    # soak residual check only asserted delta==0 (#2755/#2902/#3073) —
+    # counter growth without bit attribution was reported, never proven.
+    # The soak residual check now also asserts counter→bits attribution on
+    # every gated sample (rearm_race → bits != 0; envframe / lifetime_proof
+    # → the matching StealInvariant mask), reading the existing #2929
+    # last_reject_invariant_bits SSOT. No new counters. Runtime doors:
+    # test_chaos_mutate_steal_gc_mailbox.cpp (hard soak residual check)
+    # + test_steal_safety_production_residual_zero.cpp (AC19).
+    rhbc4161_script = ROOT / "scripts" / "check_rejecthard_bit_coverage_4161.py"
+    if not rhbc4161_script.exists():
+        fail(f"missing {rhbc4161_script}")
+        return 1
+    r = run([sys.executable, str(rhbc4161_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4161 RejectHard bit coverage linter failed — run python3 scripts/check_rejecthard_bit_coverage_4161.py"
+        )
+        return r
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
