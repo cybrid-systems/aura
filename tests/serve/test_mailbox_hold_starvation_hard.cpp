@@ -4184,13 +4184,24 @@ static void ac4158_2_quarantine_dispose_runtime() {
     // Arm the cancel clock directly (header atomics, #3859 AC2 pattern) so
     // every inbody-window poll exceeds and the quarantine clock starts on
     // the first exceeded poll. armed_fiber must match the live holder.
-    aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
-    aura::compiler::g_hold_budget_cancel_armed_fiber.store(holder->id(), std::memory_order_release);
-    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
     std::thread io([&]() { sched.run(); });
     for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     CHECK(guard_held.load() == 1 || body_done.load() == 1, "4158 AC2: holder entered or finished");
+    // Arm the cancel clock ONLY AFTER the holder has entered the Guard:
+    // a scheduler poll in the arming→entry gap sees held=false and takes
+    // the window-end path (consume + clear the quarantine clock) before
+    // any exceeded poll can run (DIAG-proven in the first run). The
+    // holder's Guard ctor precedes guard_held, so held=true from here on.
+    // armed_fiber must match the live holder.
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(holder->id(), std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    // Deterministic quarantine clock (#3859 AC1 arming pattern): stamp
+    // first_seen in the past so the FIRST exceeded poll crosses the 4×
+    // inbody-bound quarantine SLO and latches — the AC exercises the
+    // latch + disposal face, not the 16ms sustained-window timing.
+    aura::compiler::g_hold_budget_no_edge_first_seen_ns.store(1, std::memory_order_release);
     std::thread peer([&]() {
         for (int i = 0; i < 900 && body_done.load(std::memory_order_acquire) == 0; ++i) {
             if (guard_held.load(std::memory_order_acquire) != 0) {
@@ -4220,6 +4231,19 @@ static void ac4158_2_quarantine_dispose_runtime() {
     peer.join();
     sched.stop();
     io.join();
+    std::println(
+        "4158 DIAG AC2: exceeded={} force={} qtotal={} first_seen={} armed_ns={} latched={} "
+        "live_fid={} held={} sticky={} reclaimed_seen={} done={}",
+        aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read(),
+        aura::compiler::hold_budget_no_edge_force_total_v_read(),
+        aura::compiler::hold_budget_no_edge_quarantine_total_v_read(),
+        aura::compiler::g_hold_budget_no_edge_first_seen_ns.load(std::memory_order_acquire),
+        aura::compiler::g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire),
+        aura::compiler::g_hold_budget_no_edge_quarantine_latched.load(std::memory_order_acquire),
+        aura::compiler::mutation_hold_live_snapshot().fiber_id,
+        aura::compiler::mutation_hold_live_snapshot().held,
+        aura::serve::steal_safety_production_residual_sticky_fail_v_read(), reclaimed_seen.load(),
+        body_done.load());
     CHECK(aura::compiler::hold_budget_no_edge_quarantine_total_v_read() >= 1,
           "4158 AC2: quarantine latch fired (face explicit)");
     CHECK(reclaimed_seen.load() == 1 || holder->is_reclaimed() || holder->is_done(),
@@ -4281,12 +4305,18 @@ static void ac4158_3_admit_refuse_structured() {
         body_done.store(1, std::memory_order_release);
     });
     CHECK(holder != nullptr, "4158 AC3: holder spawned");
-    aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
-    aura::compiler::g_hold_budget_cancel_armed_fiber.store(holder->id(), std::memory_order_release);
-    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
     std::thread io([&]() { sched.run(); });
     for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // Arm AFTER entry — see the AC2 rationale (window-end consume race).
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(holder->id(), std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    // Deterministic quarantine clock (#3859 AC1 arming pattern): stamp
+    // first_seen in the past so the FIRST exceeded poll crosses the 4×
+    // inbody-bound quarantine SLO and latches — the AC exercises the
+    // latch + disposal face, not the 16ms sustained-window timing.
+    aura::compiler::g_hold_budget_no_edge_first_seen_ns.store(1, std::memory_order_release);
     std::thread peer([&]() {
         while (face_live.load(std::memory_order_acquire) == 0 &&
                body_done.load(std::memory_order_acquire) == 0) {
@@ -4299,6 +4329,18 @@ static void ac4158_3_admit_refuse_structured() {
     });
     for (int i = 0; i < 1000 && face_live.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (face_live.load(std::memory_order_acquire) == 0)
+        std::println(
+            "4158 DIAG AC3: exceeded={} force={} qtotal={} first_seen={} armed_ns={} "
+            "live_fid={} held={} guard_held={} done={}",
+            aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read(),
+            aura::compiler::hold_budget_no_edge_force_total_v_read(),
+            aura::compiler::hold_budget_no_edge_quarantine_total_v_read(),
+            aura::compiler::g_hold_budget_no_edge_first_seen_ns.load(std::memory_order_acquire),
+            aura::compiler::g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire),
+            aura::compiler::mutation_hold_live_snapshot().fiber_id,
+            aura::compiler::mutation_hold_live_snapshot().held, guard_held.load(),
+            body_done.load());
     CHECK(face_live.load() == 1, "4158 AC3: quarantine face went live within bound");
     CHECK(guard_held.load() == 1, "4158 AC3: holder still inside body (face live mid-spin)");
     // Structured refuse while the face is live — the new gate precedes the
