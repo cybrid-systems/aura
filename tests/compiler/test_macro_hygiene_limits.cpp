@@ -93,6 +93,10 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 extern "C" std::uint64_t aura_fiber_current_id();
+// Issue #4150: strong-bindable full-reset alias — light-link test
+// executables bind the no-op stub over the _for_test symbol, so the
+// reset hook must use the fresh _full symbol (same impl body).
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_full(void) noexcept;
 
 using NameMap = std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                                    std::equal_to<>>;
@@ -2086,6 +2090,243 @@ static void ac4101_soft_still_evals() {
     reset_all();
 }
 
+// Issue #4151 fixtures: separate body flats (the #3890/#4077 pattern) —
+// the registry points at body ids the target flat does not own.
+// m_small body: (let ((s 7)) s) — 1 distinct binding (≤ gensym cap 2).
+// m_big body: (let ((a 1)) (let ((b 2)) (let ((c 3)) y))) — 3 distinct
+// bindings (> cap 2 → gensym ceiling when the cap is armed).
+static void fill_4151_bodies(FlatAST& small_flat, StringPool& small_pool,
+                             aura::ast::NodeId& small_body, FlatAST& big_flat, StringPool& big_pool,
+                             aura::ast::NodeId& big_body) {
+    auto s = small_pool.intern("s");
+    auto seven = small_flat.add_literal(7);
+    auto svar = small_flat.add_variable(s);
+    small_body = small_flat.add_let(s, seven, svar);
+    auto y = big_pool.intern("y");
+    auto a = big_pool.intern("a");
+    auto b = big_pool.intern("b");
+    auto c = big_pool.intern("c");
+    auto one = big_flat.add_literal(1);
+    auto two = big_flat.add_literal(2);
+    auto three = big_flat.add_literal(3);
+    auto yvar = big_flat.add_variable(y);
+    auto inner = big_flat.add_let(c, three, yvar);
+    auto mid = big_flat.add_let(b, two, inner);
+    big_body = big_flat.add_let(a, one, mid);
+}
+
+// m_wrap body: (f2 (m_big 4)) — f2 is not a macro; the nested (m_big 4)
+// child hits the gensym ceiling one level below the wrap arm.
+static void fill_4151_wrap_body(FlatAST& wrap_flat, StringPool& wrap_pool,
+                                aura::ast::NodeId& wrap_body) {
+    auto f2 = wrap_pool.intern("f2");
+    auto m_big = wrap_pool.intern("m_big");
+    auto four = wrap_flat.add_literal(4);
+    std::array<aura::ast::NodeId, 1> big_args{four};
+    auto big_call = wrap_flat.add_call(wrap_flat.add_variable(m_big), big_args);
+    std::array<aura::ast::NodeId, 1> f2_args{big_call};
+    wrap_body = wrap_flat.add_call(wrap_flat.add_variable(f2), f2_args);
+}
+
+// Parent with two sibling macro calls: (head (first 1) (second 2)) —
+// head is not a macro, so expand_inner_macros takes the non-macro
+// child walk (the #4151 surface).
+static aura::ast::NodeId add_4151_sibling_root(FlatAST& flat, StringPool& pool, const char* head,
+                                               const char* first, const char* second) {
+    auto one_id = flat.add_literal(1);
+    std::array<aura::ast::NodeId, 1> first_args{one_id};
+    auto first_call = flat.add_call(flat.add_variable(pool.intern(first)), first_args);
+    auto two_id = flat.add_literal(2);
+    std::array<aura::ast::NodeId, 1> second_args{two_id};
+    auto second_call = flat.add_call(flat.add_variable(pool.intern(second)), second_args);
+    std::array<aura::ast::NodeId, 2> root_args{first_call, second_call};
+    return flat.add_call(flat.add_variable(pool.intern(head)), root_args);
+}
+
+static void ac4151_sibling_deny_rolls_back_splice() {
+    std::println("\n--- #4151 AC1: later sibling deny rolls the earlier splice back ---");
+    reset_all();
+    grant_self_evo_production();
+    // Clear the global AND per-fiber sticky deny slots — reset_all only
+    // clears the global atomic, and inner_expand_production_limit_deny
+    // reads the fiber slot first (#4034), so a prior AC's ceiling would
+    // refuse this expand at the first child.
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    StringPool pool;
+    FlatAST flat;
+    FlatAST small_flat;
+    StringPool small_pool;
+    FlatAST big_flat;
+    StringPool big_pool;
+    aura::ast::NodeId small_body = NULL_NODE;
+    aura::ast::NodeId big_body = NULL_NODE;
+    fill_4151_bodies(small_flat, small_pool, small_body, big_flat, big_pool, big_body);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m_small"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"s"}, false, &small_flat, &small_pool, small_body};
+    macros["m_big"] =
+        aura::compiler::macro_exp::MacroExpansionDef{{"y"}, false, &big_flat, &big_pool, big_body};
+    const auto orig = add_4151_sibling_root(flat, pool, "f", "m_small", "m_big");
+    flat.root = orig;
+    const auto fp0 = tree_fp(flat, orig);
+    const auto size0 = flat.size();
+    aura_test_set_max_gensym_map_size_for_test(2);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = aura::compiler::macro_exp::expand_inner_macros(&flat, &pool, orig, /*depth=*/0,
+                                                              /*max_depth=*/4, macros);
+    CHECK(out == orig, "4151 AC1: deny returns the original parent root");
+    CHECK(tree_fp(flat, out) == fp0, "4151 AC1: tree fingerprint equals pre-expand");
+    CHECK(flat.size() == size0, "4151 AC1: earlier sibling clone nodes truncated");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling,
+          "4151 AC1: reason gensym-ceiling");
+    aura_test_set_max_gensym_map_size_for_test(0);
+    reset_all();
+}
+
+static void ac4151_soft_keeps_sibling_splice() {
+    std::println("\n--- #4151 AC2: Soft/Off keeps the historical sibling half-expand ---");
+    reset_all();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    StringPool pool;
+    FlatAST flat;
+    FlatAST small_flat;
+    StringPool small_pool;
+    FlatAST big_flat;
+    StringPool big_pool;
+    aura::ast::NodeId small_body = NULL_NODE;
+    aura::ast::NodeId big_body = NULL_NODE;
+    fill_4151_bodies(small_flat, small_pool, small_body, big_flat, big_pool, big_body);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m_small"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"s"}, false, &small_flat, &small_pool, small_body};
+    macros["m_big"] =
+        aura::compiler::macro_exp::MacroExpansionDef{{"y"}, false, &big_flat, &big_pool, big_body};
+    const auto orig = add_4151_sibling_root(flat, pool, "f", "m_small", "m_big");
+    flat.root = orig;
+    const auto fp0 = tree_fp(flat, orig);
+    const auto size0 = flat.size();
+    aura_test_set_max_gensym_map_size_for_test(2);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = aura::compiler::macro_exp::expand_inner_macros(&flat, &pool, orig, /*depth=*/0,
+                                                              /*max_depth=*/4, macros);
+    CHECK(out == orig, "4151 AC2: child walk still returns the parent root");
+    CHECK(tree_fp(flat, out) != fp0, "4151 AC2: Soft keeps the committed sibling splice");
+    CHECK(flat.size() > size0, "4151 AC2: Soft keeps the m_small clone nodes");
+    aura_test_set_max_gensym_map_size_for_test(0);
+    reset_all();
+}
+
+static void ac4151_nested_cascade_rolls_back() {
+    std::println("\n--- #4151 AC3: nested deny cascade rolls every level back ---");
+    reset_all();
+    grant_self_evo_production();
+    // Clear the global AND per-fiber sticky deny slots (see AC1). The
+    // fingerprint/size checks below are only meaningful when this expand
+    // genuinely runs the m_small splice + m_wrap/m_big cascade.
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    StringPool pool;
+    FlatAST flat;
+    FlatAST small_flat;
+    StringPool small_pool;
+    FlatAST big_flat;
+    StringPool big_pool;
+    FlatAST wrap_flat;
+    StringPool wrap_pool;
+    aura::ast::NodeId small_body = NULL_NODE;
+    aura::ast::NodeId big_body = NULL_NODE;
+    aura::ast::NodeId wrap_body = NULL_NODE;
+    fill_4151_bodies(small_flat, small_pool, small_body, big_flat, big_pool, big_body);
+    fill_4151_wrap_body(wrap_flat, wrap_pool, wrap_body);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m_small"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"s"}, false, &small_flat, &small_pool, small_body};
+    macros["m_big"] =
+        aura::compiler::macro_exp::MacroExpansionDef{{"y"}, false, &big_flat, &big_pool, big_body};
+    macros["m_wrap"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"w"}, false, &wrap_flat, &wrap_pool, wrap_body};
+    const auto orig = add_4151_sibling_root(flat, pool, "f", "m_small", "m_wrap");
+    flat.root = orig;
+    const auto fp0 = tree_fp(flat, orig);
+    const auto size0 = flat.size();
+    aura_test_set_max_gensym_map_size_for_test(2);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = aura::compiler::macro_exp::expand_inner_macros(&flat, &pool, orig, /*depth=*/0,
+                                                              /*max_depth=*/6, macros);
+    CHECK(out == orig, "4151 AC3: cascade returns the original parent root");
+    CHECK(tree_fp(flat, out) == fp0, "4151 AC3: cascade unwinds to the pre-expand tree");
+    CHECK(flat.size() == size0, "4151 AC3: every level's clone nodes truncated");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling,
+          "4151 AC3: reason gensym-ceiling");
+    aura_test_set_max_gensym_map_size_for_test(0);
+    reset_all();
+}
+
+static void ac4151_full_expand_unaffected() {
+    std::println("\n--- #4151 AC4: successful full expand still splices (no over-block) ---");
+    reset_all();
+    grant_self_evo_production();
+    // Clear the global AND per-fiber sticky deny slots (see AC1) — a
+    // sticky deny would refuse this expand at the first child and the
+    // no-over-block assertion would observe a zero-mutation tree.
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    StringPool pool;
+    FlatAST flat;
+    FlatAST small_flat;
+    StringPool small_pool;
+    FlatAST big_flat;
+    StringPool big_pool;
+    aura::ast::NodeId small_body = NULL_NODE;
+    aura::ast::NodeId big_body = NULL_NODE;
+    fill_4151_bodies(small_flat, small_pool, small_body, big_flat, big_pool, big_body);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m_small"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"s"}, false, &small_flat, &small_pool, small_body};
+    macros["m_big"] =
+        aura::compiler::macro_exp::MacroExpansionDef{{"y"}, false, &big_flat, &big_pool, big_body};
+    const auto orig = add_4151_sibling_root(flat, pool, "f", "m_small", "m_big");
+    flat.root = orig;
+    const auto fp0 = tree_fp(flat, orig);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    // max_depth 8: the m_big clone body is 3 nested lets — walked from
+    // the clone at depth 2 it reaches entry depth 5, so the success path
+    // must not clip the #3470 depth ceiling (max_depth 4 would stamp a
+    // deny and roll the success path back).
+    auto out = aura::compiler::macro_exp::expand_inner_macros(&flat, &pool, orig, /*depth=*/0,
+                                                              /*max_depth=*/8, macros);
+    CHECK(out == orig, "4151 AC4: child walk returns the parent root");
+    CHECK(tree_fp(flat, out) != fp0, "4151 AC4: successful expand still splices both siblings");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 0,
+          "4151 AC4: no deny stamped on the success path");
+    reset_all();
+}
+
+static void ac4151_source_wiring() {
+    std::println("\n--- #4151 AC5: source wiring + no new artifacts ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cpp.find("Issue #4151") != std::string::npos, "4151: cpp cites #4151");
+    CHECK(cpp.find("const std::size_t child_ckpt = flat->size();") != std::string::npos,
+          "4151: child walk captures the pre-walk checkpoint");
+    CHECK(cpp.find("flat->truncate_to(child_ckpt)") != std::string::npos,
+          "4151: deny truncates the child-walk commit");
+    CHECK(cpp.find("production_surface && inner_expand_production_limit_deny()") !=
+              std::string::npos,
+          "4151: gate is production-surface + deny consult");
+    CHECK(read_file("tests/compiler/test_issue_4151.cpp").empty(), "4151: no test_issue_4151.cpp");
+    CHECK(read_file("docs/design/4151-macro-child-walk-gate.md").empty(),
+          "4151: no docs/design/4151-*");
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -2151,6 +2392,12 @@ int run_test_macro_hygiene_limits() {
     ac4101_gensym_ceiling_truncates();
     ac4101_same_flat_inner_skips_eval();
     ac4101_soft_still_evals();
+    std::println("\n=== Issue #4151: non-macro child walk rolls back sibling half-expand ===");
+    ac4151_sibling_deny_rolls_back_splice();
+    ac4151_soft_keeps_sibling_splice();
+    ac4151_nested_cascade_rolls_back();
+    ac4151_full_expand_unaffected();
+    ac4151_source_wiring();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
