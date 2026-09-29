@@ -734,7 +734,24 @@ private:
     std::uint32_t active_predicate_cond_node_ = 0;
     std::uint32_t active_affected_node_ = 0;
     std::vector<std::uint32_t> blame_affected_nodes_;
+    // Issue #4174: recover×truncation-clear restore point. Captured BEFORE
+    // note_full_solve_cleared_truncation() in the occurrence hard-face full
+    // solve recover so that a commit_readiness forced recovered=false (#3108
+    // re-gate / other post-recover gate) can put the latched truncation state
+    // back. A recover-true that is subsequently denied must not leave a
+    // half-clean CS behind (retry would vacuous-SOLVE leftover EQUALs or
+    // miss the truncate hard face — stale narrowing / wrong readiness).
+    struct RecoverTruncationSnapshot {
+        bool valid = false;
+        bool reverify_truncated = false;
+        std::size_t reverify_unscanned = 0;
+        bool blame_truncated_reverify = false;
+        bool blame_partial = false;
+    };
     DeltaBlameChain last_blame_chain_;
+    // Issue #4174: staged truncation restore point (see
+    // note_recover_truncation_snapshot / restore_recover_truncation_snapshot).
+    RecoverTruncationSnapshot recover_trunc_snap_{};
     // Issue #2024: retained after clear_blame_context for cross-delta
     // stitching when the next record_cross_delta_blame_hit has no active
     // mutation stamp yet (dirty cascade gap).
@@ -1041,6 +1058,29 @@ public:
             last_blame_chain_.partial = false;
         else if (last_blame_chain_.truncated_reverify)
             last_blame_chain_.partial = true;
+    }
+    // Issue #4174: recover×truncation-clear restore point — snapshot capture
+    // and restore. The struct lives with the member declarations above; the
+    // capture/restore pair sits next to note_full_solve_cleared_truncation
+    // (the clear it compensates).
+    void note_recover_truncation_snapshot() noexcept {
+        recover_trunc_snap_.valid = true;
+        recover_trunc_snap_.reverify_truncated = last_reverify_truncated_;
+        recover_trunc_snap_.reverify_unscanned = last_reverify_unscanned_;
+        recover_trunc_snap_.blame_truncated_reverify = last_blame_chain_.truncated_reverify;
+        recover_trunc_snap_.blame_partial = last_blame_chain_.partial;
+    }
+    // Issue #4174: restore the staged snapshot (no-op without one). Returns
+    // true when a pending snapshot was consumed (rollback actually fired).
+    [[nodiscard]] bool restore_recover_truncation_snapshot() noexcept {
+        if (!recover_trunc_snap_.valid)
+            return false;
+        last_reverify_truncated_ = recover_trunc_snap_.reverify_truncated;
+        last_reverify_unscanned_ = recover_trunc_snap_.reverify_unscanned;
+        last_blame_chain_.truncated_reverify = recover_trunc_snap_.blame_truncated_reverify;
+        last_blame_chain_.partial = recover_trunc_snap_.blame_partial;
+        recover_trunc_snap_.valid = false;
+        return true;
     }
     // Issue #2308: forensic / Agent-visible accessor — true when the
     // last escalate_if_production call took the production full-solve
@@ -3228,6 +3268,16 @@ export struct TypeChecker {
                 // legitimate recover off the stale snapshot. Stamp SOLVED so
                 // the post-recover live status matches the recover outcome.
                 last_delta_solve_status_ = SolveResult::SOLVED;
+                // Issue #4174: stage the truncation restore point BEFORE the
+                // clear — commit_readiness may still force recovered=false
+                // (#3108 re-gate / other post-recover gate) after this fn
+                // returns true, and the denied commit must not keep the
+                // half-clean cleared state (retry vacuous-SOLVEs leftover
+                // EQUALs / misses the truncate hard face).
+                solve_delta_cs_.note_recover_truncation_snapshot();
+                recover_trunc_pending_ = true;
+                recover_trunc_cone_truncated_ = last_partial_cone_truncated_;
+                recover_trunc_cone_dropped_ = last_partial_cone_dropped_;
                 solve_delta_cs_.note_full_solve_cleared_truncation();
                 // Clear engine-local truncate stamp so next fidelity proof
                 // does not re-observe half-green truncate (#2842 fingerprint).
@@ -3241,6 +3291,24 @@ export struct TypeChecker {
             // commit_readiness — fail closed by returning false (class A).
         }
         return false;
+    }
+    // Issue #4174: roll back the truncation clear staged by the last recover-
+    // true. commit_readiness calls the C ABI wrapper
+    // (aura_typed_audit_recover_truncation_rollback) whenever a post-recover
+    // gate (#3108 re-gate) forces recovered=false, so a denied commit leaves
+    // the CS consistently LATCHED — not half-clean. Restores both layers:
+    // the ConstraintSystem reverify/blame truncation snapshot and the
+    // engine-local cone truncate stamps. Returns true when a pending snapshot
+    // was consumed (a rollback actually fired); false = nothing pending
+    // (fresh TC, accept path, already rolled back) — idempotent.
+    [[nodiscard]] bool rollback_occurrence_recover_truncation_clear() noexcept {
+        if (!recover_trunc_pending_)
+            return false;
+        recover_trunc_pending_ = false;
+        (void)solve_delta_cs_.restore_recover_truncation_snapshot();
+        last_partial_cone_truncated_ = recover_trunc_cone_truncated_;
+        last_partial_cone_dropped_ = recover_trunc_cone_dropped_;
+        return true;
     }
     // Issue #3380: recover is invoked directly on the commit TC bound
     // to the live Evaluator (C ABI
@@ -3520,6 +3588,11 @@ public:
     // Issue #2621: last partial cone truncate (soft/hard overflow #2560).
     bool last_partial_cone_truncated_ = false;
     std::uint64_t last_partial_cone_dropped_ = 0;
+    // Issue #4174: pending truncation restore point staged by the last
+    // recover-true (see rollback_occurrence_recover_truncation_clear).
+    bool recover_trunc_pending_ = false;
+    bool recover_trunc_cone_truncated_ = false;
+    std::uint64_t recover_trunc_cone_dropped_ = 0;
     // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
     // invalidate. Test-only helper — forces the per-call state that
     // infer_flat_partial would set when its partial cone is truncated

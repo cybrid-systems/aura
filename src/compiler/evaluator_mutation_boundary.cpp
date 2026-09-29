@@ -395,6 +395,25 @@ extern "C" void aura_typed_audit_test_seed_commit_solve_status(int status) noexc
     tc->note_last_delta_solve_status_for_test(static_cast<aura::compiler::SolveResult>(status));
 }
 
+// Issue #4174: commit_readiness calls this whenever a post-recover gate
+// (#3108 re-gate sites) forces recovered=false after the recover fn already
+// returned true — the recover cleared the CS truncation stamps on the live
+// commit TC before returning, so the forced-false must roll that clear back
+// or the denied commit leaves a half-clean CS (retry vacuous-SOLVEs leftover
+// EQUALs / misses the truncate hard face). Returns true when a pending
+// snapshot was consumed. No TLS / no live commit TC / nothing pending →
+// false, zero side effects (hermetic override-recover tests stay no-op here
+// — an override never touches real stamps, so there is nothing to restore).
+extern "C" bool aura_typed_audit_recover_truncation_rollback() noexcept {
+    void* tc_handle = aura_typed_audit_current_commit_type_checker();
+    if (tc_handle == nullptr)
+        return false;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    if (tc == nullptr)
+        return false;
+    return tc->rollback_occurrence_recover_truncation_clear();
+}
+
 // Test-only: install / clear a recover fn override. Production code paths
 // never call these — only test suites (test_typed_audit_commit_readiness_*,
 // test_partial_cone_commit_gate, test_type_linear_commit_health) that
