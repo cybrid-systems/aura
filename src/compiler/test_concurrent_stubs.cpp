@@ -117,6 +117,18 @@ aura_typed_audit_recover_live_solve_status() noexcept {
 extern "C" __attribute__((weak)) void
 aura_typed_audit_test_seed_commit_solve_status(int /*status*/) noexcept {}
 
+// Issue #4174: commit_readiness rollback of the truncation clear staged by
+// the last recover-true (post-recover gate forces recovered=false, #3108
+// re-gate sites). Strong def lives in evaluator_mutation_boundary.cpp
+// (full-module binaries). test_concurrent does not compile that TU —
+// without a stub asan-build fails at link: undefined reference to
+// aura_typed_audit_recover_truncation_rollback (typed_mutation_audit.h
+// commit_readiness_mutable_4170 call sites). No-op-safe per the ABI
+// contract: no live commit TC / nothing pending → false, zero side effects.
+extern "C" __attribute__((weak)) bool aura_typed_audit_recover_truncation_rollback() noexcept {
+    return false;
+}
+
 // Issue #3547: light-link has no TLS Evaluator / workspace FlatAST.
 extern "C" __attribute__((weak)) std::uint32_t
 aura_tls_workspace_type_id(std::uint32_t /*node*/) noexcept {
