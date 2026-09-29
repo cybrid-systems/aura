@@ -8274,6 +8274,19 @@ public:
         // (pre-peel re-check below, AC1(b) take-full).
         const std::uint64_t gen0 = deferred_hybrid_gen_.load(std::memory_order_acquire);
         std::size_t ok = 0;
+        // Issue #4172: pre-JIT residual CastOp verification face. Under the
+        // production hard face, a pending #3347 undermark latch means
+        // persisted CastOp sites the cone missed exist; after this peel
+        // they must not silently reach JIT. The loop below forces the
+        // persist sites into each entry's peel mask, and the post-peel arm
+        // re-runs the DeadCoercion fold (full peel) / counts survivors
+        // (partial peel), arming the existing #3699 density gate reject
+        // when unannotated CastOps survive under a hard density face.
+        // Soft / Off: face disarmed — zero extra.
+        const bool residual_undermark_face_4172 =
+            aura::compiler::typed_audit::production_hard_face_active() &&
+            aura::compiler::dirty::residual_castop_undermark_pending();
+        const std::uint64_t epoch_4172 = aura::core::current_mutation_epoch();
         // Snapshot names first — relower may erase/replace entries.
         std::vector<std::string> dirty_names;
         dirty_names.reserve(ir_cache_v2_.size());
@@ -8417,6 +8430,16 @@ public:
             auto it = ir_cache_v2_.find(name);
             if (it == ir_cache_v2_.end())
                 continue;
+            // Issue #4172: force the persisted CastOp sites into THIS
+            // entry's peel mask before the decision — the #3349 arm only
+            // runs inside want_partial && dirty_n>0, and an undermarked
+            // cone must not also under-mark the peel. Idempotent (mark
+            // dedup'd); persist empty → 0 extra.
+            if (residual_undermark_face_4172 &&
+                aura::compiler::dirty::residual_castop_persist_size() > 0) {
+                (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
+                (void)mark_entry_from_dead_coercion_persist_(it->second);
+            }
             // Issue #3484: a name that entered the peel set (root, #3381 /
             // #3474 caller, or persist under-mark) must not silent-skip
             // on a zero mask. Production / Full fail-closed full; Soft /
@@ -8845,6 +8868,19 @@ public:
             if (want_partial || dirty_n == 0) {
                 if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
                     ++ok;
+                    // Issue #4172: post-peel residual verification before
+                    // JIT lower. Partial peel: survivors counted only (the
+                    // peel already DCE'd its blocks; scanning stale clean
+                    // blocks would reopen #3689). Reject arms via the
+                    // existing density gate inside the verifier.
+                    if (residual_undermark_face_4172) {
+                        auto vit = ir_cache_v2_.find(name);
+                        if (vit != ir_cache_v2_.end())
+                            (void)aura::compiler::opt_registry::
+                                verify_residual_undermark_post_peel_4172(
+                                    vit->second.irs, /*want_partial=*/true, &type_registry_,
+                                    epoch_4172);
+                    }
                     // Count true partial only (per-fn / blocks), not full-fallback.
                     if (metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
                             per_before ||
@@ -8869,8 +8905,21 @@ public:
                 // Over threshold / storm → full re-lower; record reason (#2193).
                 note_relower_fallback(metrics_, RelowerFallbackReason::Threshold);
                 metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
-                if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded))
+                if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
                     ++ok;
+                    // Issue #4172: post-peel residual verification before
+                    // JIT lower. Full peel re-runs the DeadCoercion fold
+                    // over the fresh body (all blocks relowered — no #3689
+                    // mixed-IR hazard) before the survivor count.
+                    if (residual_undermark_face_4172) {
+                        auto vit = ir_cache_v2_.find(name);
+                        if (vit != ir_cache_v2_.end())
+                            (void)aura::compiler::opt_registry::
+                                verify_residual_undermark_post_peel_4172(
+                                    vit->second.irs, /*want_partial=*/false, &type_registry_,
+                                    epoch_4172);
+                    }
+                }
             }
         }
         return ok;

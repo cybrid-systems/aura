@@ -262,6 +262,56 @@ inline void note_hot_residual_fail_close(std::size_t leftover_non_id, bool unann
     g_density_gate_reject_pending.store(1, std::memory_order_release);
 }
 
+// Issue #4172: residual-undermark post-peel hard reject. After the
+// pre-JIT-lower verification re-run still leaves unannotated CastOps in
+// the relowered body while the #3347 undermark latch is pending under
+// the production hard face, arm the EXISTING density gate reject
+// (#3699 pending + #2459/#3699 counters) so typecheck-after-mutate /
+// boundary persist fail closed. No streak hop: the undermark latch
+// already proves the cone missed the persisted sites. Annotated
+// (narrow_evidence) leftover keeps the #3699 AC4 density-keep path.
+// Soft / Off: the caller never reaches the arm (production-gated
+// verification face); counters stay observe-only.
+inline constexpr int kResidualUndermarkRejectIssue = 4172;
+inline std::atomic<std::uint64_t> g_residual_undermark_reelide_attempts_total{0};
+inline std::atomic<std::uint64_t> g_residual_undermark_reelide_elided_total{0};
+inline std::atomic<std::uint64_t> g_residual_undermark_reject_total{0};
+
+[[nodiscard]] inline std::uint64_t residual_undermark_reelide_attempts_total() noexcept {
+    return g_residual_undermark_reelide_attempts_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t residual_undermark_reelide_elided_total() noexcept {
+    return g_residual_undermark_reelide_elided_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t residual_undermark_reject_total() noexcept {
+    return g_residual_undermark_reject_total.load(std::memory_order_relaxed);
+}
+
+// Verification attempt bookkeeping (Quiet: elided==0 no-op).
+inline void note_residual_undermark_reelide(std::size_t elided) noexcept {
+    if (elided == 0)
+        return;
+    g_residual_undermark_reelide_elided_total.fetch_add(elided, std::memory_order_relaxed);
+}
+
+// Reuse the existing #3699 density gate reject plumbing — the three
+// commit consumers (typecheck-after-mutate, outermost persist, mid
+// boundary) reject without any new query key.
+inline void note_residual_undermark_hard_reject(std::size_t unannotated_leftover) noexcept {
+    if (unannotated_leftover == 0)
+        return;
+    g_residual_undermark_reject_total.fetch_add(1, std::memory_order_relaxed);
+    g_gate_reject_total().fetch_add(1, std::memory_order_relaxed);
+    mutate_type_gate::g_hard_type_error_reject_total.fetch_add(1, std::memory_order_relaxed);
+    g_density_gate_reject_pending.store(1, std::memory_order_release);
+}
+
+inline void reset_residual_undermark_reject_for_test() noexcept {
+    g_residual_undermark_reelide_attempts_total.store(0, std::memory_order_relaxed);
+    g_residual_undermark_reelide_elided_total.store(0, std::memory_order_relaxed);
+    g_residual_undermark_reject_total.store(0, std::memory_order_relaxed);
+}
+
 [[nodiscard]] inline bool hot_residual_soft_must_deopt_pending() noexcept {
     return g_hot_residual_soft_must_deopt_pending.load(std::memory_order_acquire) != 0;
 }

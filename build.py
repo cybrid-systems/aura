@@ -9782,6 +9782,26 @@ def cmd_lint():
             "Issue #4171 blame_ok vacuous-on-empty fill linter failed — run python3 scripts/check_blame_ok_vacuous_4171.py"
         )
         return r
+    # Issue #4172 (P1: residual CastOp may remain on the JIT hot path after
+    # the DeadCoercion dual-layer): under the production hard face with the
+    # #3347 undermark latch pending, the relower now forces the persist
+    # sites into each entry's peel mask and runs a post-peel verification —
+    # a full peel re-runs the DeadCoercion fold over the fresh body (no
+    # #3689 mixed-IR reopen), a partial peel counts survivors only;
+    # unannotated survivors under a hard density face arm the EXISTING
+    # #3699/#2459 density gate reject (no streak hop, no second pending
+    # model). Soft / Off observe only — commit may succeed. Runtime door:
+    # test_dead_coercion_dirty_cone.cpp (ac4172_1..ac4172_6).
+    rumj4172_script = ROOT / "scripts" / "check_residual_undermark_jit_4172.py"
+    if not rumj4172_script.exists():
+        fail(f"missing {rumj4172_script}")
+        return 1
+    r = run([sys.executable, str(rumj4172_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4172 residual-undermark JIT verification linter failed — run python3 scripts/check_residual_undermark_jit_4172.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
