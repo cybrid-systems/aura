@@ -1147,6 +1147,12 @@ public:
         last_blame_chain_.frames.push_back(f);
         last_blame_chain_.missing_provenance_frames = 1;
     }
+    // Issue #4171: force an EMPTY last_blame_chain (frames.empty() &&
+    // !complete) — the vacuous face the live-TC fill previously treated as
+    // OK even after a real mutate. The blame gate must consult the
+    // mutation face (txn_dirty / commit_cs_has_work), not frames.empty()
+    // alone.
+    void force_last_blame_empty_for_test() noexcept { last_blame_chain_ = {}; }
     void force_last_blame_complete_for_test(std::uint64_t mutation_id = 2221,
                                             std::uint32_t predicate = 7,
                                             std::uint32_t affected_node = 3) noexcept {
@@ -3327,6 +3333,12 @@ export struct TypeChecker {
                                             std::uint32_t predicate = 7,
                                             std::uint32_t affected_node = 3) noexcept {
         solve_delta_cs_.force_last_blame_complete_for_test(mutation_id, predicate, affected_node);
+    }
+    // Issue #4171: empty-chain inject on the persistent solve_delta CS —
+    // the surface aura_typed_audit_fill_from_live_tc reads via
+    // constraint_system() (same CS commit_cs_has_work() consults).
+    void force_last_blame_empty_for_test() noexcept {
+        solve_delta_cs_.force_last_blame_empty_for_test();
     }
 
 private:

@@ -13,6 +13,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -41,6 +43,8 @@ using aura::compiler::g_coercion_provenance_complete_total;
 using aura::compiler::g_coercion_provenance_miss_total;
 using aura::compiler::g_coercion_provenance_sentinel_total;
 using aura::compiler::kCoercionProvenanceSentinelBase;
+using aura::compiler::typed_audit::commit_readiness;
+using aura::compiler::typed_audit::CommitReadinessInput;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -242,6 +246,87 @@ static void ac7_identity_elision() {
     CHECK(g_coercion_provenance_chain_walk_total.load() == walks0, "elision skips provenance walk");
 }
 
+// Issue #4171: blame_ok vacuous on empty frames after mutate under
+// Production. The live-TC fill (aura_typed_audit_fill_from_live_tc)
+// previously treated ANY empty blame chain as OK
+// (is_complete() || frames.empty()) — after a real mutate with CS work,
+// Production blame_hard allowed commit with zero recorded blame frames
+// (silent blame/provenance gap for Agent query:type / audit join). The
+// vacuous arm is now gated on the mutated face
+// (evaluator->txn_dirty() || out->cs_has_work); Soft keeps today's
+// vacuous empty→ok via the #2221 Soft observe arm in commit_readiness
+// step 4. These ACs drive the extern "C" fill + commit_readiness
+// directly on a fresh CompilerService — pure functions of the filled
+// input; blame_hard is an input flag (no production env arming needed;
+// the mutated state lives on the evaluator's commit TC, same library
+// the bridge reads).
+static void ac8_blame_ok_vacuous_mutated() {
+    std::println("\n=== Issue #4171: blame_ok vacuous on empty frames after mutate under "
+                 "Production ===");
+    CHECK(true, "ac4171: issue stamp");
+
+    // AC-4171-1: Production (blame_hard) + mutated CS + EMPTY frames →
+    // fill reports blame_ok=false → commit_readiness hard-rejects.
+    {
+        std::println("\n--- #4171 AC1: mutated CS + empty frames → blame_hard reject ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/true);
+        CommitReadinessInput in{};
+        in.blame_hard = true;
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(in.cs_has_work, "4171 AC1: fill reports cs_has_work (mutated face)");
+        CHECK(!in.blame_ok, "4171 AC1: empty frames after mutate → blame_ok false");
+        const auto r = commit_readiness(in);
+        CHECK(!r.would_allow_commit, "4171 AC1: commit refused under Production");
+        CHECK(r.force_reason == "blame", "4171 AC1: force_reason == blame");
+    }
+
+    // AC-4171-2: Soft + same mutated/empty state → observe-only allow
+    // (vacuous empty→ok kept for Soft via the #2221 observe arm).
+    {
+        std::println("\n--- #4171 AC2: Soft + mutated CS + empty frames → observe allow ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/true);
+        CommitReadinessInput in{};
+        // blame_hard stays false (Soft).
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(!in.blame_ok, "4171 AC2: fill still reports the broken blame face");
+        const auto r = commit_readiness(in);
+        CHECK(r.would_allow_commit, "4171 AC2: Soft observe keeps commit allowed");
+        CHECK(r.force_reason == "blame", "4171 AC2: force_reason == blame (observe bp 5000)");
+    }
+
+    // AC-4171-3: complete blame frames → allow under Production (no
+    // false positive on the rich triple).
+    {
+        std::println("\n--- #4171 AC3: complete frames → allow under blame_hard ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_complete_blame_for_test();
+        CommitReadinessInput in{};
+        in.blame_hard = true;
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(in.blame_ok, "4171 AC3: complete chain → blame_ok true");
+        const auto r = commit_readiness(in);
+        CHECK(r.would_allow_commit, "4171 AC3: no false positive on complete chain");
+        CHECK(r.force_reason == "ok", "4171 AC3: force_reason == ok");
+    }
+
+    // AC-4171-4: vacuous empty + NOT mutated → ok preserved (quiet arm —
+    // no mutation in flight means blame is moot; today's semantics).
+    {
+        std::println("\n--- #4171 AC4: empty frames + no CS work → vacuous ok kept ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/false);
+        CommitReadinessInput in{};
+        in.blame_hard = true;
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(!in.cs_has_work, "4171 AC4: no CS work staged");
+        CHECK(in.blame_ok, "4171 AC4: vacuous empty→ok preserved when not mutated");
+        const auto r = commit_readiness(in);
+        CHECK(r.would_allow_commit, "4171 AC4: commit allowed (no mutation → blame moot)");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -252,6 +337,7 @@ int main() {
     ac5_query_keys();
     ac6_multi_delta_suite();
     ac7_identity_elision();
+    ac8_blame_ok_vacuous_mutated();
     if (g_failed)
         return 1;
     std::println("occurrence provenance chain completeness (#2024): OK ({} passed)", g_passed);

@@ -289,8 +289,21 @@ extern "C" void aura_typed_audit_fill_from_live_tc(
     // hard-fail. Both contribute to a force-rollback in commit_readiness.
     out->linear_ok =
         !tc->last_partial_linear_revalidate_fail() && !evaluator->linear_synth_hard_fail_pending();
-    // blame_ok: rich-triple complete OR vacuous (no frames — no mutation
-    // happened, so blame is moot). mirrors DeltaBlameChain::is_complete.
+    // cs_has_work: commit_cs_has_work covers dirty / pending / touched /
+    // occurrence / let_poly. Spec text says "dirty_count || pending_full_solve_roots"
+    // but the existing accessor already folds both plus the wider CS work
+    // set so use it (strictly stronger gate — never under-marks).
+    // Filled BEFORE blame_ok: the #4171 mutated face reads this value.
+    out->cs_has_work = tc->commit_cs_has_work();
+    // blame_ok: rich-triple complete OR vacuous. Issue #4171: vacuous
+    // (frames.empty()) is only sound when no mutation is in flight — after
+    // a real mutate (txn_dirty) with CS work (cs_has_work), an empty chain
+    // means blame frames were never recorded, not that blame is moot;
+    // treating it as OK let Production blame_hard green a commit with a
+    // silently broken provenance chain. The mutated face now reads
+    // blame_ok=false (hard reject under blame_hard); Soft keeps today's
+    // vacuous empty→ok via the #2221 Soft observe arm in commit_readiness
+    // step 4. Mirrors DeltaBlameChain::is_complete.
     // Route through constraint_system() because the
     // `last_blame_chain()` accessor the wrapper exposes delegates to
     // cs_.last_blame_chain(); going straight to ConstraintSystem
@@ -298,12 +311,8 @@ extern "C" void aura_typed_audit_fill_from_live_tc(
     // as `no member named 'last_blame_chain'` when the wrapper is
     // forward-declared only.
     const auto& bc = tc->constraint_system().last_blame_chain();
-    out->blame_ok = bc.is_complete() || bc.frames.empty();
-    // cs_has_work: commit_cs_has_work covers dirty / pending / touched /
-    // occurrence / let_poly. Spec text says "dirty_count || pending_full_solve_roots"
-    // but the existing accessor already folds both plus the wider CS work
-    // set so use it (strictly stronger gate — never under-marks).
-    out->cs_has_work = tc->commit_cs_has_work();
+    const bool mutated = evaluator->txn_dirty() || out->cs_has_work;
+    out->blame_ok = bc.is_complete() || (!mutated && bc.frames.empty());
     // truncated_reverify: from the same DeltaBlameChain face used by
     // commit_readiness()'s truncate branch (#2458). Quiet (no blame
     // chain) → face bit false → commit_readiness path unchanged.
