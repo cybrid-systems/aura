@@ -9221,6 +9221,29 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4230 fiber join done-face linter failed — run python3 scripts/check_fiber_join_done_face_4230.py")
         return r
+    # Issue #4164 (free-slot gen paint on layout capture): make_ref_layout
+    # filled StableNodeRef.gen = generation_ even for free slots
+    # (node_gen_ == 0 after free_orphan_nodes_from) — production export
+    # faces that layout-stamp without the #4162 walk/gate consult could
+    # publish schema-2 refs whose packed gen equals the live workspace
+    # generation while the slot is dead (green-looking tombstone memory;
+    # the false-Fresh window only closes at resolve time via is_live_node).
+    # Gate pins: the production free-slot guard in make_ref_layout /
+    # make_safe_ref_layout (#3397 caller-side production flag, NULL_NODE
+    # layout refusal, Soft keeps the legacy paint) and the three
+    # production_defaults_active() threading sites in the evaluator stamp
+    # authority (layout_missing remake, make_stamped_ref,
+    # make_stamped_safe_ref). Runtime doors: ac4164_* in
+    # test_query_result_full_provenance.cpp + the #4164 zone in
+    # test_stable_ref_export_validate.cpp.
+    rlpg4164_script = ROOT / "scripts" / "check_ref_layout_gen_paint_4164.py"
+    if not rlpg4164_script.exists():
+        fail(f"missing {rlpg4164_script}")
+        return 1
+    r = run([sys.executable, str(rlpg4164_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4164 ref-layout gen-paint linter failed — run python3 scripts/check_ref_layout_gen_paint_4164.py")
+        return r
     # Issue #4143: sticky densify-off recovery cleared the trap BEFORE the
     # densify retry, so between the clear and the unified-green publish (or
     # on the #3884 LCP-deny re-arm path) moving_compact_enabled() read true

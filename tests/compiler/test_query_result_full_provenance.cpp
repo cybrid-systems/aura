@@ -3515,6 +3515,136 @@ void test_ac4162_6_source_cite() {
     }
 }
 
+// ═══════════ Issue #4164: free-slot gen paint on layout capture ═══════════
+// FlatAST::make_ref_layout filled StableNodeRef.gen = generation_ even for
+// free slots (node_gen_ == 0 after free_orphan_nodes_from): production
+// export faces that layout-stamp without the #4162 walk/gate consult could
+// publish a schema-2 ref whose packed gen equals the live workspace
+// generation while the slot is dead — green-looking tombstone memory (the
+// false-Fresh window only closes at resolve time via is_live_node). Fix
+// face: make_ref_layout(id, production=true) returns the NULL_NODE layout
+// for a free slot; make_stamped_ref / make_stamped_safe_ref /
+// stamp_query_stable_ref_export thread the production face. Soft keeps the
+// legacy paint (EDSL make_ref / make_ref_in_layer contract unchanged).
+
+void test_ac4164_1_prod_stamped_ref_refuses_free_slot() {
+    std::print("AC4164/AC1 -- production make_stamped_ref refuses freed NodeId\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4164 AC1: set-code",
+                cs.eval("(set-code \"(define r4164 (lambda (x) x))\")").has_value());
+    expect_true("4164 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    expect_true("4164 AC1: workspace flat", flat != nullptr);
+    const auto ghost = flat->add_literal_float(8.5);
+    (void)flat->free_orphan_nodes_from(ghost);
+    expect_true("4164 AC1: ghost slot is free", flat->is_free_slot(ghost));
+    // Freed NodeId must not stamp schema-2: the production layout capture
+    // returns the NULL_NODE layout (pre-fix it painted generation_ onto the
+    // tombstone and the stamp published it as epoch-fresh). All ghost-face
+    // checks run BEFORE the live sibling append: add_node pops the LIFO
+    // free list, so an earlier allocation would resurrect the slot.
+    const auto ref = ev.make_stamped_ref(ghost);
+    expect_true("4164 AC1: prod make_stamped_ref(freed) -> NULL layout",
+                ref.id == aura::ast::NULL_NODE);
+    const auto sref = ev.make_stamped_safe_ref(ghost, /*workspace_id=*/0, /*fiber_id=*/0);
+    expect_true("4164 AC1: prod make_stamped_safe_ref(freed) -> NULL layout",
+                sref.id == aura::ast::NULL_NODE);
+    // Live sibling still stamps + validates under production (no over-refusal).
+    const auto live = flat->add_literal_float(4.5);
+    const auto lref = ev.make_stamped_ref(live);
+    expect_true("4164 AC1: live node still stamps under production",
+                lref.id == live && lref.is_valid_in(*flat));
+    apply_dev_audit_defaults();
+}
+
+void test_ac4164_2_layout_paint_soft_kept_prod_refused() {
+    std::print("AC4164/AC2 -- make_ref_layout paint face: Soft kept, production refused\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4164 AC2: set-code",
+                cs.eval("(set-code \"(define l4164 (lambda (x) x))\")").has_value());
+    expect_true("4164 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    expect_true("4164 AC2: workspace flat", flat != nullptr);
+    const auto ghost = flat->add_literal_float(2.75);
+    (void)flat->free_orphan_nodes_from(ghost);
+    // Soft (default production=false): legacy paint contract kept — the EDSL
+    // make_ref / make_ref_in_layer faces still capture the workspace gen.
+    const auto soft_ref = flat->make_ref_layout(ghost);
+    expect_true("4164 AC2: Soft keeps legacy layout paint (id)", soft_ref.id == ghost);
+    expect_true("4164 AC2: Soft paint gen == workspace generation",
+                soft_ref.gen == flat->generation());
+    // Production face: NULL_NODE layout — no gen painted onto tombstones.
+    const auto prod_ref = flat->make_ref_layout(ghost, /*production=*/true);
+    expect_true("4164 AC2: production layout refuse for free slot",
+                prod_ref.id == aura::ast::NULL_NODE);
+    // Export surfaces refuse a freed NodeId under production (structured
+    // null; the #4162 gate is the outer belt — this pins the end-to-end
+    // export face the issue body asks for). Runs BEFORE the live sibling
+    // is appended: add_node pops the LIFO free list, so allocating first
+    // would resurrect the ghost slot and un-free it.
+    apply_production_audit_defaults();
+    expect_true("4164 AC2: ghost still free pre-export", flat->is_free_slot(ghost));
+    const auto ex = ev.export_ref(ghost);
+    expect_true("4164 AC2: prod export_ref(freed) -> null", ex.id == aura::ast::NULL_NODE);
+    const auto exs = ev.export_ref_safe(ghost, /*workspace_id=*/0, /*fiber_id=*/0);
+    expect_true("4164 AC2: prod export_ref_safe(freed) -> null", exs.id == aura::ast::NULL_NODE);
+    // Live node: both faces capture the gen (no behavior change). Appended
+    // AFTER the ghost-face checks — it may reuse the freed slot (LIFO).
+    const auto live = flat->add_literal_float(1.25);
+    const auto live_ref = flat->make_ref_layout(live, /*production=*/true);
+    expect_true("4164 AC2: live node layout intact under production",
+                live_ref.id == live && live_ref.gen == flat->generation());
+    apply_dev_audit_defaults();
+}
+
+void test_ac4164_3_source_cite() {
+    std::print("AC4164/AC3 -- source-cite: layout guard + production threading\n");
+    std::ifstream f_ast("src/core/ast.ixx");
+    std::ifstream f_sec("src/compiler/evaluator_security.cpp");
+    std::string ast_src((std::istreambuf_iterator<char>(f_ast)), std::istreambuf_iterator<char>());
+    std::string sec((std::istreambuf_iterator<char>(f_sec)), std::istreambuf_iterator<char>());
+    expect_true("4164 AC3: ast.ixx readable", !ast_src.empty());
+    expect_true("4164 AC3: evaluator_security.cpp readable", !sec.empty());
+    // make_ref_layout carries the production free-slot guard; both layout
+    // capture faces cite #4164.
+    expect_true("4164 AC3: make_ref_layout production free-slot guard",
+                ast_src.find("if (production && is_free_slot(id))") != std::string::npos);
+    std::size_t ast_hits = 0;
+    const std::string cite = "Issue #4164";
+    for (std::size_t pos = 0; (pos = ast_src.find(cite, pos)) != std::string::npos;
+         pos += cite.size())
+        ++ast_hits;
+    expect_eq_i64("4164 AC3: ast.ixx cites #4164 (layout + safe layout)", 2,
+                  static_cast<std::int64_t>(ast_hits));
+    // The security TU threads the production face at all three stamp sites.
+    std::size_t sec_hits = 0;
+    for (std::size_t pos = 0; (pos = sec.find(cite, pos)) != std::string::npos; pos += cite.size())
+        ++sec_hits;
+    expect_eq_i64("4164 AC3: security TU cites #4164 at 3 stamp sites + belt", 4,
+                  static_cast<std::int64_t>(sec_hits));
+    std::size_t thread_hits = 0;
+    const std::string thread_tok = "production_defaults_active());";
+    for (std::size_t pos = 0; (pos = sec.find(thread_tok, pos)) != std::string::npos;
+         pos += thread_tok.size())
+        ++thread_hits;
+    expect_eq_i64("4164 AC3: three production threading sites", 3,
+                  static_cast<std::int64_t>(thread_hits));
+    // No per-issue test file (per #81934 the family test is extended).
+    {
+        std::ifstream f("tests/compiler/test_issue_4164.cpp");
+        expect_true("4164 AC3: no tests/compiler/test_issue_4164.cpp", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -3664,9 +3794,15 @@ int main() {
     test_ac4162_4_prod_defines_by_marker_skips_ghost();
     test_ac4162_5_stamp_and_export_refuse_tombstone();
     test_ac4162_6_source_cite();
+    // Issue #4164: end-of-dispatch zone — fresh CompilerService per probe
+    // (same #4088 isolation rationale as the #4162 tail).
+    test_ac4164_1_prod_stamped_ref_refuses_free_slot();
+    test_ac4164_2_layout_paint_soft_kept_prod_refused();
+    test_ac4164_3_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
     std::print("All #4162 query free-slot AC tests PASSED\n");
+    std::print("All #4164 ref-layout gen-paint AC tests PASSED\n");
     return 0;
 }

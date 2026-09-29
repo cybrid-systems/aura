@@ -11,6 +11,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "orch/agent_spawn.h"
 #include "serve/multi_fiber_mailbox.h"
@@ -175,6 +176,24 @@ int run_test_stable_ref_export_validate() {
         const auto snap0 = snapshot_provenance_enforcement();
         auto held = ev.export_held_ref(bad);
         CHECK(!held.has_value(), "AC2: OOR export_held_ref nullopt");
+        // Issue #4162: OOR / free-slot ids now refuse at the export gate
+        // (allow_query_stable_ref_export) BEFORE finalize_agent_export — the
+        // refusal is metric-quiet (nullopt only). The stale-reject counter
+        // belongs to the finalize path, so pin it with a genuinely
+        // unrefreshable ref that still passes the gate: a live id carrying a
+        // stale gen (gate passes — slot is live; finalize fails — gen
+        // mismatch, no refresh path for a foreign gen on a held handle).
+        const auto live_id = first_live(*ws);
+        CHECK(live_id != NULL_NODE, "AC2: live node for stale-gen probe");
+        FlatAST::StableNodeRef stale_gen{};
+        stale_gen.id = live_id;
+        stale_gen.gen = static_cast<std::uint16_t>(ws->generation() + 7); // future gen: never valid
+        stale_gen.wrap_epoch = ws->wrap_epoch() + 1; // epoch fence: refresh fails deterministically
+        stale_gen.cow_epoch_at_capture = ws->workspace_cow_epoch();
+        // Soft finalize contract returns the unrefreshable stamped handle
+        // (engaged optional) — the fail-closed signal on this path is the
+        // stale-reject counter, not nullopt.
+        (void)ev.export_held_ref(stale_gen);
         const auto snap1 = snapshot_provenance_enforcement();
         CHECK(snap1.export_stale_reject > snap0.export_stale_reject, "AC2: stale-reject bumps");
 
@@ -522,6 +541,66 @@ int run_test_stable_ref_export_validate() {
         CHECK(spawn_src.find("never weakens the mailbox gate") != std::string::npos,
               "2848 AC6: production never weakens #2663 gate");
         CHECK(true, "2848 AC5: coverage linter check_agent_send_auto_handoff_2848.py");
+    }
+
+    // ── Issue #4164: production export must not paint workspace generation_
+    // onto free slots (green-looking tombstone memory). make_ref_layout
+    // returns the NULL_NODE layout for free ids on production faces; the
+    // export faces (export_ref / export_ref_safe / export_held_ref) refuse
+    // freed NodeIds; Soft keeps the legacy layout paint.
+    {
+        std::println("\n--- #4164 AC1-AC4: free-slot gen paint refused on export faces ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(setup_workspace(cs), "4164 AC1 workspace");
+        auto& ev = cs.evaluator();
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "4164 AC1 flat");
+        const auto ghost = ws->add_literal_float(8.5);
+        (void)ws->free_orphan_nodes_from(ghost);
+        CHECK(ws->is_free_slot(ghost), "4164 AC1: ghost slot is free");
+        apply_production_audit_defaults();
+        // AC1: freed NodeId must not stamp schema-2 (NULL layout, no gen paint).
+        auto stamped = ev.make_stamped_ref(ghost);
+        CHECK(stamped.id == NULL_NODE, "4164 AC1: prod make_stamped_ref(freed) -> NULL layout");
+        // AC2: export returns null / structured reject for a freed NodeId.
+        auto ex = ev.export_ref(ghost);
+        CHECK(ex.id == NULL_NODE, "4164 AC2: prod export_ref(freed) -> null");
+        auto exs = ev.export_ref_safe(ghost, 0, 0);
+        CHECK(exs.id == NULL_NODE, "4164 AC2: prod export_ref_safe(freed) -> null");
+        // Agent-held tombstone-painted ref (the pre-fix poison shape: packed
+        // gen == live workspace generation on a dead slot) re-export refuses
+        // too — the #4162 gate is the outer belt here.
+        FlatAST::StableNodeRef held{};
+        held.id = ghost;
+        held.gen = ws->generation();
+        held.wrap_epoch = ws->wrap_epoch();
+        held.cow_epoch_at_capture = ws->workspace_cow_epoch();
+        auto out = ev.export_held_ref(held);
+        CHECK(!out.has_value(), "4164 AC2: export_held_ref(tombstone-painted) -> nullopt");
+        // Live sibling still exports under production (no over-refusal).
+        const auto nid = first_live(*ws);
+        CHECK(nid != NULL_NODE, "4164 AC2: live node present");
+        auto exlive = ev.export_ref(nid);
+        CHECK(exlive.id == nid && exlive.is_valid_in(*ws), "4164 AC2: live export intact");
+        // AC3: Soft keeps the legacy layout paint; production refuses the
+        // same slot.
+        apply_dev_audit_defaults();
+        const auto soft_layout = ws->make_ref_layout(ghost);
+        CHECK(soft_layout.id == ghost, "4164 AC3: Soft keeps legacy layout paint");
+        const auto prod_layout = ws->make_ref_layout(ghost, /*production=*/true);
+        CHECK(prod_layout.id == NULL_NODE, "4164 AC3: prod layout refuse for free slot");
+        // AC4: source-cite in the two production TUs.
+        const auto ast_src = read_file("src/core/ast.ixx");
+        const auto sec_src = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(!ast_src.empty(), "4164 AC4: ast.ixx readable");
+        CHECK(!sec_src.empty(), "4164 AC4: evaluator_security.cpp readable");
+        CHECK(ast_src.find("if (production && is_free_slot(id))") != std::string::npos,
+              "4164 AC4: make_ref_layout production free-slot guard");
+        CHECK(sec_src.find("Issue #4164") != std::string::npos,
+              "4164 AC4: security TU cites #4164");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
