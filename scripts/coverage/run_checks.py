@@ -15,6 +15,16 @@ Env:
   AURA_GATE_JOBS          default parallel workers (else min(16, nproc))
   AURA_COVERAGE_NO_CASCADE  default 1 here; nested check_* subprocesses skip
   AURA_GATE_SERIAL=1      force --jobs 1
+  AURA_COVERAGE_LANE_JOBS override the interpreter-spawn lane pool (default 2)
+
+Interpreter-spawn lane:
+  Checks whose body spawns an aura interpreter child (oneshot stdlib
+  linters, Soft serve smokes) run AFTER the parallel phase in a small
+  dedicated pool. The default jobs-wide burst chronically SIGKILLed their
+  freshly forked children (exit=-9 with empty streams — cgroup OOM kill at
+  sweep scale, not the linters' own 8s timeout; documented by #4152/#4154/
+  #4155 and punted each time). The lane keeps the other ~1100 static checks
+  at full parallelism.
 """
 
 from __future__ import annotations
@@ -188,6 +198,31 @@ def default_jobs() -> int:
     return max(1, min(16, nproc))
 
 
+# Body markers for checks that spawn an aura interpreter child process
+# (oneshot stdlib linters: build_soft*/aura -e; Soft serve smokes: AURA_BIN
+# Popen). Pattern-based so newer siblings join the lane automatically; the
+# subprocess requirement keeps static string-mention linters (e.g.
+# check_denseness_multiprocess_env_2772) in the full-parallelism pool.
+INTERPRETER_SPAWN_RE = re.compile(r"""(?:AURA_BIN|build_soft\d*|["']aura["'])""")
+
+
+def is_interpreter_spawn_check(script: Path) -> bool:
+    """True for checks whose body spawns an aura interpreter child."""
+    try:
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "subprocess" in text and bool(INTERPRETER_SPAWN_RE.search(text))
+
+
+def _lane_jobs(jobs: int) -> int:
+    """Dedicated pool size for the interpreter-spawn lane (small on purpose)."""
+    env = os.environ.get("AURA_COVERAGE_LANE_JOBS", "").strip()
+    if env.isdigit() and int(env) > 0:
+        return min(int(env), jobs)
+    return min(2, jobs)
+
+
 def _run_manifests(extra: list[str]) -> int:
     """Run declarative manifests in-process via runner.py (no check_*.py spawn)."""
     runner = ROOT / "scripts" / "coverage" / "runner.py"
@@ -235,7 +270,15 @@ def run_checks(
         print(f"OK: {label} — no checks selected (skip)")
         return 0
 
+    # Interpreter-spawn checks take a dedicated post-burst lane (module
+    # docstring); the static majority keeps the full jobs-wide pool.
+    lane = [s for s in checks if is_interpreter_spawn_check(s)] if jobs > 1 else []
+    lane_set = {s.resolve() for s in lane}
+    burst = [s for s in checks if s.resolve() not in lane_set]
+
     print(f"{label}: {len(checks)} check(s), jobs={jobs}, no_cascade={int(no_cascade)}")
+    if lane:
+        print(f"  interpreter-spawn lane: {len(lane)} check(s) deferred to a jobs={_lane_jobs(jobs)} post-burst pool")
     t0 = time.perf_counter()
     results: list[tuple[str, int, float, str]] = []
 
@@ -249,7 +292,7 @@ def run_checks(
         # Stream completions for progress without flooding (print failures immediately).
         done = 0
         with ThreadPoolExecutor(max_workers=jobs) as ex:
-            futs = {ex.submit(run_one, s, no_cascade=no_cascade): s for s in checks}
+            futs = {ex.submit(run_one, s, no_cascade=no_cascade): s for s in burst}
             for fut in as_completed(futs):
                 row = fut.result()
                 results.append(row)
@@ -260,8 +303,21 @@ def run_checks(
                     if tail:
                         for line in tail.splitlines()[-8:]:
                             print(f"         {line}", flush=True)
-                elif done % 50 == 0 or done == len(checks):
-                    print(f"  … {done}/{len(checks)} complete", flush=True)
+                elif done % 50 == 0 or done == len(burst):
+                    print(f"  … {done}/{len(burst)} complete", flush=True)
+
+        if lane:
+            with ThreadPoolExecutor(max_workers=_lane_jobs(jobs)) as ex:
+                futs = {ex.submit(run_one, s, no_cascade=no_cascade): s for s in lane}
+                for fut in as_completed(futs):
+                    row = fut.result()
+                    results.append(row)
+                    name, rc, dt, tail = row
+                    status = "OK" if rc == 0 else "FAIL"
+                    print(f"  [{status}] {dt:5.2f}s  {name} (lane)", flush=True)
+                    if rc != 0 and tail:
+                        for line in tail.splitlines()[-8:]:
+                            print(f"         {line}", flush=True)
 
     wall = time.perf_counter() - t0
     fails = [r for r in results if r[1] != 0]

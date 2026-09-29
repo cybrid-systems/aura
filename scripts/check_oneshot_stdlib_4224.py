@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,8 +40,9 @@ CASES: list[tuple[int, str, str]] = [
 def run_case(issue: int, expr: str, expect: str) -> tuple[bool, str]:
     if not AURA.is_file():
         return False, f"missing aura binary: {AURA}"
-    try:
-        proc = subprocess.run(
+
+    def _spawn() -> subprocess.CompletedProcess:
+        return subprocess.run(
             [str(AURA), "-e", expr],
             capture_output=True,
             text=True,
@@ -56,8 +58,24 @@ def run_case(issue: int, expr: str, expect: str) -> tuple[bool, str]:
                 "AURA_PIPELINE_STRICT": os.environ.get("AURA_PIPELINE_STRICT", "0"),
             },
         )
+
+    try:
+        proc = _spawn()
     except subprocess.TimeoutExpired:
         return False, f"TIMEOUT>{TIMEOUT_S}s"
+    if proc.returncode is not None and proc.returncode < 0:
+        # Externally SIGKILLed child (negative rc, empty streams): the shared
+        # gate host's memory-pressure waves kill freshly forked interpreter
+        # children — the chronic stdlib-oneshot exit=-9 flakes (#4152/#4154/
+        # #4155; reproduced even at lane jobs=2, so not burst-only). A signal
+        # death is not a case outcome: retry once so the assertions below run
+        # on a live child. A real interpreter crash reproduces and still
+        # fails; no value/exit/unbound assertion is relaxed.
+        time.sleep(2.0)
+        try:
+            proc = _spawn()
+        except subprocess.TimeoutExpired:
+            return False, f"TIMEOUT>{TIMEOUT_S}s (after sigkill retry)"
     out = (proc.stdout or "").strip()
     err = (proc.stderr or "").strip()
     if proc.returncode != 0:
