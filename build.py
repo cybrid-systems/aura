@@ -9085,6 +9085,25 @@ def cmd_lint():
             "Issue #4150 hygiene last-limit fiber linter failed — run python3 scripts/check_hygiene_last_limit_fiber_4150.py"
         )
         return r
+    # Issue #4151: expand_inner_macros' non-macro child walk consulted no
+    # production gate — a later sibling hitting depth/pass/gensym/steal/cap
+    # deny left earlier successful sibling expansions committed (sibling
+    # half-expand) for standalone callers. The walk now consults the same
+    # deny, restores the snapshotted child edges, truncates the pre-walk
+    # checkpoint, and returns the original root; the caller belts stay
+    # (redundant but harmless). Gate pins the in-function gate, the
+    # Soft/Off contract, the unchanged belts, and the extended tests.
+    # Runtime doors live in test_macro_hygiene_limits.cpp (#4151 ACs).
+    mcwg4151_script = ROOT / "scripts" / "check_macro_child_walk_gate_4151.py"
+    if not mcwg4151_script.exists():
+        fail(f"missing {mcwg4151_script}")
+        return 1
+    r = run([sys.executable, str(mcwg4151_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4151 macro child walk gate linter failed — run python3 scripts/check_macro_child_walk_gate_4151.py"
+        )
+        return r
     # Issue #4176: Soft --serve-async unix sock stalled permanently after a
     # long sequence of sequential fiber:spawn+mutate:rebind+fiber:join
     # oneshots (host raw_line timeout; Soft alive in ep_poll, near-zero

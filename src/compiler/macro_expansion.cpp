@@ -3527,8 +3527,46 @@ aura::ast::NodeId expand_inner_macros(
         auto rv = flat->get(root);
         child_ids.assign(rv.children.begin(), rv.children.end());
     }
-    for (auto child : child_ids)
+    // Issue #4151: the non-macro child walk needs the same production
+    // gate as the macro-call arms above. A later sibling hitting
+    // depth/pass/gensym/steal/cap deny otherwise leaves EARLIER
+    // successful sibling expansions committed, and standalone callers
+    // (Agent / self-evo / reexpand) install no outer
+    // inner_expand_production_limit_deny(_all) + checkpoint-restore
+    // belt — the sibling half-expand is observable. Per-child consult:
+    // the first deny rolls this level back — restore the snapshotted
+    // child edges (set_child re-links the original subtrees), truncate
+    // this level's committed clone nodes back to the pre-walk size
+    // (the same truncate_to / restore pattern the macro-call arm and
+    // the outer belts use), and return the original root. Ancestors
+    // observe the same deny and roll their own commits, so the whole
+    // walk unwinds to the pre-expand tree. Soft/Off keeps the
+    // historical partial expand (contract; #3062/#4078).
+    const std::size_t child_ckpt = flat->size();
+    for (auto child : child_ids) {
         (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
+        if (production_surface && inner_expand_production_limit_deny()) {
+            // Issue #4077: set-code only a checkpoint this expand
+            // installed — mirrored from the macro-call arms (the
+            // expander installs none today; a Guard snapshot stays
+            // live for the Guard dtor).
+            if (expand_inner_checkpoint_owned())
+                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            std::vector<aura::ast::NodeId> current_children;
+            {
+                auto rv_now = flat->get(root);
+                current_children.assign(rv_now.children.begin(), rv_now.children.end());
+            }
+            const std::size_t restore_n = child_ids.size() < current_children.size()
+                                              ? child_ids.size()
+                                              : current_children.size();
+            for (std::size_t ci = 0; ci < restore_n; ++ci)
+                if (current_children[ci] != child_ids[ci])
+                    flat->set_child(root, static_cast<std::uint32_t>(ci), child_ids[ci]);
+            flat->truncate_to(child_ckpt);
+            return root;
+        }
+    }
     return root;
 }
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
