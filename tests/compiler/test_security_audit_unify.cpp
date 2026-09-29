@@ -1153,8 +1153,10 @@ int run_test_security_audit_unify() {
               "3319 AC1: issue stamp");
         CHECK(aura::compiler::typed_audit::production_defaults_active(),
               "3319 AC1: production_defaults_active");
-        CHECK(!aura::compiler::typed_audit::should_audit(1),
-              "3319 AC1: mid 1 is Sampled-skip (ratio 4)");
+        // Issue #4173: production leftover forces the audit — the non-hit
+        // mid now audits (the audit-skipped SE still emits below).
+        CHECK(aura::compiler::typed_audit::should_audit(1),
+              "3319 AC1: mid 1 non-hit — #4173 forces audit under production leftover");
         const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
         aura::compiler::typed_audit::capture_macro_hygiene_audit(
             "hygiene-protected", AuditOutcome::Error, /*node=*/3, /*fiber=*/5, /*tenant=*/7,
@@ -1184,7 +1186,9 @@ int run_test_security_audit_unify() {
         CHECK(seq1c > seq1b, "3319 AC1: invariant fail still emits SE under Sampled+prod");
         TypedMutationAuditEvent te_miss{};
         const bool trail_hit = trail_find_by_mutation_id(5, te_miss);
-        CHECK(!trail_hit, "3319 AC1: Sampled skip may miss Typed trail (mid 5)");
+        // Issue #4173: capture_audit_event passes the gate for non-hit mids
+        // under production leftover — the Typed trail now joins mid 5.
+        CHECK(trail_hit, "3319 AC1: #4173 forced audit writes the Typed trail (mid 5)");
         const auto& e_inv = g_security_event_ring().ring[(seq1c - 1) % kSecurityEventRingSize];
         CHECK(e_inv.mutation_id == 5, "3319 AC1: SE mid=5 despite trail miss");
         CHECK(e_inv.denied == true, "3319 AC1: invariant SE denied");

@@ -30,9 +30,12 @@ using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::decide;
+using aura::compiler::typed_audit::inject_sampled_ratio_for_test;
+using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::typed_audit::requires_invariant_hard_gate;
 using aura::compiler::typed_audit::set_sample_ratio;
 using aura::compiler::typed_audit::set_strategy;
+using aura::compiler::typed_audit::should_audit;
 using aura::compiler::typed_audit::should_audit_contextual;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -442,6 +445,96 @@ int run_test_typed_mutation_audit_decision() {
         CHECK(read_file("tests/compiler/test_issue_3872.cpp").empty(), "3872 AC4: no invent");
         CHECK(read_file("docs/design/3872-mutate-session-hard-gate.md").empty(),
               "3872 AC4: no docs/design");
+    }
+
+    // ── Issue #4173: leftover Production Sampled+ratio>1 cannot skip the
+    // Success trail audit — under production_defaults the sampled skip is
+    // observability-only (audit-skipped SE), never an audit skip.
+    std::println("\n=== Issue #4173: production leftover Sampled forces the audit ===");
+    {
+        std::println("\n--- #4173 AC1: leftover Sampled+ratio>1 + production → audit runs ---");
+        AuditStateGuard guard;
+        apply_production_audit_defaults();
+        // Leftover misconfig (test seam / mis-order): bypass the #3530
+        // setter refuse and park production on Sampled/ratio>1.
+        inject_sampled_ratio_for_test(4);
+        CHECK(production_defaults_active(), "4173 AC1: production_defaults_active");
+        const auto skipped0 =
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.samples_skipped.load(
+                std::memory_order_relaxed);
+        // Non-hit ids (1..3 % 4 != 0): the audit RUNS (#4173); the sample
+        // miss is still counted (#3530 SE/counter pairing retained).
+        CHECK(should_audit(1), "4173 AC1: should_audit(1) true (non-hit, leftover)");
+        CHECK(should_audit(2), "4173 AC1: should_audit(2) true (non-hit)");
+        CHECK(should_audit(3), "4173 AC1: should_audit(3) true (non-hit)");
+        // The issue's face: small dirty non-linear non-match scope —
+        // contextual force does not fire, the fallthrough still audits.
+        CHECK(should_audit_contextual(/*mid=*/1, /*nodes=*/0, /*linear=*/false, /*match=*/false),
+              "4173 AC1: contextual small-dirty non-linear audits");
+        const auto skipped1 =
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.samples_skipped.load(
+                std::memory_order_relaxed);
+        CHECK(skipped1 == skipped0 + 4,
+              "4173 AC1: samples_skipped still counts sample misses (SE pairing)");
+    }
+    {
+        std::println("\n--- #4173 AC2: Soft Sampled skip unchanged ---");
+        AuditStateGuard guard;
+        apply_dev_audit_defaults();
+        set_strategy(AuditStrategy::Sampled);
+        set_sample_ratio(4);
+        CHECK(!production_defaults_active(), "4173 AC2: production off");
+        CHECK(!should_audit(1), "4173 AC2: soft non-hit still skipped");
+        CHECK(!should_audit(2), "4173 AC2: soft non-hit still skipped (2)");
+        CHECK(!should_audit(3), "4173 AC2: soft non-hit still skipped (3)");
+        CHECK(should_audit(4), "4173 AC2: soft hit still audits");
+    }
+    {
+        std::println("\n--- #4173 AC3: decide() mirrors the forced face ---");
+        AuditStateGuard guard;
+        apply_production_audit_defaults();
+        inject_sampled_ratio_for_test(4);
+        for (std::uint64_t mid : {0u, 1u, 2u, 3u, 4u, 5u}) {
+            const auto d = decide(mid, /*nodes=*/0, /*linear=*/false, /*strict=*/false,
+                                  /*match=*/false, /*mutate_session=*/false);
+            CHECK(d.would_audit == should_audit(mid),
+                  std::format("4173 AC3: parity mid={} decide==live", mid));
+        }
+        const auto d = decide(/*mid=*/1, /*nodes=*/0, false, false);
+        CHECK(d.would_audit, "4173 AC3: production leftover would_audit true");
+        CHECK(d.force_reason == "production-sampled-leftover", "4173 AC3: force_reason");
+        CHECK(!d.would_hard_gate,
+              "4173 AC3: hard gate NOT widened by #4173 (no session/context force)");
+    }
+    {
+        std::println("\n--- #4173 AC4: soft decide() face unchanged ---");
+        AuditStateGuard guard;
+        apply_dev_audit_defaults();
+        set_strategy(AuditStrategy::Sampled);
+        set_sample_ratio(4);
+        const auto d = decide(/*mid=*/1, /*nodes=*/0, false, false);
+        CHECK(!d.would_audit, "4173 AC4: soft would_audit false");
+        CHECK(d.force_reason == "sampled-skip", "4173 AC4: soft reason stays sampled-skip");
+    }
+    {
+        std::println("\n--- #4173 AC5: source-cite + linter + no invent ---");
+        const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(hdr.find("Issue #4173") != std::string::npos, "4173 AC5: header cites #4173");
+        CHECK(hdr.find("production-sampled-leftover") != std::string::npos,
+              "4173 AC5: decide() reason present");
+        CHECK(hdr.find("audit-skipped") != std::string::npos &&
+                  hdr.find("sampled-ratio-skip") != std::string::npos,
+              "4173 AC5: #3530 SE observability retained");
+        const auto lint = read_file("scripts/check_sampled_leftover_audit_4173.py");
+        CHECK(!lint.empty() && lint.find("4173") != std::string::npos, "4173 AC5: linter");
+        CHECK(read_file("build.py").find("check_sampled_leftover_audit_4173") != std::string::npos,
+              "4173 AC5: build.py wires linter");
+        CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                      .find("check_sampled_leftover_audit_4173") != std::string::npos,
+              "4173 AC5: allowlist entry");
+        CHECK(read_file("tests/compiler/test_issue_4173.cpp").empty(), "4173 AC5: no invent");
+        CHECK(read_file("docs/design/4173-sampled-leftover-audit.md").empty(),
+              "4173 AC5: no docs/design");
     }
 
     apply_dev_audit_defaults();
