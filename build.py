@@ -9389,6 +9389,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4142 WAL miss/refuse fold linter failed — run python3 scripts/check_wal_miss_refuse_next_4142.py")
         return r
+    # Issue #4154 (DeadCoercion / residual CastOp remirror miss-column):
+    # a nonempty persist span with added==0 must durability-probe the
+    # sites and latch the existing #3031 pending_full_solve face when
+    # nothing is durably marked (SOA columnar dirty rebuild / IR-only
+    # site) — commit / typed-entry refuse until remirror or full
+    # re-infer; Soft / Off unchanged. Runtime door:
+    # test_dead_coercion_dirty_cone.cpp (ac4154_1..ac4154_4).
+    castop4154_script = ROOT / "scripts" / "check_residual_castop_remirror_4154.py"
+    if not castop4154_script.exists():
+        fail(f"missing {castop4154_script}")
+        return 1
+    r = run([sys.executable, str(castop4154_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4154 residual CastOp remirror linter failed — run python3 scripts/check_residual_castop_remirror_4154.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

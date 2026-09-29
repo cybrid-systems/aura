@@ -866,6 +866,22 @@ inline std::size_t force_residual_castop_blocks_into_cone(std::span<const NodeId
     return n;
 }
 
+// Issue #4154: durability probe for the persisted residual sites. True
+// when at least one site is still durably marked in the global dirty set
+// (AST dep mark or IR block mark) — i.e. the type∪IR union cone still
+// reaches those sites, so the next remutate re-enters typecheck.
+[[nodiscard]] inline bool residual_persist_sites_durable() noexcept {
+    for (NodeId nid : t_residual_castop_ast) {
+        if (nid != 0 && g_global_dirty.is_dirty(encode_ast_dep_node(nid)))
+            return true;
+    }
+    for (NodeId enc : t_residual_castop_blocks) {
+        if (enc != 0 && g_global_dirty.is_dirty(enc))
+            return true;
+    }
+    return false;
+}
+
 // Issue #3120: after type-txn wipe of last_type_cone_ast, re-union
 // persisted residual CastOp source AST / containing blocks so a
 // previously cone-skipped site re-enters type∪IR (or forces full).
@@ -877,6 +893,22 @@ inline std::size_t remirror_persisted_residual_castops() noexcept {
         return 0;
     const auto n_ast = force_dead_coercion_elim_into_cone(t_residual_castop_ast);
     const auto n_blk = force_residual_castop_blocks_into_cone(t_residual_castop_blocks);
+    // Issue #4154: nonempty persist span + added==0 (seen-set short-circuit
+    // after a SOA columnar dirty rebuild / IR-only CastOp site without a
+    // durable AST/column mark) can leave the type∪IR union cone still empty
+    // for those sites — incremental typecheck skips while IR still executes
+    // the prior lowering (miss stamp → miss revalidate, #3065/#3120
+    // residual). Latch the existing #3031 pending_full_solve readiness face
+    // (no new model): commit / typed-entry refuse until a successful
+    // remirror or full re-infer (drain SOLVED clears via note(0)). Benign
+    // keep-alive stays latch-free — a site whose dep/block mark survives
+    // reports durable above (#3347 AC3); Soft / Off never reaches here (the
+    // persist gate above returns 0, no permanent bits).
+    if (n_ast + n_blk == 0 && !residual_persist_sites_durable()) {
+        aura::compiler::typed_audit::note_pending_full_solve_residual(
+            t_residual_castop_ast.size() + t_residual_castop_blocks.size(),
+            /*hard=*/true);
+    }
     return n_ast + n_blk;
 }
 
