@@ -70,6 +70,13 @@ using aura::compiler::types::is_void;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+// Issue #4149: full hygiene-reason reset (process global + ALL fiber
+// slots). The capability-deny (7) stamp arms the per-fiber #4078/#4034
+// expand/eval refuse; sequential deny ACs sharing one fiber must retire
+// it between calls (the #3787 test-reset clears what a global-only
+// store(0) cannot).
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept;
+
 static std::string read_file(const char* path) {
     const std::string rel(path);
     for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
@@ -4739,18 +4746,28 @@ static void ac3652_1_batch_allow_denied_without_mse() {
     CHECK(d1.has_value(), "3652 AC1a: returns");
     CHECK(merr_kind_3027(cs, *d1) == "hygiene-protected", "3652 AC1a: batch hygiene merr");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1a: SE reason");
+    // Issue #4149: the deny now stamps capability-deny (7), which arms the
+    // per-fiber #4078 expand/eval refuse — retire it so the (b)/(c) deny
+    // arms below run against a clean hygiene face (#3787 test-reset).
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
     // (b) per-sub-op :allow-macro? #t — op_opt_out arm, same MSE face.
     // Single-use Mutate grants: the d1 wrapper consumed them — re-arm.
     grant_3301_production_mutate(cs);
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
     reset_security_event_ring_for_test();
+    // Issue #4149: retire AFTER the re-arm too — the arm/revoke sequence
+    // must not leave the 7 refuse-arm armed when this eval runs.
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
     auto d2 = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 "
                                   "\"3652-b\" :allow-macro? #t)) \"s\")",
                                   as_int(*find_f)));
     CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene-protected",
           "3652 AC1b: per-op kwarg denied");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1b: SE reason");
+    // Issue #4149: retire the 7 refuse arm before the (c) rebind deny
+    // (same face as (a); #3787 test-reset).
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
     // (c) name-based :rebind (target_arg = -1, pre-audit cannot see it) —
     // the eval_flat allow gate fires inside the sub-op; batch surfaces the
     // MacroIntroduced diagnostic as kind=hygiene and rolls back.
@@ -4759,12 +4776,16 @@ static void ac3652_1_batch_allow_denied_without_mse() {
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
     reset_security_event_ring_for_test();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
     auto d3 =
         cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\" "
                 ":allow-macro? #t)) \"s\")");
     CHECK(d3.has_value() && merr_kind_3027(cs, *d3) == "hygiene-protected",
           "3652 AC1c: rebind sub-op denied");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1c: SE reason");
+    // Issue #4149: retire the 7 refuse arm so the rollback re-query and
+    // eval-current below are not blocked by the #4078 face (#3787 reset).
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
     // Rollback: binding intact, node id unchanged, still evaluable.
     auto still = cs.eval("(car (query :find \"f\"))");
     CHECK(still && is_int(*still) && as_int(*still) == as_int(*find_f),
@@ -7068,6 +7089,243 @@ static void ac4127_5_source_cite_no_artifacts() {
           "4127 AC5: no tests/issues/test_issue_4127.cpp");
 }
 
+// ── Issue #4149: MSE allow-arm deny stamps capability-deny (7) on the
+//    unified hygiene last-limit surface (public + lockless twins) ──
+static void ac4149_1_public_allow_arm_capability_deny() {
+    std::println("\n--- #4149 AC1: public mutate:* allow-arm deny stamps capability-deny (7) ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "4149 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4149 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "4149 AC1: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "4149 AC1: stamp MacroIntroduced");
+    // Restricted + wildcard-only (parity with #3542 AC1): TA armed then
+    // revoked so #3144 strips MacroSelfEvo out of the wildcard expansion.
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(denied.has_value(), "4149 AC1: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "4149 AC1: deny kind");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "capability-deny",
+          "4149 AC1: process last_limit = capability-deny");
+    CHECK(aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+              std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny,
+          "4149 AC1: reason code 7 (was: no stamp at all)");
+    // Issue #4149: the fine-grain capability reason rides the #3304
+    // companion surface; the per-fiber slot is deliberately NOT armed
+    // (fiber-slot 7 is the #4034/#4078 expand-refuse arm — a mutate deny
+    // must not refuse unrelated subsequent evals on the fiber).
+    CHECK(std::string(aura::core::capability::capability_deny_last_reason_string()) ==
+              "capability-not-granted",
+          "4149 AC1: capability fine-grain reason");
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    CHECK(aura::compiler::macro_exp::get_fiber_hygiene_metrics(fid).last_limit_reason !=
+              aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny,
+          "4149 AC1: fiber refuse-arm NOT set (#4034/#4078 boundary)");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"),
+          "4149 AC1: SE reason unchanged");
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac4149_2_lockless_batch_subops_capability_deny() {
+    std::println("\n--- #4149 AC2: lockless atomic-batch sub-op deny stamps 7 (not 4) ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (* x 2)))\")").has_value(),
+          "4149 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4149 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "4149 AC2: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "4149 AC2: stamp MacroIntroduced");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    // (a) batch-level :allow-macro? #t — the #3652 pre-audit walker MSE arm
+    // denies before any sub-op; the former caller-side 4 re-stamp is gone.
+    // Full reset (global + fiber): a 7 stamp arms the #4078 eval refuse.
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    auto d1 = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 \"4149-a\")) \"s\" "
+        ":allow-macro? #t)",
+        as_int(*find_f)));
+    CHECK(d1.has_value() && merr_kind_3027(cs, *d1) == "hygiene-protected",
+          "4149 AC2a: walker deny kind");
+    CHECK(aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+              std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny,
+          "4149 AC2a: walker deny stamps 7 (not 4)");
+    // Single-use Mutate grants: d1 consumed them — re-arm.
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    reset_security_event_ring_for_test();
+    // (b) name-based :rebind (target_arg = -1, pre-audit cannot see it) —
+    // the eval_flat allow gate fires inside the lockless sub-op; the same
+    // unified capability-deny face, not the structural 4. Full reset AFTER
+    // the re-arm so no 7 refuse-arm survives into this eval (#4078).
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    auto d2 = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"g\" "
+                      ":allow-macro? #t)) \"s\")");
+    CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene-protected",
+          "4149 AC2b: batch surfaces the lockless deny");
+    CHECK(aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+              std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny,
+          "4149 AC2b: lockless sub-op deny stamps 7 (not 4)");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "capability-deny", "4149 AC2b: capability-deny");
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac4149_3_soft_off_allow_one_load() {
+    std::println("\n--- #4149 AC3: Soft/Off allow path stays one-load (no stamp) ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "4149 AC3: Soft sandbox");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "4149 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4149 AC3: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "4149 AC3: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "4149 AC3: stamp MacroIntroduced");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene-protected" &&
+              merr_kind_3027(cs, *allowed) != "hygiene",
+          "4149 AC3: Soft opt-out permits");
+    CHECK(aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+              std::memory_order_relaxed) == 0,
+          "4149 AC3: allow path stamps nothing (zero-cost contract)");
+}
+
+static void ac4149_4_naked_default_deny_stays_4() {
+    std::println(
+        "\n--- #4149 AC4: naked default-deny still stamps hygiene-macro-introduced (4) ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "4149 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4149 AC4: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "4149 AC4: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "4149 AC4: stamp MacroIntroduced");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\")");
+    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
+          "4149 AC4: naked default-deny kind");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          "4149 AC4: contrast reason 4 preserved");
+}
+
+static void ac4149_5_source_cite_no_artifacts() {
+    std::println("\n--- #4149 AC5: source-cite + ceiling guard + linter wiring ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    // Public deny helper stamps the capability-deny sentinel (#4149).
+    const auto pub0 =
+        mut.find("deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id, "
+                 "const MakeErrorVal& mev) {");
+    CHECK(pub0 != std::string::npos, "4149 AC5: public deny helper present");
+    const auto pub1 = mut.find("return mev(\"hygiene-protected\",", pub0);
+    CHECK(pub1 != std::string::npos && pub1 > pub0, "4149 AC5: public deny tail");
+    const auto pub_body = mut.substr(pub0, pub1 - pub0);
+    CHECK(pub_body.find("note_capability_deny_last_reason(") != std::string::npos,
+          "4149 AC5: public deny stamps the capability last_limit surface");
+    CHECK(pub_body.find("kCapabilityDenyReasonNotGranted") != std::string::npos,
+          "4149 AC5: public deny stamps the not-granted capability reason");
+    // Lockless twin: capability-deny (7), no MacroIntroduced stamp inside.
+    const auto lock0 = efl.find(
+        "static bool deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id) {");
+    CHECK(lock0 != std::string::npos, "4149 AC5: lockless deny helper present");
+    const auto lock1 = efl.find("return true;", lock0);
+    CHECK(lock1 != std::string::npos && lock1 > lock0, "4149 AC5: lockless deny tail");
+    const auto lock_body = efl.substr(lock0, lock1 - lock0);
+    CHECK(lock_body.find("note_capability_deny_last_reason(") != std::string::npos,
+          "4149 AC5: lockless deny stamps the capability last_limit surface");
+    CHECK(lock_body.find("kCapabilityDenyReasonNotGranted") != std::string::npos,
+          "4149 AC5: lockless deny stamps the not-granted capability reason");
+    CHECK(lock_body.find("kHygieneLimitReasonMacroIntroduced") == std::string::npos,
+          "4149 AC5: lockless deny no longer stamps 4");
+    // Public atomic-batch walker deny branch: no caller-side 4 override.
+    const auto walk0 = mut.find("if (deny_macro_opt_out_without_mse(ev, node, mev)) {");
+    CHECK(walk0 != std::string::npos, "4149 AC5: batch walker deny arm");
+    const auto walk1 = mut.find("bump_atomic_batch_hygiene_violation();", walk0);
+    CHECK(walk1 != std::string::npos && walk1 > walk0, "4149 AC5: walker deny tail");
+    const auto walk_body = mut.substr(walk0, walk1 - walk0);
+    CHECK(walk_body.find("note_hygiene_last_limit_reason") == std::string::npos,
+          "4149 AC5: walker branch defers to the helper stamp (no 4 override)");
+    // Issue #4149: the batch sub-op conversion preserves a MacroSelfEvo
+    // capability diagnostic's capability-deny stamp (7) — only the naked
+    // structural diagnostic stamps macro-introduced (4).
+    const auto conv0 =
+        mut.find("if (diag.message.find(\"MacroIntroduced\") != std::string::npos) {");
+    CHECK(conv0 != std::string::npos, "4149 AC5: batch conversion present");
+    const auto conv1 = mut.find("bump_atomic_batch_hygiene_violation();", conv0);
+    CHECK(conv1 != std::string::npos && conv1 > conv0, "4149 AC5: conversion tail");
+    const auto conv_body = mut.substr(conv0, conv1 - conv0);
+    CHECK(conv_body.find("diag.message.find(\"MacroSelfEvo\") == std::string::npos") !=
+              std::string::npos,
+          "4149 AC5: conversion preserves the capability stamp for MacroSelfEvo diagnostics");
+    CHECK(conv_body.find("Issue #4149") != std::string::npos,
+          "4149 AC5: conversion preserve branch cites #4149");
+    // Ceiling guard intact: pass/depth/gensym cannot clobber a stored 4/5.
+    const auto mcx = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(mcx.find("if (cur == kHygieneLimitReasonMacroIntroduced || "
+                   "cur == kHygieneLimitReasonRestUnmarked)") != std::string::npos,
+          "4149 AC5: ceiling LWW guard intact (#3888)");
+    CHECK(mcx.find("return \"capability-deny\";") != std::string::npos,
+          "4149 AC5: reason-7 string mapping intact");
+    // Runtime: ceiling code cannot clobber a stored 4 (verification #5).
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(
+        aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced, std::memory_order_relaxed);
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+        aura::compiler::macro_exp::kHygieneLimitReasonPassLimit);
+    CHECK(aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+              std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced,
+          "4149 AC5: pass-limit cannot clobber 4 (gensym/depth/pass unchanged)");
+    // Linter wiring + no artifacts.
+    CHECK(!read_file("scripts/check_hygiene_limit_stamp_4149.py").empty(),
+          "4149 AC5: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_hygiene_limit_stamp_4149") != std::string::npos,
+          "4149 AC5: build.py wires the linter");
+    CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                  .find("check_hygiene_limit_stamp_4149.py") != std::string::npos,
+          "4149 AC5: root allowlist append");
+    CHECK(read_file("docs/design/4149-hygiene-limit-stamp.md").empty(),
+          "4149 AC5: no docs/design/4149-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4149.cpp").empty(),
+          "4149 AC5: no test_issue_4149.cpp per #81934");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -7320,6 +7578,12 @@ int main() {
     ac4127_3_default_deny_unchanged();
     ac4127_4_soft_paths_unchanged();
     ac4127_5_source_cite_no_artifacts();
+    std::println("\n=== Issue #4149: MSE allow-arm deny stamps capability-deny (7) ===");
+    ac4149_1_public_allow_arm_capability_deny();
+    ac4149_2_lockless_batch_subops_capability_deny();
+    ac4149_3_soft_off_allow_one_load();
+    ac4149_4_naked_default_deny_stays_4();
+    ac4149_5_source_cite_no_artifacts();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

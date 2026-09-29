@@ -484,6 +484,19 @@ namespace {
             kEffectMacroSelfEvo, "macro-self-evo", "macro-mutate-needs-macro-self-evo",
             /*denied=*/true, static_cast<std::int64_t>(aura_fiber_current_id()));
         ev.record_hygiene_violation_attempt();
+        // Issue #4149: the MSE allow-arm deny IS a capability deny — stamp
+        // the Agent last-limit surface with the capability-deny sentinel (7)
+        // via the #3304 companion API so public mutate:* rejections publish
+        // the unified hygiene last-limit face
+        // (hygiene_last_limit_reason_string() reads "capability-deny") plus
+        // the fine-grain capability reason. SE reason
+        // macro-mutate-needs-macro-self-evo keeps the SE grain. The
+        // per-fiber slot is deliberately NOT armed: fiber-slot 7 is the
+        // #4034/#4078 expand-refuse arm — stamped from a mutate context it
+        // refuses unrelated subsequent evals on the fiber (control-proven);
+        // the process-global surface is the Agent-replay authority here.
+        aura::core::capability::note_capability_deny_last_reason(
+            aura::core::capability::kCapabilityDenyReasonNotGranted);
         typed_audit::capture_macro_hygiene_audit(
             "macro-mutate-needs-macro-self-evo", typed_audit::AuditOutcome::Error,
             static_cast<std::uint32_t>(id), static_cast<std::int64_t>(aura_fiber_current_id()),
@@ -5966,9 +5979,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             // sub-op; MSE granted falls through to per-op gates.
                             if (op_opt_out || batch_allow_macro || ev.get_allow_macro_mutate()) {
                                 if (deny_macro_opt_out_without_mse(ev, node, mev)) {
-                                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                                        aura::compiler::macro_exp::
-                                            kHygieneLimitReasonMacroIntroduced);
+                                    // Issue #4149: the deny helper now stamps
+                                    // kHygieneLimitReasonCapabilityDeny (7); the
+                                    // former caller-side MacroIntroduced (4)
+                                    // stamp clobbered the unified allow-arm
+                                    // face, so it is gone (last-writer-wins).
                                     ev.bump_atomic_batch_hygiene_violation();
                                     abort_batch_workspace();
                                     ev.atomic_batch_domain_.rollbacks++;
@@ -6117,8 +6132,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 const auto& diag = sub_result.error();
                 if (diag.message.find("MacroIntroduced") != std::string::npos) {
                     ev.record_hygiene_violation_attempt();
-                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                        aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                    // Issue #4149: MacroSelfEvo-capability diagnostics were
+                    // already stamped with the capability-deny sentinel (7)
+                    // by the deny helper — do not clobber that with the
+                    // structural 4; only the naked structural deny (no
+                    // MacroSelfEvo in the message) stamps macro-introduced.
+                    if (diag.message.find("MacroSelfEvo") == std::string::npos) {
+                        aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                            aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                    }
                     ev.bump_atomic_batch_hygiene_violation();
                     abort_batch_workspace();
                     ev.atomic_batch_domain_.rollbacks++;
