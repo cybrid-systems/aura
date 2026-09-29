@@ -7778,6 +7778,9 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"adaptive-thr-frozen",
                  make_int(m ? load(m->adaptive_thr_frozen)
                             : (aura::compiler::adaptive_thr_frozen() ? 1 : 0))},
+                // Issue #4156: genuinely wired — the peel decision core
+                // (decide_workload_adaptive_partial_relower) clamps the
+                // effective thr to the risk-narrowed adaptive face.
                 {"adaptive-thr-wired", make_int(1)},
                 {"schema-2248", make_int(2248)},
                 {"issue-2248", make_int(2248)},

@@ -254,9 +254,11 @@ struct CompilerMetrics {
     // Issue #2248: Agent-driven adaptive relower threshold from
     // fallback-reason telemetry (refine #2112 / #2127 / #2190).
     //   - adaptive_thr_current: current effective partial cost thr
-    //     (basis points * 100 for fixed-point precision)
-    //   - adaptive_thr_raises_total: bad-reason window raised thr
-    //   - adaptive_thr_decays_total: clean-window decayed thr
+    //     (basis points * 100 for fixed-point precision); #4156 inverted
+    //     polarity — <= base, lowered under correctness-risk fallbacks
+    //   - adaptive_thr_raises_total: clean-window recovery raised thr
+    //     toward base (#4156 inverted polarity)
+    //   - adaptive_thr_decays_total: bad-reason window lowered thr
     //   - adaptive_thr_bad_window_count: current bad_window_count
     //   - adaptive_thr_frozen: 1 if AURA_ADAPTIVE_THR=0 (AC3 override)
     std::atomic<std::uint64_t> adaptive_thr_current{800};

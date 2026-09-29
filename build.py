@@ -9425,6 +9425,23 @@ def cmd_lint():
             "Issue #4155 densify residual CastOp persist clear linter failed — run python3 scripts/check_residual_castop_densify_clear_4155.py"
         )
         return r
+    # Issue #4156 (AdaptiveThrPolicy #2248 dual-track closure): the wired
+    # adaptive face now feeds the peel decision core with inverted
+    # polarity — correctness-risk fallbacks (MapInconsistent /
+    # DesyncForceFull) LOWER the effective partial thr (prefer full
+    # sooner) and clean windows recover toward base; neutral state +
+    # AURA_ADAPTIVE_THR=0 keep decisions unchanged (#2112/#2127/#3987
+    # untouched). Runtime door:
+    # test_adaptive_partial_relower_threshold.cpp (ac2248 polarity flip
+    # + ac4156_adaptive_thr_feeds_peel_inverted).
+    adaptive4156_script = ROOT / "scripts" / "check_adaptive_thr_4156.py"
+    if not adaptive4156_script.exists():
+        fail(f"missing {adaptive4156_script}")
+        return 1
+    r = run([sys.executable, str(adaptive4156_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4156 AdaptiveThrPolicy dual-track linter failed — run python3 scripts/check_adaptive_thr_4156.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
