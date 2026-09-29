@@ -37,7 +37,7 @@
   odd? even? positive? negative? zero?
   gcd lcm prime? factors fibonacci
   factorial expt nCr nPr
-  sum product range variance stddev percentile normalize)
+  sum product extent variance stddev percentile normalize)
 
 (require "std/string" all:)
 (require "std/json" all:)

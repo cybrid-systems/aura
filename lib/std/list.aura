@@ -11,7 +11,7 @@
 (export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
         partition sort range sum product last flatten intersperse
         intersperse-iterative any all
-        make-list list-tail find count)
+        make-list list-tail find count remove delete)
 
 ; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
 (define (foldl f init lst)
@@ -186,3 +186,23 @@
     (if (null? xs)
       n
       (loop (cdr xs) (if (pred (car xs)) (+ n 1) n)))))
+
+; SRFI-1 remove — Soft oneshot gap (#4224). Complement of filter; iterative
+; O(1) stack. Elements for which pred is true are dropped.
+(define (remove pred lst)
+  (let loop ((xs lst) (acc (list)))
+    (if (null? xs)
+      (reverse acc)
+      (if (pred (car xs))
+        (loop (cdr xs) acc)
+        (loop (cdr xs) (cons (car xs) acc))))))
+
+; SRFI-1 delete — Soft oneshot gap (#4226). equal?-based; iterative O(1)
+; stack. Optional = comparator deferred.
+(define (delete x lst)
+  (let loop ((xs lst) (acc (list)))
+    (if (null? xs)
+      (reverse acc)
+      (if (equal? (car xs) x)
+        (loop (cdr xs) acc)
+        (loop (cdr xs) (cons (car xs) acc))))))

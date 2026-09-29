@@ -23,3 +23,5 @@ make-list: Any Any -> Any
 list-tail: Any Any -> Any
 find: Any Any -> Any
 count: Any Any -> Any
+remove: Any Any -> Any
+delete: Any Any -> Any
