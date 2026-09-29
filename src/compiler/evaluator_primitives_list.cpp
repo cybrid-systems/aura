@@ -78,8 +78,17 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
     auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg,
                              bool list_hotpath = false) -> EvalValue {
-        if (is_primitive(fn)) {
-            auto slot = as_primitive_slot(fn);
+        // Issue #4228: deref define-cells (Soft std/math preds) before dispatch.
+        EvalValue callee = fn;
+        if (is_cell(callee)) {
+            auto ci = as_cell_id(callee);
+            if (ci < ev.cells().size())
+                callee = ev.cells()[ci];
+            else
+                return make_void();
+        }
+        if (is_primitive(callee)) {
+            auto slot = as_primitive_slot(callee);
             ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
@@ -93,8 +102,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return (*prim)({arg});
         }
-        if (is_closure(fn)) {
-            auto cid = as_closure_id(fn);
+        if (is_closure(callee)) {
+            auto cid = as_closure_id(callee);
             ev.bump_primitives_apply_closure_calls();
             if (list_hotpath)
                 ev.bump_list_estimated_cache_misses();
@@ -105,8 +114,20 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     };
     auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg,
                             bool list_hotpath = false) -> bool {
-        if (is_primitive(fn)) {
-            auto slot = as_primitive_slot(fn);
+        // Issue #4228: Soft std/math exports are define-cells. Env::lookup
+        // returns the cell sentinel; Variable eval usually derefs, but
+        // list hot-path preds must tolerate a cell reaching apply_pred
+        // (same for apply_unary / apply_binary).
+        EvalValue pred = fn;
+        if (is_cell(pred)) {
+            auto ci = as_cell_id(pred);
+            if (ci < ev.cells().size())
+                pred = ev.cells()[ci];
+            else
+                return false;
+        }
+        if (is_primitive(pred)) {
+            auto slot = as_primitive_slot(pred);
             ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
@@ -119,8 +140,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return aura::compiler::pure::is_truthy((*prim)({arg}));
         }
-        if (is_closure(fn)) {
-            auto cid = as_closure_id(fn);
+        if (is_closure(pred)) {
+            auto cid = as_closure_id(pred);
             ev.bump_primitives_apply_closure_calls();
             if (list_hotpath)
                 ev.bump_list_estimated_cache_misses();
@@ -131,8 +152,17 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     };
     auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg,
                               bool list_hotpath = false) -> EvalValue {
-        if (is_primitive(fn)) {
-            auto slot = as_primitive_slot(fn);
+        // Issue #4228: deref define-cells before dispatch.
+        EvalValue callee = fn;
+        if (is_cell(callee)) {
+            auto ci = as_cell_id(callee);
+            if (ci < ev.cells().size())
+                callee = ev.cells()[ci];
+            else
+                return make_void();
+        }
+        if (is_primitive(callee)) {
+            auto slot = as_primitive_slot(callee);
             ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
@@ -145,8 +175,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return (*prim)({acc, arg});
         }
-        if (is_closure(fn)) {
-            auto cid = as_closure_id(fn);
+        if (is_closure(callee)) {
+            auto cid = as_closure_id(callee);
             ev.bump_primitives_apply_closure_calls();
             if (list_hotpath)
                 ev.bump_list_estimated_cache_misses();
@@ -486,6 +516,10 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         add, ev, "filter",
         [&pairs, &string_heap, &error_values, apply_pred, &ev](std::span<const EvalValue> a) {
             // (filter pred list) — keep elements where pred returns truthy
+            // Issue #4228: snapshot cars under lock (same shape as map), then
+            // apply Soft/native preds outside. Walking pairs_ live while
+            // Soft std/math closures allocate via apply_closure dropped keeps
+            // for direct (filter even? (list …)) while apply/let stayed green.
             if (a.size() < 2) {
                 return make_primitive_error(string_heap, error_values, "filter: too few args",
                                             ev.primitive_error_counter_ptr());
@@ -497,40 +531,47 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                             ev.primitive_error_counter_ptr());
             }
 
-            EvalValue result = make_void();
-            EvalValue tail = make_void();
-            bool first = true;
-            EvalValue current = a[1];
-
-            while (is_pair(current)) {
-                auto idx = as_pair_idx(current);
-                if (idx >= pairs.size())
-                    break;
-
-                ev.bump_list_chain_traversals();
-                ev.bump_list_estimated_cache_misses();
-                bool keep = apply_pred(a[0], pairs[idx].car, true);
-                if (keep) {
-                    auto new_id = pairs.size();
-                    pairs.push_back({pairs[idx].car, make_void()});
-                    ev.bump_pair_alloc_count(); // Issue #614
-                    auto new_pair = make_pair(new_id);
-
-                    if (first) {
-                        result = new_pair;
-                        tail = new_pair;
-                        first = false;
-                    } else {
-                        auto tail_idx = as_pair_idx(tail);
-                        if (tail_idx < pairs.size())
-                            pairs[tail_idx].cdr = new_pair;
-                        tail = new_pair;
-                    }
+            std::vector<EvalValue> cars;
+            {
+                Evaluator::ListCtorLockHold hold(ev);
+                auto current = a[1];
+                while (is_pair(current)) {
+                    auto idx = as_pair_idx(current);
+                    if (idx >= pairs.size())
+                        break;
+                    cars.push_back(pairs[idx].car);
+                    current = pairs[idx].cdr;
+                    ev.bump_list_chain_traversals();
+                    ev.bump_list_estimated_cache_misses();
                 }
-
-                current = pairs[idx].cdr;
             }
 
+            std::vector<EvalValue> kept;
+            kept.reserve(cars.size());
+            for (const auto& car : cars) {
+                if (apply_pred(a[0], car, true))
+                    kept.push_back(car);
+            }
+
+            Evaluator::ListCtorLockHold hold(ev);
+            const auto n = kept.size();
+            if (n == 0)
+                return make_void();
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            }
+            pairs.reserve(pairs.size() + n);
+            EvalValue result = make_void();
+            for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
+                auto id = pairs.size();
+                pairs.push_back({*it, result});
+                result = make_pair(id);
+            }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
         pure_general(2, "(pred list) -> list", "Keep elements where pred is truthy."));

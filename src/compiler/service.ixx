@@ -7775,25 +7775,88 @@ public:
     void sync_workspace_value_cells_from_env() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
-        if (!ws_flat || !ws_pool)
-            return;
-        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
-            auto v = ws_flat->get(id);
-            if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
-                continue;
-            auto name = std::string(ws_pool->resolve(v.sym_id));
+        if (ws_flat && ws_pool) {
+            for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                auto v = ws_flat->get(id);
+                if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                auto name = std::string(ws_pool->resolve(v.sym_id));
+                if (name.empty() || name[0] == '_')
+                    continue;
+                if (v.children.empty())
+                    continue;
+                // Skip pure function defines (Lambda body) — IR function cache
+                // owns those; only value defines need cell indices.
+                // Issue #4228: Soft TW Lambda exports are registered below via
+                // top_env Soft-cell walk (not workspace Lambda skip alone).
+                if (ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
+                    continue;
+                auto existing = evaluator_.top_env().lookup_binding(name);
+                if (!existing || !types::is_cell(*existing))
+                    continue;
+                ir_value_cell_bindings_[name] = types::as_cell_id(*existing);
+            }
+        }
+        // Issue #4228: Soft oneshot std/math (even?/odd?/positive?/zero?/…)
+        // and other require-injected Lambda cells are TW-evaluated into
+        // top_env. Prefer those live TW closures via TopCellLoad over IR
+        // function-cache MakeClosure (high-bit stubs) — native filter/map
+        // apply_closure misses the stub while let/apply/TW Call stay green.
+        sync_soft_tw_export_cells_into_ir_value_bindings_();
+    }
+
+    void sync_soft_tw_export_cells_into_ir_value_bindings_() {
+        // Soft (require … all:) injects via Env::bind into legacy string
+        // bindings_ (top_ often has no StringPool, so bindings_symid_ /
+        // bindings_with_names() stay empty — #4228). Walk bindings() and
+        // also force-lookup Soft std/math preds Soft oneshot auto-loads.
+        auto try_register = [&](const std::string& name, const types::EvalValue& val) {
+            types::EvalValue actual = val;
+            if (types::is_cell(actual)) {
+                const auto ci = types::as_cell_id(actual);
+                if (ci >= evaluator_.cells().size())
+                    return;
+                actual = evaluator_.cells()[ci];
+                if (!types::is_closure(actual))
+                    return;
+                const auto cid = types::as_closure_id(actual);
+                if (cid & types::kClosureIdHighBit)
+                    return;
+                ir_value_cell_bindings_[name] = ci;
+                return;
+            }
+            // Soft may inject a bare TW closure (not cell-wrapped). Wrap
+            // into a fresh define-cell so TopCellLoad can feed native
+            // filter/map apply_closure the live Soft cid.
+            if (!types::is_closure(actual))
+                return;
+            const auto cid = types::as_closure_id(actual);
+            if (cid & types::kClosureIdHighBit)
+                return;
+            const auto ci = evaluator_.cells().size();
+            evaluator_.cells().push_back(actual);
+            // Re-bind as cell so later TW lookups stay consistent with IR.
+            evaluator_.top_env().bind(name, types::make_cell(static_cast<std::uint64_t>(ci)));
+            ir_value_cell_bindings_[name] = ci;
+        };
+
+        for (auto& [name, val] : evaluator_.top_env().bindings()) {
             if (name.empty() || name[0] == '_')
                 continue;
-            if (v.children.empty())
+            try_register(name, val);
+        }
+        // Soft oneshot std/math preds — ensure even when bindings() is
+        // parent-shadowed or only visible via lookup_binding.
+        static constexpr const char* kSoftMathPreds[] = {
+            "even?", "odd?", "positive?", "negative?", "zero?",
+        };
+        for (const char* pred : kSoftMathPreds) {
+            if (ir_value_cell_bindings_.count(pred))
                 continue;
-            // Skip pure function defines (Lambda body) — IR function cache
-            // owns those; only value defines need cell indices.
-            if (ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
-                continue;
-            auto existing = evaluator_.top_env().lookup_binding(name);
-            if (!existing || !types::is_cell(*existing))
-                continue;
-            ir_value_cell_bindings_[name] = types::as_cell_id(*existing);
+            if (auto b = evaluator_.top_env().lookup_binding(pred))
+                try_register(pred, *b);
+            else if (auto v = evaluator_.top_env().lookup(pred))
+                try_register(pred, *v);
         }
     }
 
@@ -14482,6 +14545,13 @@ public:
 
     [[nodiscard]] std::uint64_t value_define_ir_env_bind_count() const noexcept {
         return metrics_.value_define_ir_env_bind_count.load(std::memory_order_relaxed);
+    }
+
+    // Issue #4228: Soft oneshot prelude calls this after require so
+    // Soft TW Lambda cells (std/math preds) win TopCellLoad over IR
+    // function-cache MakeClosure high-bit stubs.
+    void sync_soft_export_cells_for_ir() {
+        sync_soft_tw_export_cells_into_ir_value_bindings_();
     }
 
     // Issue #272 Cycle 2: test hook for needs_tree_walker_fallback on defines.

@@ -1996,6 +1996,9 @@ int main(int argc, char* argv[]) {
                              pre.error().format_with_source(kSoftOneshotStdPrelude));
                 return 1;
             }
+            // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
+            // for native filter/map (IR MakeClosure stubs return empty).
+            cs.sync_soft_export_cells_for_ir();
         }
         auto result = cs.eval(content);
         if (!result) {
@@ -3067,6 +3070,9 @@ int main(int argc, char* argv[]) {
                          pre.error().format_with_source(kSoftOneshotStdPrelude));
             return 1;
         }
+        // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
+        // for native filter/map (IR MakeClosure stubs return empty).
+        cs.sync_soft_export_cells_for_ir();
     }
     // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
     // ONE cs.eval pass, matching the --load entry. Per-expression eval
