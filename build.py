@@ -9763,6 +9763,25 @@ def cmd_lint():
             "Issue #4169 apply_closure TLS seq-survive linter failed — run python3 scripts/check_apply_closure_tls_seq_4169.py"
         )
         return r
+    # Issue #4171 (P0: blame_ok vacuous on empty frames after mutate under
+    # Production): the live-TC fill treated ANY empty blame chain as OK
+    # (is_complete() || frames.empty()), so a real mutate with CS work
+    # (txn_dirty / commit_cs_has_work) could green a Production commit with
+    # zero recorded blame frames — silent blame/provenance gap. The vacuous
+    # arm is now gated on the mutated face; Soft keeps vacuous empty→ok via
+    # the #2221 Soft observe arm in commit_readiness step 4. No second
+    # blame model — the fill feeds the existing step-4 gate. Runtime door:
+    # test_occurrence_provenance_chain_completeness.cpp (#4171 AC1–AC4).
+    bbv4171_script = ROOT / "scripts" / "check_blame_ok_vacuous_4171.py"
+    if not bbv4171_script.exists():
+        fail(f"missing {bbv4171_script}")
+        return 1
+    r = run([sys.executable, str(bbv4171_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4171 blame_ok vacuous-on-empty fill linter failed — run python3 scripts/check_blame_ok_vacuous_4171.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

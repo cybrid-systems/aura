@@ -3292,6 +3292,42 @@ void Evaluator::inject_commit_cs_complete_blame_for_test() noexcept {
     }
 }
 
+// Issue #4171: seed live commit TC with an EMPTY last_blame_chain and —
+// by default — residual CS work so commit_cs_has_work() reports the
+// mutated face. This is the vacuous-empty-after-mutate state the live
+// fill previously treated as blame_ok (silent provenance gap under
+// Production blame_hard). with_cs_work=false keeps the CS quiet so the
+// vacuous-not-mutated arm (blame moot → ok) stays pinned.
+void Evaluator::inject_commit_cs_empty_blame_for_test(bool with_cs_work) noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        tc->force_last_blame_empty_for_test();
+        if (with_cs_work) {
+            // Touched delta root — commit_cs_has_work() true (mutated face).
+            auto& cs = tc->constraint_system();
+            const auto v = cs.fresh_var();
+            cs.mark_touched_on_delta(v, /*occurrence_narrow=*/false);
+        }
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
 void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
                                                  std::uint64_t nodes_changed) noexcept {
     // Issue #2144: never throw into Guard dtor.

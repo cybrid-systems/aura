@@ -3789,6 +3789,11 @@ public:
     // Issue #2221: seed commit CS last_blame_chain for require-complete gate.
     void inject_commit_cs_incomplete_blame_for_test() noexcept;
     void inject_commit_cs_complete_blame_for_test() noexcept;
+    // Issue #4171: seed live commit TC with an EMPTY last_blame_chain
+    // (frames.empty(), !complete) and — by default — a touched delta root
+    // so commit_cs_has_work() reports the mutated face the live fill must
+    // gate on (with_cs_work=false pins the vacuous-not-mutated arm).
+    void inject_commit_cs_empty_blame_for_test(bool with_cs_work = true) noexcept;
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
