@@ -9725,6 +9725,25 @@ def cmd_lint():
             "Issue #4167 hot-contract pack face default linter failed — run python3 scripts/check_hot_contract_pack_face_4167.py"
         )
         return r
+    # Issue #4168 (P1: Soft dirty/batch-only misconfig can pretend multi-round
+    # amortization while cone/permanent bits are skipped): the dashboard
+    # honesty face — query:soa-dirty-stats surfaces pretend-amortized=1 and
+    # refuses the HP readiness claim (hp-amortization-ready=0) whenever the
+    # production face is inactive; residual==0 alone is NOT an HP amortization
+    # proof (#2936 Soft smoke stays observe-only). Soft observe counters and
+    # Production batch APIs are unchanged; reuses the single
+    # aura_production_defaults_active_probe (#3201 model — no second model).
+    # Runtime door: test_batch_dirty_discipline.cpp (ac4168_1..ac4168_4).
+    spa4168_script = ROOT / "scripts" / "check_ir_dirty_soft_pretend_amortized_4168.py"
+    if not spa4168_script.exists():
+        fail(f"missing {spa4168_script}")
+        return 1
+    r = run([sys.executable, str(spa4168_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4168 Soft dirty/batch-only pretend-amortized honesty linter failed — run python3 scripts/check_ir_dirty_soft_pretend_amortized_4168.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

@@ -266,6 +266,34 @@ export [[nodiscard]] inline bool ir_dirty_batch_only_hard() noexcept {
     return aura_production_defaults_active_probe() != 0;
 }
 
+// Issue #4168: Soft/Off honesty face — pretend amortization + HP readiness
+// refusal. Soft/Off skip permanent dirty-bit writes (observe-only cone
+// branches in dirty_propagation.ixx gate on production_defaults_active) and
+// env=0 can force AURA_IR_DIRTY_BATCH_ONLY=0 (#3201), so Soft counters read
+// "green" (residual multi-via-single == 0, #2936) while incremental lower/opt
+// may re-scan whole modules. Dashboard contract: when the production face is
+// NOT active the query surface reports pretend-amortized=1 and refuses the
+// HP readiness claim (hp-amortization-ready=0); residual==0 alone is NOT an
+// HP amortization proof. Reuses the single C probe (#3201 model — no second
+// model); Soft observe counters (#2774/#2936) are untouched and Production
+// batch APIs are unchanged.
+export inline constexpr int kIrSoaSoftPretendAmortizedIssue = 4168;
+// pretend_amortized: true when the production face is absent (probe missing
+// → Soft binary; probe returns 0 → Soft/Off defaults). Keyed on the same
+// aura_production_defaults_active_probe as ir_dirty_batch_only_hard.
+export [[nodiscard]] inline bool ir_dirty_soft_pretend_amortized() noexcept {
+    if (aura_production_defaults_active_probe == nullptr)
+        return true; // Soft binary: no production face wired (#4168)
+    return aura_production_defaults_active_probe() == 0;
+}
+// HP readiness claim: granted only under the active production face. Soft
+// observe counters stay green but the dashboard must refuse the claim —
+// incremental lower/opt may re-scan whole modules when permanent dirty bits
+// were skipped (#4168 failure mode).
+export [[nodiscard]] inline bool ir_dirty_hp_amortization_ready() noexcept {
+    return !ir_dirty_soft_pretend_amortized();
+}
+
 // ── Issue #2773: logical invalidation epoch (process-wide) ──────────
 // One tick per *logical* cascade so Agents can answer "how many fence
 // advances did one mutation cause?" without joining N layer counters.
