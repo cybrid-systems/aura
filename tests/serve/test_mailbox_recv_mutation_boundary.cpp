@@ -2171,7 +2171,10 @@ static void ac3256_2_force_path_order_no_second_unlock() {
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
     auto fn = mb.find("inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {");
     CHECK(fn != std::string::npos, "3256 AC2: helper present");
-    auto win = mb.substr(fn, 5000);
+    // 8000: the #4160 arm-path pairing (#3223 urgent poll + #3764/#3826
+    // busy-path bound) grew the function past the old 5000-char window —
+    // same widening as check_mailbox_defer_slo_hold_unify_3256.py.
+    auto win = mb.substr(fn, 8000);
     CHECK(win.find("Issue #3256") != std::string::npos, "3256 AC2: helper cites #3256");
     CHECK(win.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
           "3256 AC2: hold arm via force_degrade");
