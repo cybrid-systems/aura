@@ -782,6 +782,16 @@ inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
             1, std::memory_order_relaxed);
         return;
     }
+    // Issue #4160: tie the #3859 quarantine SLO into the same sticky admit
+    // deny — while THIS face is hot (p99 / starvation throttle), a latched
+    // no-edge quarantine arms the residual sticky via the SSOT reader so
+    // soak/admit deny (incl. the #4158 structured edge-free refuse) within
+    // one mailbox SLO poll; holder exit recovers via the zero path. Soft
+    // already returned above (observe-only).
+    if (aura::compiler::g_hold_budget_no_edge_quarantine_latched.load(std::memory_order_acquire) !=
+        0) {
+        (void)aura::serve::steal_safety_production_residual_zero_v_read();
+    }
     // One-shot arm for this open-defer window (AC3).
     std::uint8_t expected = 0;
     if (!g_mailbox_defer_slo_hold_cancel_armed.compare_exchange_strong(
@@ -798,6 +808,16 @@ inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
         // ages. Soft / sandbox=off already returned above (observe-only);
         // no new counters — reuses the existing force path (#3285 / #3035).
         (void)aura_hold_budget_poll_inbody_window();
+        // Issue #4160: the re-poll must also drive the peer busy-path poll
+        // (#3764/#3826). poll_inbody_window's #3859/#4158 quarantine-dispose
+        // ladder is multi-worker-latch-gated; without the latch an edge-free
+        // holder only ever saw "foreign → re-arm cancel only" — this face
+        // bounded new entrants while the stale holder kept workspace_mtx_
+        // (fleet livelock). busy_path bounds the holder at duration > 2×SLO:
+        // same-fiber → force_release; foreign → residual sticky +
+        // dispose_no_edge_holder (Reclaimed/Done). The foreign unique_lock is
+        // NEVER unlocked from this thread (#4032/#3826/#3859 contract).
+        (void)aura_hold_budget_poll_busy_path();
         return;
     }
     const auto holder = aura::compiler::mutation_hold_live_snapshot();
@@ -817,7 +837,18 @@ inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
     // returns Backpressure (caller). Soft already returned above.
     aura_evaluator_force_degrade_outermost_holder(holder.fiber_id);
     const int armed = aura_fiber_request_hold_budget_cancel(holder.fiber_id);
+    // Issue #4160: always pair the one-shot cancel arm with the #3223
+    // urgent inbody poll so the victim's next cooperative edge matches
+    // same-fiber force-release even when the degrade ran same-fiber
+    // (request_cancel only — no synthetic yield on that arm).
+    (void)aura_fiber_request_urgent_inbody_poll(holder.fiber_id);
     (void)aura_hold_budget_poll_inbody_window();
+    // Issue #4160: pair the peer busy-path poll from THIS face so an
+    // edge-free holder is bounded (same-fiber force-release; foreign →
+    // residual sticky + dispose_no_edge_holder Reclaimed/Done at duration
+    // > 2×SLO) instead of only ever re-arming the cancel. Foreign thread
+    // never unlocks the unique_lock (#4032/#3826/#3859 contract).
+    (void)aura_hold_budget_poll_busy_path();
     if (armed != 0) {
         g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.fetch_add(1,
                                                                          std::memory_order_relaxed);

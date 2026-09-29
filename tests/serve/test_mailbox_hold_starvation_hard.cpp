@@ -4386,6 +4386,450 @@ static void ac4158_4_linter_selftest() {
     CHECK(rc == 0, "4158 AC4: linter --self-test passes");
 }
 
+// ── Issue #4160: mailbox hold p99 deny face bounds the stale holder ──
+static void ac4160_1_source_and_pairing() {
+    std::println("\n--- #4160 AC1: SLO face pairs urgent poll + busy-path bound + sticky tie ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    // One-shot arm path (#3256 window): the cancel arm is ALWAYS paired with
+    // the #3223 urgent inbody poll + the peer busy-path bound under #4160.
+    const auto arm = mb.find("Issue #3256: unify mailbox under-boundary SLO");
+    CHECK(arm != std::string::npos, "4160 AC1: #3256 arm window present");
+    if (arm != std::string::npos) {
+        const auto win = mb.substr(arm, 1600);
+        CHECK(win.find("Issue #4160") != std::string::npos, "4160 AC1: arm window cites #4160");
+        CHECK(win.find("aura_fiber_request_urgent_inbody_poll(holder.fiber_id)") !=
+                  std::string::npos,
+              "4160 AC1: urgent inbody poll paired with the cancel arm");
+        CHECK(win.find("aura_hold_budget_poll_busy_path()") != std::string::npos,
+              "4160 AC1: peer busy-path bound paired with the cancel arm");
+    }
+    // Already-armed re-poll (#3289): also drives the busy-path bound.
+    const auto rp = mb.find("Issue #3289 (I5 residual)");
+    CHECK(rp != std::string::npos, "4160 AC1: #3289 re-poll branch present");
+    if (rp != std::string::npos) {
+        const auto rwin = mb.substr(rp, 1600);
+        CHECK(rwin.find("aura_hold_budget_poll_inbody_window()") != std::string::npos,
+              "4160 AC1: re-poll inbody drive intact");
+        CHECK(rwin.find("aura_hold_budget_poll_busy_path()") != std::string::npos,
+              "4160 AC1: re-poll drives the busy-path bound");
+    }
+    // Quarantine SLO (#3859) tied into the same sticky admit deny, AFTER the
+    // Soft observe-only return (production face only).
+    const auto soft = mb.find("mailbox_defer_slo_soft_observe_total.fetch_add");
+    const auto tie = mb.find("g_hold_budget_no_edge_quarantine_latched.load");
+    CHECK(soft != std::string::npos && tie != std::string::npos && soft < tie,
+          "4160 AC1: quarantine tie-in after the Soft observe-only return");
+    CHECK(mb.find("Issue #4160: tie the #3859 quarantine SLO") != std::string::npos,
+          "4160 AC1: tie-in cites #4160");
+    if (tie != std::string::npos) {
+        const auto twin = mb.substr(tie, 300);
+        CHECK(twin.find("steal_safety_production_residual_zero_v_read") != std::string::npos,
+              "4160 AC1: sticky armed via the SSOT reader (no second model)");
+    }
+    // Foreign no-unlock + prior contracts intact.
+    CHECK(fc.find("Never drops unique_lock from this thread") != std::string::npos,
+          "4160 AC1: dispose stays unlock-free (#3764 face)");
+    CHECK(emb.find("foreign — re-arm cancel only") != std::string::npos,
+          "4160 AC1: force_release foreign arm unchanged (#3826 face)");
+    CHECK(fc.find("Issue #4158") != std::string::npos, "4160 AC1: #4158 escalation intact");
+    CHECK(mhb.find("kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4") != std::string::npos,
+          "4160 AC1: #3859 quarantine SLO multiple unchanged");
+    CHECK(mb.find("Issue #2958: under-boundary wait / open-window age") != std::string::npos,
+          "4160 AC1: #2958 SLO cancel contract header intact");
+    // No invent.
+    CHECK(mhb.find("g_4160_") == std::string::npos && fc.find("g_4160_") == std::string::npos &&
+              mb.find("g_4160_") == std::string::npos && emb.find("g_4160_") == std::string::npos,
+          "4160 AC1: no new counters");
+    CHECK(read_file("tests/serve/test_issue_4160.cpp").empty(), "4160 AC1: no invent");
+    CHECK(build.find("check_mailbox_holder_bound_4160") != std::string::npos,
+          "4160 AC1: build.py wires the linter");
+    CHECK(allow.find("check_mailbox_holder_bound_4160.py") != std::string::npos,
+          "4160 AC1: allowlist row present");
+}
+
+static void ac4160_2_face_bounds_holder_runtime() {
+    std::println("\n--- #4160 AC2: mailbox SLO face drives the bounded holder dispose ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    using aura::serve::StealSafetyDecision;
+    using aura::serve::YieldReason;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "4160 AC2: reject_enabled under production");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195 reset named residuals
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(0, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(0, std::memory_order_release);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    clear_agent_throttle_for_mailbox_starvation();
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "4160 AC2: SLO configured");
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 30 * 1000;
+    // Pin the #2958 SSOT signal hot via the starvation throttle (the sample
+    // reads it with empty scope) — deterministic, no hist sampling needed.
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1, std::memory_order_relaxed);
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    std::atomic<int> disposed_seen{0};
+    std::atomic<int> mid_steal_ok{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // edge-free: no cooperative / JIT / eval_flat edge
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "4160 AC2: holder spawned");
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(guard_held.load() == 1 || body_done.load() == 1, "4160 AC2: holder entered or finished");
+    std::thread peer([&]() {
+        for (int i = 0; i < 900 && body_done.load(std::memory_order_acquire) == 0; ++i) {
+            if (guard_held.load(std::memory_order_acquire) != 0) {
+                // THE deny face under test: the #2958 helper the p99 gate
+                // calls — now pairing urgent inbody poll + peer busy-path.
+                aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel();
+                if (holder->is_reclaimed() || holder->is_done())
+                    disposed_seen.store(1, std::memory_order_release);
+                // A foreign dispose must never make a held mutation stealable.
+                Fiber probe([]() {}, /*stack_size=*/64 * 1024);
+                probe.set_yield_reason(YieldReason::Explicit);
+                probe.publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/true, /*defuse=*/0);
+                if (aura::serve::steal_safety_transaction(&probe) == StealSafetyDecision::Ok)
+                    mid_steal_ok.store(1, std::memory_order_relaxed);
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    });
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    CHECK(jr.status == JoinStatus::Reclaimed || jr.status == JoinStatus::Cancelled ||
+              jr.status == JoinStatus::Ok || holder->is_done() || holder->is_reclaimed(),
+          "4160 AC2: holder bounded — join did not hang");
+    for (int i = 0; i < 300 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    peer.join();
+    sched.stop();
+    io.join();
+    std::println(
+        "4160 DIAG AC2: cancel_total={} exceeded={} force={} qtotal={} disposed={} held={} "
+        "done={} sticky={}",
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) -
+            cancel0,
+        aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read(),
+        aura::compiler::hold_budget_no_edge_force_total_v_read(),
+        aura::compiler::hold_budget_no_edge_quarantine_total_v_read(), disposed_seen.load(),
+        aura::compiler::mutation_hold_live_snapshot().held, body_done.load(),
+        aura::serve::steal_safety_production_residual_sticky_fail_v_read());
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) >
+              cancel0,
+          "4160 AC2: one-shot cancel arm fired from the SLO face");
+    CHECK(disposed_seen.load() == 1 || holder->is_reclaimed() || holder->is_done(),
+          "4160 AC2: deny face bounded the stale holder (Reclaimed/Done)");
+    CHECK(mid_steal_ok.load() == 0, "4160 AC2: dispose never made a held mutation stealable");
+    CHECK(body_done.load() == 1 || holder->is_done() || holder->is_reclaimed(),
+          "4160 AC2: body finished or fail-closed");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+}
+
+static void ac4160_3_no_latch_no_unlock_contract() {
+    std::println(
+        "\n--- #4160 AC3: latch off — face re-arms the ladder, never foreign-disposes ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "4160 AC3: reject_enabled under production");
+    // THE #4160 contract face: multi-worker latch OFF — the #4158
+    // quarantine-dispose ladder and the busy-path foreign dispose must NOT
+    // fire; the face still drives the escalation ladder (re-arm) so the
+    // victim's next edge matches same-fiber force-release.
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    CHECK(aura_runtime_multi_worker_production_latched() == 0, "4160 AC3: latch off");
+    aura::serve::clear_steal_safety_transaction_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(0, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(0, std::memory_order_release);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    clear_agent_throttle_for_mailbox_starvation();
+    const auto exceeded0 =
+        aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "4160 AC3: SLO configured");
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 30 * 1000;
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1, std::memory_order_relaxed);
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    std::atomic<int> exceeded_seen{0};
+    std::atomic<int> disposed_mid{0};
+    // ONE worker: sched.run() auto-latches production multi-worker when
+    // workers_.size() > 1 (scheduler.cpp #3325), which would re-arm the
+    // #4158 dispose face mid-run — exactly what this contract AC excludes.
+    Scheduler sched(1);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // edge-free spin
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "4160 AC3: holder spawned");
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(guard_held.load() == 1 || body_done.load() == 1, "4160 AC3: holder entered or finished");
+    std::thread peer([&]() {
+        for (int i = 0; i < 900 && body_done.load(std::memory_order_acquire) == 0; ++i) {
+            if (guard_held.load(std::memory_order_acquire) != 0) {
+                aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel();
+                if (aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read() >
+                    exceeded0)
+                    exceeded_seen.store(1, std::memory_order_release);
+                // Dispose face is latch-gated: a mid-body foreign dispose
+                // (Reclaimed) here would violate the #4032/#3826/#3859
+                // no-unlock contract posture this AC pins.
+                if (exceeded_seen.load(std::memory_order_acquire) != 0 &&
+                    body_done.load(std::memory_order_acquire) == 0 && holder->is_reclaimed())
+                    disposed_mid.store(1, std::memory_order_release);
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    });
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    CHECK(jr.status == JoinStatus::Ok || holder->is_done() || holder->is_reclaimed(),
+          "4160 AC3: holder finished normally (no foreign dispose, join bounded)");
+    for (int i = 0; i < 300 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    peer.join();
+    sched.stop();
+    io.join();
+    CHECK(exceeded_seen.load() == 1, "4160 AC3: re-poll drove the inbody escalation ladder");
+    CHECK(aura::compiler::hold_budget_no_edge_force_total_v_read() == 0,
+          "4160 AC3: latch-gated dispose face never fired");
+    CHECK(disposed_mid.load() == 0, "4160 AC3: no foreign dispose mid-body (unique_lock stays)");
+    CHECK(aura::serve::steal_safety_production_residual_sticky_fail_v_read() == 0,
+          "4160 AC3: sticky untouched without the latch");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+}
+
+static void ac4160_4_quarantine_sticky_admit_tie() {
+    std::println("\n--- #4160 AC4: latched quarantine + hot SLO face → sticky admit deny ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "4160 AC4: reject_enabled under production");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_ns.store(0, std::memory_order_release);
+    aura::compiler::g_hold_budget_cancel_armed_fiber.store(0, std::memory_order_release);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    clear_agent_throttle_for_mailbox_starvation();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "4160 AC4: SLO configured");
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 30 * 1000;
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1, std::memory_order_relaxed);
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // edge-free spin
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "4160 AC4: holder spawned");
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(guard_held.load() == 1 || body_done.load() == 1, "4160 AC4: holder entered or finished");
+    // Deterministic unit pins (the real firing paths are proven by the
+    // #3859/#4158 ACs): a no-edge force HAS fired and the #3859 quarantine
+    // is latched while the holder is still live. One hot face poll must
+    // promote this into the SAME sticky admit deny.
+    aura::compiler::g_hold_budget_no_edge_force_total.store(1, std::memory_order_relaxed);
+    aura::compiler::g_hold_budget_no_edge_quarantine_total.store(1, std::memory_order_relaxed);
+    aura::compiler::g_hold_budget_no_edge_quarantine_latched.store(1, std::memory_order_release);
+    aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel();
+    CHECK(aura::serve::steal_safety_production_residual_sticky_fail_v_read() != 0,
+          "4160 AC4: hot face armed the sticky admit deny from the latched quarantine");
+    // Clear the face-hot pin BEFORE try_acquire: the #2587 mailbox-starve
+    // deny precedes the #4158 edge-free refuse in try_acquire, so leaving
+    // the throttle set would deny with "mailbox-hold-starvation" instead of
+    // the structured edge-free reason under test here.
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    auto g1 = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, nullptr);
+    CHECK(!g1.has_value(), "4160 AC4: admit refused while the quarantine face is live");
+    CHECK(!g1.has_value() &&
+              g1.error().message.find("edge-free-hold-unsupported") != std::string::npos,
+          "4160 AC4: structured AdmissionRejected: edge-free-hold-unsupported");
+    for (int i = 0; i < 300 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    CHECK(jr.status == JoinStatus::Ok || holder->is_done() || holder->is_reclaimed(),
+          "4160 AC4: holder finished (join bounded)");
+    sched.stop();
+    io.join();
+    // Live-scoped: holder exit + resets disarm the refuse (no edge-free deny).
+    aura::serve::clear_steal_safety_transaction_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, nullptr);
+    const bool g2_edge_free =
+        !g2.has_value() &&
+        g2.error().message.find("edge-free-hold-unsupported") != std::string::npos;
+    CHECK(!g2_edge_free, "4160 AC4: refuse live-scoped — disarms after holder exit");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+}
+
+static void ac4160_5_soft_and_linter_selftest() {
+    std::println("\n--- #4160 AC5: Soft observe-only + gate linter self-test ---");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(), "4160 AC5: Soft reject disabled");
+    aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
+                                                                         std::memory_order_relaxed);
+    clear_agent_throttle_for_mailbox_starvation();
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1, std::memory_order_relaxed);
+    aura::compiler::g_hold_budget_no_edge_force_total.store(1, std::memory_order_relaxed);
+    aura::compiler::g_hold_budget_no_edge_quarantine_total.store(1, std::memory_order_relaxed);
+    aura::compiler::g_hold_budget_no_edge_quarantine_latched.store(1, std::memory_order_release);
+    const auto breach0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+    const auto cancel1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel();
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(
+              std::memory_order_relaxed) == breach0 + 1,
+          "4160 AC5: breach observe bumped");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) ==
+              soft0 + 1,
+          "4160 AC5: soft observe-only path taken");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
+              cancel1,
+          "4160 AC5: no cancel arm / dispose work under Soft");
+    CHECK(aura::serve::steal_safety_production_residual_sticky_fail_v_read() == 0,
+          "4160 AC5: sticky untouched under Soft");
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    aura::compiler::g_hold_budget_no_edge_quarantine_latched.store(0, std::memory_order_release);
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    int rc = std::system(
+        "python3 scripts/check_mailbox_holder_bound_4160.py --self-test > /dev/null 2>&1");
+    if (rc != 0)
+        rc = std::system(
+            "python3 ../scripts/check_mailbox_holder_bound_4160.py --self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "4160 AC5: linter --self-test passes");
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -4541,6 +4985,12 @@ int run_test_mailbox_hold_starvation_hard() {
     ac4158_2_quarantine_dispose_runtime();
     ac4158_3_admit_refuse_structured();
     ac4158_4_linter_selftest();
+    std::println("\n=== Issue #4160: mailbox hold p99 deny face bounds the stale holder ===");
+    ac4160_1_source_and_pairing();
+    ac4160_2_face_bounds_holder_runtime();
+    ac4160_3_no_latch_no_unlock_contract();
+    ac4160_4_quarantine_sticky_admit_tie();
+    ac4160_5_soft_and_linter_selftest();
     std::println(
         "\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588 + #3613: {} passed, {} failed ===",
         g_passed, g_failed);

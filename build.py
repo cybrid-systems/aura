@@ -9504,6 +9504,24 @@ def cmd_lint():
             "Issue #4159 production concurrency Ready residual gate linter failed — run python3 scripts/check_chaos_ready_residual_gate_4159.py"
         )
         return r
+    # Issue #4160 (P1: mailbox hold p99 denies new mutate but does not bound
+    # holder unlock): the deny face only drove the inbody window, whose
+    # #3859/#4158 quarantine-dispose ladder is multi-worker-latch-gated — a
+    # holder that never polls a cooperative edge kept workspace_mtx_ while
+    # receivers Backpressured and new Agents got AdmissionRejected (fleet
+    # livelock). The face now ALWAYS pairs the #3223 urgent inbody poll + the
+    # peer #3764/#3826 busy-path bound with the one-shot cancel arm and the
+    # #3289 re-poll, and ties the #3859 quarantine latch into the same sticky
+    # admit deny (SSOT reader, after the Soft observe-only return). Runtime
+    # doors: test_mailbox_hold_starvation_hard.cpp (ac4160_1..ac4160_5).
+    mhb4160_script = ROOT / "scripts" / "check_mailbox_holder_bound_4160.py"
+    if not mhb4160_script.exists():
+        fail(f"missing {mhb4160_script}")
+        return 1
+    r = run([sys.executable, str(mhb4160_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4160 mailbox holder bound linter failed — run python3 scripts/check_mailbox_holder_bound_4160.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
