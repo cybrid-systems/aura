@@ -18,22 +18,17 @@ ROOT = Path(__file__).resolve().parents[1]
 AURA = Path(os.environ.get("AURA_BIN", str(ROOT / "build" / "aura")))
 TIMEOUT_S = float(os.environ.get("AURA_ONESHOT_TIMEOUT", "8"))
 
-# (label, expr, expect_substr_in_stdout, soft_only)
-CASES: list[tuple[str, str, str, bool]] = [
-    # Direct Soft math preds (the #4228 failure mode) — even?/odd?/
-    # positive?/zero? come from the Soft std/math auto-load face; they are
-    # unbound in a standard build, so these cases only run against a Soft
-    # binary (soft_only=True).
-    ("direct-even?", "(filter even? (list 1 2 3 4))", "(2 4)", True),
-    ("direct-odd?", "(filter odd? (list 1 2 3 4))", "(1 3)", True),
-    ("direct-positive?", "(filter positive? (list -1 0 2 -3 4))", "(2 4)", True),
-    ("direct-zero?", "(filter zero? (list 0 1 0 2))", "(0 0)", True),
-    # Paths that already worked — must stay green
-    ("let-bind", "(let ((f filter) (e even?)) (f e (list 1 2 3 4)))", "(2 4)", False),
-    ("apply", "(apply filter (list even? (list 1 2 3 4)))", "(2 4)", False),
-    ("lambda", "(filter (lambda (x) (even? x)) (list 1 2 3 4))", "(2 4)", False),
-    ("number?", "(filter number? (list 1 2 #f 3))", "(1 2 3)", False),
-    ("partition", "(partition even? (list 1 2 3 4))", "((2 4) (1 3))", False),
+# (label, expr, expect_substr_in_stdout)
+CASES: list[tuple[str, str, str]] = [
+    # Paths that already worked — must stay green. (The direct math-pred
+    # cases from the original #4228 report — even?/odd?/positive?/zero? —
+    # exercise the Soft std/math auto-load face and were dropped when the
+    # gate normalized to the single standard build/aura binary.)
+    ("let-bind", "(let ((f filter) (e even?)) (f e (list 1 2 3 4)))", "(2 4)"),
+    ("apply", "(apply filter (list even? (list 1 2 3 4)))", "(2 4)"),
+    ("lambda", "(filter (lambda (x) (even? x)) (list 1 2 3 4))", "(2 4)"),
+    ("number?", "(filter number? (list 1 2 #f 3))", "(1 2 3)"),
+    ("partition", "(partition even? (list 1 2 3 4))", "((2 4) (1 3))"),
 ]
 
 
@@ -89,20 +84,13 @@ def main() -> int:
         return 0
     print(f"AURA_BIN={AURA}")
     failed = 0
-    skipped = 0
-    is_soft = "soft" in str(AURA).lower()
-    for label, expr, expect, soft_only in CASES:
-        if soft_only and not is_soft:
-            print(f"#4228 SKIP: {label}: soft-only face (needs Soft std/math auto-load)")
-            skipped += 1
-            continue
+    for label, expr, expect in CASES:
         ok, detail = run_case(label, expr, expect)
         mark = "PASS" if ok else "FAIL"
         print(f"#4228 {mark}: {label}: {expr} -> {detail}")
         if not ok:
             failed += 1
-    ran = len(CASES) - skipped
-    print(f"summary: {ran - failed}/{ran} pass")
+    print(f"summary: {len(CASES) - failed}/{len(CASES)} pass")
     return 1 if failed else 0
 
 
