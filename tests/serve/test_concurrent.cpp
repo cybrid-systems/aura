@@ -2581,7 +2581,16 @@ static bool test_issue_4176_fd_budget_oneshots() {
 
     for (int i = 0; i < N; ++i) {
         sched.spawn([&done]() { done.fetch_add(1); });
-        wait_for_atomic(done, i + 2);
+        // Issue #4176 follow-up (ubsan-smoke concurrent 600s timeout):
+        // the return was ignored, so a single stalled oneshot burned the
+        // full 30s wait_for_atomic deadline per iteration SILENTLY —
+        // 256 iterations of zero output past the 600s CI ceiling with
+        // no diagnostics (observed 2/3 ubsan-smoke + build-test runs on
+        // 2026-09-29). Fail fast on the first stall and name the
+        // iteration and observed count so the wedge point is visible.
+        CHECK(wait_for_atomic(done, i + 2),
+              "#4176 AC2: oneshot " + std::to_string(i) +
+                  " completed within deadline (done=" + std::to_string(done.load()) + ")");
     }
 
     const int after = count_fds();
