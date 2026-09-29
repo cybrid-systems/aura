@@ -8170,7 +8170,17 @@ public:
     // Does NOT consult process-global isolation capture (no Soft stamp, no
     // hard-close evaluator_miss bump). Quiet single-tenant: zero extra cost
     // beyond the field fill already done by make_ref.
-    [[nodiscard]] StableNodeRef make_ref_layout(NodeId id) const noexcept {
+    [[nodiscard]] StableNodeRef make_ref_layout(NodeId id, bool production = false) const noexcept {
+        // Issue #4164: production export faces must not paint workspace
+        // generation_ onto free/ghost slots (node_gen_ == 0 after rollback's
+        // free_orphan_nodes_from): a gen-painted tombstone looks epoch-fresh
+        // to Agents comparing hash epoch keys while the slot is dead — the
+        // false-Fresh window only closes later at resolve via is_live_node.
+        // Fail-closed: NULL_NODE layout so no downstream stamp can publish a
+        // schema-2 ref for a dead slot. Soft keeps the legacy paint (the EDSL
+        // make_ref / make_ref_in_layer faces are unchanged, default false).
+        if (production && is_free_slot(id))
+            return StableNodeRef{};
         // Issue #2122 / #2421: lazy-align node_gen_ after incremental wrap so
         // ref.gen == node_gen_[id] == generation_ for live slots.
         if (restamp_lazy_align_enabled_.load(std::memory_order_acquire) && id != NULL_NODE &&
@@ -8226,8 +8236,13 @@ public:
     // Issue #303 / #2759: layout-only safe capture (workspace + fiber +
     // last_validated_generation). No isolation stamp — Evaluator stamps.
     [[nodiscard]] StableNodeRef make_safe_ref_layout(NodeId id, std::uint32_t workspace_id = 0,
-                                                     std::uint32_t fiber_id = 0) const noexcept {
-        auto ref = make_ref_layout(id);
+                                                     std::uint32_t fiber_id = 0,
+                                                     bool production = false) const noexcept {
+        auto ref = make_ref_layout(id, production);
+        // Issue #4164: refused layout (free slot under the production face) —
+        // nothing to overlay; the NULL_NODE layout propagates unchanged.
+        if (ref.id == NULL_NODE)
+            return ref;
         ref.workspace_id = workspace_id;
         ref.fiber_id = fiber_id;
         ref.last_validated_generation.store(generation_, std::memory_order_relaxed);

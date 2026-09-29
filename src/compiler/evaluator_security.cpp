@@ -2285,7 +2285,12 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
             (we != 0 && ref.wrap_epoch == 0) || (ce != 0 && ref.cow_epoch_at_capture == 0);
         if (layout_missing) {
             const auto id = ref.id;
-            ref = workspace_flat_->make_ref_layout(id);
+            // Issue #4164: thread the production face — a free slot can
+            // never be layout-stamped epoch-fresh here (post-gate
+            // defense-in-depth); a NULL_NODE layout hits the early return
+            // below instead of stamping a tombstone green.
+            ref = workspace_flat_->make_ref_layout(
+                id, aura::compiler::typed_audit::production_defaults_active());
             // Issue #3230: layout gen is post-mutate authority. Do not
             // paint a pre-mutate gen onto a remade layout.
             ::aura::core::provenance::record_query_stable_ref_unstamped_prevented();
@@ -2305,9 +2310,16 @@ ast::FlatAST::StableNodeRef Evaluator::make_stamped_ref(ast::NodeId id) const no
     // authority). Avoid make_ref → maybe_stamp under hard-close, which would
     // false-count evaluator_miss while still overwriting via stamp_stable_ref.
     ast::FlatAST::StableNodeRef ref{};
-    if (workspace_flat_)
-        ref = workspace_flat_->make_ref_layout(id);
-    else
+    if (workspace_flat_) {
+        // Issue #4164: the production authority must not paint workspace
+        // generation_ onto free/ghost slots — make_ref_layout returns the
+        // NULL_NODE layout for a dead id on production faces; Soft keeps the
+        // legacy paint. Nothing to stamp for a refused layout.
+        ref = workspace_flat_->make_ref_layout(
+            id, aura::compiler::typed_audit::production_defaults_active());
+        if (ref.id == ast::NULL_NODE)
+            return ref;
+    } else
         ref.id = id;
     stamp_stable_ref(ref);
     return ref;
@@ -2320,12 +2332,19 @@ Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
     ast::FlatAST::StableNodeRef ref{};
     const auto fiber =
         fiber_id != 0 ? fiber_id : static_cast<std::uint32_t>(aura_fiber_current_id());
-    if (workspace_flat_)
-        ref = workspace_flat_->make_safe_ref_layout(id, workspace_id, fiber);
-    else {
+    if (workspace_flat_) {
+        // Issue #4164: thread the production face — free slots must not be
+        // layout-stamped epoch-fresh on the agent-safe capture face either.
+        ref = workspace_flat_->make_safe_ref_layout(
+            id, workspace_id, fiber, aura::compiler::typed_audit::production_defaults_active());
+    } else {
         ref.id = id;
         ref.fiber_id = fiber;
     }
+    // Issue #4164: refused layout (free slot under production) — nothing to
+    // stamp; the NULL_NODE id propagates so callers fail closed.
+    if (ref.id == ast::NULL_NODE)
+        return ref;
     stamp_stable_ref(ref);
     return ref;
 }
