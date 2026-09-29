@@ -215,3 +215,4 @@ check_shape_flip_persist_fresh_4157.py
 check_edge_free_hold_4158.py
 check_chaos_ready_residual_gate_4159.py
 check_mailbox_holder_bound_4160.py
+check_filter_prim_infer_standard.py

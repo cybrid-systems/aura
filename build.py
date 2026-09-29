@@ -9717,6 +9717,26 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3673 recv under boundary linter failed — run python3 scripts/check_recv_under_boundary_3673.py")
         return r
+    # Issue #4228 standard face: filter prim-as-arg completion — the direct
+    # form `(filter even? lst)` runs std/math auto-load preds through the
+    # native filter specialization; fecdf639e's face-agnostic runtime cell
+    # handling (apply_unary/apply_pred/apply_binary define-cell deref,
+    # filter car snapshot, oneshot prelude sync_soft_export_cells_for_ir)
+    # completes the standard face. Gate pins: the #4228 deref/snapshot
+    # cites in evaluator_primitives_list.cpp, the prelude sync call in
+    # main.cpp, all 9 ungated cases in
+    # scripts/check_oneshot_filter_4228.py (four direct math-pred forms
+    # restored without soft_only gating), and the allowlist row.
+    fpis4228_script = ROOT / "scripts" / "check_filter_prim_infer_standard.py"
+    if not fpis4228_script.exists():
+        fail(f"missing {fpis4228_script}")
+        return 1
+    r = run([sys.executable, str(fpis4228_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4228 filter prim-as-arg standard-face linter failed — run python3 scripts/check_filter_prim_infer_standard.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
