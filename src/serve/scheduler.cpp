@@ -632,6 +632,30 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         f->mark_reclaimed();
         // Drop from wait_map_ (epoll wake-ups for this fiber id
         // are no longer relevant; the body is detached).
+        //
+        // Issue #4176 follow-up (fd budget): the reaper owns the
+        // fiber's full wake-fd teardown. A reclaimed fiber never
+        // reaches on_fiber_done — the worker's dispatch loop drops
+        // is_reclaimed() fibers WITHOUT notify_fiber_done (the
+        // reaper already cleaned maps/quota/joiners) — so the #4176
+        // eventfd close there never runs for this fiber. Without
+        // the close here every hard-reaped fiber leaked its wake
+        // eventfd for the Scheduler's lifetime (fiber objects stay
+        // owned until ~Scheduler, #3905): one fd per orch join
+        // hard-timeout — the exact RLIMIT_NOFILE growth class
+        // #4176 reported. Mirror on_fiber_done's teardown order:
+        // epoll DEL (outside the lock) → wait_map_ erase (under
+        // the lock) → close_eventfd (idempotent, stores -1;
+        // ~Fiber backstop safe). Safe because mark_reclaimed()
+        // above makes any in-flight resume() a no-op (#2468) and
+        // nothing reads or writes this fiber's eventfd afterwards.
+#if AURA_HAVE_EPOLL
+        {
+            const auto evfd = f->eventfd();
+            if (evfd >= 0)
+                ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, evfd, nullptr);
+        }
+#endif
         {
             ::aura::compiler::lock_order::AuditedMutexLock wl(
                 wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
@@ -639,6 +663,7 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
             if (evfd >= 0)
                 wait_map_.erase(evfd);
         }
+        f->close_eventfd();
         // Unregister from all workers (no future dispatch).
         for (auto& w : workers_) {
             w->unregister_fiber(f);
