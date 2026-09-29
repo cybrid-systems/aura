@@ -1553,6 +1553,49 @@ static void ac2755_5_source_and_linter() {
           "AC5: no docs/design/2755-* per #1655");
 }
 
+// ── Issue #4159 (P0): chaos residual-zero hard gate mandatory on the
+// production concurrency Ready face — machine-checkable continuous deploy
+// AND. The #2722/#2755 soak hard gate was RELEASE-only env-opt-in
+// (AURA_CHAOS_SOAK_HARD_GATE=1 via cmd_chaos_soak_hard_gate_2722) and the
+// coverage linter proved only command PRESENCE, so a deploy could ship a
+// Soft-green soak while the named residuals (rearm_race /
+// lifetime_proof_reject / envframe_lag) grew between RELEASE runs. The
+// deploy-AND accessor (steal_safety.h: multi-worker Ready latch ∧ soak arm
+// ∧ residual-zero SSOT ∧ sticky-clear) + the build.py deploy gate command
+// + the release.yml step make the AND mandatory and continuously proven.
+// Soft/PR soak stays non-gating (#2722 AC5 / #2755 AC2 unchanged); no new
+// residual bus; no docs/design/4159-* per #1655; no test_issue_4159.cpp
+// per #81934. Runtime door: test_steal_safety_production_residual_zero
+// (#4159 AC18 live AND semantics).
+static void ac4159_1_deploy_and_gate_wired() {
+    std::println("\n--- #4159 AC1: production concurrency Ready deploy residual gate wired ---");
+    const auto sh = read_file("src/serve/steal_safety.h");
+    const auto build = read_file("build.py");
+    const auto release = read_file(".github/workflows/release.yml");
+    CHECK(sh.find("steal_safety_production_concurrency_ready_gate_v_read") != std::string::npos,
+          "AC1: deploy-AND accessor present in steal_safety.h");
+    CHECK(sh.find("kStealSafetyProductionConcurrencyReadyGateIssue = 4159") != std::string::npos,
+          "AC1: #4159 issue stamp");
+    CHECK(sh.find("AURA_CHAOS_SOAK_HARD_GATE") != std::string::npos,
+          "AC1: soak-arm term (cmd_chaos_soak_hard_gate_2722 env)");
+    CHECK(sh.find("g_4159_") == std::string::npos, "AC1: no new g_4159_* residual bus");
+    CHECK(build.find("def cmd_production_concurrency_ready_gate_4159(") != std::string::npos,
+          "AC1: build.py deploy gate command defined");
+    CHECK(build.find("cmd_chaos_soak_hard_gate_2722()") != std::string::npos,
+          "AC1: deploy gate AND-s the 2722 SOAK hard gate");
+    CHECK(
+        build.find(
+            R"("production-concurrency-ready-gate-4159": cmd_production_concurrency_ready_gate_4159,)") !=
+            std::string::npos,
+        "AC1: deploy gate in the command table");
+    CHECK(release.find("production-concurrency-ready-gate-4159") != std::string::npos,
+          "AC1: release.yml runs the deploy gate before upload");
+    CHECK(!std::filesystem::exists("docs/design/4159-chaos-ready-residual-gate.md"),
+          "AC1: no docs/design/4159-* per #1655");
+    CHECK(!std::filesystem::exists("tests/serve/test_issue_4159.cpp"),
+          "AC1: no test_issue_4159.cpp per #81934");
+}
+
 // ── Issue #2856: production chaos gate (release blocker).
 //   Multi-fiber mutate × densify × steal × mailbox composition under
 //   production_defaults_active(). P0 release blocker — the practical gate
@@ -2331,6 +2374,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac2755_3_counter_list_documented();
     ac2755_4_2722_preserved();
     ac2755_5_source_and_linter();
+    ac4159_1_deploy_and_gate_wired();
     // Issue #2999: residual_zero lineage cites dtor consume (hold-starvation
     // is the runtime suite; chaos stays source-cite).
     ac2999_residual_dtor_consume_cite();

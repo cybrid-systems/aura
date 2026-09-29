@@ -37,10 +37,15 @@ jobs:
       # the release-asset upload step below is skipped. Static contract
       # is asserted by scripts/coverage/checks/check_chaos_soak_hard_gate_2722.py
       # (also wired in build.py gate chain).
-      - name: chaos SOAK hard gate (#2722)
+      - name: chaos SOAK hard gate (#2722) + production concurrency Ready residual gate (#4159)
         run: |
           python3 build.py chaos-soak-hard-gate-2722-coverage
           python3 build.py chaos-soak-hard-gate-2722
+          # Issue #4159: the deploy AND is mandatory on the production
+          # concurrency Ready face — this step re-proves the continuous
+          # residual-zero + sticky-clear deploy gate (soak term re-run is
+          # idempotent) before any release asset uploads.
+          python3 build.py production-concurrency-ready-gate-4159
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
