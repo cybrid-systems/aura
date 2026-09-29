@@ -506,10 +506,13 @@ void ShapeProfiler::ShapeHistoryRing::push(const ShapeRecord& rec, std::uint32_t
     ensure_capacity(window_size);
     if (count < window_size) {
         slots[count++] = rec;
+        note_inc(rec.shape_id); // #4166: running histogram tracks the live window
         return;
     }
+    note_dec(slots[head].shape_id); // #4166: evicted record leaves the window
     slots[head] = rec;
     head = (head + 1) % window_size;
+    note_inc(rec.shape_id);
     history_jitter_reduction_count.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -520,28 +523,21 @@ ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
     // Issue #4090: count the closed inline ShapeID set in a stack array —
     // compute_dominant runs under the shard unique_lock on every merge,
     // and the unordered_map heap walk serialized same-FnKey fibers for
-    // the allocation's duration. Buckets 0..SHAPE_REF cover every known
-    // id; one residual bucket keeps out-of-set ids dominant-eligible
-    // exactly like the pre-#4090 map (production ids all come from
-    // inline_shape_of, so the residual path is unreachable in practice).
-    constexpr std::size_t kDominantBuckets = static_cast<std::size_t>(SHAPE_REF) + 2;
-    std::uint32_t counts[kDominantBuckets] = {};
-    ShapeID residual_id = SHAPE_UNKNOWN;
-    history.for_each([&](const ShapeRecord& rec) {
-        if (rec.shape_id <= SHAPE_REF)
-            counts[static_cast<std::size_t>(rec.shape_id)]++;
-        else {
-            residual_id = rec.shape_id;
-            counts[kDominantBuckets - 1]++;
-        }
-    });
-
+    // the allocation's duration. Issue #4166: the array is now the ring's
+    // RUNNING histogram (exact multiset of the live window, maintained at
+    // push/evict/clear/shrink time), so the merge path reads it in
+    // O(buckets) instead of re-walking history under the shard unique_lock
+    // — the residual O(window) hold serialized same-FnKey fibers on every
+    // TLS merge flush. Residual-bucket semantics unchanged (#4090):
+    // out-of-set ids stay dominant-eligible; production ids all come from
+    // inline_shape_of, so the residual path is unreachable in practice.
+    constexpr std::size_t kDominantBuckets = ShapeHistoryRing::kHistogramBuckets;
     ShapeID best = SHAPE_UNKNOWN;
     std::uint32_t best_count = 0;
     for (std::size_t i = 0; i < kDominantBuckets; ++i) {
-        if (counts[i] > best_count) {
-            best_count = counts[i];
-            best = i == kDominantBuckets - 1 ? residual_id : static_cast<ShapeID>(i);
+        if (history.counts[i] > best_count) {
+            best_count = history.counts[i];
+            best = i == kDominantBuckets - 1 ? history.residual_last : static_cast<ShapeID>(i);
         }
     }
     // Issue #1519: dominant count cannot exceed history size.
@@ -582,16 +578,16 @@ bool ShapeProfiler::record_shape_apply_locked_(FnKey fn, ShapeID shape_id, std::
         if (history.size() < kStableThreshold)
             return false;
 
+        // Issue #4166: dominant + dominant count come from the ring's
+        // running histogram — no history.for_each under the shard
+        // unique_lock. The TLS (fn, shape, n) triple arrives as stack
+        // values before the lock; under the lock we only merge counts +
+        // flip stability bits.
         auto dominant = profile.compute_dominant();
-        auto dominant_count = 0;
-        history.for_each([&](const ShapeRecord& rec) {
-            if (rec.shape_id == dominant)
-                dominant_count++;
-        });
+        const auto dominant_count = history.count_of(dominant);
 
         const auto hist_size = history.size();
-        contract_assert(dominant_count >= 0);
-        contract_assert(static_cast<std::uint32_t>(dominant_count) <= hist_size);
+        contract_assert(dominant_count <= hist_size);
         double ratio = static_cast<double>(dominant_count) / static_cast<double>(hist_size);
         contract_assert(ratio >= 0.0 && ratio <= 1.0);
         if (ratio >= stab && profile.is_stable && profile.stable_shape == dominant) {
@@ -701,12 +697,28 @@ bool ShapeProfiler::tls_record_(FnKey fn, ShapeID shape_id, bool& out_stable) {
 void ShapeProfiler::flush_tls_records() noexcept {
     if (g_shape_tls_merge.owner != this)
         return;
+    // Issue #4166: snap the TLS (fn, shape, count) triples to the stack
+    // BEFORE the merge takes any shard unique_lock — under the lock the
+    // merge only pushes counts into the ring histogram + flips stability
+    // bits (no history walk). Releasing the slot before the lock lets a
+    // post-flush observation on this fiber start a fresh window without
+    // waiting on the merge.
+    struct Snap {
+        FnKey fn;
+        ShapeID shape;
+        std::uint32_t count;
+    };
+    Snap snaps[kShapeTlsRecordSlots];
+    std::size_t n = 0;
     for (auto& s : g_shape_tls_merge.slots) {
         if (s.fn == 0 || s.count == 0)
             continue;
-        (void)record_shape_apply_locked_(s.fn, s.shape, s.count);
-        tls_merge_batches_total_.fetch_add(1, std::memory_order_relaxed);
+        snaps[n++] = Snap{s.fn, s.shape, s.count};
         s.count = 0;
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        (void)record_shape_apply_locked_(snaps[i].fn, snaps[i].shape, snaps[i].count);
+        tls_merge_batches_total_.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

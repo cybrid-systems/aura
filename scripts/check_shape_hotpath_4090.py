@@ -23,8 +23,10 @@ ACs:
        path (shard map + TLS slots stay).
   AC2  is_stable / dominant_shape / current_snapshot answer via the
        pre-flush tls_pending_stable_read_ fast path (flush path preserved).
-  AC3  FnProfile::compute_dominant counts in a stack array — no
-       unordered_map under the shard lock; the history walk stays.
+  AC3  FnProfile::compute_dominant counts the closed inline ShapeID set —
+       no unordered_map under the shard lock. Since #4166 the stack
+       array IS the ring's running histogram (history.counts): the
+       per-merge history walk is superseded (merge lock scope).
   AC4  the design marker (kShapeHotReadNoFlushIssue) lives in the header,
        test_shape drives the four runtime ACs, and the linter is wired in
        build.py + scripts/coverage/root_check_allowlist.txt.
@@ -97,13 +99,20 @@ def main() -> int:
             "answers from the shard before any flush; flush fallback preserved",
         )
 
-    # AC3: compute_dominant counts the closed inline ShapeID set in a stack
-    # array — no unordered_map (heap) under the shard unique_lock.
+    # AC3: compute_dominant counts the closed inline ShapeID set in a
+    # stack array — no unordered_map (heap) under the shard unique_lock.
+    # Issue #4166: the array is the ring's RUNNING histogram
+    # (history.counts) — the per-merge history walk is superseded; the
+    # dominant scan is O(buckets) with no for_each.
     body = function_body(cpp, "ShapeID ShapeProfiler::FnProfile::compute_dominant() const {")
     report(
         "AC3 compute_dominant heap-free",
-        bool(body) and "std::unordered_map" not in body and "counts[" in body and "history.for_each" in body,
-        "stack-array bucket counts; no unordered_map; history walk kept",
+        bool(body)
+        and "std::unordered_map" not in body
+        and "counts[" in body
+        and "history.counts" in body
+        and "for_each" not in body,
+        "running-histogram bucket counts; no unordered_map; no walk (#4166)",
     )
 
     # AC4: design marker in the header, runtime ACs in the hosting test,

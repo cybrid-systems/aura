@@ -4,6 +4,7 @@
 //          Issue #3199 — on_arena_compact per-shard unique (no all-shards).
 //          Issue #3271 — dirty hook is fn ptr (no std::function).
 //          Issue #3357 — TLS record_shape merge (hot-FnKey unique_lock amortisation).
+//          Issue #4166 — same-FnKey merge lock scope (running ring histogram).
 //
 //   AC1: docs model A (shared_mutex) in shape_profiler.h
 //   AC2: concurrent record_shape + invalidate does not corrupt profiles_
@@ -39,13 +40,16 @@ using aura::compiler::shape::DirtyHookFn;
 using aura::compiler::shape::FnKey;
 using aura::compiler::shape::kShapeCompactNoAllShardsLockIssue;
 using aura::compiler::shape::kShapeDirtyHookNoStdFunctionIssue;
+using aura::compiler::shape::kShapeMergeHistogramIssue;
 using aura::compiler::shape::kShapeProfilerConcurrencyIssue;
 using aura::compiler::shape::kShapeProfilerShardCount;
 using aura::compiler::shape::kShapeProfilerShardIssue;
 using aura::compiler::shape::kShapeTlsMergeBatch;
 using aura::compiler::shape::kShapeTlsRecordMergeIssue;
+using aura::compiler::shape::mutation_shape_churn_count;
 using aura::compiler::shape::SHAPE_FLOAT;
 using aura::compiler::shape::SHAPE_INT;
+using aura::compiler::shape::SHAPE_UNKNOWN;
 using aura::compiler::shape::ShapeProfiler;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -419,6 +423,196 @@ static void ac3357_5_source_and_linter() {
     CHECK(read_file("docs/design/3357-shape-tls-record-merge.md").empty(),
           "3357 AC5: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3357.cpp").empty(), "3357 AC5: no invent");
+}
+
+// ── Issue #4166: same-FnKey merge lock scope (running ring histogram) ──
+static void ac4166_1_wrap_eviction_histogram_exact() {
+    std::println("\n--- #4166 AC1: wrap eviction keeps the running histogram exact ---");
+    CHECK(kShapeMergeHistogramIssue == 4166, "4166 AC1: stamp");
+    ShapeProfiler sp;
+    sp.set_window_size(200);
+    const auto fn = static_cast<FnKey>(41661);
+    // 100 INT → stable at kStableThreshold.
+    for (int i = 0; i < 100; ++i)
+        (void)sp.record_shape(fn, SHAPE_INT);
+    CHECK(sp.is_stable(fn), "4166 AC1: INT stabilizes at kStableThreshold");
+    // 120 FLOAT → wrap evictions begin (window full at FLOAT #100); the
+    // pending INT stability must flip off (churn path) with exact counts.
+    for (int i = 0; i < 120; ++i)
+        (void)sp.record_shape(fn, SHAPE_FLOAT);
+    CHECK(!sp.is_stable(fn), "4166 AC1: dominant churn flips stability off");
+    // 80 INT → live window is F120 + I80; dominant FLOAT at ratio 0.6.
+    // Any histogram drift (missed eviction decrement) breaks the ratio.
+    for (int i = 0; i < 80; ++i)
+        (void)sp.record_shape(fn, SHAPE_INT);
+    CHECK(sp.dominant_shape(fn) == SHAPE_UNKNOWN,
+          "4166 AC1: stability loss cleared the stable shape in the mixed window");
+    CHECK(!sp.is_stable(fn), "4166 AC1: no shape ≥ 0.9 in the mixed window");
+    const auto m = sp.metrics(fn);
+    CHECK(m.total_calls == 300, "4166 AC1: 300 observations recorded");
+    CHECK(m.shape_stability_ratio == 0.6, "4166 AC1: histogram ratio == walk ratio (120/200)");
+    CHECK(m.unique_shapes_seen == 2, "4166 AC1: ring cross-check — two live shapes");
+    // 200 INT → evicts the whole mixed window; INT re-stabilizes at 1.0.
+    for (int i = 0; i < 200; ++i)
+        (void)sp.record_shape(fn, SHAPE_INT);
+    CHECK(sp.is_stable(fn), "4166 AC1: re-stabilizes after 400 wrap evictions");
+    CHECK(sp.dominant_shape(fn) == SHAPE_INT, "4166 AC1: dominant INT again");
+    const auto m2 = sp.metrics(fn);
+    CHECK(m2.shape_stability_ratio == 1.0, "4166 AC1: full-window INT ratio exact");
+    CHECK(m2.unique_shapes_seen == 1, "4166 AC1: evicted shapes left the histogram");
+}
+
+static void ac4166_2_same_fnkey_merge_under_fibers() {
+    std::println("\n--- #4166 AC2: same-FnKey TLS merge flush under multi-fiber load ---");
+    ShapeProfiler sp;
+    sp.set_tls_merge_enabled(true);
+    std::atomic<int> done{0};
+    std::atomic<std::uint64_t> reads_ok{0};
+    std::atomic<bool> start{false};
+    constexpr int k_fibers = 4;
+    constexpr int k_iters = 4000;
+    auto worker = [&]() {
+        while (!start.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < k_iters; ++i)
+            (void)sp.record_shape(static_cast<FnKey>(41662), SHAPE_INT);
+        done.fetch_add(1, std::memory_order_relaxed);
+    };
+    // Stability readers share the shard while the merge flush holds it
+    // unique — the #4166 contract is that the hold is O(n) pushes + an
+    // O(bucket) scan, never an O(window) walk.
+    auto reader = [&]() {
+        while (!start.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < 2000; ++i) {
+            (void)sp.is_stable(static_cast<FnKey>(41662));
+            (void)sp.dominant_shape(static_cast<FnKey>(41662));
+            (void)sp.current_snapshot(static_cast<FnKey>(41662));
+            reads_ok.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::thread w0(worker), w1(worker), w2(worker), w3(worker), r0(reader), r1(reader);
+    start.store(true, std::memory_order_release);
+    w0.join();
+    w1.join();
+    w2.join();
+    w3.join();
+    r0.join();
+    r1.join();
+    sp.flush_tls_records();
+    CHECK(done.load() == k_fibers, "4166 AC2: all same-FnKey writers completed");
+    CHECK(reads_ok.load() == 4000, "4166 AC2: stability readers ran to completion");
+    CHECK(sp.tls_merge_batches_total() > 0,
+          "4166 AC2: merges ran through the histogram merge path");
+    CHECK(sp.is_stable(static_cast<FnKey>(41662)), "4166 AC2: same-shape storm converges stable");
+    CHECK(sp.dominant_shape(static_cast<FnKey>(41662)) == SHAPE_INT,
+          "4166 AC2: dominant INT after the merge storm");
+    std::println("  merge batches={} lock_contended={}", sp.tls_merge_batches_total(),
+                 sp.lock_contended_total());
+}
+
+static void ac4166_3_window_shrink_trims_histogram() {
+    std::println("\n--- #4166 AC3: window shrink trims the running histogram ---");
+    ShapeProfiler sp;
+    sp.set_window_size(200);
+    const auto fn = static_cast<FnKey>(41663);
+    for (int i = 0; i < 150; ++i)
+        (void)sp.record_shape(fn, SHAPE_INT);
+    CHECK(sp.is_stable(fn), "4166 AC3: stable before shrink");
+    const auto churn0 = mutation_shape_churn_count.load();
+    sp.set_window_size(100);
+    // Pure same-shape continuation across a shrink must NOT fire a
+    // spurious stability loss (the old zombie-slot path reported
+    // size()=150 over 100 live slots → ratio 2/3 → churn + version bump).
+    for (int i = 0; i < 5; ++i)
+        (void)sp.record_shape(fn, SHAPE_INT);
+    CHECK(sp.is_stable(fn), "4166 AC3: same-shape continuation stays stable across shrink");
+    CHECK(sp.current_snapshot(fn).version == 0, "4166 AC3: no spurious stability loss");
+    CHECK(mutation_shape_churn_count.load() == churn0,
+          "4166 AC3: no churn bump from the shrink path");
+    const auto m = sp.metrics(fn);
+    CHECK(m.shape_stability_ratio == 1.0, "4166 AC3: post-shrink histogram exact");
+    CHECK(m.unique_shapes_seen == 1, "4166 AC3: ring/histogram agree after trim");
+}
+
+static void ac4166_4_merge_lock_scope_source() {
+    std::println("\n--- #4166 AC4: merge path source — no history walk under the lock ---");
+    const auto cpp = strip_line_comments(read_file("src/compiler/shape_profiler.cpp"));
+    const auto fn_body = [&](std::string_view sig) {
+        const auto i = cpp.find(sig);
+        if (i == std::string::npos)
+            return std::string{};
+        const auto brace = cpp.find('{', i);
+        int depth = 0;
+        std::size_t end = brace;
+        for (; end < cpp.size(); ++end) {
+            if (cpp[end] == '{')
+                ++depth;
+            else if (cpp[end] == '}') {
+                --depth;
+                if (depth == 0) {
+                    ++end;
+                    break;
+                }
+            }
+        }
+        return cpp.substr(brace, end - brace);
+    };
+    // AC4a: the merge critical section merges counts + flips bits — the
+    // O(window) history walk is gone (comment-stripped scan).
+    const auto merge_body = fn_body("bool ShapeProfiler::record_shape_apply_locked_");
+    CHECK(!merge_body.empty(), "4166 AC4: merge body found");
+    CHECK(merge_body.find("for_each") == std::string::npos,
+          "4166 AC4: no history.for_each under the shard unique_lock");
+    CHECK(merge_body.find("count_of(") != std::string::npos,
+          "4166 AC4: dominant count from the running histogram");
+    // AC4b: compute_dominant reads history.counts (O(bucket) scan).
+    const auto dom_body = fn_body("ShapeProfiler::FnProfile::compute_dominant");
+    CHECK(!dom_body.empty() && dom_body.find("for_each") == std::string::npos,
+          "4166 AC4: compute_dominant reads the histogram (no walk)");
+    CHECK(dom_body.find("history.counts") != std::string::npos,
+          "4166 AC4: compute_dominant scans history.counts");
+    // AC4c: TLS triples are stack-snapped and released before the lock.
+    const auto flush_body = fn_body("void ShapeProfiler::flush_tls_records");
+    CHECK(flush_body.find("Snap") != std::string::npos &&
+              flush_body.find("s.count = 0;") < flush_body.find("record_shape_apply_locked_("),
+          "4166 AC4: TLS triples stack-snapped (and released) before the lock");
+    // AC4d: the invalidate reset path still clears the histogram with the ring.
+    CHECK(cpp.find("history.clear()") != std::string::npos,
+          "4166 AC4: invalidate reset path clears ring + histogram");
+}
+
+static void ac4166_5_source_and_linter() {
+    std::println("\n--- #4166 AC5: source-cite + linter + no invent ---");
+    const auto hh = read_file("src/compiler/shape_profiler.h");
+    const auto t = read_file("tests/compiler/test_shape_profiler_concurrency.cpp");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    const auto lint = read_file("scripts/check_shape_merge_lock_scope_4166.py");
+    CHECK(hh.find("kShapeMergeHistogramIssue = 4166") != std::string::npos,
+          "4166 AC5: header stamp");
+    CHECK(hh.find("kHistogramBuckets") != std::string::npos, "4166 AC5: histogram in ring");
+    CHECK(t.find("ac4166_1_wrap_eviction_histogram_exact") != std::string::npos,
+          "4166 AC5: AC1 present");
+    CHECK(t.find("ac4166_2_same_fnkey_merge_under_fibers") != std::string::npos,
+          "4166 AC5: AC2 present");
+    CHECK(t.find("ac4166_3_window_shrink_trims_histogram") != std::string::npos,
+          "4166 AC5: AC3 present");
+    CHECK(!lint.empty() && lint.find("Issue #4166") != std::string::npos,
+          "4166 AC5: top-level linter present");
+    CHECK(build.find("check_shape_merge_lock_scope_4166") != std::string::npos,
+          "4166 AC5: build.py wires linter");
+    CHECK(allow.find("check_shape_merge_lock_scope_4166.py") != std::string::npos,
+          "4166 AC5: allowlist row present");
+    const auto p4157 = build.find("check_shape_flip_persist_fresh_4157");
+    const auto p4166 = build.find("check_shape_merge_lock_scope_4166");
+    CHECK(p4157 != std::string::npos && p4166 != std::string::npos && p4166 > p4157,
+          "4166 AC5: linter AFTER #4157");
+    CHECK(hh.find("schema-4166") == std::string::npos, "4166 AC5: no schema-4166");
+    CHECK(read_file("docs/design/4166-shape-merge-lock-scope.md").empty(),
+          "4166 AC5: no docs/design per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4166.cpp").empty(),
+          "4166 AC5: no invent test file per #81967");
 }
 
 static void ac3199_4_source_and_linter() {
@@ -823,6 +1017,13 @@ int run_test_shape_profiler_concurrency() {
     ac3357_3_soft_zero_extra();
     ac3357_4_compact_invalidate_unchanged();
     ac3357_5_source_and_linter();
+
+    std::println("\n=== Issue #4166: same-FnKey merge lock scope (running histogram) ===");
+    ac4166_1_wrap_eviction_histogram_exact();
+    ac4166_2_same_fnkey_merge_under_fibers();
+    ac4166_3_window_shrink_trims_histogram();
+    ac4166_4_merge_lock_scope_source();
+    ac4166_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
