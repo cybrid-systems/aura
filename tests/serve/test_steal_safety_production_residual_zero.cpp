@@ -896,7 +896,58 @@ int run_test_steal_safety_production_residual_zero() {
         clear_production_abi_selfcheck_for_test();
     }
 
-    std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592/#3950/#4159 production-readiness "
+    // ── AC19 (Issue #4161): RejectHard bit coverage on every hard soak
+    //    sample (#3001 contract). #2755/#2902/#3073 already hard-fail
+    //    residual growth under the soak gates; the soak residual check
+    //    now also asserts counter→bits attribution: a grown named arm
+    //    (rearm_race / lifetime_proof / envframe) must be covered by the
+    //    last RejectHard bit-set (#2929) — counter growth without bit
+    //    attribution means Agents cannot distinguish which invariant
+    //    failed and sticky may latch without a machine-checkable arm
+    //    proof. No new counters: reads the existing
+    //    last_reject_invariant_bits SSOT only.
+    {
+        std::println("\n--- AC19: RejectHard bit coverage on hard soak samples (#4161) ---");
+        const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+        const auto rz_pos = chaos.find("chaos_soak_hard_gate() || prod_gate");
+        const auto bits_pos = chaos.find("steal_safety_last_reject_invariant_bits_v_read");
+        CHECK(rz_pos != std::string::npos, "AC19: soak residual gate row present (#2755 intact)");
+        CHECK(bits_pos != std::string::npos && bits_pos > rz_pos,
+              "AC19: bit-coverage rows live inside the soak residual gate");
+        CHECK(chaos.find("#4161: rearm_race grew without matching RejectHard bits") !=
+                  std::string::npos,
+              "AC19: rearm attribution row (bits != 0 — no dedicated bit)");
+        CHECK(chaos.find("#4161: envframe grew without matching RejectHard bit") !=
+                  std::string::npos,
+              "AC19: envframe attribution row (mask(EnvFrameOk))");
+        CHECK(chaos.find("#4161: lifetime_proof grew without matching RejectHard bit") !=
+                  std::string::npos,
+              "AC19: lifetime_proof attribution row (mask(LifetimeProofOk))");
+        CHECK(chaos.find("Issue #4161") != std::string::npos, "AC19: harness cites #4161");
+        CHECK(chaos.find("StealInvariant::EnvFrameOk") != std::string::npos,
+              "AC19: mask via the existing StealInvariant table (#2929)");
+        CHECK(chaos.find("StealInvariant::LifetimeProofOk") != std::string::npos,
+              "AC19: LifetimeProofOk mask present");
+        // #3001 contract + stores stay intact (no second model).
+        const auto sh = read_file("src/serve/steal_safety.h");
+        CHECK(sh.find("last_reject_invariant_bits covering the arm") != std::string::npos,
+              "AC19: #3001 contract comment intact in steal_safety.h");
+        CHECK(chaos.find("g_4161_") == std::string::npos, "AC19: no new g_4161_* counter");
+        CHECK(sh.find("schema-4161") == std::string::npos, "AC19: no new query key");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_4161.cpp"),
+              "AC19: no tests/serve/test_issue_4161.cpp per #81934");
+        const auto docs = std::filesystem::current_path() / "docs" / "design";
+        if (std::filesystem::exists(docs)) {
+            for (const auto& f : std::filesystem::directory_iterator(docs)) {
+                CHECK(f.path().filename().string().find("4161-") == std::string::npos,
+                      "AC19: no docs/design/4161-* per #1655");
+                break;
+            }
+        }
+    }
+
+    std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592/#3950/#4159/#4161 production-readiness "
                  "residual-zero: {} "
                  "passed, {} failed ===",
                  g_passed, g_failed);

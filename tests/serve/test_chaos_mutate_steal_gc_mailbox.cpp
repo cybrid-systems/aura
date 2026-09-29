@@ -676,6 +676,40 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         CHECK(d_resume_fence_hard == 0,
               "#2902: resume_fence hard/ticket surplus == 0 (layout observe-only)");
         // layout_stamp_resume_mismatch: observe-only (printed above).
+        // Issue #4161: RejectHard bit coverage on every hard soak sample
+        // (#3001 contract — soak fails closed when a residual arm grows
+        // without matching bits). The delta==0 rows above hard-fail any
+        // growth under this gate; these rows add the attribution proof:
+        // when a named arm DID grow, the last RejectHard bit-set (#2929)
+        // must cover the arm — counter growth without bit attribution
+        // means Agents cannot distinguish which invariant failed and
+        // sticky may latch without a machine-checkable arm proof. No new
+        // counters: reads the existing last_reject_invariant_bits SSOT,
+        // published by both RejectHard stores in steal_safety.cpp
+        // (SnapshotConsistent + residual fail paths).
+        {
+            const auto d4161_envframe =
+                aura::serve::steal_safety_residual_envframe_lag_total_v_read() - res_envframe0;
+            const auto d4161_life =
+                aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read() - res_life0;
+            const auto reject_bits = aura::serve::steal_safety_last_reject_invariant_bits_v_read();
+            std::println("  #4161 RejectHard bit coverage: bits={:#x} rearm={} envframe={} "
+                         "life={}",
+                         reject_bits, d_rearm, d4161_envframe, d4161_life);
+            // rearm_race has no dedicated StealInvariant bit — the
+            // RejectHard store publishes the underlying residual arm's
+            // bits, so the attribution predicate is bits != 0.
+            if (d_rearm != 0)
+                CHECK(reject_bits != 0, "#4161: rearm_race grew without matching RejectHard bits");
+            if (d4161_envframe != 0)
+                CHECK((reject_bits & aura::serve::steal_invariant_mask(
+                                         aura::serve::StealInvariant::EnvFrameOk)) != 0,
+                      "#4161: envframe grew without matching RejectHard bit");
+            if (d4161_life != 0)
+                CHECK((reject_bits & aura::serve::steal_invariant_mask(
+                                         aura::serve::StealInvariant::LifetimeProofOk)) != 0,
+                      "#4161: lifetime_proof grew without matching RejectHard bit");
+        }
     }
 
     // Issue #3002: soak fail-closed if p99 stays ≥ SLO and cancel /
