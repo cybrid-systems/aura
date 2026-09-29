@@ -22,6 +22,9 @@
 // Issue #4154: remirror added==0 with a nonempty persist span and an
 //              empty type∪IR union cone latches the #3031 readiness
 //              face (miss stamp → miss revalidate under production).
+// Issue #4155: Phase-5 densify success drops the stale residual CastOp
+//              persist NodeIds + bumps decision-invalidate (same #3985
+//              production/Full face; false-attribute under partial).
 
 #include "test_harness.hpp"
 #include "core/densify_consistency_report.h"
@@ -66,6 +69,7 @@ using aura::compiler::dirty::last_type_cone_ast;
 using aura::compiler::dirty::mirror_type_affected_to_cascade;
 using aura::compiler::dirty::note_residual_castop_sites;
 using aura::compiler::dirty::remirror_persisted_residual_castops;
+using aura::compiler::dirty::reset_residual_castop_persist_after_densify;
 using aura::compiler::dirty::reset_residual_castop_persist_for_test;
 using aura::compiler::dirty::residual_castop_persist_size;
 using aura::compiler::dirty::residual_castop_undermark_pending;
@@ -1864,6 +1868,196 @@ static void ac4154_4_quiet_soft_source_cite() {
           "4154 AC4: no docs/design (per #1655)");
 }
 
+// ── Issue #4155: densify success must clear residual CastOp persist NodeIds ──
+static void ac4155_1_densify_clears_stale_persist() {
+    std::println("\n--- #4155 AC1: densify-invalid drops stale persist + bumps gen ---");
+    // Full production face via apply_production_audit_defaults (the #3985
+    // shape in test_source_to_ir_desync_recovery): the v2 define-cache
+    // store path only populates under production/Full, so arming the
+    // production_defaults_active atomic alone is not enough to drive the
+    // CompilerService half of this AC.
+    apply_production_audit_defaults();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    using aura::compiler::typed_audit::clear_occurrence_partial_drift_grant_refuse;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    reset_pending_full_solve_residual_for_test();
+    clear_occurrence_partial_drift_grant_refuse();
+    // #4011 CI heal: remount-heavy members latch the process-global
+    // remount-last-zero strip face; live commit_readiness then denies this
+    // member's cache commits even though this AC does not test
+    // remount-last-zero. Clear the latch (and the #3031 residual face and
+    // #3794 belt above) so AC1 exercises the densify persist contract it
+    // owns.
+    aura::compiler::typed_audit::g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    // Cache entry FIRST (clean pre-persist state — the ac3986 AC2 order:
+    // set-code/eval store before the persist TLS is armed), then arm the
+    // stale NodeIds the densify hook must drop. Stale-NodeId shape: the
+    // armed persist holds pre-densify AST / block Ids; after densify a
+    // store_define_v2 rebuild of source_to_ir_map could alias them to the
+    // WRONG block (mark_entry_from_dead_coercion_persist_ false-attribute;
+    // #3618 fail-closes on attribution failure only).
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f4155 (lambda (x) (+ x 1))) (f4155 1)\")").has_value(),
+          "4155 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4155 AC1: eval store");
+    const auto* e0 = cs.get_define_v2("f4155");
+    if (!e0) {
+        const auto cache_eval = cs.eval("(compile:cache-define \"f4155\")");
+        std::println("  4155 AC1: cache-define fallback ok={}", cache_eval.has_value());
+        e0 = cs.get_define_v2("f4155");
+    }
+    CHECK(e0 != nullptr, "4155 AC1: cache entry");
+
+    constexpr aura::compiler::dirty::NodeId kStale = 4155;
+    const aura::compiler::dirty::NodeId stale_ast[] = {kStale};
+    const aura::compiler::dirty::NodeId stale_blk[] = {kStale + 1};
+    note_residual_castop_sites(stale_ast, stale_blk);
+    CHECK(residual_castop_persist_size() >= 2, "4155 AC1: stale persist armed");
+
+    const auto gen0 = dead_coercion_decision_invalidate_gen();
+    cs.public_force_ir_cache_map_invalid_after_densify();
+    CHECK(residual_castop_persist_size() == 0, "4155 AC1: stale persist dropped on densify");
+    CHECK(dead_coercion_decision_invalidate_gen() > gen0,
+          "4155 AC1: decision invalidate bumped (DeadCoercion full-scan next)");
+    const auto* e1 = cs.get_define_v2("f4155");
+    CHECK(e1 && e1->abort_map_invalid, "4155 AC1: #3985 face retained (map invalid)");
+    CHECK(e1 && e1->source_to_ir_map.empty(), "4155 AC1: map cleared → no alias lookup");
+
+    reset_residual_castop_persist_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4155_2_stale_ids_cannot_drive_remirror() {
+    std::println("\n--- #4155 AC2: cleared persist cannot remirror / false-attribute ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kStale = 4256;
+    const aura::compiler::dirty::NodeId stale_ast[] = {kStale};
+    const aura::compiler::dirty::NodeId stale_blk[] = {kStale + 1};
+    note_residual_castop_sites(stale_ast, stale_blk);
+    CHECK(residual_castop_persist_size() >= 2, "4155 AC2: stale persist armed");
+
+    // Densify success (dirty-side face of the #3985 surface): the stale
+    // Ids are dropped, so a recycled NodeId cannot drive the remirror /
+    // the #3349 mark path at all — nothing stale survives to alias.
+    reset_residual_castop_persist_after_densify();
+    CHECK(residual_castop_persist_size() == 0, "4155 AC2: persist cleared");
+    CHECK(force_residual_castop_undermark_into_cone() == 0,
+          "4155 AC2: stale Ids cannot drive remirror");
+    CHECK(!pending_full_solve_residual_face_hit(), "4155 AC2: empty persist does not latch");
+
+    // Live sites keep flowing: a fresh production sweep re-notes and the
+    // existing #3120/#3228 remirror re-unions them (drop ≠ disable).
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "4155 AC2: cone wipe");
+    const aura::compiler::dirty::NodeId fresh[] = {kStale + 2};
+    note_residual_castop_sites(fresh, {});
+    CHECK(residual_castop_persist_size() == 1, "4155 AC2: fresh sweep re-notes after densify");
+    CHECK(force_residual_castop_undermark_into_cone() >= 1, "4155 AC2: fresh site remirrors");
+    CHECK(!pending_full_solve_residual_face_hit(), "4155 AC2: re-add path does not latch");
+
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4155_3_empty_persist_and_soft_zero_cost() {
+    std::println("\n--- #4155 AC3: empty persist no bump; Soft untouched ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    // Production densify with an empty persist: nothing stale → no bump.
+    const auto gen0 = dead_coercion_decision_invalidate_gen();
+    reset_residual_castop_persist_after_densify();
+    CHECK(dead_coercion_decision_invalidate_gen() == gen0,
+          "4155 AC3: empty persist densify does not bump");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+
+    // Soft: persist never notes (#3120 AC2 shape) and the drop stays a
+    // no-op (service gates Soft out before the persist drop).
+    SoftAuditScope soft;
+    reset_residual_castop_persist_for_test();
+    constexpr aura::compiler::dirty::NodeId kSoft = 4357;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "4155 AC3: Soft does not persist");
+    const auto gen1 = dead_coercion_decision_invalidate_gen();
+    reset_residual_castop_persist_after_densify();
+    CHECK(dead_coercion_decision_invalidate_gen() == gen1, "4155 AC3: Soft no decision bump");
+    reset_residual_castop_persist_for_test();
+}
+
+static void ac4155_4_source_cite_and_wiring() {
+    std::println("\n--- #4155 AC4: source-cite + wiring, prior faces intact ---");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto lint = read_file("scripts/check_residual_castop_densify_clear_4155.py");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(dirty.find("Issue #4155") != std::string::npos, "4155 AC4: dirty cites #4155");
+    CHECK(dirty.find("kResidualCastopDensifyClearIssue = 4155") != std::string::npos,
+          "4155 AC4: issue stamp");
+    const auto helper =
+        dirty.find("inline void reset_residual_castop_persist_after_densify() noexcept {");
+    CHECK(helper != std::string::npos, "4155 AC4: densify clear helper present");
+    if (helper != std::string::npos) {
+        const auto win = dirty.substr(helper, 900);
+        CHECK(win.find("t_residual_castop_ast.clear()") != std::string::npos,
+              "4155 AC4: clears stale AST Ids");
+        CHECK(win.find("t_residual_castop_blocks.clear()") != std::string::npos,
+              "4155 AC4: clears stale block Ids");
+        CHECK(win.find("bump_dead_coercion_decision_invalidate()") != std::string::npos,
+              "4155 AC4: reuses #3102 decision invalidate (no new model)");
+    }
+    const auto svc_fn = svc.find("void force_ir_cache_map_invalid_after_densify()");
+    CHECK(svc_fn != std::string::npos, "4155 AC4: #3985 surface present");
+    if (svc_fn != std::string::npos) {
+        const auto win = svc.substr(svc_fn, 2000);
+        const auto gate = win.find("production_defaults_active()");
+        const auto drop = win.find("reset_residual_castop_persist_after_densify");
+        CHECK(drop != std::string::npos && gate != std::string::npos && gate < drop,
+              "4155 AC4: drop sits behind the production/Full gate (Soft zero-cost)");
+        CHECK(win.find("Issue #4155") != std::string::npos, "4155 AC4: surface cites #4155");
+    }
+    // Prior faces intact: #4154 latch, #3618 fail-closed, #3985 abort path.
+    CHECK(dirty.find("note_pending_full_solve_residual") != std::string::npos,
+          "4155 AC4: #4154 latch unchanged");
+    CHECK(dirty.find("residual_persist_sites_durable") != std::string::npos,
+          "4155 AC4: #4154 durability probe unchanged");
+    CHECK(svc.find("!persist_attributed") != std::string::npos,
+          "4155 AC4: #3618 fail-closed row unchanged");
+    CHECK(svc.find("force_ir_cache_dirty_after_abort") != std::string::npos,
+          "4155 AC4: abort densify path unchanged");
+    CHECK(t.find("ac4155_1_densify_clears_stale_persist") != std::string::npos, "4155 AC4: AC1");
+    CHECK(t.find("ac4155_2_stale_ids_cannot_drive_remirror") != std::string::npos, "4155 AC4: AC2");
+    CHECK(t.find("ac4155_3_empty_persist_and_soft_zero_cost") != std::string::npos,
+          "4155 AC4: AC3");
+    CHECK(t.find("ac4155_4_source_cite_and_wiring") != std::string::npos, "4155 AC4: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #4155") != std::string::npos, "4155 AC4: linter");
+    CHECK(build.find("check_residual_castop_densify_clear_4155") != std::string::npos,
+          "4155 AC4: build.py");
+    CHECK(allow.find("check_residual_castop_densify_clear_4155.py") != std::string::npos,
+          "4155 AC4: allowlist");
+    CHECK(read_file("tests/compiler/test_issue_4155.cpp").empty(),
+          "4155 AC4: no invent (per #81934)");
+    CHECK(read_file("docs/design/4155-densify-castop-persist-clear.md").empty(),
+          "4155 AC4: no docs/design (per #1655)");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -1916,9 +2110,13 @@ int run_test_dead_coercion_dirty_cone() {
     ac4154_2_keep_alive_stays_clear();
     ac4154_3_readiness_deny_and_authority();
     ac4154_4_quiet_soft_source_cite();
+    ac4155_1_densify_clears_stale_persist();
+    ac4155_2_stale_ids_cannot_drive_remirror();
+    ac4155_3_empty_persist_and_soft_zero_cost();
+    ac4155_4_source_cite_and_wiring();
     reset_residual_castop_persist_for_test();
     std::println(
-        "\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689/#4154: {} "
+        "\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689/#4154/#4155: {} "
         "passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;

@@ -6148,6 +6148,16 @@ public:
         if (n > 0)
             metrics_.should_relower_total.fetch_add(static_cast<std::uint64_t>(n),
                                                     std::memory_order_relaxed);
+        // Issue #4155: densify relocated FlatAST NodeIds — the residual
+        // CastOp persist TLS still holds pre-densify Ids that a later
+        // store_define_v2 map rebuild can alias to the WRONG block
+        // (mark_entry_from_dead_coercion_persist_ false-attribute; #3618
+        // fail-closes on attribution failure only). Drop the stale persist
+        // + bump the decision-invalidate gen on the same production/Full
+        // face. Soft / Off returned above (zero cost). The #4154 remirror
+        // latch is untouched: empty persist → remirror returns 0 early and
+        // the next production sweep re-notes the live sites.
+        aura::compiler::dirty::reset_residual_castop_persist_after_densify();
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any

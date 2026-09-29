@@ -9406,6 +9406,25 @@ def cmd_lint():
             "Issue #4154 residual CastOp remirror linter failed — run python3 scripts/check_residual_castop_remirror_4154.py"
         )
         return r
+    # Issue #4155 (densify × residual CastOp persist false-attribute):
+    # Phase-5 Moving densify relocates FlatAST NodeIds; the #3985
+    # invalidation surface now drops the stale
+    # t_residual_castop_ast / t_residual_castop_blocks persist and bumps
+    # the #3102 decision-invalidate gen so a recycled NodeId cannot
+    # false-attribute the wrong block at
+    # mark_entry_from_dead_coercion_persist_ (#3618 fail-closes on
+    # attribution failure only). Soft / Off keep zero cost. Runtime door:
+    # test_dead_coercion_dirty_cone.cpp (ac4155_1..ac4155_4).
+    castop4155_script = ROOT / "scripts" / "check_residual_castop_densify_clear_4155.py"
+    if not castop4155_script.exists():
+        fail(f"missing {castop4155_script}")
+        return 1
+    r = run([sys.executable, str(castop4155_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4155 densify residual CastOp persist clear linter failed — run python3 scripts/check_residual_castop_densify_clear_4155.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
