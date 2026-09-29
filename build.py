@@ -9508,6 +9508,26 @@ def cmd_lint():
             "Issue #4157 Shape-flip persist-freshness linter failed — run python3 scripts/check_shape_flip_persist_fresh_4157.py"
         )
         return r
+    # Issue #4166 (P0 ShapeProfiler same-FnKey merge serialization): the
+    # #3357 TLS merge flush ran two O(window) history.for_each walks
+    # (compute_dominant + dominant count) under the shard unique_lock —
+    # same-FnKey fibers serialized for the whole walk on every flush and
+    # stability readers starved. Gate pins: the ring's running histogram
+    # (push/evict/clear/shrink exact), the merge body free of
+    # history.for_each with the dominant count from count_of,
+    # compute_dominant scanning history.counts, and the TLS (fn, shape,
+    # count) triples stack-snapped before the unique_lock. Runtime door:
+    # test_shape_profiler_concurrency.cpp (ac4166_1_*).
+    mergehist4166_script = ROOT / "scripts" / "check_shape_merge_lock_scope_4166.py"
+    if not mergehist4166_script.exists():
+        fail(f"missing {mergehist4166_script}")
+        return 1
+    r = run([sys.executable, str(mergehist4166_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4166 shape merge lock-scope linter failed — run python3 scripts/check_shape_merge_lock_scope_4166.py"
+        )
+        return r
     # Issue #4158 (P0 edge-free outermost hold starvation): the #3859
     # quarantine face only bumped a counter at 4× the inbody bound while
     # the holder kept workspace_mtx_ forever — join hung, sticky stayed,

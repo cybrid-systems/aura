@@ -56,6 +56,12 @@ namespace aura::compiler::shape {
 //     remain shard-shared reads. ≤1 observation per merge window takes
 //     the existing unique_lock path (no extra atomics). No std::function;
 //     no process-wide lock.
+//   - Issue #4166: the merge-flush critical section is O(n) ring pushes +
+//     an O(bucket) dominant scan — never a history.for_each. The ring
+//     keeps a running shape histogram (exact multiset of the live
+//     window), and the TLS (fn, shape, count) triples are stack-snapped
+//     before the unique_lock; the old two O(window) walks under the lock
+//     serialized same-FnKey fibers for the whole walk on every flush.
 //   - External deopt/dirty hooks fire *after* releasing locks so
 //     callbacks may re-enter without deadlock.
 //   - Metrics atomics remain lock-free for publish. Contention counted in
@@ -88,6 +94,9 @@ inline constexpr std::uint32_t kShapeTlsMergeBatch = 8;
 // compute_dominant heap walk) per eval result. record_shape's hotpath
 // tick is sampled instead of a process-wide fetch_add per call.
 inline constexpr int kShapeHotReadNoFlushIssue = 4090;
+// Issue #4166: merge-flush lock scope — the shard profile keeps a running
+// shape histogram; no history.for_each runs under the shard unique_lock.
+inline constexpr int kShapeMergeHistogramIssue = 4166;
 // Fixed shard count — power-of-two friendly; FnKey hash selects shard.
 inline constexpr std::size_t kShapeProfilerShardCount = 16;
 // Production IR/cascade callback. Unset (nullptr) is zero extra (#3271).
@@ -501,24 +510,78 @@ private:
     };
 
     // Issue #686: fixed-capacity ring buffer — O(1) push vs vector erase(begin).
+    // Issue #4166: the ring also maintains a RUNNING shape histogram — the
+    // exact multiset a for_each walk would count, in the same bucket layout
+    // as the #4090 stack array (0..SHAPE_REF inline ids plus one residual
+    // bucket keeping out-of-set ids dominant-eligible). record_shape's TLS
+    // merge flush used to run two O(window) history.for_each walks
+    // (dominant + dominant count) under the shard unique_lock; same-FnKey
+    // fibers serialized on that hold. With the histogram the merge critical
+    // section is n O(1) pushes + an O(bucket) dominant scan.
     struct ShapeHistoryRing {
+        static constexpr std::size_t kHistogramBuckets = static_cast<std::size_t>(SHAPE_REF) + 2;
         std::vector<ShapeRecord> slots;
         std::uint32_t head = 0;
         std::uint32_t count = 0;
+        std::uint32_t counts[kHistogramBuckets] = {};
+        // Last out-of-set id observed (#4090 residual-bucket semantics).
+        ShapeID residual_last = SHAPE_UNKNOWN;
+
+        void note_inc(ShapeID id) noexcept {
+            if (id <= SHAPE_REF) {
+                counts[static_cast<std::size_t>(id)]++;
+            } else {
+                counts[kHistogramBuckets - 1]++;
+                residual_last = id;
+            }
+        }
+        void note_dec(ShapeID id) noexcept {
+            auto& c =
+                counts[id <= SHAPE_REF ? static_cast<std::size_t>(id) : kHistogramBuckets - 1];
+            if (c > 0)
+                c--;
+        }
 
         void clear() noexcept {
             head = 0;
             count = 0;
+            for (auto& c : counts)
+                c = 0;
+            residual_last = SHAPE_UNKNOWN;
         }
 
         void ensure_capacity(std::uint32_t cap) {
-            if (slots.size() != cap)
+            if (slots.size() == cap)
+                return;
+            if (slots.size() < cap) {
                 slots.resize(cap);
+                return;
+            }
+            // Issue #4166: shrink must trim the records the new window can
+            // no longer hold so the histogram stays the exact multiset of
+            // live slots. The old shrink path left zombie slots (count >
+            // capacity) that a later for_each walk would miscount; clamp
+            // count so the ring stays consistent.
+            const auto live = count < static_cast<std::uint32_t>(slots.size())
+                                  ? count
+                                  : static_cast<std::uint32_t>(slots.size());
+            for (std::uint32_t i = cap; i < live; ++i)
+                note_dec(slots[i].shape_id);
+            if (count > cap)
+                count = cap;
+            slots.resize(cap);
         }
 
         void push(const ShapeRecord& rec, std::uint32_t window_size);
 
         [[nodiscard]] std::uint32_t size() const noexcept { return count; }
+
+        // Issue #4166: count of `id` in the live window in O(bucket) — the
+        // merge path reads this instead of re-walking history under the
+        // shard unique_lock. Out-of-set ids share the residual bucket.
+        [[nodiscard]] std::uint32_t count_of(ShapeID id) const noexcept {
+            return counts[id <= SHAPE_REF ? static_cast<std::size_t>(id) : kHistogramBuckets - 1];
+        }
 
         template <typename F> void for_each(F&& f) const {
             if (count == 0)
