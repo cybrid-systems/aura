@@ -23,6 +23,7 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.core.ast;
 
@@ -40,6 +41,7 @@ static void ac2672_helper_drift_inject_sets_state();
 static void ac2672_source_and_linter();
 
 using aura::compiler::CompilerService;
+using aura::compiler::TypeChecker;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
@@ -1269,6 +1271,191 @@ static void ac3686_soft_log_back_only() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #4174: recover-true truncation clear must not survive a forced
+// recovered=false (#3108 re-gate face). try_occurrence_hard_face_full_solve_
+// recover() clears the CS truncation stamps BEFORE returning true; when
+// commit_readiness then hard-rejects, the denied commit previously kept the
+// cleared state — a half-clean CS the retry reads as vacuous-SOLVE / missed
+// truncate hard face. Fix: stage a snapshot before the clear; every #3108
+// forcing site rolls it back on the live commit TC so the CS stays
+// consistently latched. ──
+static void ac4174_1_rollback_restores_truncation() {
+    std::println("\n--- #4174 AC1: recover-true rollback restores latched truncation ---");
+    CHECK(typed_audit::kOccurrenceRecoverTruncationRollbackIssue == 4174, "AC1: issue stamp");
+    reset_2621();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC1: warm service");
+    (void)cs.evaluator().plant_commit_occurrence_preds_for_test({}); // live commit TC
+    auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle());
+    CHECK(tc != nullptr, "AC1: live commit TC available");
+    tc->force_partial_cone_truncate_for_test(7);
+    CHECK(tc->last_partial_cone_truncated(), "AC1: engine-local truncation latched");
+    CHECK(tc->last_partial_cone_dropped() == 7, "AC1: dropped count latched");
+    // Real recover path: SOLVED on the quiet CS → stamps cleared, snapshot
+    // staged (restore point). Direct TC call — no TLS / no gate needed.
+    CHECK(tc->try_occurrence_hard_face_full_solve_recover(), "AC1: recover reaches SOLVED");
+    CHECK(!tc->last_partial_cone_truncated(), "AC1: recover cleared stamps (pre-reject staging)");
+    CHECK(tc->rollback_occurrence_recover_truncation_clear(),
+          "AC1: rollback consumed the pending snapshot");
+    CHECK(tc->last_partial_cone_truncated(), "AC1: truncation stamp RESTORED (no half-clean CS)");
+    CHECK(tc->last_partial_cone_dropped() == 7, "AC1: dropped count restored");
+    CHECK(!tc->rollback_occurrence_recover_truncation_clear(),
+          "AC1: second rollback is a no-op (idempotent)");
+    CHECK(tc->last_partial_cone_truncated(), "AC1: no-op rollback left restored state intact");
+    reset_2621();
+}
+
+static void ac4174_2_forced_reject_rolls_back_live_tc() {
+    std::println("\n--- #4174 AC2: #3108 forced-false rolls back truncation clear (live TC) ---");
+    reset_2621();
+    apply_production_audit_defaults();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC2: warm service");
+    (void)cs.evaluator().plant_commit_occurrence_preds_for_test({});
+    auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle());
+    CHECK(tc != nullptr, "AC2: live commit TC available");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    tc->force_partial_cone_truncate_for_test(7);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    const auto rb0 = typed_audit::g_occurrence_recover_truncation_rollback_total.load();
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    in.solve_status = 2; // stale pre-recover CONFLICT snapshot (#3108 forcing face)
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "AC2: recover-true denied by #3108 re-gate (stale CONFLICT)");
+    CHECK(r.force_reason == "cone_outside_goal_drop", "AC2: force_reason cone_outside_goal_drop");
+    CHECK(typed_audit::g_occurrence_recover_truncation_rollback_total.load() > rb0,
+          "AC2: truncation rollback counter advanced on the forced reject");
+    CHECK(tc->last_partial_cone_truncated(),
+          "AC2: truncation stamp still latched after reject (no half-clean CS)");
+    CHECK(tc->last_partial_cone_dropped() == 7, "AC2: dropped count survived the reject");
+    aura_typed_audit_clear_readiness_evaluator();
+    reset_2621();
+}
+
+static void ac4174_3_accept_keeps_clear() {
+    std::println("\n--- #4174 AC3: accepted recover keeps the clear (no rollback) ---");
+    reset_2621();
+    apply_production_audit_defaults();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC3: warm service");
+    (void)cs.evaluator().plant_commit_occurrence_preds_for_test({});
+    auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle());
+    CHECK(tc != nullptr, "AC3: live commit TC available");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    tc->force_partial_cone_truncate_for_test(3);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    const auto rb0 = typed_audit::g_occurrence_recover_truncation_rollback_total.load();
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    in.solve_status = 0; // SOLVED → #3108 re-gate passes → recover accepted
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "AC3: recovered SOLVED allows commit");
+    CHECK(r.force_reason == "ok", "AC3: force_reason ok");
+    CHECK(typed_audit::g_occurrence_recover_truncation_rollback_total.load() == rb0,
+          "AC3: no rollback on the accept path");
+    CHECK(!tc->last_partial_cone_truncated(),
+          "AC3: accept keeps stamps cleared (no half-latched residue)");
+    aura_typed_audit_clear_readiness_evaluator();
+    reset_2621();
+}
+
+static void ac4174_4_hermetic_forced_reject_no_bump() {
+    std::println("\n--- #4174 AC4: hermetic forced-false is rollback-safe (no live TC) ---");
+    reset_2621();
+    apply_production_audit_defaults();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    // Deterministic regardless of TLS leaks from earlier ACs in this batch.
+    aura_typed_audit_clear_readiness_evaluator();
+    // Override recover-true + stale CONFLICT snapshot → forced reject. The
+    // override never touches real stamps, so the rollback ABI must be a
+    // no-op (nothing pending, no live commit TC) — counter stays flat.
+    aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                   nullptr);
+    publish_partial_cone_truncate(true, 2);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    const auto rb0 = typed_audit::g_occurrence_recover_truncation_rollback_total.load();
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    in.solve_status = 2; // CONFLICT snapshot (#3108 hazard)
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "AC4: override recover-true still fail-closed");
+    CHECK(r.force_reason == "cone_outside_goal_drop", "AC4: force_reason stable");
+    CHECK(typed_audit::g_occurrence_recover_truncation_rollback_total.load() == rb0,
+          "AC4: no rollback counter noise without a live commit TC");
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
+    reset_2621();
+}
+
+static void ac4174_5_source_cite_and_linter() {
+    std::println("\n--- #4174 AC5: source-cite staging order + all forcing sites + wiring ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    // Staging order inside the recover SOLVED branch: snapshot BEFORE clear.
+    const auto solved = ixx.find("if (full == SolveResult::SOLVED) {");
+    CHECK(solved != std::string::npos, "AC5: recover SOLVED branch present");
+    const auto solved_ret = ixx.find("return true;", solved);
+    const auto branch = ixx.substr(solved, solved_ret - solved);
+    const auto snap = branch.find("note_recover_truncation_snapshot()");
+    const auto cs_clear = branch.find("note_full_solve_cleared_truncation()");
+    const auto cone_clear = branch.find("last_partial_cone_truncated_ = false");
+    CHECK(snap != std::string::npos && cs_clear != std::string::npos &&
+              cone_clear != std::string::npos,
+          "AC5: staging + clear present in the SOLVED branch");
+    CHECK(snap < cs_clear && cs_clear < cone_clear,
+          "AC5: snapshot staged BEFORE the truncation clear");
+    CHECK(ixx.find("rollback_occurrence_recover_truncation_clear") != std::string::npos,
+          "AC5: TC rollback method present");
+    CHECK(ixx.find("restore_recover_truncation_snapshot") != std::string::npos,
+          "AC5: CS snapshot restore present");
+    CHECK(tma.find("kOccurrenceRecoverTruncationRollbackIssue = 4174") != std::string::npos,
+          "AC5: issue constant");
+    CHECK(tma.find("g_occurrence_recover_truncation_rollback_total") != std::string::npos,
+          "AC5: rollback counter");
+    std::size_t sites = 0;
+    for (auto pos = tma.find("if (aura_typed_audit_recover_truncation_rollback())");
+         pos != std::string::npos;
+         pos = tma.find("if (aura_typed_audit_recover_truncation_rollback())", pos + 1))
+        ++sites;
+    CHECK(sites == 3, "AC5: all three #3108 forcing sites roll the clear back");
+    CHECK(emb.find("aura_typed_audit_recover_truncation_rollback") != std::string::npos &&
+              emb.find("rollback_occurrence_recover_truncation_clear") != std::string::npos,
+          "AC5: ABI defined on the live commit TC chain");
+    CHECK(emb.find("aura_typed_audit_current_commit_type_checker()") != std::string::npos,
+          "AC5: rollback ABI walks the live commit TC handle");
+    CHECK(build.find("check_recover_truncation_4174.py") != std::string::npos,
+          "AC5: build.py registers the linter");
+    CHECK(allow.find("check_recover_truncation_4174.py") != std::string::npos,
+          "AC5: root_check_allowlist.txt lists the linter");
+    CHECK(read_file("tests/compiler/test_issue_4174.cpp").empty(),
+          "AC5: no new test file per #81934");
+    CHECK(read_file("docs/design/4174-half-clean-cs.md").empty(),
+          "AC5: no docs/design/4174-* per #1655");
+}
+
 int run_test_partial_cone_commit_gate() {
     std::println("=== Issue #2621: partial cone truncate commit gate ===");
     ac1_soft_observe_allow();
@@ -1355,6 +1542,14 @@ int run_test_partial_cone_commit_gate() {
     ac2962_3_soft_quiet();
     ac2962_4_schema_and_source();
     ac2962_5_linter_no_design();
+    // Issue #4174: recover-true truncation clear must not survive a forced
+    // recovered=false (#3108 re-gate face) — half-clean CS close.
+    std::println("\n=== Issue #4174: recover truncation-clear rollback ===");
+    ac4174_1_rollback_restores_truncation();
+    ac4174_2_forced_reject_rolls_back_live_tc();
+    ac4174_3_accept_keeps_clear();
+    ac4174_4_hermetic_forced_reject_no_bump();
+    ac4174_5_source_cite_and_linter();
     std::println("\n=== Issue #3686: post-mutate union Guard mutation log ===");
     ac3686_source_and_gate();
     ac3686_soak_two_defines();

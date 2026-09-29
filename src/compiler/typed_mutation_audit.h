@@ -120,6 +120,13 @@ extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept;
 // typed_audit::aura_typed_audit_test_* now call the unmangled names.
 extern "C" void* aura_typed_audit_current_commit_type_checker() noexcept;
 extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept;
+// Issue #4174: roll back the truncation clear staged by the last recover-true
+// on the live commit TypeChecker. commit_readiness calls this whenever a
+// post-recover gate forces recovered=false (#3108 re-gate sites), so a denied
+// commit leaves the CS consistently latched — never half-clean. Returns true
+// when a pending snapshot was consumed (a rollback actually fired); no live
+// TC / nothing pending → false, zero side effects.
+extern "C" bool aura_typed_audit_recover_truncation_rollback() noexcept;
 extern "C" void aura_typed_audit_test_install_recover_override(bool (*fn)(void* ctx) noexcept,
                                                                void* ctx) noexcept;
 extern "C" void aura_typed_audit_test_clear_recover_override() noexcept;
@@ -4003,6 +4010,15 @@ inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_fail_total{0};
 inline constexpr int kOccurrenceRecoverNotSolvedIssue = 3108;
 inline std::atomic<std::uint64_t> g_occurrence_recover_not_solved_total{0};
 inline std::atomic<std::uint32_t> g_occurrence_recover_not_solved_wired{1};
+// Issue #4174: recover×truncation-clear restore point. try_occurrence_hard_
+// face_full_solve_recover() clears the CS truncation stamps BEFORE returning
+// true; when commit_readiness then forces recovered=false (#3108 re-gate /
+// other post-recover gate) the clear must not survive the reject — the
+// rollback ABI restores the staged snapshot on the live commit TC and this
+// counter counts every restore that actually fired (soak / Agent-visible
+// half-clean residual). Quiet (no forced-false) stays zero extra atomics.
+inline constexpr int kOccurrenceRecoverTruncationRollbackIssue = 4174;
+inline std::atomic<std::uint64_t> g_occurrence_recover_truncation_rollback_total{0};
 // Issue #2909: force-closure counters (must be before commit_readiness).
 // Full definitions / accessors also live near #2703 face section.
 inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_attempt_total{0};
@@ -4254,6 +4270,14 @@ commit_readiness_mutable_4170(CommitReadinessInput in) noexcept {
             // never silent green) — see CI test_occurrence_coercion_batch.
             if (recovered && in.solve_status != 0) {
                 g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #4174: recover-true already cleared the CS truncation
+                // stamps inside try_occurrence_hard_face_full_solve_recover —
+                // a forced-false here must not leave that half-clean state
+                // behind the reject. Roll the staged snapshot back so the
+                // retry observes a consistently latched CS.
+                if (aura_typed_audit_recover_truncation_rollback())
+                    g_occurrence_recover_truncation_rollback_total.fetch_add(
+                        1, std::memory_order_relaxed);
                 recovered = false;
             }
             if (recovered) {
@@ -4324,6 +4348,11 @@ commit_readiness_mutable_4170(CommitReadinessInput in) noexcept {
             // Issue #3108: second re-gate (cone/empty hard-face recover).
             if (recovered && in.solve_status != 0) {
                 g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #4174: same truncation-clear rollback as step 2 — the
+                // cone/empty recover cleared the stamps before returning true.
+                if (aura_typed_audit_recover_truncation_rollback())
+                    g_occurrence_recover_truncation_rollback_total.fetch_add(
+                        1, std::memory_order_relaxed);
                 recovered = false;
             }
             if (recovered) {
@@ -4379,6 +4408,12 @@ commit_readiness_mutable_4170(CommitReadinessInput in) noexcept {
         // would_allow_commit. Asymmetric fail-closed after #3108.
         if (recovered && in.solve_status != 0) {
             g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #4174: same truncation-clear rollback as step 2 / step 6 —
+            // the refined_drift recover cleared the stamps before returning
+            // true; the forced-false reject must not keep them cleared.
+            if (aura_typed_audit_recover_truncation_rollback())
+                g_occurrence_recover_truncation_rollback_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
             recovered = false;
         }
         if (recovered) {

@@ -9455,6 +9455,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4142 WAL miss/refuse fold linter failed — run python3 scripts/check_wal_miss_refuse_next_4142.py")
         return r
+    # Issue #4174 (recover×truncation-clear half-clean CS): the occurrence
+    # hard-face recover clears the CS truncation stamps BEFORE returning
+    # true; when commit_readiness forces recovered=false (#3108 re-gate
+    # sampling a stale pre-recover CONFLICT/TIMEOUT snapshot) the denied
+    # commit previously kept the cleared state — a half-clean CS the retry
+    # reads as vacuous-SOLVE / missed truncate hard face. Gate pins: the
+    # restore point is staged BEFORE the clear in the recover SOLVED
+    # branch; the pending-gated rollback restores BOTH layers (CS snapshot
+    # + engine-local cone stamps); ALL THREE #3108 forcing sites roll the
+    # clear back on the live commit TC; the ABI is no-op-safe without a
+    # live TC. Runtime doors live in
+    # tests/compiler/test_partial_cone_commit_gate.cpp (ac4174_1..ac4174_5).
+    recovtrunc4174_script = ROOT / "scripts" / "check_recover_truncation_4174.py"
+    if not recovtrunc4174_script.exists():
+        fail(f"missing {recovtrunc4174_script}")
+        return 1
+    r = run([sys.executable, str(recovtrunc4174_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4174 recover truncation rollback linter failed — run python3 scripts/check_recover_truncation_4174.py"
+        )
+        return r
     # Issue #4154 (DeadCoercion / residual CastOp remirror miss-column):
     # a nonempty persist span with added==0 must durability-probe the
     # sites and latch the existing #3031 pending_full_solve face when
