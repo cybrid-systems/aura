@@ -20,10 +20,18 @@ TIMEOUT_S = float(os.environ.get("AURA_ONESHOT_TIMEOUT", "8"))
 
 # (label, expr, expect_substr_in_stdout)
 CASES: list[tuple[str, str, str]] = [
-    # Paths that already worked — must stay green. (The direct math-pred
-    # cases from the original #4228 report — even?/odd?/positive?/zero? —
-    # exercise the Soft std/math auto-load face and were dropped when the
-    # gate normalized to the single standard build/aura binary.)
+    # Direct math preds (the #4228 failure mode) — even?/odd?/positive?/
+    # zero? come from the std/math auto-load face; the standard-face
+    # completion is fecdf639e's face-agnostic runtime cell handling
+    # (apply_unary/apply_pred/apply_binary define-cell deref + filter car
+    # snapshot + oneshot prelude sync), verified against a current
+    # build/aura (restored without any soft_only gating per the
+    # single-binary direction; all 9 cases run against build/aura).
+    ("direct-even?", "(filter even? (list 1 2 3 4))", "(2 4)"),
+    ("direct-odd?", "(filter odd? (list 1 2 3 4))", "(1 3)"),
+    ("direct-positive?", "(filter positive? (list -1 0 2 -3 4))", "(2 4)"),
+    ("direct-zero?", "(filter zero? (list 0 1 0 2))", "(0 0)"),
+    # Paths that already worked — must stay green.
     ("let-bind", "(let ((f filter) (e even?)) (f e (list 1 2 3 4)))", "(2 4)"),
     ("apply", "(apply filter (list even? (list 1 2 3 4)))", "(2 4)"),
     ("lambda", "(filter (lambda (x) (even? x)) (list 1 2 3 4))", "(2 4)"),
