@@ -10,7 +10,8 @@
 
 (export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
         partition sort range sum product last flatten intersperse
-        intersperse-iterative any all)
+        intersperse-iterative any all
+        make-list list-tail)
 
 ; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
 (define (foldl f init lst)
@@ -153,3 +154,16 @@
   (let loop ((xs lst))
     (if (null? xs) #t
       (if (pred (car xs)) (loop (cdr xs)) #f))))
+
+; R7RS make-list — Soft oneshot gap (#4189/#4203). Iterative O(1) stack.
+(define (make-list n fill)
+  (if (<= n 0)
+    (list)
+    (let loop ((k n) (acc (list)))
+      (if (<= k 0)
+        acc
+        (loop (- k 1) (cons fill acc))))))
+
+; R7RS list-tail ≡ skip with (lst n) arg order (#4194). Soft skip is (skip n lst).
+(define (list-tail lst n)
+  (skip n lst))

@@ -10,8 +10,11 @@
         string-upcase string-downcase
         string-contains? string-prefix? string-suffix? string-replace
         string-find
-        string-pad-left string-pad-right string-reverse string-repeat
-        string->chars chars->string string-take string-drop)
+        string-pad-left string-pad-right string-pad string-reverse string-repeat
+        string->chars chars->string string-take string-drop
+        starts-with? ends-with? contains?
+        string-starts-with string-ends-with
+        string-starts-with? string-ends-with?)
 
 ; Note: string.aura intentionally avoids requiring std/list internally.
 ; Module evaluation runs in isolated env; internal imports would pollute top_.
@@ -213,3 +216,15 @@
 ; Drop first n characters
 (define (string-drop s n)
   (substring s (min n (string-length s)) (string-length s)))
+
+; Left-pad alias — Soft oneshot / orch align (#4180/#4208). Same as string-pad-left.
+(define string-pad string-pad-left)
+
+; Product / R7RS-friendly aliases for Soft oneshot (#4186–#4188, #4216–#4218).
+(define starts-with? string-prefix?)
+(define ends-with? string-suffix?)
+(define contains? string-contains?)
+(define string-starts-with string-prefix?)
+(define string-ends-with string-suffix?)
+(define string-starts-with? string-prefix?)
+(define string-ends-with? string-suffix?)

@@ -3,9 +3,14 @@
   hash-set hash-ref hash-get hash-remove
   hash-keys hash-values hash-length hash->list
   hash-for-each hash-fold
-  hash-merge hash-empty? alist->hash frequencies)
+  hash-merge hash-empty? alist->hash frequencies
+  make-hash)
 
-(require std/list)
+(require "std/list" all:)
+
+; Soft oneshot / Racket-style constructor (#4195–#4198 / #4204–#4207).
+; Zero-arg empty hash; alist form via alist->hash.
+(define (make-hash) (hash))
 
 
 (define (for-each f lst)

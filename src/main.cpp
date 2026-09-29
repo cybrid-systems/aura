@@ -1985,7 +1985,20 @@ int main(int argc, char* argv[]) {
         }
         std::string content((std::istreambuf_iterator<char>(f)), {});
         aura::compiler::CompilerService cs;
-        auto result = cs.eval(content);
+                // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file.
+        {
+            static constexpr const char* kSoftOneshotStdPrelude =
+                "(require \"std/list\" all:)"
+                "(require \"std/string\" all:)"
+                "(require \"std/hash\" all:)"
+                "(require \"std/math\" all:)";
+            if (auto pre = cs.eval(kSoftOneshotStdPrelude); !pre) {
+                std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
+                             pre.error().format_with_source(kSoftOneshotStdPrelude));
+                return 1;
+            }
+        }
+auto result = cs.eval(content);
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().format());
             return 1;
@@ -3038,6 +3051,25 @@ int main(int argc, char* argv[]) {
     }
 
     bool err = false;
+    // Soft oneshot std prelude (#4178–#4219): auto-load Soft std list /
+    // string / hash / math so bare oneshot (`aura -e` / file / pipe) binds
+    // foldr, any/all, string-take/drop/pad/trim/split/replace/case,
+    // starts-with?/ends-with?/contains?, make-list, list-tail, last,
+    // hash-for-each/fold/empty?/->list, make-hash, even? — matching Soft
+    // std semantics. Prefer Soft std auto-load over aura-build soft_*.aura
+    // host fills (three-layer: Soft runtime/std, not gold host workarounds).
+    {
+        static constexpr const char* kSoftOneshotStdPrelude =
+            "(require \"std/list\" all:)"
+            "(require \"std/string\" all:)"
+            "(require \"std/hash\" all:)"
+            "(require \"std/math\" all:)";
+        if (auto pre = cs.eval(kSoftOneshotStdPrelude); !pre) {
+            std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
+                         pre.error().format_with_source(kSoftOneshotStdPrelude));
+            return 1;
+        }
+    }
     // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
     // ONE cs.eval pass, matching the --load entry. Per-expression eval
     // split pipeline state across calls and broke fiber:spawn parameter

@@ -19,3 +19,5 @@ intersperse: Any Any -> Any
 intersperse-iterative: Any Any -> Any
 any: Any Any -> Any
 all: Any Any -> Any
+make-list: Any Any -> Any
+list-tail: Any Any -> Any

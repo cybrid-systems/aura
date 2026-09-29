@@ -16,8 +16,11 @@
   string-split string-split-words string-join string-trim
   string-upcase string-downcase
   string-contains? string-prefix? string-suffix? string-replace
-  string-pad-left string-pad-right string-reverse string-repeat
+  string-pad-left string-pad-right string-pad string-reverse string-repeat
   string->chars chars->string string-take string-drop
+  starts-with? ends-with? contains?
+  string-starts-with string-ends-with
+  string-starts-with? string-ends-with?
 
   ; ── json (parse/encode are engine prims; stringify is stdlib alias) ──
   json-stringify json-escape json-value
