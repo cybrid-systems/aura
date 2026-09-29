@@ -19,6 +19,9 @@
 //              CastOp persist before auto_partial / type authority.
 // Issue #3349: re-union persist into type∪IR before partial-relower
 //              impact_ub (decision-time cone lag after #3120 / #3228).
+// Issue #4154: remirror added==0 with a nonempty persist span and an
+//              empty type∪IR union cone latches the #3031 readiness
+//              face (miss stamp → miss revalidate under production).
 
 #include "test_harness.hpp"
 #include "core/densify_consistency_report.h"
@@ -51,8 +54,10 @@ using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::dirty::clear_residual_castop_undermark_pending;
 using aura::compiler::dirty::dead_coercion_decision_invalidate_gen;
 using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
+using aura::compiler::dirty::encode_ast_dep_node;
 using aura::compiler::dirty::force_dead_coercion_elim_into_cone;
 using aura::compiler::dirty::force_residual_castop_undermark_into_cone;
+using aura::compiler::dirty::g_global_dirty;
 using aura::compiler::dirty::kDeadCoercionElimConeIssue;
 using aura::compiler::dirty::kDeadCoercionPersistBeforePartialIssue;
 using aura::compiler::dirty::kResidualCastopReadinessUndermarkIssue;
@@ -1696,6 +1701,169 @@ static void ac3581_3_dual_owner_source_cite() {
           "3581 AC3: no check_3581.py");
 }
 
+// ── Issue #4154: remirror added==0 + union-empty latches #3031 face ──
+static void ac4154_1_miss_column_latches_face() {
+    std::println("\n--- #4154 AC1: dirty miss-column (added==0, union empty) latches face ---");
+    using aura::compiler::typed_audit::commit_readiness_live_policy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kRes = 1541;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    CHECK(force_dead_coercion_elim_into_cone(one) >= 1, "4154 AC1: #3065 force marks site");
+    CHECK(cone_contains(kRes), "4154 AC1: site in last type cone");
+    // Miss precondition: the durable dep mark drains (SOA columnar dirty
+    // rebuild / block-matrix sync) while the cone list survives.
+    g_global_dirty.sparse.erase(encode_ast_dep_node(kRes));
+    CHECK(!g_global_dirty.is_dirty(encode_ast_dep_node(kRes)),
+          "4154 AC1: dep mark dropped (miss precondition)");
+
+    // Remirror: seen-set hit → added==0; union cone empty for the site.
+    CHECK(remirror_persisted_residual_castops() == 0, "4154 AC1: added==0 keep-alive return");
+    CHECK(pending_full_solve_residual_face_hit(), "4154 AC1: #3031 face latched on miss");
+
+    // Live policy: the C ABI remirror runs before the face read, so the
+    // same fill discovers the miss and observes its own latch.
+    reset_pending_full_solve_residual_for_test();
+    CHECK(!pending_full_solve_residual_face_hit(), "4154 AC1: face clear before live policy");
+    auto in = commit_readiness_live_policy();
+    CHECK(in.pending_full_solve_residual,
+          "4154 AC1: live-policy remirror latches + observes in same fill");
+
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4154_2_keep_alive_stays_clear() {
+    std::println("\n--- #4154 AC2: durable keep-alive remirror stays latch-free ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kRes = 2542;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "4154 AC2: cone wipe");
+    // Wiped cone → remirror re-adds (added>0) — existing #3120/#3228 flow.
+    CHECK(remirror_persisted_residual_castops() >= 1, "4154 AC2: wipe → re-add");
+    CHECK(!pending_full_solve_residual_face_hit(), "4154 AC2: re-add path does not latch");
+
+    // Steady state: cone list has the site and the dep mark is durable →
+    // added==0 keep-alive must stay latch-free (#3347 AC3 compose).
+    CHECK(remirror_persisted_residual_castops() == 0, "4154 AC2: steady keep-alive 0");
+    CHECK(!pending_full_solve_residual_face_hit(), "4154 AC2: durable keep-alive no latch");
+    CHECK(type_ir_union_cone_nonempty(), "4154 AC2: union cone nonempty (remutate re-enters)");
+    CHECK(!residual_castop_undermark_pending(), "4154 AC2: no undermark pending either");
+
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac4154_3_readiness_deny_and_authority() {
+    std::println("\n--- #4154 AC3: latched face denies commit / typed-entry authority ---");
+    using aura::compiler::typed_audit::clear_occurrence_partial_drift_grant_refuse;
+    using aura::compiler::typed_audit::commit_readiness;
+    using aura::compiler::typed_audit::note_pending_full_solve_residual;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    using aura::compiler::typed_audit::type_export_residual_faces_clear;
+    // Sibling batch members may leave the #3794 belt latched; the
+    // authority rows below pin only the #3031 face (reset both first).
+    clear_occurrence_partial_drift_grant_refuse();
+    reset_pending_full_solve_residual_for_test();
+
+    // Hermetic table (pure decision — no atomics, no process faces):
+    // only the #3031 residual face set, production hard → deny 700.
+    aura::compiler::typed_audit::CommitReadinessInput in;
+    in.pending_full_solve_residual = true;
+    in.pending_full_solve_hard = true;
+    const auto r_hard = commit_readiness(in);
+    CHECK(!r_hard.would_allow_commit, "4154 AC3: production denies commit");
+    CHECK(r_hard.force_reason == "pending_full_solve_residual", "4154 AC3: deny reason");
+    CHECK(r_hard.readiness_bp == 700, "4154 AC3: deny bp 700");
+
+    // Soft observe: same face, hard=false → allow (no permanent bits).
+    aura::compiler::typed_audit::CommitReadinessInput soft = in;
+    soft.pending_full_solve_hard = false;
+    const auto r_soft = commit_readiness(soft);
+    CHECK(r_soft.would_allow_commit, "4154 AC3: Soft observe-allow");
+
+    // Typed-entry / grant authority: the same latch blocks type export.
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    CHECK(!type_export_residual_faces_clear(), "4154 AC3: type export authority refused");
+    reset_pending_full_solve_residual_for_test();
+    CHECK(type_export_residual_faces_clear(), "4154 AC3: clear restores authority");
+}
+
+static void ac4154_4_quiet_soft_source_cite() {
+    std::println("\n--- #4154 AC4: Soft/quiet zero-extra + source-cite ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    // Quiet: production armed, empty persist → 0, face clear.
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+    reset_pending_full_solve_residual_for_test();
+    CHECK(remirror_persisted_residual_castops() == 0, "4154 AC4: quiet empty persist 0");
+    CHECK(!pending_full_solve_residual_face_hit(), "4154 AC4: quiet no face");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+
+    // Soft: persist never notes; remirror 0; face clear (#3228 AC2 shape).
+    SoftAuditScope soft;
+    reset_residual_castop_persist_for_test();
+    constexpr aura::compiler::dirty::NodeId kSoft = 3544;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "4154 AC4: Soft does not persist");
+    CHECK(remirror_persisted_residual_castops() == 0, "4154 AC4: Soft remirror 0");
+    CHECK(!pending_full_solve_residual_face_hit(), "4154 AC4: Soft no face latch");
+    reset_residual_castop_persist_for_test();
+
+    // Source-cite: fix + linter + build wiring, no invent.
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto lint = read_file("scripts/check_residual_castop_remirror_4154.py");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(dirty.find("Issue #4154") != std::string::npos, "4154 AC4: dirty cites #4154");
+    CHECK(dirty.find("residual_persist_sites_durable") != std::string::npos,
+          "4154 AC4: durability probe");
+    CHECK(dirty.find("note_pending_full_solve_residual") != std::string::npos,
+          "4154 AC4: latches existing #3031 face (no new model)");
+    CHECK(aud.find("Issue #4154") != std::string::npos, "4154 AC4: live-policy cite");
+    CHECK(t.find("ac4154_1_miss_column_latches_face") != std::string::npos, "4154 AC4: AC1");
+    CHECK(t.find("ac4154_2_keep_alive_stays_clear") != std::string::npos, "4154 AC4: AC2");
+    CHECK(t.find("ac4154_3_readiness_deny_and_authority") != std::string::npos, "4154 AC4: AC3");
+    CHECK(!lint.empty() && lint.find("Issue #4154") != std::string::npos, "4154 AC4: linter");
+    CHECK(build.find("check_residual_castop_remirror_4154") != std::string::npos,
+          "4154 AC4: build.py");
+    CHECK(allow.find("check_residual_castop_remirror_4154.py") != std::string::npos,
+          "4154 AC4: allowlist");
+    CHECK(read_file("tests/compiler/test_issue_4154.cpp").empty(),
+          "4154 AC4: no invent (per #81934)");
+    CHECK(read_file("docs/design/4154-residual-castop-remirror.md").empty(),
+          "4154 AC4: no docs/design (per #1655)");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -1744,10 +1912,15 @@ int run_test_dead_coercion_dirty_cone() {
     ac3581_2_double_miss_unreachable();
     ac3581_3_dual_owner_source_cite();
     ac3689_partial_peel_aos_dce_uses_mask();
+    ac4154_1_miss_column_latches_face();
+    ac4154_2_keep_alive_stays_clear();
+    ac4154_3_readiness_deny_and_authority();
+    ac4154_4_quiet_soft_source_cite();
     reset_residual_castop_persist_for_test();
-    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689: {} "
-                 "passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689/#4154: {} "
+        "passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

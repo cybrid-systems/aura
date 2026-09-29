@@ -4367,7 +4367,12 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     // persist → 0 extra. Pending latch (C ABI n>0, not yet re-inferred)
     // drives auto_partial so empty CS hard-rejects until infer_flat_partial
     // clears it. Last cone staying nonempty after infer must not latch
-    // forever — remirror n==0 once nodes are already in cone.
+    // forever — remirror n==0 once nodes are already in cone. Issue #4154:
+    // that remirror now also latches the #3031 face itself when the
+    // persist span was nonempty, added==0, and no persist site is still
+    // durably marked (SOA columnar dirty rebuild / IR-only site) — the
+    // pending_full_solve_residual read below denies before remutate
+    // commit until a successful remirror or full re-infer.
     (void)aura_force_residual_castop_undermark_into_cone();
     if (aura_residual_castop_undermark_pending())
         in.auto_partial_from_cone = true;
