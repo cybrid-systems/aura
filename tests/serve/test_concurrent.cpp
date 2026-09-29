@@ -2644,6 +2644,12 @@ static bool test_issue_4176_source_cite() {
     CHECK(sched_src.find("fiber->close_eventfd();") != std::string::npos &&
               fiber_h.find("void close_eventfd() noexcept;") != std::string::npos,
           "#4176 AC3: on_fiber_done closes the done fiber's eventfd");
+    // Issue #4176 follow-up (fd budget): hard-reaped fibers never reach
+    // on_fiber_done (worker drops is_reclaimed() fibers without notify),
+    // so reap_orphans_now must do the full wake-fd teardown itself.
+    CHECK(sched_src.find("f->close_eventfd();") != std::string::npos &&
+              sched_src.find("EPOLL_CTL_DEL, evfd, nullptr") != std::string::npos,
+          "#4176 AC3: reaper tears down the reaped fiber's wake fd (epoll DEL + close)");
     // Spawn degrade at scheduler failure (#2656 #f contract preserved).
     CHECK(messaging.find("bool spawn_failed = false;") != std::string::npos &&
               messaging.find("catch (const std::exception&)") != std::string::npos,
