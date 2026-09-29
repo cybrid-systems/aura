@@ -393,9 +393,11 @@ void ac7_3676_skip_refuse_join_context() {
 
     // AC1: leftover Sampled skip → sampled-ratio-skip SE joins live fiber
     // + Mutation epoch (0 stays 0). should_audit drives the emit directly.
-    std::uint64_t skip_mid = 1;
-    while (ta::should_audit(skip_mid))
-        ++skip_mid;
+    // Issue #4173: production leftover no longer returns false — the SE
+    // is observability-only and the audit runs. Pick a non-hit mid
+    // directly instead of searching for a false return.
+    const std::uint64_t skip_mid = 1; // 1 % 4 != 0 → non-hit under leftover ratio
+    (void)ta::should_audit(skip_mid);
     const auto skip_row = latest();
     CHECK(std::string_view(skip_row.reason) == "sampled-ratio-skip", "AC7: skip row reason");
     CHECK(skip_row.mutation_id == skip_mid, "AC7: skip row mid");
@@ -499,9 +501,11 @@ void ac8_3971_skip_refuse_tenant_join() {
     constexpr std::uint64_t kTenant = 7;
     ta::note_boundary_audit_tenant(kTenant);
 
-    std::uint64_t skip_mid = 1;
-    while (ta::should_audit(skip_mid))
-        ++skip_mid;
+    // Issue #4173: should_audit no longer returns false under production
+    // leftover (skip is observability-only) — pick the non-hit mid
+    // directly; the skip SE row is still emitted for it.
+    const std::uint64_t skip_mid = 1;
+    (void)ta::should_audit(skip_mid);
     const auto skip_row = latest();
     CHECK(std::string_view(skip_row.reason) == "sampled-ratio-skip", "3971: skip row reason");
     CHECK(skip_row.mutation_id == skip_mid, "3971: skip row mid");
@@ -524,9 +528,8 @@ void ac8_3971_skip_refuse_tenant_join() {
         std::memory_order_relaxed);
     g_typed_mutation_audit_counters.production_defaults_active.store(1);
     ta::inject_sampled_ratio_for_test(4);
-    std::uint64_t skip0_mid = 1;
-    while (ta::should_audit(skip0_mid))
-        ++skip0_mid;
+    const std::uint64_t skip0_mid = 1; // non-hit; #4173: audit forced, SE still emits
+    (void)ta::should_audit(skip0_mid);
     CHECK(latest().tenant_id == 0, "3971: no principal → tenant 0");
     CHECK(g_typed_mutation_audit_counters.process_se_tenant_unset_total.load(
               std::memory_order_relaxed) > unset0,
@@ -544,9 +547,8 @@ void ac8_3971_skip_refuse_tenant_join() {
     // Agent filter: query:security-audit by tenant keeps the skip row.
     g_typed_mutation_audit_counters.production_defaults_active.store(1);
     ta::note_boundary_audit_tenant(kTenant);
-    std::uint64_t qmid = 1;
-    while (ta::should_audit(qmid))
-        ++qmid;
+    const std::uint64_t qmid = 1; // non-hit; #4173: SE emitted even though audit runs
+    (void)ta::should_audit(qmid);
     CompilerService cs;
     auto q = cs.eval(
         std::format("(engine:metrics \"query:security-audit\" 10 {} 0 0 {})", kTenant, qmid));

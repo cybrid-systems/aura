@@ -1475,7 +1475,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_timeout_repair.cpp` (—) [domain_suite, theme_compiler] — test_type_timeout_repair.cpp
 - `tests/compiler/test_typed_audit_commit_readiness_live_policy.cpp` (—) [domain_suite, theme_compiler] — blame_ok / cs_has_work / truncated_reverify from the current commit
 - `tests/compiler/test_typed_audit_commit_readiness_recover_acl.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC4 from the issue body):
-- `tests/compiler/test_typed_mutation_audit_decision.cpp` (—) [domain_suite, theme_compiler] — (≥12 cells per AC4) + the query schema sentinels (AC2/AC3).
+- `tests/compiler/test_typed_mutation_audit_decision.cpp` (—) [large, domain_suite, theme_compiler] — (≥12 cells per AC4) + the query schema sentinels (AC2/AC3).
 - `tests/compiler/test_typed_summary_full_gate.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_typed_summary_full_gate.cpp
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp — Issue #745:
 - `tests/compiler/test_typesystem_type_propagation_jit_l2_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_type_propagation_jit_l2_typed_mutate.cpp — Issue #746:

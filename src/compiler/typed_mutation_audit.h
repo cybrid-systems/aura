@@ -1300,6 +1300,9 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
 // Thread-safe Full / Sampled / Off gate.
 // Sampled: audit when mutation_id % sample_ratio == 0.
 // Issue #2818: cold-start default is Full (no under-sample).
+// Issue #4173: under production_defaults_active a Sampled skip is
+// observability-only — the audit-skipped SE (#3530) is still emitted but
+// the invariant audit runs for non-hit ids too.
 // Issue #3676: SE join context for production skip/refuse rows. Fiber is
 // override-aware (#2151) + live TLS fiber; epoch comes from
 // ::aura::core::current_mutation_epoch() at each emit site (0 stays 0,
@@ -1327,10 +1330,11 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
         return true;
     if ((mutation_id % ratio) != 0) {
         g_typed_mutation_audit_counters.samples_skipped.fetch_add(1, std::memory_order_relaxed);
+        const bool prod = production_defaults_active();
         // Issue #3530: production leftover Sampled/ratio>1 still mutates
         // but must leave a joinable audit-skipped SE (mid + reason).
         // Soft / !production: zero extra (one relaxed load, no emit).
-        if (production_defaults_active()) {
+        if (prod) {
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto tenant = audit_se_join_tenant_id();
@@ -1342,6 +1346,14 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
                                         /*effect_bits=*/0, "audit-skipped", "sampled-ratio-skip",
                                         /*denied=*/false, /*fiber=*/audit_se_join_fiber_id());
         }
+        // Issue #4173: production leftover must not under-sample the
+        // Success trail — the audit-skipped SE above stays as joinable
+        // observability, but the invariant audit now RUNS for non-hit
+        // ids too (should_audit_contextual falls through here for small
+        // non-linear non-match dirty scopes, where contextual force does
+        // not fire). Soft keeps the zero-cost skip (return false).
+        if (prod)
+            return true;
         return false;
     }
     return true;
@@ -1424,6 +1436,10 @@ requires_invariant_hard_gate(std::uint64_t nodes_changed, bool linear_ops_presen
 //   │          │         │       │        │         │ "match-sites"          │
 //   │ Sampled  │ -       │ -     │ -      │ -       │ true  / true  /         │
 //   │          │         │       │        │         │ "mutate-session" (prod)│
+//   │ Sampled  │ -       │ <N    │ -      │ -       │ true  / false /         │
+//   │          │         │       │        │         │ "production-sampled-   │
+//   │          │         │       │        │         │  leftover" (prod, r>1, │
+//   │          │         │       │        │         │  #4173: audit forced)  │
 //   │ Sampled  │ -       │ -     │ true   │ -       │ *hit / true / "strict"  │
 //   │ Sampled  │ -       │ <N    │ false  │ false   │ *hit / false /          │
 //   │          │         │       │        │         │ "sampled-hit"|"skip"    │
@@ -1477,8 +1493,13 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
         (d.sample_ratio <= 1) || (mutation_id % static_cast<std::uint64_t>(d.sample_ratio)) == 0;
     // Issue #3872: production + live mutate session always hard-gates.
     const bool mutate_session_force = d.production_defaults && mutate_session_active;
+    // Issue #4173: production leftover Sampled/ratio>1 forces the audit
+    // (mirror of should_audit's forced skip arm) — under production the
+    // sampled skip is observability-only, never an audit skip.
+    const bool production_leftover_force = d.production_defaults && d.sample_ratio > 1;
 
-    d.would_audit = context_force || sample_hit || mutate_session_force;
+    d.would_audit =
+        context_force || sample_hit || mutate_session_force || production_leftover_force;
     d.would_hard_gate = strict_sandbox || context_force || mutate_session_force;
 
     // force_reason: priority order (most specific first).
@@ -1492,6 +1513,8 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
         d.force_reason = "mutate-session";
     } else if (nodes_changed >= force_n) {
         d.force_reason = d.production_defaults ? "production-nodes" : "nodes";
+    } else if (production_leftover_force) {
+        d.force_reason = "production-sampled-leftover";
     } else if (d.would_audit) {
         d.force_reason = "sampled-hit";
     } else {

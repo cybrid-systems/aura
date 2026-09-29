@@ -248,7 +248,7 @@ int run_test_should_audit_sampled_default() {
 
     // ── #3530 AC3: leftover production Sampled skip emits joinable SE ──
     {
-        std::println("\n--- #3530 AC3: production leftover skip → audit-skipped SE ---");
+        std::println("\n--- #3530 AC3 + #4173: production leftover skip → SE + forced audit ---");
         ta::apply_production_audit_defaults();
         ta::inject_sampled_ratio_for_test(4);
         CHECK(ta::production_defaults_active(), "3530 AC3: production on");
@@ -266,14 +266,17 @@ int run_test_should_audit_sampled_default() {
             else
                 ++skips;
         }
-        CHECK(hits == kN / 4, std::format("3530 AC3: hits 2500/10000 (got {})", hits));
-        CHECK(skips == kN - kN / 4, std::format("3530 AC3: skips 7500 (got {})", skips));
+        CHECK(hits == kN, std::format("4173: production leftover audits all 10000 (got {})", hits));
+        CHECK(skips == 0,
+              std::format("4173: no false return under production leftover (got {})", skips));
+        // Sample-miss accounting unchanged (#3530 observability retained):
+        // the counter + audit-skipped SE still fire once per non-hit id.
         CHECK(ta::g_typed_mutation_audit_counters.samples_skipped.load() ==
-                  static_cast<std::uint64_t>(skips),
-              "3530 AC3: samples_skipped matches");
+                  static_cast<std::uint64_t>(kN - kN / 4),
+              "3530 AC3: samples_skipped still counts sample misses");
         const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
-        CHECK(se_total == static_cast<std::uint64_t>(skips),
-              std::format("3530 AC3: SE total == skip count (got {})", se_total));
+        CHECK(se_total == static_cast<std::uint64_t>(kN - kN / 4),
+              std::format("3530 AC3: SE total == sample-miss count (got {})", se_total));
 
         // Last skip mid=9999 (9999 % 4 != 0) is joinable in the ring window.
         const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);

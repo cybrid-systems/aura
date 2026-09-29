@@ -9802,6 +9802,25 @@ def cmd_lint():
             "Issue #4172 residual-undermark JIT verification linter failed — run python3 scripts/check_residual_undermark_jit_4172.py"
         )
         return r
+    # Issue #4173 (P1: leftover Production Sampled+ratio>1 can skip Success
+    # trail audit): should_audit's Sampled skip arm now forces the audit
+    # under production_defaults_active — the #3530 audit-skipped SE stays
+    # as joinable observability but a non-hit id can no longer return
+    # false (small non-linear non-match dirty scopes were under-sampled
+    # when contextual force did not fire). Soft keeps the zero-cost skip;
+    # decide() mirrors the forced face via
+    # force_reason "production-sampled-leftover"; hard gate NOT widened.
+    # Runtime door: test_typed_mutation_audit_decision.cpp (#4173 AC1–AC5).
+    sla4173_script = ROOT / "scripts" / "check_sampled_leftover_audit_4173.py"
+    if not sla4173_script.exists():
+        fail(f"missing {sla4173_script}")
+        return 1
+    r = run([sys.executable, str(sla4173_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4173 sampled-leftover audit force linter failed — run python3 scripts/check_sampled_leftover_audit_4173.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:
