@@ -19,6 +19,14 @@ Contract:
   AC5  extend test_mailbox_recv_mutation_boundary; linter after #3255
   AC6  no docs/design/3256-*; no tests/issues/test_issue_3256.cpp
 
+Window note (#4160): maybe_mailbox_defer_slo_hold_cancel grew when the
+#4160 ship paired the #3223 urgent inbody poll + the peer #3764/#3826
+busy-path bound with the one-shot cancel arm and tied the #3859
+quarantine latch into the sticky admit deny — the reuse rows now assert
+over an 8000-char window (was 5000) so the function tail (the
+mailbox_defer_slo_hold_cancel_total reuse bump) stays in scope. Order
+rows unchanged.
+
 Exit 0 = all rows satisfied.
 """
 
@@ -48,7 +56,7 @@ def main() -> int:
     hold = _read("src/compiler/mutation_hold_budget.h")
 
     fn = mb.find("inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {")
-    win = mb[fn : fn + 5000] if fn >= 0 else ""
+    win = mb[fn : fn + 8000] if fn >= 0 else ""  # 8000: #4160 arm-path pairing grew the fn
 
     must("Issue #3256", "AC1 cite", win)
     must("aura_evaluator_force_degrade_outermost_holder", "AC1 force_degrade", win)
