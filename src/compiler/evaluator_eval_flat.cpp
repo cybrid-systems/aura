@@ -2699,7 +2699,12 @@ static bool deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id) 
         "macro-self-evo", "macro-mutate-needs-macro-self-evo",
         /*denied=*/true, static_cast<std::int64_t>(aura_fiber_current_id()));
     ev.record_hygiene_violation_attempt();
-    note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+    // Issue #4149: an MSE capability miss is a capability deny, not a
+    // structural default-deny — stamp the capability-deny sentinel (7) via
+    // the #3304 companion API (#3542/#3652 parity). The per-fiber slot
+    // stays un-armed (#4034/#4078); SE reason keeps fine grain.
+    aura::core::capability::note_capability_deny_last_reason(
+        aura::core::capability::kCapabilityDenyReasonNotGranted);
     typed_audit::capture_macro_hygiene_audit(
         "macro-mutate-needs-macro-self-evo", typed_audit::AuditOutcome::Error,
         static_cast<std::uint32_t>(id), static_cast<std::int64_t>(aura_fiber_current_id()),

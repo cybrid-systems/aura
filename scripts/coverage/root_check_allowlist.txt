@@ -197,3 +197,4 @@ check_soft_autowire_unreachable_4145.py
 check_facade_cone_jit_drop_4146.py
 check_residual_force_rearm_4147.py
 check_jit_drop_must_deopt_4148.py
+check_hygiene_limit_stamp_4149.py

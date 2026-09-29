@@ -9031,6 +9031,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4128 workspace lock stamp linter failed — run python3 scripts/check_workspace_lock_stamp_4128.py")
         return r
+    # Issue #4149: public deny_macro_opt_out_without_mse dropped
+    # note_hygiene_last_limit_reason (lockless twin stamped 4 for a
+    # capability miss; the atomic-batch walker re-stamped 4 after the
+    # deny) — both MSE allow-arm denies now stamp the capability-deny
+    # sentinel (7) on the unified Agent last-limit surface. Gate pins
+    # the stamps, the dropped walker override, and the intact ceiling
+    # guard. Runtime doors live in test_hygiene_mutate_closed_loop.cpp
+    # (#4149 ACs).
+    hls4149_script = ROOT / "scripts" / "check_hygiene_limit_stamp_4149.py"
+    if not hls4149_script.exists():
+        fail(f"missing {hls4149_script}")
+        return 1
+    r = run([sys.executable, str(hls4149_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4149 hygiene limit stamp linter failed — run python3 scripts/check_hygiene_limit_stamp_4149.py")
+        return r
     # Issue #4143: sticky densify-off recovery cleared the trap BEFORE the
     # densify retry, so between the clear and the unified-green publish (or
     # on the #3884 LCP-deny re-arm path) moving_compact_enabled() read true
