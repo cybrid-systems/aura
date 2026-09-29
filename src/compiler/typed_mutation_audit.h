@@ -1783,6 +1783,47 @@ inline void clear_occurrence_persist_on_steal_densify_success_() noexcept;
     return true;
 }
 
+// Issue #4153: nested / atomic_batch txn-dirty (lockless mutate, infer
+// deferred to the outermost dtor per #3658/#3686) must drop the PRIOR
+// outermost TypeLinearCommitProof green face. While depth>0 and the AST
+// is already mutated, ir_typed_entry_commit_readiness_ok (#3379 gen arm)
+// and linear_move_drop_elision_ok (try_skip #3099 re-sample) still consult
+// last_proof_* + a live TC that may report SOLVED (no new constraints
+// yet), so mid-boundary IR/JIT / Move-Drop elision rode the stale green
+// over half-typed AST. Reuses the #3032 invalidate-gen SSOT (no second
+// proof model): the advance flips both consults until the outermost
+// SOLVED restamp rebinds green via publish_last_proof_face; an abort
+// leaves the face non-green. Coordinates with #4152: the advance between
+// a persist defer arm and its Guard commit makes the fence refuse the
+// deferred green. Soft/Off: no extra atomics.
+inline constexpr int kTxnDirtyGreenInvalidateIssue = 4153;
+inline std::atomic<std::uint64_t> g_txn_dirty_green_invalidate_total{0};
+[[nodiscard]] inline std::uint64_t txn_dirty_green_invalidate_total_v_read() noexcept {
+    return g_txn_dirty_green_invalidate_total.load(std::memory_order_relaxed);
+}
+
+// Purpose: drop the prior outermost green proof face at the txn-dirty
+//       0→1 transition (nested / atomic_batch enter)
+// Pre: production/Full; caller holds the boundary lock (enter path)
+// Post: invalidate_gen advanced (release) + face bits cleared →
+//       ir_typed_entry_commit_readiness_ok / linear_move_drop_elision_ok
+//       refuse until the outermost SOLVED restamp rebinds green
+// Safety Class: P0 under production/Full (half-green execute residual)
+// Issue: #4153
+// AI-Native Rationale: Agents join txn-dirty → gen advance → refuse →
+//       outermost restamp re-opens
+[[nodiscard]] inline bool invalidate_green_face_on_txn_dirty() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard)
+        return false; // Issue #4153: Soft/Off — no extra atomics
+    g_txn_dirty_green_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    return true;
+}
+
 inline void note_rehydrate_success_bind(std::uint64_t goals, std::uint64_t fp) noexcept {
     g_rehydrate_success_bound_goals.store(goals, std::memory_order_relaxed);
     g_rehydrate_success_bound_fp.store(fp, std::memory_order_relaxed);

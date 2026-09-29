@@ -3222,6 +3222,188 @@ static void ac4152_6_source_cite_fence_order() {
           "4152: no docs/design");
 }
 
+// ── Issue #4153: txn-dirty drops the prior outermost green face ──
+static void ac4153_1_mid_entry_refuses_stale_green() {
+    std::println("\n--- #4153 AC1: mid-boundary typed entry refuses the prior green ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    // Prior outermost SOLVED restamp: Stamped authority + green face + gen
+    // rebind (the ride). #3414: face-only green without a Stamped outcome
+    // is not commit authority under production — the real restamp latches
+    // both.
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1; // mid-boundary
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "4153 AC1: entry rides the prior green before the txn window");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4153 AC1: warm");
+    // Delta baselines AFTER the warm eval: a production eval boundary
+    // legitimately advances the invalidate gen, so the note must be the
+    // only delta between here and the assertion.
+    const auto inv0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const auto tot0 = typed_audit::txn_dirty_green_invalidate_total_v_read();
+    cs.evaluator().note_txn_dirty(); // atomic_batch / nested enter arm
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == inv0 + 1,
+          "4153 AC1: invalidate gen advanced at the 0→1 dirty transition");
+    CHECK(typed_audit::txn_dirty_green_invalidate_total_v_read() == tot0 + 1,
+          "4153 AC1: invalidate counter bumped");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0 &&
+              typed_audit::last_proof_linear_ok_v_read() == 0,
+          "4153 AC1: green face dropped");
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "4153 AC1: mid-boundary entry blocked while txn_dirty");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4153_2_elision_blocked_while_txn_dirty() {
+    std::println("\n--- #4153 AC2: Move/Drop elision blocked while txn_dirty ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    // Depth==0 probe isolates the face/gen contract: the depth>0 arm of
+    // try_skip would mask the stale-green ride behind the structural
+    // boundary block. try_skip consults the #3099 gen re-sample at any
+    // depth, so this is the exact face the txn window must drop.
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(linear_move_drop_elision_ok(),
+          "4153 AC2: elision rides the prior green before the txn window");
+    CompilerService cs;
+    cs.evaluator().note_txn_dirty();
+    CHECK(!linear_move_drop_elision_ok(), "4153 AC2: Move/Drop elision blocked while txn_dirty");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4153_3_outermost_restamp_reopens() {
+    std::println("\n--- #4153 AC3: outermost SOLVED restamp re-opens the fast path ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(ir_typed_entry_commit_readiness_ok(), "4153 AC3: green ride pre-window");
+    CompilerService cs;
+    cs.evaluator().note_txn_dirty();
+    CHECK(!ir_typed_entry_commit_readiness_ok(), "4153 AC3: blocked while txn_dirty");
+    // Outermost SOLVED restamp (#3658 → persist → #3984 commit): the green
+    // publish re-binds green_bind_gen to the advanced invalidate gen.
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire) ==
+              typed_audit::rehydrate_miss_invalidate_gen_v_read(),
+          "4153 AC3: restamp rebinds the advanced gen");
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "4153 AC3: entry allowed again after SOLVED restamp");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4153_4_idempotent_note_abort_stays_nongreen() {
+    std::println("\n--- #4153 AC4: re-note idempotent; abort keeps the face non-green ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::publish_last_proof_face(true, true);
+    CompilerService cs;
+    const auto tot0 = typed_audit::txn_dirty_green_invalidate_total_v_read();
+    cs.evaluator().note_txn_dirty();
+    // Nested enter while already dirty: no gen churn (idempotent).
+    cs.evaluator().note_txn_dirty();
+    CHECK(typed_audit::txn_dirty_green_invalidate_total_v_read() == tot0 + 1,
+          "4153 AC4: already-dirty re-note does not re-bump");
+    // Abort/rollback: proof clear + Reject — no restamp, face stays non-green.
+    typed_audit::clear_type_linear_commit_proof_on_abort();
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeReject);
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "4153 AC4: entry stays blocked after abort (no green rebind)");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    // Rollback → re-enter: a fresh 0→1 transition invalidates again.
+    cs.evaluator().clear_txn_dirty();
+    cs.evaluator().note_txn_dirty();
+    CHECK(typed_audit::txn_dirty_green_invalidate_total_v_read() == tot0 + 2,
+          "4153 AC4: fresh dirty transition re-invalidates");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4153_5_soft_no_extra_atomics() {
+    std::println("\n--- #4153 AC5: Soft/Off zero-cost — no gen advance, no counter ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(linear_move_drop_elision_ok(), "4153 AC5: soft elision green pre-window");
+    const auto inv0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const auto tot0 = typed_audit::txn_dirty_green_invalidate_total_v_read();
+    CompilerService cs;
+    cs.evaluator().note_txn_dirty();
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == inv0,
+          "4153 AC5: gen unchanged under Soft (no extra atomics)");
+    CHECK(typed_audit::txn_dirty_green_invalidate_total_v_read() == tot0,
+          "4153 AC5: counter unchanged under Soft");
+    CHECK(linear_move_drop_elision_ok(), "4153 AC5: soft elision contract unchanged");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "4153 AC5: soft entry contract unchanged");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    reset_for_test();
+}
+
+static void ac4153_6_source_cite_invalidate_shape() {
+    std::println("\n--- #4153 AC6: source-cite the invalidate shape + wiring ---");
+    CHECK(typed_audit::kTxnDirtyGreenInvalidateIssue == 4153, "4153 AC6: issue constant");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    const auto fn = h.find("[[nodiscard]] inline bool invalidate_green_face_on_txn_dirty");
+    const auto hard = h.find("const bool hard = production_defaults_active()", fn);
+    const auto softout = h.find("return false;", fn);
+    const auto gen =
+        h.find("g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);", fn);
+    const auto face =
+        h.find("g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);", fn);
+    CHECK(fn != std::string::npos && hard != std::string::npos && hard < softout && softout < gen &&
+              face != std::string::npos,
+          "4153 AC6: Soft early-out precedes the gen advance + face clear");
+    const auto ex = read_file("src/compiler/evaluator.ixx");
+    const auto note = ex.find("void note_txn_dirty() noexcept {");
+    const auto swap = ex.find("txn_dirty_.exchange(1, std::memory_order_relaxed);", note);
+    const auto guard = ex.find("if (!was)", note);
+    const auto call = ex.find("invalidate_green_face_on_txn_dirty();", note);
+    CHECK(note != std::string::npos && swap != std::string::npos && guard != std::string::npos &&
+              call != std::string::npos && guard < call,
+          "4153 AC6: note_txn_dirty gates the invalidate on the 0→1 transition");
+    const auto lint = read_file("scripts/check_txn_dirty_green_4153.py");
+    CHECK(!lint.empty() && lint.find("4153") != std::string::npos, "4153 AC6: linter present");
+    CHECK(read_file("build.py").find("check_txn_dirty_green_4153.py") != std::string::npos,
+          "4153 AC6: build.py wires the linter");
+    CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                  .find("check_txn_dirty_green_4153.py") != std::string::npos,
+          "4153 AC6: allowlist lists the linter");
+    CHECK(read_file("tests/compiler/test_issue_4153.cpp").empty(), "4153: no invent");
+    CHECK(read_file("docs/design/4153-txn-dirty-green-invalidate.md").empty(),
+          "4153: no docs/design");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -3425,6 +3607,14 @@ int run_test_type_linear_commit_health() {
     ac4152_4_soft_no_defer_no_fence();
     ac4152_5_guard_happy_no_false_refuse();
     ac4152_6_source_cite_fence_order();
+    // Issue #4153: txn-dirty drops the prior outermost green face.
+    std::println("\n=== Issue #4153: txn-dirty green invalidation ===");
+    ac4153_1_mid_entry_refuses_stale_green();
+    ac4153_2_elision_blocked_while_txn_dirty();
+    ac4153_3_outermost_restamp_reopens();
+    ac4153_4_idempotent_note_abort_stays_nongreen();
+    ac4153_5_soft_no_extra_atomics();
+    ac4153_6_source_cite_invalidate_shape();
     // Issue #3614: outermost persist gated behind linear deny + drain
     // (#3472 residual — order, not a missing restore).
     std::println("\n=== Issue #3614: drain+linear gate before outermost persist ===");

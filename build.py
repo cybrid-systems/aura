@@ -9129,6 +9129,31 @@ def cmd_lint():
             "Issue #4152 deferred-green steal fence linter failed — run python3 scripts/check_deferred_green_steal_fence_4152.py"
         )
         return r
+    # Issue #4153 (P1 typed-mutation): nested / atomic_batch enter notes the
+    # txn dirty flag, but the PRIOR outermost TypeLinearCommitProof green
+    # face stayed live: ir_typed_entry_commit_readiness_ok (#3379) and
+    # linear_move_drop_elision_ok (try_skip #3099) consult last_proof_* +
+    # a live TC that may still report SOLVED (lockless helpers skip infer,
+    # #3686/#3658), so mid-boundary IR/JIT / Move-Drop elision executed
+    # half-typed AST under high-frequency lockless mutate. The 0→1 dirty
+    # transition now advances the #3032 invalidate-gen SSOT and clears the
+    # green face; both consult surfaces flip until the outermost SOLVED
+    # restamp rebinds green via publish_last_proof_face; abort keeps the
+    # face non-green; #4152's fence refuses a deferred green that spans the
+    # advance. Soft/Off: no extra atomics. Gate pins the exchange-gated
+    # invalidate, the Soft early-out ordering, the single-gen SSOT, the
+    # preserved consult arms, and the extended tests. Runtime doors live in
+    # test_type_linear_commit_health.cpp (#4153 ACs).
+    tdgi4153_script = ROOT / "scripts" / "check_txn_dirty_green_4153.py"
+    if not tdgi4153_script.exists():
+        fail(f"missing {tdgi4153_script}")
+        return 1
+    r = run([sys.executable, str(tdgi4153_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4153 txn-dirty green invalidation linter failed — run python3 scripts/check_txn_dirty_green_4153.py"
+        )
+        return r
     # Issue #4176: Soft --serve-async unix sock stalled permanently after a
     # long sequence of sequential fiber:spawn+mutate:rebind+fiber:join
     # oneshots (host raw_line timeout; Soft alive in ep_poll, near-zero

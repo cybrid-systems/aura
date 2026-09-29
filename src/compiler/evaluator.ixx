@@ -3978,7 +3978,22 @@ public:
     [[nodiscard]] bool txn_dirty() const noexcept {
         return txn_dirty_.load(std::memory_order_relaxed) != 0;
     }
-    void note_txn_dirty() noexcept { txn_dirty_.store(1, std::memory_order_relaxed); }
+    void note_txn_dirty() noexcept {
+        // Issue #2105: mark txn-dirty for nested / atomic_batch so Agents
+        // see half-typed views as not commit-consistent until
+        // composite_txn_commit.
+        const bool was = txn_dirty_.exchange(1, std::memory_order_relaxed);
+        // Issue #4153: the 0→1 dirty transition must drop the PRIOR
+        // outermost TypeLinearCommitProof green face — mid-boundary IR/JIT
+        // / Move-Drop elision must not ride the stale green over a
+        // half-typed AST while the lockless txn window is open. Already-
+        // dirty transitions are idempotent (no gen churn on nested
+        // enters); the outermost SOLVED restamp via publish_last_proof_face
+        // rebinds the invalidate gen and re-opens the fast path. Soft/Off:
+        // no extra atomics (helper early-outs).
+        if (!was)
+            (void)aura::compiler::typed_audit::invalidate_green_face_on_txn_dirty();
+    }
     void clear_txn_dirty() noexcept { txn_dirty_.store(0, std::memory_order_relaxed); }
     // Issue #2108: inject a live Moved linear root so composite commit /
     // invariant audit tests can force cross-batch escape hard-block.
