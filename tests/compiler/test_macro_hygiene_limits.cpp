@@ -1589,7 +1589,14 @@ static void ac3888_sticky_mi_then_ceiling_still_observable() {
     CHECK(std::string(hygiene_last_limit_reason_string()) == "hygiene-macro-introduced",
           "3888 AC1: Agent-facing reason stays hygiene-macro-introduced");
     note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
-    CHECK(std::string(hygiene_last_limit_reason_string()) == "hygiene-macro-introduced",
+    // Issue #4150: the Agent string face is fiber-preferring now — the
+    // follow-on ceiling the fiber slot deliberately carries (#3888) is
+    // what the string reports; the 4/5 process-keep contract moves to
+    // the atomic CHECK below (sticky MI survives in the aggregate).
+    CHECK(std::string(hygiene_last_limit_reason_string()) == "hygiene-gensym-ceiling",
+          "3888 AC1: fiber-preferring string reports the follow-on ceiling (#4150)");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+              kHygieneLimitReasonMacroIntroduced,
           "3888 AC1: ceiling does not clobber sticky MI (no second lattice)");
     const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
     CHECK(get_fiber_hygiene_metrics(fid).last_limit_reason == kHygieneLimitReasonGensymCeiling,

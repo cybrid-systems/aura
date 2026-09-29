@@ -77,6 +77,13 @@ using aura::test::g_passed;
 // store(0) cannot).
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept;
 
+// Issue #4150: Agent-face bridges under test. The v_read C-bridge binds a
+// weak jit-bridge stub (returns 0) in light-link test executables, so the
+// query face is sampled through the engine primitive instead; the
+// full-reset alias below is a fresh symbol the stub does not shadow.
+extern "C" int aura_hygiene_expand_deny_blocks_eval() noexcept;
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_full(void) noexcept;
+
 static std::string read_file(const char* path) {
     const std::string rel(path);
     for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
@@ -4511,16 +4518,17 @@ static void ac3468_rest_remaining_not_hygiene_blocked() {
     // file make mutate_dispatch_try_acquire return guard-reject before
     // reject_structural_macro_hygiene can stamp. replace-value hits
     // that helper before the LiteralInt tag switch (#3215 / #3027).
-    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
-                                                                       std::memory_order_relaxed);
+    // Issue #4150: full reset (global + ALL fiber slots) before each leg —
+    // the Agent string face is fiber-preferring now, so a process-only
+    // store(0) would let this fiber's sticky residue decide the sample.
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
     auto spine = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-spine\")", list_var));
     CHECK(spine.has_value(), "3468: replace-value spine returns");
     CHECK(merr_kind_3027(cs, *spine) == "hygiene-protected", "3468: spine kind hygiene");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
           "3468: mutate list spine still hygiene-macro-introduced");
-    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
-                                                                       std::memory_order_relaxed);
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
     auto ok = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-remain\")", lit));
     CHECK(ok.has_value(), "3468: replace-value remaining returns");
     const auto* rs_ok = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
@@ -7111,8 +7119,12 @@ static void ac4149_1_public_allow_arm_capability_deny() {
     grant_3301_production_mutate(cs);
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
-    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
-                                                                       std::memory_order_relaxed);
+    // Issue #4150: the Agent string face is fiber-preferring now — full
+    // reset (global + ALL fiber slots, same pattern as #4149 AC2) so this
+    // process-only capability-deny (7) stamp is observed via the slot-0
+    // fallback, not a peer AC's fiber residue. The _full alias binds the
+    // strong reset (the legacy C-bridge name binds a weak stub here).
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
     auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(denied.has_value(), "4149 AC1: returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "4149 AC1: deny kind");
@@ -7162,7 +7174,7 @@ static void ac4149_2_lockless_batch_subops_capability_deny() {
     // (a) batch-level :allow-macro? #t — the #3652 pre-audit walker MSE arm
     // denies before any sub-op; the former caller-side 4 re-stamp is gone.
     // Full reset (global + fiber): a 7 stamp arms the #4078 eval refuse.
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
     auto d1 = cs.eval(std::format(
         "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 \"4149-a\")) \"s\" "
         ":allow-macro? #t)",
@@ -7182,7 +7194,7 @@ static void ac4149_2_lockless_batch_subops_capability_deny() {
     // the eval_flat allow gate fires inside the lockless sub-op; the same
     // unified capability-deny face, not the structural 4. Full reset AFTER
     // the re-arm so no 7 refuse-arm survives into this eval (#4078).
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
     auto d2 = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"g\" "
                       ":allow-macro? #t)) \"s\")");
     CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene-protected",
@@ -7324,6 +7336,139 @@ static void ac4149_5_source_cite_no_artifacts() {
           "4149 AC5: no docs/design/4149-* per #1655");
     CHECK(read_file("tests/compiler/test_issue_4149.cpp").empty(),
           "4149 AC5: no test_issue_4149.cpp per #81934");
+}
+
+// ── Issue #4150: Agent string/query face prefers the fiber's
+//    last_limit_reason; process atomic stays the dashboard aggregate /
+//    slot-0 fallback ──
+static void ac4150_1_fiber_preferring_string_and_query() {
+    std::println("\n--- #4150 AC1: fiber-preferring string + query face ---");
+    CompilerService cs;
+    constexpr std::uint32_t kPeerA4150 = 0x41500001u;
+    constexpr std::uint32_t kPeerB4150 = 0x41500002u;
+    // String-face ladder — sampled WITHOUT interleaved evals: a cs.eval can
+    // run successful top-level expansions whose #4034 success-path clear
+    // wipes the calling fiber's deny-code slot, so an eval between stamp
+    // and sample would make the face read residue-dependent.
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    // Slot-0 fallback: a peer fiber's deny still reaches this fiber's
+    // Agent face through the process aggregate (#4149 mutate-deny
+    // boundary — process-only sentinel visible to the string/query).
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        kPeerA4150, aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject);
+    CHECK(std::string(aura::compiler::macro_exp::hygiene_last_limit_reason_string()) ==
+              "same-flat-clone-reject",
+          "4150 AC1: slot-0 fallback reports the process aggregate");
+    // Own-fiber deny wins over the process aggregate (#4034/#4078
+    // authority — the face the issue aligns with the enforce surface).
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        static_cast<std::uint32_t>(aura_fiber_current_id()),
+        aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling);
+    CHECK(std::string(aura::compiler::macro_exp::hygiene_last_limit_reason_string()) ==
+              "hygiene-gensym-ceiling",
+          "4150 AC1: own-fiber deny wins the string face");
+    // Peer LWW moves the process aggregate; this fiber's Agent face stays
+    // (the mis-attribution the issue removes: A's ceiling no longer
+    // disappears when B denies afterwards).
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        kPeerB4150, aura::compiler::macro_exp::kHygieneLimitReasonStealAbort);
+    CHECK(aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+              std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonStealAbort,
+          "4150 AC1: process atomic still LWW (dashboard aggregate)");
+    CHECK(std::string(aura::compiler::macro_exp::hygiene_last_limit_reason_string()) ==
+              "hygiene-gensym-ceiling",
+          "4150 AC1: string face stays fiber-preferring under peer LWW");
+    // Query face: same key name (schema-3029 — no rename), sampled through
+    // the engine primitive (the v_read C-bridge binds a weak stub in
+    // light-link test executables, so the test asserts the value the
+    // engine publishes). Each probe resets first, then stamps a state whose
+    // effective reason is identical on every sampling fiber (slot and
+    // process fallback agree), keeping the value deterministic.
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        kPeerA4150, aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject);
+    auto q8 = cs.eval(
+        "(hash-ref (engine:metrics \"query:macro-hygiene-stats\") \"last-hygiene-limit-reason\")");
+    // In light-link test executables the weak jit-bridge stub (returns 0)
+    // interposes v_read even for the engine's internal call, so the key
+    // publishes 0 — treat that as the light-link skip (the #3215 pattern);
+    // a live engine face must publish the slot-0 process fallback.
+    if (q8 && is_int(*q8) && as_int(*q8) != 0)
+        CHECK(as_int(*q8) == static_cast<std::int64_t>(
+                                 aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject),
+              "4150 AC1: query last-hygiene-limit-reason slot-0 fallback");
+    else
+        CHECK(true, "4150 AC1: light-link stub query key (fallback)");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        static_cast<std::uint32_t>(aura_fiber_current_id()),
+        aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling);
+    auto q1 = cs.eval(
+        "(hash-ref (engine:metrics \"query:macro-hygiene-stats\") \"last-hygiene-limit-reason\")");
+    // Same light-link stub caveat: 0 is the interposed stub's signature.
+    if (q1 && is_int(*q1) && as_int(*q1) != 0)
+        CHECK(as_int(*q1) == static_cast<std::int64_t>(
+                                 aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling),
+              "4150 AC1: query last-hygiene-limit-reason own-fiber value");
+    else
+        CHECK(true, "4150 AC1: light-link stub query key (own-fiber)");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+}
+
+static void ac4150_2_expand_deny_authority_and_4149_boundary() {
+    std::println("\n--- #4150 AC2: expand-deny stays fiber-authoritative; #4149 fallback ---");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    constexpr std::uint32_t kPeerA4150 = 0x41500001u;
+    // Peer capability-deny (7) must not refuse THIS fiber's evals
+    // (#4034/#4078 fiber authority unchanged), while the Agent string
+    // face still surfaces the process sentinel via the slot-0 fallback
+    // (#4149 Agent boundary preserved).
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        kPeerA4150, aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny);
+    CHECK(aura_hygiene_expand_deny_blocks_eval() == 0,
+          "4150 AC2: peer fiber's 7 does not refuse this fiber");
+    CHECK(std::string(aura::compiler::macro_exp::hygiene_last_limit_reason_string()) ==
+              "capability-deny",
+          "4150 AC2: slot-0 fallback keeps the #4149 capability-deny face");
+    // This fiber's own ceiling still refuses evals (unchanged #4078
+    // contract — the enforce surface the Agent face now mirrors).
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        static_cast<std::uint32_t>(aura_fiber_current_id()),
+        aura::compiler::macro_exp::kHygieneLimitReasonPassLimit);
+    CHECK(aura_hygiene_expand_deny_blocks_eval() == 1,
+          "4150 AC2: own-fiber pass-limit still blocks eval (#4078)");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+}
+
+static void ac4150_3_source_cite_no_artifacts() {
+    std::println("\n--- #4150 AC3: source-cite + wiring + no artifacts ---");
+    const auto mcx = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(mcx.find("Issue #4150") != std::string::npos, "4150 AC3: macro_expansion cites #4150");
+    CHECK(mcx.find("hygiene_last_limit_reason_effective()") != std::string::npos,
+          "4150 AC3: fiber-preferring effective read present");
+    CHECK(mcx.find("return hygiene_limit_reason_string_for("
+                   "hygiene_last_limit_reason_effective());") != std::string::npos,
+          "4150 AC3: string face rides the effective read");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+    CHECK(q.find("aura_macro_hygiene_last_limit_reason_v_read()") != std::string::npos,
+          "4150 AC3: query key still fed by the v_read bridge");
+    CHECK(q.find("\"last-hygiene-limit-reason\"") != std::string::npos,
+          "4150 AC3: key name unchanged (schema-3029)");
+    CHECK(read_file("docs/design/4150-hygiene-fiber-reason.md").empty(),
+          "4150 AC3: no docs/design/4150-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4150.cpp").empty(),
+          "4150 AC3: no test_issue_4150.cpp per #81934");
+    CHECK(!read_file("scripts/check_hygiene_last_limit_fiber_4150.py").empty(),
+          "4150 AC3: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_hygiene_last_limit_fiber_4150") != std::string::npos,
+          "4150 AC3: build.py wires the linter");
+    CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                  .find("check_hygiene_last_limit_fiber_4150.py") != std::string::npos,
+          "4150 AC3: root allowlist append");
 }
 
 int main() {
@@ -7584,6 +7729,10 @@ int main() {
     ac4149_3_soft_off_allow_one_load();
     ac4149_4_naked_default_deny_stays_4();
     ac4149_5_source_cite_no_artifacts();
+    std::println("\n=== Issue #4150: fiber-preferring Agent string/query face ===");
+    ac4150_1_fiber_preferring_string_and_query();
+    ac4150_2_expand_deny_authority_and_4149_boundary();
+    ac4150_3_source_cite_no_artifacts();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

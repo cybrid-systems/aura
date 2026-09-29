@@ -45,7 +45,15 @@ def run_case(issue: int, expr: str, expect: str) -> tuple[bool, str]:
             text=True,
             timeout=TIMEOUT_S,
             cwd=str(ROOT),
-            env={**os.environ, "AURA_SANDBOX": os.environ.get("AURA_SANDBOX", "off")},
+            env={
+                **os.environ,
+                "AURA_SANDBOX": os.environ.get("AURA_SANDBOX", "off"),
+                # Issue #4150: stdlib oneshots verify values, not the pipeline
+                # face — default the soft oneshot spawn to the diagnostics
+                # face (build.py's own default) so gate-composed runs stay
+                # deterministic; an explicit caller value still wins.
+                "AURA_PIPELINE_STRICT": os.environ.get("AURA_PIPELINE_STRICT", "0"),
+            },
         )
     except subprocess.TimeoutExpired:
         return False, f"TIMEOUT>{TIMEOUT_S}s"
