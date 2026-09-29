@@ -272,7 +272,24 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 # Issue #3489: production pack deletes IRFunctionSoA::mark_block_dirty.
-target_compile_definitions(aura PRIVATE AURA_PRODUCTION_PACK=1)
+# Issue #4167: the production CMake face DEFAULTS to AURA_PRODUCTION_PACK.
+# Without the define, an NDEBUG binary compiles the #3501 OFF expansion:
+# every hot AURA_HOT_CONTRACT (value.ixx as_* / ir_soa.ixx view_at) pays a
+# relaxed hot_contract_harden_armed_cache load per call, and with defaults
+# inactive the predicate is NOT evaluated — the Quiet OOB ship-without-arm
+# window (#3866 Ready refuses it at runtime; the face default closes it at
+# configure time). With the define, the #3666/#3702 pack face compiles the
+# bounds predicate unconditionally (const-armed Harden, [[unlikely]] abort
+# only — no happy-path sampled RECORD, no armed-cache load). Soft/unit test
+# targets never receive the define (#3666 AC2 / #3313 AC2 runtime-cache
+# semantics kept). -DAURA_PRODUCTION_PACK=OFF is the explicit Soft-
+# production escape hatch; test_pack_pipeline_strict keeps its own
+# unconditional define as the pack-face mirror fixture (#3627).
+option(AURA_PRODUCTION_PACK
+       "Production face: compile hot contracts const-armed Harden (default ON, #4167)" ON)
+if(AURA_PRODUCTION_PACK)
+    target_compile_definitions(aura PRIVATE AURA_PRODUCTION_PACK=1)
+endif()
 
 # Issue #1967–#1976: per-source commercial/integration vertical flags
 # (avoids PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
