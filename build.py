@@ -15508,6 +15508,37 @@ def cmd_occurrence_recover_regate_3623_coverage():
     return 0
 
 
+def cmd_recover_solve_status_4170_coverage():
+    """Issue #4170: commit_readiness recover SOLVED still rejected by the
+    stale pre-recover solve_status snapshot (#3108 re-gate input):
+
+    - TypeChecker::try_occurrence_hard_face_full_solve_recover now stamps
+      last_delta_solve_status_ = SOLVED on the live commit TC when its full
+      solve reaches SOLVED, and commit_readiness re-samples the live status
+      ahead of every #3108 re-gate (step 2 / step 6 / 6c) via the
+      aura_typed_audit_recover_live_solve_status C ABI. Test override / no
+      live TC keep the snapshot (0xFF sentinel) so #3108's fail-closed
+      semantics and the #3623 re-gate rows are unchanged.
+    - With the stamp, recover true on the live path implies stamped SOLVED,
+      so the forced-false branch can no longer follow the recover-side
+      truncation clear (half-clean CS asymmetry closed).
+
+    Runtime ACs in tests/compiler/test_partial_cone_commit_gate.cpp
+    (ac4170_*). No docs/design/4170-*, no tests/**/test_issue_4170.cpp.
+    """
+    print(f"{B}=== recover solve-status re-sample (#4170) ==={N}")
+    script = ROOT / "scripts" / "check_recover_solve_status_4170.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("recover solve-status re-sample (#4170) contract rows failed")
+        return 1
+    ok("recover solve-status re-sample (#4170) clean")
+    return 0
+
+
 def cmd_type_export_face_3624_coverage():
     """Issue #3624: locality-budget SOLVED+pending must drop type_export
     authority until drain (#3307/#3237 residual):
@@ -24805,6 +24836,7 @@ def cmd_gate():
         or cmd_steal_identity_proof_3621_coverage()
         or cmd_type_dynamic_production_3622_coverage()
         or cmd_occurrence_recover_regate_3623_coverage()
+        or cmd_recover_solve_status_4170_coverage()
         or cmd_type_export_face_3624_coverage()
         or cmd_render_fast_audit_3625_coverage()
         or cmd_closure_calls_hotpath_3626_coverage()

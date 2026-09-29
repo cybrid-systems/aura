@@ -1047,6 +1047,135 @@ static aura::ast::NodeId find_literal_int_3686(aura::ast::FlatAST& flat, std::in
     return NULL_NODE;
 }
 
+// ── Issue #4170: recover SOLVED re-samples the stale pre-recover solve_status ──
+// Live commit TC path: seed the status a prior TIMEOUT delta solve would have
+// left, drive step 2 force-closure recover through the real C ABI (no test
+// override), and assert the legitimate recover is allowed. Pre-fix, the #3108
+// re-gate read the stale snapshot and hard-rejected (false reject); post-fix
+// the recover-side SOLVED stamp + post-recover re-sample see the truth.
+static void ac4170_1_live_recover_solved_allows() {
+    std::println("\n--- #4170 AC1: live commit TC recover SOLVED → allow (stale snapshot "
+                 "re-sampled) ---");
+    apply_production_audit_defaults();
+    aura_typed_audit_test_clear_recover_override();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_partial_cone_truncate_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define ac4170_live 1)\")").has_value(), "AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC1: eval-current");
+    // A clean typecheck-current alone does not materialize the commit TC —
+    // drive one real mutation (the ac3686 driver) so the boundary creates +
+    // binds it, then settle the CS with typecheck-current.
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "AC1: workspace flat");
+    const auto lit = ws ? find_literal_int_3686(*ws, 1) : aura::ast::NULL_NODE;
+    CHECK(lit != aura::ast::NULL_NODE, "AC1: literal node found");
+    CHECK(cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 2)))",
+                              static_cast<long long>(lit)))
+              .has_value(),
+          "AC1: mutation drives commit-TC boundary");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "AC1: typecheck-current settles CS");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    CHECK(aura_typed_audit_current_commit_type_checker() != nullptr,
+          "AC1: live commit TC bound via TLS");
+    // Stale-snapshot hazard seed: without the recover-side SOLVED stamp the
+    // post-recover re-sample reads TIMEOUT and this AC stays red.
+    aura_typed_audit_test_seed_commit_solve_status(2); // TIMEOUT
+    const auto rec_ok0 = typed_audit::g_cone_outside_goal_drop_recover_ok_total.load();
+    CommitReadinessInput in;
+    in.solve_status = 2; // TIMEOUT — stale pre-recover snapshot (#4170 hazard)
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true; // production hard face
+    in.cone_outside_goal_drop_face = true;
+    const auto cr = commit_readiness(in);
+    CHECK(cr.would_allow_commit, "AC1: live recover SOLVED allows (stale snapshot re-sampled)");
+    CHECK(cr.force_reason == "ok", "AC1: force_reason ok");
+    CHECK(!last_partial_cone_truncated(), "AC1: truncation face consumed by recover");
+    CHECK(typed_audit::g_cone_outside_goal_drop_recover_ok_total.load() > rec_ok0,
+          "AC1: recover-ok counter bumped");
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_partial_cone_truncate_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    apply_dev_audit_defaults();
+}
+
+// Negative: recover claims success (test override) while the snapshot is
+// CONFLICT — with a live commit TC bound (SOLVED default status). A naive
+// live re-sample would hand the re-gate 0 and flip this to allow; the
+// sentinel must keep the #3108 snapshot while the override owns the seam.
+static void ac4170_2_override_true_conflict_still_fails_closed() {
+    std::println("\n--- #4170 AC2: override recover true + live TC + CONFLICT snapshot → "
+                 "fail-closed ---");
+    apply_production_audit_defaults();
+    aura_typed_audit_test_clear_recover_override();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_partial_cone_truncate_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define ac4170_neg 1)\")").has_value(), "AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC2: eval-current");
+    auto* ws2 = cs.evaluator().workspace_flat();
+    CHECK(ws2 != nullptr, "AC2: workspace flat");
+    const auto lit2 = ws2 ? find_literal_int_3686(*ws2, 1) : aura::ast::NULL_NODE;
+    CHECK(lit2 != aura::ast::NULL_NODE, "AC2: literal node found");
+    CHECK(cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 2)))",
+                              static_cast<long long>(lit2)))
+              .has_value(),
+          "AC2: mutation drives commit-TC boundary");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "AC2: typecheck-current settles CS");
+    aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
+    aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                   nullptr);
+    const auto not_solved0 = typed_audit::g_occurrence_recover_not_solved_total.load();
+    CommitReadinessInput in;
+    in.solve_status = 1; // CONFLICT snapshot (#3108 hazard, live TC bound)
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "AC2: CONFLICT snapshot still hard-rejected");
+    CHECK(cr.force_reason == "cone_outside_goal_drop", "AC2: re-gate reject reason");
+    CHECK(cr.force_reason_code == 10, "AC2: code 10");
+    CHECK(typed_audit::g_occurrence_recover_not_solved_total.load() > not_solved0,
+          "AC2: #3108 not-solved counter bumped");
+    aura_typed_audit_test_clear_recover_override();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_partial_cone_truncate_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4170_3_source_and_seams() {
+    std::println("\n--- #4170 AC3: source-cite stamp + re-sample seams ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    const auto cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto stubs = read_file("src/compiler/test_concurrent_stubs.cpp");
+    CHECK(ixx.find("Issue #4170") != std::string::npos,
+          "AC3: recover stamps SOLVED on live TC (#4170 cite)");
+    CHECK(ixx.find("note_last_delta_solve_status_for_test") != std::string::npos,
+          "AC3: test seed setter present");
+    CHECK(h.find("aura_typed_audit_recover_live_solve_status") != std::string::npos,
+          "AC3: re-sample C ABI declared");
+    CHECK(h.find("kAuraTypedAuditSolveStatusUnknown = 0xFF") != std::string::npos,
+          "AC3: sentinel constant declared");
+    CHECK(h.find("aura_typed_audit_test_seed_commit_solve_status") != std::string::npos,
+          "AC3: seed C ABI declared");
+    CHECK(cpp.find("aura_typed_audit_recover_live_solve_status") != std::string::npos,
+          "AC3: re-sample implemented in boundary TU");
+    int sites = 0;
+    for (auto pos = h.find("aura_typed_audit_recover_live_solve_status()");
+         pos != std::string::npos;
+         pos = h.find("aura_typed_audit_recover_live_solve_status()", pos + 1))
+        ++sites;
+    CHECK(sites >= 4, "AC3: re-sample wired at all three recover sites (+decl)");
+    CHECK(stubs.find("aura_typed_audit_recover_live_solve_status") != std::string::npos,
+          "AC3: light-link stub present");
+    CHECK(read_file("tests/compiler/test_issue_4170.cpp").empty(),
+          "AC3: no test_issue_4170.cpp (#81934)");
+}
+
 static void ac3686_source_and_gate() {
     std::println("\n--- #3686 AC2/AC3/AC4/AC5: source-cite union + Soft/Off + cap + no query ---");
     const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
@@ -1187,6 +1316,9 @@ int run_test_partial_cone_commit_gate() {
     ac3623_2_recover_fail_rejects();
     ac3623_3_conflict_snapshot_fail_closed();
     ac3623_4_soft_observe_allow();
+    ac4170_1_live_recover_solved_allows();
+    ac4170_2_override_true_conflict_still_fails_closed();
+    ac4170_3_source_and_seams();
     {
         std::println("\n--- #3440: persist-reject restore does not invent a cone/query face ---");
         const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
