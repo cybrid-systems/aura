@@ -5,6 +5,7 @@ Verifies Soft oneshot (`aura -e`) binds Soft std list/string/hash helpers
 without aura-build soft_*.aura host fills. Prefer hard timeouts; no
 task-specific gold overrides.
 """
+
 from __future__ import annotations
 
 import os
