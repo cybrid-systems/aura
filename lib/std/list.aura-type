@@ -21,3 +21,5 @@ any: Any Any -> Any
 all: Any Any -> Any
 make-list: Any Any -> Any
 list-tail: Any Any -> Any
+find: Any Any -> Any
+count: Any Any -> Any
