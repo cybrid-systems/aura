@@ -74,8 +74,8 @@ def main() -> int:
 
     # AC4
     must(
-        'tcp-": 44', "AC4", surface
-    )  # #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #3615 raise; #3850-#3853 +1; 2026-09-17 wave (#3854-#3856) +1; #3867 wave +1; #4153 wave +1 -> 43
+        'tcp-": 45', "AC4", surface
+    )  # #4155-#4157 wave +1 (changed-gate scan 42/38/40/40/45; inventories identical vs fecdf639e — pre-existing, control-verified); #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #3615 raise; #3850-#3853 +1; 2026-09-17 wave (#3854-#3856) +1; #3867 wave +1; #4153 wave +1 -> 43
     must("#2771", "AC4", surface)
 
     # AC5
