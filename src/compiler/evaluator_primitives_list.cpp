@@ -542,12 +542,19 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_primitive_error(string_heap, error_values, "take: too few args",
                                             counter);
             }
-            if (!is_int(a[0]) || as_int(a[0]) < 0) {
+            // Issue #4177: R7RS/SRFI-1 argument order — (take lst k) with the
+            // list first. The previous (take k lst) contract made every
+            // R7RS-order call fall into this count guard and return an opaque
+            // primitive-error value (display -> <unknown>, pair? -> #f),
+            // leaving the native binding unusable for list prefix/suffix.
+            // Count guard stays ahead of the list guard so (take (list 1) "x")
+            // keeps signalling the bad-count arm.
+            if (!is_int(a[1]) || as_int(a[1]) < 0) {
                 return make_primitive_error(string_heap, error_values,
                                             "take: count must be a non-negative integer", counter);
             }
-            auto n = static_cast<std::size_t>(as_int(a[0]));
-            auto v = a[1];
+            auto n = static_cast<std::size_t>(as_int(a[1]));
+            auto v = a[0];
             if (n == 0 || is_end_of_list(v))
                 return make_void();
             if (!is_pair(v)) {
@@ -603,7 +610,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             return final;
         },
-        pure_general(2, "(int list) -> list", "Prefix of n elements from a list."));
+        pure_general(2, "(list int) -> list", "Prefix of n elements from a list."));
     register_prim(
         add, ev, "drop",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -612,12 +619,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_primitive_error(string_heap, error_values, "drop: too few args",
                                             counter);
             }
-            if (!is_int(a[0]) || as_int(a[0]) < 0) {
+            // Issue #4177: R7RS/SRFI-1 argument order — (drop lst k) with the
+            // list first; see the take note above for the opaque-face root
+            // cause. Count guard stays ahead of the list guard.
+            if (!is_int(a[1]) || as_int(a[1]) < 0) {
                 return make_primitive_error(string_heap, error_values,
                                             "drop: count must be a non-negative integer", counter);
             }
-            auto n = static_cast<std::size_t>(as_int(a[0]));
-            auto v = a[1];
+            auto n = static_cast<std::size_t>(as_int(a[1]));
+            auto v = a[0];
             if (n == 0)
                 return v;
             if (is_end_of_list(v))
@@ -641,7 +651,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             return v;
         },
-        pure_general(2, "(int list) -> list", "List after dropping n elements."));
+        pure_general(2, "(list int) -> list", "List after dropping n elements."));
     register_prim(
         add, ev, "foldl",
         [&pairs, apply_binary, &ev](std::span<const EvalValue> a) {
