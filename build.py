@@ -9442,6 +9442,29 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4156 AdaptiveThrPolicy dual-track linter failed — run python3 scripts/check_adaptive_thr_4156.py")
         return r
+    # Issue #4157 (Shape-storm flip × stale persist): #3986's consult
+    # branch kept Shape prefer-partial on ANY nonempty residual CastOp
+    # persist — but nonempty is not proof. Persist noted before the
+    # latest densify/store holds NodeIds the rebuilt source_to_ir_map
+    # can mis-attribute (the #4155 false-positive shape; #3618
+    # fail-closes an attribution FAILURE, not a stale-alias SUCCESS).
+    # The consult now fail-closes unless the persist is FRESH (write
+    # epoch == content epoch, stamped by note_residual_castop_sites and
+    # bumped by densify #4155 + both store sites); the peel's #3618
+    # same-define attribution stays the final proof. Soft/Off keep
+    # Shape widen (zero persist consult). Runtime door:
+    # test_shape_storm_partial_relower.cpp
+    # (ac4157_shape_flip_stale_persist_fails_closed).
+    shapeflip4157_script = ROOT / "scripts" / "check_shape_flip_persist_fresh_4157.py"
+    if not shapeflip4157_script.exists():
+        fail(f"missing {shapeflip4157_script}")
+        return 1
+    r = run([sys.executable, str(shapeflip4157_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4157 Shape-flip persist-freshness linter failed — run python3 scripts/check_shape_flip_persist_fresh_4157.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

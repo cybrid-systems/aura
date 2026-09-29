@@ -605,6 +605,28 @@ inline thread_local std::vector<NodeId> t_residual_castop_blocks{};
 // Not set by remirror_persisted_residual_castops (post-infer keep-alive).
 inline thread_local bool t_residual_castop_undermark_pending = false;
 
+// Issue #4157: persist freshness epoch. A densify (#4155) or a
+// store_define_v2 / per-fn partial store rebuilds the AST/IR content —
+// persist NodeIds captured before the latest densify/store can alias
+// recycled Ids in a rebuilt source_to_ir_map (the #4155 false-positive
+// shape: #3618 fail-closes an attribution FAILURE, not a stale-alias
+// SUCCESS). note_residual_castop_sites stamps the current content epoch
+// on every non-empty re-observe; the #3986 Shape-flip fail-closed in
+// service keeps Shape prefer-partial only when the persist is FRESH
+// (write epoch == content epoch). Production/Full callers only — Soft /
+// Off never consult the flip gate.
+inline constexpr int kResidualCastopFreshPersistIssue = 4157;
+inline thread_local std::uint64_t t_residual_castop_content_epoch{0};
+inline thread_local std::uint64_t t_residual_castop_write_epoch{0};
+
+inline void bump_residual_castop_persist_content_epoch() noexcept {
+    ++t_residual_castop_content_epoch;
+}
+
+[[nodiscard]] inline bool residual_castop_persist_fresh() noexcept {
+    return t_residual_castop_write_epoch == t_residual_castop_content_epoch;
+}
+
 [[nodiscard]] inline bool residual_castop_persist_active() noexcept {
     using aura::compiler::typed_audit::AuditStrategy;
     using aura::compiler::typed_audit::get_strategy;
@@ -632,12 +654,18 @@ inline void note_residual_castop_sites(std::span<const NodeId> ast,
         note_residual_id(t_residual_castop_ast, id);
     for (NodeId id : blocks)
         note_residual_id(t_residual_castop_blocks, id);
+    // #4157: re-observing live sites (even all-duplicates) re-proves
+    // freshness — stamp the current content epoch.
+    t_residual_castop_write_epoch = t_residual_castop_content_epoch;
 }
 
 inline void reset_residual_castop_persist_for_test() noexcept {
     t_residual_castop_ast.clear();
     t_residual_castop_blocks.clear();
     t_residual_castop_undermark_pending = false;
+    // #4157: re-zero the freshness epochs so members start hermetic.
+    t_residual_castop_content_epoch = 0;
+    t_residual_castop_write_epoch = 0;
 }
 
 [[nodiscard]] inline std::size_t residual_castop_persist_size() noexcept {
@@ -1000,6 +1028,10 @@ inline void reset_residual_castop_persist_after_densify() noexcept {
     t_residual_castop_ast.clear();
     t_residual_castop_blocks.clear();
     bump_dead_coercion_decision_invalidate();
+    // #4157: the densify is itself a content epoch — a persist write
+    // stamped before it must not read as fresh for the next Shape-flip
+    // consult.
+    bump_residual_castop_persist_content_epoch();
 }
 
 // Sync multi-function block dirty matrix [func][block] into DirtySet.
