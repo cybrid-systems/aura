@@ -1985,20 +1985,19 @@ int main(int argc, char* argv[]) {
         }
         std::string content((std::istreambuf_iterator<char>(f)), {});
         aura::compiler::CompilerService cs;
-                // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file.
+        // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file.
         {
-            static constexpr const char* kSoftOneshotStdPrelude =
-                "(require \"std/list\" all:)"
-                "(require \"std/string\" all:)"
-                "(require \"std/hash\" all:)"
-                "(require \"std/math\" all:)";
+            static constexpr const char* kSoftOneshotStdPrelude = "(require \"std/list\" all:)"
+                                                                  "(require \"std/string\" all:)"
+                                                                  "(require \"std/hash\" all:)"
+                                                                  "(require \"std/math\" all:)";
             if (auto pre = cs.eval(kSoftOneshotStdPrelude); !pre) {
                 std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
                              pre.error().format_with_source(kSoftOneshotStdPrelude));
                 return 1;
             }
         }
-auto result = cs.eval(content);
+        auto result = cs.eval(content);
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().format());
             return 1;
@@ -3059,11 +3058,10 @@ auto result = cs.eval(content);
     // std semantics. Prefer Soft std auto-load over aura-build soft_*.aura
     // host fills (three-layer: Soft runtime/std, not gold host workarounds).
     {
-        static constexpr const char* kSoftOneshotStdPrelude =
-            "(require \"std/list\" all:)"
-            "(require \"std/string\" all:)"
-            "(require \"std/hash\" all:)"
-            "(require \"std/math\" all:)";
+        static constexpr const char* kSoftOneshotStdPrelude = "(require \"std/list\" all:)"
+                                                              "(require \"std/string\" all:)"
+                                                              "(require \"std/hash\" all:)"
+                                                              "(require \"std/math\" all:)";
         if (auto pre = cs.eval(kSoftOneshotStdPrelude); !pre) {
             std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
                          pre.error().format_with_source(kSoftOneshotStdPrelude));
