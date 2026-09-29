@@ -9945,6 +9945,20 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
     // cannot re-process the same batch (and cannot UAF the vector).
     std::vector<std::string> batch;
     batch.swap(pending_cascade_bfs_invalidate_);
+    // Snapshot each root's dependents BEFORE the hard pass: invalidate_
+    // function tears down the drained root's dep_graph_ row, so a post-pass
+    // get_dependents_fn_ lookup reads the post-teardown (empty) state and
+    // the re-stamp below silently no-ops — edsl-ir-cache:cascade-after-
+    // mutate dependents were left clean after every precise rebind.
+    std::vector<std::pair<std::string, std::vector<std::string>>> batch_deps;
+    if (get_dependents_fn_) {
+        batch_deps.reserve(batch.size());
+        for (const auto& name : batch) {
+            if (name.empty())
+                continue;
+            batch_deps.emplace_back(name, get_dependents_fn_(name));
+        }
+    }
     std::uint64_t drained = 0;
     for (const auto& name : batch) {
         if (name.empty())
@@ -9959,15 +9973,14 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
     // hard invalidate_function re-lowers root + dependents and clears
     // entry.dirty. Soft rebind still needs dependents marked dirty so the
     // next eval-current knows to re-lower callers of a mutated callee.
-    // Re-stamp callers only (not the drained roots) after the hard pass.
-    if (drained > 0 && mark_define_dirty_fn_ && get_dependents_fn_) {
+    // Re-stamp callers only (not the drained roots) after the hard pass,
+    // from the pre-teardown snapshot (post-pass lookups read empty).
+    if (drained > 0 && mark_define_dirty_fn_) {
         std::unordered_set<std::string> restamped;
-        restamped.reserve(batch.size() * 2);
-        for (const auto& name : batch) {
-            if (name.empty())
-                continue;
-            for (const auto& dep : get_dependents_fn_(name)) {
-                if (dep.empty() || dep == name)
+        restamped.reserve(batch_deps.size() * 2);
+        for (const auto& [root, deps] : batch_deps) {
+            for (const auto& dep : deps) {
+                if (dep.empty() || dep == root)
                     continue;
                 // Skip if this dep was itself hard-invalidated as a root
                 // in the same batch (its IR is already fresh).

@@ -2862,7 +2862,18 @@ public:
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError ||
                     d.kind == aura::diag::ErrorKind::Note) {
-                    std::println(std::cerr, "type: {}", d.format());
+                    // Non-strict face: eval continues on the dynamic /
+                    // tree-walker path, so these diagnostics are
+                    // informational only — printing them leaked into
+                    // stderr-merging harnesses (tests/python/run-tests.sh
+                    // run_test compares 2>&1 output exactly) and broke the
+                    // pinned error:car / error:car-nonpair /
+                    // error:cdr-nonpair contracts, where a try-caught
+                    // dynamic type error must produce clean output.
+                    // Strict face keeps the detailed print: the abort
+                    // below makes it the primary error surface.
+                    if (strict_mode_)
+                        std::println(std::cerr, "type: {}", d.format());
                     if (d.kind == aura::diag::ErrorKind::TypeError)
                         has_type_error = true;
                 }
