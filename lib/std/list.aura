@@ -11,7 +11,7 @@
 (export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
         partition sort range sum product last flatten intersperse
         intersperse-iterative any all
-        make-list list-tail)
+        make-list list-tail find count)
 
 ; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
 (define (foldl f init lst)
@@ -75,7 +75,7 @@
     lst
     (let* ((n (length lst))
            (mid (quotient n 2))
-           (left (take mid lst))
+           (left (take lst mid))
            (right (skip mid lst)))
       (merge (sort-merge left) (sort-merge right)))))
 
@@ -96,7 +96,9 @@
       (reverse acc)
       (loop (+ i 1) (cons i acc)))))
 
-(define (take n lst)
+; take: R7RS / SRFI-1 (lst k) — align with native #4177; Soft oneshot
+; previously shadowed native with count-first (take n lst) (#4221).
+(define (take lst n)
   (let loop ((k n) (xs lst) (acc (list)))
     (if (or (= k 0) (null? xs))
       (reverse acc)
@@ -167,3 +169,20 @@
 ; R7RS list-tail ≡ skip with (lst n) arg order (#4194). Soft skip is (skip n lst).
 (define (list-tail lst n)
   (skip n lst))
+
+; SRFI-1 find — Soft oneshot gap (#4220). Soft empty convention: () when
+; not found (not #f). Iterative O(1) stack.
+(define (find pred lst)
+  (let loop ((xs lst))
+    (if (null? xs)
+      (list)
+      (if (pred (car xs))
+        (car xs)
+        (loop (cdr xs))))))
+
+; SRFI-1 count — Soft oneshot gap (#4222). Iterative O(1) stack.
+(define (count pred lst)
+  (let loop ((xs lst) (n 0))
+    (if (null? xs)
+      n
+      (loop (cdr xs) (if (pred (car xs)) (+ n 1) n)))))
