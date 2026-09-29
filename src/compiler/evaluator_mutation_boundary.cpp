@@ -2857,9 +2857,32 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         }
         // Soft path (Off / Soft sandbox): fall through (metric-only).
     }
+    // Issue #4158: edge-free quarantine refuse — placed BEFORE the #2701
+    // budget gate so the quarantine face names the specific starvation
+    // (AdmissionRejected: edge-free-hold-unsupported) instead of the generic
+    // budget reason, and the already-quarantined holder is not re-degraded
+    // by the #2720 holder-degrade path. Under production multi-worker latch,
+    // a no-edge holder past the #3859 quarantine SLO kept workspace_mtx_
+    // past the 2×SLO inbody window while one holder spun; fail closed while
+    // the face is live (quarantine fired AND a no-edge hold is still live).
+    // Live-scoped: holder exit drops held → no-edge probe → 0 → refuse
+    // disarms. Soft / unlatched: latch probe returns 0 → never fires
+    // (zero behavioural change). Order becomes: #2587 mailbox-hold
+    // -starvation → #4158 edge-free quarantine → #2701 budget →
+    // #2630/#2660 security-schedule.
+    if (aura::serve::aura_runtime_multi_worker_production_latched() != 0 &&
+        hold_budget_no_edge_quarantine_total_v_read() != 0 &&
+        aura::serve::aura_mutation_hold_no_edge_still_held() != 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: edge-free-hold-unsupported")));
+    }
     // Issue #2701: Mutation hold-budget timeout → force degrade / reject
-    // new mutate admit. Order: #2587 mailbox-hold-starvation → #2701
-    // budget → #2630/#2660 security-schedule. Budget is a fast atomic
+    // new mutate admit. Order: #2587 mailbox-hold-starvation → #4158
+    // edge-free quarantine → #2701 budget → #2630/#2660 security-schedule.
+    // Budget is a fast atomic
     // read + compare; security-schedule is the last line of defense
     // (multiple live signals). Putting budget BEFORE schedule means
     // over-budget requests never reach the schedule evaluation.
@@ -3269,9 +3292,24 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
         }
         // Soft path: fall through.
     }
+    // Issue #4158: edge-free quarantine refuse — same predicate + ordering
+    // rationale as try_acquire above (#2587 mailbox-hold-starvation → #4158
+    // edge-free quarantine → #2701 budget): the quarantine face names the
+    // specific starvation instead of the generic budget reason. Soft /
+    // unlatched: never fires.
+    if (aura::serve::aura_runtime_multi_worker_production_latched() != 0 &&
+        hold_budget_no_edge_quarantine_total_v_read() != 0 &&
+        aura::serve::aura_mutation_hold_no_edge_still_held() != 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: edge-free-hold-unsupported")));
+    }
     // Issue #2701: Mutation hold-budget timeout → force degrade / reject
     // new mutate admit. Same order as try_acquire: #2587 mailbox-hold
-    // -starvation → #2701 budget → #2630/#2660 security-schedule.
+    // -starvation → #4158 edge-free quarantine → #2701 budget →
+    // #2630/#2660 security-schedule.
     {
         const auto check = mutation_hold_budget_check();
         if (check.over_budget) {

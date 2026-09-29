@@ -553,6 +553,29 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
         if (now_ns >= first_ns && (now_ns - first_ns) >= quarantine_ns &&
             g_hold_budget_no_edge_quarantine_latched.exchange(1, std::memory_order_acq_rel) == 0) {
             g_hold_budget_no_edge_quarantine_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #4158: P0 edge-free starvation — quarantine age means the
+            // holder kept workspace_mtx_ past 4x the inbody window bound with
+            // no cooperative / JIT / eval_flat / aura_jit_poll_hold_budget_
+            // safepoint edge. The #3764/#3826 busy-path peer dispose rarely
+            // fires under Agent load (every worker sits inside its own body),
+            // so the quarantine was open-ended: join waited, sticky stayed,
+            // starve/GC/mailbox never progressed. Bound it from THIS poll
+            // (the mailbox SLO poll face — multi_fiber_mailbox.h calls
+            // aura_hold_budget_poll_inbody_window under backpressure):
+            // foreign holder -> dispose_no_edge_holder (Running ->
+            // mark_reclaimed so join returns Reclaimed; else Cancel+Done) +
+            // arm the residual sticky via the SSOT reader so new admits deny
+            // with the structured edge-free-hold-unsupported reason
+            // (evaluator_mutation_boundary.cpp). Foreign thread NEVER unlocks
+            // the unique_lock (#4032/#3826/#3859 contract); same-fiber needs
+            // nothing here — aura_evaluator_force_release_outermost_holder
+            // already ran above with the dual-restore + unlock arm.
+            if (auto* cur = g_current_fiber; !(cur && cur->id() == fid)) {
+                (void)steal_safety_production_residual_zero_v_read();
+                std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+                if (Fiber* f = find_fiber_by_id_locked_held(fid))
+                    (void)dispose_no_edge_holder(f);
+            }
         }
     }
     return 1;
