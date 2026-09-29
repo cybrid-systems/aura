@@ -13,9 +13,13 @@
 //   AC7: #1632 lineage wire flags still present
 //   Issue #3832: TLS apply_closure cache — hot path skips closures_mtx_;
 //                tombstone/densify-stale refuse; contended microbench
+//   Issue #4169: seq-stable TLS hits survive densify window_seq bumps
+//                (re-stamp, no drop) — no shard mtx miss storm under
+//                densify publish churn; epoch-owned content drop kept
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "core/moving_densify_health.hh"
 
 #include <array>
 #include <cstdint>
@@ -312,7 +316,97 @@ static void ac3832_tombstone_and_source() {
     CHECK(flat.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
           "3832 AC2: densify-stale hard-refuse retained");
     CHECK(flat.find("g_last_window_seq") != std::string::npos,
-          "3832: densify window_seq invalidates TLS");
+          "3832/4169: densify window_seq keys the TLS stamp (bump re-stamps, no drop)");
+}
+
+// ── #4169: apply_closure TLS survives densify window_seq churn (P1) ──
+// Pre-#4169 every publish dropped all slots (exact seq key) → the next
+// apply per fiber took the closures-shard shared_lock + refuse consult —
+// a multi-fiber miss storm under densify windows. The epoch owns content
+// invalidation; the publish now only re-stamps the resident slot.
+static void ac4169_seq_stable_survive() {
+    std::println("\n--- #4169 AC1/AC2/AC3: seq-stable TLS hits survive publish storm ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto r = cs.eval("(lambda (x) (+ x 1))");
+    CHECK(r && is_closure(*r), "4169: alloc lambda");
+    const auto cid = as_closure_id(*r);
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+
+    // Warm TLS (first apply may mtx-lookup + store).
+    (void)ev.apply_closure(cid, args);
+
+    const auto hits0 = ev.apply_closure_tls_hit_total();
+    const auto mtx0 = ev.apply_closure_mtx_lookup_total();
+    const auto consult0 =
+        aura::core::moving_densify_health::g_apply_densify_window_consult_total.load(
+            std::memory_order_relaxed);
+
+    // Densify publish storm: 8 window publishes bump g_last_window_seq
+    // without touching the closure map (apply epoch stays). Pre-#4169 each
+    // bump flushed TLS → one shard shared_lock per fiber per bump.
+    constexpr int kWindows = 8;
+    constexpr int kPerWindow = 50;
+    for (int w = 0; w < kWindows; ++w) {
+        aura::core::moving_densify_health::publish_last_moving_densify_window(false, true, false, 0,
+                                                                              0, 0);
+        for (int i = 0; i < kPerWindow; ++i)
+            (void)ev.apply_closure(cid, args);
+    }
+
+    const auto hits1 = ev.apply_closure_tls_hit_total();
+    const auto mtx1 = ev.apply_closure_mtx_lookup_total();
+    const auto consult1 =
+        aura::core::moving_densify_health::g_apply_densify_window_consult_total.load(
+            std::memory_order_relaxed);
+    CHECK(hits1 >= hits0 + static_cast<std::uint64_t>(kWindows * kPerWindow - kWindows),
+          "4169 AC1: seq-stable TLS hits survive the densify publish storm");
+    CHECK(mtx1 == mtx0, "4169 AC1: no closures-shard mtx miss storm across seq bumps");
+    CHECK(consult1 == consult0,
+          "4169 AC2: g_apply_densify_window_consult_total bounded (Soft 0; #4006 seq-skip arm)");
+
+    // Content invalidation is epoch-owned and still fires (#3832 face kept):
+    // bump epoch → next apply takes the shard shared_lock again.
+    const auto mtx2 = ev.apply_closure_mtx_lookup_total();
+    ev.bump_closures_apply_epoch_for_test();
+    (void)ev.apply_closure(cid, args);
+    CHECK(ev.apply_closure_mtx_lookup_total() > mtx2,
+          "4169 AC3: epoch bump still forces mtx refill (content drop preserved)");
+    // Result still correct after the refill.
+    auto got = ev.apply_closure(cid, args);
+    CHECK(got && is_int(*got) && as_int(*got) == 2, "4169 AC3: post-refill apply correct");
+}
+
+static void ac4169_source_cite() {
+    std::println("\n--- #4169 AC4/AC5: seq-survive stamp + correctness nets retained ---");
+    const auto flat = [&] {
+        for (const char* p :
+             {"src/compiler/evaluator_eval_flat.cpp", "../src/compiler/evaluator_eval_flat.cpp",
+              "../../src/compiler/evaluator_eval_flat.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    }();
+    CHECK(flat.find("kApplyClosureTlsSeqSurviveIssue = 4169") != std::string::npos,
+          "4169: seq-survive stamp in eval_flat");
+    CHECK(flat.find("Issue #4169") != std::string::npos, "4169: eval_flat cites the issue");
+    CHECK(flat.find("s.densify_window_seq = dseq;") != std::string::npos,
+          "4169: resident slot re-stamped to the published seq (flush TLS only)");
+    CHECK(flat.find("if (s.apply_epoch != epoch || s.densify_window_seq != dseq)") ==
+              std::string::npos,
+          "4169: seq mismatch no longer drops the TLS slot");
+    CHECK(flat.find("bind_temporary_moving_live_ptr(cl_copy.flat") != std::string::npos,
+          "4169: #4066/#4124 remap bind net retained for densify-old copies");
+    CHECK(flat.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "4169: #3421 densify refuse consult retained on the copy");
+    CHECK(flat.find("densify_refuse_seq_skip") != std::string::npos,
+          "4169: #4006 seq-skip consult arm retained (storm consults bounded)");
+    CHECK(flat.find("closure_apply_use_site_ok") != std::string::npos,
+          "4169: tombstone use-site check still runs on the cached copy");
 }
 
 } // namespace
@@ -343,7 +437,13 @@ static void ac3867_shard_source_cite() {
           "3867: no docs/design/3867-* per #1655");
 }
 
-int main() {
+// Issue #4169: wired into test_ir_closure_jit_misc_batch — the wave-8
+// (#1978) rename dropped this file's target wiring (no add_executable
+// member line anywhere in CMakeLists.txt), so its #1660/#3832/#3867
+// runtime ACs were inventory-tracked but never executed. Batch members
+// expose run_<stem>(); the standalone main stays behind
+// #ifndef AURA_ISSUE_BATCH_MEMBER.
+int run_test_apply_closure_envframe_soa() {
     std::println("=== Issue #1660: apply_closure + EnvFrame SoA unified stale ===");
     ac1_unified_helper();
     ac2_envframe_soa();
@@ -355,6 +455,14 @@ int main() {
     ac3832_tls_cache_happy_path();
     ac3867_shard_source_cite();
     ac3832_tombstone_and_source();
+    ac4169_seq_stable_survive();
+    ac4169_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_apply_closure_envframe_soa();
+}
+#endif

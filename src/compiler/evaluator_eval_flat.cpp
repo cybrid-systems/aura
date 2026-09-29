@@ -679,10 +679,17 @@ bool Evaluator::closure_apply_use_site_ok(const Closure& cl) noexcept {
 // Issue #3832: epoch-local TLS cache of last-N Closure copies for the
 // apply_closure happy path. Multi-fiber high-rate apply skips the
 // process-wide closures_mtx_ shared_lock on hit. Invalidated when
-// closures_apply_epoch_ bumps (unique-write / erase) or densify
-// publishes a new g_last_window_seq. Tombstone + densify-stale refuse
+// closures_apply_epoch_ bumps (unique-write / erase); a densify publish
+// re-stamps the resident slot's window_seq instead of dropping it
+// (#4169 seq-stable hits survive). Tombstone + densify-stale refuse
 // still run on the copied Closure.
 inline constexpr int kApplyClosureTlsCacheIssue = 3832;
+// Issue #4169: a TLS slot survives a densify g_last_window_seq bump
+// (re-stamp, no drop) — the closures-shard shared_lock is taken only on
+// a genuine content miss (epoch mismatch / empty slot), so Moving
+// publishes under densify windows no longer amplify multi-fiber apply
+// with a shard shared_lock + densify refuse-consult storm.
+inline constexpr int kApplyClosureTlsSeqSurviveIssue = 4169;
 inline constexpr std::size_t kApplyClosureTlsCacheSlots = 8;
 
 struct ApplyClosureTlsSlot {
@@ -710,6 +717,17 @@ static std::uint64_t densify_window_seq_relaxed() noexcept {
 
 // Returns true on usable cache hit (cl_out filled). tombstoned_out set when
 // a matching slot fails use-site OK (treated as refuse; slot dropped).
+// Issue #4169: a densify window_seq bump no longer drops the slot. The
+// epoch owns content validity (every shard-map unique-write / erase bumps
+// closures_apply_epoch_), the #4066/#4124 bind_temporary_moving_live_ptr
+// step below rewrites densify-old flat/pool through last_object_remap_ on
+// the copied Closure hit or miss, and the #3421/#4006 refuse consult still
+// runs downstream on cl_copy. Exact g_last_window_seq slot keying turned
+// every Moving publish under densify windows into a TLS flush →
+// closures-shard shared_lock miss storm on hot ClosureIds (multi-fiber
+// apply amplification). Flush TLS only: re-stamp the surviving slot to the
+// published seq ("seq-stable hits survive"); no new scheduler, no second
+// densify model.
 static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& cl_out,
                                          bool& tombstoned_out) {
     tombstoned_out = false;
@@ -722,10 +740,16 @@ static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& 
             continue;
         if (s.instance_id != iid || s.cid != cid)
             continue;
-        if (s.apply_epoch != epoch || s.densify_window_seq != dseq) {
+        if (s.apply_epoch != epoch) { // #3832: unique-write / erase drop (content).
             s.occupied = false;
             continue;
         }
+        // Issue #4169 (kApplyClosureTlsSeqSurviveIssue): seq bump re-stamps
+        // the resident slot instead of dropping it — densify window churn
+        // keeps the TLS hit path lock-free; the shard mtx miss storm is
+        // gone. The stamp stays the SSOT window_seq snapshot for
+        // observability.
+        s.densify_window_seq = dseq;
         if (!Evaluator::closure_apply_use_site_ok(s.cl)) {
             s.occupied = false;
             tombstoned_out = true;

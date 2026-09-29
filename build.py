@@ -9744,6 +9744,25 @@ def cmd_lint():
             "Issue #4168 Soft dirty/batch-only pretend-amortized honesty linter failed — run python3 scripts/check_ir_dirty_soft_pretend_amortized_4168.py"
         )
         return r
+    # Issue #4169 (P1: apply_closure closures-shard shared_lock on TLS miss
+    # amplified multi-fiber apply under densify windows): the #3832 TLS slot
+    # drops only on closures_apply_epoch_ content invalidation; a densify
+    # g_last_window_seq bump re-stamps the resident slot instead of dropping
+    # it (seq-stable hits survive — flush TLS only). #4066/#4124 remap bind,
+    # #3021 tombstone use-site check, and the #3421/#4006 refuse consult
+    # (seq-skip) are unchanged on the copied Closure. No new scheduler, no
+    # second densify model. Runtime door: test_apply_closure_envframe_soa.cpp
+    # (ac4169_seq_stable_survive + ac4169_source_cite).
+    acts4169_script = ROOT / "scripts" / "check_apply_closure_tls_seq_4169.py"
+    if not acts4169_script.exists():
+        fail(f"missing {acts4169_script}")
+        return 1
+    r = run([sys.executable, str(acts4169_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4169 apply_closure TLS seq-survive linter failed — run python3 scripts/check_apply_closure_tls_seq_4169.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

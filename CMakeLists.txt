@@ -3655,6 +3655,7 @@ endif()
 add_executable(test_ir_closure_jit_misc_batch
     tests/compiler/test_ir_closure_jit_misc_batch.cpp
     tests/compiler/test_anonymous_residual_stable_id_policy.cpp
+    tests/compiler/test_apply_closure_envframe_soa.cpp
     tests/compiler/test_aura_jit_unused_fn_lock.cpp
     tests/compiler/test_closure_call_must_deopt_toctou.cpp
     tests/compiler/test_comprehensive_live_closure_expire.cpp
