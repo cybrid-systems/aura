@@ -199,3 +199,4 @@ check_residual_force_rearm_4147.py
 check_jit_drop_must_deopt_4148.py
 check_hygiene_limit_stamp_4149.py
 check_serve_async_join_wake_4176.py
+check_oneshot_stdlib_4178.py

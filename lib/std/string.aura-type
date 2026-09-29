@@ -16,3 +16,11 @@ string->chars: Any -> Any
 chars->string: Any -> String
 string-take: Any Any -> String
 string-drop: Any Any -> String
+string-pad: Any Any -> Any
+starts-with?: Any Any -> Bool
+ends-with?: Any Any -> Bool
+contains?: Any Any -> Any
+string-starts-with: Any Any -> Bool
+string-ends-with: Any Any -> Bool
+string-starts-with?: Any Any -> Bool
+string-ends-with?: Any Any -> Bool

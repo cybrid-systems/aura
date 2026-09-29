@@ -7,3 +7,4 @@ hash->list: Any -> Any
 alist->hash: Any -> Any
 hash-merge: Any Any -> Any
 frequencies: Any -> Any
+make-hash: -> Any
