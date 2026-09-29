@@ -25,7 +25,7 @@
   factorial expt nCr nPr
 
   ; Statistics
-  sum product range variance stddev percentile normalize)
+  sum product extent variance stddev percentile normalize)
 
 (require std/list)
 
@@ -191,7 +191,9 @@
 (define (stddev lst)
   (sqrt (variance lst)))
 
-(define (range lst)
+(define (extent lst)
+  ; Statistical extent (max-min). Formerly named `range`; renamed (#4225) so
+  ; Soft oneshot (range start end) from std/list is not shadowed by math.
   (- (max-list lst) (min-list lst)))
 
 (define (percentile lst p)

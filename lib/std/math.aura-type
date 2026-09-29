@@ -37,6 +37,6 @@ median: Any -> Any
 mode: Any -> Any
 variance: Any -> Int
 stddev: Any -> Any
-range: Any -> Int
+extent: Any -> Int
 percentile: Any Any -> Any
 normalize: Any -> Any
