@@ -9477,6 +9477,30 @@ def cmd_lint():
             "Issue #4174 recover truncation rollback linter failed — run python3 scripts/check_recover_truncation_4174.py"
         )
         return r
+    # Issue #4231 (P1: Soft --serve-async sock/holder dies mid set-code
+    # scoring batch — cold-restart thrash → sock_transient). Two silent
+    # holder-death faces contained: (a) a C++ exception escaping any fiber
+    # body crossed the ucontext resume boundary with no unwinding contract
+    # and landed in std::terminate (whole holder death; one throwing
+    # denseness/scoring fiber killed a 64-explorer batch) — the trampoline
+    # now contains body exceptions (counter + stderr notice, fiber Done,
+    # no rethrow); (b) status writes to a closed stdout reader raised
+    # SIGPIPE (silent default-disposition death) — serve-async + bench
+    # install SIG_IGN so a dead reader degrades to EPIPE on the explicit-
+    # error path. Runtime doors live in tests/serve/test_concurrent.cpp
+    # (test_issue_4231_body_exception_contained,
+    # test_issue_4231_holder_survives_thrown_body,
+    # test_issue_4231_source_cite, test_issue_4231_sigpipe_containment).
+    fbb4231_script = ROOT / "scripts" / "check_fiber_body_exception_4231.py"
+    if not fbb4231_script.exists():
+        fail(f"missing {fbb4231_script}")
+        return 1
+    r = run([sys.executable, str(fbb4231_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4231 fiber body exception containment linter failed — run python3 scripts/check_fiber_body_exception_4231.py"
+        )
+        return r
     # Issue #4154 (DeadCoercion / residual CastOp remirror miss-column):
     # a nonempty persist span with added==0 must durability-probe the
     # sites and latch the existing #3031 pending_full_solve face when

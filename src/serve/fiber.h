@@ -1000,6 +1000,10 @@ public:
     [[nodiscard]] static std::uint64_t join_total() noexcept;
     [[nodiscard]] static std::uint64_t join_timeout_total() noexcept;
     [[nodiscard]] static std::uint64_t join_cancel_total() noexcept;
+    // Issue #4231: contained fiber-body exception total — one bump per
+    // body whose exception was caught at the trampoline instead of
+    // terminating the holder (Soft --serve-async sock/holder death).
+    [[nodiscard]] static std::uint64_t fiber_body_exception_total() noexcept;
     // Issue #2467: counter for JoinStatus::Reclaimed returns
     // (target force-reclaimed but body still executing).
     [[nodiscard]] static std::uint64_t join_reclaim_total() noexcept;
@@ -1477,6 +1481,8 @@ private:
     static std::atomic<std::uint64_t> join_total_;
     static std::atomic<std::uint64_t> join_timeout_total_;
     static std::atomic<std::uint64_t> join_cancel_total_;
+    // Issue #4231: contained body-exception total (trampoline catch).
+    static std::atomic<std::uint64_t> fiber_body_exception_total_;
     // Issue #2467: counter for JoinStatus::Reclaimed returns.
     static std::atomic<std::uint64_t> join_reclaim_total_;
     // Issue #2397: process-wide still-running gauge + body-retired counter.

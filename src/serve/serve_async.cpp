@@ -12,6 +12,7 @@
 
 #include <array>
 #include <atomic>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -332,6 +333,16 @@ std::string status_line_error(std::string_view session, std::string_view msg,
 // ── run_serve_async ─────────────────────────────────────
 
 void run_serve_async(int num_workers) {
+    // Issue #4231: serve-async writes protocol status lines to stdout for
+    // the lifetime of the session. A client-side reader close (host
+    // restart thrash, timed-out reader) turns the next ::write into
+    // SIGPIPE, whose default disposition silently kills the holder: the
+    // Soft serve.sock vanished and the holder PID changed mid set-code
+    // scoring batch. Ignore SIGPIPE so a dead reader degrades to an EPIPE
+    // write failure on the explicit-error path while the holder stays up
+    // for the remaining explorers of the batch.
+    ::signal(SIGPIPE, SIG_IGN);
+
     // 1. Set stdin to non-blocking
     int flags = ::fcntl(STDIN_FILENO, F_GETFL);
     ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
@@ -1254,6 +1265,11 @@ void run_serve_async(int num_workers) {
 // ── run_serve_async_bench ────────────────────────────
 
 void run_serve_async_bench(const std::string& file_path, int num_workers) {
+    // Issue #4231: same holder-survival contract as run_serve_async — a
+    // closed stdout reader must surface as EPIPE, never SIGPIPE process
+    // death of the serve-async holder.
+    ::signal(SIGPIPE, SIG_IGN);
+
     // 1. Set stdin to non-blocking
     int flags = ::fcntl(STDIN_FILENO, F_GETFL);
     ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);

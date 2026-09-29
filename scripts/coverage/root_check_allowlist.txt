@@ -232,3 +232,4 @@ check_residual_undermark_jit_4172.py
 check_recover_solve_status_4170.py
 check_sampled_leftover_audit_4173.py
 check_recover_truncation_4174.py
+check_fiber_body_exception_4231.py
