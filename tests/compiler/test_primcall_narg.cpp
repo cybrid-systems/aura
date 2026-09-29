@@ -16,6 +16,17 @@
 //   AC9: string<=? boundaries
 //   AC10: orch.aura select-best tie-break shape
 //   AC11: source + linter wiring
+//
+// Issue #4177 — R7RS list take/drop completion: native take/drop were bound
+// count-first ((take k lst), {Int, Dyn} typed rows), so every R7RS-order call
+// ((take lst k)) fell into the count guard and returned an opaque
+// primitive-error value (display -> <unknown>, pair? -> #f).
+//
+//   AC12: (take (list 1 2 3 4) 2) -> proper list (1 2), pair? #t
+//   AC13: (drop (list 1 2 3 4) 2) -> proper list (3 4), pair? #t
+//   AC14: boundaries — k = length / over-length / k = 0
+//   AC15: error arms per repo convention + procedure? stays #t
+//   AC16: source + linter wiring
 
 #include "test_harness.hpp"
 
@@ -285,6 +296,134 @@ static void ac11_source_gate() {
           "AC11: build.py linter");
 }
 
+// Issue #4177: R7RS list take/drop — see the header note above. take/drop are
+// evaluator prims (no JIT layer), so the gate is the flipped arg order + the
+// proper-list face through the standard pair-construction path.
+
+static void ac12_take_r7rs() {
+    std::println("\n--- #4177 AC12: R7RS (take lst k) -> proper list ---");
+    CompilerService cs;
+    auto disp = with_stdout_capture(
+        [&] { (void)cs.eval(R"((begin (display (take (list 1 2 3 4) 2)) (newline)))"); });
+    CHECK(trim_nl(disp) == "(1 2)", "AC12: (display (take (list 1 2 3 4) 2)) -> (1 2)");
+    CompilerService cs2;
+    auto pr = with_stdout_capture([&] {
+        (void)cs2.eval(R"((begin (display (if (pair? (take (list 1 2 3 4) 2)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(pr) == "1", "AC12: (pair? (take (list 1 2 3 4) 2)) -> #t");
+}
+
+static void ac13_drop_r7rs() {
+    std::println("\n--- #4177 AC13: R7RS (drop lst k) -> proper list ---");
+    CompilerService cs;
+    auto disp = with_stdout_capture(
+        [&] { (void)cs.eval(R"((begin (display (drop (list 1 2 3 4) 2)) (newline)))"); });
+    CHECK(trim_nl(disp) == "(3 4)", "AC13: (display (drop (list 1 2 3 4) 2)) -> (3 4)");
+    CompilerService cs2;
+    auto pr = with_stdout_capture([&] {
+        (void)cs2.eval(R"((begin (display (if (pair? (drop (list 1 2 3 4) 2)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(pr) == "1", "AC13: (pair? (drop (list 1 2 3 4) 2)) -> #t");
+}
+
+static void ac14_take_drop_boundaries() {
+    std::println("\n--- #4177 AC14: take/drop boundaries ---");
+    // k == length
+    CompilerService cs;
+    auto take_all = with_stdout_capture(
+        [&] { (void)cs.eval(R"((begin (display (take (list 1 2 3) 3)) (newline)))"); });
+    CHECK(trim_nl(take_all) == "(1 2 3)", "AC14: (take (list 1 2 3) 3) -> (1 2 3)");
+    CompilerService cs2;
+    auto drop_all = with_stdout_capture([&] {
+        (void)cs2.eval(R"((begin (display (if (null? (drop (list 1 2 3) 3)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(drop_all) == "1", "AC14: (drop (list 1 2 3) 3) -> ()");
+    // over-length: take clamps to the full list, drop past end -> empty
+    CompilerService cs3;
+    auto take_over = with_stdout_capture(
+        [&] { (void)cs3.eval(R"((begin (display (take (list 1 2 3) 9)) (newline)))"); });
+    CHECK(trim_nl(take_over) == "(1 2 3)", "AC14: (take (list 1 2 3) 9) clamps -> (1 2 3)");
+    CompilerService cs4;
+    auto drop_over = with_stdout_capture([&] {
+        (void)cs4.eval(R"((begin (display (if (null? (drop (list 1 2 3) 9)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(drop_over) == "1", "AC14: (drop (list 1 2 3) 9) past end -> ()");
+    // k = 0
+    CompilerService cs5;
+    auto take_zero = with_stdout_capture([&] {
+        (void)cs5.eval(R"((begin (display (if (null? (take (list 1 2 3) 0)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(take_zero) == "1", "AC14: (take (list 1 2 3) 0) -> ()");
+    CompilerService cs6;
+    auto drop_zero = with_stdout_capture(
+        [&] { (void)cs6.eval(R"((begin (display (drop (list 1 2 3) 0)) (newline)))"); });
+    CHECK(trim_nl(drop_zero) == "(1 2 3)", "AC14: (drop (list 1 2 3) 0) -> (1 2 3)");
+}
+
+static void ac15_take_drop_errors() {
+    std::println("\n--- #4177 AC15: error arms + procedure? face ---");
+    // Runtime-reachable guard arms: not-a-list on the Dyn slot and negative
+    // count on the Int slot. A non-int count literal is intentionally NOT
+    // probed here — a wrong-typed value on the declared-Int slot is rejected
+    // by the static type checker / slot coercion before prim dispatch (the
+    // repo convention for typed params; AC16 pins the {Dyn, Int} rows), so
+    // the prim's own count guard is defense-in-depth for direct dispatch.
+    CompilerService cs;
+    auto take_bad_lst = with_stdout_capture(
+        [&] { (void)cs.eval(R"((begin (display (if (error? (take "x" 2)) 1 0)) (newline)))"); });
+    CHECK(trim_nl(take_bad_lst) == "1", "AC15: (take \"x\" 2) -> error");
+    CompilerService cs2;
+    auto take_neg = with_stdout_capture([&] {
+        (void)cs2.eval(R"((begin (display (if (error? (take (list 1 2) -1)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(take_neg) == "1", "AC15: (take (list 1 2) -1) -> error");
+    CompilerService cs3;
+    auto drop_bad_lst = with_stdout_capture(
+        [&] { (void)cs3.eval(R"((begin (display (if (error? (drop 42 1)) 1 0)) (newline)))"); });
+    CHECK(trim_nl(drop_bad_lst) == "1", "AC15: (drop 42 1) -> error");
+    CompilerService cs4;
+    auto drop_neg = with_stdout_capture([&] {
+        (void)cs4.eval(R"((begin (display (if (error? (drop (list 1 2) -1)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(drop_neg) == "1", "AC15: (drop (list 1 2) -1) -> error");
+    // `and` is tree-walker-only (strict pipeline fallback-forbidden), so the
+    // conjunctive face is expressed as nested ifs.
+    CompilerService cs5;
+    auto proc = with_stdout_capture([&] {
+        (void)cs5.eval(
+            R"((begin (display (if (procedure? take) (if (procedure? drop) 1 0) 0)) (newline)))");
+    });
+    CHECK(trim_nl(proc) == "1", "AC15: take/drop stay procedures");
+}
+
+static void ac16_source_gate() {
+    std::println("\n--- #4177 AC16: source + linter wiring ---");
+    const auto evp = read_file("src/compiler/evaluator_primitives_list.cpp");
+    CHECK(evp.find("Issue #4177") != std::string::npos, "AC16: evaluator cites #4177");
+    CHECK(evp.find("\"take: count must be a non-negative integer\"") != std::string::npos,
+          "AC16: take count guard message");
+    CHECK(evp.find("\"take: not a list\"") != std::string::npos, "AC16: take not-a-list guard");
+    CHECK(evp.find("\"drop: count must be a non-negative integer\"") != std::string::npos,
+          "AC16: drop count guard message");
+    const auto tc = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tc.find("register_primitive(\"take\", {Dyn, Int}, Dyn)") != std::string::npos,
+          "AC16: typechecker take (Dyn, Int)");
+    CHECK(tc.find("register_primitive(\"drop\", {Dyn, Int}, Dyn)") != std::string::npos,
+          "AC16: typechecker drop (Dyn, Int)");
+    CHECK(tc.find("register_primitive(\"take\", {Int, Dyn}, Dyn)") == std::string::npos,
+          "AC16: old count-first take registration gone");
+    const auto mfn = read_file("tests/suite/multiframe_named_let_2873.aura");
+    CHECK(mfn.find("(take (list 9 8 7 6) 2)") != std::string::npos,
+          "AC16: 2873 fixture flipped to R7RS order");
+    const auto qp = read_file("tests/suite/query_primitives_split_2914.aura");
+    CHECK(qp.find("(take (list 1) \"x\")") != std::string::npos,
+          "AC16: 2914 bad-count arm in R7RS order");
+    CHECK(qp.find("(drop (list 1) 9)") != std::string::npos,
+          "AC16: 2914 past-end arm in R7RS order");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_list_take_drop_4177") != std::string::npos, "AC16: build.py linter");
+}
+
 } // namespace
 
 int run_test_primcall_narg() {
@@ -300,7 +439,12 @@ int run_test_primcall_narg() {
     ac9_string_le();
     ac10_orch_tiebreak();
     ac11_source_gate();
-    std::println("\n=== #2576+#4175: {} passed, {} failed ===", g_passed, g_failed);
+    ac12_take_r7rs();
+    ac13_drop_r7rs();
+    ac14_take_drop_boundaries();
+    ac15_take_drop_errors();
+    ac16_source_gate();
+    std::println("\n=== #2576+#4175+#4177: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

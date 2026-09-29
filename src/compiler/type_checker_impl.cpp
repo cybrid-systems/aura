@@ -4079,8 +4079,8 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("member", {Dyn, Dyn}, Dyn);
     register_primitive("append", {Dyn, Dyn}, Dyn);
     register_primitive("reverse", {Dyn}, Dyn);
-    register_primitive("take", {Int, Dyn}, Dyn);
-    register_primitive("drop", {Int, Dyn}, Dyn);
+    register_primitive("take", {Dyn, Int}, Dyn); // Issue #4177: R7RS (take lst k)
+    register_primitive("drop", {Dyn, Int}, Dyn); // Issue #4177: R7RS (drop lst k)
     register_primitive("foldl", {Dyn, Dyn, Dyn}, Dyn);
     // Polymorphic map/filter: ∀a b. ((a -> b), list a) -> b
     // The list types are approximated as Any for now (no proper List type).
@@ -4200,8 +4200,8 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_poly_primitive("length", {Dyn}, Int, {});
     register_poly_primitive("reverse", {Dyn}, Dyn, {_a});
     register_poly_primitive("zip", {Dyn, Dyn}, Dyn, {_a, _b});
-    register_poly_primitive("take", {Int, Dyn}, Dyn, {_a});
-    register_poly_primitive("drop", {Int, Dyn}, Dyn, {_a});
+    register_poly_primitive("take", {Dyn, Int}, Dyn, {_a}); // Issue #4177: R7RS order
+    register_poly_primitive("drop", {Dyn, Int}, Dyn, {_a}); // Issue #4177: R7RS order
     register_poly_primitive("flatten", {Dyn}, Dyn, {_a});
     register_poly_primitive("partition", {reg_.register_func({_a}, Bool), Dyn}, Dyn, {_a});
     register_poly_primitive("sort", {Dyn, reg_.register_func({_a, _a}, Bool)}, Dyn, {_a});

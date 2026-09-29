@@ -8484,6 +8484,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4175 R7RS string-compare linter failed - run python3 scripts/check_r7rs_string_compare_4175.py")
         return r
+    # Issue #4177 (correctness): R7RS list take/drop — native take/drop were
+    # bound count-first ((take k lst), {Int, Dyn} typed rows), so every
+    # R7RS-order call ((take lst k)) fell into the count guard and returned an
+    # opaque primitive-error value (display -> <unknown>, pair? -> #f); the
+    # binding was present but unusable for list prefix/suffix. Gate pins the
+    # flipped contract in lockstep: evaluator prims take/drop take the list
+    # first with the count guard ahead of the list guard, type_checker rows
+    # are (Dyn, Int), and the pinned count-first suite fixture rows (2873 prim
+    # row + 2914 error arms) are flipped to R7RS order. Runtime ACs live in
+    # tests/compiler/test_primcall_narg.cpp (no test_issue_4177.cpp per
+    # #81934, no docs/design/4177-* per #1655).
+    ltd4177_script = ROOT / "scripts" / "check_list_take_drop_4177.py"
+    if not ltd4177_script.exists():
+        fail(f"missing {ltd4177_script}")
+        return 1
+    r = run([sys.executable, str(ltd4177_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4177 R7RS list take/drop linter failed - run python3 scripts/check_list_take_drop_4177.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

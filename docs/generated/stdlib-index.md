@@ -33,7 +33,7 @@
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/fss` | `fss:init` `fss:init-hash` `fss:step!` `fss:best` `fss:population` `fss:report` `fss:export` `fss:help` … (+8) | lib/std/fss.aura — Issue #2880 Fish School Search surface |
 | `std/git` | `git-status` `git-diff` `git-log` `git-commit` `git-branch-current` `git-stage` `git-rev-parse` | git.aura — Git integration host prims (Issue #3174) |
-| `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-keys` `hash-values` `hash-length` `hash->list` … (+6) | hash.aura -- Hash table operations |
+| `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-keys` `hash-values` `hash-length` `hash->list` … (+7) | hash.aura -- Hash table operations |
 | `std/heal` | `heal` | — |
 | `std/hot-strategy` | `hot-strategy:version` `hot-strategy:last-good-body` `hot-strategy:last-good-snap` `hot-strategy:active-name` `hot-strategy:snapshot!` `hot-strategy:register!` `hot-strategy:swap!` `hot-strategy:heal!` … (+3) | lib/std/hot-strategy.aura — Issue #2582 (Aether denseness H7) |
 | `std/hot-update-monitor` | `make-hot-update-monitor` `monitor:poll` `monitor:run-n` `monitor:stop` `monitor:running?` `monitor:last-stats` | lib/std/hot-update-monitor.aura — Issue #1370 |
@@ -43,7 +43,7 @@
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
-| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+14) | Aura standard list library |
+| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+16) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+52) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
@@ -69,9 +69,9 @@
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
 | `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
-| `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+11) | Aura standard string library |
+| `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+19) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
-| `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+81) | lib/std/surface.aura — recommended public convenience surface (P3) |
+| `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+89) | lib/std/surface.aura — recommended public convenience surface (P3) |
 | `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:population` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` … (+2) | lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |

@@ -35,13 +35,13 @@
 (if (= (member 9 (list 1 2 3)) 0)
     #t
     (begin (display "FAIL-2998 member not-found stays 0\n") (set! ok #f)))
-(if (error? (take "x" (list 1)))
+(if (error? (take (list 1) "x"))
     #t
     (begin (display "FAIL-2998 take bad count\n") (set! ok #f)))
 (if (error? (drop 1 42))
     #t
     (begin (display "FAIL-2998 drop not-a-list\n") (set! ok #f)))
-(if (null? (drop 9 (list 1)))
+(if (null? (drop (list 1) 9))
     #t
     (begin (display "FAIL-2998 drop past end empty\n") (set! ok #f)))
 (if (error? (filter (lambda (x) #t) 42))

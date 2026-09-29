@@ -42,7 +42,7 @@
       (take (cdr ys) (+ n 1) (cons (car ys) out)))))
 (assert! (equal? take-rev (list 3 2 1)) "take-rev (3 2 1)")
 ; bare prim still works
-(assert! (equal? (take 2 (list 9 8 7 6)) (list 9 8)) "prim take still works")
+(assert! (equal? (take (list 9 8 7 6) 2) (list 9 8)) "prim take still works")
 
 ; AC4: cache-put with append-1 + let take (issue Repro B)
 (display "AC4 cache-put fill with let take\n")
