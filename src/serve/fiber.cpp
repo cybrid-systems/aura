@@ -1400,6 +1400,17 @@ std::uint64_t Fiber::join_drain_residual_body_retired_total() noexcept {
 
 // ── Destructor ───────────────────────────────────────
 
+// Issue #4176: close the fiber's wake eventfd once, idempotently. Called
+// from Scheduler::on_fiber_done (fd budget: completed fibers stay owned
+// by the Scheduler until ~Scheduler, so the fd must be released at
+// done-time, not dtor-time) and as the ~Fiber backstop.
+void Fiber::close_eventfd() noexcept {
+    if (eventfd_ >= 0) {
+        ::close(eventfd_);
+        eventfd_ = -1;
+    }
+}
+
 Fiber::~Fiber() {
     // Issue #2726: unregister Fiber* from the process-wide registry
     // first (before any teardown that might race an in-flight
@@ -1447,8 +1458,11 @@ Fiber::~Fiber() {
     // empty and this is a no-op. Same fail-safe shape as the Reclaimed
     // path inside Fiber::join.
     release_orphan_roots();
-    if (eventfd_ >= 0)
-        ::close(eventfd_);
+    // Issue #4176: backstop close. A scheduler-driven fiber already had
+    // its eventfd closed at Scheduler::on_fiber_done (fd budget: a done
+    // fiber's wake fd is never used again); this guards every other
+    // teardown path. close_eventfd() is idempotent (stores -1).
+    close_eventfd();
     if (stack_) {
         // stack_ = usable start; the mmap base is one guard page before
         auto* base = static_cast<char*>(stack_) - 4096;

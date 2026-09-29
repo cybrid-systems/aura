@@ -891,8 +891,23 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         int64_t fid = 0;
         // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
-            fid = aura::messaging::g_fiber_spawn(complete_fiber);
+            // Issue #4176: at RLIMIT_NOFILE exhaustion the Fiber ctor
+            // throws std::system_error ("fiber eventfd"). Swallow it and
+            // fail per the #2656 contract (#f) instead of unwinding
+            // through the fiber trampoline (kills the session fiber →
+            // permanent sock stall). A failing scheduler must NOT fall
+            // through to the thread backend either — spawn_failed skips
+            // the fallback so the caller sees an honest failure.
+            bool spawn_failed = false;
+            try {
+                fid = aura::messaging::g_fiber_spawn(complete_fiber);
+            } catch (const std::exception&) {
+                fid = 0;
+                spawn_failed = true;
+            }
             fid_holder->store(fid, std::memory_order_release);
+            if (spawn_failed)
+                return make_bool(false);
         }
         // Fallback (CLI denseness / stdin): std::thread with positive ids.
         if (fid <= 0) {
@@ -1073,9 +1088,33 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 // a stack value via the yield + resume protocol,
                 // but that's invasive. The thread_local works
                 // because the joiner fiber is single-threaded.)
-                if (aura::serve::g_scheduler &&
-                    aura::serve::g_scheduler->add_joiner(static_cast<std::uint64_t>(fid),
-                                                         aura::serve::g_current_fiber)) {
+                // Issue #4176: the BlockingIO park is a *wait
+                // protocol*, not a one-shot wake. Spurious eventfd
+                // wakes are legal (stdin-event broadcast across
+                // wait_map_, recycled wake fds) and a wake that finds
+                // the target still running must re-register and
+                // re-park. The old single-shot shape treated ANY wake
+                // as target-done: it removed the joiner, observed a
+                // not-ready result slot, ERASED the pending slot and
+                // returned void — the orphaned child kept the denseness
+                // body mutex and the next spawn's body blocked on it
+                // while running on the worker → permanent serve-async
+                // sock stall (no reply, IO thread idle in ep_poll).
+                // Mirrors the Fiber::join wait loop (predicate
+                // re-checked after every wake). Escapes: target done,
+                // target reclaimed (reap wakes the joiner once;
+                // is_done() never fires), or target unregistered
+                // (re-resolve via g_fiber_lookup → fall through to the
+                // result fetch).
+                while (true) {
+                    if (target->is_done() || target->is_reclaimed())
+                        break;
+                    if (!static_cast<aura::serve::Fiber*>(aura::messaging::g_fiber_lookup(fid)))
+                        break; // target unregistered — result fetch below
+                    if (!(aura::serve::g_scheduler &&
+                          aura::serve::g_scheduler->add_joiner(static_cast<std::uint64_t>(fid),
+                                                               aura::serve::g_current_fiber)))
+                        break;
                     joiner_target_id = static_cast<std::uint64_t>(fid);
                     // Issue #2869 / #4053: unlock denseness body mutex across
                     // the join wait so a nested denseness child can run.
@@ -1083,10 +1122,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     // Yield with BlockingIO so the scheduler
                     // doesn't steal this fiber while we wait.
                     aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
-                    // After wakeup: the target's on_fiber_done
-                    // already wrote to our eventfd. The
-                    // IO thread's epoll resumed us. The
-                    // result is now in s_fiber_results.
+                    // After wakeup: either the target's on_fiber_done
+                    // wrote our eventfd (target done — fetch below),
+                    // or a spurious/early wake fired (loop re-parks).
                     aura::serve::g_scheduler->remove_joiner(joiner_target_id,
                                                             aura::serve::g_current_fiber);
                 }
