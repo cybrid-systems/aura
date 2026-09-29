@@ -9705,6 +9705,26 @@ def cmd_lint():
             "Issue #4165 agent fiber isolation linter failed — run python3 scripts/check_agent_fiber_isolation_4165.py"
         )
         return r
+    # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
+    # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
+    # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the
+    # aura target's define sits behind an option(default ON) so an NDEBUG
+    # binary can no longer ship the #3501 relaxed-load / unarmed-skip face
+    # by accident (the #3866 Ready refusal stays as the runtime backstop).
+    # Soft/unit test targets keep the #3490/#3501 runtime cache (#3666 AC2 /
+    # #3313 AC2); the #3666/#3702 pack semantics are reused verbatim — no
+    # second contract system. Runtime door: test_pack_pipeline_strict.cpp
+    # (ac4167_pack_face_default).
+    hpff4167_script = ROOT / "scripts" / "check_hot_contract_pack_face_4167.py"
+    if not hpff4167_script.exists():
+        fail(f"missing {hpff4167_script}")
+        return 1
+    r = run([sys.executable, str(hpff4167_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4167 hot-contract pack face default linter failed — run python3 scripts/check_hot_contract_pack_face_4167.py"
+        )
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

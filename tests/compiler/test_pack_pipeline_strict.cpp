@@ -282,6 +282,61 @@ void ac4007_pack_deletes_aos_factory() {
     CHECK(read_file("docs/design/4007-soa-factory.md").empty(), "4007: no docs/design");
 }
 
+void ac4167_pack_face_default() {
+    std::printf("\n--- #4167: production CMake face defaults to AURA_PRODUCTION_PACK ---\n");
+    // AC1: under the face default the pack binary is compile-armed —
+    // armed() is a constant true with no env / production_defaults arming.
+    CHECK(aura::core::cpp26::kHotContractProductionPackCompileArmed,
+          "4167 AC1: pack compile-armed under the face default");
+    CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+          "4167 AC1: pack armed() constant true — no env / defaults arming");
+    AURA_HOT_CONTRACT(true);
+    CHECK(true, "4167 AC1: CONTRACT(true) does not abort in the face-default binary");
+
+    // AC2: the bounds predicate (view_at / value as_*) is unconditional in
+    // pack — the #3501 armed() gate cannot skip it, closing the Quiet OOB
+    // window when defaults are inactive (source level: pack macros carry no
+    // armed() consult; the CMake default removes the non-pack NDEBUG face).
+    auto hh = read_file("src/core/cpp26_contract_stats.h");
+    const auto pack = hh.find("#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)");
+    CHECK(pack != std::string::npos, "4167 AC2: pack redefine present");
+    const auto pack_end = hh.find("#endif", pack == std::string::npos ? 0 : pack);
+    const auto pwin = (pack != std::string::npos && pack_end > pack)
+                          ? hh.substr(pack, pack_end - pack)
+                          : std::string{};
+    CHECK(pwin.find("hot_contract_harden_armed()") == std::string::npos,
+          "4167 AC2: pack predicate not gated on the runtime arm");
+    CHECK(pwin.find("if (!(expr))") != std::string::npos,
+          "4167 AC2: pack evaluates the predicate unconditionally");
+
+    // AC3: the CMake face default (the #4167 fix): option ON + aura define
+    // behind the option; this fixture keeps its unconditional mirror define
+    // (#3627); exactly two target rows carry the define — every other target
+    // (Soft/unit) stays non-pack.
+    auto cm = read_file("CMakeLists.txt");
+    CHECK(cm.find("Issue #4167") != std::string::npos, "4167 AC3: CMake rationale cite");
+    CHECK(cm.find("option(AURA_PRODUCTION_PACK") != std::string::npos,
+          "4167 AC3: production face option present");
+    CHECK(cm.find("default ON, #4167") != std::string::npos, "4167 AC3: option defaults ON");
+    CHECK(cm.find("if(AURA_PRODUCTION_PACK)") != std::string::npos,
+          "4167 AC3: aura define sits behind the option");
+    CHECK(count_substr(cm, "PRIVATE AURA_PRODUCTION_PACK=1") == 2,
+          "4167 AC3: only aura + pack fixture carry the define");
+
+    // AC4: Soft/unit keep the #3490/#3501 runtime cache; no second contract
+    // system (the #3666 pack redefine is reused verbatim).
+    CHECK(hh.find("hot_contract_harden_armed_cache") != std::string::npos,
+          "4167 AC4: Soft armed-cache kept");
+    CHECK(hh.find("note_hot_contract_harden_armed") != std::string::npos,
+          "4167 AC4: cache store kept");
+    CHECK(hh.find("expr not evaluated") != std::string::npos,
+          "4167 AC4: unarmed NDEBUG-OFF skip kept (#3313 AC2)");
+    CHECK(hh.find("schema-4167") == std::string::npos, "4167 AC4: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4167.cpp").empty(), "4167 AC4: no invent");
+    CHECK(read_file("docs/design/4167-production-pack-face-default.md").empty(),
+          "4167 AC4: no docs/design");
+}
+
 } // namespace
 
 int main() {
@@ -294,6 +349,7 @@ int main() {
     ac3702_pack_happy_no_record();
     ac3770_one_contract_per_unbox();
     ac4007_pack_deletes_aos_factory();
+    ac4167_pack_face_default();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
