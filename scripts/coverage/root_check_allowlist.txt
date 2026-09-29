@@ -208,3 +208,4 @@ check_macro_child_walk_gate_4151.py
 check_deferred_green_steal_fence_4152.py
 check_txn_dirty_green_4153.py
 check_residual_castop_remirror_4154.py
+check_residual_castop_densify_clear_4155.py

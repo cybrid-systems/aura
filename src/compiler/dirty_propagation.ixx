@@ -980,6 +980,28 @@ inline void clear_residual_castop_undermark_pending() noexcept {
     return t_residual_castop_undermark_pending;
 }
 
+// Issue #4155: Phase-5 Moving densify success relocates FlatAST NodeIds
+// (same #3985 production/Full invalidation surface). Persisted residual
+// CastOp AST / block NodeIds captured pre-densify can alias recycled Ids
+// once a later store_define_v2 rebuilds source_to_ir_map, so
+// mark_entry_from_dead_coercion_persist_ would false-attribute the WRONG
+// block while the real type-changed CastOp site stays clean (#3618
+// fail-closes only when attribution FAILS — a false-positive bypasses it).
+// No densify
+// NodeId map reaches this surface, so drop the stale persist instead of
+// remapping, and bump the #3102 decision-invalidate gen so
+// DeadCoercionPass full-scans instead of consulting decisions keyed off
+// the pre-densify type view. Empty persist: no-op (no bump). Soft / Off
+// never reach the densify call site (service gates production/Full first).
+inline constexpr int kResidualCastopDensifyClearIssue = 4155;
+inline void reset_residual_castop_persist_after_densify() noexcept {
+    if (t_residual_castop_ast.empty() && t_residual_castop_blocks.empty())
+        return;
+    t_residual_castop_ast.clear();
+    t_residual_castop_blocks.clear();
+    bump_dead_coercion_decision_invalidate();
+}
+
 // Sync multi-function block dirty matrix [func][block] into DirtySet.
 inline void sync_from_block_dirty_matrix(DirtySet& dest,
                                          const std::vector<std::vector<std::uint8_t>>& per_func) {
