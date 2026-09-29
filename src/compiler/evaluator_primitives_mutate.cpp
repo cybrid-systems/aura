@@ -1472,7 +1472,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             using aura::compiler::query_result_decode::resolve_query_result_match;
             auto hr = resolve_query_result_match(
                 arg, ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()), op,
+                // Issue #4165: Agent-scoped fiber resolve — a fiberless
+                // production Agent resolves under its own minted id, so a
+                // same-tenant foreign Agent's held hash denies InvalidFiber.
+                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), op,
                 parse_query_result_match_index(a, ev.keyword_table()));
             if (hr.kind == HashNodeKind::Ok) {
                 out_node = hr.node;

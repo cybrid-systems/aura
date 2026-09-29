@@ -3,6 +3,7 @@
 module;
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -2147,6 +2148,42 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
     return false;
 }
 
+namespace {
+
+    // Issue #4165: Agent-band base for the per-Evaluator fibers minted when
+    // production Agent entry runs fiberless. Registry fiber ids are small pool
+    // indices, so the 0x4165 band cannot collide with a live fiber; 16 bits of
+    // mint sequence wrap only after 65536 fiberless production Evaluators in
+    // one process (a dead predecessor's refs are already stale by then).
+    inline constexpr std::uint32_t kAgentFiberStampBand = 0x4165'0000u;
+    inline constexpr std::uint32_t kAgentFiberStampBandMask = 0x0000'FFFFu;
+    std::atomic<std::uint32_t> g_agent_fiber_stamp_seq{0};
+
+} // namespace
+
+// Issue #4165: Agent-scoped fiber resolution — see the evaluator.ixx
+// declaration for the contract. Order: #2151 effect_fiber_id_or override
+// > live aura_fiber_current_id(); still 0 under the production face →
+// lazily mint a stable per-Evaluator Agent-band fiber. Same Evaluator →
+// same id, so an Agent's own held QueryResult / StableNodeRef stays
+// fresh; a different same-tenant Agent resolves under a different mint →
+// InvalidFiber (query_result_decode.hh) → stale-ref. Soft / Off keep the
+// legacy 0 stamp (no new soft face). One relaxed fetch_add per fiberless
+// production Evaluator lifetime (first resolution only).
+std::uint32_t Evaluator::agent_scoped_fiber_id() const noexcept {
+    const auto resolved = ::aura::core::capability::effect_fiber_id_or(
+        static_cast<std::uint32_t>(aura_fiber_current_id()));
+    if (resolved != 0)
+        return resolved;
+    if (!typed_audit::production_defaults_active())
+        return 0;
+    if (agent_fiber_id_ == 0)
+        agent_fiber_id_ = kAgentFiberStampBand +
+                          (g_agent_fiber_stamp_seq.fetch_add(1, std::memory_order_relaxed) &
+                           kAgentFiberStampBandMask);
+    return agent_fiber_id_;
+}
+
 void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept {
     // Issue #2056: full stamp (tenant + fiber) — alias of stamp_stable_ref.
     stamp_stable_ref(ref);
@@ -2155,7 +2192,11 @@ void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcep
 // Issue #2056: mandate tenant_id + fiber provenance on every StableNodeRef
 // handed to Agent / user code. Central create/rebind helper.
 void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept {
-    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #4165: Agent-scoped resolution — production fiberless entry
+    // mints a stable per-Evaluator non-zero fiber (Agent band) so exports
+    // never carry fiber 0 and same-tenant cross-Agent resolves hit the
+    // existing hard InvalidFiber face.
+    const auto fiber = agent_scoped_fiber_id();
     // Issue #2687 / #2759: bump local capture counter — sole production
     // multi-tenant path (per-Evaluator authority via capability_tenant_id_).
     // Distinct from maybe_stamp_stable_ref_isolation_tenant which bumps
@@ -2330,8 +2371,10 @@ Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
                                  std::uint32_t fiber_id) const noexcept {
     // Issue #2759: same layout-only + stamp path as make_stamped_ref.
     ast::FlatAST::StableNodeRef ref{};
-    const auto fiber =
-        fiber_id != 0 ? fiber_id : static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #4165: explicit caller fiber wins; otherwise Agent-scoped
+    // resolution (#2151 override > live fiber > production per-Evaluator
+    // mint) so fiberless production query exports stamp non-zero too.
+    const auto fiber = fiber_id != 0 ? fiber_id : agent_scoped_fiber_id();
     if (workspace_flat_) {
         // Issue #4164: thread the production face — free slots must not be
         // layout-stamped epoch-fresh on the agent-safe capture face either.

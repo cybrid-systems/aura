@@ -7211,6 +7211,22 @@ public:
     void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;
     // Issue #2056: full mandate stamp (tenant_id + fiber if unset).
     void stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept;
+    // Issue #4165: Agent-scoped fiber resolution for every stamp + resolve
+    // face (same-tenant multi-Agent code-as-memory isolation). Resolution
+    // order reuses existing SSOTs only — no second model: explicit caller
+    // fiber (make_stamped_safe_ref arg) > #2151 effect_fiber_id_or
+    // override > live aura_fiber_current_id(); still 0 under the production
+    // face → a lazily-minted stable per-Evaluator id in the #4165 Agent
+    // band (agent_fiber_id_). Fiberless production Agent entry therefore
+    // never stamps or resolves fiber 0, so the hard InvalidFiber freshness
+    // check (query_result_decode.hh) denies same-tenant cross-Agent held
+    // QueryResult / StableNodeRef memory; the same Agent resolves its own
+    // exports under its own mint. Soft / Off keep the legacy 0 stamp (no
+    // new soft face). Deploy contract: one fiber (or tenant) per Agent.
+    [[nodiscard]] std::uint32_t agent_scoped_fiber_id() const noexcept;
+    // Issue #4165: minted Agent-band fiber for fiberless production entry
+    // (0 lifetime writes after first resolution; mutable for const stamp).
+    mutable std::uint32_t agent_fiber_id_ = 0;
     // Issue #2960: query:*-stable / children_stable Agent export stamp.
     // Remakes brace-init residuals via make_ref_layout when workspace has
     // non-zero wrap/cow (counts unstamped_prevented), then stamp_stable_ref
