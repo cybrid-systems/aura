@@ -87,6 +87,16 @@ def run_case(issue: int, expr: str, expect: str) -> tuple[bool, str]:
 
 
 def main() -> int:
+    if not AURA.exists():
+        # The Soft oneshot stdlib auto-load face needs a Soft build; the CI
+        # gate job is a static-checks environment and does not build C++
+        # binaries. Skip there; run locally via: ninja -C build_soft4132 aura
+        # (or point AURA_BIN at any Soft oneshot build). (#4178-#4226)
+        print(f"SKIP: no Soft oneshot binary at {AURA}")
+        print("SKIP reason: this check exercises the Soft oneshot stdlib")
+        print("SKIP auto-load face; the CI gate does not build C++ binaries.")
+        print("SKIP locally: ninja -C build_soft4132 aura (or set AURA_BIN)")
+        return 0
     print(f"AURA_BIN={AURA}")
     failed = 0
     for issue, expr, expect in CASES:
