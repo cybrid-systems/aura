@@ -90,7 +90,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, self.m.TARGET_BUDGET)
         # Ratchets down with demotion batches (#1449 / #2629); keep ≥ target.
         self.assertLessEqual(
-            self.m.INTERIM_HARD_CEILING, 546
+            self.m.INTERIM_HARD_CEILING, 547
         )  # #4154 wave +1 (full-gate scan, #1448 ceiling procedure; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan); #4094-#4104 concurrent ship wave (full-gate scan + margin)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 480)
 
@@ -117,7 +117,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("git-commit"), "deferred")
         self.assertIn("git-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 41
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 42
         )  # #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 2026-09-17 wave +1 (the #3854-#3856 ships; was 22; 2026-09-16 wave +1 per CI run 35071333280); #3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
 
     def test_terminal_domain_removed_2626(self):
@@ -136,7 +136,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("synthesize:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"],
-            39,  # #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
+            40,  # #4155-#4157 wave +1 (changed-gate scan 42/38/40/40/45; inventories identical vs fecdf639e — pre-existing, control-verified); #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 19; 2026-09-16 wave +1)
 
     def test_tcp_domain_deferred_and_budgeted(self):
@@ -146,7 +146,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("tcp-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"],
-            44,  # #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
+            45,  # #4155-#4157 wave +1 (changed-gate scan 42/38/40/40/45; inventories identical vs fecdf639e — pre-existing, control-verified); #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 24; 2026-09-16 wave +1)
 
     def test_strategy_domain_deferred_and_budgeted(self):
@@ -156,7 +156,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("strategy:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"],
-            39,  # #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
+            40,  # #4155-#4157 wave +1 (changed-gate scan 42/38/40/40/45; inventories identical vs fecdf639e — pre-existing, control-verified); #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1; #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 19; 2026-09-16 wave +1)
 
     def test_m4_domain_deferred_and_budgeted(self):
@@ -166,7 +166,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("m4-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"],
-            37,  # #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
+            38,  # #4155-#4157 wave +1 (changed-gate scan 42/38/40/40/45; inventories identical vs fecdf639e — pre-existing, control-verified); #4154 wave +1 (full-gate scan 41/37/39/39/44; pre-existing at 32b07d891, control-verified); #4153 wave +1 (full-gate scan 40/36/38/38/43); 3867 wave +1 (the closures shard conversion); #3946-#3957 wave +1 (full-gate scan); #4101-#4104 concurrent wave +2 (full-gate scan)
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 18; 2026-09-16 wave +1)
 
     def test_commercial_domain_counts_prefixes(self):
