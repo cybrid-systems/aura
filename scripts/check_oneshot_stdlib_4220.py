@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AURA = Path(os.environ.get("AURA_BIN", str(ROOT / "build_soft4132" / "aura")))
+AURA = Path(os.environ.get("AURA_BIN", str(ROOT / "build" / "aura")))
 TIMEOUT_S = float(os.environ.get("AURA_ONESHOT_TIMEOUT", "8"))
 
 # (issue, expr, expect_substr_in_stdout)
