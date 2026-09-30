@@ -244,3 +244,4 @@ check_scope_region_admit_4238.py
 check_require_effect_join_refuse_4239.py
 check_wal_prune_fold_4240.py
 check_mid_refuse_ordering_4241.py
+check_remap_tombstone_quarantine_4242.py
