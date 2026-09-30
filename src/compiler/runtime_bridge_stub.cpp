@@ -187,3 +187,40 @@ run_escape_analysis(const std::vector<std::vector<FlatInstruction>>& /*flat_inst
 }
 
 } // namespace aura::jit
+
+// Issue-wave link rescue (lane16, at bda315cef): evaluator_fiber_mutation.cpp,
+// aura_jit.cpp and evaluator_primitives_obs_eval.cpp are compiled into this SO
+// and call three C bridges whose strong definitions live in the JIT TUs
+// (aura_jit_bridge.cpp / aura_jit_runtime.cpp) that this SO intentionally does
+// NOT compile (same class as the AuraJIT weak ctor above; full-JIT binaries
+// link the strong defs and they interpose). Weak Soft-allow stubs so
+// libaura_test_objects.so resolves at load time:
+//  - aura_1637_note_steal_restore_fallback: steal-restore fallback telemetry
+//    note (no-op here; strong body notes the occurrence).
+//  - reemit_owner_missing_reject_total_v_read: reemit owner-missing reject
+//    counter read (0 here; strong body reads the live atomic).
+//  - aura_macro_hygiene_production_fail_closed (Issue #3475): 0 here — the
+//    Soft/Off face (consult + dirty-only deopt); strong body consults the
+//    production-defaults/Full strategy atomics.
+extern "C" __attribute__((weak)) void aura_1637_note_steal_restore_fallback(void) {}
+extern "C" __attribute__((weak)) std::uint64_t reemit_owner_missing_reject_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_macro_hygiene_production_fail_closed(void) noexcept {
+    return 0;
+}
+// Link round 2 (same wave, same class): four more JIT-lib bridges referenced
+// from TUs compiled into this SO (root_remap_pass.ixx, hot_update_registry.cpp,
+// evaluator_primitives_obs_eval.cpp) whose strong defs live in the JIT TUs this
+// SO does not compile. Same Soft-allow stub semantics as the round-1 block:
+extern "C" __attribute__((weak)) void aura_clear_densify_candidates(void) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_emit_region_mask_preferred(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_get_require_stable_id_for_aot(void) noexcept {
+    return 0;
+}
