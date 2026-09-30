@@ -5316,6 +5316,9 @@ namespace agent_scope_compat {
 //                     max_restarts from arg (retry-on-batch-fail
 //                     projects onto scope join). Does not overwrite
 //                     an already-constructed AgentFailurePolicy.
+//                     #4237: max_restarts=0 (the default) is restart
+//                     belief without fuel — compose flags it via
+//                     restart_fuel_missing (no deny; observe-only).
 //   CircuitBreaker  → on_stall=Cancel, consecutive_stall_limit aligned
 //
 // Optional language sugar (orch:supervise-batch / apply after
@@ -5410,7 +5413,31 @@ struct WorkflowFailurePolicy {
     // Issue #3969: C++ adapter :pure flag for decide_isolation. Default
     // false (not transactional). Aura :pure stays best-effort elsewhere.
     bool pure = false;
+    // Issue #4237: RestartN belief vs fuel. True when the compose armed a
+    // RestartN action (on_stall and/or on_join_fail) with max_restarts == 0
+    // — the policy/hash then reads "restart-n" while the scope can never
+    // re-spawn (join arm exhausts; watch arm skips per #3730/#3250). Pure
+    // derived face: no deny, no counter at compose — the runtime no-op
+    // faces stay the existing agent_restart_exhausted_total /
+    // agent_restart_skipped_no_spec_total counters. Soft / Off: policy
+    // behaviour unchanged (observe-only in both faces). Appended at
+    // struct END — additive over #2756/#3206/#3969 fields.
+    bool restart_fuel_missing = false;
 };
+
+// Issue #4237: RestartN belief vs fuel. A composed policy arms RestartN
+// (commercial restart face) but the scope re-spawn is fueled by
+// max_restarts > 0 plus a restartable spec / keepalive (#3250 / #3730).
+// With max_restarts == 0 the action can only exhaust / skip — the belief
+// without the fuel. Derived once at compose so the Aura hash and C++
+// hosts can observe "restart-n is dead fuel" without scraping counters.
+// No second orch model: the runtime no-op faces are unchanged.
+inline constexpr int kRestartFuelMissingIssue = 4237;
+[[nodiscard]] inline bool agent_restart_fuel_missing(const AgentFailurePolicy& ap) noexcept {
+    const bool restart_armed = ap.on_stall == AgentFailureAction::RestartN ||
+                               ap.on_join_fail == AgentFailureAction::RestartN;
+    return restart_armed && ap.max_restarts == 0;
+}
 
 inline constexpr int kWorkflowFailurePolicyIssue = 2756;
 inline constexpr int kWorkflowApplySugarIssue = 2852; // #2852 supervised-batch / apply_workflow
@@ -5469,6 +5496,9 @@ compose_workflow_policy(serve::parallel_orch::FailurePolicy batch,
     w.retry_backoff_ms = retry_backoff_ms;
     w.residual = residual;
     w.agent_policy = to_agent_policy(batch, max_retries, consecutive_fail_limit, retry_backoff_ms);
+    // Issue #4237: derive the RestartN fuel face once at compose (pure;
+    // face-independent observation — no deny in either face).
+    w.restart_fuel_missing = agent_restart_fuel_missing(w.agent_policy);
     // Observability (additive; no-op for callers that never compose).
     g_orch_module_stats.workflow_compose_total.fetch_add(1, std::memory_order_relaxed);
     using FP = serve::parallel_orch::FailurePolicy;
@@ -5491,6 +5521,8 @@ compose_workflow_policy(serve::parallel_orch::FailurePolicy batch,
     w.retry_backoff_ms = pp.retry_backoff_ms;
     w.residual = residual;
     w.agent_policy = to_agent_policy(pp);
+    // Issue #4237: same derived fuel face on the ParallelPolicy overload.
+    w.restart_fuel_missing = agent_restart_fuel_missing(w.agent_policy);
     g_orch_module_stats.workflow_compose_total.fetch_add(1, std::memory_order_relaxed);
     using FP = serve::parallel_orch::FailurePolicy;
     if (w.batch_policy == FP::RetryN)
