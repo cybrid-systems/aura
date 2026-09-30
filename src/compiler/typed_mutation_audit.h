@@ -4848,7 +4848,9 @@ inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
         // branch, contract). The mid=0 deny row itself is still never
         // invented (#3054).
         if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
-            resolve_audit_mutation_id(0);
+            // Emit-only discard (#4241 split): deny face emits via resolve;
+            // return value unused — the mid=0 deny row is never invented (#3054).
+            (void)resolve_audit_mutation_id(0);
         return;
     }
     // Issue #3319: production_defaults_active (any strategy) always emits.
