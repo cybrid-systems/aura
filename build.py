@@ -13073,13 +13073,24 @@ def test_concurrent():
     san_name = BUILD.name.removeprefix("build_") if BUILD.name.startswith("build_") else ""
     if shutil.which("stdbuf") and san_name not in ("asan", "tsan"):
         cmd = ["stdbuf", "-oL", "-eL", str(bin_path)]
+    # Sanitizer waves need suite-level headroom: 600s was sized by #217
+    # against PLAIN CI history (plain suite occasionally >180s). ubsan-smoke
+    # red 2026-09-30: test_concurrent timed out (600s) on the CI runner,
+    # while the same suite under UBSAN finishes in 82-106s locally even on
+    # a heavily loaded box — no hang, no stall, 593/593 across 5 runs, and
+    # UBSAN ≈ plain wall clock (the suite is sync-bound, not compute-bound;
+    # #4230/#4231/#4235 add no material cost). On the small x64 CI runners
+    # that same wall clock sits near the 600s boundary and one loaded run
+    # tipped it over. 1800s keeps 3x headroom (mirrors the issues full-tier
+    # budget; the ubsan-smoke job itself allows timeout-minutes: 240).
+    timeout_s = 1800 if san_name in ("asan", "ubsan", "tsan") else 600
     # Issue #3586: unarmed Scheduler(N>1).run() aborts unless production
     # bootstrap is latched or AURA_SANDBOX=off. Latch Soft for this suite
     # (same helper as issue/integ runners). Explicit AURA_SANDBOX wins.
     try:
-        r = subprocess.run(cmd, timeout=600, env=_aura_test_env())
+        r = subprocess.run(cmd, timeout=timeout_s, env=_aura_test_env())
     except subprocess.TimeoutExpired:
-        print("  ✗ test_concurrent timed out (600s)")
+        print(f"  ✗ test_concurrent timed out ({timeout_s}s)")
         return 1
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
