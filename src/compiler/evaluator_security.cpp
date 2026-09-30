@@ -2171,26 +2171,33 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
 
 namespace {
 
-    // Issue #4165: Agent-band base for the per-Evaluator fibers minted when
-    // production Agent entry runs fiberless. Registry fiber ids are small pool
-    // indices, so the 0x4165 band cannot collide with a live fiber; 16 bits of
-    // mint sequence wrap only after 65536 fiberless production Evaluators in
-    // one process (a dead predecessor's refs are already stale by then).
+    // Issue #4165: Agent-band base for the fibers minted when production
+    // Agent entry runs fiberless. Registry fiber ids are small pool
+    // indices, so the 0x4165 band cannot collide with a live fiber; 16 bits
+    // of mint sequence wrap only after 65536 fiberless production claims
+    // in one process (a dead predecessor's refs are already stale by then).
+    // Issue #4235: the sequence is shared by the per-Agent mint table and
+    // the per-Evaluator fallback — every mint (per-Agent or fallback) is a
+    // unique draw, so two Agents can never observe one id.
     inline constexpr std::uint32_t kAgentFiberStampBand = 0x4165'0000u;
     inline constexpr std::uint32_t kAgentFiberStampBandMask = 0x0000'FFFFu;
     std::atomic<std::uint32_t> g_agent_fiber_stamp_seq{0};
 
 } // namespace
 
-// Issue #4165: Agent-scoped fiber resolution — see the evaluator.ixx
-// declaration for the contract. Order: #2151 effect_fiber_id_or override
-// > live aura_fiber_current_id(); still 0 under the production face →
-// lazily mint a stable per-Evaluator Agent-band fiber. Same Evaluator →
-// same id, so an Agent's own held QueryResult / StableNodeRef stays
-// fresh; a different same-tenant Agent resolves under a different mint →
-// InvalidFiber (query_result_decode.hh) → stale-ref. Soft / Off keep the
-// legacy 0 stamp (no new soft face). One relaxed fetch_add per fiberless
-// production Evaluator lifetime (first resolution only).
+// Issue #4165 + #4235: Agent-scoped fiber resolution — see the
+// evaluator.ixx declaration for the contract. Order: #2151
+// effect_fiber_id_or override > live aura_fiber_current_id(); still 0
+// under the production face → mint in the Agent band. Issue #4235: the
+// mint is per-Agent — keyed on the #1419 agent fingerprint via the
+// evaluator's agent_mint_slots_ table — so two Agents sharing ONE
+// Evaluator fiberless resolve distinct ids (the #4165 per-Evaluator
+// single slot made same-tenant cross-Agent held refs pass InvalidFiber
+// against each other: A's export resolved fresh under B). Fingerprint 0
+// (no #1419 identity installed — the Evaluator's single implicit agent)
+// keeps #4165's per-Evaluator mint. Soft / Off keep the legacy 0 stamp
+// (no new soft face). Mints draw from the shared per-process sequence:
+// each claim burns one unique id, two Agents can never observe one mint.
 std::uint32_t Evaluator::agent_scoped_fiber_id() const noexcept {
     const auto resolved = ::aura::core::capability::effect_fiber_id_or(
         static_cast<std::uint32_t>(aura_fiber_current_id()));
@@ -2198,6 +2205,48 @@ std::uint32_t Evaluator::agent_scoped_fiber_id() const noexcept {
         return resolved;
     if (!typed_audit::production_defaults_active())
         return 0;
+    // Issue #4235: per-Agent mint keyed on the #1419 agent fingerprint
+    // (the per-Agent principal SSOT inside one Evaluator). Slot word:
+    // high 32 bits = fingerprint key, low 32 bits = the minted Agent-band
+    // id; one lock-free CAS per (Evaluator, fingerprint) claim — no lock,
+    // torn-state-free (single word). Acquire hit-scan / acq_rel claim: a
+    // transient miss under contention can only mint a second id for the
+    // SAME fingerprint — fail-closed (an extra own-id deny), never a
+    // shared mint across Agents.
+    const auto fp = current_agent_fingerprint();
+    const auto key32 = static_cast<std::uint32_t>(fp & 0xFFFF'FFFFull);
+    if (key32 != 0) {
+        const auto start = static_cast<std::size_t>((fp * 0x9E37'79B9'7F4A'7C15ull) >> 59);
+        // Hit scan: an identified Agent keeps its mint for the Evaluator
+        // lifetime, so its own held exports stay fresh on re-resolve.
+        for (std::size_t p = 0; p < kAgentMintSlotCount; ++p) {
+            const auto w = agent_mint_slots_[(start + p) & (kAgentMintSlotCount - 1)].load(
+                std::memory_order_acquire);
+            if ((w >> 32) == key32)
+                return static_cast<std::uint32_t>(w & 0xFFFF'FFFFull);
+        }
+        // Miss: burn one mint from the shared #4165 sequence (unique per
+        // claim), then CAS-claim the first free slot; re-check the winner
+        // before probing on (twin claim between scan and CAS).
+        const auto mint = kAgentFiberStampBand +
+                          (g_agent_fiber_stamp_seq.fetch_add(1, std::memory_order_relaxed) &
+                           kAgentFiberStampBandMask);
+        const auto claim = (static_cast<std::uint64_t>(key32) << 32) | mint;
+        for (std::size_t p = 0; p < kAgentMintSlotCount; ++p) {
+            const auto i = (start + p) & (kAgentMintSlotCount - 1);
+            auto w = agent_mint_slots_[i].load(std::memory_order_relaxed);
+            if ((w >> 32) == 0 &&
+                agent_mint_slots_[i].compare_exchange_strong(w, claim, std::memory_order_acq_rel,
+                                                             std::memory_order_relaxed))
+                return mint;
+            if ((w >> 32) == key32)
+                return static_cast<std::uint32_t>(w & 0xFFFF'FFFFull);
+        }
+        // Table full (32 identified Agents on one Evaluator — beyond the
+        // one-fiber-per-Agent deploy contract): degrade to the #4165
+        // per-Evaluator mint below. Fail-closed shape: a shared mint can
+        // only widen InvalidFiber denies, never admit a foreign resolve.
+    }
     if (agent_fiber_id_ == 0)
         agent_fiber_id_ = kAgentFiberStampBand +
                           (g_agent_fiber_stamp_seq.fetch_add(1, std::memory_order_relaxed) &

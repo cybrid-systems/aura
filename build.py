@@ -9770,6 +9770,27 @@ def cmd_lint():
             "Issue #4165 agent fiber isolation linter failed — run python3 scripts/check_agent_fiber_isolation_4165.py"
         )
         return r
+    # Issue #4235 (P1: agent_scoped_fiber_id is per-Evaluator not per-Agent
+    # — same-Eval multi-Agent leak): two Agents sharing one Evaluator
+    # fiberless resolved ONE shared #4165 per-Evaluator mint, so same-tenant
+    # code-as-memory held refs passed InvalidFiber against each other (A's
+    # export resolved fresh under B). Gate pins: the mint keys on the #1419
+    # agent fingerprint via the lock-free agent_mint_slots_ table (slot
+    # word = fingerprint key high 32 | Agent-band mint low 32, single-word
+    # CAS claim, shared #4165 sequence), the #4165 resolution order
+    # (explicit fiber > #2151 override > live fiber) and the fingerprint-0
+    # per-Evaluator fallback kept, stamp/resolve wiring + the hard
+    # InvalidFiber face verbatim, runtime ACs dispatched (ac4235_1..5 in
+    # test_stable_ref_provenance_fiber_cow.cpp), build.py + allowlist
+    # wiring.
+    ampa4235_script = ROOT / "scripts" / "check_agent_mint_per_agent_4235.py"
+    if not ampa4235_script.exists():
+        fail(f"missing {ampa4235_script}")
+        return 1
+    r = run([sys.executable, str(ampa4235_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4235 per-Agent mint linter failed — run python3 scripts/check_agent_mint_per_agent_4235.py")
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

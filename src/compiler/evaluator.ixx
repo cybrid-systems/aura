@@ -7223,17 +7223,39 @@ public:
     // order reuses existing SSOTs only — no second model: explicit caller
     // fiber (make_stamped_safe_ref arg) > #2151 effect_fiber_id_or
     // override > live aura_fiber_current_id(); still 0 under the production
-    // face → a lazily-minted stable per-Evaluator id in the #4165 Agent
-    // band (agent_fiber_id_). Fiberless production Agent entry therefore
-    // never stamps or resolves fiber 0, so the hard InvalidFiber freshness
-    // check (query_result_decode.hh) denies same-tenant cross-Agent held
-    // QueryResult / StableNodeRef memory; the same Agent resolves its own
-    // exports under its own mint. Soft / Off keep the legacy 0 stamp (no
-    // new soft face). Deploy contract: one fiber (or tenant) per Agent.
+    // face → a minted stable id in the #4165 Agent band. Fiberless
+    // production Agent entry therefore never stamps or resolves fiber 0,
+    // so the hard InvalidFiber freshness check (query_result_decode.hh)
+    // denies same-tenant cross-Agent held QueryResult / StableNodeRef
+    // memory; the same Agent resolves its own exports under its own mint.
+    // Soft / Off keep the legacy 0 stamp (no new soft face). Deploy
+    // contract: one fiber (or tenant) per Agent.
+    // Issue #4235: the mint is per-Agent, not per-Evaluator — keyed on the
+    // #1419 agent fingerprint via agent_mint_slots_ below. Two Agents
+    // sharing one Evaluator fiberless used to resolve ONE shared
+    // per-Evaluator mint (agent_fiber_id_), so A's held refs passed the
+    // InvalidFiber check under B (same id on both sides); with per-Agent
+    // keys each identified Agent gets its own band id and the cross-Agent
+    // deny bites. Fingerprint 0 (no identity installed) keeps the #4165
+    // per-Evaluator mint: the Evaluator's single implicit agent.
     [[nodiscard]] std::uint32_t agent_scoped_fiber_id() const noexcept;
     // Issue #4165: minted Agent-band fiber for fiberless production entry
     // (0 lifetime writes after first resolution; mutable for const stamp).
+    // Issue #4235: now the fingerprint-0 fallback only — the Evaluator's
+    // single implicit agent (no #1419 identity installed).
     mutable std::uint32_t agent_fiber_id_ = 0;
+    // Issue #4235: per-Agent mint table — one slot per identified Agent
+    // (current_agent_fingerprint, #1419): high 32 bits = fingerprint key,
+    // low 32 bits = the minted Agent-band id. Zero word = free slot (a
+    // key32 of 0 can never be stored: the fingerprint-0 case takes the
+    // agent_fiber_id_ fallback before the table). 32 slots bound the one-
+    // fiber-per-Agent deploy contract; overflow degrades to the
+    // per-Evaluator mint — fail-closed, a shared mint can only widen
+    // InvalidFiber denies, never admit a foreign resolve. Single-word CAS
+    // claims keep readers torn-state-free with no lock; mutable for const
+    // stamp/resolve.
+    static constexpr std::size_t kAgentMintSlotCount = 32;
+    mutable std::atomic<std::uint64_t> agent_mint_slots_[kAgentMintSlotCount] = {};
     // Issue #2960: query:*-stable / children_stable Agent export stamp.
     // Remakes brace-init residuals via make_ref_layout when workspace has
     // non-zero wrap/cow (counts unstamped_prevented), then stamp_stable_ref
