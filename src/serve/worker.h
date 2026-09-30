@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <deque>
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -203,10 +204,15 @@ public:
     // Request stop
     void stop();
 
-    // Enqueue a fiber to this worker's local deque.
-    // Thread-safe (uses push which is owner-only, but callers are
-    // external threads — this is fine for Chase-Lev as the caller
-    // is effectively acting as owner for push).
+    // Enqueue a fiber to this worker.
+    // Thread-safe. The Chase-Lev deque is owner-THREAD-push-only: a call
+    // from this worker's own OS thread (a running fiber spawning a peer)
+    // pushes directly; every foreign caller (scheduler IO dispatch,
+    // foreign-thread spawn, steal re-queue) stages the fiber in
+    // inject_queue_ and the owner absorbs it at the top of its run()
+    // cycle. A foreign direct push would race the owner's pop() and can
+    // clobber bottom_ — the fiber is stranded below the deque floor and
+    // pending_ never rebalances (permanent dispatch wedge).
     void enqueue(Fiber* fiber);
 
     // Accessors
@@ -255,6 +261,10 @@ private:
     // Returns true if a fiber was stolen and placed in local queue
     bool try_steal_from(WorkerThread* victim);
 
+    // Owner-thread absorption of remote enqueues into local_queue_.
+    // Returns true if any fiber was moved (caller re-enters pop loop).
+    bool drain_injections();
+
     int id_;
     Scheduler* scheduler_;
 
@@ -270,6 +280,14 @@ private:
     // Condition variable for sleep/wake
     std::mutex wake_mutex_;
     std::condition_variable wake_cv_;
+
+    // Remote-enqueue staging. local_queue_ (Chase-Lev) is owner-push-only;
+    // foreign threads stage here under inject_mutex_ and the owner thread
+    // absorbs them into local_queue_ at the top of its run() cycle
+    // (drain_injections). pending_ is credited at stage time, so the
+    // scheduler's liveness check sees staged fibers immediately.
+    std::mutex inject_mutex_;
+    std::deque<Fiber*> inject_queue_;
 
     // The OS thread
     std::jthread thread_;
