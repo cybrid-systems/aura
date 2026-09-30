@@ -535,7 +535,10 @@ static void ac3727_5_soft_no_extra_deny_and_source() {
     CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "soft-3727") "ok"))").has_value(),
           "3727 AC5: spawn-agent under Soft");
     ac3727_mark_pending(cs, "soft-3727");
-    auto r = cs.eval(R"((hash-ref (orch:scope-spawn "soft-3727") "ok"))");
+    // Issue #4238: distinct non-zero region keys — under production this
+    // scope now carries two mutate agents, and the region-key-missing
+    // admit gate (#4238) would otherwise preempt this Soft-face shadow AC.
+    auto r = cs.eval(R"((hash-ref (orch:scope-spawn "soft-3727" :region-key 1) "ok"))");
     CHECK(r && is_bool(*r) && as_bool(*r),
           "3727 AC5: Soft/Off scope-spawn does not extra-deny pending name-table");
     const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
@@ -560,7 +563,9 @@ static void ac3727_5_soft_no_extra_deny_and_source() {
     h2.must_wait_reclaimed = true;
     cs2.evaluator().agent_names_->put(std::move(h2));
     ac3727_set_prod(true);
-    auto peer = cs.eval(R"((hash-ref (orch:scope-spawn "peer-3727") "ok"))");
+    // Issue #4238: key 2 is distinct from soft-3727's key 1 so the admit
+    // gate stays out of the way of this dual-Evaluator shadow check.
+    auto peer = cs.eval(R"((hash-ref (orch:scope-spawn "peer-3727" :region-key 2) "ok"))");
     CHECK(peer && is_bool(*peer) && as_bool(*peer),
           "3727 AC5: Evaluator-2 pending foo does not shadow Evaluator-1 scope-spawn");
     ac3727_set_prod(false);

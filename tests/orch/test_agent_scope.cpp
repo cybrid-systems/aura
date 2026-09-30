@@ -1637,6 +1637,280 @@ static void ac3366_6_source_cite_and_no_invent() {
     }
 }
 
+// ── Issue #4238: Scope admit gate closes the observation→admit loop ──
+// Saves/restores AURA_PARALLEL_REQUIRE_REGION_KEYS (the #3353 env escape).
+struct RkeysEnvGuard4238 {
+    bool had = false;
+    std::string prev;
+    RkeysEnvGuard4238() {
+        const char* e = std::getenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        had = e != nullptr;
+        if (had)
+            prev = e;
+    }
+    ~RkeysEnvGuard4238() {
+        if (had)
+            ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", prev.c_str(), 1);
+        else
+            ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    }
+};
+
+static void ac4238_region_key_admit_deny() {
+    RestoreSandbox restore_sandbox;
+    RkeysEnvGuard4238 rkeys_guard;
+    std::println("\n--- #4238 AC1–AC7: Scope region-key-missing admit deny ---");
+
+    auto set_prod = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+        aura::core::cpp26::note_hot_contract_harden_armed(on);
+    };
+    auto miss_total = [] {
+        return aura::serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
+            .load(std::memory_order_relaxed);
+    };
+    auto hold_body = [](std::atomic<bool>& stop) {
+        return [&stop] {
+            while (!stop.load(std::memory_order_acquire)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+    };
+    auto drain = [](AgentScope& scope, std::atomic<bool>& stop) {
+        stop.store(true, std::memory_order_release);
+        scope.cancel_all();
+        (void)scope.join_all(std::optional<std::uint64_t>{800});
+    };
+
+    // AC1: Soft — N keyless mutate agents admit (Serialized face unchanged,
+    // zero-cost observation-only).
+    {
+        set_prod(false);
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        const auto m0 = miss_total();
+        for (int i = 0; i < 3; ++i) {
+            AgentSpec spec;
+            spec.name = std::format("4238-soft-{}", i);
+            spec.body = [] {};
+            spec.attach_mailbox = false;
+            auto& h = scope.spawn(std::move(spec));
+            CHECK(h.ok, std::format("4238 AC1: Soft spawn {} admits", i));
+        }
+        CHECK(scope.handles().size() == 3, "4238 AC1: all three emplaced");
+        CHECK(miss_total() == m0, "4238 AC1: deny counter untouched in Soft");
+        const auto obs = scope.observe_isolation();
+        CHECK(obs.agent_count == 3, "4238 AC1: observe agent_count");
+        CHECK(!obs.region_key_missing, "4238 AC1: Soft observation stays missing=false");
+    }
+
+    // AC2: production + ≥2 mutate agents + region_key=0 → typed spawn deny
+    // (not emplaced; counter reuses region_key_missing_serialized_total;
+    // #3803 observation face stays consistent at agent_count=1).
+    {
+        set_prod(true);
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        std::atomic<bool> stop{false};
+        AgentSpec first;
+        first.name = "4238-prod-a";
+        first.body = hold_body(stop);
+        first.attach_mailbox = false;
+        first.keepalive_interval_ms = 0;
+        auto& h1 = scope.spawn(std::move(first));
+        CHECK(h1.ok, "4238 AC2: first keyless spawn admits");
+        const auto m0 = miss_total();
+        AgentSpec second;
+        second.name = "4238-prod-b";
+        second.body = hold_body(stop);
+        second.attach_mailbox = false;
+        second.keepalive_interval_ms = 0;
+        auto& h2 = scope.spawn(std::move(second));
+        CHECK(!h2.ok, "4238 AC2: second keyless spawn denied");
+        CHECK(h2.id == 0, "4238 AC2: denied handle id=0");
+        CHECK(h2.error.find("#4238") != std::string::npos, "4238 AC2: error cites #4238");
+        CHECK(h2.deny_class == aura::orch::AgentDenyClass::Other, "4238 AC2: deny_class=Other");
+        CHECK(h2.quota_dimension == "missing-or-overlap-keys",
+              "4238 AC2: deny reason = serialized missing-or-overlap-keys");
+        CHECK(scope.handles().size() == 1, "4238 AC2: denied spawn not emplaced");
+        CHECK(miss_total() == m0 + 1,
+              "4238 AC2: region_key_missing_serialized_total reused (no new query key)");
+        const auto obs = scope.observe_isolation();
+        CHECK(obs.agent_count == 1, "4238 AC2: observation stays at 1 agent");
+        CHECK(!obs.region_key_missing, "4238 AC2: single-agent observation not missing");
+        drain(scope, stop);
+        set_prod(false);
+    }
+
+    // AC3: env AURA_PARALLEL_REQUIRE_REGION_KEYS=0 explicit off — soak
+    // escape admits; the #3803 observation face still flags missing keys.
+    {
+        set_prod(true);
+        ::unsetenv("AURA_SANDBOX");
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        std::atomic<bool> stop{false};
+        AgentSpec first;
+        first.name = "4238-escape-a";
+        first.body = hold_body(stop);
+        first.attach_mailbox = false;
+        first.keepalive_interval_ms = 0;
+        auto& h1 = scope.spawn(std::move(first));
+        CHECK(h1.ok, "4238 AC3: first spawn admits");
+        AgentSpec second;
+        second.name = "4238-escape-b";
+        second.body = hold_body(stop);
+        second.attach_mailbox = false;
+        second.keepalive_interval_ms = 0;
+        auto& h2 = scope.spawn(std::move(second));
+        CHECK(h2.ok, "4238 AC3: env=0 explicit off admits the second spawn");
+        const auto obs = scope.observe_isolation();
+        CHECK(obs.region_key_missing,
+              "4238 AC3: observation still flags region-key-missing after escape admit");
+        drain(scope, stop);
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        set_prod(false);
+    }
+
+    // AC4: production + distinct non-zero keys → both admit, isolation
+    // RegionConcurrent-eligible, observation clean.
+    {
+        set_prod(true);
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        std::atomic<bool> stop{false};
+        AgentSpec a;
+        a.name = "4238-keys-a";
+        a.body = hold_body(stop);
+        a.attach_mailbox = false;
+        a.keepalive_interval_ms = 0;
+        a.region_key = 1;
+        auto& h1 = scope.spawn(std::move(a));
+        CHECK(h1.ok, "4238 AC4: key=1 spawn admits");
+        AgentSpec b;
+        b.name = "4238-keys-b";
+        b.body = hold_body(stop);
+        b.attach_mailbox = false;
+        b.keepalive_interval_ms = 0;
+        b.region_key = 2;
+        auto& h2 = scope.spawn(std::move(b));
+        CHECK(h2.ok, "4238 AC4: key=2 spawn admits (distinct keys)");
+        const auto obs = scope.observe_isolation();
+        CHECK(obs.decision.distinct_nonzero_region_keys == 2,
+              "4238 AC4: two distinct non-zero keys");
+        CHECK(!obs.region_key_missing, "4238 AC4: observation missing=false");
+        drain(scope, stop);
+        set_prod(false);
+    }
+
+    // AC5: production mutate floor — one mutate + one pure-reasoning agent
+    // (mutation_boundary=false) stays admitted (deny needs ≥2 mutate).
+    {
+        set_prod(true);
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        std::atomic<bool> stop{false};
+        AgentSpec first;
+        first.name = "4238-mut-a";
+        first.body = hold_body(stop);
+        first.attach_mailbox = false;
+        first.keepalive_interval_ms = 0;
+        auto& h1 = scope.spawn(std::move(first));
+        CHECK(h1.ok, "4238 AC5: mutate agent admits");
+        AgentSpec pure;
+        pure.name = "4238-pure-b";
+        pure.body = hold_body(stop);
+        pure.attach_mailbox = false;
+        pure.keepalive_interval_ms = 0;
+        pure.mutation_boundary = false;
+        auto& h2 = scope.spawn(std::move(pure));
+        CHECK(h2.ok, "4238 AC5: single mutate + pure agent admits (floor not met)");
+        const auto obs = scope.observe_isolation();
+        CHECK(obs.mutate_agent_count == 1, "4238 AC5: mutate_agent_count=1");
+        drain(scope, stop);
+        set_prod(false);
+    }
+
+    // AC6: Soft + env=1 stays observation-only (no Soft deny face; the
+    // helper exits before the env read — zero-cost contract kept).
+    {
+        set_prod(false);
+        ::unsetenv("AURA_SANDBOX");
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        const auto m0 = miss_total();
+        for (int i = 0; i < 2; ++i) {
+            AgentSpec spec;
+            spec.name = std::format("4238-softenv-{}", i);
+            spec.body = [] {};
+            spec.attach_mailbox = false;
+            auto& h = scope.spawn(std::move(spec));
+            CHECK(h.ok, std::format("4238 AC6: Soft env=1 spawn {} admits", i));
+        }
+        CHECK(miss_total() == m0, "4238 AC6: no deny counter bump in Soft");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    }
+
+    // AC7: source-cite — admit gate reuses the decide_isolation SSOT, no
+    // AgentRegistry, no key synthesis, no new query key, linter wired.
+    {
+        set_prod(false);
+        const auto scope_src = read_file("src/orch/agent_scope.h");
+        CHECK(scope_src.find("Issue #4238") != std::string::npos,
+              "4238 AC7: agent_scope.h cites #4238");
+        CHECK(scope_src.find("region_key_missing_admit_deny_unlocked_") != std::string::npos,
+              "4238 AC7: admit-gate helper present");
+        CHECK(scope_src.find("serve::parallel_orch::decide_isolation") != std::string::npos,
+              "4238 AC7: decide_isolation SSOT reused");
+        CHECK(scope_src.find("region_key_missing_serialized") != std::string::npos,
+              "4238 AC7: #3243 predicate reused");
+        CHECK(scope_src.find("parallel_require_region_keys_deny") != std::string::npos,
+              "4238 AC7: #3353 deny face reused");
+        CHECK(scope_src.find("class AgentRegistry") == std::string::npos,
+              "4238 AC7: no AgentRegistry");
+        CHECK(scope_src.find("auto_region_key") == std::string::npos,
+              "4238 AC7: keys never auto-invented");
+        CHECK(read_file("tests/orch/test_issue_4238.cpp").empty(),
+              "4238 AC7: no test_issue_4238.cpp");
+        CHECK(read_file("docs/design/4238-scope-region-admit.md").empty(),
+              "4238 AC7: no docs/design/4238-* per #1655");
+        const auto orch_src = read_file("src/serve/parallel_orch.h");
+        CHECK(orch_src.find("region_key_missing_serialized_total") != std::string::npos,
+              "4238 AC7: existing counter reused");
+        CHECK(orch_src.find("region-key-missing-spawn-deny-total") == std::string::npos,
+              "4238 AC7: no new query key");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim_src.find("!handle.ok") != std::string::npos,
+              "4238 AC7: scope-spawn failed-handle mapping intact");
+        const auto build_src = read_file("build.py");
+        CHECK(build_src.find("check_scope_region_admit_4238") != std::string::npos,
+              "4238 AC7: build.py wires the linter");
+        const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+        CHECK(allow.find("check_scope_region_admit_4238.py") != std::string::npos,
+              "4238 AC7: allowlist entry present");
+    }
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -1672,6 +1946,7 @@ int run_test_agent_scope() {
     ac3366_1_bp_deny_failed_handle_has_typed_reject_fields();
     ac3366_6_source_cite_and_no_invent();
     ac3442_scope_message_resolve();
+    ac4238_region_key_admit_deny();
 
     std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216/#3442: passed={} "
                  "failed={} ===",
