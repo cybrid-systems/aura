@@ -729,7 +729,21 @@ add_library(aura_test_objects SHARED
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp)
+    src/compiler/lowering_linear_types_impl.cpp
+    # Full-tree link-rot closure (lane16, at bda315cef): the evaluator TUs in
+    # AURA_EVALUATOR_SOURCE_FILES call the JIT C bridges (aura_1637_*,
+    # reemit_*, epoch_invariant_*, aot_*, cross_eval_*, residual_remount_*,
+    # tl_arena_*, ... ~160 symbols) whose ONLY strong definitions live in
+    # aura_jit.cpp / aura_jit_runtime.cpp / aura_jit_bridge.cpp — none of
+    # which this SO compiled. Latent rot the incremental gate never saw
+    # (CTest on existing binaries; a full fanout rebuild is the only reveal).
+    # runtime_bridge_stub.cpp weak stubs cover a small subset only; the
+    # closure is the bridge surface itself, so compile the strong definers
+    # here (same set test_ir links; -fno-rtti property for
+    # aura_jit_runtime.cpp is already set directory-wide above).
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp)
 set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 set_target_properties(aura_test_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
