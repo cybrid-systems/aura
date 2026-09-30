@@ -8584,6 +8584,30 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4265 pick-best call-cache linter failed - run python3 scripts/check_pick_best_call_cache_4265.py")
         return r
+    # Issue #4267 (correctness): synthesize:optimize score synthesis. The
+    # default score was the probe non-error rate plus a shorter-source bonus
+    # (labeled correctness), so shorter-wrong variants could win, and the
+    # user's :fitness / :benchmark expression was read but never eval'd — the
+    # candidate source was eval'd instead (define form → non-numeric → all
+    # candidates scored 0), and keyword-tagged option keys never parsed at
+    # all (Issue #63 Phase 3; verified at HEAD bda315cef: both opposite
+    # :fitness exprs returned the default 1000.03125). Fix: resolve keyword
+    # keys, eval the :fitness expression as the score (non-numeric =
+    # candidate rejected), default path scores by agreement with baseline
+    # probe results (semantic-preserving) with length as a pure post-gate
+    # tiebreaker. Doors: test_fiber_synthesize_batch run_optimize_score_4267
+    # AC1-AC5. No test_issue_4267.cpp per #81934, no docs/design/4267-* per
+    # #1655.
+    sos4267_script = ROOT / "scripts" / "check_synthesize_optimize_score_4267.py"
+    if not sos4267_script.exists():
+        fail(f"missing {sos4267_script}")
+        return 1
+    r = run([sys.executable, str(sos4267_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4267 synthesize:optimize score linter failed - run python3 scripts/check_synthesize_optimize_score_4267.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

@@ -561,6 +561,234 @@ int run_find_after_parens() {
 } // namespace aura_fiber_run_find_after_parens
 // ─── end test_find_after_parens.cpp ───
 
+// ─── Issue #4267 — synthesize:optimize score synthesis ───
+namespace aura_fiber_run_optimize_score_4267 {
+// @category: unit
+// @reason: Issue #4267 — synthesize:optimize score synthesis: (1) the
+// default score was the probe non-error rate plus a shorter-source bonus
+// (labeled "correctness") — a shorter-wrong variant could beat the baseline;
+// (2) the user's :fitness / :benchmark expression was read but never eval'd
+// (the candidate source was eval'd instead — a define form, non-numeric, so
+// every candidate scored 0); (3) option keys arrive keyword-tagged (Issue
+// #63 Phase 3) so the string-only parse silently dropped every :keyword
+// option. Fix: resolve keyword keys, eval the :fitness expression as the
+// score (non-numeric = candidate rejected), default path scores by
+// agreement with baseline probe results (semantic-preserving) with length
+// as a pure post-gate tiebreaker.
+//
+//   AC1: :fitness expression is the eval path — opposite fitness exprs
+//        ((f 3) vs (- 0 (f 3))) produce expression-derived, non-default
+//        scores that flip the ranking (A ≥ 13, B ≥ -13, A - B ≥ 26)
+//   AC2: :benchmark alias behaves like :fitness (expression-derived score)
+//   AC3: non-numeric fitness rejects the candidate — baseline retained
+//        (gen 0) with the reject sentinel score (< -1e300)
+//   AC4: default score is baseline-agreement — a default run never returns
+//        a sub-1000 score (a shorter-wrong variant cannot win)
+//   AC5: source contract — keyword-key resolution in the option loop,
+//        reference-agreement scoring, no `correctness` identifier in the
+//        comment-stripped optimize region, #4267 cited
+
+namespace {
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    using aura::test::g_failed;
+    using aura::test::g_passed;
+
+    std::string read_file(const char* path) {
+        std::ifstream in(path);
+        if (!in)
+            return {};
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+
+    std::string strip_line_comments(std::string_view win) {
+        std::string code;
+        code.reserve(win.size());
+        for (size_t i = 0; i < win.size();) {
+            if (i + 1 < win.size() && win[i] == '/' && win[i + 1] == '/') {
+                while (i < win.size() && win[i] != '\n')
+                    ++i;
+                continue;
+            }
+            code.push_back(win[i++]);
+        }
+        return code;
+    }
+
+    // synthesize:optimize returns (gen . fitness) as a pair of heap strings.
+    double returned_fitness(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+        if (!is_pair(v))
+            return 0.0;
+        auto pi = as_pair_idx(v);
+        auto& pairs = cs.evaluator().pairs();
+        if (pi >= pairs.size())
+            return 0.0;
+        const auto& fit = pairs[pi].cdr;
+        if (!is_string(fit))
+            return 0.0;
+        auto si = as_string_idx(fit);
+        auto& heap = cs.evaluator().string_heap_mut();
+        if (si >= heap.size())
+            return 0.0;
+        try {
+            return std::stod(heap[si]);
+        } catch (...) {
+            return 0.0;
+        }
+    }
+
+    std::int64_t returned_gen(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+        if (!is_pair(v))
+            return -1;
+        auto pi = as_pair_idx(v);
+        auto& pairs = cs.evaluator().pairs();
+        if (pi >= pairs.size())
+            return -1;
+        const auto& gen = pairs[pi].car;
+        if (!is_string(gen))
+            return -1;
+        auto si = as_string_idx(gen);
+        auto& heap = cs.evaluator().string_heap_mut();
+        if (si >= heap.size())
+            return -1;
+        try {
+            return std::stoll(heap[si]);
+        } catch (...) {
+            return -1;
+        }
+    }
+
+    bool install_baseline(CompilerService& cs) {
+        auto sc = cs.eval("(set-code \"(define (f x) (+ x 10))\")");
+        if (!sc)
+            return false;
+        auto tc = cs.eval("(typecheck-current)");
+        return tc.has_value();
+    }
+
+} // namespace
+
+int run_optimize_score_4267() {
+    // ── AC1: :fitness expression is the eval path (ranking flip) ──
+    double fitness_a = 0.0;
+    double fitness_b = 0.0;
+    {
+        std::println("\n--- AC1: :fitness expression on the eval path ---");
+        CompilerService cs;
+        CHECK(install_baseline(cs), "baseline (+ x 10) installed");
+        auto ra = cs.eval("(synthesize:optimize \"f\" :fitness \"(f 3)\")");
+        CHECK(ra.has_value(), "fitness-A eval ok");
+        if (ra)
+            fitness_a = returned_fitness(cs, *ra);
+        auto rb = cs.eval("(synthesize:optimize \"f\" :fitness \"(- 0 (f 3))\")");
+        CHECK(rb.has_value(), "fitness-B eval ok");
+        if (rb)
+            fitness_b = returned_fitness(cs, *rb);
+        // Baseline (f 3) = 13 is always in the population, so A ≥ 13 and
+        // B ≥ -13; expression-derived scores stay far below the ~1000
+        // default-scorer signature. At HEAD both returned 1000.03125 (the
+        // default non-error rate) — the expression never ran.
+        CHECK(fitness_a >= 13.0, "fitness-A derives from (f 3) — ≥ baseline 13");
+        CHECK(fitness_b >= -13.0, "fitness-B derives from (- 0 (f 3)) — ≥ baseline -13");
+        CHECK(fitness_a < 1000.0 && fitness_b < 1000.0,
+              "scores are expression values, not the default non-error rate");
+        CHECK(fitness_a - fitness_b >= 26.0,
+              "opposite :fitness expressions flip the ranking (A - B ≥ 26)");
+    }
+
+    // ── AC2: :benchmark alias ──
+    {
+        std::println("\n--- AC2: :benchmark alias honors the expression ---");
+        CompilerService cs;
+        CHECK(install_baseline(cs), "baseline installed");
+        auto r = cs.eval("(synthesize:optimize \"f\" :benchmark \"(f 3)\")");
+        CHECK(r.has_value(), "benchmark eval ok");
+        double fb = r ? returned_fitness(cs, *r) : 0.0;
+        CHECK(fb >= 13.0 && fb < 1000.0, ":benchmark score is expression-derived (≥ 13, < 1000)");
+    }
+
+    // ── AC3: non-numeric fitness rejects the candidate ──
+    {
+        std::println("\n--- AC3: non-numeric fitness rejects candidate ---");
+        CompilerService cs;
+        CHECK(install_baseline(cs), "baseline installed");
+        auto r = cs.eval("(synthesize:optimize \"f\" :fitness \"(no-such-fn 3)\")");
+        CHECK(r.has_value(), "eval ok");
+        if (r) {
+            auto gen = returned_gen(cs, *r);
+            double fit = returned_fitness(cs, *r);
+            CHECK(gen == 0, "no candidate beats a rejected-fitness baseline (gen 0)");
+            CHECK(fit < -1e300, "non-numeric fitness → reject sentinel score");
+        }
+    }
+
+    // ── AC4: default score is baseline-agreement ──
+    {
+        std::println("\n--- AC4: default score is baseline-agreement ---");
+        CompilerService cs;
+        CHECK(install_baseline(cs), "baseline installed");
+        auto r = cs.eval("(synthesize:optimize \"f\")");
+        CHECK(r.has_value(), "default optimize eval ok");
+        if (r) {
+            double fit = returned_fitness(cs, *r);
+            // Baseline self-agreement is a perfect 1000; a shorter-wrong
+            // variant (e.g. (+ x 0)) diverges on every probe and cannot win.
+            CHECK(fit >= 1000.0, "default run keeps baseline agreement (≥ 1000)");
+        }
+    }
+
+    // ── AC5: source contract ──
+    {
+        std::println("\n--- AC5: source contract in evaluator_primitives_agent.cpp ---");
+        const char* candidates[] = {
+            "src/compiler/evaluator_primitives_agent.cpp",
+            "../src/compiler/evaluator_primitives_agent.cpp",
+        };
+        std::string src;
+        for (const char* p : candidates) {
+            src = read_file(p);
+            if (!src.empty())
+                break;
+        }
+        CHECK(!src.empty(), "read agent primitives");
+        if (!src.empty()) {
+            auto pos = src.find("add(\"synthesize:optimize\"");
+            CHECK(pos != std::string::npos, "found synthesize:optimize");
+            if (pos != std::string::npos) {
+                auto end = src.find("\n    add(\"", pos + 10);
+                auto win = src.substr(pos, end == std::string::npos ? 30000 : end - pos);
+                auto code = strip_line_comments(win);
+                CHECK(win.find("Issue #4267") != std::string::npos, "region cites #4267");
+                CHECK(code.find("types::as_keyword_idx") != std::string::npos,
+                      "option loop resolves keyword-tagged keys");
+                CHECK(code.find("ref_results") != std::string::npos &&
+                          code.find("ref_ready") != std::string::npos,
+                      "default path records baseline reference results");
+                CHECK(code.find("agreement") != std::string::npos,
+                      "default score is baseline-agreement");
+                CHECK(code.find("std::numeric_limits<double>::lowest()") != std::string::npos,
+                      "non-numeric fitness rejects the candidate");
+                CHECK(code.find("push_string_heap(fitness_expr)") != std::string::npos,
+                      ":fitness expression is what gets eval'd");
+                CHECK(code.find("push_string_heap(src)") == std::string::npos,
+                      "candidate source is no longer eval'd as the fitness");
+                CHECK(code.find("correctness") == std::string::npos,
+                      "no `correctness` identifier in the optimize region");
+            }
+        }
+    }
+
+    std::println("\n=== run_optimize_score_4267: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+
+} // namespace aura_fiber_run_optimize_score_4267
+// ─── end Issue #4267 ───
+
 int main() {
     std::println("\n######## run_synthesize_json_1715 ########");
     if (int rc = aura_fiber_run_synthesize_json_1715::run_synthesize_json_1715(); rc != 0) {
@@ -580,6 +808,11 @@ int main() {
     std::println("\n######## run_find_after_parens ########");
     if (int rc = aura_fiber_run_find_after_parens::run_find_after_parens(); rc != 0) {
         std::println("run_find_after_parens FAILED rc={}", rc);
+        return rc;
+    }
+    std::println("\n######## run_optimize_score_4267 ########");
+    if (int rc = aura_fiber_run_optimize_score_4267::run_optimize_score_4267(); rc != 0) {
+        std::println("run_optimize_score_4267 FAILED rc={}", rc);
         return rc;
     }
     if (::aura::test::g_failed)
