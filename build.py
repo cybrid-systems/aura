@@ -9903,6 +9903,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4238 scope region admit linter failed — run python3 scripts/check_scope_region_admit_4238.py")
         return r
+    # Issue #4239 (P1: require_effect hard face resurrects the TypeLinear
+    # proof stamp after join(0)==0 refuse — EffectAllow/grant-bind ran on a
+    # stale proof mid P while the mid-fallback-refused SE (#2836/#3054)
+    # landed on mid=0, splitting the join key #4098 forbids): the hard face
+    # now refuses absolutely on join==0 (align with production_deny_se_mid),
+    # epoch!=0 still joins the WorkspaceEpoch mutation, Soft/Off mid=1
+    # observe arm unchanged, runtime ACs dispatched in
+    # test_require_effect_live_mid.cpp (ac4239_1..5 in
+    # run_test_std_ffi_per_call_3725), build.py + allowlist wiring.
+    rerj4239_script = ROOT / "scripts" / "check_require_effect_join_refuse_4239.py"
+    if not rerj4239_script.exists():
+        fail(f"missing {rerj4239_script}")
+        return 1
+    r = run([sys.executable, str(rerj4239_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4239 require_effect join refuse linter failed — run python3 scripts/check_require_effect_join_refuse_4239.py"
+        )
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

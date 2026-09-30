@@ -772,16 +772,21 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     const bool hard = typed_audit::production_defaults_active() ||
                       typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
     if (hard) {
-        // #3966 follow-up (#3691 soak): the wrapper gate runs BEFORE the
-        // Guard enters, so a fresh process is session-less (join==0) —
-        // keep the caller mid there; a live Guard always wins in join(0).
+        // #3966 join SSOT; #4239: join(0)==0 is the absolute refuse — the
+        // mid-fallback-refused SE (#2836/#3054) has already landed on
+        // mid=0 inside resolve_audit_mutation_id by the time join returns
+        // 0, so a proof-stamp / epoch resurrection here would run
+        // EffectAllow on a stale TypeLinear proof (#4098: the proof stamp
+        // is not the session / TypedMid join key) and split the join key
+        // against that refuse SE (query by mid=0 sees refuse, by mid=P
+        // sees allow — same action, two keys). Aligns with the
+        // production_deny_se_mid hard face in this TU (join-only, no
+        // resurrection). A live Guard / composite note / epoch!=0 always
+        // wins inside join(0); a session-less production effect refuses
+        // fail-closed with zero side effect.
         mid = typed_audit::join_audit_and_se_mid(0);
         if (mid == 0)
-            mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
-        if (mid == 0)
-            mid = ::aura::core::current_mutation_epoch();
-        if (mid == 0)
-            return false; // fail-closed, zero side effect
+            return false; // #4239: absolute refuse — no proof resurrection
     } else if (mid == 0) {
         mid = 1; // Soft only: non-zero join stamp (process origin)
     }
