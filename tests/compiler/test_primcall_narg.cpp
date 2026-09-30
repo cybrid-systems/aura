@@ -39,6 +39,21 @@
 //   AC17: car / cdr / null? callable in an unwired-env eval (the door)
 //   AC18: soft_worldline_pick pick-best select via the same env path
 //   AC19: source + linter wiring
+//
+// Issue #4265 — Soft pick-best eval returned a non-int under Soft sock stress
+// (target-sum WAVE10: the entire scores list `'(6 6 0 … 6)'`; word-search
+// WAVE10: `<error>`), while a fresh session returned the correct max.
+// Residual face after #4264 (session std prelude) + #4232 (registry prim
+// fallback): CompilerService::eval()'s Path B function-call shortcut walked
+// the PERSISTENT workspace flat's Define body through eval_flat /
+// apply_closure WITHOUT marking the body subtree dirty, so the incremental
+// eval value cache (#32b/#159/#1441) served rows cached by a PREVIOUS call —
+// repeated `(pick-best (list …))` execs with different args returned the
+// first call's result, a stale intermediate list, or stale-state errors.
+//
+//   AC20: repeated Path B pick-best calls with fresh args -> fresh max each
+//   AC21: set-code + eval-current session shape — replay parity + freshness
+//   AC22: source + linter wiring
 
 #include "test_harness.hpp"
 
@@ -531,6 +546,84 @@ static void ac19_source_gate() {
     CHECK(build.find("check_soft_list_prims_4232") != std::string::npos, "AC19: build.py linter");
 }
 
+// Issue #4265: the soft_worldline_pick helper (issue body shape) as a
+// workspace Define — every call below must compute a FRESH max from ITS list,
+// never a cached row from the previous call.
+static const char* kPickBestDef4265 = R"4265((define (pick-best xs)
+  (letrec ((loop (lambda (rest best)
+      (if (null? rest)
+        best
+        (loop (cdr rest)
+              (if (> (car rest) best) (car rest) best))))))
+    (loop xs -999999))))4265";
+
+static void ac20_pick_best_pathb_repeat_calls() {
+    std::println("\n--- #4265 AC20: Path B repeated pick-best calls, fresh args each ---");
+    CompilerService cs;
+    auto def_r = cs.eval(std::string(kPickBestDef4265));
+    CHECK(def_r.has_value(), "AC20: pick-best define evaluates");
+    // Path B door: top-level call whose head matches the workspace Lambda
+    // Define. Different arg lists per call — the #4265 bug returned the
+    // FIRST call's cached max for every later list.
+    const std::pair<const char*, int> cases[] = {
+        {"(pick-best (list 6 6 0 0 0 0 0 0 0 0 0 0 6))", 6},
+        {"(pick-best (list 0 0 9))", 9},
+        {"(pick-best (list 3))", 3},
+        {"(pick-best (list 0 8 0 0 2))", 8},
+        {"(pick-best (list 7 1 1 1 1 1 1 1 1 1 1 1 1))", 7},
+        {"(pick-best (list 4 4 4 4 5))", 5},
+        {"(pick-best (list 6 6 0 0 0 0 0 0 0 0 0 0 6))", 6},
+        {"(pick-best (list 2 2 2))", 2},
+        {"(pick-best (list 0 0 0 1))", 1},
+        {"(pick-best (list 9 9))", 9},
+    };
+    for (const auto& [expr, want] : cases) {
+        auto r = cs.eval(expr);
+        CHECK(r.has_value(), std::string("AC20: evaluates -> ") + expr);
+        if (r && aura::compiler::types::is_int(*r))
+            CHECK(aura::compiler::types::as_int(*r) == want,
+                  std::string("AC20: max == ") + std::to_string(want) + " for " + expr);
+        else
+            CHECK(false, std::string("AC20: int result for ") + expr);
+    }
+}
+
+static void ac21_pick_best_session_replay_parity() {
+    std::println("\n--- #4265 AC21: set-code + eval-current session shape — replay parity ---");
+    CompilerService cs;
+    // Soft host session shape: set-code the helper, eval-current, then
+    // repeated pick-best evals; an (eval-current) replay between calls must
+    // neither serve Path-B arg-specific rows nor break later calls.
+    auto sc = cs.eval(std::string("(set-code \"") + kPickBestDef4265 + std::string("\")"));
+    CHECK(sc.has_value(), "AC21: set-code accepts the pick-best source");
+    auto ec1 = cs.eval("(eval-current)");
+    CHECK(ec1.has_value(), "AC21: first eval-current completes");
+    auto r1 = cs.eval("(pick-best (list 6 6 0 0 0 0 0 0 0 0 0 0 6))");
+    CHECK(r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 6,
+          "AC21: post-set-code pick-best -> 6");
+    auto r2 = cs.eval("(pick-best (list 0 0 9))");
+    CHECK(r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 9,
+          "AC21: different list -> 9 (no first-call cache replay)");
+    auto ec2 = cs.eval("(eval-current)");
+    CHECK(ec2.has_value(), "AC21: replay eval-current completes after Path B rows");
+    auto r3 = cs.eval("(pick-best (list 3))");
+    CHECK(r3 && aura::compiler::types::is_int(*r3) && aura::compiler::types::as_int(*r3) == 3,
+          "AC21: post-replay pick-best still fresh -> 3");
+}
+
+static void ac22_source_gate_4265() {
+    std::println("\n--- #4265 AC22: source + linter wiring ---");
+    // Verification conclusion (HEAD 985fbb8a0): the reported repro is covered
+    // by #4264 (session std prelude + loader adopt-if-held) and #4232
+    // (registry prim fallback). AC20/AC21 pin the pick-best contract so a
+    // future regression on this surface cannot ship silently.
+    CHECK(read_file("tests/compiler/test_primcall_narg.cpp").find("#4265") != std::string::npos,
+          "AC22: test file cites #4265");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_pick_best_call_cache_4265") != std::string::npos,
+          "AC22: build.py linter");
+}
+
 } // namespace
 
 int run_test_primcall_narg() {
@@ -554,7 +647,11 @@ int run_test_primcall_narg() {
     ac17_unwired_env_list_prims();
     ac18_soft_pick_best_unwired_env();
     ac19_source_gate();
-    std::println("\n=== #2576+#4175+#4177+#4232: {} passed, {} failed ===", g_passed, g_failed);
+    ac20_pick_best_pathb_repeat_calls();
+    ac21_pick_best_session_replay_parity();
+    ac22_source_gate_4265();
+    std::println("\n=== #2576+#4175+#4177+#4232+#4265: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

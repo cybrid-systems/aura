@@ -1787,7 +1787,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_partial_relower_storm_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Global storm + small dirty → full + forced_full metric
 - `tests/compiler/test_peer_jit_name_soft_stale.cpp` (—) [domain_suite, theme_compiler] — AC1: aura_aot_mark_peer_jit_name_soft_stale / is_soft_stale / clear
 - `tests/compiler/test_pereval_reemit_region_independence.cpp` (—) [domain_suite, theme_compiler] — AC1: Dual eval; dirty candidates A+B under reemit owner A → only A
-- `tests/compiler/test_primcall_narg.cpp` (—) [domain_suite, theme_compiler] — AC1: string-append 3 strings → ABC under default JIT
+- `tests/compiler/test_primcall_narg.cpp` (—) [large, domain_suite, theme_compiler] — AC1: string-append 3 strings → ABC under default JIT
 - `tests/compiler/test_reemit_production_default_defer.cpp` (—) [domain_suite, theme_compiler] — AC1: Production default (reset / process init) → policy Defer;
 - `tests/compiler/test_reemit_production_default_defer_v2.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Default policy is Defer; SoftEnter requires explicit set.
 - `tests/compiler/test_region_priority_deopt_throttle.cpp` (—) [domain_suite, theme_compiler] — AC1: should_throttle_reemit(region) vs no-arg global decision
