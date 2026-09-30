@@ -443,6 +443,11 @@ int run_test_per_scope_bp_admit() {
                 std::memory_order_relaxed);
 
             auto spec_a0 = make_spec("prod-a0");
+            // Issue #4238: distinct non-zero region keys keep this AC on
+            // the mailbox-bp deny face — the new region-key-missing admit
+            // gate would otherwise preempt the storm reject for the
+            // second same-scope production spawn.
+            spec_a0.region_key = 1;
             auto& ha0 = sa.spawn(std::move(spec_a0));
             CHECK(ha0.ok, "#3015 AC3: first A spawn admits");
             CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
@@ -461,6 +466,7 @@ int run_test_per_scope_bp_admit() {
                   "#3015 AC3: process spawn_bp_admit_reject unchanged for B");
 
             auto spec_a1 = make_spec("prod-a1");
+            spec_a1.region_key = 2; // #4238: distinct from prod-a0
             auto& ha1 = sa.spawn(std::move(spec_a1));
             CHECK(!ha1.ok, "#3015 AC3: A rejects on its own storm");
             CHECK(ha1.quota_dimension == "mailbox-bp", "#3015 AC3: A reject is mailbox-bp");
@@ -787,6 +793,9 @@ int run_test_per_scope_bp_admit() {
                 g_orch_module_stats.spawn_bp_scope_inherited_total.load(std::memory_order_relaxed);
             auto spec_ex = make_spec("ex-3730");
             spec_ex.bp_scope_id = "explicit-3730";
+            // Issue #4238: distinct region keys so the two same-scope
+            // production spawns below stay on the #3015 BP-inherit face.
+            spec_ex.region_key = 1;
             auto& hex = sa.spawn(std::move(spec_ex));
             CHECK(hex.ok, "3730 AC4: explicit spawn admits");
             CHECK(hex.bp_scope_id == "explicit-3730", "3730 AC4: explicit id wins");
@@ -794,6 +803,7 @@ int run_test_per_scope_bp_admit() {
                       std::memory_order_relaxed) == inh0,
                   "3730 AC4: explicit does not bump inherit");
             auto spec_empty = make_spec("empty-3730");
+            spec_empty.region_key = 2; // #4238: distinct from ex-3730
             auto& hem = sa.spawn(std::move(spec_empty));
             CHECK(hem.ok, "3730 AC4: empty spawn admits");
             CHECK(hem.bp_scope_id == sa.bp_scope_id(), "3730 AC4: empty still inherits");

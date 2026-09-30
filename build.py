@@ -9855,6 +9855,29 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4237 restart-fuel linter failed — run python3 scripts/check_restart_fuel_4237.py")
         return r
+    # Issue #4238 (P1: AgentScope multi-agent mutate stays Serialized
+    # without region_keys — spawn apply bypasses decide_isolation):
+    # parallel_intend / compose_supervised_batch call the isolation SSOT
+    # and deny under #3353, but the long-lived Scope spawn path admitted
+    # N mutate agents with region_key=0, so production hosts serialized
+    # every mutate apply on agent_apply_mu_ (#3728) while #3803 only
+    # observed region_key_missing. Gate pins: AgentScope::spawn hosts the
+    # admit gate before emplace (region_key_missing_admit_deny_unlocked_
+    # over the same decide_isolation + region_key_missing_serialized
+    # predicate, ≥2 mutate floor, #3353 env escape), the typed deny face
+    # reusing region_key_missing_serialized_total (no new query key),
+    # Soft/Off zero-cost, no AgentRegistry / key synthesis, #3803
+    # observation face + RestartN bypass kept, runtime ACs dispatched
+    # (ac4238_region_key_admit_deny in test_agent_scope.cpp), build.py +
+    # allowlist wiring.
+    scra4238_script = ROOT / "scripts" / "check_scope_region_admit_4238.py"
+    if not scra4238_script.exists():
+        fail(f"missing {scra4238_script}")
+        return 1
+    r = run([sys.executable, str(scra4238_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4238 scope region admit linter failed — run python3 scripts/check_scope_region_admit_4238.py")
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the
