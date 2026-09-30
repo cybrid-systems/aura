@@ -7213,6 +7213,15 @@ public:
     // caller's tenant root. EXEMPT_2ARG inventory size unchanged.
     [[nodiscard]] bool check_tenant_host_path(std::string_view path, std::string& out_resolved,
                                               std::string_view op = "write-file") noexcept;
+    // Issue #4233: Restricted+MT / Strict exec-face jail for shell /
+    // command-output (#3836 siblings). Same policy predicate as
+    // check_tenant_host_path: Soft/Off / single-tenant Restricted →
+    // passthrough (allow, out_jail_root empty). Active: absolute / ".." /
+    // expansion-escape command tokens deny with IsolationDeny SE (reason
+    // tenant-path-escape), zero exec; on allow `out_jail_root` holds the
+    // tenant root for the post-fork child chdir (relative-only contract).
+    [[nodiscard]] bool check_tenant_exec_jail(std::string_view cmd, std::string& out_jail_root,
+                                              std::string_view op = "shell") noexcept;
     // Stamp FlatAST::StableNodeRef.tenant_id from current principal.
     // Issue #1566 / #2056: stamp tenant (+ fiber) on StableNodeRef.
     void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;

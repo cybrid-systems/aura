@@ -3,11 +3,12 @@
 
 String-cap deny_exec alone skipped fiber-principal / isolation / live mid
 under Restricted. shell + command-output now call require_effect(kEffectExec)
-before fork/execl/popen. Soft/Off deny_exec (!sandbox_mode()) short-circuit
+before fork/execl (command-output jailed fork+pipe per #4233). Soft/Off
+deny_exec (!sandbox_mode()) short-circuit
 is contract — effect choke only when sandbox on / production face.
 
 Contract (one row per AC):
-  AC1  shell + command-output call require_effect(kEffectExec) before fork/popen
+  AC1  shell + command-output call require_effect(kEffectExec) before the exec child fork
   AC2  Soft/Off deny_exec !sandbox_mode() short-circuit retained
   AC3  EXEMPT_2ARG + counts + build/grandfather wiring; no invent / docs
 
@@ -54,15 +55,16 @@ def main() -> int:
     must('require_effect(kEffectExec, "shell")', "AC1 shell", filep)
     must('require_effect(kEffectExec, "command-output")', "AC1 command-output", filep)
     must("3836 AC1", "AC1 test auto_isolation", test)
-    # order: require_effect before fork / popen
+    # order: require_effect before the exec child fork (command-output
+    # captures via the jailed fork+pipe pattern per #4233)
     sp = filep.find('require_effect(kEffectExec, "shell")')
     fp = filep.find("::fork()", sp if sp >= 0 else 0)
     if sp < 0 or fp < 0 or fp < sp:
         fails.append("AC1: shell require_effect not before fork")
     cp = filep.find('require_effect(kEffectExec, "command-output")')
-    pp = filep.find("::popen(", cp if cp >= 0 else 0)
-    if cp < 0 or pp < 0 or pp < cp:
-        fails.append("AC1: command-output require_effect not before popen")
+    fp2 = filep.find("::fork(", cp if cp >= 0 else 0)
+    if cp < 0 or fp2 < 0 or fp2 < cp:
+        fails.append("AC1: command-output require_effect not before the jailed exec child fork (#4233)")
     # git-commit sibling retained
     must("kEffectExec", "AC1 git-commit Exec retained", io_cpp)
     must('"git-commit"', "AC1 git-commit op retained", io_cpp)

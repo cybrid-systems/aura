@@ -797,7 +797,8 @@ static void ac2881_5_linter_self_test_and_no_invent() {
 // ── #3836: shell / command-output require_effect(Exec) ──
 // String-cap deny_exec alone skipped fiber-principal / isolation / live mid
 // under Restricted. Mirror git-commit (#2072): require_effect(kEffectExec)
-// before fork/popen. Soft/Off deny_exec !sandbox_mode() short-circuit kept.
+// before fork (command-output captures via the jailed fork+pipe pattern,
+// #4233). Soft/Off deny_exec !sandbox_mode() short-circuit kept.
 static void ac3836_1_shell_command_output_require_effect() {
     std::println("\n--- #3836 AC1: shell/command-output call require_effect(Exec) ---");
     const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
@@ -814,9 +815,9 @@ static void ac3836_1_shell_command_output_require_effect() {
     CHECK(execl_pos != std::string::npos && execl_pos > shell_pos,
           "3836 AC1: shell require_effect before execl");
     const auto cmd_pos = filep.find("require_effect(kEffectExec, \"command-output\")");
-    const auto popen_pos = filep.find("::popen(", cmd_pos);
-    CHECK(cmd_pos != std::string::npos && popen_pos != std::string::npos && popen_pos > cmd_pos,
-          "3836 AC1: command-output require_effect before popen");
+    const auto co_fork_pos = filep.find("::fork(", cmd_pos);
+    CHECK(cmd_pos != std::string::npos && co_fork_pos != std::string::npos && co_fork_pos > cmd_pos,
+          "3836 AC1: command-output require_effect before the jailed exec child fork");
 }
 
 static void ac3836_2_restricted_no_exec_denies() {

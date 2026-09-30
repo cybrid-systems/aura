@@ -399,6 +399,14 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_int(-1);
+        // Issue #4233: Restricted+MT / Strict tenant FS jail — absolute /
+        // ".." / expansion-escape command tokens deny with IsolationDeny
+        // tenant-path-escape + zero exec (the #3802 write-file fence on the
+        // exec face); on allow the exec child chdir's under the caller's
+        // tenant root (relative-only contract).
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail(ev.string_heap_[idx], jail_root, "shell"))
+            return make_int(-1);
         // Issue #1582: fork+exec via /bin/sh -c, then WEXITSTATUS.
         // ::system() returns raw waitpid status (exit_code << 8 + signal),
         // which made `sh` return 256/1280/32512 for exits 1/5/127 instead
@@ -408,6 +416,10 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // (git-commit, #473) for proper exit-code extraction.
         pid_t pid = ::fork();
         if (pid == 0) {
+            // Issue #4233: jail cwd before exec — surviving relative-only
+            // commands resolve inside the tenant root.
+            if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
+                ::_exit(127);
             ::execl("/bin/sh", "sh", "-c", ev.string_heap_[idx].c_str(),
                     static_cast<char*>(nullptr));
             ::_exit(127);
@@ -440,14 +452,44 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             if (idx >= ev.string_heap_.size())
                 return make_void();
             auto& cmd = ev.string_heap_[idx];
-            std::array<char, 4096> buf;
-            std::string result;
-            auto* fp = ::popen(cmd.c_str(), "r");
-            if (!fp)
+            // Issue #4233: Restricted+MT / Strict tenant FS jail — same
+            // fence as shell above (IsolationDeny tenant-path-escape, zero
+            // exec). popen gives no pre-exec hook for the child chdir, so
+            // capture runs through the shared fork+pipe pattern (#473
+            // sibling) and the child is jailed under the caller's tenant
+            // root before execl; stdout capture + trailing-newline trim
+            // stay contract.
+            std::string jail_root;
+            if (!ev.check_tenant_exec_jail(cmd, jail_root, "command-output"))
                 return make_void();
-            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-                result += buf.data();
-            ::pclose(fp);
+            int pfd[2];
+            if (::pipe(pfd) != 0)
+                return make_void();
+            std::string result;
+            pid_t pid = ::fork();
+            if (pid < 0) {
+                ::close(pfd[0]);
+                ::close(pfd[1]);
+                return make_void();
+            }
+            if (pid == 0) {
+                // Issue #4233: jail cwd before exec — surviving relative-only
+                // commands resolve inside the tenant root.
+                if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
+                    ::_exit(127);
+                ::close(pfd[0]);
+                ::dup2(pfd[1], STDOUT_FILENO);
+                ::close(pfd[1]);
+                ::execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
+                ::_exit(127);
+            }
+            ::close(pfd[1]);
+            std::array<char, 4096> buf;
+            for (ssize_t n; (n = ::read(pfd[0], buf.data(), buf.size())) > 0;)
+                result.append(buf.data(), static_cast<std::size_t>(n));
+            ::close(pfd[0]);
+            int status = 0;
+            ::waitpid(pid, &status, 0);
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
             auto sid = ev.string_heap_.size();

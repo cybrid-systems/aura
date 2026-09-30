@@ -8588,6 +8588,30 @@ def cmd_lint():
             "Issue #4059 load tenant host-path + Mutate linter failed — run python3 scripts/check_load_tenant_mutate_4059.py"
         )
         return r
+    # Issue #4233 (security): EXEMPT_2ARG shell / command-output gained
+    # require_effect(Exec) (#3836) but never called check_tenant_host_path —
+    # under Restricted+MT / Strict a tenant holding Exec could execl/popen
+    # against the shared host FS (clobber other tenants / escape the tenant
+    # root) while write-file / sys-* denied the same path. Gate pins: both
+    # exec prims run check_tenant_exec_jail after the Exec choke and before
+    # the exec child fork (IsolationDeny tenant-path-escape, zero exec),
+    # the children chdir under the caller's tenant root (relative-only
+    # contract), command-output captures through the jailed fork+pipe
+    # pattern (popen gone), the evaluator gate reuses the #3802 policy
+    # predicate and joins the shared IsolationDeny row (kEffectExec face,
+    # Typed correlate), the escape scanner lives in the
+    # tenant_host_path.hh SSOT, the EXEMPT_2ARG inventory stays frozen, and
+    # the runtime ACs extend the #3802 family host test file.
+    execjail4233_script = ROOT / "scripts" / "check_tenant_exec_jail_4233.py"
+    if not execjail4233_script.exists():
+        fail(f"missing {execjail4233_script}")
+        return 1
+    r = run([sys.executable, str(execjail4233_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4233 shell/command-output tenant exec-jail linter failed — run python3 scripts/check_tenant_exec_jail_4233.py"
+        )
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed
