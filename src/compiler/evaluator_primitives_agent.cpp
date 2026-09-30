@@ -5918,6 +5918,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"consecutive-stall-limit",
                  make_int(static_cast<std::int64_t>(ap.consecutive_stall_limit))},
                 {"restart-backoff-ms", make_int(static_cast<std::int64_t>(ap.restart_backoff_ms))},
+                // Issue #4237: honest fuel face — a "restart-n" policy with
+                // max_restarts == 0 is restart belief without re-spawn fuel
+                // (join arm exhausts, watch arm skips). No new query key.
+                {"restart-fuel-missing", make_bool(w.restart_fuel_missing)},
                 // residual preference (advisory)
                 {"residual", push_str(aura::orch::residual_preference_name(w.residual))},
                 {"residual-action", push_str(aura::orch::residual_action_name(w.residual))},

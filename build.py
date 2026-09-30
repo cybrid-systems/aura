@@ -9791,6 +9791,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4235 per-Agent mint linter failed — run python3 scripts/check_agent_mint_per_agent_4235.py")
         return r
+    # Issue #4237 (P2: RetryN compose arms RestartN with max_restarts=0 /
+    # keepalive=0 — restart belief without re-spawn): compose derives the
+    # restart_fuel_missing face via the pure predicate, the Aura compose
+    # hash surfaces "restart-fuel-missing" (no deny, no new counter /
+    # query key — the exhausted/skip counters stay the runtime no-op
+    # faces), Soft / Off policy behaviour unchanged, runtime ACs
+    # dispatched (ac4237_1..5 in test_failure_policy_bridge.cpp),
+    # build.py + allowlist wiring.
+    rfuel4237_script = ROOT / "scripts" / "check_restart_fuel_4237.py"
+    if not rfuel4237_script.exists():
+        fail(f"missing {rfuel4237_script}")
+        return 1
+    r = run([sys.executable, str(rfuel4237_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4237 restart-fuel linter failed — run python3 scripts/check_restart_fuel_4237.py")
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

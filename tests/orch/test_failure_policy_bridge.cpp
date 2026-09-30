@@ -101,6 +101,9 @@ static void ac4050_run_added_tests();
 // Issue #4114: production FailFast compose arms on_join_fail=Cancel
 // (extend-in-place at end of file).
 static void ac4114_run_added_tests();
+// Issue #4237: RetryN compose arms RestartN with max_restarts=0 —
+// restart belief without re-spawn fuel (extend-in-place at end of file).
+static void ac4237_run_added_tests();
 // #3206 production-face toggle (defined mid-file; the #2539 AC2 dev-face
 // pin and the #3052 AC4 both-face fixture below call it before its
 // definition point).
@@ -442,6 +445,9 @@ int run_test_failure_policy_bridge() {
     // same shape as the proven #3969 fixtures.
     ac4114_run_added_tests();
     ac4000_run_added_tests();
+    // Issue #4237: RestartN fuel face (pure policy-level ACs — no
+    // scheduler involvement, safe anywhere in the runner).
+    ac4237_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -2340,6 +2346,126 @@ static void ac4114_run_added_tests() {
     ac4114_2_explicit_report_only_after_compose_honored();
     ac4114_3_production_compose_routes_supervised_join();
     ac4114_4_source_cite_no_invent();
+}
+
+// ── Issue #4237: RetryN compose arms RestartN with max_restarts=0 —
+// restart belief without re-spawn fuel. Extend-in-place ACs (per #81967).
+
+// AC1: default compose(RetryN) arms the RestartN belief AND surfaces the
+// missing-fuel face — closed-loop, no silent commercial-restart promise.
+// The derived face is pure (face-independent); policy behaviour itself is
+// unchanged in both faces (AC3 pins that).
+static void ac4237_1_compose_retryn_default_fuel_missing() {
+    std::println("\n--- #4237 AC1: compose(RetryN) default → fuel-missing face ---");
+    for (int face = 0; face < 2; ++face) {
+        ac3206_set_prod(face == 1);
+        auto w = compose_workflow_policy(FailurePolicy::RetryN);
+        CHECK(w.agent_policy.on_stall == AgentFailureAction::RestartN,
+              "4237 AC1: on_stall belief armed (RestartN)");
+        CHECK(w.agent_policy.on_join_fail == AgentFailureAction::RestartN,
+              "4237 AC1: on_join_fail belief armed (RestartN) (#3052 AC4)");
+        CHECK(w.agent_policy.max_restarts == 0, "4237 AC1: default max_restarts=0");
+        CHECK(w.restart_fuel_missing,
+              "4237 AC1: compose flags restart-fuel-missing (belief without fuel)");
+    }
+    ac3206_set_prod(false);
+}
+
+// AC2: fuel present → no fuel-missing face. RetryN with explicit
+// max_retries (either compose overload) is live restart fuel.
+static void ac4237_2_retryn_with_fuel_not_missing() {
+    std::println("\n--- #4237 AC2: RetryN with max_retries>0 → fuel present ---");
+    auto w = compose_workflow_policy(FailurePolicy::RetryN, ResidualReclaimPreference::Report,
+                                     /*max_retries=*/3);
+    CHECK(w.agent_policy.max_restarts == 3, "4237 AC2: max_restarts=3 threaded");
+    CHECK(!w.restart_fuel_missing, "4237 AC2: fuel present → no fuel-missing face");
+    ParallelPolicy pp;
+    pp.failure_policy = FailurePolicy::RetryN;
+    pp.max_retries = 4;
+    pp.retry_backoff_ms = 25;
+    auto w2 = compose_workflow_policy(pp);
+    CHECK(w2.agent_policy.max_restarts == 4, "4237 AC2: pp.max_retries → max_restarts=4");
+    CHECK(!w2.restart_fuel_missing, "4237 AC2: pp path fuel present");
+    CHECK(!agent_restart_fuel_missing(to_agent_policy(FailurePolicy::RetryN, /*max_restarts=*/2)),
+          "4237 AC2: bridge predicate false with fuel");
+}
+
+// AC3: Soft / Off unchanged — the face adds observation only (no deny,
+// no counter, no policy flip); the #2539 AC2 mapping pins hold verbatim.
+static void ac4237_3_soft_face_unchanged_no_deny() {
+    std::println("\n--- #4237 AC3: Soft / Off unchanged (observe-only face) ---");
+    ac3206_set_prod(false);
+    auto p = to_agent_policy(FailurePolicy::RetryN);
+    CHECK(p.on_stall == AgentFailureAction::RestartN,
+          "4237 AC3: Soft bridge still arms RestartN (#2539 AC2 pin intact)");
+    CHECK(p.max_restarts == 0, "4237 AC3: Soft default max_restarts=0 (no re-spawn)");
+    CHECK(agent_restart_fuel_missing(p), "4237 AC3: predicate observes the 0-fuel arm");
+    // Production face: same policy, same observation — no deny either face.
+    ac3206_set_prod(true);
+    auto prod = to_agent_policy(FailurePolicy::RetryN);
+    CHECK(prod.on_stall == AgentFailureAction::RestartN && prod.max_restarts == 0,
+          "4237 AC3: production compose face unchanged (observe-only, no deny)");
+    CHECK(agent_restart_fuel_missing(prod), "4237 AC3: production observes fuel-missing too");
+    ac3206_set_prod(false);
+}
+
+// AC4: only a RestartN arm can be fuel-missing; other mappings never set
+// the face (FailFast #4114 / CollectAll / CircuitBreaker compose paths).
+static void ac4237_4_other_policies_never_fuel_missing() {
+    std::println("\n--- #4237 AC4: non-RestartN mappings → no fuel-missing face ---");
+    auto ff = compose_workflow_policy(FailurePolicy::FailFast);
+    CHECK(!ff.restart_fuel_missing, "4237 AC4: FailFast compose → false");
+    auto ca = compose_workflow_policy(FailurePolicy::CollectAll);
+    CHECK(!ca.restart_fuel_missing, "4237 AC4: CollectAll compose → false");
+    auto cb = compose_workflow_policy(FailurePolicy::CircuitBreaker);
+    CHECK(!cb.restart_fuel_missing, "4237 AC4: CircuitBreaker compose → false");
+    // On-stall-only RestartN arm with fuel → false; join arm zero fuel → true.
+    AgentFailurePolicy stall_fueled{};
+    stall_fueled.on_stall = AgentFailureAction::RestartN;
+    stall_fueled.max_restarts = 2;
+    CHECK(!agent_restart_fuel_missing(stall_fueled), "4237 AC4: stall arm with fuel → false");
+    AgentFailurePolicy join_zero{};
+    join_zero.on_join_fail = AgentFailureAction::RestartN;
+    CHECK(agent_restart_fuel_missing(join_zero), "4237 AC4: join arm zero fuel → true");
+}
+
+// AC5: source-cite + no new query key + no invented runtime model.
+static void ac4237_5_source_cite_no_invent() {
+    std::println("\n--- #4237 AC5: source-cite + no new query key ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto scope_hdr = read_file("src/orch/agent_scope.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(spawn.find("kRestartFuelMissingIssue = 4237") != std::string::npos, "4237: issue stamp");
+    CHECK(spawn.find("restart_fuel_missing") != std::string::npos, "4237: derived face field");
+    CHECK(spawn.find("agent_restart_fuel_missing") != std::string::npos, "4237: pure predicate");
+    CHECK(scope_hdr.find("agent_restart_exhausted_total") != std::string::npos,
+          "4237: runtime exhausted counter still the no-op face (no new counter)");
+    CHECK(scope_hdr.find("agent_restart_skipped_no_spec_total") != std::string::npos,
+          "4237: runtime skip counter still the keepalive/spec face (#3730/#3250)");
+    CHECK(prim.find("\"restart-fuel-missing\"") != std::string::npos,
+          "4237: Aura compose hash surfaces the fuel face");
+    CHECK(prim.find("query:4237") == std::string::npos, "4237: no new query key");
+    CHECK(spawn.find("query:4237") == std::string::npos, "4237: no new query key (bridge)");
+    CHECK(read_file("tests/orch/test_issue_4237.cpp").empty(), "4237: no invented test file");
+    CHECK(read_file("docs/design/4237-restart-fuel.md").empty(),
+          "4237: no docs/design/4237-* per #1655");
+    CHECK(build.find("check_restart_fuel_4237") != std::string::npos,
+          "4237: linter registered in build.py");
+    CHECK(allow.find("check_restart_fuel_4237.py") != std::string::npos,
+          "4237: linter allowlisted for the coverage policy gate");
+    CHECK(t.find("ac4237_run_added_tests") != std::string::npos,
+          "4237: runtime ACs live in this file (#81967)");
+}
+
+static void ac4237_run_added_tests() {
+    ac4237_1_compose_retryn_default_fuel_missing();
+    ac4237_2_retryn_with_fuel_not_missing();
+    ac4237_3_soft_face_unchanged_no_deny();
+    ac4237_4_other_policies_never_fuel_missing();
+    ac4237_5_source_cite_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
