@@ -10095,6 +10095,29 @@ def cmd_lint():
             "Issue #4242 remap tombstone quarantine linter failed — run python3 scripts/check_remap_tombstone_quarantine_4242.py"
         )
         return r
+    # Issue #4244 (P1: c-struct-set! int/float interior can hold an arena
+    # pointer with no slot remap — UAF on the native read). The opaque arm
+    # joined the cover triad; the int/float arms memcpy'd raw pointer-sized
+    # bits and never registered the interior word, so a stored live arena
+    # address stayed densify-old across the next Moving window (create-time
+    # libc-heap EXEMPT is not remap cover for bytes stored later). Gate
+    # pins: the arena.ixx query/cover helper set over the EXISTING tables
+    # (tracks_live_object dtor_index_ oracle, live_arena_remap_detail::
+    # live_tracked walk, interior_int_pattern_is_live_arena_object with the
+    # moving gate, cover_interior_int_pattern_for_densify reusing the #4068
+    # register_struct_interior_slot_for_densify durable inventory + counter),
+    # both prim arms behind the pointer-sized guard, one inventory only (no
+    # second pin registry), runtime ACs dispatched (ac4244_1..3 in
+    # test_moving_densify_fail_closed.cpp before the Results line), build.py
+    # + allowlist wiring.
+    iir4244_script = ROOT / "scripts" / "check_interior_int_remap_4244.py"
+    if not iir4244_script.exists():
+        fail(f"missing {iir4244_script}")
+        return 1
+    r = run([sys.executable, str(iir4244_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4244 interior int remap linter failed — run python3 scripts/check_interior_int_remap_4244.py")
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

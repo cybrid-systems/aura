@@ -3231,6 +3231,14 @@ public:
     [[nodiscard]] std::size_t object_remap_size() const noexcept {
         return last_object_remap_.size();
     }
+    // Issue #4244: live-tracked oracle — p currently hosts a tracked object
+    // (dtors_ ptr→slot index; rebuilt post-Moving so a moved-away address
+    // drops out). Complements last_object_remap_, which only holds keys for
+    // addresses that relocated at least once: a never-moved live object is
+    // invisible to the tombstone table.
+    [[nodiscard]] bool tracks_live_object(void* p) const noexcept {
+        return p != nullptr && dtor_index_.contains(p);
+    }
     // Issue #4242: chase contract for bind — a tombstone may be followed
     // only when the key is NOT a current tracked identity (a live Y at a
     // recycled tombstone address: #4046 test seam / same-window collision
@@ -4528,11 +4536,64 @@ namespace live_arena_remap_detail {
     inline bool resolves(void* p) noexcept {
         return resolve_ptr(p) != nullptr;
     }
+    // Issue #4244: never-moved live tracked objects — dtor_index_ walk.
+    // last_object_remap_ only holds keys for addresses that relocated at
+    // least once; a fresh create+alias pattern must still resolve. Same
+    // inventory-mutex contract as resolve_ptr: densify holds this mutex
+    // from the live==0 re-check through recycle, so the query either lands
+    // before the window or blocks until the relocated address publishes.
+    inline bool live_tracked(void* p) noexcept {
+        if (!p)
+            return false;
+        std::lock_guard<std::mutex> lock(live().mtx);
+        for (ASTArena* arena : live().arenas) {
+            if (!arena)
+                continue;
+            if (arena->tracks_live_object(p))
+                return true;
+        }
+        return false;
+    }
 } // namespace live_arena_remap_detail
 
 // Issue #4046: native dispatch (other TU) asks every live arena.
 extern "C" int aura_any_live_arena_resolves_object(void* p) noexcept {
     return live_arena_remap_detail::resolves(p) ? 1 : 0;
+}
+
+// Issue #4244: c-struct-set! int/float interior words. A stored pointer-sized
+// pattern can BE a live arena address (the "pointer-sized int" FFI pattern);
+// the int/float arms memcpy'd raw bits and never registered the interior
+// word, so the next Moving densify left it densify-old (UAF / wrong object
+// on the native read). Query half: does this pattern resolve in any live
+// arena — last_object_remap_ key (relocated ≥ once, #3469 tombstones kept)
+// or dtor_index_ (live tracked, never moved)? Off / !moving_compact_enabled:
+// one load, false — the memcpy face keeps zero extra remap.
+export inline bool interior_int_pattern_is_live_arena_object(std::uintptr_t pattern) noexcept {
+    if (pattern == 0)
+        return false;
+    if (!moving_compact_enabled())
+        return false;
+    void* p = reinterpret_cast<void*>(pattern);
+    return live_arena_remap_detail::resolves(p) || live_arena_remap_detail::live_tracked(p);
+}
+
+// Issue #4244: cover half — under a live pattern, register the stable libc
+// interior word (base+offset) with the SAME durable inventory as the opaque
+// arm (#4068 re-arm) so the next window's rewrite walk rewrites *slot via
+// this_window_remap, and bump the cover counter. Returns true when the
+// pattern was live and the slot registered. A non-arena pattern (the pinned
+// Soft/Off case) stays a plain memcpy: no register, no counter, no canary.
+export inline bool cover_interior_int_pattern_for_densify(void** slot,
+                                                          std::uintptr_t pattern) noexcept {
+    if (slot == nullptr || *slot == nullptr)
+        return false;
+    if (!interior_int_pattern_is_live_arena_object(pattern))
+        return false;
+    register_struct_interior_slot_for_densify(slot);
+    aura::core::densify_consistency::g_ffi_interior_int_slot_cover_total.fetch_add(
+        1, std::memory_order_relaxed);
+    return true;
 }
 
 // Issue #4124: bind contract for TUs that never hold an ASTArena* (JIT

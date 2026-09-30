@@ -5935,6 +5935,159 @@ static void ac4068_soft_and_source() {
     aura::ast::reset_ffi_alias_slots_for_densify_for_test();
 }
 
+// Issue #4244: c-struct-set! int/float interior words. A stored pointer-sized
+// pattern can BE a live arena address: the int/float arms memcpy'd raw bits
+// and never registered the interior word, so the next Moving densify left it
+// densify-old (UAF / wrong object on the native read). AC1: under Moving a
+// resolving pattern joins the durable interior-slot inventory (#4068 re-arm)
+// and the window rewrites the word to the post-move address.
+static void ac4244_1_int_float_pattern_cover_rewrites_on_moving() {
+    std::println(
+        "\n--- #4244 AC1: int/float interior pattern joins durable slots, rewritten on Moving ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::core::densify_consistency::reset_ffi_interior_int_slot_cover_for_test();
+
+    ASTArena arena(256 * 1024);
+    auto* a = arena.create<Pod16>(0x4244, 1, 2, 3);
+    CHECK(a != nullptr, "4244 AC1: create referent");
+    for (int i = 0; i < 7; ++i) {
+        CHECK(arena.create<Pod16>(i, i, i, i) != nullptr, "4244 AC1: sibling create");
+    }
+    // Never-moved live tracked object: resolves via the dtor_index_ arm.
+    const auto pattern = reinterpret_cast<std::uintptr_t>(a);
+    CHECK(aura::ast::interior_int_pattern_is_live_arena_object(pattern),
+          "4244 AC1: never-moved live arena address resolves (dtor_index_ arm)");
+
+    // Prim int-arm state right after the memcpy: pattern in the word.
+    void* block = std::malloc(sizeof(void*));
+    CHECK(block != nullptr, "4244 AC1: libc struct base");
+    std::memcpy(block, &a, sizeof(a));
+    void** interior = reinterpret_cast<void**>(block);
+    CHECK(aura::ast::cover_interior_int_pattern_for_densify(interior, pattern),
+          "4244 AC1: int pattern cover registered");
+    CHECK(aura::core::densify_consistency::g_ffi_interior_int_slot_cover_total.load(
+              std::memory_order_relaxed) >= 1,
+          "4244 AC1: interior int cover counter bumped");
+
+    // Float bits carry the same pattern (double bit-cast of the address).
+    void* fblock = std::malloc(sizeof(void*));
+    CHECK(fblock != nullptr, "4244 AC1: float-arm libc block");
+    double fbits = 0;
+    std::memcpy(&fbits, &a, sizeof(a));
+    std::memcpy(fblock, &fbits, sizeof(fbits));
+    void** fint = reinterpret_cast<void**>(fblock);
+    std::uintptr_t fpattern = 0;
+    std::memcpy(&fpattern, &fbits, sizeof(fpattern));
+    CHECK(aura::ast::cover_interior_int_pattern_for_densify(fint, fpattern),
+          "4244 AC1: float-bits pattern cover registered");
+
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "4244 AC1: window moved");
+    void* neu = arena.resolve_object_remap(a);
+    CHECK(neu != nullptr, "4244 AC1: referent remapped");
+    CHECK(*interior == neu, "4244 AC1: int interior word rewritten to the post-move address");
+    CHECK(*fint == neu, "4244 AC1: float interior word rewritten to the post-move address");
+
+    // Second window: the durable entry survives consume and keeps rewriting.
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    if (r2.objects_moved > 0) {
+        void* latest = arena.resolve_object_remap(neu);
+        if (latest != nullptr) {
+            CHECK(*interior == latest, "4244 AC1: second window keeps the int word live");
+            CHECK(*fint == latest, "4244 AC1: second window keeps the float word live");
+        }
+    }
+
+    aura::ast::forget_struct_interior_slots_covering(block, sizeof(void*));
+    aura::ast::forget_struct_interior_slots_covering(fblock, sizeof(void*));
+    std::free(block);
+    std::free(fblock);
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::core::densify_consistency::reset_ffi_interior_int_slot_cover_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+// Issue #4244 AC2: resolve-oracle contract — a stale copy of a moved object
+// (still a #3469 tombstone key) resolves via last_object_remap_; the
+// post-move live address resolves via dtor_index_; a non-arena int never
+// resolves (plain memcpy face in every mode).
+static void ac4244_2_resolve_oracle_tombstone_and_non_arena() {
+    std::println("\n--- #4244 AC2: resolve oracle — tombstone key arm, dtor_index_ arm, non-arena "
+                 "negative ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+
+    ASTArena arena(256 * 1024);
+    auto* a = arena.create<Pod16>(0x4244, 9, 9, 9);
+    CHECK(a != nullptr, "4244 AC2: create referent");
+    for (int i = 0; i < 7; ++i) {
+        CHECK(arena.create<Pod16>(i, i, i, i) != nullptr, "4244 AC2: sibling create");
+    }
+    void* old_a = a;
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "4244 AC2: window moved");
+    void* neu = arena.resolve_object_remap(old_a);
+    CHECK(neu != nullptr && neu != old_a, "4244 AC2: tombstone old→new");
+    CHECK(aura::ast::interior_int_pattern_is_live_arena_object(
+              reinterpret_cast<std::uintptr_t>(old_a)),
+          "4244 AC2: densify-old tombstone key resolves (last_object_remap_ arm)");
+    CHECK(
+        aura::ast::interior_int_pattern_is_live_arena_object(reinterpret_cast<std::uintptr_t>(neu)),
+        "4244 AC2: post-move live address resolves (dtor_index_ arm)");
+    CHECK(!aura::ast::interior_int_pattern_is_live_arena_object(42),
+          "4244 AC2: non-arena int does not resolve (no cover, no canary)");
+
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+// Issue #4244 AC3: Off face — Moving disabled never resolves (zero extra
+// remap), and the source contract: BOTH prim arms call the cover helper,
+// the arena module cites the issue, no second registry / docs / issue test.
+static void ac4244_3_soft_off_and_source() {
+    std::println("\n--- #4244 AC3: Off plain-memcpy face + source contract ---");
+    {
+        MovingFlagGuard off(0);
+        RequiredPinGuard pins_off(0);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        ASTArena arena(64 * 1024);
+        auto* a = arena.create<Pod16>(0x4244, 7, 7, 7);
+        CHECK(a != nullptr, "4244 AC3: Off create");
+        const auto bits = reinterpret_cast<std::uintptr_t>(a);
+        CHECK(!aura::ast::interior_int_pattern_is_live_arena_object(bits),
+              "4244 AC3: Off never resolves (plain memcpy face, zero extra remap)");
+    }
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto setb = ffi.find("add(\"c-struct-set!\"");
+    const auto sete = ffi.find("add(\"c-struct-ref\"", setb);
+    CHECK(setb != std::string::npos && sete != std::string::npos && sete > setb,
+          "4244 AC3: c-struct-set! body bounded");
+    const auto body = ffi.substr(setb, sete - setb);
+    std::size_t uses = 0;
+    for (auto pos = body.find("cover_interior_int_pattern_for_densify"); pos != std::string::npos;
+         pos = body.find("cover_interior_int_pattern_for_densify", pos + 1))
+        ++uses;
+    CHECK(uses >= 2, "4244 AC3: int AND float arms cover the pattern");
+    CHECK(body.find("sizeof(v) == sizeof(void*)") != std::string::npos,
+          "4244 AC3: pointer-sized guard on the pattern arms");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("Issue #4244") != std::string::npos, "4244 AC3: arena cites");
+    CHECK(arena_src.find("cover_interior_int_pattern_for_densify") != std::string::npos,
+          "4244 AC3: arena owns the cover helper");
+    CHECK(read_file("docs/design/4244-interior-int-remap.md").empty(), "4244 AC3: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4244.cpp").empty(), "4244 AC3: no test_issue_4244.cpp");
+    CHECK(ffi.find("class InteriorIntPinRegistry") == std::string::npos,
+          "4244 AC3: no second pin registry");
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+}
+
 // Issue #4066: peer bind × Moving recycle. The #3857 entry load is
 // check-then-act; the inventory mutex stays held from the live==0 re-read
 // through small_pool_.recycle. bind_temporary_moving_live_ptr blocks on
@@ -7690,6 +7843,11 @@ int run_test_moving_densify_fail_closed() {
     std::println("\n=== Issue #4068: struct-interior slot survives the next Moving ===");
     ac4068_second_window_rewrites_interior();
     ac4068_soft_and_source();
+
+    std::println("\n=== Issue #4244: c-struct-set! int/float interior pattern remap ===");
+    ac4244_1_int_float_pattern_cover_rewrites_on_moving();
+    ac4244_2_resolve_oracle_tombstone_and_non_arena();
+    ac4244_3_soft_off_and_source();
 
     std::println("\n=== Issue #4066: Moving canary hold through recycle ===");
     ac4066_peer_sees_unrecycled_or_remapped();
