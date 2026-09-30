@@ -9931,6 +9931,10 @@ def cmd_lint():
     # observe arm unchanged, runtime ACs dispatched in
     # test_require_effect_live_mid.cpp (ac4239_1..5 in
     # run_test_std_ffi_per_call_3725), build.py + allowlist wiring.
+    # Issue #4241 note: the hard face now resolves via
+    # peek_audit_mutation_id (silent pure read) and refuses before any
+    # effect record — the join-then-refuse emit ordering is superseded on
+    # this probe face; commit/deny faces keep resolve (emit).
     rerj4239_script = ROOT / "scripts" / "check_require_effect_join_refuse_4239.py"
     if not rerj4239_script.exists():
         fail(f"missing {rerj4239_script}")
@@ -9939,6 +9943,23 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #4239 require_effect join refuse linter failed — run python3 scripts/check_require_effect_join_refuse_4239.py"
+        )
+        return r
+    # Issue #4241 (P1 residual): resolve_audit_mutation_id eagerly emitted the
+    # durable mid-fallback-refused SE at mid-resolution time — BEFORE
+    # require_effect's zero-side-effect decide — so pre-Guard / session-less
+    # probes wrote refuse rows without ever mutating. The read-style probe
+    # face now resolves via peek_audit_mutation_id (silent pure read);
+    # commit/deny faces keep the TLS-guarded resolve emit (ACs in
+    # test_require_effect_live_mid.cpp).
+    hmro4241_script = ROOT / "scripts" / "check_mid_refuse_ordering_4241.py"
+    if not hmro4241_script.exists():
+        fail(f"missing {hmro4241_script}")
+        return 1
+    r = run([sys.executable, str(hmro4241_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4241 mid-fallback-refused emit-ordering linter failed — run python3 scripts/check_mid_refuse_ordering_4241.py"
         )
         return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the

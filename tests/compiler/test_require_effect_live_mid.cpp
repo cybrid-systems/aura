@@ -93,6 +93,34 @@ static std::size_t count_ring_rows_with_mid(std::uint64_t mid) {
     return n;
 }
 
+// #4241 helpers: durable mid=0 deny-row counters over the SE ring.
+static std::size_t count_mid0_deny_rows() {
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    std::size_t n = 0;
+    for (std::uint64_t s = 0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq == s && e.mutation_id == 0 && e.denied)
+            ++n;
+    }
+    return n;
+}
+
+static std::size_t count_refuse_rows() {
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    std::size_t n = 0;
+    for (std::uint64_t s = 0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.mutation_id == 0 && e.denied &&
+            std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
+            ++n;
+    }
+    return n;
+}
+
 // AC1: bound mid M, require_effect with live mid != M → deny + mismatch.
 static void ac1_bound_mismatch_denies() {
     std::println("\n--- #2384 AC1: bound mid mismatch denies require_effect ---");
@@ -496,26 +524,17 @@ static void ac3594_1_production_epoch0_refuses() {
     CHECK(aura::core::current_mutation_epoch() == 0, "AC1: epoch=0 matrix");
 
     const auto mid1_before = count_ring_rows_with_mid(1);
+    const auto refuse_before = count_refuse_rows();
     const bool ok =
         ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3594-ac1", 0);
     const auto mid1_after = count_ring_rows_with_mid(1);
     CHECK(!ok, "AC1: production epoch=0 TypedMid=0 → require_effect refuses");
     CHECK(mid1_after == mid1_before, "AC1: no phantom mid=1 ring row minted");
-
-    // Refuse surface joins at mid=0 (grant-mid-refused / mid-fallback-refused
-    // rows carry mid=0 per #3090/#3462) — some deny row at mid=0 must exist.
-    bool saw_deny_mid0 = false;
-    const auto& ring = g_security_event_ring();
-    const auto seq = ring.seq.load(std::memory_order_acquire);
-    for (std::uint64_t s = 0; s < seq; ++s) {
-        const auto& e = ring.ring[s % ring.ring.size()];
-        if (e.seq != s)
-            continue;
-        if (e.mutation_id == 0 && e.denied &&
-            std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
-            saw_deny_mid0 = true;
-    }
-    CHECK(saw_deny_mid0, "AC1: mid-fallback-refused refuse row at mid=0");
+    // Issue #4241: the probe is a read-style admission check — mid resolution
+    // must not write the durable mid-fallback-refused row before this
+    // function's zero-side-effect decide. Zero new refuse rows.
+    CHECK(count_refuse_rows() == refuse_before,
+          "AC1: probe emits zero mid-fallback-refused rows (#4241 read-style)");
 
     ::setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
@@ -581,29 +600,170 @@ static void ac3594_4_dual_refuse_join_mid0() {
     const bool g = ev.grant_effect_capability(82, "mut-3594-ac4", kEffectMutate,
                                               /*prov mid=*/0);
     CHECK(!g, "AC4: production grant with mid=0 refuses");
-    // Effect refuse surface: require_effect refuses at mid=0.
+    // Effect refuse surface: require_effect refuses at mid=0. Issue #4241:
+    // the grant face (commit/deny) owns the single durable mid=0 refuse row;
+    // the effect probe is read-style and adds none.
+    const auto mid0_after_grant = count_mid0_deny_rows();
+    CHECK(mid0_after_grant >= 1, "AC4: grant refuse row joins at mid=0 (deny face)");
     const bool ok =
         ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3594-ac4", 0);
     CHECK(!ok, "AC4: effect check refuses at mid=0");
-
-    // One Agent filter view: deny rows at mid=0 from BOTH surfaces.
-    std::size_t mid0_denies = 0;
-    const auto& ring = g_security_event_ring();
-    const auto seq = ring.seq.load(std::memory_order_acquire);
-    for (std::uint64_t s = 0; s < seq; ++s) {
-        const auto& e = ring.ring[s % ring.ring.size()];
-        if (e.seq != s)
-            continue;
-        if (e.mutation_id == 0 && e.denied)
-            ++mid0_denies;
-    }
-    std::println("  AC4: mid=0 deny rows={}", mid0_denies);
-    CHECK(mid0_denies >= 2, "AC4: grant refuse + effect refuse joinable at mid=0");
+    CHECK(count_mid0_deny_rows() == mid0_after_grant,
+          "AC4: probe adds zero mid=0 rows (#4241 read-style refuse)");
 
     ::setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
+
+// ── #4241: read-style require_effect resolves via peek (no refuse SE) ──
+static void ac4241_1_probe_zero_side_effect() {
+    std::println("\n--- #4241 AC1: pre-Guard probes fail closed with zero refuse SE ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    aura::compiler::security::apply_production_security_defaults();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test(); // epoch=0 (session-less probe matrix)
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(0); // no proof resurrect
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(91);
+    const auto refuse0 = count_refuse_rows();
+    for (int probe = 0; probe < 3; ++probe) {
+        const bool ok =
+            ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4241-probe", 0);
+        CHECK(!ok, "4241 AC1: probe fails closed (no EffectAllow, no phantom stamp)");
+    }
+    CHECK(count_refuse_rows() == refuse0,
+          "4241 AC1: N probes emit ZERO mid-fallback-refused rows (zero-side-effect decide)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(SandboxMode::Off);
+}
+
+static void ac4241_2_guard_enter_single_refuse() {
+    std::println("\n--- #4241 AC2: Guard enter with empty upstream → exactly one refuse SE ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(92);
+    const auto refuse0 = count_refuse_rows();
+    bool ok = true;
+    auto g = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == 0,
+          "4241 AC2: Guard enter refuses → mid=0 noted (#3016 shape)");
+    CHECK(count_refuse_rows() == refuse0 + 1,
+          "4241 AC2: commit face resolves → exactly one refuse SE");
+    // Probe under the refused session: still zero-side-effect.
+    CHECK(!ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4241-ac2-probe", 0),
+          "4241 AC2: probe under refused session still fails closed");
+    CHECK(count_refuse_rows() == refuse0 + 1, "4241 AC2: probe adds no second refuse row");
+    if (g.has_value())
+        (*g).reset();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4241_3_deny_face_guarantees_refuse_se() {
+    std::println("\n--- #4241 AC3: mid=0 deny face resolves (emit) exactly once ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    const auto refuse0 = count_refuse_rows();
+    // Silent read-style resolution first: peek emits nothing (#4241 AC1 shape).
+    const auto peeked = aura::compiler::typed_audit::peek_audit_mutation_id(0);
+    CHECK(peeked == 0, "4241 AC3: peek on empty upstream returns 0 silently");
+    CHECK(count_refuse_rows() == refuse0, "4241 AC3: peek emitted no refuse SE");
+    // Deny face with mid=0: guarantees the joinable refuse SE exactly once
+    // per cascade (#3319 TLS guard), without inventing a mid=0 deny row.
+    aura::compiler::typed_audit::emit_invariant_deny_se(
+        /*mid=*/0, /*tenant_id=*/97, /*fiber_id=*/1, /*epoch=*/0, "test:4241-deny", "rollback");
+    CHECK(count_refuse_rows() == refuse0 + 1, "4241 AC3: deny face resolves → one refuse SE");
+    // Same cascade: TLS suppression — no second refuse row, no deny row.
+    aura::compiler::typed_audit::emit_invariant_deny_se(
+        /*mid=*/0, /*tenant_id=*/97, /*fiber_id=*/1, /*epoch=*/0, "test:4241-deny2", "rollback");
+    CHECK(count_refuse_rows() == refuse0 + 1, "4241 AC3: cascade TLS suppresses re-emit");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4241_4_soft_off_no_refuse_branch() {
+    std::println("\n--- #4241 AC4: Soft/Off keeps zero-cost resolve (no refuse branch) ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(SandboxMode::Off);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    const auto refuse0 = count_refuse_rows();
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4241-soft", 0);
+    CHECK(ok, "4241 AC4: Soft probe still allows (mid=1 observe stamp)");
+    CHECK(count_refuse_rows() == refuse0, "4241 AC4: Soft has no refuse branch (contract)");
+    CHECK(last_security_event_mid() == 1, "4241 AC4: Soft observe stamp mid=1 unchanged");
+}
+
+static void ac4241_5_commit_face_wal_dual_write() {
+    std::println("\n--- #4241 AC5: commit-face refuse SE dual-writes under WAL ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    const auto wal_dir = std::filesystem::path("/tmp/aura_4241_wal_ac5");
+    std::filesystem::remove_all(wal_dir);
+    std::filesystem::create_directories(wal_dir);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(95);
+    CHECK(ev.enable_mutation_audit_wal(wal_dir.string()), "4241 AC5: mutation audit WAL enabled");
+    const auto refuse0 = count_refuse_rows();
+    const auto mid = aura::compiler::typed_audit::resolve_audit_mutation_id();
+    CHECK(mid == 0, "4241 AC5: commit-face resolve on empty upstream refuses (mid=0)");
+    CHECK(count_refuse_rows() == refuse0 + 1, "4241 AC5: exactly one refuse SE from resolve");
+    ev.disable_mutation_audit_wal();
+    bool wal_hit = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(wal_dir)) {
+        std::ifstream in(entry.path());
+        if (!in)
+            continue;
+        const std::string body((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        if (body.find("mid-fallback-refused") != std::string::npos) {
+            wal_hit = true;
+            break;
+        }
+    }
+    CHECK(wal_hit, "4241 AC5: refuse SE dual-writes to WAL from the commit face");
+    std::filesystem::remove_all(wal_dir);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
 
 static void ac3966_1_stale_proof_does_not_shadow_session();
 static void ac3966_2_nested_abort_keeps_outer_session();
@@ -633,6 +793,12 @@ int run_test_std_ffi_per_call_3725() {
     ac4239_3_epoch_join_still_allows();
     ac4239_4_live_guard_after_refuse_shares_session();
     ac4239_5_soft_observe_and_source();
+    std::println("\n=== Issue #4241: mid-fallback-refused emit ordering (peek vs resolve) ===");
+    ac4241_1_probe_zero_side_effect();
+    ac4241_2_guard_enter_single_refuse();
+    ac4241_3_deny_face_guarantees_refuse_se();
+    ac4241_4_soft_off_no_refuse_branch();
+    ac4241_5_commit_face_wal_dual_write();
     return aura::test::g_failed ? 1 : 0;
 }
 
@@ -780,7 +946,11 @@ static void ac4239_1_join_zero_refuses_no_proof_grant_allow() {
         aura::compiler::typed_audit::g_typed_mutation_audit_counters
             .audit_mid_fallback_refused_total.load(std::memory_order_relaxed);
     CHECK(!ok, "4239 AC1: join==0 refuses — grant on the proof mid cannot resurrect it");
-    CHECK(refused_after > refused_before, "4239 AC1: audit_mid_fallback_refused_total bumps");
+    // Issue #4241 compose: the probe face resolves via peek (silent pure
+    // read) — zero side effect, so the refuse counter does NOT bump from a
+    // probe. Commit/deny faces keep the resolve emit (counter) unchanged.
+    CHECK(refused_after == refused_before,
+          "4239 AC1: probe bumps no refuse counter (#4241 zero-side-effect read)");
     CHECK(count_ring_rows_with_mid(kStaleProof) == 0,
           "4239 AC1: no SE row on the stale proof mid (no EffectAllow on P)");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
@@ -810,6 +980,7 @@ static void ac4239_2_refuse_se_joins_mid_zero_only() {
     CHECK(!ok, "4239 AC2: session-less production effect refuses");
     bool saw_refuse_mid0 = false;
     bool saw_proof_row = false;
+    const auto refuse_rows_before = count_refuse_rows();
     const auto& ring = g_security_event_ring();
     const auto seq = ring.seq.load(std::memory_order_acquire);
     for (std::uint64_t s = 0; s < seq; ++s) {
@@ -822,7 +993,12 @@ static void ac4239_2_refuse_se_joins_mid_zero_only() {
             std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
             saw_refuse_mid0 = true;
     }
-    CHECK(saw_refuse_mid0, "4239 AC2: mid-fallback-refused refuse row at mid=0");
+    // Issue #4241 compose: the probe is a read-style admission check — it
+    // adds ZERO durable refuse rows (peek resolves silently; the decide is
+    // fail-closed without emit). Deny/commit faces keep the single refuse
+    // row; nothing answers on the proof mid either.
+    CHECK(count_refuse_rows() == refuse_rows_before,
+          "4239 AC2: probe adds zero refuse rows (#4241 read-style resolve)");
     CHECK(!saw_proof_row, "4239 AC2: no trail/SE row joins on the proof mid");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
@@ -937,8 +1113,9 @@ static void ac4239_5_soft_observe_and_source() {
         ++proof_reads;
     CHECK(proof_reads == 1, "4239 AC5: hard-face proof resurrection gone (Soft SSOT read only)");
     CHECK(sec.find("#4239") != std::string::npos, "4239 AC5: cites #4239");
-    CHECK(sec.find("return false; // #4239") != std::string::npos,
-          "4239 AC5: join==0 absolute refuse present");
+    CHECK(sec.find("return false; // fail-closed, zero side effect (no refuse SE, #4241)") !=
+              std::string::npos,
+          "4239 AC5: join==0 absolute refuse present (#4241 peek-before-decide compose)");
     CHECK(read_file("docs/design/4239-require-effect-join-refuse.md").empty(),
           "4239 AC5: no docs/design");
 }
@@ -966,6 +1143,12 @@ int run_test_require_effect_live_mid() {
     ac3966_1_stale_proof_does_not_shadow_session();
     ac3966_2_nested_abort_keeps_outer_session();
     ac3966_3_soft_and_source();
+    std::println("\n=== Issue #4241: mid-fallback-refused emit ordering (peek vs resolve) ===");
+    ac4241_1_probe_zero_side_effect();
+    ac4241_2_guard_enter_single_refuse();
+    ac4241_3_deny_face_guarantees_refuse_se();
+    ac4241_4_soft_off_no_refuse_branch();
+    ac4241_5_commit_face_wal_dual_write();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
