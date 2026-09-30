@@ -8321,6 +8321,30 @@ def cmd_lint():
             "Issue #4114 FailFast join-fail production arm linter failed - run python3 scripts/check_join_fail_failfast_4114.py"
         )
         return r
+    # Issue #4236 (orch): production CircuitBreaker compose left Scope
+    # on_join_fail=ReportOnly — to_agent_policy(FailurePolicy::CircuitBreaker)
+    # / compose_workflow_policy(CircuitBreaker) armed on_stall=Cancel +
+    # consecutive_stall_limit but never wrote on_join_fail (#4114 AC4 pinned
+    # the observe-first face), so a batch Timeout / QuotaExceeded residual
+    # did NOT cancel/join live Scope agents via the supervised adapter while
+    # the same host composing FailFast (#4114) did — juxtaposed APIs. Gate
+    # pins: the bridge arms on_join_fail=Cancel under
+    # production_defaults_active() (Soft / Off keep ReportOnly, zero-cost),
+    # the explicit post-compose ReportOnly override still wins (#3969 AC1),
+    # RetryN / CollectAll mappings are untouched, the #3969 route gate and
+    # compose_supervised_batch join arm stay intact, runtime ACs live in
+    # tests/orch/test_failure_policy_bridge.cpp, no AgentRegistry / new
+    # query key / docs-design invent.
+    cbjf4236_script = ROOT / "scripts" / "check_join_fail_circuitbreaker_4236.py"
+    if not cbjf4236_script.exists():
+        fail(f"missing {cbjf4236_script}")
+        return 1
+    r = run([sys.executable, str(cbjf4236_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4236 CircuitBreaker join-fail production arm linter failed - run python3 scripts/check_join_fail_circuitbreaker_4236.py"
+        )
+        return r
     # Issue #4115 (orch): production join_all / orch:scope-join-all left
     # Scope-owned Reclaimed-pending handles unswept — hosts that never call
     # orch:scope-sweep-reclaimed-pending / ensure_reclaimed_cleanup /

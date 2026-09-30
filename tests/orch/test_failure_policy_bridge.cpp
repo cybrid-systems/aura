@@ -101,6 +101,8 @@ static void ac4050_run_added_tests();
 // Issue #4114: production FailFast compose arms on_join_fail=Cancel
 // (extend-in-place at end of file).
 static void ac4114_run_added_tests();
+// Issue #4236: production CircuitBreaker compose arms on_join_fail=Cancel.
+static void ac4236_run_added_tests();
 // Issue #4237: RetryN compose arms RestartN with max_restarts=0 —
 // restart belief without re-spawn fuel (extend-in-place at end of file).
 static void ac4237_run_added_tests();
@@ -444,6 +446,9 @@ int run_test_failure_policy_bridge() {
     // exercise Scheduler(1)+spawn+apply_workflow on a clean scheduler — the
     // same shape as the proven #3969 fixtures.
     ac4114_run_added_tests();
+    // Issue #4236: production CircuitBreaker compose arms on_join_fail=Cancel.
+    // Same clean-scheduler shape as the proven #4114 / #3969 runtime fixtures.
+    ac4236_run_added_tests();
     ac4000_run_added_tests();
     // Issue #4237: RestartN fuel face (pure policy-level ACs — no
     // scheduler involvement, safe anywhere in the runner).
@@ -2250,8 +2255,8 @@ static void ac4114_1_bridge_and_compose_production_arm() {
     CHECK(ca.on_join_fail == AgentFailureAction::ReportOnly,
           "4114 AC4: CollectAll on_join_fail mapping unchanged");
     auto cb = to_agent_policy(FailurePolicy::CircuitBreaker);
-    CHECK(cb.on_join_fail == AgentFailureAction::ReportOnly,
-          "4114 AC4: CircuitBreaker on_join_fail mapping unchanged");
+    CHECK(cb.on_join_fail == AgentFailureAction::Cancel,
+          "4114 AC4: CircuitBreaker on_join_fail armed Cancel under production (#4236 supersedes)");
     // Soft / Off keep ReportOnly (zero-cost).
     ac3206_set_prod(false);
     auto dev = to_agent_policy(FailurePolicy::FailFast);
@@ -2466,6 +2471,194 @@ static void ac4237_run_added_tests() {
     ac4237_3_soft_face_unchanged_no_deny();
     ac4237_4_other_policies_never_fuel_missing();
     ac4237_5_source_cite_no_invent();
+}
+
+// ── Issue #4236: production CircuitBreaker compose arms on_join_fail=Cancel ──
+static void ac4236_1_bridge_and_compose_production_arm() {
+    std::println(
+        "\n--- #4236 AC1: production bridge/compose CircuitBreaker arms on_join_fail=Cancel ---");
+    ac3206_set_prod(true);
+    auto p = to_agent_policy(FailurePolicy::CircuitBreaker);
+    CHECK(p.on_stall == AgentFailureAction::Cancel, "4236 AC1: on_stall still Cancel");
+    CHECK(p.consecutive_stall_limit == 3, "4236 AC1: consecutive_stall_limit default aligned");
+    CHECK(p.on_join_fail == AgentFailureAction::Cancel,
+          "4236 AC1: production to_agent_policy(CircuitBreaker) arms on_join_fail=Cancel");
+    auto p7 = to_agent_policy(FailurePolicy::CircuitBreaker, /*max_restarts=*/0,
+                              /*consecutive_stall_limit=*/7);
+    CHECK(p7.consecutive_stall_limit == 7, "4236 AC1: explicit stall limit threaded");
+    CHECK(p7.on_join_fail == AgentFailureAction::Cancel,
+          "4236 AC1: explicit-limit arm still production-armed Cancel");
+    auto w = compose_workflow_policy(FailurePolicy::CircuitBreaker);
+    CHECK(w.agent_policy.on_join_fail == AgentFailureAction::Cancel,
+          "4236 AC1: compose_workflow_policy(CircuitBreaker) arms on_join_fail=Cancel");
+    // ParallelPolicy overload takes the same production arm.
+    aura::serve::parallel_orch::ParallelPolicy pp;
+    pp.failure_policy = FailurePolicy::CircuitBreaker;
+    pp.consecutive_fail_limit = 5;
+    auto ppmap = to_agent_policy(pp);
+    CHECK(ppmap.on_join_fail == AgentFailureAction::Cancel,
+          "4236 AC1: ParallelPolicy overload arms on_join_fail=Cancel");
+    CHECK(ppmap.consecutive_stall_limit == 5, "4236 AC1: ParallelPolicy limit threaded");
+    // No collateral drift: RetryN / CollectAll mappings unchanged under production.
+    auto rn = to_agent_policy(FailurePolicy::RetryN, /*max_restarts=*/3);
+    CHECK(rn.on_join_fail == AgentFailureAction::RestartN,
+          "4236 AC1: RetryN on_join_fail mapping unchanged");
+    auto ca = to_agent_policy(FailurePolicy::CollectAll);
+    CHECK(ca.on_join_fail == AgentFailureAction::ReportOnly,
+          "4236 AC1: CollectAll on_join_fail mapping unchanged");
+    // Soft / Off keep ReportOnly (zero-cost observe-first).
+    ac3206_set_prod(false);
+    auto dev = to_agent_policy(FailurePolicy::CircuitBreaker);
+    CHECK(dev.on_stall == AgentFailureAction::Cancel, "4236 AC1: on_stall Cancel in Soft / Off");
+    CHECK(dev.on_join_fail == AgentFailureAction::ReportOnly,
+          "4236 AC1: Soft / Off keeps on_join_fail ReportOnly");
+    auto wdev = compose_workflow_policy(FailurePolicy::CircuitBreaker);
+    CHECK(wdev.agent_policy.on_join_fail == AgentFailureAction::ReportOnly,
+          "4236 AC1: Soft / Off compose keeps on_join_fail ReportOnly");
+}
+
+static void ac4236_2_circuit_breaker_residual_cancels_scope() {
+    std::println("\n--- #4236 AC2: composed CircuitBreaker batch residual cancels live Scope ---");
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::orch::apply_workflow;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::parallel_orch::TaskResult;
+    using aura::serve::parallel_orch::TaskSpec;
+    ac3206_set_prod(true);
+    Scheduler sched(1);
+    Ac3969SchedRunner runner(sched);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentHandle parked;
+    parked.ok = true;
+    parked.name = "park-4236";
+    parked.fiber = fiber_owned.get();
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(parked));
+    CHECK(slot.ok && slot.fiber, "4236 AC2: parked scope handle");
+    TaskSpec tasks[2];
+    tasks[0].region_key = 1;
+    tasks[0].body = [] {
+        TaskResult r;
+        r.ok = false;
+        r.error = "fail-4236";
+        return r;
+    };
+    tasks[1].region_key = 2;
+    tasks[1].body = [] {
+        TaskResult r;
+        r.ok = true;
+        return r;
+    };
+    // Composed production policy — no second explicit knob: the arm comes
+    // from the bridge itself (#4236 AC1). consecutive_fail_limit=1 trips
+    // the circuit on the first failing task, so the batch lands FailFast
+    // (circuit_opened) — the same batch-fail residual gate as #4114.
+    auto w =
+        compose_workflow_policy(FailurePolicy::CircuitBreaker, ResidualReclaimPreference::Report,
+                                /*max_retries=*/0, /*consecutive_fail_limit=*/1);
+    CHECK(w.agent_policy.on_join_fail == AgentFailureAction::Cancel,
+          "4236 AC2: composed policy armed Cancel (no manual override)");
+    auto out = apply_workflow(sched, scope, tasks, w, /*stall=*/0, /*watch_scope=*/false);
+    CHECK(out.batch.status == aura::serve::parallel_orch::BatchStatus::FailFast,
+          "4236 AC2: circuit-open batch residual (FailFast face)");
+    CHECK(slot.fiber->is_cancel_requested() || scope.last_join_fail_action_taken() > 0,
+          "4236 AC2: armed Cancel reaches the live Scope agent (same face as FailFast #4114)");
+    ac3206_set_prod(false);
+}
+
+static void ac4236_3_explicit_report_only_observe_first() {
+    std::println("\n--- #4236 AC3: explicit post-compose ReportOnly stays observe-first ---");
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::apply_workflow;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::parallel_orch::TaskResult;
+    using aura::serve::parallel_orch::TaskSpec;
+    ac3206_set_prod(true);
+    Scheduler sched(1);
+    Ac3969SchedRunner runner(sched);
+    AgentScope scope(sched);
+    std::atomic<bool> hold{true};
+    AgentSpec spec;
+    spec.name = "live-4236-ro";
+    spec.body = [&] {
+        while (hold.load(std::memory_order_relaxed)) {
+            if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+                break;
+            Fiber::yield();
+        }
+    };
+    spec.attach_mailbox = true;
+    spec.mutation_boundary = false;
+    auto& h = scope.spawn(spec);
+    CHECK(h.ok && h.fiber, "4236 AC3: live scope agent");
+    TaskSpec tasks[2];
+    tasks[0].body = [] {
+        TaskResult r;
+        r.ok = false;
+        r.error = "fail-4236";
+        return r;
+    };
+    tasks[1].body = [] {
+        TaskResult r;
+        r.ok = true;
+        return r;
+    };
+    auto w = compose_workflow_policy(FailurePolicy::CircuitBreaker);
+    CHECK(w.agent_policy.on_join_fail == AgentFailureAction::Cancel,
+          "4236 AC3: compose armed Cancel before the explicit override");
+    w.agent_policy.on_join_fail = AgentFailureAction::ReportOnly; // explicit override wins
+    auto out = apply_workflow(sched, scope, tasks, w, 0, false);
+    CHECK(out.batch.status != aura::serve::parallel_orch::BatchStatus::Ok,
+          "4236 AC3: batch residual still observed");
+    CHECK(h.fiber && !h.fiber->is_cancel_requested(),
+          "4236 AC3: explicit ReportOnly keeps the live agent running (observe-first)");
+    hold.store(false, std::memory_order_relaxed);
+    ac3206_set_prod(false);
+}
+
+static void ac4236_4_source_cite_no_invent() {
+    std::println("\n--- #4236 AC4: source-cite + no AgentRegistry + no new query key ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto scope_hdr = read_file("src/orch/agent_scope.h");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
+    CHECK(spawn.find("kCircuitBreakerJoinFailProductionArmIssue = 4236") != std::string::npos,
+          "4236: issue stamp");
+    CHECK(spawn.find("Issue #4236") != std::string::npos, "4236: bridge cite");
+    CHECK(spawn.find("if (production_defaults_active())") != std::string::npos,
+          "4236: production gate in the bridge");
+    CHECK(scope_hdr.find("w.agent_policy.on_join_fail != AgentFailureAction::ReportOnly") !=
+              std::string::npos,
+          "4236: #3969 route gate intact (explicit override wins)");
+    CHECK(scope_hdr.find("agent_join_fail_action_cancel_total") != std::string::npos,
+          "4236: cancel face reuses agent_join_fail_action_cancel_total (no new key)");
+    CHECK(scope_hdr.find("class AgentRegistry") == std::string::npos, "4236: no AgentRegistry");
+    CHECK(spawn.find("query:4236") == std::string::npos, "4236: no query:4236");
+    CHECK(scope_hdr.find("query:4236") == std::string::npos, "4236: no query:4236 in scope");
+    CHECK(obs.find("query:orch-module-stats") != std::string::npos,
+          "4236: query:orch-module-stats unchanged (no rename)");
+    CHECK(read_file("tests/orch/test_issue_4236.cpp").empty(), "4236: no invented test file");
+    CHECK(read_file("docs/design/4236-circuitbreaker-join-fail.md").empty(),
+          "4236: no docs/design/4236-* per #1655");
+    CHECK(build.find("check_join_fail_circuitbreaker_4236") != std::string::npos,
+          "4236: linter registered in build.py");
+    CHECK(allow.find("check_join_fail_circuitbreaker_4236.py") != std::string::npos,
+          "4236: linter allowlisted for the coverage policy gate");
+    CHECK(t.find("ac4236_2_circuit_breaker_residual_cancels_scope") != std::string::npos,
+          "4236: runtime ACs live in this file (#81934)");
+}
+
+static void ac4236_run_added_tests() {
+    ac4236_1_bridge_and_compose_production_arm();
+    ac4236_2_circuit_breaker_residual_cancels_scope();
+    ac4236_3_explicit_report_only_observe_first();
+    ac4236_4_source_cite_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
