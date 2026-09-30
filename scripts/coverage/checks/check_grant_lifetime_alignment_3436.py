@@ -76,7 +76,7 @@ def main() -> int:
     if s1:
         must("Issue #3436", "AC1", s1)
         must("kHighRiskMask", "AC1", s1)
-        must("kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall", "AC1", s1)
+        must("kEffectExec | kEffectMutate | kEffectMacroSelfEvo |", "AC1", s1)
         must("capability_high_risk_forced_single_use_total", "AC1", s1)
         must("production_defaults", "AC1", s1)
         must("sandbox_mode_ != 0 || effect_sandbox_mode() != 0", "AC1", s1)

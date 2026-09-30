@@ -43,8 +43,10 @@ SCOPE_FILES = [
 # High-risk effect bit mask the production default must override.
 # Must match the constexpr kHighRiskMask in evaluator_security.cpp +
 # evaluator_primitives_security.cpp + capability_model.hh consumers.
+# Issue #4234: kEffectExec (1 << 2) joins the mask — sticky Exec closed.
 HIGH_RISK_MASK_VALUE = (
-    (1 << 3)  # kEffectMutate
+    (1 << 2)  # kEffectExec
+    | (1 << 3)  # kEffectMutate
     | (1 << 7)  # kEffectMacroSelfEvo
     | (1 << 8)  # kEffectTenantAdmin
     | (1 << 9)  # kEffectSyscall
@@ -95,7 +97,7 @@ def main() -> int:
     if cap_p >= 0 and grant_idx >= 0 and cap_p > grant_idx:
         fails.append("AC1: kHighRiskMask defined AFTER registry::grant(...) — force logic must precede grant call")
     # high-risk bit constants must exist (per security_capabilities.h).
-    for bit in ("kEffectMutate", "kEffectMacroSelfEvo", "kEffectTenantAdmin", "kEffectSyscall"):
+    for bit in ("kEffectExec", "kEffectMutate", "kEffectMacroSelfEvo", "kEffectTenantAdmin", "kEffectSyscall"):
         must(bit, "AC1", sec_caps)
     # Counter must be bumped when force applied.
     must("capability_high_risk_forced_single_use_total", "AC1", cap_model)
@@ -146,7 +148,7 @@ def main() -> int:
     # The mask value is sourced from a `kHighRiskMask` constexpr in
     # evaluator_security.cpp + evaluator_primitives_security.cpp — verify
     # both files name the 4 high-risk bits so the OR is correct.
-    for bit_name in ("kEffectMutate", "kEffectMacroSelfEvo", "kEffectTenantAdmin", "kEffectSyscall"):
+    for bit_name in ("kEffectExec", "kEffectMutate", "kEffectMacroSelfEvo", "kEffectTenantAdmin", "kEffectSyscall"):
         must(bit_name, "AC5", sec)  # kHighRiskMask defined in sec (force site)
         must(bit_name, "AC5", posture)  # also referenced in posture (query site)
     must("kHighRiskMask", "AC5", sec)
@@ -155,12 +157,18 @@ def main() -> int:
     # canonical HIGH_RISK_MASK_VALUE used by the linter.
     sec_mask_match = re.search(
         r"constexpr\s+std::uint16_t\s+kHighRiskMask\s*=\s*static_cast<std::uint16_t>\s*\(\s*"
-        r"(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\)",
+        r"(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\|\s*(kEffect\w+)\s*\)",
         sec,
     )
     if sec_mask_match:
         bits = set(sec_mask_match.groups())
-        expected_bits = {"kEffectMutate", "kEffectMacroSelfEvo", "kEffectTenantAdmin", "kEffectSyscall"}
+        expected_bits = {
+            "kEffectExec",
+            "kEffectMutate",
+            "kEffectMacroSelfEvo",
+            "kEffectTenantAdmin",
+            "kEffectSyscall",
+        }
         if bits != expected_bits:
             fails.append(
                 f"AC5: kHighRiskMask in evaluator_security.cpp = {sorted(bits)} != expected {sorted(expected_bits)}"
@@ -168,7 +176,7 @@ def main() -> int:
     else:
         fails.append(
             "AC5: kHighRiskMask constexpr in evaluator_security.cpp does not match "
-            "expected 4-bit OR (kEffectMutate|kEffectMacroSelfEvo|kEffectTenantAdmin|kEffectSyscall)"
+            "expected 5-bit OR (kEffectExec|kEffectMutate|kEffectMacroSelfEvo|kEffectTenantAdmin|kEffectSyscall)"
         )
     # Snapshot struct must carry both new fields.
     must("capability_high_risk_forced_single_use", "AC5", cap_model)

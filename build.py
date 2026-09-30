@@ -9867,6 +9867,23 @@ def cmd_lint():
             "Issue #4173 sampled-leftover audit force linter failed — run python3 scripts/check_sampled_leftover_audit_4173.py"
         )
         return r
+    # Issue #4234 (P0: sticky Exec — production high-risk force excluded
+    # Effect::Exec): kHighRiskMask now includes kEffectExec in all five
+    # grant lifetimes (string grant_capability / grant_effect_capability /
+    # grant_effect_durable / grant_effect_durable_sticky gate /
+    # grant_effect_session) — Restricted/Strict force single_use +
+    # session_bound for Exec; Soft/Off zero-cost (no force); the durable
+    # sticky escape stays the #3177 env-gated path. Runtime door:
+    # tests/core/test_capability_single_use_consume.cpp
+    # (ac4234_1..ac4234_5, dispatched via run_test_inert_session_mid_3723).
+    execforce4234_script = ROOT / "scripts" / "check_exec_high_risk_force_4234.py"
+    if not execforce4234_script.exists():
+        fail(f"missing {execforce4234_script}")
+        return 1
+    r = run([sys.executable, str(execforce4234_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4234 exec high-risk force linter failed — run python3 scripts/check_exec_high_risk_force_4234.py")
+        return r
     # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
     # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
     # holder (#3764) — the canary cannot observe either. Gate pins:

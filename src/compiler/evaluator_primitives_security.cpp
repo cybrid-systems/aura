@@ -1105,18 +1105,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.capability_session_revoke_abort));
             }
             // Issue #2882: production default single-use for high-risk
-            // grants (Mutate | MacroSelfEvo | TenantAdmin | Syscall) under
-            // Restricted/Strict. Default `grant_effect_capability` surface
-            // force-promotes high-risk grants to single_use=true; explicit
-            // `grant_effect_durable` admin path stays sticky (audited via
+            // grants (Exec | Mutate | MacroSelfEvo | TenantAdmin | Syscall;
+            // Exec per #4234) under Restricted/Strict. Default
+            // `grant_effect_capability` surface force-promotes high-risk
+            // grants to single_use=true; explicit `grant_effect_durable`
+            // admin path stays sticky (audited via
             // capability_durable_high_risk_grant counter).
             {
+                using aura::compiler::security::kEffectExec;
                 using aura::compiler::security::kEffectMacroSelfEvo;
                 using aura::compiler::security::kEffectMutate;
                 using aura::compiler::security::kEffectSyscall;
                 using aura::compiler::security::kEffectTenantAdmin;
-                constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
-                    kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+                constexpr std::uint16_t kHighRiskMask =
+                    static_cast<std::uint16_t>(kEffectExec | kEffectMutate | kEffectMacroSelfEvo |
+                                               kEffectTenantAdmin | kEffectSyscall);
                 insert_kv("schema-2882", 2882);
                 insert_kv("issue-2882", 2882);
                 insert_kv("production-default-single-use-wired", 1);

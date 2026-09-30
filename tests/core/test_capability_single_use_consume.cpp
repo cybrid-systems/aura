@@ -57,6 +57,7 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
+using aura::compiler::security::kEffectExec;
 using aura::compiler::security::kEffectMacroSelfEvo;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectSyscall;
@@ -4172,6 +4173,144 @@ static void ac4135_5_source_cite() {
           "4135 AC5: no tests/**/test_issue_4135.cpp (per #81934)");
 }
 
+// ── Issue #4234: Exec joins the production high-risk force family ──────────
+//   Sticky Exec residual: kHighRiskMask (Mutate | MacroSelfEvo | TenantAdmin |
+//   Syscall) excluded kEffectExec in every grant lifetime, so a once-granted
+//   Exec stayed privilege-sticky under Restricted/Strict (no single_use, no
+//   session_bound; only grant-epoch retain K aged it out) — unlike Mutate,
+//   which dies with the session mid. AC1: effect-path grant forced +
+//   session-mid exit revokes + deny after. AC2: string path ("exec") forced.
+//   AC3: Soft/Off keeps the sticky contract (no force). AC4: durable grant
+//   session-bound (#3177 family; sticky escape unchanged). AC5: source-cite
+//   + linter; no test_issue_4234.cpp; no docs/design/4234-*.
+
+static void ac4234_1_effect_path_exec_forced() {
+    std::println("\n--- #4234 AC1: effect-path Exec forced single_use + session_bound ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    seed_tenant_admin(7, 1);
+    const auto forced_before =
+        g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+    CHECK(ev.grant_effect_capability(7, "exec-4234-ac1", kEffectExec, /*mid=*/1,
+                                     /*single_use=*/false),
+          "4234 AC1: exec grant landed");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(7, "exec-4234-ac1", g), "4234 AC1: row exists");
+    CHECK(g.single_use, "4234 AC1: single_use forced for Exec under Restricted");
+    CHECK(g.session_bound, "4234 AC1: session_bound forced for Exec under Restricted");
+    CHECK(g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load() >=
+              forced_before + 1,
+          "4234 AC1: high-risk forced-single-use counter bumps for Exec");
+    CHECK(g_capability_registry().session_bound_entries_alive(7) >= 1,
+          "4234 AC1: live session residual");
+    CHECK(g_capability_registry().revoke_session_grants_for_mid(1) >= 1,
+          "4234 AC1: outermost session-mid exit revokes Exec (anti-sticky)");
+    CHECK(g_capability_registry().session_bound_entries_alive(7) == 0,
+          "4234 AC1: no live session residual after revoke");
+    EffectProvenance call{};
+    call.mutation_id = 1;
+    call.epoch = 1;
+    CHECK(
+        !check_and_record_effect(Effect::Exec, Effect::Exec, call, 7, "4234-ac1-post", false, true),
+        "4234 AC1: require_effect(Exec) denies after session revoke");
+}
+
+static void ac4234_2_string_path_exec_forced() {
+    std::println("\n--- #4234 AC2: string-path 'exec' forced single_use + session_bound ---");
+    reset_all(); // mode Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(21);
+    // Seed TA while Off (bootstrap chicken-and-egg: production fences deny
+    // first-TA acquisition), then flip Restricted for the AC body (#3436 AC1).
+    ev.grant_capability("tenant-admin");
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);      // Restricted
+    aura::core::bump_mutation_epoch(1); // non-zero me -> non-zero grant mid (#3090)
+    ev.grant_capability("exec");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(21, "exec", g), "4234 AC2: 'exec' row exists");
+    CHECK(g.single_use, "4234 AC2: string 'exec' single_use forced");
+    CHECK(g.session_bound, "4234 AC2: string 'exec' session_bound forced (#4234)");
+}
+
+static void ac4234_3_soft_off_exec_sticky() {
+    std::println("\n--- #4234 AC3: Soft/Off keeps the sticky Exec contract ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(42343);
+    ev.grant_capability("exec");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(42343, "exec", g), "4234 AC3: 'exec' row exists");
+    CHECK(!g.single_use, "4234 AC3: Off does not force single_use for Exec");
+    CHECK(!g.session_bound, "4234 AC3: Off keeps Exec sticky (zero-cost contract)");
+}
+
+static void ac4234_4_durable_exec_session_bound() {
+    std::println("\n--- #4234 AC4: durable Exec session-bound (#3177 family) ---");
+    reset_all(); // mode Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(24);
+    ev.grant_capability("tenant-admin"); // #2967 TA + reason gate
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);      // Restricted
+    aura::core::bump_mutation_epoch(1); // non-zero me -> non-zero grant mid (#3090)
+    const auto sb_before =
+        g_capability_effect_metrics().capability_durable_session_bound_total.load();
+    ev.grant_effect_durable(/*tenant=*/24, "exec-4234-ac4", kEffectExec, /*mid=*/40,
+                            /*reason=*/"4234-ac4-durable-exec");
+    CHECK(g_capability_effect_metrics().capability_durable_session_bound_total.load() ==
+              sb_before + 1,
+          "4234 AC4: capability_durable_session_bound_total bumps for Exec");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(24, "exec-4234-ac4", g),
+          "4234 AC4: durable exec row exists");
+    CHECK(g.session_bound, "4234 AC4: durable Exec session_bound forced (#3177)");
+    CHECK(!g.single_use, "4234 AC4: durable grants stay non-single_use (session-revoke shape)");
+}
+
+static void ac4234_5_source_cite() {
+    std::println("\n--- #4234 AC5: source-cite ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    std::size_t pos = 0, mask_hits = 0, wrapped_hits = 0;
+    const std::string needle =
+        "kEffectExec | kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin |";
+    while ((pos = sec.find(needle, pos)) != std::string::npos) {
+        ++mask_hits;
+        pos += needle.size();
+    }
+    pos = 0;
+    const std::string wrapped =
+        "static_cast<std::uint16_t>(kEffectExec | kEffectMutate | kEffectMacroSelfEvo |";
+    while ((pos = sec.find(wrapped, pos)) != std::string::npos) {
+        ++wrapped_hits;
+        pos += wrapped.size();
+    }
+    CHECK(mask_hits == 4,
+          "4234 AC5: single-line mask rows (effect_capability/durable/sticky/session)");
+    CHECK(wrapped_hits == 1, "4234 AC5: string-path mask row pins Exec (wrapped shape)");
+    CHECK(mask_hits + wrapped_hits == 5,
+          "4234 AC5: Exec joins kHighRiskMask in all five grant lifetimes");
+    CHECK(sec.find("// Issue #4234: Exec joins the production high-risk force family") !=
+              std::string::npos,
+          "4234 AC5: rationale comment cites #4234");
+    CHECK(!read_file("scripts/check_exec_high_risk_force_4234.py").empty(),
+          "4234 AC5: ship linter exists (scripts/check_exec_high_risk_force_4234.py)");
+    CHECK(read_file("tests/core/test_issue_4234.cpp").empty(),
+          "4234 AC5: no tests/**/test_issue_4234.cpp (per #81934)");
+    CHECK(!std::filesystem::exists("docs/design/4234-exec-high-risk-force.md"),
+          "4234 AC5: no docs/design/4234-*");
+}
+
 int run_test_inert_session_mid_3723() {
     std::println("=== Issue #3723: inert MutationBoundaryGuard does not publish session mid ===");
     // Issue #4038: host-cohort revoke + provenance stale-row skip + epoch-0
@@ -4221,6 +4360,13 @@ int run_test_inert_session_mid_3723() {
     ac4135_3_mse_seed_stamps_gate_node();
     ac4135_4_soft_off_no_node_invent();
     ac4135_5_source_cite();
+    // Issue #4234: batch dispatches this runner (standalone main is
+    // run_test_capability_single_use_consume only) — sticky Exec ACs here.
+    ac4234_1_effect_path_exec_forced();
+    ac4234_2_string_path_exec_forced();
+    ac4234_3_soft_off_exec_sticky();
+    ac4234_4_durable_exec_session_bound();
+    ac4234_5_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
