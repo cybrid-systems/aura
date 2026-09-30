@@ -1046,8 +1046,16 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
     //   Uses genetic algorithm to optimize a function.
     //   Keywords: :population, :generations, :mutation-rate,
     //             :fitness or :benchmark (benchmark expression)
-    //   Default fitness: runs function with synthetic test inputs
-    //   (correctness = 90% weight, code length = 10% tiebreaker).
+    //   Issue #4267 contract:
+    //   - Default score = baseline-agreement rate: probe calls run on the
+    //     baseline first to record reference results, then candidates score
+    //     by matching them (semantic-preserving). This is NOT task
+    //     correctness — the application owns the task gate via :fitness.
+    //   - Code length is a tiebreaker added only after the agreement term;
+    //     at < 1.0 it can never flip an agreement ordering (steps ≥ 250).
+    //   - With :fitness / :benchmark, that expression is what gets eval'd
+    //     after the candidate is bound; its numeric value is the score.
+    //     A non-numeric result rejects the candidate (task gate failed).
     //   Creates variants, evaluates fitness, returns best.
     add("synthesize:optimize",
         [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
@@ -1062,13 +1070,25 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             double mutation_rate = 0.3;
             std::string fitness_expr; // optional user-provided fitness expr
 
+            // Issue #4267: option keys arrive keyword-tagged from the script
+            // surface (Issue #63 Phase 3) — resolve both string and keyword
+            // keys. The string-only parse silently dropped every :keyword
+            // option, so :fitness / :benchmark never reached the eval path.
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                if (!is_string(a[i]))
+                std::string key;
+                if (is_string(a[i])) {
+                    auto k_idx = as_string_idx(a[i]);
+                    if (k_idx < ev.string_heap_.size())
+                        key = ev.string_heap_[k_idx];
+                } else if (types::is_keyword(a[i])) {
+                    auto k_idx = types::as_keyword_idx(a[i]);
+                    if (k_idx < ev.keyword_table_.size())
+                        key = ev.keyword_table_[k_idx];
+                } else {
                     continue;
-                auto k_idx = as_string_idx(a[i]);
-                if (k_idx >= ev.string_heap_.size())
+                }
+                if (key.empty())
                     continue;
-                std::string key = ev.string_heap_[k_idx];
                 if (key == ":population" && is_int(a[i + 1]))
                     pop_size = static_cast<int>(as_int(a[i + 1]));
                 else if (key == ":generations" && is_int(a[i + 1]))
@@ -1117,30 +1137,90 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 return make_void();
             std::string baseline = ev.string_heap_[cs_idx];
 
+            // Issue #4267: classify a probe result into a comparable token so
+            // candidates score by matching the baseline's observed behavior
+            // (semantic-preserving), not by "did not error". Errors collapse
+            // to one token (per-eval error indices differ); pairs compare the
+            // car structurally one level deep; other refs compare by tag.
+            auto classify_probe = [&ev](const EvalValue& v) -> std::string {
+                if (is_error(v))
+                    return "E";
+                if (is_void(v))
+                    return "V";
+                if (is_bool(v))
+                    return as_bool(v) ? "T" : "F";
+                if (is_int(v))
+                    return "i" + std::to_string(as_int(v));
+                if (is_float(v))
+                    return "f" + std::to_string(as_float(v));
+                if (is_string(v)) {
+                    auto si = as_string_idx(v);
+                    if (si < ev.string_heap_.size())
+                        return "s" + ev.string_heap_[si];
+                    return "S";
+                }
+                if (is_pair(v)) {
+                    auto pi = as_pair_idx(v);
+                    if (pi >= ev.pairs_.size())
+                        return "P";
+                    const auto& cell = ev.pairs_[pi];
+                    std::string car_tok;
+                    if (is_error(cell.car))
+                        car_tok = "E";
+                    else if (is_int(cell.car))
+                        car_tok = "i" + std::to_string(as_int(cell.car));
+                    else if (is_float(cell.car))
+                        car_tok = "f" + std::to_string(as_float(cell.car));
+                    else
+                        car_tok = "O";
+                    return "p(" + car_tok + " ...)";
+                }
+                return "O";
+            };
+
+            // Issue #4267: baseline reference behavior — the first
+            // compute_fitness call (the baseline) records probe results;
+            // variants must match them (semantic-preserving optimize).
+            bool ref_ready = false;
+            int ref_arg_count = -1;
+            std::vector<std::string> ref_results;
+
             // Fitness: generate synthetic test inputs and eval the function
-            // to measure correctness + performance.
+            // to measure agreement with the baseline + cost.
             //
             // Strategy:
             // 1. Parse variant source, count function args by scanning for fn_name
             // 2. Generate probe inputs (ints, pairs, etc.) based on arg count
-            // 3. Eval each probe: (fn_name arg...), score = fraction of probes that
-            //    return a valid value without error
-            // 4. Code length is a tiebreaker only — correctness dominates
+            // 3. Eval each probe: (fn_name arg...); the baseline pass records
+            //    result classifications, variants score by matching them
+            // 4. Code length is a tiebreaker only — agreement dominates
             //
             // If :fitness keyword is provided, use that expression instead.
             auto compute_fitness = [&](const std::string& src) -> double {
                 if (!fitness_expr.empty()) {
-                    // User-provided fitness: eval the expression
-                    auto sv = ev.push_string_heap(src);
+                    // Issue #4267: the user's :fitness / :benchmark expression
+                    // is what gets eval'd. Bind the candidate's definitions
+                    // into top_ first (the caller has set-code'd + typechecked
+                    // it), then eval the EXPRESSION — the old code eval'd the
+                    // candidate source (a define form), which is non-numeric,
+                    // so every candidate scored 0 and the expression never
+                    // influenced the ranking.
+                    auto ec_fn = ev.primitives_.lookup("eval-current");
+                    if (ec_fn)
+                        (*ec_fn)({});
+                    auto fi = ev.push_string_heap(fitness_expr);
                     auto eval_fn = ev.primitives_.lookup("eval");
                     if (eval_fn) {
-                        auto r = (*eval_fn)({make_string(sv)});
+                        auto r = (*eval_fn)({make_string(fi)});
                         if (is_float(r))
                             return as_float(r);
                         if (is_int(r))
                             return static_cast<double>(as_int(r));
                     }
-                    return 0.0;
+                    // Non-numeric fitness = the candidate failed the
+                    // application's task gate: reject it so it can never beat
+                    // a numeric score.
+                    return std::numeric_limits<double>::lowest();
                 }
 
                 // Default fitness: eval the current workspace (which contains
@@ -1188,8 +1268,8 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 // Temporary flats in eval are OK for call expressions — they don't
                 // create closures, just look up and apply.
                 static const std::int64_t probe_ints[] = {0, 1, -1, 2};
-                int successes = 0;
                 int total_tests = 0;
+                std::vector<std::string> results; // #4267: per-probe classifications
                 auto eval_fn = ev.primitives_.lookup("eval");
 
                 // Issue #1718: reuse one string_heap slot for probe sources
@@ -1212,8 +1292,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                     }
                     if (eval_fn) {
                         auto r = (*eval_fn)({make_string(probe_slot)});
-                        if (!types::is_error(r))
-                            ++successes;
+                        results.push_back(classify_probe(r));
+                    } else {
+                        results.push_back("E");
                     }
                 };
 
@@ -1238,12 +1319,32 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                     try_probe(call_src);
                 }
 
-                // Score: correctness dominates (up to 1000), then small length bonus
-                double correctness = total_tests > 0 ? (1000.0 * static_cast<double>(successes) /
-                                                        static_cast<double>(total_tests))
-                                                     : 0.0;
+                // Issue #4267: semantic-preserving score = baseline-agreement
+                // rate, NOT a correctness / task pass rate. The first call
+                // (baseline) records the reference probe behavior; variants
+                // score by matching it. Length stays a pure tiebreaker: it is
+                // added after the agreement term and at < 1.0 can never flip
+                // an agreement ordering (steps are 1000/N ≥ 250) — cost is
+                // compared only after the agreement gate passes.
                 double length_bonus = 1.0 / static_cast<double>(src.size() + 1);
-                return correctness + length_bonus;
+                if (!ref_ready) {
+                    ref_ready = true;
+                    ref_arg_count = arg_count;
+                    ref_results = results;
+                    return 1000.0 + length_bonus;
+                }
+                if (arg_count != ref_arg_count || results.size() != ref_results.size())
+                    return length_bonus; // probe surface changed → not semantic-preserving
+                int matches = 0;
+                for (std::size_t i = 0; i < results.size(); ++i) {
+                    if (results[i] == ref_results[i])
+                        ++matches;
+                }
+                double agreement =
+                    total_tests > 0
+                        ? (1000.0 * static_cast<double>(matches) / static_cast<double>(total_tests))
+                        : 0.0;
+                return agreement + length_bonus;
             };
 
             std::string best_code = baseline;

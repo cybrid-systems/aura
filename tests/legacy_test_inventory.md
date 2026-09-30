@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-09-30 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-10-01 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -1533,7 +1533,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fiber_spawn_cli.cpp` (—) [domain_suite, theme_compiler] — Issue #2685 — sequential / multi-define dual spawn → distinct ids.
 - `tests/serve/test_fiber_steal_panic_checkpoint_nested_gc.cpp` (—) [small, domain_suite, theme_serve] — tests/test_fiber_steal_panic_checkpoint_nested_gc.cpp — Issue #1446
 - `tests/serve/test_fiber_strategy_evolve_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_strategy_evolve_batch.cpp — consolidated fiber-theme drivers
-- `tests/serve/test_fiber_synthesize_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — test_fiber_synthesize_batch.cpp — consolidated fiber-theme drivers
+- `tests/serve/test_fiber_synthesize_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_synthesize_batch.cpp — consolidated fiber-theme drivers
 - `tests/serve/test_guard_panic_reflect_fiber_resume_task6.cpp` (—) [domain_suite, theme_serve] — test_guard_panic_reflect_fiber_resume_task6.cpp — Issue #596:
 - `tests/compiler/test_hard_fiber_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: hard_fiber_isolation=false → fiber mismatch allow + metric only
 - `tests/compiler/test_hard_fiber_restricted.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted default soft — fiber A grant, fiber B allow + mismatch metric
