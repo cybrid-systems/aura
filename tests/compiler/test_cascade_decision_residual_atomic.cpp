@@ -72,8 +72,10 @@ static void ac3257_1_last_look_source() {
     const auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
-    auto block = ixx.substr(pos, 34000); // window covers relower growth through #3491; #3611 peer +
-                                         // reconsult pushed last-look past 30000
+    auto block = ixx.substr(pos, 40000); // window covers relower growth through #3491; #3611 peer +
+                                         // reconsult pushed last-look past 30000; #4172 pre-JIT
+                                         // verify grew the body again — size_now > attr_seen_size
+                                         // now sits ~34.2KB from the signature
     CHECK(block.find("Issue #3257") != std::string::npos, "3257 AC1: relower cites #3257");
     CHECK(block.find("post_attr_armed") != std::string::npos ||
               block.find("attr_seen_size") != std::string::npos,
@@ -657,7 +659,9 @@ static void ac3348_1_last_look_source() {
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3348 AC1: relower def");
     auto rel =
-        ixx.substr(pos, 37000); // relower body ends ~35.5KB after #3611; 37KB stays inside fn
+        ixx.substr(pos, 42000); // relower body ends ~35.5KB after #3611; 37KB stays inside fn;
+                                // #4172 pre-JIT verify grew the body — the #3348 last-look counters
+                                // (node_now / block_now) now sit ~38KB from the signature
     CHECK(rel.find("Issue #3348") != std::string::npos, "3348 AC1: relower cites #3348");
     must_inline(rel, "initial_block_mirror_edges", "3348 AC1: block-dep snapshot with gen0");
     must_inline(rel, "dep_graph_block_mirror_edges_total",

@@ -8593,7 +8593,9 @@ def cmd_lint():
         return 1
     r = run([sys.executable, str(spp4272_script)], cwd=ROOT)
     if r != 0:
-        fail("Issue #4272+#4273 set-code/pick parity linter failed - run python3 scripts/check_setcode_pick_parity_4272_4273.py")
+        fail(
+            "Issue #4272+#4273 set-code/pick parity linter failed - run python3 scripts/check_setcode_pick_parity_4272_4273.py"
+        )
         return r
     # Issue #4267 (correctness): synthesize:optimize score synthesis. The
     # default score was the probe non-error rate plus a shorter-source bonus

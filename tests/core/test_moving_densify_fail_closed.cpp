@@ -5735,11 +5735,10 @@ static void ac3956_3958_admit_densify_gates() {
     CHECK(mb.find("try_acquire_for_region") != std::string::npos, "3956: region path present");
     const auto rgn = mb.find("Evaluator::MutationBoundaryGuard::try_acquire_for_region");
     CHECK(rgn != std::string::npos, "3956: region admit");
-    // #4242 re-anchor: #4174 (1e86f445d) grew try_acquire_for_region so the
-    // densify_in_flight_for sample site sits 6034 chars from the definition —
-    // 34 past the old 6000 window on the pristine file (batch went red with
-    // the diff absent). Same-site check, widened window only.
-    const auto rwin = mb.substr(rgn, 6400);
+    const auto rwin = mb.substr(rgn, 8000); // #4174 (1e86f445d) inserted the recover-truncation
+                                            // staging into the region admit path —
+                                            // densify_in_flight_for now sits ~6KB past the
+                                            // signature; 8KB stays inside the function
     CHECK(rwin.find("densify_in_flight_for") != std::string::npos,
           "3956: RegionExclusive samples densify-in-flight");
     CHECK(mb.find("Issue #3958") != std::string::npos, "3958: cite");

@@ -202,7 +202,7 @@ def main() -> int:
     )
     for fn in (
         "ac4174_1_rollback_restores_truncation",
-        "ac4174_2_forced_reject_rolls_back_live_tc",
+        "ac4174_2_live_accept_solved_stamp",
         "ac4174_3_accept_keeps_clear",
         "ac4174_4_hermetic_forced_reject_no_bump",
         "ac4174_5_source_cite_and_linter",

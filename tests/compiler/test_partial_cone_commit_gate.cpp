@@ -1305,8 +1305,9 @@ static void ac4174_1_rollback_restores_truncation() {
     reset_2621();
 }
 
-static void ac4174_2_forced_reject_rolls_back_live_tc() {
-    std::println("\n--- #4174 AC2: #3108 forced-false rolls back truncation clear (live TC) ---");
+static void ac4174_2_live_accept_solved_stamp() {
+    std::println(
+        "\n--- #4174 AC2: live recover-true accepted — SOLVED stamp supersedes stale CONFLICT ---");
     reset_2621();
     apply_production_audit_defaults();
     clear_cone_outside_goal_drop_for_test();
@@ -1325,17 +1326,24 @@ static void ac4174_2_forced_reject_rolls_back_live_tc() {
     in.truncate_hard = true;
     in.occurrence_face_hard = true;
     in.cone_outside_goal_drop_face = true;
-    in.solve_status = 2; // stale pre-recover CONFLICT snapshot (#3108 forcing face)
+    in.solve_status = 2; // stale pre-recover CONFLICT snapshot (superseded post-#4170)
     in.linear_ok = true;
     in.blame_ok = true;
     auto r = commit_readiness(in);
-    CHECK(!r.would_allow_commit, "AC2: recover-true denied by #3108 re-gate (stale CONFLICT)");
-    CHECK(r.force_reason == "cone_outside_goal_drop", "AC2: force_reason cone_outside_goal_drop");
-    CHECK(typed_audit::g_occurrence_recover_truncation_rollback_total.load() > rb0,
-          "AC2: truncation rollback counter advanced on the forced reject");
-    CHECK(tc->last_partial_cone_truncated(),
-          "AC2: truncation stamp still latched after reject (no half-clean CS)");
-    CHECK(tc->last_partial_cone_dropped() == 7, "AC2: dropped count survived the reject");
+    // Post-#4170 the live recover stamps last_delta_solve_status_ = SOLVED before
+    // returning true, so commit_readiness's re-sample reads SOLVED and the #3108
+    // re-gate cannot fire on the live path — a live recover-true is ACCEPTED, the
+    // stale pre-recover snapshot no longer false-rejects it. Accept semantics
+    // (mirrors AC3): faces consumed, clear kept, zero rollback counter noise.
+    CHECK(r.would_allow_commit,
+          "AC2: live recover-true accepted — SOLVED stamp supersedes stale CONFLICT (#4170)");
+    CHECK(r.force_reason != "cone_outside_goal_drop",
+          "AC2: no cone_outside_goal_drop deny on accept");
+    CHECK(typed_audit::g_occurrence_recover_truncation_rollback_total.load() == rb0,
+          "AC2: no rollback counter noise on accept");
+    CHECK(!tc->last_partial_cone_truncated(),
+          "AC2: accept keeps the truncation clear (consumed, not half-clean)");
+    CHECK(tc->last_partial_cone_dropped() == 0, "AC2: dropped count zeroed on accept");
     aura_typed_audit_clear_readiness_evaluator();
     reset_2621();
 }
@@ -1546,7 +1554,7 @@ int run_test_partial_cone_commit_gate() {
     // recovered=false (#3108 re-gate face) — half-clean CS close.
     std::println("\n=== Issue #4174: recover truncation-clear rollback ===");
     ac4174_1_rollback_restores_truncation();
-    ac4174_2_forced_reject_rolls_back_live_tc();
+    ac4174_2_live_accept_solved_stamp();
     ac4174_3_accept_keeps_clear();
     ac4174_4_hermetic_forced_reject_no_bump();
     ac4174_5_source_cite_and_linter();
