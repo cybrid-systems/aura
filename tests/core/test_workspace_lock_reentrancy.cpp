@@ -97,6 +97,37 @@ int main() {
         CHECK(ws.has_value(), "AC3: workspace-state after mutate (pin adopt / short lock)");
     }
 
+    // ── AC6 (#4264): (require …) inside set-code'd source + eval-current ──
+    // Soft serve-async set-code + eval-current walks the workspace flat under
+    // WorkspaceUniqueIfNeeded (unique workspace hold). A (require …) inside
+    // that set-code'd source re-entered load_module_file on the SAME thread,
+    // whose critical sections took fresh unique_lock(workspace_mtx_) —
+    // std::shared_mutex is non-recursive — so the re-lock returned EDEADLK
+    // ("Resource deadlock avoided"; the serve exec surfaced "exec exception:
+    // Resource deadlock avoided") while the same source oneshot required
+    // cleanly. With the #4264 adopt-if-held loader locks the require proceeds
+    // under the already-held exclusive.
+    {
+        std::println("\n--- AC6 (#4264): require inside set-code'd source + eval-current ---");
+#ifdef AURA_SOURCE_DIR
+        const std::string lib = std::string(AURA_SOURCE_DIR) + "/lib";
+#else
+        const std::string lib = "lib";
+#endif
+        setenv("AURA_PATH", lib.c_str(), 1);
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        CompilerService cs;
+        // C++ \\\" → runtime \" → aura escaped quote inside the set-code
+        // string literal (matches the oneshot/serve e2e escaping for #4264).
+        const std::string src_4264 = "(require \\\"std/hash\\\" all:) (define h (make-hash)) "
+                                     "(hash-set! h 7 42) (hash-ref h 7 -1)";
+        auto sc = cs.eval("(set-code \"" + src_4264 + "\")");
+        CHECK(sc.has_value(), "AC6: set-code of require-using source");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value(), "AC6: eval-current completes require + hash program (no EDEADLK)");
+    }
+
     // ── AC4: source markers ──────────────────────────────────────────
     {
         std::println("\n--- AC4: Wave1 source markers ---");

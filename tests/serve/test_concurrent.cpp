@@ -3120,6 +3120,82 @@ static bool test_issue_4231_sigpipe_containment() {
     return true;
 }
 
+// ── Issue #4264: Soft serve-async set-code + eval-current parity with oneshot ──
+// ═══════════════════════════════════════════════════════════
+// Two silent divergences between serve-async set-code + eval-current and
+// oneshot for the SAME source (the soft_score_inflate → verify_no_gain
+// family): (a) serve session services never bound the Soft std prelude
+// oneshot auto-loads (#4178–#4219) — a set-code'd source using
+// require-injected std bindings evaluated to "unbound variable: make-hash"
+// under (eval-current) while the same source oneshot ran, so the host
+// scored a truncated/empty CASE display; (b) a (require …) INSIDE the
+// set-code'd source re-entered load_module_file's fresh
+// unique_lock(workspace_mtx_) while (eval-current) held the workspace
+// unique — EDEADLK ("exec exception: Resource deadlock avoided").
+// Fix: (a) load_soft_session_prelude at session creation (default +
+// own-service named + bench) with the #4228 cell sync; (b) loader
+// WorkspaceAdoptIfNeeded adopt-if-held locks (lock_order is_held probe).
+// Runtime door for (b): tests/core/test_workspace_lock_reentrancy.cpp AC6.
+static bool test_issue_4264_session_prelude_parity() {
+    std::println("\n--- #4264 AC1: session std-prelude parity (serve_async.cpp) ---");
+    auto read_file = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string();
+    };
+    const auto serve_src = read_file("src/serve/serve_async.cpp");
+    CHECK(!serve_src.empty(), "#4264 AC1: serve_async source readable");
+    CHECK(serve_src.find("load_soft_session_prelude") != std::string::npos,
+          "#4264 AC1: session prelude helper present");
+    CHECK(serve_src.find("Issue #4264: Soft serve-async sessions must bind the same Soft std "
+                         "prelude") != std::string::npos,
+          "#4264 AC1: helper cites #4264");
+    // The exact oneshot prelude (#4178–#4219): all four std requires.
+    for (const auto* mod : {"std/list", "std/string", "std/hash", "std/math"}) {
+        CHECK(serve_src.find("(require \\\"" + std::string(mod) + "\\\"" + " all:)") !=
+                  std::string::npos,
+              std::string("#4264 AC1: prelude requires ") + mod);
+    }
+    CHECK(serve_src.find("sync_soft_export_cells_for_ir") != std::string::npos,
+          "#4264 AC1: #4228 TopCellLoad sync inside the prelude helper");
+    // AC2: the helper runs at session creation — default + own-service named
+    // + bench (definition + 3 call sites = 4 occurrences).
+    {
+        constexpr auto kCall = "load_soft_session_prelude(";
+        int calls = 0;
+        for (std::size_t pos = serve_src.find(kCall); pos != std::string::npos;
+             pos = serve_src.find(kCall, pos + 1))
+            ++calls;
+        CHECK(calls == 4, "#4264 AC2: prelude wired at default+named+bench (found " +
+                              std::to_string(calls) + " sites incl. definition)");
+    }
+    // AC3: loader adopt-if-held contract (eval-current + nested require).
+    std::println("\n--- #4264 AC3: loader adopt-if-held contract (module loader) ---");
+    const auto loader_src = read_file("src/compiler/evaluator_module_loader.cpp");
+    CHECK(!loader_src.empty(), "#4264 AC3: module loader source readable");
+    CHECK(loader_src.find("WorkspaceAdoptIfNeeded") != std::string::npos,
+          "#4264 AC3: adopt-if-held helper present");
+    CHECK(loader_src.find("lock_order::is_held(lock_order::Level::Workspace)") != std::string::npos,
+          "#4264 AC3: is_held probe gates the physical lock");
+    CHECK(loader_src.find("Issue #4264") != std::string::npos, "#4264 AC3: loader cites #4264");
+    {
+        // The old fresh-lock shape must be gone from the load path.
+        constexpr auto kOld = "std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);";
+        int old_locks = 0;
+        for (std::size_t pos = loader_src.find(kOld); pos != std::string::npos;
+             pos = loader_src.find(kOld, pos + 1))
+            ++old_locks;
+        CHECK(old_locks == 0, "#4264 AC3: fresh workspace re-lock removed from loader (found " +
+                                  std::to_string(old_locks) + ")");
+    }
+    return true;
+}
+
 int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
@@ -3305,6 +3381,7 @@ int main() {
              test_issue_4231_holder_survives_thrown_body);
     run_test("test_issue_4231_source_cite", test_issue_4231_source_cite);
     run_test("test_issue_4231_sigpipe_containment", test_issue_4231_sigpipe_containment);
+    run_test("test_issue_4264_session_prelude_parity", test_issue_4264_session_prelude_parity);
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);

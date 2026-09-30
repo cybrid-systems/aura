@@ -8546,6 +8546,25 @@ def cmd_lint():
             "Issue #4232 soft worldline select list-prims linter failed - run python3 scripts/check_soft_list_prims_4232.py"
         )
         return r
+    # Issue #4264 (Soft): serve-async set-code + eval-current diverged from
+    # oneshot for the same source — session services never bound the Soft std
+    # prelude oneshot auto-loads (#4178–#4219) and a (require …) inside a
+    # set-code'd source EDEADLK'd the loader's fresh workspace re-lock while
+    # eval-current held the unique. Gate pins: the loader
+    # WorkspaceAdoptIfNeeded adopt-if-held contract (is_held probe, 8 adopt
+    # sites, zero fresh re-locks), the session prelude parity helper with the
+    # four oneshot require lines + #4228 cell sync wired at default/named/
+    # bench creation, and the runtime doors (test_concurrent parity rows +
+    # test_workspace_lock_reentrancy AC6). No test_issue_4264.cpp per #81934,
+    # no docs/design/4264-* per #1655.
+    ssp4264_script = ROOT / "scripts" / "check_serve_setcode_parity_4264.py"
+    if not ssp4264_script.exists():
+        fail(f"missing {ssp4264_script}")
+        return 1
+    r = run([sys.executable, str(ssp4264_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4264 serve set-code parity linter failed - run python3 scripts/check_serve_setcode_parity_4264.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the

@@ -330,6 +330,31 @@ std::string status_line_error(std::string_view session, std::string_view msg,
         json_escape(session), json_escape(msg), json_escape(display));
 }
 
+// Issue #4264: Soft serve-async sessions must bind the same Soft std prelude
+// oneshot auto-loads (#4178–#4219) and run the same #4228 TopCellLoad sync.
+// Oneshot (aura file.aura / pipe / --load) seeds require "std/list" |
+// "std/string" | "std/hash" | "std/math" all: before the program text; the
+// serve-async session services never did, so a set-code'd source using any
+// require-injected std binding evaluated to "unbound variable: make-hash"
+// under (eval-current) while the same source oneshot ran — the host scored a
+// truncated/empty CASE display (silent divergence from oneshot, the
+// soft_score_inflate family). Load the identical prelude at session service
+// creation (before any scoring exec) so set-code + eval-current binds exactly
+// what oneshot binds; then run the #4228 sync so TW std closures resolve via
+// TopCellLoad for native filter/map, same as oneshot.
+static void load_soft_session_prelude(aura::compiler::CompilerService& cs) {
+    static constexpr const char* kSoftServeSessionStdPrelude = "(require \"std/list\" all:)"
+                                                               "(require \"std/string\" all:)"
+                                                               "(require \"std/hash\" all:)"
+                                                               "(require \"std/math\" all:)";
+    if (auto pre = cs.eval(kSoftServeSessionStdPrelude); !pre) {
+        std::println(std::cerr, "aura: serve-async std prelude failed: {}",
+                     pre.error().format_with_source(kSoftServeSessionStdPrelude));
+        return;
+    }
+    cs.sync_soft_export_cells_for_ir();
+}
+
 // ── run_serve_async ─────────────────────────────────────
 
 void run_serve_async(int num_workers) {
@@ -923,6 +948,9 @@ void run_serve_async(int num_workers) {
         sess->service.set_session_id("default");
         sess->service.set_workspace_tree(shared_workspace_tree);
         aura::compiler::CompilerService::register_session("default", &sess->service);
+        // Issue #4264: same std prelude + #4228 cell sync as oneshot, so
+        // set-code + eval-current binds what oneshot binds.
+        load_soft_session_prelude(sess->service);
     }
 
     // Soft shared graph: named-session exec uses default CompilerService.
@@ -1042,6 +1070,10 @@ void run_serve_async(int num_workers) {
             // Soft alias — do not register an extra GC root for the unused CS.
         } else {
             aura::compiler::CompilerService::register_session(name, &it->second->service);
+            // Issue #4264: own-service (non-shared) sessions bind the same
+            // std prelude as oneshot; shared-graph sessions already inherited
+            // it through the default service above.
+            load_soft_session_prelude(it->second->service);
             if (gc_collect) {
                 int wid = static_cast<int>(std::hash<std::string>{}(name) % 997) + 1;
                 register_session_root(*it->second, wid);
@@ -1376,6 +1408,8 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     sess->service.set_session_id("default");
     sess->service.set_workspace_tree(shared_workspace_tree);
     aura::compiler::CompilerService::register_session("default", &sess->service);
+    // Issue #4264: bench sessions get the same session prelude parity.
+    load_soft_session_prelude(sess->service);
 
     // 4. Read the bench file
     std::ifstream f(file_path);
