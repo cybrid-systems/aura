@@ -9962,6 +9962,30 @@ def cmd_lint():
             "Issue #4241 mid-fallback-refused emit-ordering linter failed — run python3 scripts/check_mid_refuse_ordering_4241.py"
         )
         return r
+    # Issue #4242 (P1: bind/resolve chases a #3469 tombstone onto a recycled
+    # live address — apply UAF). ASTArena::destroy recycles small-pool slots
+    # without touching last_object_remap_, and #3469 keeps previous-window
+    # keys, so a recycled address A still carrying A→B could be handed to a
+    # new tracked Y; every bind/resolve of Y chased onto B (wrong object or
+    # freed slot) while the green window never saw it. Gate pins: the
+    # SmallObjectPool quarantine hook (freelist pop+park / bump fail-close /
+    # reset free) installed by the ASTArena ctor over the ONE
+    # last_object_remap_ table (no second pin/GC registry), the guarded
+    # chase SSOT resolve_object_remap_for_bind (live-key / dead-destination
+    # refusals + counters) wired into both bind paths while the #3421
+    # refuse-face resolve_object_remap stays untouched, runtime ACs
+    # dispatched (ac4242_1..5 in test_moving_densify_fail_closed.cpp before
+    # the Results line), build.py + allowlist wiring.
+    rtq4242_script = ROOT / "scripts" / "check_remap_tombstone_quarantine_4242.py"
+    if not rtq4242_script.exists():
+        fail(f"missing {rtq4242_script}")
+        return 1
+    r = run([sys.executable, str(rtq4242_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4242 remap tombstone quarantine linter failed — run python3 scripts/check_remap_tombstone_quarantine_4242.py"
+        )
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

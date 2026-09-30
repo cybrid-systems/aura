@@ -117,6 +117,12 @@ export inline void reset_no_safepoint_warned_for_test() noexcept {
 // Issue #658: small-object tier exhaustion fallbacks to main pmr arena.
 export inline std::atomic<std::uint64_t> arena_small_tier_fallback_total{0};
 
+// Issue #4242: tombstone-key quarantine refusals — SmallObjectPool::
+// try_allocate refused to hand a recycled slot that is still a
+// last_object_remap_ key to a new object (freelist park or bump fail-close).
+// Declared before SmallObjectPool so its in-class bodies can bind it.
+export inline std::atomic<std::uint64_t> g_moving_remap_tombstone_quarantine_total{0};
+
 // ── ArenaStats — per-arena memory accounting ─────────────────────
 //
 // Issue #2381 — concurrency contract:
@@ -350,21 +356,48 @@ public:
             if (size > c.obj_sz)
                 continue;
             // Issue #1518: freelist hit = lazy live-relocate into a freed slot.
+            // Issue #4242: a slot still carrying a #3469 tombstone key must
+            // not be handed to a new object — bind/resolve would chase the
+            // new occupant onto the prior-window destination (apply UAF).
+            // Pop and PARK quarantined heads (freed at reset(); the fold
+            // never drops a key into a state where the address is safe to
+            // hand out mid-life — key-dropped addresses are live_new homes
+            // or still-tombstoned keys).
             if (free_heads_[ti] != nullptr) {
-                void* ptr = free_heads_[ti];
-                free_heads_[ti] = *static_cast<void**>(ptr);
-                if (free_count_ > 0)
-                    --free_count_;
-                allocated_from_small_ += c.obj_sz;
-                ++recycle_hits_;
-                AURA_HOT_RECORD(); // Issue #2142 freelist hit
-                return ptr;
+                void** link = &free_heads_[ti];
+                while (*link != nullptr && quarantine_pred_ != nullptr &&
+                       quarantine_pred_(quarantine_ctx_, *link)) {
+                    void* parked = *link;
+                    *link = *static_cast<void**>(parked);
+                    if (free_count_ > 0)
+                        --free_count_;
+                    quarantined_.push_back(parked);
+                    g_moving_remap_tombstone_quarantine_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                }
+                if (*link != nullptr) {
+                    void* ptr = *link;
+                    free_heads_[ti] = *static_cast<void**>(ptr);
+                    if (free_count_ > 0)
+                        --free_count_;
+                    allocated_from_small_ += c.obj_sz;
+                    ++recycle_hits_;
+                    AURA_HOT_RECORD(); // Issue #2142 freelist hit
+                    return ptr;
+                }
             }
             // Hard cap: bump must stay within both tier.end and buffer.
             std::byte* hard_end = c.end < buf_end ? c.end : const_cast<std::byte*>(buf_end);
             void* ptr = c.bump;
             auto* next = c.bump + c.obj_sz;
             if (next <= hard_end && next >= c.start) {
+                // Issue #4242: a rewind (rebind_tiers / reset_small_pool_tiers)
+                // can aim bump at a tombstone-keyed slot — fail the tier
+                // closed rather than hand out a stale-chasable address.
+                if (quarantine_pred_ != nullptr && quarantine_pred_(quarantine_ctx_, ptr)) {
+                    AURA_HOT_RECORD(); // Issue #2142 tier overflow probe
+                    return nullptr;
+                }
                 c.bump = next;
                 allocated_from_small_ += c.obj_sz;
                 AURA_HOT_RECORD(); // Issue #2142 bump hit
@@ -408,6 +441,23 @@ public:
         return false;
     }
 
+    // Issue #4242: quarantine hook — installed by ASTArena so try_allocate
+    // can refuse slots that are still last_object_remap_ keys (one
+    // empty()-load fast path while the table is empty; Soft/Off/Force never
+    // fill it). pred/ctx must outlive the arena (ASTArena sets both once in
+    // its constructor).
+    using QuarantinePred = bool (*)(void* ctx, void* candidate) noexcept;
+    void set_quarantine_pred(QuarantinePred pred, void* ctx) noexcept {
+        quarantine_pred_ = pred;
+        quarantine_ctx_ = ctx;
+    }
+    // Issue #4242: slots parked because their address still carries a
+    // tombstone key. Returned to service only at reset() — ASTArena::reset()
+    // clears last_object_remap_ in the same pass.
+    [[nodiscard]] std::size_t quarantined_slot_count() const noexcept {
+        return quarantined_.size();
+    }
+
     [[nodiscard]] bool owns(const void* p) const noexcept {
         if (!p || buffer_.empty())
             return false;
@@ -422,6 +472,7 @@ public:
         }
         allocated_from_small_ = 0;
         clear_freelist_();
+        quarantined_.clear(); // Issue #4242: tombstones clear with the table
     }
 
     // Issue #974 / #1242: re-bind tier start/end after buffer reallocation
@@ -500,6 +551,10 @@ private:
     std::size_t free_count_ = 0;
     std::size_t recycle_hits_ = 0;
     std::size_t recycle_puts_ = 0;
+    // Issue #4242: tombstone-key quarantine (see set_quarantine_pred).
+    QuarantinePred quarantine_pred_ = nullptr;
+    void* quarantine_ctx_ = nullptr;
+    std::vector<void*> quarantined_;
 };
 
 // ── ASTArena — tiered pmr bump allocator ─────────────────────────
@@ -604,6 +659,15 @@ export inline std::atomic<std::uint64_t> g_moving_uncovered_relocation_total{0};
 export inline std::atomic<std::uint64_t> g_moving_unified_success_total{0};
 export inline std::atomic<std::uint64_t> g_moving_unified_fail_total{0};
 inline constexpr int kMovingUnifiedSuccessGateIssue = 2682;
+
+// Issue #4242: bind must not chase a #3469 tombstone onto a recycled live
+// address (apply UAF). Guarded-chase observability, append-only schema —
+// Soft/Off never bump (the paths are Moving/table-gated). The matching
+// quarantine counter is declared before SmallObjectPool (its try_allocate
+// bumps it).
+export inline std::atomic<std::uint64_t> g_moving_remap_bind_live_key_keep_total{0};
+export inline std::atomic<std::uint64_t> g_moving_remap_bind_dead_dest_keep_total{0};
+inline constexpr int kMovingRemapTombstoneQuarantineIssue = 4242;
 
 // Issue #2775: process-wide counter for external roots registered via
 // ASTArena::register_external_root_for_densify(void*) / batch span.
@@ -1517,6 +1581,25 @@ public:
         , arena_id_(g_arena_id_counter.fetch_add(1, std::memory_order_relaxed) + 1)
         , generation_(0) {
         live_arena_remap_detail::note(this);
+        // Issue #4242: refuse to hand a #3469 tombstone-keyed slot to a new
+        // object (see SmallObjectPool::set_quarantine_pred).
+        small_pool_.set_quarantine_pred(&ASTArena::remap_tombstone_quarantine_pred_, this);
+    }
+
+    // Issue #4242: quarantine predicate — true when candidate is still a
+    // last_object_remap_ key. A recycled address a stale consumer can still
+    // chase must never host a new tracked object (apply UAF). One
+    // empty()-load fast path while the table is empty.
+    [[nodiscard]] static bool remap_tombstone_quarantine_pred_(void* ctx,
+                                                               void* candidate) noexcept {
+        const auto* self = static_cast<const ASTArena*>(ctx);
+        return !self->last_object_remap_.empty() && self->last_object_remap_.contains(candidate);
+    }
+
+    // Issue #4242: tombstone-keyed slots parked by the pool quarantine —
+    // test/observability surface for the freelist-park arm.
+    [[nodiscard]] std::size_t small_pool_quarantined_slot_count() const noexcept {
+        return small_pool_.quarantined_slot_count();
     }
 
     // Issue #300 (P1) Phase 3: defrag request flag. Set by
@@ -1875,7 +1958,8 @@ public:
         std::lock_guard<std::mutex> lock(inv.mtx);
         if (watch)
             g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
-        if (void* neu = resolve_object_remap(p))
+        // Issue #4242: guarded chase (live-key / dead-destination refusals).
+        if (void* neu = resolve_object_remap_for_bind(p))
             p = neu;
         inv.ptrs.push_back(p);
         inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
@@ -3147,6 +3231,30 @@ public:
     [[nodiscard]] std::size_t object_remap_size() const noexcept {
         return last_object_remap_.size();
     }
+    // Issue #4242: chase contract for bind — a tombstone may be followed
+    // only when the key is NOT a current tracked identity (a live Y at a
+    // recycled tombstone address: #4046 test seam / same-window collision
+    // only; quarantine keeps production tables key-exclusive) AND the
+    // destination is still tracked (a destroyed destination would UAF the
+    // caller's copy — leave the key address in place so the #3421 refuse
+    // face still resolves it and refuses the apply; quarantine keeps that
+    // address un-reused for Soft). Single guarded-chase SSOT for
+    // ASTArena::bind_temporary_moving_live_ptr and the any-arena walk;
+    // resolve_object_remap (refuse face) is unchanged.
+    [[nodiscard]] void* resolve_object_remap_for_bind(void* old_ptr) const noexcept {
+        void* neu = resolve_object_remap(old_ptr);
+        if (neu == nullptr)
+            return nullptr;
+        if (dtor_index_.contains(old_ptr)) {
+            g_moving_remap_bind_live_key_keep_total.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
+        }
+        if (!dtor_index_.contains(neu)) {
+            g_moving_remap_bind_dead_dest_keep_total.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
+        }
+        return neu;
+    }
     // Issue #4046 test seam: one tombstone in this arena's existing
     // last_object_remap_ (the table resolve_object_remap reads).
     void note_remap_tombstone_for_test(void* old_ptr, void* new_ptr) noexcept {
@@ -4398,6 +4506,25 @@ namespace live_arena_remap_detail {
         }
         return nullptr;
     }
+    // Issue #4242: chase-validated walk for bind_temporary_moving_live_ptr_
+    // any_arena — the same guard as the member bind, evaluated in the arena
+    // that owns the key (relocate is intra-arena, so the destination lives
+    // there too). First key wins (same semantics as resolve_ptr); a refused
+    // chase returns nullptr so the caller keeps the key address (the #3421
+    // refuse face still resolves it via resolves()).
+    inline void* resolve_ptr_for_chase(void* p) noexcept {
+        if (!p)
+            return nullptr;
+        std::lock_guard<std::mutex> lock(live().mtx);
+        for (ASTArena* arena : live().arenas) {
+            if (!arena)
+                continue;
+            if (arena->resolve_object_remap(p) == nullptr)
+                continue;
+            return arena->resolve_object_remap_for_bind(p);
+        }
+        return nullptr;
+    }
     inline bool resolves(void* p) noexcept {
         return resolve_ptr(p) != nullptr;
     }
@@ -4434,7 +4561,8 @@ export inline void* bind_temporary_moving_live_ptr_any_arena(void* p, bool* note
     std::lock_guard<std::mutex> lock(inv.mtx);
     if (watch)
         g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
-    if (void* neu = live_arena_remap_detail::resolve_ptr(p))
+    // Issue #4242: guarded chase — live-key / dead-destination refusals.
+    if (void* neu = live_arena_remap_detail::resolve_ptr_for_chase(p))
         p = neu;
     inv.ptrs.push_back(p);
     inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);

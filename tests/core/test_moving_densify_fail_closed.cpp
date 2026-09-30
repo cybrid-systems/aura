@@ -5735,7 +5735,11 @@ static void ac3956_3958_admit_densify_gates() {
     CHECK(mb.find("try_acquire_for_region") != std::string::npos, "3956: region path present");
     const auto rgn = mb.find("Evaluator::MutationBoundaryGuard::try_acquire_for_region");
     CHECK(rgn != std::string::npos, "3956: region admit");
-    const auto rwin = mb.substr(rgn, 6000);
+    // #4242 re-anchor: #4174 (1e86f445d) grew try_acquire_for_region so the
+    // densify_in_flight_for sample site sits 6034 chars from the definition —
+    // 34 past the old 6000 window on the pristine file (batch went red with
+    // the diff absent). Same-site check, widened window only.
+    const auto rwin = mb.substr(rgn, 6400);
     CHECK(rwin.find("densify_in_flight_for") != std::string::npos,
           "3956: RegionExclusive samples densify-in-flight");
     CHECK(mb.find("Issue #3958") != std::string::npos, "3958: cite");
@@ -6656,6 +6660,239 @@ static void ac4125_source_cite_and_wiring() {
     CHECK(read_file("tests/core/test_issue_4125.cpp").empty(), "4125: no test_issue file");
 }
 
+// ── Issue #4242: bind/resolve must not chase a #3469 tombstone onto a
+// recycled live address (apply UAF; extends fail_closed per #81967).
+// Quarantine: try_allocate never returns a tombstone-keyed slot. Guard:
+// bind chases only when the key is not a current tracked identity and the
+// destination is still tracked. (#3469 multi-window refuse retained;
+// Soft/Off one-load no-op.)
+
+static void ac4242_1_quarantine_recycle_never_lands_on_key() {
+    std::println("\n--- #4242 AC1: recycled tombstone-key slots are quarantined ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+
+    ASTArena arena(64 * 1024);
+    const auto q0 =
+        aura::ast::g_moving_remap_tombstone_quarantine_total.load(std::memory_order_relaxed);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "4242 AC1: create window-1 objects");
+    void* A = p0;
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "4242 AC1: window 1 moved");
+    void* B = arena.resolve_object_remap(A);
+    CHECK(B != nullptr && B != A, "4242 AC1: tombstone A→B");
+    CHECK(arena.small_pool_quarantined_slot_count() >= 1,
+          "4242 AC1: at least one recycled key slot parked");
+
+    // Recycled A still carries the tombstone key: no create may land on it
+    // (without quarantine this loop re-hands A to a fresh Y — the #4242 UAF).
+    void* Y = nullptr;
+    bool landed_on_A = false;
+    for (int i = 0; i < 32; ++i) {
+        auto* cand = arena.create<Pod16>(100 + i, 101, 102, 103);
+        CHECK(cand != nullptr, "4242 AC1: create served");
+        if (static_cast<void*>(cand) == A)
+            landed_on_A = true;
+        else if (Y == nullptr)
+            Y = cand;
+    }
+    CHECK(!landed_on_A, "4242 AC1: quarantine — no Y ever lands on tombstone key A");
+    CHECK(Y != nullptr, "4242 AC1: allocation still served at a non-key slot");
+    const auto q1 =
+        aura::ast::g_moving_remap_tombstone_quarantine_total.load(std::memory_order_relaxed);
+    CHECK(q1 > q0, "4242 AC1: quarantine counter bumped");
+    bool noted = false;
+    void* bound = arena.bind_temporary_moving_live_ptr(Y, &noted);
+    CHECK(bound == Y, "4242 AC1: bind(Y) returns Y — no chase onto B");
+    if (noted)
+        aura::ast::unnote_temporary_moving_live_ptr(bound);
+    CHECK(arena.resolve_object_remap(A) == B, "4242 AC1: tombstone A→B retained for refuse");
+}
+
+static void ac4242_2_bind_live_key_guard() {
+    std::println("\n--- #4242 AC2: bind never chases a current tracked identity ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+
+    ASTArena arena(64 * 1024);
+    auto* y = arena.create<Pod16>(0x4242, 2, 2, 2);
+    auto* d = arena.create<Pod16>(0xD00D, 3, 3, 3);
+    CHECK(y && d, "4242 AC2: create live Y + destination D");
+    void* A = y;
+    // #4046 test seam: install the quarantine-forbidden state directly —
+    // A is BOTH the current tracked identity of live Y AND a tombstone key
+    // (quarantine keeps real pools from ever re-creating this state).
+    arena.note_remap_tombstone_for_test(A, d);
+    CHECK(arena.resolve_object_remap(A) == static_cast<void*>(d),
+          "4242 AC2: refuse face still resolves the key (unchanged)");
+    const auto k0 =
+        aura::ast::g_moving_remap_bind_live_key_keep_total.load(std::memory_order_relaxed);
+    bool noted = false;
+    void* bound = arena.bind_temporary_moving_live_ptr(A, &noted);
+    CHECK(bound == A, "4242 AC2: bind(A) keeps the live identity — no chase to D");
+    CHECK(noted, "4242 AC2: canary note holds the live address");
+    if (noted)
+        aura::ast::unnote_temporary_moving_live_ptr(bound);
+    const auto k1 =
+        aura::ast::g_moving_remap_bind_live_key_keep_total.load(std::memory_order_relaxed);
+    CHECK(k1 == k0 + 1, "4242 AC2: live-key keep counter bumped");
+    CHECK(static_cast<Pod16*>(A)->a == 0x4242, "4242 AC2: Y payload intact at A");
+}
+
+static void ac4242_3_dead_dest_never_rewritten() {
+    std::println("\n--- #4242 AC3: bind never rewrites onto a freed destination ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "4242 AC3: create window-1 objects");
+    void* A = p0;
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "4242 AC3: window 1 moved");
+    void* B = arena.resolve_object_remap(A);
+    CHECK(B != nullptr && B != A, "4242 AC3: tombstone A→B");
+    CHECK(static_cast<Pod16*>(B)->a == 1, "4242 AC3: p0 payload moved to B");
+    // Destroy the object now living at B: the tombstone destination dies
+    // (destroy never erases the key — reset() is the only full clear).
+    arena.destroy(static_cast<Pod16*>(B));
+    CHECK(arena.resolve_object_remap(A) == B,
+          "4242 AC3: tombstone still resolves (refuse face sees the stale key)");
+    const auto d0 =
+        aura::ast::g_moving_remap_bind_dead_dest_keep_total.load(std::memory_order_relaxed);
+    bool noted = false;
+    void* bound = arena.bind_temporary_moving_live_ptr(A, &noted);
+    CHECK(bound == A, "4242 AC3: bind keeps the stale key — dest is dead, no rewrite");
+    CHECK(noted, "4242 AC3: canary notes the refused key address");
+    if (noted)
+        aura::ast::unnote_temporary_moving_live_ptr(bound);
+    const auto d1 =
+        aura::ast::g_moving_remap_bind_dead_dest_keep_total.load(std::memory_order_relaxed);
+    CHECK(d1 == d0 + 1, "4242 AC3: dead-destination keep counter bumped");
+}
+
+static void ac4242_4_multi_window_refuse_retained() {
+    std::println("\n--- #4242 AC4: #3469 chain retained; live Y never retargeted ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "4242 AC4: create window-1 objects");
+    void* A = p0;
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "4242 AC4: window 1 moved");
+    // Re-register slots at post-move identities for window 2 (#3781 AC2 shape).
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved > 0, "4242 AC4: window 2 moved");
+    CHECK(arena.resolve_object_remap(A) != nullptr,
+          "4242 AC4: resolve(A) still hits after A→B→C (#3469 refuse retained)");
+    // The folded chain keys stay quarantined: a fresh Y cannot land on A.
+    bool landed_on_A = false;
+    void* Y = nullptr;
+    for (int i = 0; i < 16; ++i) {
+        auto* cand = arena.create<Pod16>(200 + i, 201, 202, 203);
+        CHECK(cand != nullptr, "4242 AC4: create served");
+        if (static_cast<void*>(cand) == A)
+            landed_on_A = true;
+        else if (Y == nullptr)
+            Y = cand;
+    }
+    CHECK(!landed_on_A, "4242 AC4: quarantine holds across the folded chain");
+    CHECK(Y != nullptr, "4242 AC4: fresh Y served at a non-key slot");
+    bool noted = false;
+    void* bound = arena.bind_temporary_moving_live_ptr(Y, &noted);
+    CHECK(bound == Y, "4242 AC4: live Y never retargeted through the chain");
+    if (noted)
+        aura::ast::unnote_temporary_moving_live_ptr(bound);
+}
+
+static void ac4242_5_soft_off_noop_and_source() {
+    std::println("\n--- #4242 AC5: Soft/Off one-load no-op; slot recycle unchanged ---");
+    MovingFlagGuard off(0);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+
+    ASTArena arena(64 * 1024);
+    const auto q0 =
+        aura::ast::g_moving_remap_tombstone_quarantine_total.load(std::memory_order_relaxed);
+    auto* x = arena.create<Pod16>(0x51, 2, 3, 4);
+    void* x_addr = x;
+    CHECK(x != nullptr, "4242 AC5: create x");
+    arena.destroy(x);
+    auto* z = arena.create<Pod16>(0x5F, 5, 6, 7);
+    CHECK(static_cast<void*>(z) == x_addr,
+          "4242 AC5: no tombstone → freelist recycle unchanged (slot re-handed)");
+    const auto q1 =
+        aura::ast::g_moving_remap_tombstone_quarantine_total.load(std::memory_order_relaxed);
+    CHECK(q1 == q0, "4242 AC5: empty table never quarantines");
+    CHECK(arena.small_pool_quarantined_slot_count() == 0, "4242 AC5: nothing parked");
+    bool noted = true;
+    void* bound = arena.bind_temporary_moving_live_ptr(x_addr, &noted);
+    CHECK(bound == x_addr && !noted, "4242 AC5: Off bind is a one-load no-op");
+    // Source-cite: quarantine + guarded chase + TW apply consumer.
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("Issue #4242") != std::string::npos, "4242 AC5: arena cites #4242");
+    CHECK(arena_src.find("resolve_object_remap_for_bind") != std::string::npos,
+          "4242 AC5: guarded-chase SSOT present");
+    CHECK(arena_src.find("resolve_ptr_for_chase") != std::string::npos,
+          "4242 AC5: any-arena chase walk guarded");
+    CHECK(arena_src.find("quarantined_.push_back(parked)") != std::string::npos,
+          "4242 AC5: freelist park present");
+    CHECK(arena_src.find("g_moving_remap_tombstone_quarantine_total") != std::string::npos,
+          "4242 AC5: quarantine counter present");
+    CHECK(arena_src.find("g_moving_remap_bind_dead_dest_keep_total") != std::string::npos,
+          "4242 AC5: dead-dest counter present");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(apply.find("bind_temporary_moving_live_ptr(cl_copy.flat, &noted)") != std::string::npos,
+          "4242 AC5: TW apply binds through the guarded contract");
+    CHECK(apply.find("bind_temporary_moving_live_ptr_any_arena(cl_copy.flat, &noted)") !=
+              std::string::npos,
+          "4242 AC5: no-owner apply binds through the guarded any-arena walk");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -7501,6 +7738,14 @@ int run_test_moving_densify_fail_closed() {
     ac4145_2_soft_value_only_contract_retained();
     ac4145_3_guard_source_cite_unreachable();
     ac4145_4_single_residual_site_and_wiring();
+
+    std::println("\n=== Issue #4242: bind/resolve must not chase a #3469 tombstone onto a "
+                 "recycled live address (apply UAF; extends fail_closed per #81967) ===");
+    ac4242_1_quarantine_recycle_never_lands_on_key();
+    ac4242_2_bind_live_key_guard();
+    ac4242_3_dead_dest_never_rewritten();
+    ac4242_4_multi_window_refuse_retained();
+    ac4242_5_soft_off_noop_and_source();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
