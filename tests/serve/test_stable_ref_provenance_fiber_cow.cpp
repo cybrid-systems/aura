@@ -1518,6 +1518,175 @@ static void ac4165_5_no_docs_linter_wired() {
     aura::core::resource_quota::reset_process_resource_quota_for_test();
 }
 
+// ── #4235 ACs — agent_scoped_fiber_id is per-Agent, not per-Evaluator ──
+// #4165 minted ONE Agent-band id per Evaluator (agent_fiber_id_ single
+// slot), so two Agents sharing one Evaluator fiberless resolved the SAME
+// mint and same-tenant code-as-memory held refs passed InvalidFiber
+// against each other (A's export resolved fresh under B). The mint now
+// keys on the #1419 agent fingerprint (agent_mint_slots_ CAS table): each
+// identified Agent on the Evaluator gets its own band id, fingerprint 0
+// keeps the #4165 per-Evaluator fallback, and the resolution order
+// (explicit fiber > #2151 override > live fiber) is unchanged. Dispatched
+// in the armed pristine block (before the stress suites exhaust the
+// process-global production budget, #1547).
+static void ac4235_1_per_agent_distinct_mints_one_evaluator() {
+    std::println(
+        "\n=== #4235 AC1: two identified Agents on ONE Evaluator mint distinct stable fibers ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs; // ONE Evaluator — the #4235 shared-Evaluator scenario
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0001ull); // Agent A
+    const auto mint_a = cs.evaluator().agent_scoped_fiber_id();
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0002ull); // Agent B, same Evaluator
+    const auto mint_b = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(mint_a >= 0x41650000u && mint_b >= 0x41650000u,
+          "4235 AC1: both identified Agents mint in the Agent band");
+    CHECK(
+        mint_a != mint_b,
+        "4235 AC1: distinct Agents on ONE Evaluator get distinct mints (was shared per-Evaluator)");
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0001ull);
+    CHECK(cs.evaluator().agent_scoped_fiber_id() == mint_a,
+          "4235 AC1: Agent A's mint is stable across re-resolve");
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0002ull);
+    CHECK(cs.evaluator().agent_scoped_fiber_id() == mint_b,
+          "4235 AC1: Agent B's mint is stable across re-resolve");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4235_2_cross_agent_held_result_deny_same_evaluator() {
+    std::println("\n=== #4235 AC2: Agent A's held QueryResult denies under Agent B on the SAME "
+                 "Evaluator ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_int;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs; // the #4235 hole: one Evaluator, two fiberless Agents
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    CHECK(cs.eval("(set-code \"(define a4235 (lambda (x) 1))\")").has_value(),
+          "4235 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4235 AC2: eval");
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0011ull); // Agent A
+    CHECK(cs.eval("(define q4235a (query :find \"a4235\" :as-query-result #t))").has_value(),
+          "4235 AC2: A exports QueryResult hash");
+    auto fid = cs.eval("(hash-ref q4235a \"fiber-id\")");
+    const auto fid_v = fid && is_int(*fid) ? as_int(*fid) : -1;
+    CHECK(fid_v >= 0x41650000LL, "4235 AC2: A's export stamped with A's own Agent-band mint");
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0012ull); // Agent B, same Evaluator
+    auto fresh_b = cs.eval("(query:result-fresh? q4235a)");
+    CHECK(fresh_b && is_bool(*fresh_b) && !as_bool(*fresh_b),
+          "4235 AC2: B resolves A's held QueryResult stale (InvalidFiber deny bites)");
+    CHECK(cs.eval("(define m4235b (query:result-matches q4235a))").has_value(),
+          "4235 AC2: B result-matches attempt binds");
+    auto eq_stale = cs.eval("(equal? (car m4235b) \"stale-ref\")");
+    CHECK(eq_stale && is_bool(*eq_stale) && as_bool(*eq_stale),
+          "4235 AC2: B query:result-matches denies stale-ref");
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0011ull); // back to Agent A
+    auto fresh_a = cs.eval("(query:result-fresh? q4235a)");
+    CHECK(fresh_a && is_bool(*fresh_a) && as_bool(*fresh_a),
+          "4235 AC2: A re-resolves its own export fresh under its own mint");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4235_3_unidentified_agent_keeps_per_evaluator_mint() {
+    std::println("\n=== #4235 AC3: fingerprint-0 entry keeps the #4165 per-Evaluator mint ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    // No fingerprint installed (#1419 identity absent) — the Evaluator's
+    // implicit agent: stable per-Evaluator mint, #4165 contract unchanged.
+    const auto m1 = cs.evaluator().agent_scoped_fiber_id();
+    const auto m2 = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(m1 >= 0x41650000u, "4235 AC3: fallback mint in the Agent band");
+    CHECK(m1 == m2, "4235 AC3: fingerprint-0 mint stable per Evaluator (#4165 kept)");
+    // An identified Agent draws its own mint, distinct from the fallback.
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0003ull);
+    const auto m3 = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(m3 != m1, "4235 AC3: identified Agent's mint differs from the fallback slot");
+    CHECK(cs.evaluator().agent_scoped_fiber_id() == m3,
+          "4235 AC3: identified Agent keeps its table mint");
+    cs.evaluator().set_current_agent_fingerprint(0); // clear back to system
+    CHECK(cs.evaluator().agent_scoped_fiber_id() == m1,
+          "4235 AC3: cleared fingerprint resolves the per-Evaluator fallback again");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4235_4_override_beats_agent_mint() {
+    std::println(
+        "\n=== #4235 AC4: #2151 effect-fiber override still wins over the per-Agent mint ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0004ull);
+    // Real fiber id (steal×resume contract): the #2151 process-global
+    // override simulates fiber A vs B without a scheduler — it must win
+    // over any mint, per-Agent or fallback.
+    aura::core::capability::set_effect_fiber_id_override(0x2E4u);
+    CHECK(cs.evaluator().agent_scoped_fiber_id() == 0x2E4u,
+          "4235 AC4: explicit/override fiber wins over the per-Agent mint");
+    aura::core::capability::set_effect_fiber_id_override(0);
+    const auto mint = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(mint >= 0x41650000u, "4235 AC4: override cleared → back to the Agent-band resolution");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac4235_5_source_cite() {
+    std::println("\n=== #4235 AC5: source-cite — per-Agent table + wiring kept + linter wired ===");
+    auto read_src = [](const char* rel) {
+        std::ifstream f(rel);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    const auto sec = read_src("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("agent_mint_slots_") != std::string::npos,
+          "4235 AC5: per-Agent mint table consulted in the security TU");
+    CHECK(sec.find("current_agent_fingerprint()") != std::string::npos,
+          "4235 AC5: mint keyed on the #1419 agent fingerprint");
+    CHECK(sec.find("agent_fiber_id_ == 0") != std::string::npos,
+          "4235 AC5: #4165 per-Evaluator fallback kept");
+    const auto ixx = read_src("src/compiler/evaluator.ixx");
+    CHECK(ixx.find("kAgentMintSlotCount = 32") != std::string::npos,
+          "4235 AC5: per-Agent table member declared");
+    const auto dec = read_src("src/compiler/query_result_decode.hh");
+    CHECK(dec.find("current_fiber_id != 0 && m.fiber_id != current_fiber_id") != std::string::npos,
+          "4235 AC5: hard InvalidFiber face unchanged (per-Agent deny rides the same face)");
+    const auto qws = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(qws.find("ev.agent_scoped_fiber_id()") != std::string::npos,
+          "4235 AC5: resolve sites ride the per-Agent resolution unchanged");
+    {
+        std::ifstream f("docs/design/4235-agent-mint-per-agent.md");
+        CHECK(!f.good(), "4235 AC5: no docs/design/4235-*");
+    }
+    {
+        std::ifstream f("tests/core/test_issue_4235.cpp");
+        CHECK(!f.good(), "4235 AC5: no tests/core/test_issue_4235.cpp (#81934)");
+    }
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_agent_mint_per_agent_4235") != std::string::npos,
+          "4235 AC5: linter wired into build.py");
+    std::ifstream f_allow("scripts/coverage/root_check_allowlist.txt");
+    std::string allow((std::istreambuf_iterator<char>(f_allow)), std::istreambuf_iterator<char>());
+    CHECK(allow.find("check_agent_mint_per_agent_4235.py") != std::string::npos,
+          "4235 AC5: root allowlist carries the linter");
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -1537,6 +1706,12 @@ int main() {
     ac4165_3_cross_agent_same_tenant_deny();
     ac4165_4_source_cite();
     ac4165_5_no_docs_linter_wired();
+    // #4235 ACs (5) — per-Agent mint on one shared Evaluator (leak fix).
+    ac4235_1_per_agent_distinct_mints_one_evaluator();
+    ac4235_2_cross_agent_held_result_deny_same_evaluator();
+    ac4235_3_unidentified_agent_keeps_per_evaluator_mint();
+    ac4235_4_override_beats_agent_mint();
+    ac4235_5_source_cite();
     // ORIG ACs (9)
     ac1_orig();
     ac2_orig();
