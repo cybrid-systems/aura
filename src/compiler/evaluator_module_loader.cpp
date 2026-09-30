@@ -276,6 +276,27 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
     return path.size() <= kMax ? path : path.substr(0, kMax);
 }
 
+// Issue #4264: adopt-if-held workspace locking for module loads reachable
+// from (eval-current). Soft serve-async set-code + eval-current walks the
+// workspace flat under Evaluator::WorkspaceUniqueIfNeeded (unique workspace
+// hold, lock_order::Level::Workspace depth-stamped per #4128). A (require
+// ...) inside that set-code'd source re-enters load_module_file on the SAME
+// thread, whose critical sections took fresh unique_lock(workspace_mtx_) —
+// std::shared_mutex is non-recursive, so the re-lock returned EDEADLK
+// ("Resource deadlock avoided") and the serve exec surfaced "exec
+// exception: Resource deadlock avoided" while the same source oneshot
+// required cleanly. When THIS thread already holds the workspace exclusive
+// (lock_order::is_held(Level::Workspace)), no other thread can be inside
+// these critical sections, so same-thread loading_stack_ mutation is safe
+// without re-locking; adopt the hold instead (the #4128 adopt shape).
+struct WorkspaceAdoptIfNeeded {
+    std::unique_lock<std::shared_mutex> lock_;
+    explicit WorkspaceAdoptIfNeeded(std::shared_mutex& mtx) noexcept {
+        if (!lock_order::is_held(lock_order::Level::Workspace))
+            lock_ = std::unique_lock<std::shared_mutex>(mtx);
+    }
+};
+
 // ── Load module file, return module object ────────────────
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Issue #3266: validate before lock (string predicate; no shared
@@ -339,7 +360,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // 3. Circular dependency detection (Issue #1132: under workspace_mtx_
     // so concurrent load_module_file calls cannot race the set).
     {
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
         if (loading_stack_.count(resolved)) {
             // Issue #1488 / #1692: do NOT string_heap_.push_back(
             // "circular dependency: " + resolved) — return is make_void()
@@ -360,7 +381,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     struct stat st;
     if (::stat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
         {
-            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         return types::make_void();
@@ -368,7 +389,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     std::ifstream f(resolved);
     if (!f) {
         {
-            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         return types::make_void();
@@ -376,7 +397,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     std::string content((std::istreambuf_iterator<char>(f)), {});
     if (content.empty()) {
         {
-            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         return types::make_void();
@@ -385,7 +406,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // 5. Parse
     if (!arena_) {
         {
-            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         std::println(std::cerr, "load_module_file: no arena");
@@ -408,7 +429,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         {
-            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         std::println(std::cerr, "load_module_file: parse error for {}", resolved);
@@ -505,7 +526,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         if (current_export_set_)
             current_export_set_->clear();
         {
-            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         arena_group_->reset_module(resolved);
@@ -691,7 +712,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     }
 
     {
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
         loading_stack_.erase(resolved);
     }
     return types::make_module(mod_idx);
