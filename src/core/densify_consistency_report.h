@@ -560,6 +560,20 @@ inline void reset_opaque_heap_pin_required_fail_for_test() noexcept {
     g_opaque_heap_pin_required_fail_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #4244: c-struct-set! int/float interior words whose stored
+// pointer-sized pattern resolved as a live arena address (last_object_remap_
+// key or dtor_index_ live-tracked) and joined the SAME durable interior-slot
+// inventory as the opaque arm (#4068 re-arm). Append-only; Off never bumps
+// (query helper early-returns), non-arena patterns never resolve.
+inline std::atomic<std::uint64_t> g_ffi_interior_int_slot_cover_total{0};
+inline constexpr int kFfiInteriorIntSlotCoverIssue = 4244;
+[[nodiscard]] inline std::uint64_t ffi_interior_int_slot_cover_total_v_read() noexcept {
+    return g_ffi_interior_int_slot_cover_total.load(std::memory_order_relaxed);
+}
+inline void reset_ffi_interior_int_slot_cover_for_test() noexcept {
+    g_ffi_interior_int_slot_cover_total.store(0, std::memory_order_relaxed);
+}
+
 // Issue #3569: # of process-level FFI alias densify slot queue entries
 // consumed (erased) at Moving window end — snapshot-scoped drain so no
 // entry survives across windows (registered slots are &opaque_heap_[i] /

@@ -258,11 +258,30 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             if (!need(sizeof(v)))
                 return make_void();
             std::memcpy(base + offset, &v, sizeof(v));
+            // Issue #4244: the "pointer-sized int" FFI pattern can carry a
+            // live arena address. Under Moving a resolving pattern (any live
+            // arena's last_object_remap_ key or dtor_index_ live-tracked)
+            // joins the durable interior-slot inventory (#4068 re-arm) so
+            // the next densify rewrites this word; a non-arena int stays a
+            // plain memcpy (Soft/Off zero extra remap — helper early-returns).
+            if constexpr (sizeof(v) == sizeof(void*)) {
+                (void)aura::ast::cover_interior_int_pattern_for_densify(
+                    reinterpret_cast<void**>(base + offset), static_cast<std::uintptr_t>(v));
+            }
         } else if (types::is_float(val)) {
             auto v = types::as_float(val);
             if (!need(sizeof(v)))
                 return make_void();
             std::memcpy(base + offset, &v, sizeof(v));
+            // Issue #4244: float bits can alias a live arena address the
+            // same way — same resolve + durable-slot contract as the int
+            // arm above.
+            if constexpr (sizeof(v) == sizeof(void*)) {
+                std::uintptr_t pattern = 0;
+                std::memcpy(&pattern, &v, sizeof(pattern));
+                (void)aura::ast::cover_interior_int_pattern_for_densify(
+                    reinterpret_cast<void**>(base + offset), pattern);
+            }
         } else if (types::is_opaque(val)) {
             auto vi = types::as_opaque_idx(val);
             auto* ptr = vi < oh->size() ? (*oh)[vi] : nullptr;
