@@ -25,8 +25,10 @@
 #       AC (live agent cancel-requested / join_fail action taken >= 1)
 #       is pinned in the bridge test.
 # AC4 - no collateral mapping drift: the RetryN on_join_fail=RestartN row
-#       (#3052 AC4) is intact; CollectAll / CircuitBreaker cases write no
-#       on_join_fail; Soft / Off (production off) keeps ReportOnly.
+#       (#3052 AC4) is intact; CollectAll writes no on_join_fail;
+#       CircuitBreaker arms on_join_fail=Cancel under the production gate
+#       (#4236 supersedes the pre-#4236 observe-first face); Soft / Off
+#       (production off) keeps ReportOnly.
 # AC5 - runtime ACs live in tests/orch/test_failure_policy_bridge.cpp
 #       (per #81934 extend-the-family; dispatcher wired), no
 #       tests/orch/test_issue_4114.cpp, no docs/design/4114-* (per
@@ -134,8 +136,13 @@ def main() -> int:
         if "on_join_fail" in collect_window:
             fails.append("AC4: CollectAll must not write on_join_fail (unchanged mapping)")
         circuit_window = spawn[circuit_case : spawn.find("}", circuit_case)]
-        if "on_join_fail" in circuit_window:
-            fails.append("AC4: CircuitBreaker must not write on_join_fail (unchanged mapping)")
+        # Issue #4236 supersedes the pre-#4236 face: the CircuitBreaker arm
+        # now arms on_join_fail=Cancel under the production gate (mirror
+        # #4114 FailFast). Soft / Off keep ReportOnly.
+        if "out.on_join_fail = AgentFailureAction::Cancel;" not in circuit_window:
+            fails.append("AC4: CircuitBreaker must arm on_join_fail=Cancel under the production gate (#4236)")
+        if "if (production_defaults_active())" not in circuit_window:
+            fails.append("AC4: CircuitBreaker on_join_fail arm must be gated on production_defaults_active()")
 
     # -- AC5: runtime ACs hosted + no invent + registration --
     if "ac4114_run_added_tests();" not in test_src:

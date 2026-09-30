@@ -236,4 +236,5 @@ check_fiber_body_exception_4231.py
 check_soft_list_prims_4232.py
 check_exec_high_risk_force_4234.py
 check_agent_mint_per_agent_4235.py
+check_join_fail_circuitbreaker_4236.py
 check_restart_fuel_4237.py

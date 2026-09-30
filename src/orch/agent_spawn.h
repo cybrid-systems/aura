@@ -5319,7 +5319,13 @@ namespace agent_scope_compat {
 //                     #4237: max_restarts=0 (the default) is restart
 //                     belief without fuel — compose flags it via
 //                     restart_fuel_missing (no deny; observe-only).
-//   CircuitBreaker  → on_stall=Cancel, consecutive_stall_limit aligned
+//   CircuitBreaker  → on_stall=Cancel, consecutive_stall_limit aligned.
+//                     production (#4236) also arms on_join_fail=Cancel
+//                     (mirror #4114) so a composed CircuitBreaker
+//                     cancels/joins live Scope agents on batch Timeout /
+//                     QuotaExceeded residual. Soft / Off keep ReportOnly
+//                     (zero-cost observe-first); explicit post-compose
+//                     ReportOnly still wins (#3969 AC1 face).
 //
 // Optional language sugar (orch:supervise-batch / apply after
 // parallel_intend) is deferred — this issue ships the mapping API only.
@@ -5356,6 +5362,16 @@ to_agent_policy(serve::parallel_orch::FailurePolicy p, std::uint32_t max_restart
         case FP::CircuitBreaker:
             out.on_stall = AgentFailureAction::Cancel;
             out.consecutive_stall_limit = consecutive_stall_limit;
+            // Issue #4236: under production defaults CircuitBreaker also
+            // arms on_join_fail=Cancel (mirror #4114 FailFast) so a
+            // composed CircuitBreaker routes apply_workflow through
+            // compose_supervised_batch (#3969 AC2 path) — a batch Timeout /
+            // QuotaExceeded residual cancels/joins live Scope agents
+            // without a second explicit knob. Soft / Off keep ReportOnly
+            // (zero-cost observe-first); an explicit post-compose
+            // ReportOnly override still wins (#3969 AC1 face).
+            if (production_defaults_active())
+                out.on_join_fail = AgentFailureAction::Cancel;
             break;
     }
     return out;
@@ -5467,6 +5483,14 @@ inline constexpr int kComposeSupervisedBatchIssue = 3969;
 // second explicit knob. Soft / Off keep ReportOnly (zero-cost); an
 // explicit post-compose ReportOnly is still honored (#3969 AC1 face).
 inline constexpr int kFailFastJoinFailProductionArmIssue = 4114;
+// Issue #4236: production CircuitBreaker compose arms on_join_fail=Cancel
+// in the to_agent_policy bridge (mirror #4114 FailFast) so commercial
+// hosts that compose CircuitBreaker cancel/join live Scope agents on a
+// batch Timeout / QuotaExceeded residual without a second explicit knob.
+// Soft / Off keep ReportOnly (zero-cost); an explicit post-compose
+// ReportOnly is still honored (#3969 AC1 face). No new query key — the
+// cancel face reuses workflow_* / agent_join_fail_action_cancel_total.
+inline constexpr int kCircuitBreakerJoinFailProductionArmIssue = 4236;
 // Issue #4000: orch:supervise-batch optional :region-keys forwards into
 // TaskSpec / AgentSpec (same decide_isolation SSOT as parallel-intend).
 // Missing keys stay Serialized. Production + ≥2 distinct non-zero keys
