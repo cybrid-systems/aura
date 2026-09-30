@@ -240,4 +240,5 @@ check_agent_mint_per_agent_4235.py
 check_join_fail_circuitbreaker_4236.py
 check_restart_fuel_4237.py
 check_scope_region_admit_4238.py
+check_require_effect_join_refuse_4239.py
 check_wal_prune_fold_4240.py

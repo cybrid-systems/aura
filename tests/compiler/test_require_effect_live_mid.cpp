@@ -608,6 +608,11 @@ static void ac3594_4_dual_refuse_join_mid0() {
 static void ac3966_1_stale_proof_does_not_shadow_session();
 static void ac3966_2_nested_abort_keeps_outer_session();
 static void ac3966_3_soft_and_source();
+static void ac4239_1_join_zero_refuses_no_proof_grant_allow();
+static void ac4239_2_refuse_se_joins_mid_zero_only();
+static void ac4239_3_epoch_join_still_allows();
+static void ac4239_4_live_guard_after_refuse_shares_session();
+static void ac4239_5_soft_observe_and_source();
 
 int run_test_std_ffi_per_call_3725() {
     std::println("=== Issue #3725: std/ffi per-call require_effect choke ===");
@@ -622,6 +627,12 @@ int run_test_std_ffi_per_call_3725() {
     ac3966_1_stale_proof_does_not_shadow_session();
     ac3966_2_nested_abort_keeps_outer_session();
     ac3966_3_soft_and_source();
+    std::println("\n=== Issue #4239: join==0 refuse — no TypeLinear proof resurrection ===");
+    ac4239_1_join_zero_refuses_no_proof_grant_allow();
+    ac4239_2_refuse_se_joins_mid_zero_only();
+    ac4239_3_epoch_join_still_allows();
+    ac4239_4_live_guard_after_refuse_shares_session();
+    ac4239_5_soft_observe_and_source();
     return aura::test::g_failed ? 1 : 0;
 }
 
@@ -724,6 +735,212 @@ static void ac3966_3_soft_and_source() {
     CHECK(sec.find("schema-3966") == std::string::npos, "3966: no new query key");
     CHECK(read_file("tests/compiler/test_issue_3966.cpp").empty(), "3966: no invent");
     CHECK(read_file("docs/design/3966-require-effect-mid.md").empty(), "3966: no docs/design");
+}
+
+// Issue #4239: the hard face must NOT resurrect the TypeLinear proof
+// stamp after join(0)==0 refuse (#4098: the proof stamp is not the
+// session / TypedMid join key). Arrangement: production defaults,
+// epoch=0, no live Guard / composite note, proof stamp P present.
+static void ac4239_1_join_zero_refuses_no_proof_grant_allow() {
+    std::println("\n--- #4239 AC1: join==0 refuses even with a grant bound to the stale proof ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test(); // epoch=0: no WorkspaceEpoch arm
+    constexpr std::uint64_t kStaleProof = 0x4239A1ULL;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kStaleProof);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(51);
+    ev.clear_boundary_audit_mid_for_test();
+    // A durable grant bound to the stale proof mid: pre-#4239 the
+    // resurrected proof mid satisfied provenance_ok and EffectAllow'd on
+    // the split key; post-#4239 the refuse fires before the capability
+    // check ever sees the grant.
+    {
+        auto prov =
+            make_grant_provenance(kStaleProof, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
+        g_capability_registry().grant_session(51, "mut-4239-proof", Effect::Mutate, prov,
+                                              /*single_use=*/false);
+    }
+    CapabilityGrant row4239{};
+    CHECK(g_capability_registry().find_grant(51, "mut-4239-proof", row4239),
+          "4239 AC1: grant bound to the proof mid installed");
+    CHECK(row4239.bound_mutation_id == kStaleProof, "4239 AC1: grant bound_mutation_id = P");
+    const auto refused_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .audit_mid_fallback_refused_total.load(std::memory_order_relaxed);
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4239-refuse",
+                                      0, /*ref_tenant=*/51);
+    const auto refused_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .audit_mid_fallback_refused_total.load(std::memory_order_relaxed);
+    CHECK(!ok, "4239 AC1: join==0 refuses — grant on the proof mid cannot resurrect it");
+    CHECK(refused_after > refused_before, "4239 AC1: audit_mid_fallback_refused_total bumps");
+    CHECK(count_ring_rows_with_mid(kStaleProof) == 0,
+          "4239 AC1: no SE row on the stale proof mid (no EffectAllow on P)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #4239 AC2: the only join key on the refuse path is mid=0 — the
+// stale proof never becomes a trail / SE key (Agent query by mid=0 sees
+// the refuse; nothing answers on P).
+static void ac4239_2_refuse_se_joins_mid_zero_only() {
+    std::println("\n--- #4239 AC2: refuse SE joins mid=0; proof mid is absent ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test();
+    constexpr std::uint64_t kStaleProof = 0x4239B2ULL;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kStaleProof);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(52);
+    ev.clear_boundary_audit_mid_for_test();
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4239-se", 0,
+                                      /*ref_tenant=*/52);
+    CHECK(!ok, "4239 AC2: session-less production effect refuses");
+    bool saw_refuse_mid0 = false;
+    bool saw_proof_row = false;
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    for (std::uint64_t s = 0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.mutation_id == kStaleProof)
+            saw_proof_row = true;
+        if (e.mutation_id == 0 && e.denied &&
+            std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
+            saw_refuse_mid0 = true;
+    }
+    CHECK(saw_refuse_mid0, "4239 AC2: mid-fallback-refused refuse row at mid=0");
+    CHECK(!saw_proof_row, "4239 AC2: no trail/SE row joins on the proof mid");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #4239 AC3: epoch!=0 still joins the WorkspaceEpoch mutation —
+// the refuse is not over-broad (join already returns epoch, #3296).
+static void ac4239_3_epoch_join_still_allows() {
+    std::println("\n--- #4239 AC3: epoch!=0 join still allows on the epoch mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    bump_mutation_epoch(1);
+    constexpr std::uint64_t kStaleProof = 0x4239C3ULL;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kStaleProof);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(53);
+    ev.clear_boundary_audit_mid_for_test();
+    const auto ep = current_mutation_epoch();
+    CHECK(ep != 0, "4239 AC3: epoch non-zero");
+    {
+        auto prov = make_grant_provenance(ep, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
+        g_capability_registry().grant_session(53, "mut-4239-epoch", Effect::Mutate, prov,
+                                              /*single_use=*/false);
+    }
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4239-epoch",
+                                      0, /*ref_tenant=*/53);
+    CHECK(ok, "4239 AC3: epoch!=0 join allows (WorkspaceEpoch arm, not refuse)");
+    CHECK(last_security_event_mid() == ep, "4239 AC3: SE joins the epoch mid, not the proof");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #4239 AC4: after a refuse, a live Guard still joins a non-zero
+// mid — the refuse does not wedge the join and the proof never wins
+// (effect / grant / SE share that mid, verification item 3). With
+// epoch=0 and no session the Guard enter itself resolves to the
+// production refuse, so the epoch is bumped before entering: the Guard
+// then publishes the WorkspaceEpoch mid (fresh #3016 enter resolve).
+static void ac4239_4_live_guard_after_refuse_shares_session() {
+    std::println("\n--- #4239 AC4: refuse then live Guard joins the session mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    aura::core::reset_mutation_epoch_for_test();
+    constexpr std::uint64_t kStaleProof = 0x4239D4ULL;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kStaleProof);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(54);
+    ev.clear_boundary_audit_mid_for_test();
+    // 1) session-less attempt refuses (mid=0 refuse SE; boundary unnoted).
+    const bool refused = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                           "test:4239-refuse", 0, /*ref_tenant=*/54);
+    CHECK(!refused, "4239 AC4: session-less attempt refuses");
+    // 2) bump the epoch so the live Guard enter (#3016) resolves a
+    //    non-zero mid — the refuse left nothing sticky in the way.
+    bump_mutation_epoch(1);
+    bool ok_flag = true;
+    Evaluator::MutationBoundaryGuard g(ev, &ok_flag);
+    const auto session = aura::compiler::typed_audit::current_boundary_audit_mid();
+    CHECK(session != 0, "4239 AC4: session mid published");
+    CHECK(session != kStaleProof, "4239 AC4: session mid is not the stale proof");
+    {
+        auto prov = make_grant_provenance(session, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
+        g_capability_registry().grant_session(54, "mut-4239-guard", Effect::Mutate, prov,
+                                              /*single_use=*/false);
+    }
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4239-guard",
+                                      0, /*ref_tenant=*/54);
+    CHECK(ok, "4239 AC4: live-Guard effect allows on the session mid");
+    CHECK(last_security_event_mid() == session, "4239 AC4: effect/grant/SE share the session mid");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #4239 AC5: Soft observe arm unchanged (proof → epoch → 1 SSOT
+// untouched) + source-cite: the hard face refuse has no resurrection.
+static void ac4239_5_soft_observe_and_source() {
+    std::println("\n--- #4239 AC5: Soft proof-stamp observe unchanged + source-cite ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::reset_mutation_epoch_for_test();
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(SandboxMode::Off);
+    constexpr std::uint64_t kSoftProof = 0x4239E5ULL;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kSoftProof);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:4239-soft", 0);
+    CHECK(ok, "4239 AC5: Soft/Off still allows without a session");
+    CHECK(last_security_event_mid() == kSoftProof,
+          "4239 AC5: Soft SSOT still stamps the proof arm (no refuse re-shape)");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(!sec.empty(), "4239 AC5: evaluator_security.cpp readable");
+    const auto re_at = sec.find("bool Evaluator::require_effect");
+    CHECK(re_at != std::string::npos, "4239 AC5: require_effect definition found");
+    std::size_t proof_reads = 0;
+    for (auto p = sec.find("last_type_linear_commit_proof_stamp_v_read", re_at);
+         p != std::string::npos && p < re_at + 3000;
+         p = sec.find("last_type_linear_commit_proof_stamp_v_read", p + 1))
+        ++proof_reads;
+    CHECK(proof_reads == 1, "4239 AC5: hard-face proof resurrection gone (Soft SSOT read only)");
+    CHECK(sec.find("#4239") != std::string::npos, "4239 AC5: cites #4239");
+    CHECK(sec.find("return false; // #4239") != std::string::npos,
+          "4239 AC5: join==0 absolute refuse present");
+    CHECK(read_file("docs/design/4239-require-effect-join-refuse.md").empty(),
+          "4239 AC5: no docs/design");
 }
 
 int run_test_require_effect_live_mid() {
