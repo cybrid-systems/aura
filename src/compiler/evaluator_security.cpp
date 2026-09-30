@@ -173,12 +173,21 @@ void Evaluator::grant_capability(std::string cap) {
     bool single_use = false;
     bool session_bound = false;
     if (eff != Effect::None) {
+        // Issue #4234: Exec joins the production high-risk force family — a
+        // once-granted Exec was privilege-sticky (survived outermost
+        // session-mid exit; grant-epoch retain K=64 was the only age-out),
+        // unlike Mutate which dies with the session mid. Restricted/Strict
+        // now force single_use + session_bound for Exec; Soft/Off stays
+        // zero-cost (no force). True sticky escape remains the #3177
+        // grant_effect_durable_sticky env gate.
+        using aura::compiler::security::kEffectExec;
         using aura::compiler::security::kEffectMacroSelfEvo;
         using aura::compiler::security::kEffectMutate;
         using aura::compiler::security::kEffectSyscall;
         using aura::compiler::security::kEffectTenantAdmin;
-        constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
-            kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+        constexpr std::uint16_t kHighRiskMask =
+            static_cast<std::uint16_t>(kEffectExec | kEffectMutate | kEffectMacroSelfEvo |
+                                       kEffectTenantAdmin | kEffectSyscall);
         const bool production_defaults = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
         const bool is_high_risk = (static_cast<std::uint16_t>(eff) & kHighRiskMask) != 0;
         if (production_defaults && is_high_risk) {
@@ -1166,12 +1175,15 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // must close this. Explicit durable admin path goes through
     // grant_effect_durable() which is auditable and bumps a separate
     // counter (capability_durable_high_risk_grant_total).
+    // Issue #4234: Exec joins the high-risk force (rationale at
+    // grant_capability above) — same single_use + session_bound contract.
+    using aura::compiler::security::kEffectExec;
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
     using aura::compiler::security::kEffectTenantAdmin;
     constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
-        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+        kEffectExec | kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
     const bool production_defaults = force_bind;
     const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
     if (production_defaults && is_high_risk && !single_use) {
@@ -1334,16 +1346,19 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     const auto node = typed_audit::current_boundary_target_node();
     auto prov = make_grant_provenance(mid, force_bind, node, fiber);
     // Bump the durable high-risk counter when this durable override touches
-    // a high-risk effect bit (Mutate / MacroSelfEvo / TenantAdmin / Syscall).
+    // a high-risk effect bit (Exec / Mutate / MacroSelfEvo / TenantAdmin / Syscall).
     // Non-high-risk durable grants are tracked only via capability_grant_total.
     using aura::compiler::security::kCapCapability;
     using aura::compiler::security::kCapTenantAdmin;
+    // Issue #4234: Exec joins the high-risk force (rationale at
+    // grant_capability above) — same single_use + session_bound contract.
+    using aura::compiler::security::kEffectExec;
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
     using aura::compiler::security::kEffectTenantAdmin;
     constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
-        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+        kEffectExec | kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
     const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
     // Issue #2969 AC1: registry write-fence — under production
     // (Restricted/Strict), writing a grant for a FOREIGN tenant id
@@ -1482,12 +1497,15 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
     const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
     const auto node = typed_audit::current_boundary_target_node();
     auto prov = make_grant_provenance(mid, force_bind, node, fiber);
+    // Issue #4234: Exec joins the high-risk force (rationale at
+    // grant_capability above) — same single_use + session_bound contract.
+    using aura::compiler::security::kEffectExec;
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
     using aura::compiler::security::kEffectTenantAdmin;
     constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
-        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+        kEffectExec | kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
     const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
     const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
     const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
@@ -1607,12 +1625,15 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     // Production force_bind: leave 0 (grant refuse / join-0) — no phantom 1.
     if (prov.mutation_id == 0 && !force_bind)
         prov.mutation_id = prov.epoch != 0 ? prov.epoch : 1;
+    // Issue #4234: Exec joins the high-risk force (rationale at
+    // grant_capability above) — same single_use + session_bound contract.
+    using aura::compiler::security::kEffectExec;
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
     using aura::compiler::security::kEffectTenantAdmin;
     constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
-        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+        kEffectExec | kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
     const bool production_defaults = force_bind;
     const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
     if (production_defaults && is_high_risk && !single_use) {
