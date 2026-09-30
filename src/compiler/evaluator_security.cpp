@@ -2169,6 +2169,70 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
     return false;
 }
 
+// Issue #4233: exec-face tenant FS jail for shell / command-output — mirror
+// check_tenant_host_path (#3802) under the same policy predicate (no second
+// capability model). Soft/Off / single-tenant Restricted passthrough (AC2
+// parity). Active + absolute / ".." / expansion-escape command tokens →
+// IsolationDeny SE (reason tenant-path-escape), zero exec; allow carries
+// out_jail_root = tenant root for the post-fork child chdir (relative-only
+// contract). The deny joins mid+tenant+fiber+epoch like every other
+// IsolationDeny row; the exec face stamps kEffectExec.
+bool Evaluator::check_tenant_exec_jail(std::string_view cmd, std::string& out_jail_root,
+                                       std::string_view op) noexcept {
+    using ::aura::compiler::security::kEffectExec;
+    using ::aura::compiler::security::kTenantPathEscapeReason;
+    using ::aura::compiler::security::resolve_tenant_host_path;
+    using ::aura::compiler::security::tenant_exec_cmd_escapes_root;
+    using ::aura::compiler::security::tenant_host_path_policy_active;
+    using ::aura::compiler::security::TenantHostPathVerdict;
+    using ::aura::core::capability::EffectSandboxMode;
+    using ::aura::core::capability::g_capability_registry;
+    using ::aura::core::provenance::hard_capture_tenant_active;
+    using ::aura::core::provenance::multi_tenant_env_active;
+    using ::aura::core::sandbox::is_strict;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+
+    out_jail_root.clear();
+    std::uint8_t mode = effect_sandbox_mode();
+    if (mode != 2 && is_strict())
+        mode = 2;
+    if (mode != 2 && g_capability_registry().sandbox_mode == EffectSandboxMode::Strict)
+        mode = 2;
+    if (mode == 0 && g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted)
+        mode = 1;
+    const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
+    if (!tenant_host_path_policy_active(mode, mt))
+        return true; // Soft/Off / single-tenant Restricted — exec passthrough.
+    // Deny body mirrors check_tenant_host_path (#3802) with the exec effect
+    // face; the Typed correlate row stamps the caller tenant (#3994 shape).
+    const auto deny = [&]() {
+        bump_capability_denial();
+        last_mutate_error_ = std::string(op) + ": " + kTenantPathEscapeReason;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        const auto mid = production_deny_se_mid();
+        const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+        emit_security_event_durable(SecurityEventKind::IsolationDeny, capability_tenant_id_, mid,
+                                    epoch, static_cast<std::uint16_t>(kEffectExec), op,
+                                    kTenantPathEscapeReason, /*denied=*/true, fiber);
+        typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
+                                                       /*target_node=*/0, fiber,
+                                                       capability_tenant_id_);
+    };
+    // Jail root for the child chdir; "." resolves to the tenant root.
+    const auto root = resolve_tenant_host_path(".", capability_tenant_id_, /*policy_active=*/true);
+    if (root.verdict != TenantHostPathVerdict::Resolved) {
+        deny(); // tenant 0 / no root — fail closed like the write face.
+        return false;
+    }
+    if (tenant_exec_cmd_escapes_root(cmd)) {
+        deny();
+        return false;
+    }
+    out_jail_root = root.resolved;
+    return true;
+}
+
 namespace {
 
     // Issue #4165: Agent-band base for the fibers minted when production

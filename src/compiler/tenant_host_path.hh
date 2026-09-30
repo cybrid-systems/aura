@@ -34,6 +34,9 @@ inline constexpr int kHostPathCorrelateTenantIssue = 3994;
 // Auditable SE reason (IsolationDeny) — keep ≤63 chars for SecurityEvent.
 inline constexpr const char* kTenantPathEscapeReason = "tenant-path-escape";
 inline constexpr const char* kEnvTenantFsRoot = "AURA_TENANT_FS_ROOT";
+// Issue #4233: exec-face jail for shell / command-output (require_effect
+// siblings) shares the #3802 policy predicate and deny reason.
+inline constexpr int kTenantExecJailIssue = 4233;
 
 enum class TenantHostPathVerdict : std::uint8_t {
     Passthrough = 0, // Soft/Off / single-tenant Restricted — use path as-is
@@ -123,6 +126,44 @@ struct TenantHostPathResult {
         return true;
     if (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/')
         return true;
+    return false;
+}
+
+// Issue #4233: exec-face escape scan for shell / command-output command
+// strings. The exec child runs chdir'd under the tenant root (relative-only
+// contract), so any ABSOLUTE path token, ".." segment, or expansion escape
+// ($VAR / `cmd` / ~user) can land outside the caller's root — deny at the
+// fence (IsolationDeny tenant-path-escape, zero exec). Shell metacharacters
+// (; | & < > ( ) { }) split tokens too, so redirect-prefixed (>/abs,
+// 2>/abs), ';'-joined (cmd;cat /etc/passwd) and '='-joined
+// (--opt=/abs) forms are caught. Fail-closed: a token that merely looks
+// absolute (quoted prose) denies too — jail posture over convenience.
+// Soft/Off / single-tenant Restricted never call this (the policy
+// predicate in check_tenant_exec_jail owns the arm).
+[[nodiscard]] inline bool tenant_exec_cmd_escapes_root(std::string_view cmd) noexcept {
+    if (cmd.empty() || cmd.find('\0') != std::string_view::npos)
+        return true;
+    if (cmd.find("..") != std::string_view::npos || cmd.find('$') != std::string_view::npos ||
+        cmd.find('`') != std::string_view::npos || cmd.find('~') != std::string_view::npos)
+        return true;
+    auto is_meta = [](char c) noexcept {
+        return c == ' ' || c == '\t' || c == '\n' || c == ';' || c == '|' || c == '&' || c == '<' ||
+               c == '>' || c == '(' || c == ')' || c == '{' || c == '}';
+    };
+    std::size_t tok_begin = 0;
+    for (std::size_t i = 0; i <= cmd.size(); ++i) {
+        if (i == cmd.size() || is_meta(cmd[i])) {
+            if (i > tok_begin) {
+                const std::string_view tok = cmd.substr(tok_begin, i - tok_begin);
+                if (tok.front() == '/')
+                    return true; // absolute path token
+                for (std::size_t j = 1; j < tok.size(); ++j)
+                    if (tok[j] == '/' && tok[j - 1] == '=')
+                        return true; // --opt=/abs joined form
+            }
+            tok_begin = i + 1;
+        }
+    }
     return false;
 }
 

@@ -5638,6 +5638,235 @@ int main() {
         CHECK(!invent.good(), "3836 AC3: no test_issue_3836.cpp");
     }
 
+    // ── Issue #4233: EXEMPT shell/command-output tenant host-path jail ──
+    {
+        std::println(
+            "\n--- #4233 AC1: Restricted+MT tenant A cannot shell into tenant B prefix ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4233-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        const auto root_b = tenant_host_root_for(42);
+        const auto escape = root_b + "/secret.txt";
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        const auto fib = static_cast<std::int64_t>(aura_fiber_current_id());
+        std::string out;
+        // Exec-face deny for both jailed prims: IsolationDeny
+        // tenant-path-escape joins the shared SE row (op+tenant+fiber).
+        for (const char* op : {"shell", "command-output"}) {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            CHECK(!ev.check_tenant_exec_jail(escape, out, op),
+                  (std::string("4233 AC1: Evaluator denies A→B via ") + op).c_str());
+            CHECK(ev.last_mutate_error().find(std::string(op) + ": tenant-path-escape") !=
+                      std::string::npos,
+                  (std::string("4233 AC1: last_mutate_error carries ") + op).c_str());
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 7, "4233 AC1: SE tenant is caller A");
+                CHECK(std::string_view(e.op) == op, "4233 AC1: SE op is the jailed prim");
+                CHECK(e.fiber_id == fib, "4233 AC1: SE fiber joins the row");
+            }
+            CHECK(saw, (std::string("4233 AC1: IsolationDeny SE for ") + op).c_str());
+        }
+        // The issue's bypass shapes deny too (zero exec on every form).
+        CHECK(!ev.check_tenant_exec_jail("$AURA_TENANT_FS_ROOT/t-42/secret.txt", out, "shell"),
+              "4233 AC1: $-expansion escape denies");
+        CHECK(!ev.check_tenant_exec_jail("cat ../../../etc/passwd", out, "shell"),
+              "4233 AC1: .. climb denies");
+        CHECK(!ev.check_tenant_exec_jail("echo pwned `id`", out, "command-output"),
+              "4233 AC1: backtick expansion denies");
+        CHECK(!ev.check_tenant_exec_jail("sort < /etc/passwd", out, "shell"),
+              "4233 AC1: redirect-read absolute denies");
+        CHECK(!ev.check_tenant_exec_jail("git --git-dir=/etc/x status", out, "command-output"),
+              "4233 AC1: '='-joined absolute denies");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4233 AC2: Soft/Off / single-tenant Restricted exec passthrough ---");
+        reset_all();
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        using aura::compiler::security::tenant_exec_cmd_escapes_root;
+        using aura::compiler::security::tenant_host_path_policy_active;
+        CHECK(!tenant_host_path_policy_active(/*mode=*/0, /*mt=*/false),
+              "4233 AC2: Soft/Off inactive");
+        CHECK(!tenant_host_path_policy_active(/*mode=*/1, /*mt=*/false),
+              "4233 AC2: single-tenant Restricted inactive");
+        // Lexical fence units: relative-only scans clean; every escape form
+        // from the issue's bypass section scans as an escape.
+        CHECK(!tenant_exec_cmd_escapes_root("echo hi > out.txt"),
+              "4233 AC2: relative-only command scans clean");
+        CHECK(!tenant_exec_cmd_escapes_root("whoami"), "4233 AC2: bare command scans clean");
+        CHECK(!tenant_exec_cmd_escapes_root("ls src"), "4233 AC2: relative arg scans clean");
+        CHECK(tenant_exec_cmd_escapes_root("echo pwned > /tmp/x"),
+              "4233 AC2: absolute redirect scans escape");
+        CHECK(tenant_exec_cmd_escapes_root("cat $HOME/x"), "4233 AC2: $-escape scans");
+        CHECK(tenant_exec_cmd_escapes_root("echo `id`"), "4233 AC2: backtick scans");
+        CHECK(tenant_exec_cmd_escapes_root("ls ../.."), "4233 AC2: .. climb scans");
+        CHECK(tenant_exec_cmd_escapes_root("git --git-dir=/etc/x status"),
+              "4233 AC2: '='-joined absolute scans");
+        CHECK(tenant_exec_cmd_escapes_root("cat a;cat /etc/passwd"),
+              "4233 AC2: ';'-joined absolute scans");
+
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        const auto& ring = g_security_event_ring();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        ev.set_capability_tenant_id(7);
+        std::string out;
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CHECK(ev.check_tenant_exec_jail("/tmp/anywhere && cat /etc/passwd", out, "shell"),
+              "4233 AC2: Off jail allows absolute command");
+        CHECK(out.empty(), "4233 AC2: Off jail leaves jail_root empty (passthrough)");
+        CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+              "4233 AC2: Off allow emits no IsolationDeny SE");
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.check_tenant_exec_jail("/tmp/anywhere", out, "command-output"),
+              "4233 AC2: single-tenant Restricted allows absolute command");
+
+        // Real-prim passthrough (Off): the jailed fork+pipe capture keeps
+        // the exit-code and stdout contracts. Deferred host prims are not
+        // in the typecheck env / IR prim table (#3174 shape), so arm via
+        // ensure_std_host_prims and invoke the prim bodies directly.
+        ev.set_effect_sandbox_mode(0);
+        (void)ev.ensure_std_host_prims("std/process");
+        auto& heap_w = ev.string_heap_mut();
+        heap_w.push_back("exit 7");
+        auto sh = ev.primitives().lookup("shell");
+        CHECK(sh.has_value(), "4233 AC2: shell prim registered after install");
+        if (sh) {
+            using aura::compiler::types::make_string;
+            const auto rr = (*sh)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(is_int(rr) && as_int(rr) == 7, "4233 AC2: shell prim keeps exit codes");
+        }
+        heap_w.push_back("echo -n aura-4233-passthrough");
+        auto co = ev.primitives().lookup("command-output");
+        CHECK(co.has_value(), "4233 AC2: command-output prim registered after install");
+        if (co) {
+            using aura::compiler::types::make_string;
+            const auto rr2 = (*co)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(is_string(rr2), "4233 AC2: command-output prim returns stdout");
+            if (is_string(rr2)) {
+                auto heap = ev.string_heap();
+                const auto sidx = as_string_idx(rr2);
+                CHECK(sidx < heap.size() && heap[sidx] == "aura-4233-passthrough",
+                      "4233 AC2: command-output stdout content intact");
+            }
+        }
+    }
+
+    {
+        std::println("\n--- #4233 AC3: active-policy allow carries the jail root; prims wired ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4233-ac3";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        std::string out;
+        CHECK(ev.check_tenant_exec_jail("logs/run.txt", out, "shell"),
+              "4233 AC3: relative-only allow under active policy");
+        CHECK(out == root_a, "4233 AC3: jail root is the caller's tenant root");
+        const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+        CHECK(filep.find("check_tenant_exec_jail(ev.string_heap_[idx], jail_root, \"shell\")") !=
+                  std::string::npos,
+              "4233 AC3: shell prim wires the jail fence");
+        CHECK(filep.find("check_tenant_exec_jail(cmd, jail_root, \"command-output\")") !=
+                  std::string::npos,
+              "4233 AC3: command-output prim wires the jail fence");
+        CHECK(filep.find("::chdir(jail_root.c_str())") != std::string::npos,
+              "4233 AC3: exec children chdir under the tenant root");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4233 AC4: dual-evaluator chaos — Exec face fenced per tenant ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4233-chaos";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(11);
+        const auto root_b = tenant_host_root_for(22);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(11);
+        ev_b.set_effect_sandbox_mode(1);
+        ev_b.set_capability_tenant_id(22);
+        std::string out;
+        CHECK(!ev_a.check_tenant_exec_jail(root_b + "/f.txt", out, "shell"),
+              "4233 AC4 chaos: A denied on B prefix");
+        CHECK(!ev_b.check_tenant_exec_jail(root_a + "/f.txt", out, "command-output"),
+              "4233 AC4 chaos: B denied on A prefix");
+        CHECK(ev_a.check_tenant_exec_jail("work.txt", out, "shell") && out == root_a,
+              "4233 AC4 chaos: A allows relative under own root");
+        CHECK(ev_b.check_tenant_exec_jail("work.txt", out, "command-output") && out == root_b,
+              "4233 AC4 chaos: B allows relative under own root");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4233 AC5: linter + build wiring; no invent ---");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto hh = read_file("src/compiler/tenant_host_path.hh");
+        const auto build = read_file("build.py");
+        const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+        CHECK(sec.find("bool Evaluator::check_tenant_exec_jail(") != std::string::npos,
+              "4233 AC5: check_tenant_exec_jail defined");
+        CHECK(sec.find("Issue #4233") != std::string::npos, "4233 AC5: security TU cites #4233");
+        CHECK(hh.find("tenant_exec_cmd_escapes_root") != std::string::npos &&
+                  hh.find("Issue #4233") != std::string::npos,
+              "4233 AC5: header escape scanner cites #4233");
+        CHECK(build.find("check_tenant_exec_jail_4233") != std::string::npos,
+              "4233 AC5: build.py wires the #4233 linter");
+        CHECK(allow.find("check_tenant_exec_jail_4233.py") != std::string::npos,
+              "4233 AC5: linter on the root allowlist");
+        std::ifstream invent("tests/core/test_issue_4233.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4233.cpp");
+        CHECK(!invent.good(), "4233 AC5: no tests/core/test_issue_4233.cpp (forbidden)");
+    }
+
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
     ac4133_1_target_ta_non_ta_caller_denied();
     ac4133_2_caller_ta_mint_foreign_target_lands();

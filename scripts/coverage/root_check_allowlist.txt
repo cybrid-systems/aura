@@ -234,6 +234,7 @@ check_sampled_leftover_audit_4173.py
 check_recover_truncation_4174.py
 check_fiber_body_exception_4231.py
 check_soft_list_prims_4232.py
+check_tenant_exec_jail_4233.py
 check_exec_high_risk_force_4234.py
 check_agent_mint_per_agent_4235.py
 check_join_fail_circuitbreaker_4236.py
