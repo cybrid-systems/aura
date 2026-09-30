@@ -6146,6 +6146,22 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         auto slot = as_primitive_slot(*fn);
                         if (slot < primitives_.slot_count()) {
                             auto prim = eval_env.lookup_primitive(primitives_.name_for_slot(slot));
+                            // Issue #4232: the env-level primitive table is caller-wired
+                            // after materialize_call_env (#145 Phase 2.3 contract —
+                            // "primitives_/cells_/pool_ are NOT set here ... the caller
+                            // wires them"). Helper eval envs built without that wiring
+                            // (serve-async Soft worldline select, soft_worldline_pick) made
+                            // this lookup return nullopt and the call degrade to
+                            // "cannot call: car / did you forget to define 'car'?" even
+                            // though the Variable fallback above had just resolved the
+                            // name from THIS full registry (slot_for_name). Fall back to
+                            // the same registry slot the prim value was manufactured
+                            // from: bare prim names stay callable in any eval env
+                            // regardless of env-table wiring. User shadowing is
+                            // unaffected — this handler only runs on a prim VALUE, and
+                            // the #2873 fast path still prefers env bindings ahead of it.
+                            if (!prim)
+                                prim = primitives_.slot_lookup_fast(slot);
                             if (prim) {
                                 std::vector<EvalValue> args;
                                 for (std::size_t i = 1; i < v.children.size(); ++i) {

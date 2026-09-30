@@ -27,6 +27,18 @@
 //   AC14: boundaries — k = length / over-length / k = 0
 //   AC15: error arms per repo convention + procedure? stays #t
 //   AC16: source + linter wiring
+//
+// Issue #4232 — Soft: cannot call car in soft_worldline_pick (host_fallback
+// select). The tree-walker's prim-value call handler resolved the callee via
+// the ENV-level primitive table; helper eval envs built per the
+// materialize_call_env contract without caller-side wiring (serve-async Soft
+// worldline select) returned nullopt there and degraded to
+// "cannot call: car" even though the Variable fallback resolves bare prim
+// names from the full Evaluator registry. Registry fallback closes the gap.
+//
+//   AC17: car / cdr / null? callable in an unwired-env eval (the door)
+//   AC18: soft_worldline_pick pick-best select via the same env path
+//   AC19: source + linter wiring
 
 #include "test_harness.hpp"
 
@@ -39,8 +51,12 @@
 #include <unistd.h>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.arena;
+import aura.core.ast;
+import aura.parser.parser;
 
 namespace {
 
@@ -426,6 +442,97 @@ static void ac16_source_gate() {
 
 } // namespace
 
+// Issue #4232 regression door: evaluate `code` in an Env that mirrors the
+// materialize_call_env contract gap — DEFAULT-constructed (primitives_/cells_/pool_
+// unwired), exactly the shape materialize_call_env hands its caller before the
+// caller-side wiring (serve-async soft worldline select).
+static std::optional<aura::compiler::types::EvalValue> eval_in_unwired_env(CompilerService& cs,
+                                                                           std::string_view code) {
+    auto& ev = cs.evaluator();
+    aura::compiler::Env call_env;
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat(std::string(code), flat, pool);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return std::nullopt;
+    flat.root = pr.root;
+    auto r = ev.eval_flat(flat, pool, pr.root, call_env);
+    if (!r)
+        return std::nullopt;
+    return std::optional(*r);
+}
+
+namespace {
+
+static void ac17_unwired_env_list_prims() {
+    std::println("\n--- #4232 AC17: car/cdr/null? callable in unwired-env eval ---");
+    CompilerService cs;
+    auto car_r = eval_in_unwired_env(cs, "(car (quote (5 2 7)))");
+    CHECK(car_r.has_value(), "AC17: (car '(5 2 7)) evaluates (was: cannot call: car)");
+    if (car_r && aura::compiler::types::is_int(*car_r))
+        CHECK(aura::compiler::types::as_int(*car_r) == 5, "AC17: car -> 5");
+    else
+        CHECK(false, "AC17: car -> int 5");
+    auto cdr_r = eval_in_unwired_env(cs, "(cdr (quote (5 2 7)))");
+    CHECK(cdr_r.has_value() && aura::compiler::types::is_pair(*cdr_r), "AC17: cdr -> pair (2 7)");
+    auto null_r = eval_in_unwired_env(cs, "(null? (quote ()))");
+    CHECK(null_r.has_value() && aura::compiler::types::is_bool(*null_r) &&
+              aura::compiler::types::as_bool(*null_r),
+          "AC17: (null? '()) -> #t");
+}
+
+static void ac18_soft_pick_best_unwired_env() {
+    std::println("\n--- #4232 AC18: soft_worldline_pick pick-best via unwired env ---");
+    CompilerService cs;
+    // The helper from aura/soft_worldline_pick.aura (issue body) defined AND
+    // selected through the same unwired env: define lands in the env, the
+    // closure call is wired by apply_closure, and the score-list select must
+    // stay Soft-native numeric max (no host_fallback).
+    auto r = eval_in_unwired_env(cs, R"4232((begin (define pick-best
+  (lambda (xs)
+    (letrec ((loop (lambda (rest best)
+        (if (null? rest)
+          best
+          (loop (cdr rest)
+                (if (> (car rest) best) (car rest) best))))))
+      (loop xs -999999))))
+
+  (pick-best (quote (3 9 4)))))4232");
+    CHECK(r.has_value(), "AC18: pick-best evaluates in unwired env");
+    if (r && aura::compiler::types::is_int(*r))
+        CHECK(aura::compiler::types::as_int(*r) == 9, "AC18: select-best -> 9 (numeric max)");
+    else
+        CHECK(false, "AC18: select-best -> int 9");
+    // Prim select step evaluated at the unwired call site itself.
+    CompilerService cs2;
+    auto mixed = eval_in_unwired_env(cs2, "(+ 1 (car (quote (41 7))))");
+    CHECK(mixed.has_value() && aura::compiler::types::is_int(*mixed) &&
+              aura::compiler::types::as_int(*mixed) == 42,
+          "AC18: (+ 1 (car ...)) -> 42 in unwired env");
+}
+
+static void ac19_source_gate() {
+    std::println("\n--- #4232 AC19: source + linter wiring ---");
+    const auto evf = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(evf.find("Issue #4232") != std::string::npos, "AC19: eval_flat cites #4232");
+    CHECK(evf.find("slot_lookup_fast(slot)") != std::string::npos,
+          "AC19: registry fallback present at prim-value call handler");
+    const auto pairp = read_file("src/compiler/evaluator_primitives_pair.cpp");
+    CHECK(pairp.find("\"car\"") != std::string::npos && pairp.find("\"cdr\"") != std::string::npos,
+          "AC19: car/cdr registered in pair prims");
+    const auto listp = read_file("src/compiler/evaluator_primitives_list.cpp");
+    CHECK(listp.find("\"null?\"") != std::string::npos, "AC19: null? registered in list prims");
+    const auto tc = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tc.find("register_primitive(\"car\", {Dyn}, Dyn)") != std::string::npos,
+          "AC19: typechecker car row");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_soft_list_prims_4232") != std::string::npos, "AC19: build.py linter");
+}
+
+} // namespace
+
 int run_test_primcall_narg() {
     std::println("=== Issue #2576: PrimCall N-arg ===");
     ac1_append3();
@@ -444,7 +551,10 @@ int run_test_primcall_narg() {
     ac14_take_drop_boundaries();
     ac15_take_drop_errors();
     ac16_source_gate();
-    std::println("\n=== #2576+#4175+#4177: {} passed, {} failed ===", g_passed, g_failed);
+    ac17_unwired_env_list_prims();
+    ac18_soft_pick_best_unwired_env();
+    ac19_source_gate();
+    std::println("\n=== #2576+#4175+#4177+#4232: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

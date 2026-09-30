@@ -233,4 +233,5 @@ check_recover_solve_status_4170.py
 check_sampled_leftover_audit_4173.py
 check_recover_truncation_4174.py
 check_fiber_body_exception_4231.py
+check_soft_list_prims_4232.py
 check_exec_high_risk_force_4234.py

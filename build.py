@@ -8503,6 +8503,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4177 R7RS list take/drop linter failed - run python3 scripts/check_list_take_drop_4177.py")
         return r
+    # Issue #4232 (Soft): "cannot call: car" in soft_worldline_pick (serve-async
+    # Soft Ready denseness, soft_select.via=host_fallback). The tree-walker's
+    # prim-value call handler re-resolved a registry-manufactured PrimitiveRef
+    # through the ENV-level primitive table; envs built per the
+    # materialize_call_env contract without caller-side wiring degraded to
+    # "cannot call: car". Gate pins: the registry fallback (slot_lookup_fast)
+    # at the handler, the car/cdr/null? runtime registrations, the type-checker
+    # rows, and the unwired-env runtime ACs in test_primcall_narg.cpp (no
+    # test_issue_4232.cpp per #81934, no docs/design/4232-* per #1655).
+    slp4232_script = ROOT / "scripts" / "check_soft_list_prims_4232.py"
+    if not slp4232_script.exists():
+        fail(f"missing {slp4232_script}")
+        return 1
+    r = run([sys.executable, str(slp4232_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4232 soft worldline select list-prims linter failed - run python3 scripts/check_soft_list_prims_4232.py"
+        )
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the
