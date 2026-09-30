@@ -6425,6 +6425,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3970: cheap-window miss continues with a named full
             // scan (production/Full + explicit mid / :durable only).
             std::int64_t wal_full_scan_hit = 0;
+            // Issue #4240: a scan-all ran over every retained segment and
+            // still missed the mid — the durable face is exhausted
+            // (retention may have unlinked the only segment that held it).
+            // Only ever set inside the production/Full durable block below,
+            // so Soft / WAL-off keeps 0 (zero-cost contract preserved).
+            std::int64_t wal_full_scan_exhausted = 0;
             std::int64_t wal_segments_scanned = 0;
             std::int64_t typed_summary_from_wal = 0;
             std::int64_t typed_kind = 0;
@@ -6481,6 +6487,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             static_cast<std::int64_t>(se_wal.retained_segment_count());
                         if (rec)
                             wal_full_scan_hit = 1;
+                        else
+                            wal_full_scan_exhausted = 1; // #4240: scanned all, still missed
                     }
                     if (rec) {
                         if (rec->reason[0] != '\0') {
@@ -6505,6 +6513,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                     static_cast<std::int64_t>(mut_wal.retained_segment_count());
                             if (mrec)
                                 wal_full_scan_hit = 1;
+                            else
+                                wal_full_scan_exhausted = 1; // #4240: scanned all, still missed
                         }
                         if (mrec) {
                             last_se_denied = mrec->effect_denied ? 1 : 0;
@@ -6572,6 +6582,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                     join_mid)) {
                             if (!ovr->reason.empty())
                                 last_se_reason_str = ovr->reason;
+                        } else if (::aura::core::audit_wal::g_audit_wal_metrics()
+                                           .audit_wal_segment_prune_total.load(
+                                               std::memory_order_relaxed) +
+                                       ::aura::core::security_event_wal::
+                                           g_security_event_wal_metrics()
+                                               .security_event_wal_segment_prune_total.load(
+                                                   std::memory_order_relaxed) >
+                                   0) {
+                            // Issue #4240: AURA_WAL_MAX_SEGMENTS retention
+                            // unlinked segments after the ring wrap — the
+                            // mid's durable audit row was forensically
+                            // thinned by prune, never "never audited".
+                            // Counters are read lazily inside this
+                            // production/Full block (Soft: zero-cost).
+                            last_se_reason_str = "wal-segment-pruned";
                         } else if (::aura::core::security_event_wal::wal_overflow_ring_wrap_total()
                                        .load(std::memory_order_relaxed) > 0) {
                             // Issue #3838: wrap storm — Agent face distinguishes
@@ -6716,8 +6741,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 // #3149/#3498/#3970 ring/WAL/overflow fills; (b) the
                 // #4118/#3877 durable join helper; (c) post-wrap all-miss
                 // (typed + se + window) while #3838 refuse counters are
-                // live — the thinning this issue closes. No new query
-                // key: suggested-next stays the single observable.
+                // live; (d) #4240 segment-prune-evicted all-miss —
+                // AURA_WAL_MAX_SEGMENTS retention unlinked the only
+                // durable segment holding the mid (or the exhaustive scan
+                // still missed), the same forensic-thinning shape. No new
+                // query key: suggested-next stays the single observable.
                 nin.wal_miss_refuse_evidence =
                     (production_defaults_active() || get_strategy() == AuditStrategy::Full) &&
                     (last_se_reason_str == "mutation_wal_append_miss" ||
@@ -6725,7 +6753,23 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                      ::aura::core::security_event::forensic_mid_has_wal_append_miss(join_mid) ||
                      (se_mid_miss != 0 && typed_miss != 0 && wal_lookup_window_miss != 0 &&
                       ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
-                          std::memory_order_relaxed) > 0));
+                          std::memory_order_relaxed) > 0) ||
+                     // Issue #4240: prune-evicted all-miss — segment
+                     // retention unlinked the only durable copy after both
+                     // rings wrapped, so every face misses with no refuse
+                     // row to speak for it. Production-only (Soft /
+                     // WAL-off / retention=0 keep the #4142 fold
+                     // unchanged, zero-cost); observe-only InspectDeny —
+                     // never auto-recover.
+                     (production_defaults_active() && join_mid != 0 && se_mid_miss != 0 &&
+                      typed_miss != 0 && wal_lookup_window_miss != 0 &&
+                      (::aura::core::audit_wal::g_audit_wal_metrics()
+                                   .audit_wal_segment_prune_total.load(std::memory_order_relaxed) +
+                               ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                                   .security_event_wal_segment_prune_total.load(
+                                       std::memory_order_relaxed) >
+                           0 ||
+                       wal_full_scan_exhausted != 0)));
                 const auto next = decide_evolution_suggested_next(nin);
                 insert_kv_str("suggested-next", evolution_suggested_next_cstr(next));
                 insert_kv("suggested-next-code", static_cast<std::int64_t>(next));

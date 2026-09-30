@@ -9522,6 +9522,31 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4142 WAL miss/refuse fold linter failed — run python3 scripts/check_wal_miss_refuse_next_4142.py")
         return r
+    # Issue #4240 (WAL segment prune after ring wrap): after the typed
+    # (256) + SE (1024) rings wrap AND AURA_WAL_MAX_SEGMENTS retention
+    # prunes the only durable segment holding the mid (#3338), every
+    # query:evolution-audit-decision face misses with no refuse row —
+    # the #4142 fold had no prune arm, so the Agent read a forensically
+    # thinned mid as "never audited" and suggested-next folded to "ok"
+    # when commit/schedule/densify were green. Gate pins: the fold gains
+    # one production-only additive arm (join_mid + all three miss faces
+    # + (prune counters > 0 OR wal_full_scan_exhausted) →
+    # wal_miss_refuse_evidence → InspectDeny, observe-only); both
+    # exhaustive scan-all branches mark exhaustion; the durable miss
+    # block emits last-se-reason "wal-segment-pruned" before the #3838
+    # wrap-evicted fallback; Soft / WAL-off / retention=0 keep the fold
+    # unchanged (zero-cost); no new query key / hash capacity
+    # (suggested-next stays the single observable). Runtime doors live
+    # in tests/compiler/test_evolution_audit_decision_forensic.cpp
+    # (ac11_wal_prune_fold_4240 … ac14_wiring_non_goals_4240).
+    prune4240_script = ROOT / "scripts" / "check_wal_prune_fold_4240.py"
+    if not prune4240_script.exists():
+        fail(f"missing {prune4240_script}")
+        return 1
+    r = run([sys.executable, str(prune4240_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4240 WAL segment-prune fold linter failed — run python3 scripts/check_wal_prune_fold_4240.py")
+        return r
     # Issue #4174 (recover×truncation-clear half-clean CS): the occurrence
     # hard-face recover clears the CS truncation stamps BEFORE returning
     # true; when commit_readiness forces recovered=false (#3108 re-gate

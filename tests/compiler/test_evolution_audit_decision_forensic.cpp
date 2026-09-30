@@ -275,6 +275,164 @@ static void ac10_wal_fold_autoscan_3674() {
           "bounded wal_mid_lookup_segments() window reused");
 }
 
+// AC11 (#4240): segment-prune arm in the wal_miss_refuse_evidence fold.
+// After typed (256) + SE (1024) ring wrap AND AURA_WAL_MAX_SEGMENTS
+// retention pruned the only durable segment holding the mid, all three
+// faces miss with no refuse row — the fold must not read as "never
+// audited": a production-only additive arm (prune counters live OR the
+// exhaustive scan exhausted) joins the #4142 evidence and folds
+// suggested-next to inspect-deny (observe-only; never auto-recover).
+static void ac11_wal_prune_fold_4240() {
+    std::println("\n--- AC11 (#4240): segment-prune arm in decision fold ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
+    CHECK(src.find("Issue #4240") != std::string::npos, "cites #4240");
+    const auto assign = src.find("nin.wal_miss_refuse_evidence =");
+    CHECK(assign != std::string::npos, "wal_miss_refuse_evidence assignment present");
+    const auto decide = src.find("decide_evolution_suggested_next(nin)");
+    CHECK(decide != std::string::npos && assign < decide,
+          "fold assignment precedes the suggested-next call");
+    if (assign == std::string::npos || decide == std::string::npos || assign > decide)
+        return;
+    std::string flat;
+    flat.reserve(decide - assign);
+    for (std::size_t i = assign; i < decide; ++i)
+        if (src[i] != ' ' && src[i] != '\n' && src[i] != '\t' && src[i] != '\r')
+            flat.push_back(src[i]);
+    // Additive #4142 arms preserved (append-miss / overflow-refuse /
+    // durable join / post-wrap all-miss + refuse counter).
+    CHECK(flat.find("\"mutation_wal_append_miss\"") != std::string::npos,
+          "#4142 append-miss arm preserved");
+    CHECK(flat.find("\"overflow-refuse\"") != std::string::npos,
+          "#4142 overflow-refuse arm preserved");
+    CHECK(flat.find("forensic_mid_has_wal_append_miss(join_mid)") != std::string::npos,
+          "#4118/#3877 durable join arm preserved");
+    CHECK(flat.find("wal_overflow_ring_wrap_refuse_total()") != std::string::npos,
+          "#4142 post-wrap refuse-counter arm preserved");
+    // New prune arm: production + join_mid + all three miss faces +
+    // (prune counters > 0 || full scan exhausted). Whitespace-stripped
+    // match so clang-format refolding cannot void the contract.
+    CHECK(flat.find("Issue#4240") != std::string::npos, "#4240 arm cited at the fold");
+    CHECK(flat.find("production_defaults_active()&&join_mid!=0") != std::string::npos,
+          "prune arm gated on production + join_mid");
+    CHECK(flat.find("se_mid_miss!=0") != std::string::npos, "se-mid-miss face in prune arm");
+    CHECK(flat.find("typed_miss!=0") != std::string::npos, "typed-trail-miss face in prune arm");
+    CHECK(flat.find("wal_lookup_window_miss!=0") != std::string::npos,
+          "wal-lookup-window-miss face in prune arm");
+    CHECK(flat.find("audit_wal_segment_prune_total") != std::string::npos,
+          "mutation audit WAL prune counter arm");
+    CHECK(flat.find("security_event_wal_segment_prune_total") != std::string::npos,
+          "SE WAL prune counter arm");
+    CHECK(flat.find("wal_full_scan_exhausted!=0") != std::string::npos,
+          "full-scan-exhausted disjunct in prune arm");
+}
+
+// AC12 (#4240): wal_full_scan_exhausted is computed inside the
+// production/Full durable scan block — both exhaustive paths (SE WAL and
+// mutation provenance WAL) mark exhaustion when the scan-all still
+// missed; the typed-summary sidecar scan (#3242) does not; the
+// cheap-window contract (#3603/#3970) is unchanged.
+static void ac12_full_scan_exhausted_face_4240() {
+    std::println("\n--- AC12 (#4240): wal-full-scan-exhausted face ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
+    CHECK(src.find("std::int64_t wal_full_scan_exhausted = 0;") != std::string::npos,
+          "wal_full_scan_exhausted declared beside wal_full_scan_hit");
+    std::size_t pos = 0;
+    std::size_t arms = 0;
+    std::size_t first_arm = 0;
+    std::size_t second_arm = 0;
+    while ((pos = src.find("wal_full_scan_exhausted = 1", pos)) != std::string::npos) {
+        if (arms == 0)
+            first_arm = pos;
+        else if (arms == 1)
+            second_arm = pos;
+        ++arms;
+        pos += 4;
+    }
+    CHECK(arms == 2, "both scan-all branches mark exhaustion (SE + mutation, not sidecar)");
+    const auto se_all = src.find("se_wal.find_by_mutation_id_scan_all_segments(join_mid)");
+    CHECK(se_all != std::string::npos && first_arm > se_all,
+          "SE WAL scan-all precedes its exhausted arm");
+    const auto mut_all = src.find("find_by_provenance_mutation_id_scan_all_segments(join_mid)");
+    CHECK(mut_all != std::string::npos && second_arm > mut_all,
+          "mutation WAL scan-all precedes its exhausted arm");
+    // Face is computed before the fold consumes it.
+    const auto fold = src.find("nin.wal_miss_refuse_evidence =");
+    CHECK(fold != std::string::npos && second_arm < fold,
+          "exhausted face computed before the decision fold");
+}
+
+// AC13 (#4240): observe-only reason "wal-segment-pruned" — the durable
+// miss block labels a prune-thinned mid (prune counters live) before the
+// #3838 wrap-evicted fallback; a live overflow row keeps precedence;
+// counters are read lazily inside the production/Full block so Soft /
+// WAL-off / retention=0 keep the #4142 fold unchanged (zero-cost).
+static void ac13_pruned_reason_4240() {
+    std::println("\n--- AC13 (#4240): wal-segment-pruned observe reason ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
+    CHECK(src.find("Issue #4240") != std::string::npos, "cites #4240");
+    CHECK(src.find("last_se_reason_str = \"wal-segment-pruned\";") != std::string::npos,
+          "wal-segment-pruned observe reason present");
+    const auto miss_block = src.find("if (durable_hit == 0 && last_se_reason_str.empty())");
+    CHECK(miss_block != std::string::npos, "durable miss reason block present");
+    const auto ovr = src.find("wal_overflow_find_by_mid(", miss_block);
+    const auto pruned = src.find("\"wal-segment-pruned\"", miss_block);
+    const auto wrap = src.find("\"overflow_wrap_evicted\"", miss_block);
+    CHECK(ovr != std::string::npos && pruned != std::string::npos && wrap != std::string::npos,
+          "all three reason arms present in the miss block");
+    CHECK(ovr < pruned && pruned < wrap,
+          "reason precedence: overflow row, prune-thinned, wrap-evicted");
+    // Prune counters are only read inside production/Full-gated arms:
+    // the reason arm and the #4240 fold arm (both after the durable gate).
+    const auto gate = src.find("if ((want_durable || auto_durable) && join_mid != 0 &&");
+    CHECK(gate != std::string::npos && pruned > gate,
+          "prune reason sits inside the production/Full durable block");
+}
+
+// AC14 (#4240): wiring + non-goals — the ship linter is registered in
+// build.py and listed on the frozen root allowlist; no new query key
+// cites 4240; planned_keys stays 72; no test_issue_4240.cpp (#81934);
+// no docs/design/4240-* markdown (#1655).
+static void ac14_wiring_non_goals_4240() {
+    std::println("\n--- AC14 (#4240): linter wiring + non-goals ---");
+    auto lint = read_file("../scripts/check_wal_prune_fold_4240.py");
+    if (lint.find("check_wal_prune_fold_4240") == std::string::npos)
+        lint = read_file("scripts/check_wal_prune_fold_4240.py");
+    CHECK(lint.find("#!/usr/bin/env python3") != std::string::npos,
+          "ship linter script readable (python3 gate)");
+    CHECK(lint.find("check_wal_prune_fold_4240") != std::string::npos,
+          "linter self-identifies (#4240 gate)");
+    auto build_py = read_file("../build.py");
+    if (build_py.find("check_wal_prune_fold_4240.py") == std::string::npos)
+        build_py = read_file("build.py");
+    CHECK(build_py.find("def gate") != std::string::npos || build_py.size() > 1000,
+          "build.py readable");
+    CHECK(build_py.find("check_wal_prune_fold_4240.py") != std::string::npos,
+          "build.py registers the #4240 linter");
+    auto allow = read_file("../scripts/coverage/root_check_allowlist.txt");
+    if (allow.find("check_wal_prune_fold_4240.py") == std::string::npos)
+        allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(allow.find("check_wal_prune_fold_4240.py") != std::string::npos,
+          "root allowlist lists the #4240 linter");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+          "planned_keys stays 72 (no new query key)");
+    // No insert_kv row cites 4240 (suggested-next stays the observable).
+    std::size_t p = 0;
+    bool kv_4240 = false;
+    while ((p = src.find("insert_kv", p)) != std::string::npos) {
+        const auto close = src.find(");", p);
+        if (close == std::string::npos)
+            break;
+        if (src.find("4240", p) < close)
+            kv_4240 = true;
+        p = close;
+    }
+    CHECK(!kv_4240, "no insert_kv row cites 4240 (no new query key)");
+}
+
 } // namespace
 
 int main() {
@@ -288,6 +446,10 @@ int main() {
     ac8_3284_se_mid_miss();
     ac9_wal_window_miss_3603();
     ac10_wal_fold_autoscan_3674();
+    ac11_wal_prune_fold_4240();
+    ac12_full_scan_exhausted_face_4240();
+    ac13_pruned_reason_4240();
+    ac14_wiring_non_goals_4240();
     if (g_failed)
         return 1;
     std::println("evolution-audit-decision forensic-source (#3152): OK ({} passed)", g_passed);
