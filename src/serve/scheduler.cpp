@@ -304,6 +304,9 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     // registry so fiber:join can find the Fiber* by ID.
     workers_[wid]->register_fiber(ptr);
 
+    // Always-on spawn-activity counter (gates the IO loop auto-stop).
+    spawns_total_.fetch_add(1, std::memory_order_release);
+
     // Metrics
     if (metrics_on_) {
         metrics_.fibers_spawned.fetch_add(1, std::memory_order_relaxed);
@@ -357,6 +360,9 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
     workers_[worker_id]->enqueue(ptr);
     // Issue #119: register the fiber for fiber:join lookup.
     workers_[worker_id]->register_fiber(ptr);
+
+    // Always-on spawn-activity counter (gates the IO loop auto-stop).
+    spawns_total_.fetch_add(1, std::memory_order_release);
 
     if (metrics_on_) {
         metrics_.fibers_spawned.fetch_add(1, std::memory_order_relaxed);
@@ -971,6 +977,11 @@ void Scheduler::run() {
         w->start();
     }
 
+    // Auto-stop bookkeeping: idle ticks only count when NO spawn happened
+    // since the previous tick (see spawns_total_ in scheduler.h).
+    std::uint64_t last_seen_spawns = spawns_total_.load(std::memory_order_acquire);
+    int idle_ticks = 0;
+
 #if AURA_HAVE_EPOLL
     struct epoll_event events[64];
 
@@ -1149,18 +1160,30 @@ void Scheduler::run() {
                 }
                 if (all_idle && !running_.load(std::memory_order_acquire))
                     break;
-                // If idle for multiple cycles, auto-stop (avoids hang)
-                // Use a counter to prevent premature stop
-                static thread_local int idle_cycles = 0;
-                if (all_idle) {
-                    ++idle_cycles;
-                    if (idle_cycles >= 3) {
-                        // All fibers completed — auto-stop
+                // If idle for multiple cycles, auto-stop (avoids hang).
+                // Only ticks with NO spawn activity since the previous
+                // tick may count toward self-destruct: a 1s epoll tick
+                // that lands in the transient between-iterations gap of
+                // a busy spawn loop (wait_map_ empty, queues drained for
+                // a few ms) must not stop a working scheduler out from
+                // under its spawner. ubsan-smoke CI 2026-09-30 (runs
+                // 36692907837 / 36694879795): 3 CUMULATIVE idle ticks
+                // fired mid-loop in test_concurrent #4176 AC2 under
+                // 2-core + UBSAN slowness — run() stopped and joined the
+                // workers while the test thread kept spawning, freezing
+                // dispatch forever (done stuck at 199/226, ok 0/200).
+                const std::uint64_t now_spawns = spawns_total_.load(std::memory_order_acquire);
+                const bool spawned_since_tick = now_spawns != last_seen_spawns;
+                last_seen_spawns = now_spawns;
+                if (all_idle && !spawned_since_tick) {
+                    ++idle_ticks;
+                    if (idle_ticks >= 3) {
+                        // All fibers completed, no spawn for ~3s — auto-stop
                         running_.store(false, std::memory_order_release);
                         break;
                     }
                 } else {
-                    idle_cycles = 0;
+                    idle_ticks = 0;
                 }
             }
         }

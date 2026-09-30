@@ -277,6 +277,15 @@ private:
 
     // Runtime flag
     std::atomic<bool> running_{true};
+
+    // Total fibers admitted via spawn/spawn_with_affinity (always-on,
+    // metrics-independent). Gates the IO loop's auto-stop: an idle tick
+    // only counts toward self-destruct when NO spawn happened since the
+    // previous tick — a 1s epoll tick landing in the transient
+    // between-iterations gap of a busy spawn loop (wait_map_ empty and
+    // queues drained for a few ms) must never accumulate toward stopping
+    // a working scheduler.
+    std::atomic<std::uint64_t> spawns_total_{0};
     // Issue #4004: true until ~Scheduler (store false before fiber destroy).
     std::shared_ptr<std::atomic<bool>> handoff_source_live_{
         std::make_shared<std::atomic<bool>>(true)};

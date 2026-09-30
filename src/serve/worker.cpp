@@ -222,21 +222,36 @@ void WorkerThread::join() {
 // ── enqueue — add fiber to local queue ────────────────
 // Thread-safe: push into the work-stealing deque.
 // The push() operation is "owner-only" in Chase-Lev, but the
-// scheduler (IO thread) is the one calling enqueue from outside.
-// This is safe because:
-//   1. push() only writes to buffer_ and increments bottom_
-//   2. The stealers only read the top
-//   3. The only conflict is between push and steal, which is handled
-//      by the Chase-Lev memory ordering (release fence in push,
-//      seq_cst fence in steal)
+// scheduler (IO thread) can call enqueue from outside.
+// A Chase-Lev deque permits exactly ONE producer thread, and that same
+// thread also pops. A foreign push races the owner's pop() on bottom_
+// (pop's restore-store can overwrite the push's increment, stranding the
+// fiber below the deque floor forever), so foreign callers must NOT push
+// directly — they stage in inject_queue_ and the owner drains it.
 
 void WorkerThread::enqueue(Fiber* fiber) {
     if (!fiber || fiber->is_done())
         return;
 
     fiber->set_queued();
-    local_queue_.push(fiber);
     pending_.fetch_add(1, std::memory_order_release);
+
+    if (g_worker_ctx == &ctx_) {
+        // Owner-thread enqueue: a fiber running on THIS worker spawning a
+        // peer. Legal Chase-Lev producer (this OS thread is the deque's
+        // single producer; its pop() is quiescent while a fiber runs).
+        local_queue_.push(fiber);
+    } else {
+        // Remote enqueue (scheduler IO dispatch, foreign-thread spawn,
+        // steal re-queue). Stage for owner-side drain — a direct foreign
+        // push can strand the fiber below the deque floor with pending_
+        // stuck > 0: permanent dispatch wedge (ubsan-smoke CI 2026-09-30,
+        // runs 36692907837 / 36694879795: #4176 AC2 done frozen at 199
+        // for the whole 1800s suite budget; #4230 AC2 driver parked on
+        // join iteration 1, ok 0/200).
+        std::lock_guard<std::mutex> lock(inject_mutex_);
+        inject_queue_.push_back(fiber);
+    }
 
     if (worker_metrics_) {
         worker_metrics_->local_pushes.fetch_add(1, std::memory_order_relaxed);
@@ -246,6 +261,35 @@ void WorkerThread::enqueue(Fiber* fiber) {
         ::write(wake_evfd_, &val, sizeof(val));
     }
     wake_cv_.notify_one();
+}
+
+// ── drain_injections — owner-thread absorption of remote enqueues ────
+//
+// Runs ONLY on this worker's OS thread (run() Phase 0 / Phase 1 pop-miss).
+// Moves remotely staged fibers into the Chase-Lev deque via a legal
+// owner-side push. pending_ was already credited at stage time — do not
+// double-count here. Returns true if any fiber was absorbed (the caller
+// re-enters its pop loop).
+bool WorkerThread::drain_injections() {
+    std::deque<Fiber*> batch;
+    {
+        std::lock_guard<std::mutex> lock(inject_mutex_);
+        if (inject_queue_.empty())
+            return false;
+        batch.swap(inject_queue_);
+    }
+    for (Fiber* fiber : batch) {
+        if (fiber->is_done() || fiber->is_reclaimed()) {
+            // Hard-reaped while staged (reaper cleaned maps/quota/joiners
+            // already). Mirror the Phase-1 drop: release the pending_
+            // credit, never resume.
+            fiber->clear_queued();
+            pending_.fetch_sub(1, std::memory_order_release);
+            continue;
+        }
+        local_queue_.push(fiber);
+    }
+    return true;
 }
 
 // ── notify_fiber_done — report completed fiber ────────
@@ -568,12 +612,22 @@ void WorkerThread::run() {
         auto cycle_start = std::chrono::steady_clock::now();
         bool was_busy = false;
 
+        // ── Phase 0: absorb remote enqueues (owner-side) ──
+        // Fibers staged by foreign threads (IO dispatch, remote spawn,
+        // steal re-queue) join the deque here, on the owner thread, via
+        // a legal Chase-Lev owner push.
+        (void)drain_injections();
+
         // ── Phase 1: drain local queue (LIFO) ───────
         size_t iter = 0;
         while (iter < MAX_ITER_PER_ROUND) {
             Fiber* fiber = local_queue_.pop();
-            if (!fiber)
+            if (!fiber) {
+                // A remote enqueue may have raced in after Phase 0.
+                if (drain_injections())
+                    continue;
                 break;
+            }
             ++iter;
             was_busy = true;
 
