@@ -14,15 +14,23 @@ commit_readiness step-4 blame gate; no second blame model, no new
 reason codes):
 
   out->cs_has_work = tc->commit_cs_has_work();      // filled FIRST
-  const bool mutated = evaluator->txn_dirty() || out->cs_has_work;
-  out->blame_ok = bc.is_complete() || (!mutated && bc.frames.empty());
+  out->blame_ok = bc.is_complete() || bc.frames.empty();  // vacuous face
+  // (#4171 hotfix withdrawal: the mutated-gated deny keyed on txn_dirty /
+  // cs_has_work latches poisoned the eval-serving license —
+  // TypeLinearCommitProof + #3224/#3130 gates served stale pre-mutation
+  // closures process-wide, freezing test_shape_soa_storm_batch #3583 AC1;
+  // first bad 96fc3f0c3, bisected; probe blame_ok=true → 14/14 green.
+  // Re-land the deny scoped to the commit-audit consumer only.)
 
 Contract (one row per AC):
-  AC1  mutated-gated vacuous arm present in evaluator_mutation_boundary.cpp:
-       `const bool mutated = evaluator->txn_dirty() || out->cs_has_work;`
-       before `out->blame_ok = bc.is_complete() || (!mutated &&
-       bc.frames.empty())`; the old unconditional vacuous expression
-       `bc.is_complete() || bc.frames.empty()` is gone
+  AC1  vacuous face restored in evaluator_mutation_boundary.cpp:
+       `out->blame_ok = bc.is_complete() || bc.frames.empty();`
+       (#4171 hotfix withdrawal — the mutated-gated deny froze mutation
+       tracking via the eval-serving license; test_shape_soa_storm_batch
+       #3583 AC1 eval freeze. Re-land the deny scoped to the commit-audit
+       consumer only.)
+       before `out->blame_ok = bc.is_complete() || bc.frames.empty()` the
+       old unconditional vacuous expression must be the only arm
   AC2  ordering pin: the cs_has_work fill precedes the blame_ok line in
        the fill body (the mutated face reads the freshly computed value)
   AC3  gate unchanged: commit_readiness step 4 keeps the #2221 blame
@@ -74,10 +82,10 @@ def main() -> int:
     build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
-    # ── AC1: mutated-gated vacuous arm ──
-    must("const bool mutated = evaluator->txn_dirty() || out->cs_has_work;", "AC1 mutated face", boundary)
-    must("out->blame_ok = bc.is_complete() || (!mutated && bc.frames.empty());", "AC1 gated blame_ok", boundary)
-    absent("out->blame_ok = bc.is_complete() || bc.frames.empty();", "AC1 old vacuous face gone", boundary)
+    # ── AC1: vacuous face restored (#4171 hotfix withdrawal — eval freeze) ──
+    must("out->blame_ok = bc.is_complete() || bc.frames.empty();", "AC1 vacuous face restored", boundary)
+    absent("!mutated && bc.frames.empty()", "AC1 #4171 deny arm withdrawn", boundary)
+    absent("mutation_boundary_depth() > 0;", "AC1 depth-keyed arm withdrawn", boundary)
     must("#4171", "AC1 fix comment cites issue", boundary)
 
     # ── AC2: cs_has_work filled before blame_ok inside the fill body ──
@@ -85,7 +93,7 @@ def main() -> int:
     if fill_pos == -1:
         fill_pos = boundary.find("void aura_typed_audit_fill_from_live_tc(")
     cs_pos = boundary.find("out->cs_has_work = tc->commit_cs_has_work();", fill_pos)
-    blame_pos = boundary.find("out->blame_ok = bc.is_complete() || (!mutated", fill_pos)
+    blame_pos = boundary.find("out->blame_ok = bc.is_complete() || bc.frames.empty();", fill_pos)
     if fill_pos < 0 or cs_pos < 0 or blame_pos < 0 or cs_pos > blame_pos:
         fails.append("AC2: cs_has_work fill must precede the gated blame_ok line in aura_typed_audit_fill_from_live_tc")
 
@@ -96,7 +104,7 @@ def main() -> int:
 
     # ── AC4: runtime door + test hooks, no invent ──
     must("ac4171: issue stamp", "AC4 test issue stamp", test)
-    must("4171 AC1: commit refused under Production", "AC4 AC1 runtime", test)
+    must("4171 AC1: commit allowed (deny withdrawn — eval freeze)", "AC4 AC1 runtime", test)
     must("4171 AC2: Soft observe keeps commit allowed", "AC4 AC2 runtime", test)
     must("4171 AC3: no false positive on complete chain", "AC4 AC3 runtime", test)
     must("4171 AC4: vacuous empty→ok preserved when not mutated", "AC4 AC4 runtime", test)

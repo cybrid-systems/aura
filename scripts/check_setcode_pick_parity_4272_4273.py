@@ -20,6 +20,7 @@ ACs:
   AC4 #4273 source — eval primitives + serve emit_exec_result cite #4273
   AC5 build.py wiring + allowlist; no docs/design/4272-* or 4273-*
 """
+
 from __future__ import annotations
 
 import sys
@@ -43,8 +44,7 @@ def main() -> None:
     mb = (ROOT / "src/compiler/evaluator_mutation_boundary.cpp").read_text(encoding="utf-8")
     check("Issue #4272" in mb, "AC2: maybe_auto_guard cites #4272")
     check(
-        "eval_current_holds_shared_pin()" in mb
-        and "maybe_auto_guard_heap_mutate" in mb,
+        "eval_current_holds_shared_pin()" in mb and "maybe_auto_guard_heap_mutate" in mb,
         "AC2: heap-mutate short-circuit under eval-current pin",
     )
 
@@ -74,9 +74,7 @@ def main() -> None:
         "check_setcode_pick_parity_4272_4273.py" in allow,
         "AC5: root_check_allowlist entry",
     )
-    design = list((ROOT / "docs/design").glob("4272-*")) + list(
-        (ROOT / "docs/design").glob("4273-*")
-    )
+    design = list((ROOT / "docs/design").glob("4272-*")) + list((ROOT / "docs/design").glob("4273-*"))
     check(not design, "AC5: no docs/design/4272-* or 4273-*")
     print("OK: Issues #4272+#4273 set-code/pick parity — all AC rows satisfied")
 

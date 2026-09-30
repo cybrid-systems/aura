@@ -311,8 +311,23 @@ extern "C" void aura_typed_audit_fill_from_live_tc(
     // as `no member named 'last_blame_chain'` when the wrapper is
     // forward-declared only.
     const auto& bc = tc->constraint_system().last_blame_chain();
-    const bool mutated = evaluator->txn_dirty() || out->cs_has_work;
-    out->blame_ok = bc.is_complete() || (!mutated && bc.frames.empty());
+    // Issue #4171 hotfix withdrawal (bisect-proven): the mutated-gated
+    // vacuous arm keyed on txn_dirty / cs_has_work — latches that persist
+    // across the whole non-composite eval flow — kept blame_ok=false for
+    // EVERY post-mutation consult. The deny rode
+    // commit_readiness_live_policy() into
+    // build_type_linear_commit_proof_from_live
+    // (p.would_allow_commit=false) and the #3224/#3130 IR/JIT entry gates,
+    // which then served stale pre-mutation closures for the rest of the
+    // process: test_shape_soa_storm_batch #3583 AC1 eval freeze (f/g frozen
+    // at the first mutation's value from iter 3 on; probe — forcing
+    // blame_ok=true → 14/14 members green; first bad 96fc3f0c3, bisected;
+    // boundary-depth keying does NOT help — the freeze-causing consults all
+    // run in-boundary). Restores the vacuous face. #4171's hole (empty blame
+    // chain at Agent audit-join commits) must be re-landed scoped to the
+    // commit-audit consumer only — it must not ride the eval-serving
+    // license.
+    out->blame_ok = bc.is_complete() || bc.frames.empty();
     // truncated_reverify: from the same DeltaBlameChain face used by
     // commit_readiness()'s truncate branch (#2458). Quiet (no blame
     // chain) → face bit false → commit_readiness path unchanged.

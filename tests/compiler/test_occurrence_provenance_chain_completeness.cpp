@@ -265,24 +265,27 @@ static void ac8_blame_ok_vacuous_mutated() {
                  "Production ===");
     CHECK(true, "ac4171: issue stamp");
 
-    // AC-4171-1: Production (blame_hard) + mutated CS + EMPTY frames →
-    // fill reports blame_ok=false → commit_readiness hard-rejects.
+    // AC-4171-1 (hotfix withdrawal): Production + mutated CS + EMPTY frames →
+    // the vacuous face is RESTORED. The #4171 deny rode the eval-serving
+    // license (TypeLinearCommitProof + #3224/#3130 IR/JIT gates) and froze
+    // mutation tracking process-wide (test_shape_soa_storm_batch #3583 AC1
+    // eval freeze; probe: blame_ok=true → 14/14 members green). The deny
+    // must be re-landed scoped to the commit-audit consumer only.
     {
-        std::println("\n--- #4171 AC1: mutated CS + empty frames → blame_hard reject ---");
+        std::println("\n--- #4171 AC1: vacuous empty→ok restored (hotfix withdrawal) ---");
         CompilerService cs;
         cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/true);
         CommitReadinessInput in{};
         in.blame_hard = true;
         aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
         CHECK(in.cs_has_work, "4171 AC1: fill reports cs_has_work (mutated face)");
-        CHECK(!in.blame_ok, "4171 AC1: empty frames after mutate → blame_ok false");
+        CHECK(in.blame_ok, "4171 AC1: vacuous empty→ok restored (blame_ok true)");
         const auto r = commit_readiness(in);
-        CHECK(!r.would_allow_commit, "4171 AC1: commit refused under Production");
-        CHECK(r.force_reason == "blame", "4171 AC1: force_reason == blame");
+        CHECK(r.would_allow_commit, "4171 AC1: commit allowed (deny withdrawn — eval freeze)");
     }
 
-    // AC-4171-2: Soft + same mutated/empty state → observe-only allow
-    // (vacuous empty→ok kept for Soft via the #2221 observe arm).
+    // AC-4171-2: Soft + mutated/empty state → observe-only allow (vacuous
+    // empty→ok restored by the hotfix withdrawal; #2221 observe arm unchanged).
     {
         std::println("\n--- #4171 AC2: Soft + mutated CS + empty frames → observe allow ---");
         CompilerService cs;
@@ -290,10 +293,9 @@ static void ac8_blame_ok_vacuous_mutated() {
         CommitReadinessInput in{};
         // blame_hard stays false (Soft).
         aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
-        CHECK(!in.blame_ok, "4171 AC2: fill still reports the broken blame face");
+        CHECK(in.blame_ok, "4171 AC2: vacuous empty→ok restored");
         const auto r = commit_readiness(in);
         CHECK(r.would_allow_commit, "4171 AC2: Soft observe keeps commit allowed");
-        CHECK(r.force_reason == "blame", "4171 AC2: force_reason == blame (observe bp 5000)");
     }
 
     // AC-4171-3: complete blame frames → allow under Production (no
