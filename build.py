@@ -8565,6 +8565,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4264 serve set-code parity linter failed - run python3 scripts/check_serve_setcode_parity_4264.py")
         return r
+    # Issue #4265 (correctness): Soft pick-best eval under serve-async sock
+    # stress reported non-int results (the scores list or <error>). Verified
+    # NOT reproducible at HEAD 985fbb8a0 — the faces are covered by #4264
+    # (session std prelude + loader adopt-if-held) and #4232 (registry prim
+    # fallback): unit door AC20/AC21 green, and the 16-step WAVE10
+    # --serve-async sequence (direct calls + the literal let-form + replay
+    # eval-currents) returns the exact scalar max for every call. Ship = the
+    # regression doors pinning the pick-best contract in test_primcall_narg
+    # (AC20 repeat-call freshness, AC21 set-code + eval-current session
+    # parity, AC22 source gate). No test_issue_4265.cpp per #81934, no
+    # docs/design/4265-* per #1655.
+    pbc4265_script = ROOT / "scripts" / "check_pick_best_call_cache_4265.py"
+    if not pbc4265_script.exists():
+        fail(f"missing {pbc4265_script}")
+        return 1
+    r = run([sys.executable, str(pbc4265_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4265 pick-best call-cache linter failed - run python3 scripts/check_pick_best_call_cache_4265.py")
+        return r
     # Issue #4058 (security): capability_stack_ (with-capability pushes)
     # satisfied Evaluator::has_capability, so a zero-grant Agent could read
     # host files, clear process exception stacks, and open the
