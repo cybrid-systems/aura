@@ -49,6 +49,10 @@ RESOLVE_AUDIT_MID = re.compile(
     r"inline\s+std::uint64_t\s*\nresolve_audit_mutation_id\s*\(",
     re.MULTILINE,
 )
+PEEK_AUDIT_MID = re.compile(
+    r"inline\s+std::uint64_t\s+peek_audit_mutation_id\s*\(",
+    re.MULTILINE,
+)
 COMPOSITE_BATCH_JOIN_MID = re.compile(
     r"\binline\s+std::uint64_t\s+pin_composite_batch_join_mid\s*\(",
     re.MULTILINE,
@@ -133,13 +137,15 @@ def _check_require_effect_cascade(esec: str) -> list[str]:
 
 
 def _check_resolve_audit_mid(tma: str) -> list[str]:
-    """resolve_audit_mutation_id cascade: caller_mid -> boundary note -> epoch -> refuse.
+    """peek/resolve cascade: caller_mid -> boundary note -> epoch -> refuse.
 
-    Quota MUST NOT appear in this cascade under production. The TypedMid
-    (proof-stamp v_read) SSOT leg moved downstream to
-    pin_composite_batch_join_mid (#4098/#3016 AC4 — a leftover stamp after
-    steal must not publish as session mid), pinned by
-    _check_composite_batch_join_mid below.
+    Quota MUST NOT appear in either block under production. Issue #4241:
+    the caller_mid -> boundary -> epoch cascade moved into
+    peek_audit_mutation_id (pure join read; resolve delegates to it and
+    owns only the TLS-guarded refuse emit), so the epoch anchor + #3296
+    cite are pinned on the peek block. The TypedMid (proof-stamp v_read)
+    SSOT leg lives downstream in pin_composite_batch_join_mid
+    (#4098/#3016 AC4), pinned by _check_composite_batch_join_mid below.
     """
     fails: list[str] = []
     block = _find_func_block(tma, RESOLVE_AUDIT_MID)
@@ -154,21 +160,33 @@ def _check_resolve_audit_mid(tma: str) -> list[str]:
             f"(line ~{line_idx + 1}); SSOT is caller_mid -> TypedMid -> epoch -> refuse "
             f"(#3296 AC1)"
         )
-    # Issue #4106 note: the TypedMid (proof-stamp v_read) leg lives in
-    # pin_composite_batch_join_mid since the #4098/#3016 AC4 restructure —
-    # pinned by _check_composite_batch_join_mid. This cascade pins the
-    # epoch anchor + quota forbid only.
-    ep_pos = body.find("::aura::core::current_mutation_epoch")
-    if ep_pos < 0:
-        fails.append(
-            f"typed_mutation_audit.h: resolve_audit_mutation_id cascade missing "
-            f"epoch anchor (ep_pos={ep_pos}, line ~{line_idx + 1})"
-        )
-    if not ISSUE_3296_ANCHOR.search(body):
-        fails.append(
-            f"typed_mutation_audit.h: resolve_audit_mutation_id missing 'Issue #3296' "
-            f"comment anchor (line ~{line_idx + 1})"
-        )
+    # Issue #4241: epoch anchor + #3296 cite moved to peek_audit_mutation_id
+    # (the cascade owner after the peek/resolve split). Resolve keeps the
+    # refuse emit only; this pins the epoch anchor on the peek block.
+    peek_block = _find_func_block(tma, PEEK_AUDIT_MID)
+    if not peek_block:
+        fails.append("typed_mutation_audit.h: peek_audit_mutation_id block not found (#4241 peek/resolve split)")
+    else:
+        peek_line, peek_body_lines = peek_block
+        peek_body = _slice(tma, peek_line, peek_body_lines + 1)
+        if CASCADE_QUOTA_FORBID.search(peek_body):
+            fails.append(
+                f"typed_mutation_audit.h: peek_audit_mutation_id cascade MUST NOT use "
+                f"process_resource_quota_manager().provenance_mutation_id under "
+                f"production (line ~{peek_line + 1}); SSOT is caller_mid -> boundary "
+                f"-> epoch -> refuse (#3296 AC1)"
+            )
+        ep_pos = peek_body.find("::aura::core::current_mutation_epoch")
+        if ep_pos < 0:
+            fails.append(
+                f"typed_mutation_audit.h: peek_audit_mutation_id cascade missing "
+                f"epoch anchor (ep_pos={ep_pos}, line ~{peek_line + 1})"
+            )
+        if not ISSUE_3296_ANCHOR.search(peek_body):
+            fails.append(
+                f"typed_mutation_audit.h: peek_audit_mutation_id missing 'Issue #3296' "
+                f"comment anchor (line ~{peek_line + 1})"
+            )
     return fails
 
 

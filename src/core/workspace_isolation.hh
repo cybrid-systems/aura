@@ -500,10 +500,19 @@ struct WorkspaceIsolationPolicy {
         // epoch=0 stays 0 (no phantom mid=1). Soft/Off keeps TypedMid-then-
         // epoch with 0 terminal (#2493 Soft mid=1 is EffectDeny Soft arms).
         // Weak hook → epoch when audit TU not linked.
-        const auto mid =
-            deny_mid_resolver
-                ? deny_mid_resolver()
-                : ((aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch);
+        // Issue #4241: resolve the SE-join mid ONLY on deny — the deny SE is
+        // its only consumer (#2530: allows stay private-ring only), and the
+        // resolver runs the commit/deny emit face (join → resolve →
+        // mid-fallback-refused SE). Resolving on the ALLOW path made every
+        // read-style probe that passes isolation write a durable refuse row
+        // before require_effect's zero-side-effect decide. Mirrors the
+        // #3011 resolve-only-on-deny fiber pattern; allow entries join
+        // epoch (informational, private ring).
+        const auto mid = denied ? (deny_mid_resolver ? deny_mid_resolver()
+                                                     : ((aura_isolation_deny_se_mid != nullptr)
+                                                            ? aura_isolation_deny_se_mid()
+                                                            : epoch))
+                                : epoch;
 
         const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
         IsolationAuditEntry entry{};

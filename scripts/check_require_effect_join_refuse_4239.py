@@ -98,8 +98,12 @@ def main() -> int:
         "AC1",
     )
     must("#4239", "AC1 cite", re_fn)
-    must("typed_audit::join_audit_and_se_mid(0)", "AC1 join SSOT", re_fn)
-    must("return false; // #4239: absolute refuse", "AC1 refuse", re_fn)
+    # Issue #4241 compose: the probe face resolves via peek_audit_mutation_id
+    # (pure join read — same cascade, silent); the eager join→resolve emit on
+    # this read-style face is superseded. Commit/deny faces keep join/resolve.
+    must("typed_audit::peek_audit_mutation_id(0)", "AC1 read-style peek resolver (#4241)", re_fn)
+    absent("join_audit_and_se_mid(0)", "AC1 no eager join emit on the probe face (#4241)", re_fn)
+    must("return false; // fail-closed, zero side effect (no refuse SE, #4241)", "AC1 refuse", re_fn)
     # The proof stamp is read exactly once in the function — the Soft SSOT
     # pre-compute. The hard-face resurrection chain is gone.
     proof_reads = count(re_fn, "last_type_linear_commit_proof_stamp_v_read")
@@ -113,7 +117,7 @@ def main() -> int:
     # Ordering: the refuse fires inside the hard branch, before the Soft
     # else-if mid=1 arm.
     hard_at = re_fn.find("if (hard) {")
-    refuse_at = re_fn.find("return false; // #4239")
+    refuse_at = re_fn.find("return false; // fail-closed, zero side effect (no refuse SE, #4241)")
     soft_at = re_fn.find("mid = 1; // Soft only")
     if hard_at == -1 or refuse_at == -1 or soft_at == -1 or not (hard_at < refuse_at < soft_at):
         fails.append("AC1: refuse not ordered inside the hard branch (hard < refuse < soft)")

@@ -4632,6 +4632,52 @@ inline std::atomic<std::uint64_t> g_session_audit_mid_gen{0};
     return h;
 }
 
+// Issue #3066: single join mid for composite / lockless batch so typed
+// deny + SE trail share last_stamped_audit_mid. Soft / quiet: no extra.
+// #4241: block moved above peek/resolve — peek reads the composite pin
+// first, exactly like join_audit_and_se_mid, so a read-style caller
+// observes the same mid resolve would return.
+inline constexpr int kCompositeAuditSeJoinIssue = 3066;
+inline thread_local std::uint64_t g_tls_composite_batch_join_mid = 0;
+inline std::atomic<std::uint64_t> g_last_composite_batch_join_mid{0};
+inline std::atomic<std::uint64_t> g_composite_batch_join_pin_total{0};
+inline std::atomic<std::uint64_t> g_composite_batch_se_join_total{0};
+inline std::atomic<std::uint32_t> g_composite_audit_se_join_wired{1};
+
+// Issue #4241: read-style mid resolution — pure join read with ZERO side
+// effects on the production/Full refuse face (no ring/WAL row, no refuse
+// counters, no TLS flips). Cascade mirrors join_audit_and_se_mid exactly
+// (composite pin → caller → boundary noted → Mutation epoch) so a peek
+// caller observes the same mid resolve would return; when everything
+// upstream is zero peek returns 0 SILENTLY and the caller owns the
+// zero-side-effect decide (require_effect fails closed without writing a
+// durable mid-fallback-refused row for a probe that never mutated —
+// pre-Guard / session-less probes at #3966). Commit/deny faces call
+// resolve_audit_mutation_id, which wraps peek and owns the refuse emit
+// (#2836/#3054). Soft / Sampled: last-resort process-origin stamp,
+// identical to resolve (gen counter + fresh id).
+[[nodiscard]] inline std::uint64_t peek_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
+    if (g_tls_composite_batch_join_mid != 0)
+        return g_tls_composite_batch_join_mid;
+    if (caller_mid != 0)
+        return caller_mid;
+    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        return g_tls_boundary_audit_mid;
+    // Issue #3296: Mutation epoch beats refuse — the WorkspaceEpoch join key
+    // (#2149). Quota mid stays out of this cascade. Same leg resolve used
+    // before the #4241 split; peek now owns caller → boundary → epoch.
+    const auto ep = ::aura::core::current_mutation_epoch();
+    if (ep != 0)
+        return ep;
+    const bool hard_deny_eligible =
+        production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard_deny_eligible)
+        return 0; // refuse face (#4241) — peek is silent; the emit belongs to resolve
+    g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add(
+        1, std::memory_order_relaxed);
+    return next_audit_mutation_id();
+}
+
 // Issue #2493: canonical mid resolution for audit paths that did not
 // thread a caller mid. Preference order (mirrors #2384 require_effect
 // stamping so SE ↔ TypedMutationAudit ↔ grant epoch stay joined):
@@ -4646,63 +4692,50 @@ inline std::atomic<std::uint64_t> g_session_audit_mid_gen{0};
 // resolve-time hard-deny (SLO gate remains on schedule admission #2630).
 // Soft / Sampled keep Soft fallback (#2493 AC4, #2635 AC3, #2836 AC2).
 // #2636 note: AuditStrategy has {Off, Sampled, Full} only — no Strict enum.
+// Issue #4241: the cascade (and the Soft stamp) live in
+// peek_audit_mutation_id above — single SSOT, no second model. resolve
+// adds ONLY the commit/deny-face refuse emit on top. Read-style faces
+// call peek directly and stay silent: mid resolution must not emit a
+// durable SE before the caller's zero-side-effect decide (require_effect
+// fail-closed probe, #4241 AC1).
 [[nodiscard]] inline std::uint64_t
 resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
-    if (caller_mid != 0)
-        return caller_mid;
-    // Issue #3296 AC1: a live boundary note is the join key for
-    // grant.bound_mutation_id / SE.mutation_id /
-    // AuditWalRecord.provenance_mutation_id. Issue #4098: that key is
-    // g_tls_boundary_audit_mid, the same early return as
-    // join_audit_and_se_mid. The type-linear proof stamp is not the
-    // session mid — a leftover note after steal must not publish
-    // last_type_linear_commit_proof_stamp as session_mid_at_enter_
-    // (#3016 AC4). Host-quota mid stays out of this cascade.
-    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
-        return g_tls_boundary_audit_mid;
-    const auto ep = ::aura::core::current_mutation_epoch();
-    if (ep != 0)
-        return ep;
+    const auto mid = peek_audit_mutation_id(caller_mid);
+    if (mid != 0)
+        return mid;
     // Issue #2836 / #2635 lineage: production mid-fallback absolute
-    // zero-tolerance. hard_deny_eligible = production_defaults || Full
-    // (same gate shape as #2635; behavior is now absolute refuse, not
-    // rate-based would_arm_degraded). Soft/Sampled fall through.
-    const bool hard_deny_eligible =
-        production_defaults_active() || get_strategy() == AuditStrategy::Full;
-    if (hard_deny_eligible) {
-        // Absolute refuse: no process-origin join stamp into the trail.
-        // Callers treat mid==0 as deny / re-stamp or surface
-        // "mid-fallback-refused" (#2836 AC4). Distinct refuse metric —
-        // does NOT bump audit_mid_fallback_gen_total (#2836 AC1).
-        g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.fetch_add(
-            1, std::memory_order_relaxed);
-        // Issue #3054: exactly one joinable SE (ring + WAL when enabled).
-        // Soft never reaches this branch. TLS suppresses nested re-resolve.
-        if (!g_tls_mid_fallback_refuse_se_emitted) {
-            g_tls_mid_fallback_refuse_se_emitted = true;
-            using ::aura::core::security_event::g_security_event_ring;
-            using ::aura::core::security_event::SecurityEventKind;
-            using ::aura::core::security_event_wal::emit_security_event_durable;
-            const auto tenant = audit_se_join_tenant_id();
-            if (tenant == 0)
-                g_typed_mutation_audit_counters.process_se_tenant_unset_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            emit_security_event_durable(SecurityEventKind::InvariantFail, tenant,
-                                        /*mid=*/0, /*epoch=*/ep, /*effect_bits=*/0,
-                                        "resolve-audit-mid", "mid-fallback-refused",
-                                        /*denied=*/true, /*fiber=*/audit_se_join_fiber_id());
-            const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
-            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
-                seq == 0 ? 0 : seq - 1, std::memory_order_relaxed);
-            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        return 0;
-    }
-    // Soft / Sampled: last-resort process-origin stamp + gen counter.
-    g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add(
+    // zero-tolerance — peek returned 0, so this is the production/Full
+    // face with every upstream mid zero. Absolute refuse: no
+    // process-origin join stamp into the trail. Callers treat mid==0 as
+    // deny / re-stamp or surface "mid-fallback-refused" (#2836 AC4).
+    // Distinct refuse metric — does NOT bump audit_mid_fallback_gen_total
+    // (#2836 AC1).
+    g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.fetch_add(
         1, std::memory_order_relaxed);
-    return next_audit_mutation_id();
+    // Issue #3054: exactly one joinable SE (ring + WAL when enabled).
+    // Soft never reaches this branch. TLS suppresses nested re-resolve.
+    // Issue #4241: epoch is 0 here by construction (peek already consumed
+    // any non-zero epoch), same value the pre-split emit used.
+    if (!g_tls_mid_fallback_refuse_se_emitted) {
+        g_tls_mid_fallback_refuse_se_emitted = true;
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto tenant = audit_se_join_tenant_id();
+        if (tenant == 0)
+            g_typed_mutation_audit_counters.process_se_tenant_unset_total.fetch_add(
+                1, std::memory_order_relaxed);
+        emit_security_event_durable(SecurityEventKind::InvariantFail, tenant,
+                                    /*mid=*/0, /*epoch=*/0, /*effect_bits=*/0, "resolve-audit-mid",
+                                    "mid-fallback-refused",
+                                    /*denied=*/true, /*fiber=*/audit_se_join_fiber_id());
+        const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
+            seq == 0 ? 0 : seq - 1, std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    return 0;
 }
 
 // Issue #2814 M7: TLS link between trail Success and invariant enforcement.
@@ -4731,15 +4764,6 @@ inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
     g_tls_boundary_audit_mid = mid;
     g_tls_boundary_audit_noted = true;
 }
-
-// Issue #3066: single join mid for composite / lockless batch so typed
-// deny + SE trail share last_stamped_audit_mid. Soft/quiet: no extra.
-inline constexpr int kCompositeAuditSeJoinIssue = 3066;
-inline thread_local std::uint64_t g_tls_composite_batch_join_mid = 0;
-inline std::atomic<std::uint64_t> g_last_composite_batch_join_mid{0};
-inline std::atomic<std::uint64_t> g_composite_batch_join_pin_total{0};
-inline std::atomic<std::uint64_t> g_composite_batch_se_join_total{0};
-inline std::atomic<std::uint32_t> g_composite_audit_se_join_wired{1};
 
 inline void clear_boundary_audit_mid() noexcept {
     g_tls_boundary_audit_mid = 0;
@@ -4815,8 +4839,18 @@ inline void clear_invariant_deny_se_tls() noexcept {
 inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
                                    std::int64_t fiber_id, std::uint64_t epoch, std::string_view op,
                                    std::string_view deny_kind) noexcept {
-    if (mid == 0)
-        return; // production refuse path already emitted mid-fallback-refused (#3054)
+    if (mid == 0) {
+        // Issue #4241: read-style faces resolve via peek (no emit), so a
+        // deny face receiving mid=0 no longer implies the refuse SE exists.
+        // Guarantee the joinable evidence here: hard face resolves (TLS-
+        // guarded, one per cascade) and emits mid-fallback-refused;
+        // Soft/Sampled keeps the legacy silent early return (no refuse
+        // branch, contract). The mid=0 deny row itself is still never
+        // invented (#3054).
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+            resolve_audit_mutation_id(0);
+        return;
+    }
     // Issue #3319: production_defaults_active (any strategy) always emits.
     // Soft/Off and Sampled-without-production stay zero-cost.
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))

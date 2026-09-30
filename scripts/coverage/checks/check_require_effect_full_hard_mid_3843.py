@@ -10,7 +10,9 @@ phantom mid=1 while Typed trail refused mid=0.
 
 Contract (one row per AC):
   AC1  require_effect hard = production_defaults || Full; mid==0 refuses
-       (join_audit_and_se_mid then return false); no phantom mid=1 invent
+       (read-style peek_audit_mutation_id(0) since #4241 — the probe face
+       must NOT eagerly join+emit via join_audit_and_se_mid(0) — then
+       return false); no phantom mid=1 invent
   AC2  Soft-only mid=1 observe stamp retained (else-if mid==0 → mid=1)
   AC3  Extends test_audit_mutation_id_unify; linter + grandfather +
        manifest + build.py; not a dup of #3837; no invent / docs/design
@@ -60,15 +62,19 @@ def main() -> int:
         fails.append("AC1: Evaluator::require_effect not found")
         re_win = ""
     else:
-        re_win = sec[re : re + 4000]
+        re_win = sec[re : re + 6000]
 
     # AC1 — hard face includes Full; refuse on join mid==0.
     must("Issue #3843", "AC1 cite", sec)
     must("AuditStrategy::Full", "AC1 Full in require_effect", re_win)
     must("production_defaults_active()", "AC1 production_defaults in hard", re_win)
     # Issue #3966: the hard path joins via the 0-caller form (live session
-    # mid, not the leftover TypedMid variable).
-    must("typed_audit::join_audit_and_se_mid(0)", "AC1 join on hard path", re_win)
+    # mid, not the leftover TypedMid variable). Issue #4241: the probe face
+    # resolves via peek_audit_mutation_id(0) — same cascade, silent on the
+    # refuse face; the eager join_audit_and_se_mid(0) emit landed BEFORE
+    # require_effect's zero-side-effect decide and is now forbidden here.
+    must("typed_audit::peek_audit_mutation_id(0)", "AC1 read-style peek on hard path (#4241)", re_win)
+    must_not("join_audit_and_se_mid(0)", "AC1 no eager join emit on probe path (#4241)", re_win)
     must("if (mid == 0)", "AC1 mid==0 refuse", re_win)
     must("return false", "AC1 refuse return", re_win)
     if "AuditStrategy::Full" not in re_win and "production_hard_face_active()" not in re_win:

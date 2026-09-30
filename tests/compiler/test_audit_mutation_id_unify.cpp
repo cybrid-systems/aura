@@ -1487,7 +1487,11 @@ static void ac4098_boundary_mid_not_proof_stamp() {
     CHECK(tma.find("inline std::uint64_t\nresolve_audit_mutation_id") != std::string::npos,
           "4098: resolve signature line break kept (#3296)");
     CHECK(tma.find("Issue #3296") != std::string::npos, "4098: header still cites #3296");
-    const auto resolve_pos = tma.find("resolve_audit_mutation_id(std::uint64_t caller_mid");
+    // Issue #4241: the caller_mid → boundary → epoch cascade (and the
+    // boundary-mid return this AC pins) lives in peek_audit_mutation_id —
+    // resolve delegates to it and owns only the refuse emit. Anchor the
+    // slice at the cascade owner.
+    const auto resolve_pos = tma.find("peek_audit_mutation_id(std::uint64_t caller_mid");
     const auto note_pos = tma.find("inline void note_boundary_audit_mid", resolve_pos);
     CHECK(resolve_pos != std::string::npos && note_pos != std::string::npos,
           "4098: resolve body located");
