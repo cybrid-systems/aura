@@ -124,6 +124,27 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             return r;
         }
 
+        // Issue #4272 / #3917 parity: extra close-paren at form top level is a
+        // hard parse error for parse_to_flat (set-code / CompilerService), not
+        // only the oneshot CLI sexp splitter. Soft set-code used to skip the
+        // leftover ')' tokens, wrap the truncated prefix + trailing forms in
+        // begin, and return success — host oneshot hard-failed (empty CASE)
+        // while Soft scored full hits (soft_score_inflate / course-schedule).
+        auto hard_fail_extra_close = [&](const Token& tok) {
+            auto loc = aura::diag::SourceLocation{tok.line, tok.column, 0};
+            auto msg = std::string("unexpected ')'");
+            auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
+            if (r.error.empty())
+                r.error = formatted;
+            r.errors.push_back({msg, loc});
+            r.root = NULL_NODE;
+            r.success = false;
+        };
+        if (next.kind == TokenKind::RParen) {
+            hard_fail_extra_close(next);
+            return r;
+        }
+
         // Multiple forms → wrap in begin
         std::vector<NodeId> exprs;
         exprs.push_back(r.root);
@@ -131,9 +152,18 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             auto e = parse_expr(s);
             if (e == NULL_NODE) {
                 auto tok = s.lex.peek();
+                if (tok.kind == TokenKind::RParen) {
+                    // Issue #4272: do not skip-and-recover past top-level ')'
+                    hard_fail_extra_close(tok);
+                    return r;
+                }
                 if (tok.kind != TokenKind::EndOfFile) {
                     record_error("expected expression, got " + token_desc(tok), tok);
                     e = parse_expr(s); // try again after skip
+                    if (e == NULL_NODE && s.lex.peek().kind == TokenKind::RParen) {
+                        hard_fail_extra_close(s.lex.peek());
+                        return r;
+                    }
                 }
                 if (s.lex.eof())
                     break;
@@ -143,6 +173,10 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             if (s.lex.eof())
                 break;
             next = s.lex.peek();
+            if (next.kind == TokenKind::RParen) {
+                hard_fail_extra_close(next);
+                return r;
+            }
         } while (next.kind != TokenKind::EndOfFile);
 
         r.root = s.flat.add_begin(exprs);

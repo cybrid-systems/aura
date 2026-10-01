@@ -139,27 +139,84 @@ int main() {
         std::println("\n--- AC7 (#4272): vector-set! under set-code + eval-current ---");
         setenv("AURA_SANDBOX", "off", 1);
         setenv("AURA_PIPELINE_STRICT", "0", 1);
-        CompilerService cs;
-        const std::string src =
-            "(let ((v (make-vector 2 0))) (vector-set! v 0 7) (vector-ref v 0))";
-        auto sc = cs.eval(std::string("(set-code \"") + src + "\")");
-        CHECK(sc.has_value(), "AC7: set-code accepts vector-set! program");
-        auto r = cs.eval("(eval-current)");
-        CHECK(r.has_value(), "AC7: eval-current completes");
-        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 7,
-              "AC7: vector-set! under eval-current -> 7 (not soft <error>)");
-        // hash-set! face (same #3235 auto-Guard path)
-        const std::string src_h = "(let ((h (make-hash))) (hash-set! h 1 9) (hash-ref h 1 -1))";
-        auto sc2 = cs.eval(std::string("(set-code \"") + src_h + "\")");
-        CHECK(sc2.has_value(), "AC7: set-code hash-set! program");
-        auto r2 = cs.eval("(eval-current)");
-        CHECK(r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 9,
-              "AC7: hash-set! under eval-current -> 9");
+        {
+            CompilerService cs;
+            const std::string src =
+                "(let ((v (make-vector 2 0))) (vector-set! v 0 7) (vector-ref v 0))";
+            auto sc = cs.eval(std::string("(set-code \"") + src + "\")");
+            CHECK(sc.has_value(), "AC7: set-code accepts vector-set! program");
+            auto r = cs.eval("(eval-current)");
+            CHECK(r.has_value(), "AC7: eval-current completes");
+            CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 7,
+                  "AC7: vector-set! under eval-current -> 7 (not soft <error>)");
+        }
+        // Fresh CS for hash-set! face (same #3235 auto-Guard path). A second
+        // set-code in the vector-set! CS can leave residual workspace/env that
+        // makes hash-ref observe a non-int under LLVM RelWithDebInfo; isolate.
+        {
+            CompilerService cs;
+            // Require std/hash inside the set-code'd source (#4264 adopt path)
+            // so make-hash binds under a fresh CompilerService without relying
+            // on prior AC6 process residue / Soft oneshot prelude.
+            const std::string src_h =
+                "(begin (require \\\"std/hash\\\" all:) "
+                "(let ((h (make-hash))) (hash-set! h 1 9) (hash-ref h 1 -1)))";
+            auto sc2 = cs.eval(std::string("(set-code \"") + src_h + "\")");
+            CHECK(sc2.has_value(), "AC7: set-code hash-set! program");
+            auto r2 = cs.eval("(eval-current)");
+            CHECK(r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 9,
+                  "AC7: hash-set! under eval-current -> 9");
+        }
         CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp", "Issue #4272"),
               "AC7: maybe_auto_guard cites #4272");
         CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp",
                             "eval_current_holds_shared_pin()"),
               "AC7: heap-mutate exempt under eval-current pin");
+    }
+
+    // ── AC8 (#4272 over-count): extra ) must fail set-code like oneshot ──
+    // WAVE16 course-schedule: Soft set-code recovered past leftover ')' after
+    // a truncated begin, wrapped trailing forms, and scored 10/10 while
+    // oneshot (#3917 CLI splitter) hard-failed with empty CASE. parse_to_flat
+    // now fails closed on top-level unexpected ')' (Issue #4272 / #3917 parity).
+    // set-code returns make_merr("parse", ...) as an EvalValue pair (Result
+    // still has_value) — Soft serve surfaces that as status=error.
+    {
+        std::println("\n--- AC8 (#4272): set-code rejects extra close-paren ---");
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        CompilerService cs;
+        auto merr_kind_is = [&](const std::string& set_code_arg, std::string_view expect) -> bool {
+            auto r = cs.eval(std::string("(set-code \"") + set_code_arg + "\")");
+            if (!r || !aura::compiler::types::is_pair(*r))
+                return false;
+            auto pidx = aura::compiler::types::as_pair_idx(*r);
+            auto& pairs = cs.evaluator().pairs();
+            if (pidx >= pairs.size())
+                return false;
+            auto car = pairs[pidx].car;
+            if (!aura::compiler::types::is_string(car))
+                return false;
+            auto& heap = cs.evaluator().string_heap_mut();
+            auto idx = aura::compiler::types::as_string_idx(car);
+            if (idx >= heap.size())
+                return false;
+            return heap[idx] == expect;
+        };
+        CHECK(merr_kind_is("(begin (define x 1) x))", "parse"),
+              "AC8: extra top-level ) → parse merr (oneshot parity)");
+        CHECK(merr_kind_is("(begin (define a 1) (define b (lambda () a))))) "
+                           "(define c 2) c)",
+                           "parse"),
+              "AC8: truncated-begin + trailing forms → parse merr");
+        auto ok = cs.eval("(set-code \"(begin (define x 1) x)\")");
+        CHECK(ok.has_value() && aura::compiler::types::is_bool(*ok) &&
+                  aura::compiler::types::as_bool(*ok),
+              "AC8: balanced source still set-code #t");
+        CHECK(file_contains("src/parser/parser_impl.cpp", "Issue #4272"),
+              "AC8: parse_to_flat cites #4272 hard-fail");
+        CHECK(file_contains("src/parser/parser_impl.cpp", "hard_fail_extra_close"),
+              "AC8: hard_fail_extra_close helper present");
     }
 
     // ── AC4: source markers ──────────────────────────────────────────
