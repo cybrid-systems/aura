@@ -952,6 +952,20 @@ static void ac3978_soft_single_unchanged() {
           "3978 AC4: Soft 2-arg missing still fails (no owner gate)");
 }
 
+
+// Issue #4245: owner-scoped multi-eval reload skips peer slot clobber + epoch bump.
+static void ac4245_owner_scoped_reload_cite() {
+    std::println("\n--- #4245 AC: owner-filter staging + frozen epoch under multi-eval ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #4245") != std::string::npos, "4245: bridge cites #4245");
+    CHECK(br.find("owner_filter") != std::string::npos ||
+              br.find("owner_scoped_reload") != std::string::npos,
+          "4245: owner-scoped reload branch present");
+    CHECK(br.find("soft_stale.store(1") != std::string::npos, "4245: peer soft-stale on skip");
+    CHECK(read_file("tests/compiler/test_issue_4245.cpp").empty(), "4245: no invent");
+    CHECK(read_file("docs/design/4245-reload-owner.md").empty(), "4245: no docs/design");
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -982,6 +996,8 @@ int main() {
     ac4074_dlclose_waits_for_native();
     ac3978_2arg_prod_multi_no_owner();
     ac3978_soft_single_unchanged();
+    std::println("\n=== Issue #4245: multi-eval reload owner-scope ===");
+    ac4245_owner_scoped_reload_cite();
     ac7_cross_workspace_reject_2178();
 
     // ── Issue #2240: stable cross-workspace reject reason code ──
