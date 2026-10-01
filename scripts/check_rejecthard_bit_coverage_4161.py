@@ -161,6 +161,18 @@ def run_rows(texts: dict) -> list[str]:
     )
     must("steal_invariant_mask(StealInvariant inv)" in ss_h, "AC3: mask helper intact")
     must("Count = 7," in ss_h, "AC3: StealInvariant table stays 7 bits (no new bit)")
+    # Issue #4258: densify-in-flight composition sub-flag (not a new bit).
+    must("Issue #4258" in chaos, "AC3b/#4258: soak cites densify-in-flight residual")
+    must(
+        "steal_safety_last_reject_densify_in_flight_v_read" in chaos,
+        "AC3b/#4258: soak reads densify-busy sub-flag",
+    )
+    must(
+        "g_steal_safety_last_reject_densify_in_flight" in ss_h,
+        "AC3b/#4258: densify-busy sub-flag SSOT in header",
+    )
+    must("densify_in_flight_for" in ss_cpp, "AC3b/#4258: BoundarySafe consults densify_in_flight_for")
+    must("Count = 7," in ss_h, "AC3b/#4258: still 7 StealInvariant bits (composition-only)")
 
     # ── AC4: wiring + no invent ──
     must("check_rejecthard_bit_coverage_4161.py" in build, "AC4: build.py runs the linter")

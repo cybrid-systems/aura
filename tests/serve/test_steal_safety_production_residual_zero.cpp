@@ -924,6 +924,13 @@ int run_test_steal_safety_production_residual_zero() {
                   std::string::npos,
               "AC19: lifetime_proof attribution row (mask(LifetimeProofOk))");
         CHECK(chaos.find("Issue #4161") != std::string::npos, "AC19: harness cites #4161");
+        // Issue #4258: densify-in-flight composition probe (no new StealInvariant bit).
+        CHECK(chaos.find("Issue #4258") != std::string::npos, "AC19b/#4258: harness cites #4258");
+        CHECK(chaos.find("steal_safety_last_reject_densify_in_flight_v_read") != std::string::npos,
+              "AC19b/#4258: densify-busy sub-flag reader on soak samples");
+        CHECK(chaos.find("#4258: densify-busy RejectHard must set BoundarySafe bit") !=
+                  std::string::npos,
+              "AC19b/#4258: densify-busy → BoundarySafe attribution");
         CHECK(chaos.find("StealInvariant::EnvFrameOk") != std::string::npos,
               "AC19: mask via the existing StealInvariant table (#2929)");
         CHECK(chaos.find("StealInvariant::LifetimeProofOk") != std::string::npos,
@@ -934,6 +941,15 @@ int run_test_steal_safety_production_residual_zero() {
               "AC19: #3001 contract comment intact in steal_safety.h");
         CHECK(chaos.find("g_4161_") == std::string::npos, "AC19: no new g_4161_* counter");
         CHECK(sh.find("schema-4161") == std::string::npos, "AC19: no new query key");
+        const auto ss_cpp = read_file("src/serve/steal_safety.cpp");
+        CHECK(ss_cpp.find("densify_in_flight_for") != std::string::npos,
+              "AC19b/#4258: BoundarySafe consults densify_in_flight_for");
+        CHECK(sh.find("g_steal_safety_last_reject_densify_in_flight") != std::string::npos,
+              "AC19b/#4258: densify-busy sub-flag SSOT");
+        CHECK(sh.find("g_4258_") == std::string::npos, "AC19b/#4258: no g_4258_* counter");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_4258.cpp"),
+              "AC19b/#4258: no tests/serve/test_issue_4258.cpp per #81934");
         CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
                                        "test_issue_4161.cpp"),
               "AC19: no tests/serve/test_issue_4161.cpp per #81934");
