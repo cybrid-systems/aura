@@ -1442,10 +1442,29 @@ void clear_aot_staging() noexcept {
 void apply_aot_staging_to_live() noexcept {
     const std::uint64_t epoch = g_aot_table_epoch.load(std::memory_order_acquire);
     const auto owner = reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval);
+    // Issue #4245: production multi-eval reload must not clobber peer-owned
+    // slots (hard-invalidate owner-scope parity #3300/#3750). Skip peer
+    // overwrite and soft-stale the peer slot instead; only exchange slots
+    // owned by the reloading eval (or unowned). Soft/single-eval unchanged.
+    const bool owner_filter =
+        aura::compiler::typed_audit::production_defaults_active() &&
+        aura_aot_state_map_size() > 1 && owner != 0;
     for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
         if (!g_aot_staging[i].written)
             continue;
         auto& slot = g_aot_func_slots[i];
+        if (owner_filter) {
+            const auto slot_owner = slot.owner_eval.load(std::memory_order_acquire);
+            if (slot_owner != 0 && slot_owner != owner) {
+                // Peer owns live native at this index — soft-stale so probe
+                // refuses; leave fn_ptr + owner intact (no physical steal).
+                slot.soft_stale.store(1, std::memory_order_release);
+                // Clear written so commit_func_table_swap does not restamp
+                // this peer generation as if we applied the staging ptr.
+                g_aot_staging[i].written = false;
+                continue;
+            }
+        }
         const std::uintptr_t new_ptr = g_aot_staging[i].fn_ptr;
         const std::uintptr_t old_ptr = slot.fn_ptr.exchange(new_ptr, std::memory_order_acq_rel);
         if (old_ptr != 0 && old_ptr != new_ptr)
@@ -1468,17 +1487,89 @@ void commit_func_table_swap() {
     // leave written flags set until after this returns so generations
     // can be stamped to the new epoch (reload path). Reemit leaves
     // staging empty — loop is a no-op.
-    const std::uint64_t new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
-    for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
-        if (!g_aot_staging[i].written)
-            continue;
-        g_aot_func_slots[i].table_generation.store(new_epoch, std::memory_order_relaxed);
+    //
+    // Issue #4245: under production multi-eval with owner TLS, prefer
+    // owner-scoped reload commit parity with hard invalidate (#3300):
+    // freeze g_aot_table_epoch so peer dual-fresh stays green; fan peer
+    // soft-stale for reloaded names / hashes instead of a process-wide
+    // bump. Soft/single-eval keep the shared epoch advance.
+    const auto owner_ptr = g_aot_register_owner_eval
+                               ? g_aot_register_owner_eval
+                               : g_aot_reemit_owner_eval;
+    const bool owner_scoped_reload =
+        aura::compiler::typed_audit::production_defaults_active() &&
+        aura_aot_state_map_size() > 1 && owner_ptr != nullptr;
+
+    std::uint64_t new_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+    if (owner_scoped_reload) {
+        // Collect staged name hashes / names while holding the stable-id
+        // map, then soft-stale peers (name table + slot) without bumping
+        // the process table epoch.
+        std::vector<std::string> staged_names;
+        {
+            std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+            for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
+                if (!g_aot_staging[i].written)
+                    continue;
+                // Restamp owner-applied slots to current (frozen) epoch.
+                g_aot_func_slots[i].table_generation.store(new_epoch, std::memory_order_relaxed);
+                const auto nh = g_func_id_name_hash[i].load(std::memory_order_acquire);
+                if (nh == 0)
+                    continue;
+                for (const auto& [eval, inner] : g_eval_to_stable_func_id) {
+                    (void)eval;
+                    for (const auto& [name, binding] : inner) {
+                        if (binding.id == i) {
+                            staged_names.push_back(name);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for (const auto& name : staged_names) {
+            aura_aot_mark_peer_jit_name_soft_stale(name.c_str());
+            aura_aot_mark_peer_ir_name_soft_stale(name.c_str());
+            aura_aot_soft_stale_peer_slots_for_name(name.c_str(), owner_ptr);
+        }
+        // Also soft-stale peer slots that share a staged name-hash even
+        // when the stable-id map lacks a string (hash-only fallback).
+        for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
+            if (!g_aot_staging[i].written)
+                continue;
+            const auto nh = g_func_id_name_hash[i].load(std::memory_order_acquire);
+            if (nh == 0)
+                continue;
+            const auto want = reinterpret_cast<std::uintptr_t>(owner_ptr);
+            for (unsigned j = 0; j < kMaxAotFuncs; ++j) {
+                if (j == i)
+                    continue;
+                if (g_func_id_name_hash[j].load(std::memory_order_acquire) != nh)
+                    continue;
+                auto& peer = g_aot_func_slots[j];
+                if (peer.fn_ptr.load(std::memory_order_acquire) == 0)
+                    continue;
+                const auto slot_owner = peer.owner_eval.load(std::memory_order_acquire);
+                if (want != 0 && slot_owner == want)
+                    continue;
+                peer.soft_stale.store(1, std::memory_order_release);
+            }
+        }
+    } else {
+        new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+        for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
+            if (!g_aot_staging[i].written)
+                continue;
+            g_aot_func_slots[i].table_generation.store(new_epoch, std::memory_order_relaxed);
+        }
     }
     if (aot_metrics()) {
         aot_metrics()->aot_refcount_swaps_.fetch_add(1, std::memory_order_relaxed);
         aot_metrics()->aot_concurrent_safe_reloads_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #2012 / #1956: fan-out epoch listeners (reload + reemit).
+    // Owner-scoped reload still notifies with the frozen epoch so Agents
+    // see a commit edge without a process bump.
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
     // Issue #2668 / #2980: event-driven soft walk on the epoch-bump
     // edge. Closes the burst-mutation window that pure periodic Soft
@@ -1886,7 +1977,6 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
             return 0;
         }
     }
-    return ptr;
     return ptr;
 }
 
