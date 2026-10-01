@@ -1,0 +1,52 @@
+{
+  "issue": 4263,
+  "title": "Issue #4263: IrSoaColumnSlab upstream Arena-owned past 8KiB seed",
+  "ok": "OK #4263 ir_soa_column_slab_upstream: Arena-owned past seed; BMI pins kept",
+  "checks": [
+    {
+      "ac": "AC1-upstream",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "Issue #4263",
+        "kIrSoaColumnSlabArenaUpstreamIssue = 4263",
+        "IrSoaSlabUpstream",
+        "&upstream"
+      ]
+    },
+    {
+      "ac": "AC2-bmi",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "offsetof(IRFunctionSoA, block_dirty_) == 376",
+        "sizeof(IRFunctionSoA) == 448",
+        "bind_column_arena",
+        "kIrSoaColumnArenaIssue = 3833"
+      ]
+    },
+    {
+      "ac": "AC3-tests",
+      "path": "tests/compiler/test_ir_soa_layout_stamp.cpp",
+      "contains": [
+        "4263 AC1",
+        "4263 AC2",
+        "4263 AC3",
+        "kIrSoaColumnSlabArenaUpstreamIssue"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_ir_soa_column_slab_upstream_4263",
+        "Issue #4263"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4263.cpp",
+        "docs/design/4263-column-slab-upstream.md"
+      ]
+    }
+  ]
+}

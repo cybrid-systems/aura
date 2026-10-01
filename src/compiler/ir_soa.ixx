@@ -365,19 +365,54 @@ export struct BasicBlockSoA;
 // std::pmr::vector (already pmr). blocks_ stays std::vector (CFG meta).
 // Issue #3853: the slab side map is sharded (hash(key)%N) so multi-fiber
 // bind/grow does not serialize on one process-wide mutex.
+// Issue #4263: slab monotonic upstream is Arena-owned (chunk list), not
+// default new_delete_resource — large-fn growth past 8KiB seed stays local.
 export inline constexpr int kIrSoaColumnArenaIssue = 3833;
 // Issue #3853: shard the IR SoA column-slab side map (mirror ShapeProfiler
 // FnKey shards) so multi-fiber bind/grow no longer serialize on one
 // process-wide mutex. 24B IrSoaArenaColumn BMI pins stay (#3833).
 export inline constexpr int kIrSoaColumnSlabShardIssue = 3853;
 export inline constexpr std::size_t kIrSoaColumnSlabShardCount = 16;
+// Issue #4263: IrSoaColumnSlab upstream is slab-owned (not new_delete).
+export inline constexpr int kIrSoaColumnSlabArenaUpstreamIssue = 4263;
 
 namespace ir_soa_detail {
 
+    // Issue #4263: past-seed growth stays slab-owned (monotonic upstream
+    // chunks retained until slab drop) — not default new_delete_resource.
+    // Seed size unchanged (Soft dual-emit / small fns); BMI pins untouched.
+    struct IrSoaSlabUpstream final : std::pmr::memory_resource {
+        std::vector<void*> chunks{};
+        ~IrSoaSlabUpstream() {
+            for (void* p : chunks)
+                ::operator delete(p);
+            chunks.clear();
+        }
+        IrSoaSlabUpstream() = default;
+        IrSoaSlabUpstream(const IrSoaSlabUpstream&) = delete;
+        IrSoaSlabUpstream& operator=(const IrSoaSlabUpstream&) = delete;
+        IrSoaSlabUpstream(IrSoaSlabUpstream&&) = delete;
+        IrSoaSlabUpstream& operator=(IrSoaSlabUpstream&&) = delete;
+
+        void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+            if (alignment < alignof(std::max_align_t))
+                alignment = alignof(std::max_align_t);
+            void* p = ::operator new(bytes, std::align_val_t{alignment});
+            chunks.push_back(p);
+            return p;
+        }
+        void do_deallocate(void*, std::size_t, std::size_t) override {
+            // Monotonic: retain until ~IrSoaColumnSlab / upstream dtor.
+        }
+        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+            return this == &other;
+        }
+    };
+
     struct IrSoaColumnSlab {
         alignas(std::max_align_t) std::byte seed[8192]{};
-        std::pmr::monotonic_buffer_resource resource{seed, sizeof(seed),
-                                                     std::pmr::new_delete_resource()};
+        IrSoaSlabUpstream upstream{};
+        std::pmr::monotonic_buffer_resource resource{seed, sizeof(seed), &upstream};
     };
 
     // Per-shard map + mutex — disjoint IRFunctionSoA keys do not contend.
