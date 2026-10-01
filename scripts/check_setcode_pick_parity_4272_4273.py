@@ -2,10 +2,14 @@
 """Issues #4272 + #4273: Soft set-code CASE parity with oneshot + pick-best.
 
 #4272 residual after #4264: set-code + eval-current under-counted / over-
-counted vs oneshot. Root cause: #3235 heap-mutate auto-Guard fail-closed
-under the eval-current pin (vector-set!/hash-set!/set-car! → soft <error>
-after CASE0=). Fix: maybe_auto_guard_heap_mutate allows under
-eval_current_holds_shared_pin.
+counted vs oneshot.
+  Under-count: #3235 heap-mutate auto-Guard fail-closed under the
+  eval-current pin (vector-set!/hash-set!/set-car! → soft <error> after
+  CASE0=). Fix: maybe_auto_guard_heap_mutate allows under
+  eval_current_holds_shared_pin.
+  Over-count (WAVE16 course-schedule): parse_to_flat recovered past
+  leftover top-level ')' and scored full CASE while oneshot (#3917)
+  hard-failed empty. Fix: parse hard_fail_extra_close (#4272/#3917 parity).
 
 #4273: pick-best soft_bad_value / unbound lst|i / soft_mismatch:-999999 /
 cannot call: >. Faces: (a) soft Error as status=ok value=<error>;
@@ -47,6 +51,16 @@ def main() -> None:
         "eval_current_holds_shared_pin()" in mb and "maybe_auto_guard_heap_mutate" in mb,
         "AC2: heap-mutate short-circuit under eval-current pin",
     )
+
+    # Over-count face (WAVE16): parse_to_flat hard-fails extra top-level )
+    parser = (ROOT / "src/parser/parser_impl.cpp").read_text(encoding="utf-8")
+    check("Issue #4272" in parser, "AC2b: parser cites #4272")
+    check("hard_fail_extra_close" in parser, "AC2b: hard_fail_extra_close present")
+    check("unexpected ')'" in parser, "AC2b: unexpected ) message")
+
+    ws = (ROOT / "tests/core/test_workspace_lock_reentrancy.cpp").read_text(encoding="utf-8")
+    check("AC8 (#4272)" in ws or "AC8 (#4272 over-count)" in ws, "AC2b: AC8 over-count door present")
+    check("set-code rejects" in ws or "extra close-paren" in ws, "AC2b: AC8 set-code reject door")
 
     tc = (ROOT / "tests/compiler/test_primcall_narg.cpp").read_text(encoding="utf-8")
     check("ac23_pick_best_prim_shadow_4273" in tc, "AC3: AC23 door present")
