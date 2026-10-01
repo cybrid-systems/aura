@@ -970,6 +970,11 @@ public:
     void seed_pending_full_solve_root_for_test(std::uint32_t rep) {
         pending_full_solve_roots_.insert(rep);
     }
+    // Issue #4251: read-only membership probe so a UF-merge retarget
+    // (pending seed must follow r2→r1) is observable without mutating it.
+    [[nodiscard]] bool pending_full_solve_root_present_for_test(std::uint32_t rep) const noexcept {
+        return pending_full_solve_roots_.count(rep) > 0;
+    }
     // Issue #3253: test inject — drop reverse-index so remount-incomplete
     // INSTANCE edges can be observed by production repair reindex.
     void drop_var_to_constraints_entry_for_test(std::uint32_t rep) {
