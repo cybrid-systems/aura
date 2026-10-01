@@ -25257,7 +25257,7 @@ def _gate_run_issue_bin(target: str) -> int:
         info(f"changed: skip {target} (no ninja tree)")
         return 0
     print(f"{B}═══ Gate changed: {target} ═══{N}")
-    jobs = _gate_parse_jobs() or 4
+    jobs = _gate_parse_jobs() or _build_jobs()
     rc = _ninja_build([target], jobs=max(1, jobs))
     if rc:
         fail(f"ninja {target} failed")
@@ -25292,7 +25292,7 @@ def _gate_changed_runtime_suites() -> int:
             info("changed serve: skip test_concurrent (no ninja tree)")
         else:
             print(f"{B}═══ Gate changed: test_concurrent (serve/fiber surface) ═══{N}")
-            jobs = _gate_parse_jobs() or 4
+            jobs = _gate_parse_jobs() or _build_jobs()
             nrc = _ninja_build(["test_concurrent"], jobs=max(1, jobs))
             if nrc:
                 fail("ninja test_concurrent failed")
