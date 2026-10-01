@@ -4509,15 +4509,29 @@ public:
     // Call it only through get() (seqlock window) or get_soa_safe() (SoA
     // shared lock) — a bare call has no torn-window protection.
     NodeView assemble_nodeview(NodeId id) const {
-        // Issue #1620: hot-path SoA column access invariant probe
-        // (zero cost under release observe; Agents track hits).
-        if (id < tag_.size()) {
-            aura::core::cpp26::record_hotpath_invariant_hit();
-            // In-bounds NodeId → primary SoA columns must cover it.
-            contract_assert(id < int_val_.size());
-            contract_assert(id < sym_id_.size());
-        }
-        if (id >= tag_.size()) {
+        // Issue #3868 residual (assemble bound; #2959 family): FAIL-CLOSED
+        // column-coverage guard.
+        //
+        // INVARIANT: at rest every SoA column read below covers
+        // [0, tag_.size()). add_node appends these columns inside ONE
+        // seqlock writer section but NOT atomically - tag_/int_val_/
+        // float_val_/sym_id_ are pushed before children_/param_begin_/
+        // param_count_. A lock-free get() reader that sampled a stable
+        // even epoch just before the writer opened its section can
+        // therefore observe tag_.size() grown by one while children_ (and
+        // the param columns) still lag by one. Indexing children_[id] in
+        // that window reads past the PCV column - the __GLIBCXX_ASSERTIONS
+        // abort / raw OOB this guard removes (crash path:
+        // spawn_agent_with_mailbox Fiber -> eval_flat -> get).
+        // restore_children pads children_ to >= its current size, and
+        // truncate_to resizes tag_ DOWN before children_ (never
+        // tag_-ahead), so children_ can only trail tag_ during an
+        // in-flight add_node append: an uncovered id is never a valid
+        // node. Fail closed to the same default NodeView as the
+        // stale-NodeId path instead of reading past a lagging column.
+        if (id >= tag_.size() || id >= int_val_.size() || id >= float_val_.size() ||
+            id >= sym_id_.size() || id >= children_.size() || id >= param_begin_.size() ||
+            id >= param_count_.size()) {
             // Defensive: stale or invalid NodeId. Return a default
             // NodeView (empty spans, NULL_NODE-like values). The
             // parser can produce invalid NodeIds during
@@ -4540,6 +4554,10 @@ public:
                 .marker = SyntaxMarker::User,
             };
         }
+        // Issue #1620: hot-path SoA column access invariant probe
+        // (zero cost under release observe; Agents track hits). Reached
+        // only when every primary column above covers id.
+        aura::core::cpp26::record_hotpath_invariant_hit();
         return NodeView{
             .id = id,
             .tag = tag_[id],
