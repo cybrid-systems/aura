@@ -5334,6 +5334,19 @@ def cmd_lint():
             "Issue #3853 IR SoA column_slab shard linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_slab_shard_3853.py"
         )
         return r
+    # Issue #4263: IrSoaColumnSlab past-seed growth Arena-owned (slab
+    # upstream chunks), not default new_delete_resource. Extends
+    # test_ir_soa_layout_stamp; BMI #3833/#3853 pins kept. No invent.
+    icsu4263_script = COVERAGE_CHECKS / "check_ir_soa_column_slab_upstream_4263.py"
+    if not icsu4263_script.exists():
+        fail(f"missing {icsu4263_script}")
+        return 1
+    r = run([sys.executable, str(icsu4263_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4263 IR SoA column_slab upstream linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_slab_upstream_4263.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -18333,6 +18346,70 @@ def cmd_ir_soa_column_slab_shard_3853():
     return cmd_ir_soa_column_slab_shard_3853_coverage()
 
 
+def cmd_ir_soa_column_slab_upstream_4263_coverage():
+    """Issue #4263: IrSoaColumnSlab upstream Arena-owned past 8KiB seed."""
+    print(f"{B}=== IR SoA column_slab upstream (#4263) ==={N}")
+    script = COVERAGE_CHECKS / "check_ir_soa_column_slab_upstream_4263.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("IR SoA column_slab upstream (#4263) coverage contract rows failed")
+        return r
+    ok("IR SoA column_slab upstream (#4263) coverage clean")
+    return 0
+
+
+
+def cmd_escape_soa_no_flat_4262_coverage():
+    """Issue #4262: escape SoA dirty peel without FlatInstruction materialize."""
+    print(f"{B}=== Escape SoA no-Flat (#4262) ==={N}")
+    script = COVERAGE_CHECKS / "check_escape_soa_no_flat_4262.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("Escape SoA no-Flat (#4262) coverage contract rows failed")
+        return r
+    ok("Escape SoA no-Flat (#4262) coverage clean")
+    return 0
+
+
+def cmd_primfn_no_std_function_4261_coverage():
+    """Issue #4261: PrimFn no std::function — FnPtr / SBO trampoline."""
+    print(f"{B}=== PrimFn no std::function (#4261) ==={N}")
+    script = COVERAGE_CHECKS / "check_primfn_no_std_function_4261.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("PrimFn no std::function (#4261) coverage contract rows failed")
+        return r
+    ok("PrimFn no std::function (#4261) coverage clean")
+    return 0
+
+
+def cmd_primfn_no_std_function_4261():
+    """Issue #4261: PrimFn SBO/FnPtr — drop std::function type erasure."""
+    return cmd_primfn_no_std_function_4261_coverage()
+
+
+
+def cmd_escape_soa_no_flat_4262():
+    """Issue #4262: columnar escape — zero FlatInstruction on dirty peel."""
+    return cmd_escape_soa_no_flat_4262_coverage()
+
+
+
+def cmd_ir_soa_column_slab_upstream_4263():
+    """Issue #4263: IrSoaColumnSlab Arena-owned upstream past 8KiB seed."""
+    return cmd_ir_soa_column_slab_upstream_4263_coverage()
+
+
+
 def cmd_pure_anon_budget_skip_sticky_3851_coverage():
     """Issue #3851: budget-skip arms sticky overflow fence (#3323 SSOT)."""
     print(f"{B}=== pure-anon budget-skip sticky fence (#3851) ==={N}")
@@ -26532,6 +26609,7 @@ def main():
         "abort-aot-invalidate-3852": cmd_abort_aot_invalidate_3852,
         "abort-aot-invalidate-3852-coverage": cmd_abort_aot_invalidate_3852_coverage,
         "ir-soa-column-slab-shard-3853": cmd_ir_soa_column_slab_shard_3853,
+        "ir-soa-column-slab-upstream-4263": cmd_ir_soa_column_slab_upstream_4263,
         "ir-soa-column-slab-shard-3853-coverage": cmd_ir_soa_column_slab_shard_3853_coverage,
         "pure-anon-budget-skip-sticky-3851": cmd_pure_anon_budget_skip_sticky_3851,
         "pure-anon-budget-skip-sticky-3851-coverage": cmd_pure_anon_budget_skip_sticky_3851_coverage,

@@ -13,6 +13,8 @@
 //                  view_at/batch dirty intact; SoA walk microbench
 //   #3853 AC1–AC3: column_slab map sharded (no process-wide mu); BMI
 //                  offsetof pins unchanged; uses_arena_resource post-bind
+//   #4263 AC1–AC3: IrSoaColumnSlab upstream Arena-owned past 8KiB seed;
+//                  BMI pins + view_at/batch dirty green; grow microbench
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -50,6 +52,7 @@ using aura::compiler::kAppendOnlyLayoutStampIssue;
 using aura::compiler::kIrSoaColumnArenaIssue;
 using aura::compiler::kIrSoaColumnSlabShardCount;
 using aura::compiler::kIrSoaColumnSlabShardIssue;
+using aura::compiler::kIrSoaColumnSlabArenaUpstreamIssue;
 using aura::compiler::kRelowerSoaGeneration;
 using aura::compiler::should_relower;
 using aura::compiler::walk_soa_function_hotpath;
@@ -348,6 +351,76 @@ int run_test_ir_soa_layout_stamp() {
         CHECK(read_file("tests/compiler/test_issue_3853.cpp").empty(), "3853 AC3: no invent");
         CHECK(read_file("docs/design/3853-column-slab-shard.md").empty(),
               "3853 AC3: no docs/design");
+    }
+
+    // ── #4263: column_slab upstream Arena-owned past 8KiB seed ──
+    {
+        std::println("\n--- #4263 AC1: slab upstream not new_delete ---");
+        CHECK(kIrSoaColumnSlabArenaUpstreamIssue == 4263, "4263 AC1: issue constant");
+        const auto soa = read_file("src/compiler/ir_soa.ixx");
+        CHECK(soa.find("kIrSoaColumnSlabArenaUpstreamIssue = 4263") != std::string::npos,
+              "4263 AC1: stamp");
+        CHECK(soa.find("IrSoaSlabUpstream") != std::string::npos, "4263 AC1: upstream type");
+        CHECK(soa.find("struct IrSoaColumnSlab") != std::string::npos, "4263 AC1: slab type");
+        // Default new_delete upstream must be gone from IrSoaColumnSlab ctor.
+        const auto slab_pos = soa.find("struct IrSoaColumnSlab");
+        CHECK(slab_pos != std::string::npos, "4263 AC1: slab struct present");
+        const auto slab_win = soa.substr(slab_pos, 600);
+        CHECK(slab_win.find("new_delete_resource()") == std::string::npos,
+              "4263 AC1: IrSoaColumnSlab does not upstream new_delete");
+        CHECK(slab_win.find("&upstream") != std::string::npos,
+              "4263 AC1: resource binds slab upstream");
+
+        std::println("\n--- #4263 AC2: BMI pins + view_at / batch dirty ---");
+        CHECK(soa.find("offsetof(IRFunctionSoA, block_dirty_) == 376") != std::string::npos,
+              "4263 AC2: BMI block_dirty_");
+        CHECK(soa.find("sizeof(IRFunctionSoA) == 448") != std::string::npos,
+              "4263 AC2: BMI sizeof");
+        IRFunctionSoA big;
+        big.bind_column_arena();
+        // Grow past 8KiB seed: ~13 columns × N instr × ~4B ≫ 8192.
+        constexpr std::uint32_t n = 4096;
+        big.blocks_.resize(1);
+        big.blocks_[0].block_id = 0;
+        big.blocks_[0].start_idx = 0;
+        big.blocks_[0].end_idx = n;
+        big.opcodes_.resize(n);
+        big.operand0_.resize(n);
+        big.operand1_.resize(n);
+        big.operand2_.resize(n);
+        big.operand3_.resize(n);
+        big.shape_ids_.resize(n);
+        big.type_ids_.resize(n);
+        big.linear_ownership_states_.resize(n);
+        big.narrow_evidence_.resize(n);
+        big.source_markers_.resize(n);
+        big.instruction_dirty_.assign(n, 1);
+        big.block_dirty_.assign(1, 1);
+        CHECK(big.opcodes_.uses_arena_resource(), "4263 AC2: past-seed still arena-owned");
+        CHECK(big.opcodes_.size() == n, "4263 AC2: grow size");
+        IRModuleV2 mod;
+        mod.functions.push_back(std::move(big));
+        auto view = mod.view_at(0, 0);
+        CHECK(view.func != nullptr, "4263 AC2: view_at intact");
+        auto& live = mod.functions[0];
+        const std::uint32_t ids[1] = {0};
+        live.mark_blocks_dirty(std::span<const std::uint32_t>{ids});
+        CHECK(live.is_block_dirty(0), "4263 AC2: batch dirty");
+
+        std::println("\n--- #4263 AC3: SoA grow microbench + wiring ---");
+        const auto t0 = std::chrono::steady_clock::now();
+        auto walk = walk_soa_function_hotpath(live, /*dirty_only=*/false);
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        CHECK(walk.instructions == n, "4263 AC3: walked past-seed instrs");
+        CHECK(ns >= 0, "4263 AC3: microbench ran");
+        std::println("4263 AC3: walk_soa {} instr ns={}", n, ns);
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_ir_soa_column_slab_upstream_4263") != std::string::npos,
+              "4263 AC3: build.py linter");
+        CHECK(read_file("tests/compiler/test_issue_4263.cpp").empty(), "4263 AC3: no invent");
+        CHECK(read_file("docs/design/4263-column-slab-upstream.md").empty(),
+              "4263 AC3: no docs/design");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
