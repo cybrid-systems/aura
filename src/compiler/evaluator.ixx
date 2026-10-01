@@ -16267,6 +16267,20 @@ public:
     // Returns opaque TypeChecker*; stable until invalidate/destroy.
     [[nodiscard]] void* ensure_typechecker() noexcept;
     void invalidate_persistent_typechecker() noexcept;
+    // Issue #4266 follow-up (Issue #159 Phase-5 cache invalidation): drop the
+    // cached (typecheck-current)/(typecheck-status) report. Ordinary mutations
+    // fail the #159 cache gate by marking the root dirty, but a whole-workspace
+    // replacement — set-code / load-file (fresh FlatAST) or ast:restore /
+    // restore_workspace_snapshot_under_lock (snapshot contents copied into the
+    // live flat) — installs a workspace with no dirty bits, so
+    // has_dirty_subtree() cannot see the change and the gate would serve the
+    // PREVIOUS workspace's report/status. That stale clean status is what made
+    // safe-refactor:replace-fn report 'applied' for an ill-typed replacement.
+    // Call this wherever a workspace swap also resets last_eval_current_result_.
+    void invalidate_typecheck_report_cache() noexcept {
+        last_typecheck_result_.reset();
+        last_typecheck_ok_ = false;
+    }
     [[nodiscard]] void* persistent_typechecker() const noexcept {
         return persistent_typechecker_opaque_;
     }

@@ -668,6 +668,32 @@ static void ac4266_6_source_cite() {
           "4266 AC6: no test_issue_4266 file per #81934");
 }
 
+// Issue #4266 follow-up: a whole-workspace replacement ((set-code ...)) must
+// invalidate the Phase-5 clean-workspace typecheck report, and the workspace
+// unparse must keep per-parameter type annotations. Together these are what
+// let safe-refactor:replace-fn reject an ill-typed replacement: without them
+// the previously cached clean #t leaked through (the row reported 'applied
+// for an ill-typed replacement, and the rebuilt source lost the ground
+// signature the typechecker gates on).
+static void ac4266_7_set_code_invalidates_typecheck_cache() {
+    std::println(
+        "\n--- #4266 AC7: set-code invalidates cached status + keeps param annotation ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 2))"), "4266 AC7: set-code annotated seed");
+    CHECK(workspace_source(cs).find("(: x Int)") != std::string::npos,
+          "4266 AC7: workspace unparse preserves the parameter type annotation");
+    // Warm the Phase-5 clean-workspace cache.
+    bool got_bool = false;
+    CHECK(eval_bool(cs, "(typecheck-status)", &got_bool) && got_bool,
+          "4266 AC7: clean workspace caches structured #t");
+    // Ill-typed replacement: the previously cached clean status must NOT leak.
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 2)) (score \"s\")"),
+          "4266 AC7: set-code ill-typed replacement");
+    const auto report = eval_string(cs, "(typecheck-status)");
+    CHECK(report.find("diagnostics:") != std::string::npos,
+          "4266 AC7: ill-typed set-code invalidates the cached clean status (was: stale #t)");
+}
+
 static void ac_wiring() {
     std::println("\n--- #2921 AC15: source + cmake wiring ---");
     const auto self = read_file("tests/compiler/test_current_source_roundtrip.cpp");
@@ -716,6 +742,7 @@ int run_test_current_source_roundtrip() {
     ac4266_4_check_apply_post_verify_throw_restores();
     ac4266_5_check_apply_post_verify_false_still_rolls_back();
     ac4266_6_source_cite();
+    ac4266_7_set_code_invalidates_typecheck_cache();
     std::println("\n=== #2921/#2966: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

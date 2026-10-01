@@ -224,6 +224,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 ev.last_set_code_error_kind_.clear();
                 ev.last_set_code_error_msg_.clear();
                 ev.last_eval_current_result_.reset();
+                // Issue #4266 follow-up: the replacement installs a FRESH
+                // FlatAST with no dirty bits, so the #159 clean-workspace gate
+                // cannot see the swap — drop the cached typecheck report/status
+                // or (typecheck-status) serves the pre-swap result (stale #t for
+                // an ill-typed replacement → safe-refactor reports 'applied').
+                ev.invalidate_typecheck_report_cache();
                 // Issue #4273: prior workspace (define > ...) left top_
                 // shadows that poison Path B pick-best
                 // (type error: cannot call: > / soft_mismatch:-999999).
@@ -559,6 +565,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         ev.last_set_code_error_kind_.clear();
         ev.last_set_code_error_msg_.clear();
         ev.last_eval_current_result_.reset();
+        // Issue #4266 follow-up: fresh workspace ⇒ drop the #159 report cache
+        // (see invalidate_typecheck_report_cache).
+        ev.invalidate_typecheck_report_cache();
 
         // Use ev.temp_arena_ for the parse state so (gc-temp) reclaims it.
         // The ev.workspace_pool_ / ev.workspace_flat_ pointers below are the

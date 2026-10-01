@@ -148,7 +148,15 @@ namespace detail {
             }
         }
 
-        void emit_params(std::span<const SymId> params, bool dotted) {
+        // Issue #4266 follow-up: render per-parameter type annotations
+        // (Lambda::param_annotations), which were previously dropped, so
+        // (current-source :workspace) round-trips `(define (f (: x Int)) ...)`
+        // losslessly instead of collapsing it to an unannotated lambda. The
+        // annotation node renders as `(: name Type)` (TypeAnnotation case
+        // below) — exactly the parameter form the parser accepts — so the
+        // rebuilt source keeps the ground signature the typechecker gates on.
+        void emit_params(std::span<const SymId> params, std::span<const NodeId> annots, bool dotted,
+                         int depth, int child_indent) {
             const auto n = params.size();
             for (std::size_t i = 0; i < n; ++i) {
                 if (dotted && n >= 1 && i == n - 1) {
@@ -159,7 +167,10 @@ namespace detail {
                 } else {
                     if (i > 0)
                         append(' ');
-                    append(pool.resolve(params[i]));
+                    if (i < annots.size() && annots[i] != NULL_NODE)
+                        emit(annots[i], depth + 1, child_indent);
+                    else
+                        append(pool.resolve(params[i]));
                 }
             }
         }
@@ -244,7 +255,7 @@ namespace detail {
                 case NodeTag::Lambda: {
                     const bool dotted = v.int_value != 0;
                     append("(lambda (");
-                    emit_params(v.params, dotted);
+                    emit_params(v.params, v.param_annotations, dotted, depth, child_indent);
                     append(')');
                     if (!v.children.empty()) {
                         sep(child_indent, multi);
@@ -280,7 +291,8 @@ namespace detail {
                             append(pool.resolve(v.sym_id));
                             if (!cv.params.empty()) {
                                 append(' ');
-                                emit_params(cv.params, dotted);
+                                emit_params(cv.params, cv.param_annotations, dotted, depth,
+                                            child_indent);
                             }
                             append(')');
                             if (!cv.children.empty()) {
