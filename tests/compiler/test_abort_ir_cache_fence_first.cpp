@@ -819,7 +819,10 @@ static void ac3852_3_source_and_linter() {
     const auto man = read_file("scripts/coverage/manifests/3852.json");
     const auto dirty = svc.find("void force_ir_cache_dirty_after_abort()");
     CHECK(dirty != std::string::npos, "3852 AC4: force_dirty present");
-    const auto body = svc.substr(dirty, 3200);
+    // Window must cover the whole force_ir_cache_dirty_after_abort body:
+    // #4256 (#4251-sibling) added the dep_graph_generation_ bump + note that
+    // pushed the pinned strings to ~4250 bytes, past the old 3200 bound.
+    const auto body = svc.substr(dirty, 6000);
     CHECK(body.find("Issue #3852") != std::string::npos, "3852 AC4: cite in force_dirty");
     CHECK(body.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
           "3852 AC4: force-bump note");

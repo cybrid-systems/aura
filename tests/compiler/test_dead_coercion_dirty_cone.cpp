@@ -1629,7 +1629,11 @@ static void ac3689_partial_peel_aos_dce_uses_mask() {
     const auto svc = read_file("src/compiler/service.ixx");
     CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
     const auto suite_pos = svc.find("std::size_t run_incremental_dirty_pass_suite_");
-    const auto suite = suite_pos == std::string::npos ? std::string{} : svc.substr(suite_pos, 4500);
+    // Window must cover the whole run_incremental_dirty_pass_suite_ body:
+    // #4254 (P0 prod_soa pending-SoA) added ~420 bytes ahead of the
+    // run_coercion_elim_on_function calls, pushing them past the old 4500
+    // bound (needles now at ~4533/4725).
+    const auto suite = suite_pos == std::string::npos ? std::string{} : svc.substr(suite_pos, 7000);
     CHECK(suite.find("production_hard_face_active()") != std::string::npos,
           "3689 AC4: Soft/Off skips extra DCE mask peel");
     CHECK(suite.find("run_coercion_elim_on_function(func, db)") != std::string::npos,
