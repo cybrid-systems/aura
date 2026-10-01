@@ -1357,6 +1357,7 @@ int run_4128_serve_define_call_alive_smoke() {
     std::println("\n=== #4128: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
 } // namespace aura_fiber_run_wave59_4128
 
 // ═════════════════════════════════════════════════════════════
@@ -1456,6 +1457,94 @@ int run_4270_restore_then_eval_smoke() {
     return g_failed ? 1 : 0;
 }
 } // namespace aura_fiber_run_wave60_4270
+
+// ═════════════════════════════════════════════════════════════
+// Issue #4271 — bound deep FlatAST snapshot retention under --serve.
+// ═════════════════════════════════════════════════════════════
+namespace aura_fiber_run_wave60_4271 {
+// @category: unit
+// @reason: Issue #4271 — long --serve RSS growth under repeated
+// set-code/eval. Snapshot history (ast:snapshot deep FlatAST copies) is
+// unbounded; Agent loops that snapshot every round retain every generation.
+// Cap live deep flats; keep source for fallback restore; IDs stay stable.
+//
+//   AC1: after >kMax deep snapshots, deep-flat count <= kMax
+//   AC2: early snapshot still restorable (source fallback) + eval ok
+//   AC3: source — kMaxAstSnapshotDeepFlats + drop trim present
+
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+std::string read_file_4271(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+int run_4271_snapshot_deep_flat_cap_smoke() {
+    std::println("\n=== #4271: ast:snapshot deep-flat cap ===");
+
+    const auto cap = Evaluator::kMaxAstSnapshotDeepFlats;
+    const auto n = cap + 8;
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\\n(display (f 1))\\n(newline)\")").has_value(),
+          "#4271 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "#4271 AC1: eval");
+
+    std::int64_t first_id = -1;
+    for (std::size_t i = 0; i < n; ++i) {
+        // Mutate so each snapshot is a distinct generation.
+        CHECK(cs.eval(std::format(
+                          "(set-code \"(define (f x) (+ x {}))\\n(display (f 1))\\n(newline)\")", i))
+                  .has_value(),
+              "#4271 AC1: set-code loop");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4271 AC1: eval loop");
+        auto snap = cs.eval(std::format("(ast:snapshot \"s{}\")", i));
+        CHECK(snap && is_int(*snap), "#4271 AC1: snapshot");
+        if (i == 0)
+            first_id = as_int(*snap);
+    }
+
+    const auto deep = cs.evaluator().ast_snapshot_deep_flat_count();
+    CHECK(deep <= cap, "#4271 AC1: deep flats capped");
+    CHECK(cs.evaluator().ast_snapshot_deep_flat_drops_total() > 0,
+          "#4271 AC1: drop counter bumped");
+
+    // AC2 — oldest id still restorable (source fallback if deep flat dropped).
+    {
+        auto rest = cs.eval(std::format("(ast:restore {})", first_id));
+        CHECK(rest && is_bool(*rest) && as_bool(*rest), "#4271 AC2: restore early id");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4271 AC2: eval after restore");
+        auto a = cs.eval("(+ 1 1)");
+        CHECK(a && is_int(*a) && as_int(*a) == 2, "#4271 AC2: session alive");
+    }
+
+    // AC3 — source-cite
+    {
+        const auto src = read_file_4271("src/compiler/evaluator.ixx");
+        const auto ast = read_file_4271("src/compiler/evaluator_primitives_ast.cpp");
+        CHECK(src.find("kMaxAstSnapshotDeepFlats") != std::string::npos,
+              "#4271 AC3: cap constant");
+        CHECK(ast.find("Issue #4271: drop oldest deep FlatAST") != std::string::npos,
+              "#4271 AC3: trim at snapshot push");
+    }
+
+    std::println("\n=== #4271: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave60_4271
 
 int main() {
 
@@ -1718,6 +1807,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave60_4270 ########");
     if (int rc = aura_fiber_run_wave60_4270::run_4270_restore_then_eval_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave60_4271 ########");
+    if (int rc = aura_fiber_run_wave60_4271::run_4271_snapshot_deep_flat_cap_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);
