@@ -6028,7 +6028,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // helper no-op (zero extra). Escape-gate path counter stays
             // on the Phase-5 note_escape_gate_clear_on_densify site.
             if (had_moving_densify) {
-                if (typed_audit::invalidate_fast_path_before_steal_densify_restamp()) {
+                // Issue #4252: pass ev_ so the owner's Occurrence persist
+                // buffer is cleared with the face (TLS may be a peer / null).
+                if (typed_audit::invalidate_fast_path_before_steal_densify_restamp(ev_)) {
                     const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
                     (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
                     aura_aot_record_deopt_on_steal();

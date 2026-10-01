@@ -892,6 +892,10 @@ aura::compiler::Evaluator::auto_restamp_pinned_stable_refs_at(StableRefRefreshSi
 //   3. restamp_all_pins_for_arena     (LifetimePin)
 // Soft + steal/densify + no wrap pending + no last-budget-exceeded:
 // stable-only (no extra node/pin walk).
+// Issue #4252: the steal/densify arm below passes this (the OWNER eval
+// performing the restamp) to the face-drop helper, so the Occurrence persist
+// clear keys off that eval's own commit TypeChecker instead of the TLS
+// commit TC / stamp last-look TC (null or a peer during fiber handoff).
 aura::compiler::Evaluator::UnifiedRestampResult
 aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite site) noexcept {
     UnifiedRestampResult r{};
@@ -919,7 +923,7 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
     // restamps were missing the #2507 clear (canonical steal-complete /
     // Phase-5 still bump path counters via note_*).
     if (site == UnifiedRestampSite::StealComplete || site == UnifiedRestampSite::Densify) {
-        if (typed_audit::invalidate_fast_path_before_steal_densify_restamp()) {
+        if (typed_audit::invalidate_fast_path_before_steal_densify_restamp(this)) {
             const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
             (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
             aura_aot_record_deopt_on_steal();

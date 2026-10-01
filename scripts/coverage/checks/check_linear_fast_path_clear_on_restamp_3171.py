@@ -83,7 +83,10 @@ def main() -> int:
     if restamp_pos < 0:
         fails.append("AC1: unified_restamp definition missing")
     else:
-        window = efm[restamp_pos : restamp_pos + 2500]
+        # Issue #4252: widened 2500 -> 2700 - the #4252 evaluator-aware
+        # steal/densify call adds one argument + a rationale comment inside
+        # unified_restamp_after_boundary; the required tokens are unchanged.
+        window = efm[restamp_pos : restamp_pos + 2700]
         if "clear_escape_move_elision_gate_for_eval" not in window:
             fails.append("AC1: unified_restamp window missing keyed escape clear")
         if "invalidate_fast_path_before_steal_densify_restamp" not in window:
