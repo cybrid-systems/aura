@@ -67,13 +67,20 @@ def main() -> int:
         if "stamp_aot_reload_consistency_proof_fail" not in body:
             fails.append("AC2: note_reload_rollback body missing fail helper")
 
-    # AC3 — success commit path still stamps (not via fail helper)
+    # AC3 — success commit path still stamps (not via fail helper).
+    # #4245 lengthened commit_func_table_swap with the owner-scoped
+    # reload block; the success stamp sits after that block. Slice to
+    # the next top-level decl so the window cannot stop early again.
     must("commit_func_table_swap", "AC3", bridge)
     cs = bridge.find("void commit_func_table_swap()")
     if cs < 0:
         fails.append("AC3: commit_func_table_swap not found")
     else:
-        body = bridge[cs : cs + 3500]
+        nxt = bridge.find("\nstatic ", cs + 1)
+        nxt_void = bridge.find("\nvoid ", cs + 1)
+        ends = [x for x in (nxt, nxt_void) if x > cs]
+        end = min(ends) if ends else cs + 8000
+        body = bridge[cs:end]
         if "stamp_aot_reload_consistency_proof(p)" not in body and ("stamp_aot_reload_consistency_proof(" not in body):
             fails.append("AC3: success path must still call stamp_aot_reload_consistency_proof")
         # Fail helper name is a superstring of stamp(...); require exact
