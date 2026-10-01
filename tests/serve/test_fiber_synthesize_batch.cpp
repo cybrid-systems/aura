@@ -782,6 +782,59 @@ int run_optimize_score_4267() {
         }
     }
 
+    // ── AC6: panic-checkpoint :workspace source + deterministic GA seed ──
+    {
+        std::println("\n--- AC6: checkpoint :workspace + deterministic GA seed ---");
+        // save_panic_checkpoint() must snapshot the persistent WORKSPACE
+        // source (current-source :workspace). The bare face returns the
+        // transient per-eval form; restore_panic_checkpoint() then set-codes
+        // it back into the workspace (malformed flat -> FlatAST child OOB).
+        std::string wt;
+        for (const char* p : {"src/compiler/evaluator_workspace_tree.cpp",
+                              "../src/compiler/evaluator_workspace_tree.cpp"}) {
+            wt = read_file(p);
+            if (!wt.empty())
+                break;
+        }
+        CHECK(!wt.empty(), "read evaluator_workspace_tree.cpp");
+        if (!wt.empty()) {
+            auto pos = wt.find("bool Evaluator::save_panic_checkpoint()");
+            CHECK(pos != std::string::npos, "found save_panic_checkpoint");
+            if (pos != std::string::npos) {
+                auto end = wt.find("bool Evaluator::restore_panic_checkpoint()", pos);
+                auto win = wt.substr(pos, end == std::string::npos ? 4000 : end - pos);
+                auto code = strip_line_comments(win);
+                CHECK(code.find("make_keyword") != std::string::npos,
+                      "checkpoint passes a keyword to (current-source)");
+                CHECK(code.find("\":workspace\"") != std::string::npos,
+                      "checkpoint requests the :workspace face");
+                CHECK(code.find("(*src_fn)({})") == std::string::npos,
+                      "checkpoint no longer uses the bare (current-source) face");
+            }
+        }
+        // agent_prng must seed deterministically so the GA (and its ranking
+        // AC) is reproducible; std::random_device made it statistics-flaky.
+        std::string ag;
+        for (const char* p : {"src/compiler/evaluator_primitives_agent.cpp",
+                              "../src/compiler/evaluator_primitives_agent.cpp"}) {
+            ag = read_file(p);
+            if (!ag.empty())
+                break;
+        }
+        CHECK(!ag.empty(), "read evaluator_primitives_agent.cpp (seed)");
+        if (!ag.empty()) {
+            auto pos = ag.find("std::mt19937& agent_prng()");
+            CHECK(pos != std::string::npos, "found agent_prng");
+            if (pos != std::string::npos) {
+                auto code = strip_line_comments(ag.substr(pos, 300));
+                CHECK(code.find("std::random_device") == std::string::npos,
+                      "agent_prng does not seed from std::random_device");
+                CHECK(code.find("thread_local std::mt19937 rng{") != std::string::npos,
+                      "agent_prng keeps the thread_local mt19937 engine");
+            }
+        }
+    }
+
     std::println("\n=== run_optimize_score_4267: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
