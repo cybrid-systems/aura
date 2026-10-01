@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <print>
 #include <string>
@@ -180,6 +181,59 @@ static void ac5_gate() {
     CHECK(cm.find("test_flatast_soa_read_guard") != std::string::npos, "AC5: CMake");
 }
 
+// --- AC6 (#3868 residual): assemble_nodeview fails closed on a lagging column ---
+// get() -> assemble_nodeview indexed children_[id] guarded only by
+// id < tag_.size(). add_node publishes tag_/int_val_/float_val_/sym_id_ before
+// children_/param_begin_/param_count_ inside ONE seqlock writer section, so a
+// lock-free reader that sampled a stable even epoch just before the writer
+// opened its section could observe id < tag_.size() while
+// id >= children_.size() -> OOB read / __GLIBCXX_ASSERTIONS abort (the
+// spawn_agent_with_mailbox Fiber -> eval_flat -> get face). The guard must
+// bound every column it reads and fail closed (default NodeView), never index
+// a lagging column.
+static void ac6_lagging_column_fail_closed() {
+    std::println("\n--- #3868 residual AC6: fail-closed lagging-column guard ---");
+    auto src = read_file("src/core/ast.ixx");
+    CHECK(!src.empty(), "AC6: read ast.ixx");
+    const auto gpos = src.find("NodeView assemble_nodeview(NodeId id) const {");
+    CHECK(gpos != std::string::npos, "AC6: assemble_nodeview found");
+    const auto body = src.substr(gpos, 2200);
+    CHECK(body.find("id >= children_.size()") != std::string::npos,
+          "AC6: guard bounds children_ (fail-closed)");
+    CHECK(body.find("id >= param_begin_.size()") != std::string::npos,
+          "AC6: guard bounds param_begin_");
+    CHECK(body.find("id >= param_count_.size()") != std::string::npos,
+          "AC6: guard bounds param_count_");
+    CHECK(body.find("#3868") != std::string::npos, "AC6: cites #3868 residual");
+
+    // Runtime: build a flat whose children_ column trails tag_, then read the
+    // uncovered id. Pre-fix this indexed children_[id] out of bounds; post-fix
+    // it must fail closed and never abort.
+    FlatAST donor;
+    constexpr std::uint32_t kN = 8;
+    for (std::uint32_t i = 0; i < kN; ++i)
+        (void)donor.add_node(NodeTag::LiteralInt);
+    std::vector<char> wire;
+    donor.serialize_soa(wire);
+    CHECK(wire.size() > 8, "AC6: donor serialized");
+    // num_nodes lives at offset 4 (after the 4-byte version) and is only
+    // informational: deserialize_soa sizes children_ from it while tag_ (and
+    // every other column) sizes from its own column count. Lowering it makes
+    // children_.size() == tag_.size() - 1.
+    const std::uint32_t short_nodes = kN - 1;
+    std::memcpy(wire.data() + 4, &short_nodes, sizeof(short_nodes));
+    std::size_t dpos = 0;
+    FlatAST victim = FlatAST::deserialize_soa(wire, dpos);
+    CHECK(victim.size() == static_cast<std::size_t>(kN), "AC6: tag_ column loaded");
+    const NodeId uncovered = static_cast<NodeId>(kN - 1);
+    const auto v = victim.get(uncovered);
+    CHECK(v.id == uncovered, "AC6: uncovered id returns the same id");
+    CHECK(v.tag == static_cast<NodeTag>(0), "AC6: uncovered id -> default tag (fail closed)");
+    CHECK(v.children.empty(), "AC6: uncovered id -> empty children (no OOB read)");
+    // A covered id still returns the real node (guard is not a global reject).
+    CHECK(victim.get(0).tag == NodeTag::LiteralInt, "AC6: covered id still reads LiteralInt");
+}
+
 } // namespace
 
 int run_test_flatast_soa_read_guard() {
@@ -189,6 +243,7 @@ int run_test_flatast_soa_read_guard() {
     ac3_concurrent_add_and_read();
     ac4_hotpath_get();
     ac5_gate();
+    ac6_lagging_column_fail_closed();
     std::println("\n=== #2488 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
