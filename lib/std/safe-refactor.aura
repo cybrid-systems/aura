@@ -84,6 +84,24 @@
               (else
                (list 'applied apply-result)))))))))))
 
+; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
+;
+; Convenience: rolls back the most recent safe-refactor snapshot.
+; Returns #t on success, #f if no snapshot exists.
+(define (safe-refactor:rollback)
+  ; Issue #4274: ast:list-snapshots is stats-catalog only; list is
+  ; ((id . name) ...) oldest-first. Restore the newest id (last pair's
+  ; car), never (car snaps) which is the oldest pair (and not an int).
+  (let ((snaps (stats:get "ast:list-snapshots")))
+    (if (not (pair? snaps))
+        #f
+        (let loop ((s snaps) (last-id #f))
+          (if (null? s)
+              (if last-id (ast:restore last-id) #f)
+              (let ((entry (car s)))
+                (loop (cdr s)
+                      (if (pair? entry) (car entry) last-id))))))))
+
 ; ── safe-refactor:replace-fn — atomic function replacement with typecheck gate ──
 ;
 ; Replaces a function body. Uses (set-code) on a synthesized module that
@@ -152,11 +170,3 @@
                         apply-result
                         "typecheck-status-not-ok")))))))))
 
-; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
-;
-; Convenience: rolls back the most recent safe-refactor snapshot.
-; Returns #t on success, #f if no snapshot exists.
-(define (safe-refactor:rollback)
-  (let ((snaps (ast:list-snapshots)))
-    (if (null? snaps) #f
-      (ast:restore (car snaps)))))
