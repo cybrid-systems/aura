@@ -1,4 +1,6 @@
 # Issue #675: nightly extended fuzz + sanitizer stress (non-blocking on PRs).
+# Version tags are not published here. nightly-version.yml moves
+# nightly-YYYY.MM.DD after CI succeeds on main.
 # Issue #1933: LLVM source-based coverage artifact job.
 # Issue #1935: unified fuzz orchestrator.
 # Issue #2380 / #2513: production-concurrency gate (lock-order canary + full chaos).
