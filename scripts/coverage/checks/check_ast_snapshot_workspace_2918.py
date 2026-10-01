@@ -62,7 +62,6 @@ def main() -> int:
     for path, needle in (
         ("lib/std/safe-refactor.aura", "current-source :workspace"),
         ("lib/std/refactor.aura", "current-source :workspace"),
-        ("lib/std/workspace.aura", "current-source :workspace"),
     ):
         t = _read(path)
         must(needle in t or "(current-source :workspace)" in t, f"AC4: {path} uses :workspace")
@@ -72,6 +71,14 @@ def main() -> int:
                 "(current-source)" not in t.replace("(current-source :workspace)", ""),
                 f"AC4: {path} residual bare current-source",
             )
+
+    # #4274: std/workspace no longer reads eval-frame source. Merge goes
+    # through workspace:sync-from; snapshots go through ast:snapshot, which
+    # is the C++ workspace-source path. Bare current-source must stay gone.
+    ws = _read("lib/std/workspace.aura")
+    must("workspace:sync-from" in ws, "AC4: lib/std/workspace.aura merges via sync-from")
+    must("ast:snapshot" in ws, "AC4: lib/std/workspace.aura snapshots via ast:snapshot")
+    must("(current-source)" not in ws, "AC4: lib/std/workspace.aura residual bare current-source")
 
     suite = _read("tests/suite/ast_snapshot_workspace_2918.aura")
     must("2918" in suite and "ast:snapshot" in suite, "AC5: suite present")
