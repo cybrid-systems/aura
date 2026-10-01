@@ -8584,6 +8584,17 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4265 pick-best call-cache linter failed - run python3 scripts/check_pick_best_call_cache_4265.py")
         return r
+    # Issue #4272+#4273 (correctness): Soft set-code CASE parity with oneshot
+    # (heap-mutate under eval-current) + pick-best prim-shadow / soft Error
+    # status. No docs/design/4272-* or 4273-* per #1655.
+    spp4272_script = ROOT / "scripts" / "check_setcode_pick_parity_4272_4273.py"
+    if not spp4272_script.exists():
+        fail(f"missing {spp4272_script}")
+        return 1
+    r = run([sys.executable, str(spp4272_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4272+#4273 set-code/pick parity linter failed - run python3 scripts/check_setcode_pick_parity_4272_4273.py")
+        return r
     # Issue #4267 (correctness): synthesize:optimize score synthesis. The
     # default score was the probe non-error rate plus a shorter-source bonus
     # (labeled correctness), so shorter-wrong variants could win, and the

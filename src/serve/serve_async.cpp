@@ -58,6 +58,8 @@ using aura::serve::detail::kMaxServeAsyncLineBytes;
 
 using EvalValue = aura::compiler::types::EvalValue;
 using aura::compiler::types::is_closure;
+using aura::compiler::types::is_error;
+using aura::compiler::types::is_string;
 
 static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& cs) {
     return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
@@ -328,6 +330,19 @@ std::string status_line_error(std::string_view session, std::string_view msg,
     return std::format(
         "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\",\"display\":\"{}\"}}",
         json_escape(session), json_escape(msg), json_escape(display));
+}
+
+// Issue #4273: Soft Error values must not ship as status=ok value=<error>
+// (pick-best soft_bad_value; set-code truncated CASE with a silent
+// alternate result). Uncaught soft errors become status=error with the
+// cause string when available.
+static void emit_exec_result(std::string_view sid, const EvalValue& v, std::string_view display,
+                             aura::compiler::CompilerService& cs) {
+    if (is_error(v) && !is_string(v)) {
+        emit_status_line(status_line_error(sid, cs.evaluator().soft_error_message(v), display));
+        return;
+    }
+    emit_status_line(status_line_ok(sid, fmt_val(v, cs), display));
 }
 
 // Issue #4264: Soft serve-async sessions must bind the same Soft std prelude
@@ -1034,8 +1049,7 @@ void run_serve_async(int num_workers) {
                                 } else {
                                     auto [r, display] = std::move(*captured);
                                     if (r) {
-                                        emit_status_line(
-                                            status_line_ok(nsid, fmt_val(*r, cs), display));
+                                        emit_exec_result(nsid, *r, display, cs);
                                     } else {
                                         emit_status_line(
                                             status_line_error(nsid, r.error().format(), display));
@@ -1188,8 +1202,7 @@ void run_serve_async(int num_workers) {
                                                     json_escape(sid), json_escape(display)));
                                             }
                                         } else {
-                                            emit_status_line(
-                                                status_line_ok(sid, fmt_val(v, cs), display));
+                                            emit_exec_result(sid, v, display, cs);
                                         }
                                     } catch (const std::bad_alloc&) {
                                         emit_status_line(

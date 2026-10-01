@@ -14111,6 +14111,23 @@ public:
     [[nodiscard]] std::uint64_t get_primitive_error_values_size() const noexcept {
         return error_values_.size();
     }
+    // Issue #4273: Soft serve must not report status=ok with value <error>
+    // (pick-best soft_bad_value / set-code truncated CASE). Surface the
+    // stored cause string when present.
+    [[nodiscard]] std::string soft_error_message(types::EvalValue v) const {
+        if (!types::is_error(v) || types::is_string(v))
+            return "<error>";
+        const auto idx = types::as_error_idx(v);
+        if (idx >= error_values_.size())
+            return "<error>";
+        const auto& cause = error_values_[idx];
+        if (types::is_string(cause)) {
+            const auto sidx = types::as_string_idx(cause);
+            if (sidx < string_heap_.size())
+                return string_heap_[sidx];
+        }
+        return "<error>";
+    }
     void bump_primitive_error_count() noexcept {
         primitive_error_count_.fetch_add(1, std::memory_order_relaxed);
     }

@@ -128,6 +128,41 @@ int main() {
         CHECK(r.has_value(), "AC6: eval-current completes require + hash program (no EDEADLK)");
     }
 
+    // ── AC7 (#4272): vector-set! / hash-set! under set-code + eval-current ──
+    // Soft set-code scoring under-counted vs oneshot (shortest-bridge 1/8 vs
+    // 7/8) because #3235 heap-mutate auto-Guard fail-closed under the
+    // eval-current pin (#2686 nested-mutate-under-eval-current), returning
+    // soft <error> after CASE0= and aborting the rest. Fix: allow language
+    // heap mutators while eval_current_holds_shared_pin (exclusive workspace
+    // already held; prim body uses alloc_storage_lock_).
+    {
+        std::println("\n--- AC7 (#4272): vector-set! under set-code + eval-current ---");
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        CompilerService cs;
+        const std::string src =
+            "(let ((v (make-vector 2 0))) (vector-set! v 0 7) (vector-ref v 0))";
+        auto sc = cs.eval(std::string("(set-code \"") + src + "\")");
+        CHECK(sc.has_value(), "AC7: set-code accepts vector-set! program");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value(), "AC7: eval-current completes");
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 7,
+              "AC7: vector-set! under eval-current -> 7 (not soft <error>)");
+        // hash-set! face (same #3235 auto-Guard path)
+        const std::string src_h =
+            "(let ((h (make-hash))) (hash-set! h 1 9) (hash-ref h 1 -1))";
+        auto sc2 = cs.eval(std::string("(set-code \"") + src_h + "\")");
+        CHECK(sc2.has_value(), "AC7: set-code hash-set! program");
+        auto r2 = cs.eval("(eval-current)");
+        CHECK(r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 9,
+              "AC7: hash-set! under eval-current -> 9");
+        CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp", "Issue #4272"),
+              "AC7: maybe_auto_guard cites #4272");
+        CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp",
+                            "eval_current_holds_shared_pin()"),
+              "AC7: heap-mutate exempt under eval-current pin");
+    }
+
     // ── AC4: source markers ──────────────────────────────────────────
     {
         std::println("\n--- AC4: Wave1 source markers ---");

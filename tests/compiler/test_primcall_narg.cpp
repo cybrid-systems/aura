@@ -624,7 +624,34 @@ static void ac22_source_gate_4265() {
           "AC22: build.py linter");
 }
 
+// Issue #4273: set-code workspace (define > 42) must not poison Path B
+// pick-best after eval-current (WAVE14 `cannot call: >`).
+static void ac23_pick_best_prim_shadow_4273() {
+    std::println("\n--- #4273 AC23: pick-best after workspace shadows > ---");
+    CompilerService cs;
+    auto sc = cs.eval(
+        "(set-code \"(define > 42) (define (f x) (+ x 1)) (f 3)\")");
+    CHECK(sc.has_value(), "AC23: set-code with (define > 42)");
+    auto ec = cs.eval("(eval-current)");
+    CHECK(ec.has_value(), "AC23: eval-current completes");
+    // Direct prim call and pick-best lambda must still resolve language >
+    auto gt = cs.eval("(> 3 1)");
+    CHECK(gt.has_value() && aura::compiler::types::is_bool(*gt) && aura::compiler::types::as_bool(*gt),
+          "AC23: Path B (> 3 1) still #t after workspace shadow dropped");
+    auto def = cs.eval(std::string(kPickBestDef4265));
+    CHECK(def.has_value(), "AC23: pick-best define");
+    auto r = cs.eval("(pick-best (list 2 9 4))");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 9,
+          "AC23: pick-best -> 9 (not cannot call: >)");
+    CHECK(read_file("src/compiler/evaluator_primitives_eval.cpp").find("#4273") !=
+              std::string::npos,
+          "AC23: eval primitives cite #4273");
+    CHECK(read_file("src/serve/serve_async.cpp").find("emit_exec_result") != std::string::npos,
+          "AC23: serve emit_exec_result for soft Error status");
+}
+
 } // namespace
+
 
 int run_test_primcall_narg() {
     std::println("=== Issue #2576: PrimCall N-arg ===");
@@ -650,7 +677,8 @@ int run_test_primcall_narg() {
     ac20_pick_best_pathb_repeat_calls();
     ac21_pick_best_session_replay_parity();
     ac22_source_gate_4265();
-    std::println("\n=== #2576+#4175+#4177+#4232+#4265: {} passed, {} failed ===", g_passed,
+    ac23_pick_best_prim_shadow_4273();
+    std::println("\n=== #2576+#4175+#4177+#4232+#4265+#4273: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
