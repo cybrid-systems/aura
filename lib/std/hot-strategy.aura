@@ -64,13 +64,18 @@
 ; Returns (ok version snap-id) where ok is #t/#f.
 ; Does NOT auto-heal; caller may (hot-strategy:heal!) on failure.
 (define (hot-strategy:swap! name body summary)
+  ; Issue #4275: mutate:rebind returns #f on reject (no throw). eval-current
+  ; errors must fail the swap - do not catch them as success. Only promote
+  ; last-good / version when rebind is true AND eval-current does not raise.
   (let ((pre (hot-strategy:snapshot! (string-append "hs-pre-" name)))
         (sum (if (string? summary) summary "hot-strategy:swap")))
     (let ((ok (try
-                (begin
-                  (mutate:rebind name body sum)
-                  (try (eval-current) (catch (e) #t))
-                  #t)
+                (let ((rebound (mutate:rebind name body sum)))
+                  ; Only exact #t is success — reject may be #f or an error
+                  ; object (truthy), neither of which must promote last-good.
+                  (if (equal? rebound #t)
+                      (begin (eval-current) #t)
+                      #f))
                 (catch (e) #f))))
       (if ok
           (begin
@@ -81,8 +86,6 @@
             (list #t *hs-version* pre))
           (list #f *hs-version* pre)))))
 
-; Restore last-good: prefer ast:restore when snap valid; else rebind body string.
-; Returns #t on best-effort restore.
 (define (hot-strategy:heal!)
   (let ((restored
          (if (>= *hs-last-good-snap* 0)
