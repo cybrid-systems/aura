@@ -1,0 +1,39 @@
+{
+  "issue": 4261,
+  "title": "Issue #4261: PrimFn drops std::function — FnPtr / SBO trampoline",
+  "ok": "OK #4261 primfn_no_std_function: SBO/FnPtr; Soft capturing kept",
+  "checks": [
+    {
+      "ac": "AC1-primfn",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #4261",
+        "kPrimFnNoStdFunctionIssue = 4261",
+        "uses_std_function",
+        "kSboBytes"
+      ]
+    },
+    {
+      "ac": "AC3-finalize",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": ["hot_timing_held_", "name_cstr"]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_primitives_hotpath_registry_slo.cpp",
+      "contains": ["4261 AC1", "4261 AC2", "4261 AC3"]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "build.py",
+      "contains": ["check_primfn_no_std_function_4261", "Issue #4261"]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4261.cpp",
+        "docs/design/4261-primfn-no-std-function.md"
+      ]
+    }
+  ]
+}

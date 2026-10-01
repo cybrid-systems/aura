@@ -454,3 +454,5 @@ check_ir_soa_column_slab_upstream_4263.py
 scripts/coverage/checks/check_ir_soa_column_slab_upstream_4263.py
 check_escape_soa_no_flat_4262.py
 scripts/coverage/checks/check_escape_soa_no_flat_4262.py
+check_primfn_no_std_function_4261.py
+scripts/coverage/checks/check_primfn_no_std_function_4261.py

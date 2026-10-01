@@ -2703,6 +2703,19 @@ def cmd_lint():
             "Issue #4262 escape SoA no-Flat materialize linter failed — run python3 scripts/coverage/checks/check_escape_soa_no_flat_4262.py"
         )
         return r
+    # Issue #4261: PrimFn drops std::function — FnPtr / SBO trampoline.
+    # Soft capturing OK via SBO/heap-box; finalize_hot_table SBO wrap.
+    # Extends test_primitives_hotpath_registry_slo; no invent.
+    pnf4261_script = COVERAGE_CHECKS / "check_primfn_no_std_function_4261.py"
+    if not pnf4261_script.exists():
+        fail(f"missing {pnf4261_script}")
+        return 1
+    r = run([sys.executable, str(pnf4261_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4261 PrimFn no-std::function linter failed — run python3 scripts/coverage/checks/check_primfn_no_std_function_4261.py"
+        )
+        return r
     # Issue #3796: coercion batch CI AC anchors + build-cwd harness
     ppw3796_script = COVERAGE_CHECKS / "check_occurrence_coercion_ci_ok_3796.py"
     if not ppw3796_script.exists():
@@ -18417,6 +18430,27 @@ def cmd_escape_soa_no_flat_4262():
 
 
 
+def cmd_primfn_no_std_function_4261_coverage():
+    """Issue #4261: PrimFn no std::function — FnPtr / SBO trampoline."""
+    print(f"{B}=== PrimFn no std::function (#4261) ==={N}")
+    script = COVERAGE_CHECKS / "check_primfn_no_std_function_4261.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("PrimFn no std::function (#4261) coverage contract rows failed")
+        return r
+    ok("PrimFn no std::function (#4261) coverage clean")
+    return 0
+
+
+def cmd_primfn_no_std_function_4261():
+    """Issue #4261: PrimFn SBO/FnPtr — drop std::function type erasure."""
+    return cmd_primfn_no_std_function_4261_coverage()
+
+
+
 def cmd_ir_soa_column_slab_upstream_4263():
     """Issue #4263: IrSoaColumnSlab Arena-owned upstream past 8KiB seed."""
     return cmd_ir_soa_column_slab_upstream_4263_coverage()
@@ -26720,6 +26754,7 @@ def main():
         "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
         "escape-analysis-pure-wrap-3795": cmd_escape_analysis_pure_wrap_3795_coverage,
         "escape-soa-no-flat-4262": cmd_escape_soa_no_flat_4262,
+        "primfn-no-std-function-4261": cmd_primfn_no_std_function_4261,
         "occurrence-coercion-ci-ok-3796": cmd_occurrence_coercion_ci_ok_3796_coverage,
         "occurrence-coercion-ci-ok-3796-coverage": cmd_occurrence_coercion_ci_ok_3796_coverage,
         "escape-analysis-pure-wrap-3795-coverage": cmd_escape_analysis_pure_wrap_3795_coverage,

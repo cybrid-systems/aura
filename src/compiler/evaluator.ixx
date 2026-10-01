@@ -49,6 +49,7 @@ module;
 #include <memory>
 #include <memory_resource>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <shared_mutex>
 #include <span>
@@ -88,17 +89,87 @@ namespace aura::compiler {
 using EvalValue = types::EvalValue;
 
 // Issue #913: dual-path PrimFn — free-function pointers use a bare FnPtr
-// (no type-erasure heap); capturing lambdas use std::function. Both
-// copyable. table_["name"] = lambda works via converting assignment.
+// (no type-erasure heap); capturing lambdas bind a small-buffer trampoline.
+// Issue #4261: drop std::function — SBO trampoline (or one-shot heap box for
+// Soft large captures) so hot/render-tier dispatch never pays std::function
+// alloc/indirect. Soft capturing registrations stay ergonomic.
 export class PrimFn {
     using FnPtr = EvalValue (*)(std::span<const EvalValue>);
+    using Invoker = EvalValue (*)(const void* obj, std::span<const EvalValue>);
+    using Cloner = void (*)(void* dst, const void* src);
+    using Destroyer = void (*)(void* obj);
+
+    // Enough for typical Soft captures (Evaluator*/heaps/counters) and the
+    // #4261 hot-timing wrap (PrimFn* + const char*) without heap.
+    static constexpr std::size_t kSboBytes = 64;
+
     FnPtr ptr_ = nullptr;
-    std::function<EvalValue(std::span<const EvalValue>)> fn_;
+    Invoker invoker_ = nullptr;
+    Cloner cloner_ = nullptr;
+    Destroyer destroyer_ = nullptr;
+    void* heap_ = nullptr;
+    std::size_t storage_size_ = 0;
+    alignas(std::max_align_t) std::byte sbo_[kSboBytes]{};
+
+    [[nodiscard]] const void* obj_ptr() const noexcept {
+        return heap_ != nullptr ? heap_ : static_cast<const void*>(sbo_);
+    }
+    [[nodiscard]] void* obj_ptr() noexcept {
+        return heap_ != nullptr ? heap_ : static_cast<void*>(sbo_);
+    }
+
+    void clear() noexcept {
+        if (destroyer_ != nullptr && (invoker_ != nullptr || heap_ != nullptr))
+            destroyer_(obj_ptr());
+        if (heap_ != nullptr) {
+            ::operator delete(heap_);
+            heap_ = nullptr;
+        }
+        ptr_ = nullptr;
+        invoker_ = nullptr;
+        cloner_ = nullptr;
+        destroyer_ = nullptr;
+        storage_size_ = 0;
+    }
+
+    template <class F>
+    static EvalValue invoke_erased(const void* obj, std::span<const EvalValue> args) {
+        return (*static_cast<const F*>(obj))(args);
+    }
+    template <class F>
+    static void clone_erased(void* dst, const void* src) {
+        ::new (dst) F(*static_cast<const F*>(src));
+    }
+    template <class F>
+    static void destroy_erased(void* obj) {
+        static_cast<F*>(obj)->~F();
+    }
+
+    template <class F>
+    void bind_callable(F&& f) {
+        using Decayed = std::decay_t<F>;
+        clear();
+        if constexpr (std::is_convertible_v<Decayed, FnPtr>) {
+            ptr_ = static_cast<FnPtr>(f);
+            return;
+        }
+        invoker_ = &invoke_erased<Decayed>;
+        cloner_ = &clone_erased<Decayed>;
+        destroyer_ = &destroy_erased<Decayed>;
+        storage_size_ = sizeof(Decayed);
+        if constexpr (sizeof(Decayed) <= kSboBytes && alignof(Decayed) <= alignof(std::max_align_t)) {
+            ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(f));
+        } else {
+            // Soft large-capture overflow: one heap box at registration, not per apply.
+            heap_ = ::operator new(sizeof(Decayed));
+            ::new (heap_) Decayed(std::forward<F>(f));
+        }
+    }
 
 public:
-    PrimFn() = default;
-
+    PrimFn() noexcept = default;
     PrimFn(std::nullptr_t) noexcept {}
+    ~PrimFn() { clear(); }
 
     // Free function / function pointer — zero-allocation dispatch path.
     PrimFn(FnPtr fn) noexcept
@@ -108,21 +179,84 @@ public:
         requires(!std::is_same_v<std::decay_t<F>, PrimFn> &&
                  !std::is_same_v<std::decay_t<F>, std::nullptr_t> &&
                  !std::is_same_v<std::decay_t<F>, FnPtr>)
-    PrimFn(F&& fn)
-        : fn_(std::forward<F>(fn)) {}
+    PrimFn(F&& fn) {
+        bind_callable(std::forward<F>(fn));
+    }
+
+    PrimFn(const PrimFn& o) {
+        ptr_ = o.ptr_;
+        if (o.invoker_ == nullptr)
+            return;
+        invoker_ = o.invoker_;
+        cloner_ = o.cloner_;
+        destroyer_ = o.destroyer_;
+        storage_size_ = o.storage_size_;
+        if (o.heap_ != nullptr) {
+            heap_ = ::operator new(o.storage_size_);
+            o.cloner_(heap_, o.heap_);
+        } else {
+            o.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(o.sbo_));
+        }
+    }
+
+    PrimFn(PrimFn&& o) noexcept {
+        ptr_ = o.ptr_;
+        invoker_ = o.invoker_;
+        cloner_ = o.cloner_;
+        destroyer_ = o.destroyer_;
+        storage_size_ = o.storage_size_;
+        heap_ = o.heap_;
+        if (o.invoker_ != nullptr && o.heap_ == nullptr && o.cloner_ != nullptr) {
+            // Move SBO payload via clone+destroy (F may not be nothrow-move).
+            o.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(o.sbo_));
+            o.destroyer_(static_cast<void*>(o.sbo_));
+        }
+        o.ptr_ = nullptr;
+        o.invoker_ = nullptr;
+        o.cloner_ = nullptr;
+        o.destroyer_ = nullptr;
+        o.heap_ = nullptr;
+        o.storage_size_ = 0;
+    }
+
+    PrimFn& operator=(const PrimFn& o) {
+        if (this == &o)
+            return *this;
+        PrimFn tmp(o);
+        *this = std::move(tmp);
+        return *this;
+    }
+
+    PrimFn& operator=(PrimFn&& o) noexcept {
+        if (this == &o)
+            return *this;
+        clear();
+        ptr_ = o.ptr_;
+        invoker_ = o.invoker_;
+        cloner_ = o.cloner_;
+        destroyer_ = o.destroyer_;
+        storage_size_ = o.storage_size_;
+        heap_ = o.heap_;
+        if (o.invoker_ != nullptr && o.heap_ == nullptr && o.cloner_ != nullptr) {
+            o.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(o.sbo_));
+            o.destroyer_(static_cast<void*>(o.sbo_));
+        }
+        o.ptr_ = nullptr;
+        o.invoker_ = nullptr;
+        o.cloner_ = nullptr;
+        o.destroyer_ = nullptr;
+        o.heap_ = nullptr;
+        o.storage_size_ = 0;
+        return *this;
+    }
 
     template <class F>
         requires(!std::is_same_v<std::decay_t<F>, PrimFn>)
     PrimFn& operator=(F&& f) {
         if constexpr (std::is_same_v<std::decay_t<F>, std::nullptr_t>) {
-            ptr_ = nullptr;
-            fn_ = nullptr;
-        } else if constexpr (std::is_convertible_v<std::decay_t<F>, FnPtr>) {
-            ptr_ = static_cast<FnPtr>(f);
-            fn_ = nullptr;
+            clear();
         } else {
-            ptr_ = nullptr;
-            fn_ = std::forward<F>(f);
+            bind_callable(std::forward<F>(f));
         }
         return *this;
     }
@@ -130,17 +264,28 @@ public:
     EvalValue operator()(std::span<const EvalValue> args) const {
         if (ptr_)
             return ptr_(args);
-        return fn_(args);
+        return invoker_(obj_ptr(), args);
     }
 
     EvalValue operator()(std::initializer_list<EvalValue> args) const {
         return (*this)(std::span<const EvalValue>(args.begin(), args.size()));
     }
 
-    explicit operator bool() const noexcept { return ptr_ != nullptr || static_cast<bool>(fn_); }
+    explicit operator bool() const noexcept {
+        return ptr_ != nullptr || invoker_ != nullptr;
+    }
 
     [[nodiscard]] bool is_function_pointer() const noexcept { return ptr_ != nullptr; }
+
+    // Issue #4261: production / Soft both refuse std::function storage.
+    [[nodiscard]] bool uses_std_function() const noexcept { return false; }
+    [[nodiscard]] bool uses_sbo_trampoline() const noexcept {
+        return invoker_ != nullptr && heap_ == nullptr && ptr_ == nullptr;
+    }
+    [[nodiscard]] bool uses_heap_box() const noexcept { return heap_ != nullptr; }
 };
+
+export inline constexpr int kPrimFnNoStdFunctionIssue = 4261;
 
 // Issue #480: lightweight metadata for self-describing primitives.
 // Issue #697: category + schema/contracts for AI Agent extension kit.
@@ -284,23 +429,28 @@ public:
     void finalize_hot_table() {
         hot_map_.clear();
         hot_entries_.clear();
+        hot_timing_held_.clear();
+        hot_timing_held_.reserve(ordered_names_.size());
         for (std::size_t i = 0; i < ordered_names_.size() && i < meta_.size(); ++i) {
             if (meta_[i].perf_tier != kPrimPerfHot)
                 continue;
-            // Wrap once for render-hotpath latency (skip if already wrapped — name sentinel).
-            const std::string name = ordered_names_[i];
-            PrimFn original = fn_slots_[i];
-            PrimFn timed = [original,
-                            name](std::span<const types::EvalValue> a) -> types::EvalValue {
+            // Issue #4261: SBO wrap captures PrimFn* + const char* only —
+            // never PrimFn-by-value + std::string (that forced std::function heap).
+            const std::string& name = ordered_names_[i];
+            auto held = std::make_unique<PrimFn>(std::move(fn_slots_[i]));
+            PrimFn* raw = held.get();
+            const char* name_cstr = name.c_str();
+            hot_timing_held_.push_back(std::move(held));
+            PrimFn timed = [raw, name_cstr](std::span<const types::EvalValue> a) -> types::EvalValue {
                 if (!aura::core::arena_policy::in_render_hotpath())
-                    return original(a);
+                    return (*raw)(a);
                 const auto t0 = std::chrono::steady_clock::now();
-                auto r = original(a);
+                auto r = (*raw)(a);
                 const auto ns =
                     static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                    std::chrono::steady_clock::now() - t0)
                                                    .count());
-                aura::compiler::render_telemetry::record_tracked_prim(name, ns);
+                aura::compiler::render_telemetry::record_tracked_prim(name_cstr, ns);
                 return r;
             };
             fn_slots_[i] = timed;
@@ -396,6 +546,8 @@ private:
     std::vector<std::string> ordered_names_;
     std::vector<PrimMeta> meta_;
     std::vector<PrimFn> fn_slots_;
+    // Issue #4261: owns original hot PrimFn bodies for SBO timing wraps.
+    std::vector<std::unique_ptr<PrimFn>> hot_timing_held_;
 };
 
 // Forward declaration: Evaluator is defined below.

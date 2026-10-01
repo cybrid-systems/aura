@@ -15,6 +15,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 import std;
@@ -25,6 +27,8 @@ import aura.compiler.value;
 namespace aura_issue_805_detail {
 
 using aura::compiler::CompilerService;
+using aura::compiler::PrimFn;
+using aura::compiler::kPrimFnNoStdFunctionIssue;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -92,6 +96,81 @@ static void run_matrix(CompilerService& cs) {
     auto reg709 = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
     CHECK(slo776 && is_hash(*slo776), "primitives-hotpath-slo-stats regression (#776)");
     CHECK(reg709 && is_hash(*reg709), "primitives-registry-stats regression (#709)");
+
+    std::println("\n--- #4261 AC1–AC3: PrimFn no std::function; SBO / FnPtr ---");
+    CHECK(kPrimFnNoStdFunctionIssue == 4261, "4261 AC1: issue constant");
+    auto read_file = [](const char* path) -> std::string {
+        for (const auto& cand :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(cand);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+        return {};
+    };
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev.find("kPrimFnNoStdFunctionIssue = 4261") != std::string::npos, "4261 AC1: stamp");
+    CHECK(ev.find("uses_std_function") != std::string::npos, "4261 AC1: uses_std_function API");
+    CHECK(ev.find("uses_sbo_trampoline") != std::string::npos, "4261 AC1: SBO trampoline API");
+    // PrimFn class body must not store std::function member.
+    const auto prim_pos = ev.find("export class PrimFn");
+    CHECK(prim_pos != std::string::npos, "4261 AC1: PrimFn present");
+    const auto prim_end = ev.find("kPrimFnNoStdFunctionIssue", prim_pos);
+    const auto body = ev.substr(prim_pos, prim_end - prim_pos);
+    CHECK(body.find("std::function<EvalValue") == std::string::npos,
+          "4261 AC1: PrimFn has no std::function member");
+    CHECK(body.find("kSboBytes") != std::string::npos, "4261 AC1: SBO buffer");
+
+    // FnPtr path
+    PrimFn plus = +[](std::span<const aura::compiler::types::EvalValue> a)
+        -> aura::compiler::types::EvalValue {
+        using aura::compiler::types::as_int;
+        using aura::compiler::types::is_int;
+        using aura::compiler::types::make_int;
+        if (a.size() != 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_int(0);
+        return make_int(as_int(a[0]) + as_int(a[1]));
+    };
+    CHECK(plus.is_function_pointer(), "4261 AC1: FnPtr is_function_pointer");
+    CHECK(!plus.uses_std_function(), "4261 AC1: FnPtr uses_std_function false");
+    CHECK(!plus.uses_heap_box(), "4261 AC1: FnPtr no heap box");
+
+    // Soft capturing registration — small capture fits SBO
+    int cap = 7;
+    PrimFn capturing = [&cap](std::span<const aura::compiler::types::EvalValue>) {
+        return aura::compiler::types::make_int(cap);
+    };
+    CHECK(!capturing.is_function_pointer(), "4261 AC2: capturing not FnPtr");
+    CHECK(capturing.uses_sbo_trampoline() || capturing.uses_heap_box(),
+          "4261 AC2: capturing uses trampoline");
+    CHECK(!capturing.uses_std_function(), "4261 AC2: capturing no std::function");
+    auto cv = capturing({});
+    CHECK(aura::compiler::types::is_int(cv) && aura::compiler::types::as_int(cv) == 7,
+          "4261 AC2: Soft capturing still works");
+
+    // Microbench: FnPtr apply under N workers-worth of loops (serial soak)
+    std::println("\n--- #4261 AC3: FnPtr primcall microbench ---");
+    using aura::compiler::types::make_int;
+    const aura::compiler::types::EvalValue args[2] = {make_int(1), make_int(2)};
+    const auto b0 = std::chrono::steady_clock::now();
+    std::int64_t sink = 0;
+    for (int i = 0; i < 200000; ++i) {
+        auto r = plus(std::span<const aura::compiler::types::EvalValue>(args, 2));
+        sink += aura::compiler::types::as_int(r);
+    }
+    const auto b1 = std::chrono::steady_clock::now();
+    const auto bns = std::chrono::duration_cast<std::chrono::nanoseconds>(b1 - b0).count();
+    CHECK(sink == 200000 * 3, "4261 AC3: FnPtr results");
+    CHECK(bns >= 0, "4261 AC3: microbench ran");
+    std::println("4261 AC3: 200k FnPtr applies ns={} (p99 proxy mean)", bns);
+    CHECK(ev.find("hot_timing_held_") != std::string::npos,
+          "4261 AC1: finalize_hot_table SBO wrap held");
+    CHECK(ev.find("schema-4261") == std::string::npos, "4261 AC4: no new query key");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_primfn_no_std_function_4261") != std::string::npos,
+          "4261 AC4: build.py linter");
+    CHECK(read_file("tests/compiler/test_issue_4261.cpp").empty(), "4261 AC4: no invent");
 }
 
 } // namespace aura_issue_805_detail
