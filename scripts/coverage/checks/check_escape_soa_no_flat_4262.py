@@ -61,7 +61,7 @@ def main() -> int:
     else:
         # Window around the production dirty entry definition
         win_start = svc.rfind("export inline std::size_t run_dirty_escape_on_soa", 0, helper_call)
-        win = svc[win_start:helper_call + 80] if win_start >= 0 else svc[helper_call - 800:helper_call + 80]
+        win = svc[win_start : helper_call + 80] if win_start >= 0 else svc[helper_call - 800 : helper_call + 80]
         win_code = re.sub(r"//[^\n]*", "", win)
         if "FlatInstruction" in win_code:
             fails.append("AC1: run_dirty_escape_on_soa still constructs FlatInstruction")
