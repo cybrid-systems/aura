@@ -4399,6 +4399,146 @@ static void ac4009_hard_face_dynamic_ground_fail_closed() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #4251: dep-closure reverse-map miss is not a truncate ──
+// reverify_clean_constraints_for_touched treated a var_to_constraints_ miss
+// as an empty closure node (`continue`, no pending insert, no
+// last_reverify_truncated_), so a later local / empty-dirty solve_delta could
+// return SOLVED without ever rechecking the unmapped constraint. Production
+// now takes the same fail-closed arm as a cap hit (#3511/#3557 escalate), the
+// UF merge retargets a pending seed r2→r1, and the stray 3820dbg fprintf is
+// gone. Soft/Off keeps the zero-cost observe-only continue.
+//
+// AC1 Prod: dropped reverse-map rep under production latches truncation +
+//           escalates instead of quiet SOLVED
+// AC2 Soft: miss stays observe-only, no extra full escalate
+// AC3 Merge: pending seed follows UF r2→r1 (no dead-rep miss)
+// AC4 source-cite: miss arm documented, 3820dbg removed, probe hook present
+// AC5 linter wired; no test_issue_4251 / docs/design
+
+static void ac4251_1_prod_miss_not_silent_solved() {
+    std::println("\n--- #4251 AC1: Prod dep-closure miss latches fail-closed ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    ProdScope3253 prod;
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    auto w = cs.fresh_var();
+    Constraint eq_w;
+    eq_w.kind = Constraint::EQUAL;
+    eq_w.lhs = w;
+    eq_w.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_w)); // keep var_to_constraints_ non-empty
+    Constraint eq_v;
+    eq_v.kind = Constraint::EQUAL;
+    eq_v.lhs = v;
+    eq_v.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_v));
+    const auto rep_v = cs.find(v).index;
+    cs.drop_var_to_constraints_entry_for_test(rep_v); // remount-complete miss
+    cs.seed_pending_full_solve_root_for_test(rep_v);
+    const auto fs0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+    std::vector<Constraint> unresolved;
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.last_reverify_truncated(),
+          "4251 AC1: prod miss latches truncation (not an empty closure node)");
+    CHECK(cs.last_reverify_unscanned() >= 1, "4251 AC1: unscanned residual exposed");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) > fs0,
+          "4251 AC1: #3511/#3557 escalation ran instead of quiet SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() >= 1, "4251 AC1: missed rep stays residual pending");
+}
+
+static void ac4251_2_soft_miss_observe_only() {
+    std::println("\n--- #4251 AC2: Soft miss stays zero-cost observe ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    apply_dev_audit_defaults();
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    auto w = cs.fresh_var();
+    Constraint eq_w;
+    eq_w.kind = Constraint::EQUAL;
+    eq_w.lhs = w;
+    eq_w.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_w));
+    Constraint eq_v;
+    eq_v.kind = Constraint::EQUAL;
+    eq_v.lhs = v;
+    eq_v.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_v));
+    const auto rep_v = cs.find(v).index;
+    cs.drop_var_to_constraints_entry_for_test(rep_v);
+    cs.seed_pending_full_solve_root_for_test(rep_v);
+    const auto fs0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+    std::vector<Constraint> unresolved;
+    (void)cs.solve_delta(&unresolved);
+    CHECK(!cs.last_reverify_truncated(), "4251 AC2: Soft miss does not latch truncation");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) == fs0,
+          "4251 AC2: Soft no extra full escalate");
+}
+
+static void ac4251_3_uf_merge_retargets_pending() {
+    std::println("\n--- #4251 AC3: UF merge retargets pending seed r2→r1 ---");
+    ProdScope3253 prod;
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto u = cs.fresh_var();
+    auto v = cs.fresh_var();
+    Constraint cu;
+    cu.kind = Constraint::EQUAL;
+    cu.lhs = u;
+    cu.rhs = reg.int_type();
+    cs.add(std::move(cu));
+    Constraint cv;
+    cv.kind = Constraint::EQUAL;
+    cv.lhs = v;
+    cv.rhs = reg.int_type();
+    cs.add(std::move(cv));
+    const auto rep_u = cs.find(u).index;
+    const auto rep_v = cs.find(v).index;
+    CHECK(rep_u != rep_v, "4251 AC3: distinct reps before merge");
+    cs.seed_pending_full_solve_root_for_test(rep_v);
+    CHECK(cs.pending_full_solve_root_present_for_test(rep_v), "4251 AC3: seed present pre-merge");
+    // Equal ranks + unify(u, v) → r1 = rep_u survives, r2 = rep_v dies.
+    CHECK(cs.unify(u, v), "4251 AC3: merge ok");
+    const auto surv = cs.find(u).index;
+    CHECK(surv == rep_u, "4251 AC3: rep_u survives the merge");
+    CHECK(cs.pending_full_solve_root_present_for_test(surv),
+          "4251 AC3: pending follows the surviving rep");
+    CHECK(!cs.pending_full_solve_root_present_for_test(rep_v),
+          "4251 AC3: dead r2 seed retargeted away");
+    CHECK(cs.pending_full_solve_roots_size() == 1, "4251 AC3: exactly one pending seed");
+}
+
+static void ac4251_4_source_cite_and_debug_removed() {
+    std::println("\n--- #4251 AC4: source-cite + 3820dbg removed ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("Issue #4251") != std::string::npos, "4251 AC4: impl cite");
+    CHECK(impl.find("a reverse-map miss is NOT an empty closure node") != std::string::npos,
+          "4251 AC4: miss arm documented");
+    CHECK(impl.find("hard_miss") != std::string::npos, "4251 AC4: fail-closed arm present");
+    CHECK(impl.find("3820dbg") == std::string::npos,
+          "4251 AC4: stray debug fprintf removed from prod TIMEOUT return");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(ixx.find("pending_full_solve_root_present_for_test") != std::string::npos,
+          "4251 AC4: read-only membership probe wired");
+}
+
+static void ac4251_5_source_and_linter() {
+    std::println("\n--- #4251 AC5: linter wired; no invent ---");
+    const auto lint = read_file("scripts/check_dep_closure_miss_4251.py");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("Issue #4251") != std::string::npos,
+          "4251 AC5: linter exists");
+    CHECK(build.find("check_dep_closure_miss_4251") != std::string::npos,
+          "4251 AC5: build.py wired");
+    CHECK(read_file("tests/compiler/test_issue_4251.cpp").empty(), "4251 AC5: no invent test tree");
+    CHECK(read_file("docs/design/4251-dep-closure-miss.md").empty(), "4251 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -4561,6 +4701,12 @@ int run_test_solve_delta_unresolved_export() {
     ac4009_hard_face_dynamic_ground_fail_closed();
     std::println("\n=== Issue #3511: instance-repair clean reverify ===");
     ac3511_instance_repair_clean_reverify();
+    std::println("\n=== Issue #4251: dep-closure reverse-map miss is not a truncate ===");
+    ac4251_1_prod_miss_not_silent_solved();
+    ac4251_2_soft_miss_observe_only();
+    ac4251_3_uf_merge_retargets_pending();
+    ac4251_4_source_cite_and_debug_removed();
+    ac4251_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -10136,6 +10136,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4244 interior int remap linter failed — run python3 scripts/check_interior_int_remap_4244.py")
         return r
+    # Issue #4251 (P1: dep-closure reverse-map miss is not a truncate):
+    # reverify_clean_constraints_for_touched treated a var_to_constraints_
+    # miss as an empty closure node (bare continue, no pending insert, no
+    # last_reverify_truncated_), so a local / empty-dirty solve_delta could
+    # return SOLVED without ever rechecking the unmapped constraint. Gate
+    # pins: production/Full miss takes the cap-hit fail-closed arm (pending
+    # seed + truncate latch) while Soft keeps the observe-only continue, the
+    # cap-hit arm (#2939/#3511/#3557) stays intact, the UF merge retargets
+    # pending_full_solve_roots_ r2->r1 like occurrence/let-poly, the stray
+    # 3820dbg fprintf is gone, runtime ACs ac4251_1..5 dispatch before the
+    # Results line, and build.py + allowlist are wired.
+    dcm4251_script = ROOT / "scripts" / "check_dep_closure_miss_4251.py"
+    if not dcm4251_script.exists():
+        fail(f"missing {dcm4251_script}")
+        return 1
+    r = run([sys.executable, str(dcm4251_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4251 dep-closure miss linter failed — run python3 scripts/check_dep_closure_miss_4251.py")
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

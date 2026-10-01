@@ -1257,8 +1257,31 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         const auto root = frontier[fi++];
         ++closure_nodes;
         auto it = var_to_constraints_.find(root);
-        if (it == var_to_constraints_.end())
+        if (it == var_to_constraints_.end()) {
+            // Issue #4251: a reverse-map miss is NOT an empty closure node.
+            // Densify/steal remount (or a UF merge that retargeted the map
+            // under r1 while a pending seed still named r2) can leave a live
+            // constraint unindexed for this rep. The bare `continue` reported
+            // that as a clean closure, so a later local / empty-dirty
+            // solve_delta could return SOLVED without ever rechecking the
+            // unmapped constraint — production truncated-BFS escalate
+            // (#3511/#3557) never fired because a miss is not a cap hit.
+            // Production/Full therefore takes the same fail-closed arm as a
+            // cap hit: keep the rep as residual pending and latch truncation
+            // so escalate_if_production full-solves (or the #3190/#3031 drain
+            // rejects) instead of stamping green. Soft/Off keeps the
+            // zero-cost observe-only continue.
+            const bool hard_miss = aura::compiler::typed_audit::production_defaults_active() ||
+                                   aura::compiler::typed_audit::get_strategy() ==
+                                       aura::compiler::typed_audit::AuditStrategy::Full;
+            if (hard_miss) {
+                pending_full_solve_roots_.insert(root);
+                last_reverify_truncated_ = true;
+                if (last_reverify_unscanned_ == 0)
+                    last_reverify_unscanned_ = 1;
+            }
             continue;
+        }
         bool mid_root_cap = false;
         for (auto idx : it->second) {
             ++closure_edges;
@@ -1817,6 +1840,17 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
                 let_poly_dirty_roots_.count(static_cast<std::uint32_t>(r1)) > 0) {
                 let_poly_dirty_roots_.insert(static_cast<std::uint32_t>(r1));
                 let_poly_dirty_roots_.erase(static_cast<std::uint32_t>(r2));
+            }
+            // Issue #4251: a pending full-solve seed must follow the merge
+            // too. occurrence/let-poly already retarget r2→r1; without the
+            // same move a seed still named dead r2 makes the next dep-closure
+            // BFS hit the reverse-map miss arm in
+            // reverify_clean_constraints_for_touched while the constraints
+            // actually live under r1 (cross-delta constraint leak).
+            if (pending_full_solve_roots_.count(static_cast<std::uint32_t>(r2)) > 0 ||
+                pending_full_solve_roots_.count(static_cast<std::uint32_t>(r1)) > 0) {
+                pending_full_solve_roots_.insert(static_cast<std::uint32_t>(r1));
+                pending_full_solve_roots_.erase(static_cast<std::uint32_t>(r2));
             }
             note_touched_var(TypeId{static_cast<std::uint32_t>(r1), 1});
             note_touched_var(TypeId{static_cast<std::uint32_t>(r2), 1});
@@ -3065,8 +3099,6 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
             unresolved_out->push_back(constraints_[i]);
     }
     if (unprocessed) {
-        std::fprintf(stderr, "3820dbg: ret-TIMEOUT pending=%zu\n",
-                     pending_full_solve_roots_.size());
         return SolveResult::TIMEOUT;
     }
 
