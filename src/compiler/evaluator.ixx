@@ -5751,6 +5751,11 @@ private:
     // full traversal when the workspace is clean (no dirty nodes).
     // Cleared on any mutation (via the dirty flag check).
     std::optional<std::string> last_typecheck_result_;
+    // Issue #4266: structured status of the cached report — diagnostics
+    // ride the string, never the boolean. Parity for (typecheck-status)
+    // cache hits so the stdlib gate branches on #t/#f without re-parsing
+    // the report text.
+    bool last_typecheck_ok_ = false;
 
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;

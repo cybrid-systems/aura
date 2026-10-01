@@ -1346,7 +1346,8 @@ target_include_directories(issue_508_bench PRIVATE src)
 target_compile_options(issue_508_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-reflect
+    aura_jit_test_objects)
 
 # Issue #307: quantitative benchmark for fine-grained
 # incremental type checking + IR re-lower pipeline at EDA
@@ -1362,7 +1363,8 @@ target_include_directories(issue_307_bench PRIVATE src)
 target_compile_options(issue_307_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect
+    aura_jit_test_objects)
 
 # Consolidated FlatAST hot-path benches (#393/#398/#399):
 #   stable-ref (1k + 10k), children-stable, mark-dirty
@@ -1373,7 +1375,8 @@ target_include_directories(ast_hotpath_bench PRIVATE src)
 target_compile_options(ast_hotpath_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(ast_hotpath_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+target_link_libraries(ast_hotpath_bench PRIVATE stdc++ aura_test_objects aura-reflect
+    aura_jit_test_objects)
 add_test(NAME ast_hotpath_bench COMMAND ./ast_hotpath_bench)
 # Legacy ctest names (argv selects scenario / scale).
 add_test(NAME stable_ref_bench COMMAND ./ast_hotpath_bench stable-ref 1k)
@@ -1429,7 +1432,8 @@ target_sources(issue_212_bench PRIVATE
 # in module_cache/aura_test_objects.dir/ (produced by the .ixx
 # compile) have the same identity the .cpp imports expect.
 aura_test_compile_options(issue_212_bench)
-target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect
+    aura_jit_test_objects)
 
 # Issue #213 verification: rollback mechanism for the mutation
 # boundary API (Cycle 1). Verifies that

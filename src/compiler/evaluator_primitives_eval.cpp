@@ -79,8 +79,125 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+namespace {
+
+    // Issue #4266: single typecheck core shared by (typecheck-current) and
+    // (typecheck-status). `ok` is the structured status Agents branch on —
+    // diagnostics ride `report` text, never the boolean, so a stdlib gate can
+    // reject without parsing English. One traversal, one cache, one coverage
+    // counter — no second model.
+    struct WorkspaceTypecheckResult {
+        bool ok = false;
+        std::string report;
+    };
+
+} // namespace
+
 void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
                               std::function<void()> destroy_defuse_index) {
+
+    // Lives INSIDE register_eval_primitives — an Evaluator friend — because
+    // every `ev.` member touched below is private; a file-scope free
+    // function cannot reach them (caught by the first full rebuild).
+    // Returns nullopt when no workspace is live
+    // (the primitive layers render that face themselves). Locking, the #159
+    // Phase-5 cache, the #3082 mutation-boundary lock note, the #3081/#3294
+    // export-authority re-arm and the #159 cache write-back all keep their
+    // original semantics — this is a mechanical extraction, not a behavior
+    // change, for (typecheck-current).
+    auto run_workspace_typecheck = [&](Evaluator& ev) -> std::optional<WorkspaceTypecheckResult> {
+        // #3082: MutationBoundary already holds workspace_mtx_ uniquely.
+        // Re-taking a shared_lock on the same non-recursive mutex is EDEADLK
+        // (`Resource deadlock avoided`) — same reason agent.cpp uses
+        // run_typecheck_no_lock() mid-boundary.
+        std::shared_lock<std::shared_mutex> rlock;
+        if (ev.mutation_boundary_depth() == 0 && !ev.mutation_boundary_held())
+            rlock = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
+        ev.coverage_counters_[1]++;
+        if (!ev.workspace_flat_ || !ev.workspace_pool_)
+            return std::nullopt;
+
+        // Phase 5 (Issue #159): cache check. If the workspace is clean (no
+        // dirty nodes anywhere) AND we have a cached result, reuse it. The
+        // status travels with the report so (typecheck-status) cache hits
+        // stay structured (#4266) — a cached report can still carry
+        // diagnostics (last check errored, nothing mutated since).
+        if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) &&
+            ev.last_typecheck_result_) {
+            return WorkspaceTypecheckResult{ev.last_typecheck_ok_, *ev.last_typecheck_result_};
+        }
+
+        // Lazily create persistent type registry (stable TypeIds across calls)
+        (void)ev.ensure_type_registry();
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+        aura::compiler::TypeChecker tc(treg);
+        if (ev.compiler_metrics())
+            tc.set_metrics(ev.compiler_metrics());
+
+        // Inject custom type signatures declared by declare-type
+        if (!ev.declared_type_sigs_.empty()) {
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                sig_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                mod_src_map;
+            for (auto& [name, decl] : ev.declared_type_sigs_) {
+                sig_map[name] = decl.type_str;
+                if (!decl.module_file.empty())
+                    mod_src_map[name] = decl.module_file;
+            }
+            tc.inject_type_sigs(sig_map, mod_src_map);
+        }
+
+        aura::diag::DiagnosticCollector diag;
+
+        auto result =
+            tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
+        // Issue #3081: copy infer authority so query:type / query-type-of
+        // never surface a half-solved TIMEOUT cone as truth.
+        // Issue #3082: do not grant_type_export_authority over mid/nested
+        // provisional inflight (copy_infer refuses; persist still still).
+        // Issue #3294 AC4: previous gate on tc.last_type_export_authoritative()
+        // did NOT fix AC4 — the typechecker's flag is true for trivial
+        // (solve returns SOLVED, line 4704 sets field=true) so the gate
+        // was a no-op. AC4 was failing because face was being cleared
+        // elsewhere (guard-destructor !success branch / depth-branch /
+        // else-branch of copy_infer at typecheck-current). Always pass
+        // true here: typecheck-current is a *re-arm* point (only on
+        // outermost SOLVED success does the persist+grant path in
+        // em.cpp grant; we just keep face alive on the trivial path).
+        // TIMEOUT/CONFLICT face stays refused via the typechecker's own
+        // last_type_export_authoritative_=false (line 4709) which the
+        // AC1 explicit copy_infer(false) test exercises directly.
+        ev.copy_infer_type_export_authority(true);
+
+        // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
+        // and clears per-node dirty flags. No need for post-pass cache sync.
+        // Safety clear for any nodes that may have been missed.
+        ev.workspace_flat_->clear_all_dirty();
+
+        WorkspaceTypecheckResult st;
+        st.report = "type: " + treg.format_type(result) + "\n";
+        auto all_diags = diag.diagnostics();
+        if (all_diags.empty()) {
+            st.report += "no errors\n";
+            st.ok = true;
+        } else {
+            st.report += "diagnostics:\n";
+            for (auto& d : all_diags) {
+                st.report +=
+                    "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
+            }
+        }
+
+        // Phase 5: cache the result for the next clean-workspace call —
+        // report and structured status in parity (#4266).
+        ev.last_typecheck_result_ = st.report;
+        ev.last_typecheck_ok_ = st.ok;
+        return st;
+    };
+
 
     add(aura::compiler::prim::kSetCode,
         [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
@@ -908,97 +1025,41 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // Win: repeated (typecheck-current) calls on an unchanged
     // workspace skip the O(N) tree walk entirely. Latency drops from
     // ~20us to ~1us in the cache-hit case.
-    add("typecheck-current", [&ev](const auto&) {
-        // #3082: MutationBoundary already holds workspace_mtx_ uniquely.
-        // Re-taking a shared_lock on the same non-recursive mutex is EDEADLK
-        // (`Resource deadlock avoided`) — same reason agent.cpp uses
-        // run_typecheck_no_lock() mid-boundary.
-        std::shared_lock<std::shared_mutex> rlock;
-        if (ev.mutation_boundary_depth() == 0 && !ev.mutation_boundary_held())
-            rlock = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
-        ev.coverage_counters_[1]++;
-        if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+    // Issue #4266: body extracted to run_workspace_typecheck() (shared with
+    // the (typecheck-status) primitive below). The returned-string contract
+    // is unchanged: "type: <T>\nno errors\n" or "type: <T>\ndiagnostics:\n…".
+    add("typecheck-current", [&](const auto&) {
+        auto st = run_workspace_typecheck(ev);
+        if (!st) {
             auto eidx = ev.string_heap_.size();
             ev.string_heap_.push_back("no workspace");
             return make_string(eidx);
         }
-
-        // Phase 5: cache check. If the workspace is clean (no dirty
-        // nodes anywhere) AND we have a cached result, reuse it.
-        // The cache is implicitly invalidated by mutations (which
-        // mark the root dirty via mark_dirty_upward).
-        if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) &&
-            ev.last_typecheck_result_) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*ev.last_typecheck_result_);
-            return make_string(sidx);
-        }
-
-        // Lazily create persistent type registry (stable TypeIds across calls)
-        (void)ev.ensure_type_registry();
-        auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-        aura::compiler::TypeChecker tc(treg);
-        if (ev.compiler_metrics())
-            tc.set_metrics(ev.compiler_metrics());
-
-        // 注入 declare-type 声明的自定义类型签名
-        if (!ev.declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                sig_map;
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                mod_src_map;
-            for (auto& [name, decl] : ev.declared_type_sigs_) {
-                sig_map[name] = decl.type_str;
-                if (!decl.module_file.empty())
-                    mod_src_map[name] = decl.module_file;
-            }
-            tc.inject_type_sigs(sig_map, mod_src_map);
-        }
-
-        aura::diag::DiagnosticCollector diag;
-
-        auto result =
-            tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
-        // Issue #3081: copy infer authority so query:type / query-type-of
-        // never surface a half-solved TIMEOUT cone as truth.
-        // Issue #3082: do not grant_type_export_authority over mid/nested
-        // provisional inflight (copy_infer refuses; persist still still).
-        // Issue #3294 AC4: previous gate on tc.last_type_export_authoritative()
-        // did NOT fix AC4 — the typechecker's flag is true for trivial
-        // (solve returns SOLVED, line 4704 sets field=true) so the gate
-        // was a no-op. AC4 was failing because face was being cleared
-        // elsewhere (guard-destructor !success branch / depth-branch /
-        // else-branch of copy_infer at typecheck-current). Always pass
-        // true here: typecheck-current is a *re-arm* point (only on
-        // outermost SOLVED success does the persist+grant path in
-        // em.cpp grant; we just keep face alive on the trivial path).
-        // TIMEOUT/CONFLICT face stays refused via the typechecker's own
-        // last_type_export_authoritative_=false (line 4709) which the
-        // AC1 explicit copy_infer(false) test exercises directly.
-        ev.copy_infer_type_export_authority(true);
-
-        // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
-        // and clears per-node dirty flags. No need for post-pass cache sync.
-        // Safety clear for any nodes that may have been missed.
-        ev.workspace_flat_->clear_all_dirty();
-
-        std::string out = "type: " + treg.format_type(result) + "\n";
-        auto all_diags = diag.diagnostics();
-        if (all_diags.empty()) {
-            out += "no errors\n";
-        } else {
-            out += "diagnostics:\n";
-            for (auto& d : all_diags) {
-                out += "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
-            }
-        }
-
-        // Phase 5: cache the result for the next clean-workspace call.
-        ev.last_typecheck_result_ = out;
         auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(out);
+        ev.string_heap_.push_back(st->report);
+        return make_string(sidx);
+    });
+
+    // Issue #4266: (typecheck-status) — structured typecheck status for
+    // stdlib gates. (typecheck-current) embeds diagnostics in a returned
+    // STRING and returns normally on type errors, so the old
+    // safe-refactor:replace-fn gate reported 'applied for ill-typed
+    // replacements. Agents need a value they can branch on without
+    // parsing English:
+    //   #t     — workspace typechecks clean (diagnostics block empty)
+    //   string — the full diagnostics report (non-empty block)
+    //   #f     — no workspace live
+    // Shares run_workspace_typecheck() with typecheck-current: one
+    // traversal, one Phase-5 cache (structured status cached in parity
+    // via last_typecheck_ok_), one coverage counter — no second model.
+    add("typecheck-status", [&](const auto&) {
+        auto st = run_workspace_typecheck(ev);
+        if (!st)
+            return make_bool(false);
+        if (st->ok)
+            return make_bool(true);
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(st->report);
         return make_string(sidx);
     });
 

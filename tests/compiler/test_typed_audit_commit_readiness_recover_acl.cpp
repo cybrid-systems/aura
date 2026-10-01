@@ -325,3 +325,12 @@ int run_test_typed_audit_commit_readiness_recover_acl() {
     std::println("\n=== Issue #3380 done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+// Issue #3380 follow-up: this TU ships as a batch member (ACs dispatched from
+// the typed-audit batch runner); the standalone aura_add_issue_test target
+// still needs an entry point or its link fails with undefined `main`.
+int main() {
+    return run_test_typed_audit_commit_readiness_recover_acl();
+}
+#endif
