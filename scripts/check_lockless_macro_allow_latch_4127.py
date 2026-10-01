@@ -21,7 +21,11 @@
 #      parse_no_auto_restamp_opt_out; the definitions are de-static'd
 #      (external linkage) in evaluator_primitives_mutate.cpp;
 #      evaluator_eval_flat.cpp has NO file-local mirror of either and no
-#      duplicated restamp counters (no second marker channel).
+#      duplicated restamp counters (no second marker channel). Call sites
+#      are the original three (#4127 replace-subtree / set-body / move-node)
+#      plus the #4248 residual lockless batch installs (rebind, replace-value,
+#      insert-child, replace-pattern, splice, wrap, inline-call): ten calls,
+#      still the one shared function.
 # AC5: #3637 net authority untouched (get_allow_macro_mutate() ||
 #      boundary_macro_allow_latched()); every latch sits INSIDE an
 #      effect_sandbox_mode() != 0 block (Soft/Off early-out preserved);
@@ -181,8 +185,9 @@ def _rows() -> list[str]:
     must_not("static void propagate_macro_introduced_marker", "AC4 (no file-local mirror)", efl)
     must_not("static bool parse_no_auto_restamp_opt_out", "AC4 (no file-local mirror)", efl)
     must_not("macro_mutate_auto_restamp_total", "AC4 (no duplicated restamp counters)", efl)
-    if _count(efl, PROP) != 3:
-        fails.append(f"AC4: expected 3 shared-cascade call sites in eval_flat, found {_count(efl, PROP)}")
+    # #4127: 3 sites. #4248: same shared cascade on 7 residual batch installs.
+    if _count(efl, PROP) != 10:
+        fails.append(f"AC4: expected 10 shared-cascade call sites in eval_flat, found {_count(efl, PROP)}")
 
     # ── AC5: net authority untouched + Soft early-out + public parity + wiring ──
     must("ev_->get_allow_macro_mutate() || ev_->boundary_macro_allow_latched()", "AC5", net)
