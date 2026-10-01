@@ -247,3 +247,4 @@ check_mid_refuse_ordering_4241.py
 check_remap_tombstone_quarantine_4242.py
 check_pick_best_call_cache_4265.py
 check_synthesize_optimize_score_4267.py
+check_setcode_pick_parity_4272_4273.py

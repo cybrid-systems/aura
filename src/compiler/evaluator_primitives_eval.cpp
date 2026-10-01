@@ -107,6 +107,21 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 ev.last_set_code_error_kind_.clear();
                 ev.last_set_code_error_msg_.clear();
                 ev.last_eval_current_result_.reset();
+                // Issue #4273: prior workspace (define > ...) left top_
+                // shadows that poison Path B pick-best
+                // (type error: cannot call: > / soft_mismatch:-999999).
+                // Drop bindings whose names are registered primitives so
+                // lookup falls through to the prim table again. Prelude
+                // std bindings (make-hash etc.) are not prims and stay.
+                {
+                    std::vector<std::string> shadowed;
+                    for (auto& [name, _val] : ev.top_env().bindings_with_names()) {
+                        if (ev.top_env().lookup_primitive(name))
+                            shadowed.push_back(name);
+                    }
+                    for (auto& n : shadowed)
+                        (void)ev.top_env().unbind_local(n);
+                }
                 ev.coverage_counters_[0]++;
                 ev.coverage_counters_[5]++;
                 if (a.empty() || !is_string(a[0])) {
@@ -755,6 +770,18 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // closure. That was wrong (last Define ≠ returned closure), ran side
         // effects without capability checks, and could hang on infinite
         // loops. Closures are returned unchanged — callers invoke explicitly.
+        // Issue #4273: drop prim shadows installed by this workspace walk
+        // (define > / null? / list) so Soft Path B pick-best after
+        // set-code scoring still resolves language prims.
+        {
+            std::vector<std::string> shadowed;
+            for (auto& [name, _val] : ev.top_env().bindings_with_names()) {
+                if (ev.top_env().lookup_primitive(name))
+                    shadowed.push_back(name);
+            }
+            for (auto& n : shadowed)
+                (void)ev.top_env().unbind_local(n);
+        }
         return *result;
     });
 

@@ -1268,6 +1268,18 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
     ok = true;
     if (any_active_mutation_boundary())
         return {};
+    // Issue #4272: (eval-current) already holds exclusive workspace
+    // (WorkspaceUniqueIfNeeded) and stamps eval_current_holds_shared_pin
+    // so nested MutationBoundaryGuard::try_acquire fail-closes
+    // (AdmissionRejected: nested-mutate-under-eval-current, #2686/#2738).
+    // That refuse targets mutate:* AST rebind (would EDEADLK on
+    // workspace_mtx_). Language-level heap mutators (vector-set! /
+    // hash-set! / set-car!, #3235) only need alloc_storage_lock_ in the
+    // prim body — allowing them here restores set-code + eval-current
+    // CASE parity with oneshot (Soft was returning status-ok <error>
+    // after printing CASE0= and aborting). Soft/Off and production.
+    if (eval_current_holds_shared_pin())
+        return {};
     // Guard is heap-allocated and dropped after the primitive body
     // (HeapMutateGuardHandle). A stack success flag dies at this return
     // → asan-verify stack-use-after-return in ~Guard (hash-set! / vector-set!).
