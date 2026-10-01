@@ -7040,6 +7040,28 @@ static void ac4127_4_soft_paths_unchanged() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+
+// ── Issue #4248: remaining lockless allow arms latch + propagate ──
+static void ac4248_source_cite_remaining_arms() {
+    std::println("\n--- #4248 AC1: remaining lockless arms latch + propagate (#4127 siblings) ---");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("Issue #4248") != std::string::npos, "4248 AC1: lockless cite");
+    // Latch on MSE allow for the residual arms (splice/wrap/rebind/…).
+    CHECK(efl.find("batch :splice: mutation of MacroIntroduced requires") != std::string::npos &&
+              efl.find("note_boundary_macro_allow_latch()") != std::string::npos,
+          "4248 AC1: splice latch present");
+    CHECK(efl.find("parent_was_macro_spl") != std::string::npos, "4248 AC1: splice MI capture");
+    CHECK(efl.find("node_was_macro_wrap") != std::string::npos, "4248 AC1: wrap MI capture");
+    CHECK(efl.find("define_was_macro") != std::string::npos, "4248 AC1: rebind MI capture");
+    CHECK(efl.find("parent_was_macro_ins") != std::string::npos, "4248 AC1: insert-child MI capture");
+    CHECK(efl.find("was_macro_inl") != std::string::npos, "4248 AC1: inline-call MI capture");
+    CHECK(efl.find("match_was_macro") != std::string::npos, "4248 AC1: replace-pattern MI capture");
+    CHECK(efl.find("was_macro_rv") != std::string::npos, "4248 AC1: replace-value MI capture");
+    // No invent artifacts.
+    CHECK(read_file("tests/compiler/test_issue_4248.cpp").empty(), "4248: no invent");
+    CHECK(read_file("docs/design/4248-lockless-latch.md").empty(), "4248: no docs/design");
+}
+
 static void ac4127_5_source_cite_no_artifacts() {
     std::println("\n--- #4127 AC5: source-cite, public parity, net untouched, no artifacts ---");
     const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
@@ -7057,8 +7079,8 @@ static void ac4127_5_source_cite_no_artifacts() {
     CHECK(efl.find("Issue #4127") != std::string::npos, "4127 AC5: lockless cite");
     CHECK(count_of(efl, "note_boundary_macro_allow_latch();") >= 5,
           "4127 AC5: five latch sites (rs + sb + tweak + mv x2)");
-    CHECK(count_of(efl, "primitives_detail::propagate_macro_introduced_marker(") == 3,
-          "4127 AC5: three shared-cascade propagate sites (rs + sb + mv)");
+    CHECK(count_of(efl, "primitives_detail::propagate_macro_introduced_marker(") >= 3,
+          "4127 AC5: shared-cascade propagate sites (rs + sb + mv; #4248 adds more)");
     CHECK(efl.find("primitives_detail::parse_no_auto_restamp_opt_out(*this, a)") !=
               std::string::npos,
           "4127 AC5: :no-auto-restamp? honored on the rs/mv propagates");
@@ -7723,6 +7745,8 @@ int main() {
     ac4127_3_default_deny_unchanged();
     ac4127_4_soft_paths_unchanged();
     ac4127_5_source_cite_no_artifacts();
+    std::println("\n=== Issue #4248: residual lockless latch + MacroIntroduced prop ===");
+    ac4248_source_cite_remaining_arms();
     std::println("\n=== Issue #4149: MSE allow-arm deny stamps capability-deny (7) ===");
     ac4149_1_public_allow_arm_capability_deny();
     ac4149_2_lockless_batch_subops_capability_deny();
