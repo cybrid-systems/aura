@@ -1275,10 +1275,34 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                                    aura::compiler::typed_audit::get_strategy() ==
                                        aura::compiler::typed_audit::AuditStrategy::Full;
             if (hard_miss) {
-                pending_full_solve_roots_.insert(root);
-                last_reverify_truncated_ = true;
-                if (last_reverify_unscanned_ == 0)
-                    last_reverify_unscanned_ = 1;
+                // Issue #4251 narrowing: the fail-closed arm applies only to a
+                // rep that actually OWNS a constraint in the forward store —
+                // the live-but-unindexed case the issue targets (densify/steal
+                // remount, or a UF merge that retargeted the map under r1 while
+                // a seed still named r2). A rep that owns no constraint is a
+                // legitimately EMPTY closure node (the common touched/pending
+                // root with no dirty constraint); latching truncation there
+                // poisoned every later production commit_readiness with
+                // AdmissionRejected: security-schedule:commit-not-ready.
+                bool owns_constraint = false;
+                for (const auto& c : constraints_) {
+                    if (c.lhs.valid() && reg_.is_var(c.lhs) &&
+                        union_find_rep_index(c.lhs) == root) {
+                        owns_constraint = true;
+                        break;
+                    }
+                    if (c.rhs.valid() && reg_.is_var(c.rhs) &&
+                        union_find_rep_index(c.rhs) == root) {
+                        owns_constraint = true;
+                        break;
+                    }
+                }
+                if (owns_constraint) {
+                    pending_full_solve_roots_.insert(root);
+                    last_reverify_truncated_ = true;
+                    if (last_reverify_unscanned_ == 0)
+                        last_reverify_unscanned_ = 1;
+                }
             }
             continue;
         }
