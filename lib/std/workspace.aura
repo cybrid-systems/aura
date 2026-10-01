@@ -1,10 +1,10 @@
-; lib/std/workspace.aura — Workspace utilities (Issue #563)
+; lib/std/workspace.aura — Workspace utilities (Issue #563 / #4274)
 ;
 ; High-level workspace operations that work around the current C++
 ; workspace:merge (which does set-code(child-source) — string overwrite).
 ;
 ; Provides:
-;   ws:merge-symbols child-id    — True per-symbol merge using query+mutate
+;   ws:merge-symbols child-id    — True per-symbol merge via workspace:sync-from
 ;   ws:diff child-id             — Show differences between child and parent
 ;   ws:snapshot-current          — Capture current workspace state
 ;   ws:list-snapshots            — List all available snapshots
@@ -17,45 +17,27 @@
         ws:memory-pressure ws:current-stats)
 
 ; ── ws:merge-symbols child-id ──
-; Merges individual symbols from child workspace into parent (root).
-; Uses set-code + query:find + mutate:rebind for true per-symbol merge.
-; Returns association list: ((name . "updated") (name . "added") ...)
+; Merges individual symbols from child workspace into the active parent.
+; Calls (workspace:sync-from child-id name) once per child define name.
+; Rejected rebinds are omitted from the returned list (#4274).
+; Returns the list of successfully synced define names.
 ;
 (define (ws:merge-symbols child-id)
-  ; Issue #2918: workspace trees, not the suite/eval current-source default.
-  (let ((parent-src (current-source :workspace)))
-    ; Switch to child, get its source
-    (workspace :switch child-id)
-    (define child-src (current-source :workspace))
-    
-    ; Parse child source to extract define names
-    (set-code child-src)
-    (define child-defs (query:node-type "Define"))
-    
-    ; For each define in child, get the name
-    (define (get-define-name node-id)
-      ; Use query:node to get the name of the define
-      (query :node node-id))
-    
-    ; Collect child define names
-    (define child-names '())
-    (let iter ((ids child-defs))
-      (if (pair? ids)
-        (begin
-          ; query:node returns something like ("Define" sym-name children...)
-          (define info (query :node (car ids)))
-          ; The sym_id info is in the raw node view — for now, use node's
-          ; children to extract the function name
-          (set! child-names (cons (car ids) child-names))
-          (iter (cdr ids)))
-        #f))
-    
-    ; Switch back to parent
-    (workspace :switch 0)
-    (set-code parent-src)
-    
-    ; For now, just return the list of define nodes found
-    child-names))
+  (workspace :switch child-id)
+  (define defs (stats:get "ast:defs"))
+  (workspace :switch 0)
+  (define merged '())
+  (let iter ((ds (if (pair? defs) defs '())))
+    (if (pair? ds)
+      (begin
+        (define entry (car ds))
+        (define name (if (pair? entry) (car entry) #f))
+        (when (and (string? name)
+                   (workspace:sync-from child-id name))
+          (set! merged (cons name merged)))
+        (iter (cdr ds)))
+      #f))
+  merged)
 
 ; ── ws:diff ──
 ; Show what symbols differ between child and parent
@@ -69,16 +51,31 @@
   (ast:snapshot 0))
 
 ; ── ws:list-snapshots ──
-; Return the list of all available workspace snapshots.
-; Wraps (ast:list-snapshots).
+; Return ((id . name) ...) oldest first via stats catalog (#4274).
+; Direct (ast:list-snapshots) is unbound — register_stats_impl only.
 (define (ws:list-snapshots)
-  (ast:list-snapshots))
+  (stats:get "ast:list-snapshots"))
+
+; ── helper: newest snapshot id from ((id . name) ...) ──
+; List is oldest-first; newest id is the last pair's car.
+(define (ws:newest-snapshot-id)
+  (let ((snaps (stats:get "ast:list-snapshots")))
+    (if (not (pair? snaps))
+        #f
+        (let loop ((s snaps) (last #f))
+          (if (null? s)
+              last
+              (let ((entry (car s)))
+                (loop (cdr s)
+                      (if (pair? entry) (car entry) last))))))))
 
 ; ── ws:rollback-latest ──
-; Roll back to the most recently created snapshot.
-; Wraps (ast:restore 0) with safe fallback.
+; Restore the newest snapshot id (not id 0 / oldest) (#4274).
+; No snapshots → #f. Does NOT call workspace:rollback-latest
+; (that undoes one mutation-log record, not a named snapshot).
 (define (ws:rollback-latest)
-  (ast:restore 0))
+  (let ((id (ws:newest-snapshot-id)))
+    (if id (ast:restore id) #f)))
 
 ; ── ws:memory-pressure ──
 ; Return one of "low" / "medium" / "high" based on the
@@ -93,12 +90,11 @@
       (else "low"))))
 
 ; ── ws:current-stats ──
-; Combined stats for AI Agent context windows. Aggregates
-; (workspace:mutation-count) + (workspace:memory-used) +
-; (workspace:cow-refused-count) into an alist.
+; Combined stats for AI Agent context windows. Mutation / COW
+; counters are stats-catalog only (#4274) — use stats:get.
 (define (ws:current-stats)
   (list
-    (list "mutation-count" (workspace:mutation-count))
+    (list "mutation-count" (stats:get "workspace:mutation-count"))
     (list "memory-used"    (workspace:memory-used))
     (list "memory-limit"   (workspace:memory-limit))
-    (list "cow-refused"    (workspace:cow-refused-count))))
+    (list "cow-refused"    (stats:get "workspace:cow-refused-count"))))

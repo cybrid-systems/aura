@@ -7,15 +7,16 @@
 ; Two registration families in the engine:
 ;
 ;   A. Direct callables (add()):
-;        ast:snapshot, ast:restore, ast:list-snapshots,
+;        ast:snapshot, ast:restore,
 ;        ast:validate-nodes, ast:validate-ownership, ast:validate-post-restore,
 ;        ast:diff, ast:stable-ref, ast:print, …
 ;
 ;   B. Stats catalog only (register_stats_impl → stats:get "…"):
+;        ast:list-snapshots (#4274 — same as ast:nodes; not a direct add()),
 ;        ast:nodes, ast:defs, ast:generation, ast:version, ast:summary
 ;        ast:node-count (#2737 O(1) size), ast:def-count (#2737)
-;        Direct (ast:nodes) is unbound; use (stats:get "ast:nodes") or the
-;        thin aliases exported below after (require "std/ast" all:).
+;        Direct (ast:nodes) / (ast:list-snapshots) is unbound; use
+;        (stats:get "…") or the thin aliases exported below after require.
 ;
 ; Pipeline strict (AURA_PIPELINE_STRICT): some tree-walker paths refuse
 ; unless set to 0 or force-soa — denseness hosts typically use STRICT=0.
