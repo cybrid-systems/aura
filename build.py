@@ -9992,6 +9992,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4235 per-Agent mint linter failed — run python3 scripts/check_agent_mint_per_agent_4235.py")
         return r
+    # Issue #4252 (P1: steal/densify drops the process-global proof face but
+    # the Occurrence persist clear was keyed only off the TLS commit TC, so
+    # the owner's snapshot survived and a later rehydrate copied the
+    # pre-steal narrowing). Gate pins: the evaluator-aware invalidate
+    # overload + the zero-arg TLS-fallback forwarder, the helper owner-first
+    # clear via the #3482 Evaluator ABI (a peer's buffer untouched), the
+    # runtime call sites forwarding their evaluator, the prior
+    # #3482/#3416/#3063 surfaces, Soft no-op, runtime ACs in
+    # tests/compiler/test_occurrence_goal_persist_rehydrate.cpp, build.py +
+    # allowlist wiring; no docs/design / invent.
+    oots4252_script = ROOT / "scripts" / "check_occurrence_owner_tc_steal_4252.py"
+    if not oots4252_script.exists():
+        fail(f"missing {oots4252_script}")
+        return 1
+    r = run([sys.executable, str(oots4252_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4252 owner-TC steal linter failed - run python3 scripts/check_occurrence_owner_tc_steal_4252.py")
+        return r
     # Issue #4237 (P2: RetryN compose arms RestartN with max_restarts=0 /
     # keepalive=0 — restart belief without re-spawn): compose derives the
     # restart_fuel_missing face via the pure predicate, the Aura compose

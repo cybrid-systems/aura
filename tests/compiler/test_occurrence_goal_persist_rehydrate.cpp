@@ -42,6 +42,10 @@
 //   #3346 AC2: densify/steal refuse green if mid_abort_authority outstanding
 //   #3346 AC3: last_proof_* acquire-consistent with live table after stamp
 //   #3346 AC4: Soft/Off zero extra; no new query key / invent / docs/design
+//   #4252 AC1: production steal/densify clears the OWNER eval's Occurrence persist
+//              buffer even when the TLS commit TC is null (owner=restamping eval)
+//   #4252 AC2: a peer eval bound as the TLS TC is NOT cleared; TLS fallback kept
+//   #4252 AC3: Soft no extra work + source-cite / linter / allowlist
 
 #include "test_harness.hpp"
 
@@ -2439,6 +2443,154 @@ static void ac3482_5_source_and_linter() {
           "3482 AC5: build.py");
 }
 
+// ── Issue #4252: steal/densify face drop must clear the OWNER eval's
+//   Occurrence persist snapshot. The TLS commit TypeChecker (or the stamp
+//   last-look TC) is null or a peer during fiber handoff, so keying the
+//   clear off it left the pre-steal narrowing in place after the
+//   process-global proof face was already invalidated. The clear now takes
+//   the restamping Evaluator (opaque ABI); TLS stays a fallback only. ──
+
+static void ac4252_1_owner_tc_cleared_when_tls_null() {
+    std::println("\n--- #4252 AC1: owner eval persist cleared with the face (TLS null) ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_stamp_last_look_tc(); // TLS stamp last-look null
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4252 AC1: warm service");
+    auto& ev = cs.evaluator();
+    (void)ev.plant_commit_occurrence_preds_for_test({}); // live commit TC on A
+    auto* tcA = static_cast<TypeChecker*>(ev.commit_type_checker_handle());
+    CHECK(tcA != nullptr, "4252 AC1: owner commit TC available");
+    auto& csA = tcA->constraint_system();
+    tcA->set_cache_epoch(1);
+    csA.set_current_epoch(1);
+    const auto va = csA.fresh_var();
+    csA.note_occurrence_goal(va, va, 42521, 42521, /*epoch=*/1);
+    CHECK(csA.append_occurrence_snapshot(42521) == 1, "4252 AC1: owner persist wrote");
+    CHECK(csA.occurrence_persist_log_size() == 1, "4252 AC1: owner persist buffer 1");
+
+    typed_audit::stamp_type_linear_commit_proof(42521);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "4252 AC1: green before steal");
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(&ev),
+          "4252 AC1: production steal/densify success with owner eval");
+    CHECK(csA.occurrence_persist_log_size() == 0, "4252 AC1: owner persist cleared");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0 + 1,
+          "4252 AC1: invalidate_gen advanced");
+    CHECK(!typed_audit::linear_fast_path_ok(), "4252 AC1: proof face dropped");
+    CHECK(csA.rehydrate_occurrence_from_persist(42521) == 0,
+          "4252 AC1: no pre-steal snapshot to rehydrate");
+
+    apply_dev_audit_defaults();
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac4252_2_peer_tls_tc_not_cleared() {
+    std::println("\n--- #4252 AC2: peer eval buffer untouched; TLS fallback still works ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_stamp_last_look_tc();
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4252 AC2: warm service");
+    auto& ev = cs.evaluator();
+    (void)ev.plant_commit_occurrence_preds_for_test({});
+    auto* tcA = static_cast<TypeChecker*>(ev.commit_type_checker_handle());
+    CHECK(tcA != nullptr, "4252 AC2: owner commit TC available");
+    auto& csA = tcA->constraint_system();
+    tcA->set_cache_epoch(1);
+    csA.set_current_epoch(1);
+    const auto va = csA.fresh_var();
+    csA.note_occurrence_goal(va, va, 42522, 42522, /*epoch=*/1);
+    CHECK(csA.append_occurrence_snapshot(42522) == 1, "4252 AC2: owner persist wrote");
+
+    // Peer eval B: a plain TypeChecker bound as the TLS stamp last-look TC —
+    // the exact "TLS commit TC is a peer" handoff shape.
+    TypeRegistry regB;
+    TypeChecker tcB(regB);
+    CompilerMetrics metricsB{};
+    tcB.set_metrics(&metricsB);
+    auto& csB = tcB.constraint_system();
+    csB.set_metrics(&metricsB);
+    tcB.set_cache_epoch(1);
+    csB.set_current_epoch(1);
+    const auto vb = csB.fresh_var();
+    csB.note_occurrence_goal(vb, regB.int_type(), 42522, 42522, /*epoch=*/1);
+    CHECK(csB.append_occurrence_snapshot(42522) == 1, "4252 AC2: peer persist wrote");
+    CHECK(csB.occurrence_persist_log_size() == 1, "4252 AC2: peer persist buffer 1");
+    typed_audit::note_stamp_last_look_tc(&tcB);
+
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(&ev),
+          "4252 AC2: owner-eval steal/densify success");
+    CHECK(csA.occurrence_persist_log_size() == 0, "4252 AC2: owner persist cleared");
+    CHECK(csB.occurrence_persist_log_size() == 1, "4252 AC2: peer persist untouched");
+
+    // Regression: the zero-arg form still clears the TLS fallback target.
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "4252 AC2: zero-arg fallback success");
+    CHECK(csB.occurrence_persist_log_size() == 0, "4252 AC2: TLS fallback still clears");
+
+    apply_dev_audit_defaults();
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac4252_3_soft_no_extra_and_source_cite() {
+    std::println("\n--- #4252 AC3: Soft no extra work + source-cite/linter ---");
+    apply_dev_audit_defaults();
+    typed_audit::set_strategy(typed_audit::AuditStrategy::Sampled);
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(!typed_audit::invalidate_fast_path_before_steal_densify_restamp(nullptr),
+          "4252 AC3: Soft returns false (no extra walk)");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0,
+          "4252 AC3: Soft no gen bump");
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint = read_file("scripts/check_occurrence_owner_tc_steal_4252.py");
+    const auto build = read_file("build.py");
+    const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    CHECK(tma.find("invalidate_fast_path_before_steal_densify_restamp(void* ev)") !=
+              std::string::npos,
+          "4252 AC3: evaluator-aware overload");
+    CHECK(tma.find("clear_occurrence_persist_on_steal_densify_success_(void* ev)") !=
+              std::string::npos,
+          "4252 AC3: helper takes the owner eval");
+    CHECK(tma.find("aura_clear_occurrence_persist_buffer(ev)") != std::string::npos,
+          "4252 AC3: owner clear via #3482 ABI");
+    CHECK(efm.find("invalidate_fast_path_before_steal_densify_restamp(this)") != std::string::npos,
+          "4252 AC3: fiber steal site passes this");
+    CHECK(mb.find("invalidate_fast_path_before_steal_densify_restamp(ev_)") != std::string::npos,
+          "4252 AC3: densify site passes ev_");
+    CHECK(t.find("ac4252_1_owner_tc_cleared_when_tls_null") != std::string::npos,
+          "4252 AC3: AC1 present");
+    CHECK(!lint.empty() && lint.find("4252") != std::string::npos, "4252 AC3: linter");
+    CHECK(build.find("check_occurrence_owner_tc_steal_4252") != std::string::npos,
+          "4252 AC3: build.py wiring");
+    CHECK(allow.find("check_occurrence_owner_tc_steal_4252.py") != std::string::npos,
+          "4252 AC3: allowlist entry");
+    CHECK(read_file("tests/compiler/test_issue_4252.cpp").empty(),
+          "4252 AC3: no invent test_issue_4252");
+    CHECK(read_file("docs/design/4252-owner-tc-steal.md").empty(), "4252 AC3: no docs/design/");
+
+    apply_dev_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+}
+
 // ── Issue #3099: residual close — re-sample invalidate_gen after
 // linear_fast_path_ok() returns true inside linear_ir_fastpath_try_skip.
 // Closes the half-green linear state window where a concurrent
@@ -3690,6 +3842,10 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3482_3_seqlock_and_miss_unchanged();
     ac3482_4_soft_no_persist_clear();
     ac3482_5_source_and_linter();
+    std::println("\n=== #4252 steal/densify owner-TC Occurrence clear ===");
+    ac4252_1_owner_tc_cleared_when_tls_null();
+    ac4252_2_peer_tls_tc_not_cleared();
+    ac4252_3_soft_no_extra_and_source_cite();
     std::println("\n=== #3085 densify/steal miss blocks lowering elision ===");
     ac3085_1_densify_miss_blocks_elision();
     ac3085_2_green_rebind_restores();

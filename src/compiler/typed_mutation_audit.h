@@ -1808,9 +1808,25 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
 // Issue #3482: drop Occurrence persist side-buffer on steal/densify
 // success (defined after g_tls_stamp_last_look_tc). Face drop is here;
 // persist clear reuses #3170. Do not restamp green (#2938).
-inline void clear_occurrence_persist_on_steal_densify_success_() noexcept;
+// Issue #4252: steal/densify faces are process-global, but the Occurrence
+// persist clear must key off the RESTAMPING eval's own commit TypeChecker.
+// The TLS commit TC (or stamp last-look TC) is null or a PEER during fiber
+// handoff, so keying only off it left the owner's Occurrence snapshot in
+// place after the proof face was already invalidated - a later rehydrate on
+// the owner copied the pre-steal narrowing. Pass the eval (opaque
+// Evaluator* ABI, no header module dependency). TLS stays a fallback.
+inline void clear_occurrence_persist_on_steal_densify_success_(void* ev) noexcept;
 
+// Issue #4252: canonical evaluator-aware entry (declared first so the
+// zero-arg form below can forward to it).
+[[nodiscard]] inline bool invalidate_fast_path_before_steal_densify_restamp(void* ev) noexcept;
+
+// Zero-arg form (source-cite stable): TLS fallback only.
 [[nodiscard]] inline bool invalidate_fast_path_before_steal_densify_restamp() noexcept {
+    return invalidate_fast_path_before_steal_densify_restamp(nullptr);
+}
+
+[[nodiscard]] inline bool invalidate_fast_path_before_steal_densify_restamp(void* ev) noexcept {
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (!hard)
         return false;
@@ -1821,7 +1837,9 @@ inline void clear_occurrence_persist_on_steal_densify_success_() noexcept;
     g_steal_densify_success_invalidate_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #3482: face bits are 0; persist log must not keep the
     // pre-steal snapshot for rehydrate. Soft already returned above.
-    clear_occurrence_persist_on_steal_densify_success_();
+    // Issue #4252: hand the restamping eval to the clear (owner TC);
+    // nullptr keeps the TLS fallback for evaluator-less callers.
+    clear_occurrence_persist_on_steal_densify_success_(ev);
     return true;
 }
 
@@ -2417,7 +2435,9 @@ inline constexpr int kLinearFastPathLiveMutationDensifyIssue = 3238;
         g_linear_fast_path_force_revalidate_observe_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    (void)invalidate_fast_path_before_steal_densify_restamp();
+    // Issue #4252: forward the evaluator so the owner's Occurrence persist
+    // buffer is dropped with the face (TLS commit TC may be null / a peer).
+    (void)invalidate_fast_path_before_steal_densify_restamp(ev);
     g_linear_fast_path_dirty_revalidate_total.fetch_add(1, std::memory_order_relaxed);
     if (ev != nullptr) {
         // Opaque Evaluator* (void* ABI) — this header must not name the
@@ -3397,7 +3417,15 @@ inline void clear_stamp_last_look_tc() noexcept {
 // (production). Full-without-production still clears the snapshot C ABI.
 // Do not restamp green here — outermost persist is sole freeze (#2938).
 // Last-proof gauges stay observe-only; face is already 0 so IR refuses.
-inline void clear_occurrence_persist_on_steal_densify_success_() noexcept {
+// Issue #4252: owner-TC-first clear. ev non-null -> the restamping eval's
+// own commit TypeChecker (the #3482/#3170 Evaluator ABI) and NOTHING else:
+// the TLS / stamp last-look TC is null or a peer during fiber handoff, and
+// clearing it would drop a peer's buffer.
+inline void clear_occurrence_persist_on_steal_densify_success_(void* ev) noexcept {
+    if (ev) {
+        aura_clear_occurrence_persist_buffer(ev);
+        return;
+    }
     void* tc = aura_typed_audit_current_commit_type_checker();
     if (!tc)
         tc = g_tls_stamp_last_look_tc;
