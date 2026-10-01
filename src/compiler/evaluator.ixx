@@ -15818,19 +15818,56 @@ public:
     // Raw hooks remain for JIT C ABI (aura_lock_workspace_*).
     // Issue #1523: report Workspace level into lock_order TLS when
     // JIT / C bridges take workspace locks (canonical #1388 order).
+    // Issue #4270: TLS nest count for C-ABI workspace locks that adopt an
+    // outer physical hold (Guard / WorkspaceUniqueIfNeeded). Paired with
+    // lock_order Workspace depth; never unlocks the outer mutex.
+    static std::uint32_t& workspace_lock_adopt_depth_tls() noexcept {
+        thread_local std::uint32_t depth = 0;
+        return depth;
+    }
     void lock_workspace_shared() {
+        // Issue #4270: adopt when Workspace depth already held (Guard /
+        // WorkspaceUniqueIfNeeded / prior shared). Nested shared_lock on a
+        // non-recursive shared_mutex is EDEADLK ("Resource deadlock avoided").
+        if (aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace)) {
+            aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+            ++workspace_lock_adopt_depth_tls();
+            return;
+        }
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
         workspace_mtx_.lock_shared();
     }
     void unlock_workspace_shared() {
+        if (workspace_lock_adopt_depth_tls() > 0) {
+            --workspace_lock_adopt_depth_tls();
+            aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+            return;
+        }
         workspace_mtx_.unlock_shared();
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
     }
+    // Issue #4270: C-ABI / JIT bridge unique lock must nest under an outer
+    // Guard or WorkspaceUniqueIfNeeded hold. Raw lock() while the same thread
+    // already owns the non-recursive shared_mutex throws EDEADLK — the
+    // ast:restore → eval-current → relower → aura_drop_jit_fn_native_for_define
+    // path when is_held probes miss (or any other nested bridge lock).
+    // Adopt: stamp nested depth only; unlock pairs without releasing the
+    // outer physical mutex.
     void lock_workspace_unique() {
+        if (aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace)) {
+            aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+            ++workspace_lock_adopt_depth_tls();
+            return;
+        }
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
         workspace_mtx_.lock();
     }
     void unlock_workspace_unique() {
+        if (workspace_lock_adopt_depth_tls() > 0) {
+            --workspace_lock_adopt_depth_tls();
+            aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+            return;
+        }
         workspace_mtx_.unlock();
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
     }
@@ -15864,6 +15901,12 @@ public:
     // blocking lock_workspace_shared path. On failure, roll back
     // on_acquire so depth does not under-report / leak.
     bool try_lock_workspace_shared() {
+        // Issue #4270: adopt outer Workspace hold (no try_lock_shared re-entry).
+        if (aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace)) {
+            aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+            ++workspace_lock_adopt_depth_tls();
+            return true;
+        }
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
         if (workspace_mtx_.try_lock_shared())
             return true;
@@ -15873,6 +15916,12 @@ public:
     // Issue #1768: non-blocking unique sibling for symmetry with
     // lock_workspace_unique / try_lock_workspace_shared.
     bool try_lock_workspace_unique() {
+        // Issue #4270: adopt outer Workspace hold (no try_lock re-entry).
+        if (aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace)) {
+            aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+            ++workspace_lock_adopt_depth_tls();
+            return true;
+        }
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
         if (workspace_mtx_.try_lock())
             return true;

@@ -1359,6 +1359,104 @@ int run_4128_serve_define_call_alive_smoke() {
 }
 } // namespace aura_fiber_run_wave59_4128
 
+// ═════════════════════════════════════════════════════════════
+// Issue #4270 — ast:restore then eval-current must not EDEADLK.
+// ═════════════════════════════════════════════════════════════
+namespace aura_fiber_run_wave60_4270 {
+// @category: unit
+// @reason: Issue #4270 — native RSI probe: ast:restore returns success,
+// then eval-current aborts with "Resource deadlock avoided" while taking
+// the workspace lock / relower / drop-jit-native. Root cause class is the
+// same non-recursive workspace_mtx_ re-lock as #4128/#4264: C-ABI
+// lock_workspace_unique must adopt an outer WorkspaceUniqueIfNeeded /
+// MutationBoundaryGuard hold instead of re-locking.
+//
+//   AC1: set-code → snapshot → mutate set-code → restore → eval-current ok
+//   AC2: session alive after restore+eval (later (+ 1 1) ok)
+//   AC3: source — lock_workspace_unique adopts when is_held(Workspace)
+
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+std::string read_file_4270(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+int run_4270_restore_then_eval_smoke() {
+    std::println("\n=== #4270: ast:restore then eval-current (no EDEADLK) ===");
+
+    // AC1 — issue repro shape: rename body via set-code, restore, eval again.
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) (let ((r 1)) r))\\n(display (f 0))\\n(newline)\")")
+                  .has_value(),
+              "#4270 AC1: set-code pre ok");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC1: eval-current pre ok");
+        auto snap = cs.eval("(ast:snapshot \"pre\")");
+        CHECK(snap && is_int(*snap), "#4270 AC1: snapshot ok");
+        CHECK(cs.eval("(set-code \"(define (f x) (let ((p 1)) p))\\n(display (f 0))\\n(newline)\")")
+                  .has_value(),
+              "#4270 AC1: set-code mutate ok");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC1: eval-current mutate ok");
+        auto rest = cs.eval(std::format("(ast:restore {})", as_int(*snap)));
+        CHECK(rest && is_bool(*rest) && as_bool(*rest), "#4270 AC1: ast:restore #t");
+        bool threw = false;
+        try {
+            auto ec = cs.eval("(eval-current)");
+            CHECK(ec.has_value(), "#4270 AC1: eval-current after restore ok (no EDEADLK)");
+        } catch (const std::system_error& e) {
+            threw = true;
+            std::println("  system_error: {}", e.what());
+        } catch (...) {
+            threw = true;
+        }
+        CHECK(!threw, "#4270 AC1: no system_error on eval-current after restore");
+    }
+
+    // AC2 — session stays alive after restore+eval.
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) 1)\")").has_value(), "#4270 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC2: eval");
+        auto snap = cs.eval("(ast:snapshot \"s\")");
+        CHECK(snap && is_int(*snap), "#4270 AC2: snap");
+        CHECK(cs.eval("(set-code \"(define (f x) 2)\")").has_value(), "#4270 AC2: mutate");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC2: eval2");
+        CHECK(cs.eval(std::format("(ast:restore {})", as_int(*snap))).has_value(),
+              "#4270 AC2: restore");
+        CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC2: eval after restore");
+        auto a = cs.eval("(+ 40 2)");
+        CHECK(a && is_int(*a) && as_int(*a) == 42, "#4270 AC2: session alive");
+    }
+
+    // AC3 — source-cite: lock_workspace_unique adopts when is_held(Workspace).
+    {
+        const auto src = read_file_4270("src/compiler/evaluator.ixx");
+        CHECK(!src.empty(), "#4270 AC3: evaluator.ixx readable");
+        CHECK(src.find("Issue #4270: C-ABI / JIT bridge unique lock must nest") !=
+                  std::string::npos,
+              "#4270 AC3: lock_workspace_unique adopt comment present");
+        CHECK(src.find("workspace_lock_adopt_depth_tls") != std::string::npos,
+              "#4270 AC3: adopt TLS depth present");
+    }
+
+    std::println("\n=== #4270: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave60_4270
+
 int main() {
 
 
@@ -1614,6 +1712,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave59_4128 ########");
     if (int rc = aura_fiber_run_wave59_4128::run_4128_serve_define_call_alive_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave60_4270 ########");
+    if (int rc = aura_fiber_run_wave60_4270::run_4270_restore_then_eval_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);
