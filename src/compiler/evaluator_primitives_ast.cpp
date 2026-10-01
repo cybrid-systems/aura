@@ -295,6 +295,28 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             ev.snapshot_sources_.push_back(source);
             ev.snapshot_names_.push_back(name);
             ev.snapshot_flats_.push_back(std::move(fs));
+            // Issue #4271: drop oldest deep FlatAST copies when over cap.
+            // Source strings remain so ast:restore can fall back to set-code;
+            // snapshot ids stay stable (no renumber).
+            {
+                std::size_t deep = 0;
+                for (const auto& s : ev.snapshot_flats_)
+                    if (s.has_flat)
+                        ++deep;
+                if (deep > Evaluator::kMaxAstSnapshotDeepFlats) {
+                    for (auto& s : ev.snapshot_flats_) {
+                        if (deep <= Evaluator::kMaxAstSnapshotDeepFlats)
+                            break;
+                        if (!s.has_flat)
+                            continue;
+                        s.flat.reset();
+                        s.pool.reset();
+                        s.has_flat = false;
+                        --deep;
+                        ++ev.ast_snapshot_deep_flat_drops_total_;
+                    }
+                }
+            }
             // Issue #2966: clear last fail reason on success.
             ev.note_ast_snapshot_ok();
             return make_int(static_cast<std::int64_t>(id));

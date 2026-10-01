@@ -5631,6 +5631,9 @@ private:
         std::uint64_t cow_epoch = 0;
     };
     std::vector<FlatSnapshot> snapshot_flats_;
+    // Issue #4271: drop counter for deep FlatAST snapshot eviction (see
+    // public kMaxAstSnapshotDeepFlats).
+    std::uint64_t ast_snapshot_deep_flat_drops_total_{0};
     // Issue #2966: last ast:snapshot failure reason (never silent -1).
     // 0=none/ok, 1=guard-reject, 2=no-workspace, 3=empty-source.
     // Contract: snapshot requires a non-empty workspace established by
@@ -7430,6 +7433,19 @@ public:
     void note_ast_snapshot_ok() noexcept {
         last_ast_snapshot_fail_reason_ = 0;
         ++ast_snapshot_ok_total_;
+    }
+    // Issue #4271: max live deep FlatAST copies retained for ast:snapshot.
+    // Older snapshots keep source for fallback restore; ids stay stable.
+    static constexpr std::size_t kMaxAstSnapshotDeepFlats = 32;
+    [[nodiscard]] std::size_t ast_snapshot_deep_flat_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& s : snapshot_flats_)
+            if (s.has_flat)
+                ++n;
+        return n;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_deep_flat_drops_total() const noexcept {
+        return ast_snapshot_deep_flat_drops_total_;
     }
     // Issue #548: panic-checkpoint lifecycle counters
     // + bump helpers. Public so the
@@ -15818,6 +15834,7 @@ public:
     // Raw hooks remain for JIT C ABI (aura_lock_workspace_*).
     // Issue #1523: report Workspace level into lock_order TLS when
     // JIT / C bridges take workspace locks (canonical #1388 order).
+
     // Issue #4270: TLS nest count for C-ABI workspace locks that adopt an
     // outer physical hold (Guard / WorkspaceUniqueIfNeeded). Paired with
     // lock_order Workspace depth; never unlocks the outer mutex.
