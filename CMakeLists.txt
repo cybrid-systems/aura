@@ -119,9 +119,23 @@ set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/cmake/aura_module_launcher.
 # aura_test_objects + (often) aura_jit_test_objects + LLVM — parallel
 # mold/lld of many ~70MB LLVM test bins thrashs RAM and can SIGBUS /
 # "Disk full?" on GitHub Actions. Compiles stay unbounded via ninja -j.
-# Override: -DAURA_LINK_JOBS=N (CI sets 2).
+# Default: the link pool is sized from the probed host CPU count (no
+# fixed constant), so local/dev builds get full link parallelism. CI
+# pins 2 (some jobs 1) explicitly via AURA_LINK_JOBS, and build.py
+# forwards that env to -DAURA_LINK_JOBS=N, so this default only governs
+# local/dev builds. If the core count cannot be probed, 0 disables the
+# pool entirely, leaving links bounded only by ninja -j. Dial it back
+# with -DAURA_LINK_JOBS=N or AURA_LINK_JOBS=N if links thrash RAM (the
+# historic SIGBUS / "Disk full?" failure mode).
 if(NOT DEFINED AURA_LINK_JOBS)
-    set(AURA_LINK_JOBS 2)
+    include(ProcessorCount)
+    ProcessorCount(_aura_link_cpu)
+    # 0 = no link pool at all: links are then bounded only by ninja's -j,
+    # which is the right degradation when the core count cannot be probed.
+    if(_aura_link_cpu EQUAL 0)
+        set(_aura_link_cpu 0)
+    endif()
+    set(AURA_LINK_JOBS ${_aura_link_cpu})
 endif()
 if(AURA_LINK_JOBS GREATER 0)
     set_property(GLOBAL PROPERTY JOB_POOLS "link_pool=${AURA_LINK_JOBS}")
