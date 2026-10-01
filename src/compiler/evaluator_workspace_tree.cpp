@@ -272,7 +272,32 @@ bool Evaluator::save_panic_checkpoint() {
     auto src_fn = primitives_.lookup("current-source");
     if (!src_fn)
         return false;
-    auto src = (*src_fn)({});
+    // Issue #4267 follow-up: restore_panic_checkpoint() restores through
+    // (set-code …), so the checkpoint MUST hold the persistent WORKSPACE
+    // source. The bare (current-source) face returns the *transient* per-eval
+    // expression (for a mutation boundary raised by (set-code …) that is the
+    // whole enclosing "(begin … )" form), and rolling a checkpoint back then
+    // set-codes that non-workspace text into the workspace. The resulting
+    // malformed flat is unparse-unsafe: observed as a FlatAST child OOB in
+    // assemble_nodeview (SIGSEGV / _GLIBCXX_ASSERTIONS abort) and an
+    // EnvFrame deque bounds assert. (synthesize:optimize ranking variance is
+    // a separate issue -- the GA PRNG seeding in agent_prng,
+    // evaluator_primitives_agent.cpp.) Pass :workspace, the same face agent
+    // checkpoints (#2918) and stdlib refactor helpers use for user-script
+    // intent.
+    std::uint64_t ws_kw = 0;
+    bool ws_found = false;
+    for (; ws_kw < keyword_table_.size(); ++ws_kw) {
+        if (keyword_table_[ws_kw] == ":workspace") {
+            ws_found = true;
+            break;
+        }
+    }
+    if (!ws_found) {
+        ws_kw = keyword_table_.size();
+        keyword_table_.push_back(":workspace");
+    }
+    auto src = (*src_fn)({types::make_keyword(ws_kw)});
     if (!types::is_string(src))
         return false;
     auto idx = types::as_string_idx(src);
