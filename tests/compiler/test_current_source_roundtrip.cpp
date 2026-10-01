@@ -613,7 +613,7 @@ static void ac4266_4_check_apply_post_verify_throw_restores() {
     const auto status =
         eval_string(cs, "(let ((st (safe-refactor:check-and-apply (lambda () #t) "
                         "(lambda () (error \"pv-boom\")) "
-                        "(lambda () (begin (set-code \"(define (mut (: x Int)) x)\") 42)))) "
+                        "(lambda () (begin (set-code \"(define (mut (: x Int)) x)\") 42))))) "
                         "(cond ((and (equal? (car st) 'error) "
                         "(equal? (car (cdr st)) \"post-verify-error-raised\")) \"error-restored\") "
                         "(else \"wrong-status\")))");
@@ -629,7 +629,7 @@ static void ac4266_5_check_apply_post_verify_false_still_rolls_back() {
     CHECK(set_code(cs, "(define (seed (: x Int)) x)"), "4266 AC5: seed workspace");
     const auto status =
         eval_string(cs, "(let ((st (safe-refactor:check-and-apply (lambda () #t) (lambda () #f) "
-                        "(lambda () (begin (set-code \"(define (mut (: x Int)) x)\") 42)))) "
+                        "(lambda () (begin (set-code \"(define (mut (: x Int)) x)\") 42))))) "
                         "(cond ((and (equal? (car st) 'rolled-back) "
                         "(equal? (car (cdr st)) \"post-verify-failed\")) \"rolled-back\") "
                         "(else \"wrong-status\")))");
