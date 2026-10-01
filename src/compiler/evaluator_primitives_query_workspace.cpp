@@ -1896,7 +1896,64 @@ void register_workspace_query_primitives(
                 last_qe = begin_query_epoch(&flat);
                 result = make_void();
                 filter_hygiene_skips = 0;
-                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #4260: production query:filter seeds candidates from
+                // existing indexes — tag_arity_index via snapshot_tag_all_arities
+                // for :node-type/:tag (same key surface as query:pattern /
+                // by-marker :where), and find_define_by_name for
+                // :defined-by/:defines (parity with query:find #3390/#3427).
+                // Soft/Off: historical size() walk unchanged. Cold / no
+                // seedable predicate → full walk (composite miss). Production
+                // define miss stays indexed-empty (no silent Soft size() scan).
+                std::vector<aura::ast::NodeId> scan_ids;
+                bool used_index = false;
+                if (aura::compiler::typed_audit::production_defaults_active()) {
+                    // Prefer point define lookup when present.
+                    for (const auto& p : predicates) {
+                        if (p.field != ":defined-by" && p.field != ":defines")
+                            continue;
+                        used_index = true;
+                        if (auto* cpool = ws.canonical_pool()) {
+                            if (auto found = flat.find_define_by_name(*cpool, p.value))
+                                scan_ids.push_back(*found);
+                        }
+                        ev.bump_query_index_composite_hit();
+                        break;
+                    }
+                    if (!used_index) {
+                        for (const auto& p : predicates) {
+                            if (p.field != ":node-type" && p.field != ":tag")
+                                continue;
+                            aura::ast::NodeTag target_tag =
+                                static_cast<aura::ast::NodeTag>(-1);
+                            bool found_tag = false;
+                            for (auto& m : aura::ast::kNodeMeta) {
+                                if (m.name == p.value && m.name != "<gap>") {
+                                    target_tag = m.tag;
+                                    found_tag = true;
+                                    break;
+                                }
+                            }
+                            if (!found_tag)
+                                break; // unknown tag → fall through to size() walk
+                            used_index = true;
+                            scan_ids = ev.snapshot_tag_all_arities(
+                                static_cast<std::uint32_t>(target_tag), /*trigger=*/0,
+                                /*skip_macro_introduced=*/hygiene_skip_macro);
+                            ev.bump_query_index_composite_hit();
+                            break;
+                        }
+                    }
+                    if (!used_index)
+                        ev.bump_query_index_composite_miss();
+                }
+                if (!used_index) {
+                    scan_ids.reserve(flat.size());
+                    for (aura::ast::NodeId id = 0; id < flat.size(); ++id)
+                        scan_ids.push_back(id);
+                }
+                for (aura::ast::NodeId id : scan_ids) {
+                    if (id >= flat.size())
+                        continue;
                     // Issue #4162: skip free/ghost orphan slots (#1299/#1300
                     // pattern) BEFORE hygiene/predicate evaluation —
                     // free_orphan_nodes_from leaves tag_ in place, so a

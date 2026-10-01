@@ -222,6 +222,74 @@ int run_test_query_find_by_define() {
         }
     }
 
+    // Issue #4260: production query:filter seeds from tag_arity / define index.
+    {
+        std::println("\n--- #4260 AC1: production filter :node-type hits tag_arity index ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define foo4260 1) (define bar4260 2))\")").has_value(),
+              "4260 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4260 AC1: eval");
+        // Warm the tag_arity index (EagerAfterMutate / Lazy).
+        (void)cs.eval("(query:pattern \"(define x y)\" :strict-arity #t)");
+        apply_production_audit_defaults();
+        CHECK(cs.eval("(define r4260 (query:filter (query:where :node-type \"Define\")))").has_value(),
+              "4260 AC1: production filter :node-type binds");
+        auto len = cs.eval("(length (hash-ref r4260 \"matches\"))");
+        CHECK(len && is_int(*len) && as_int(*len) >= 1, "4260 AC1: indexed Define matches >= 1");
+        apply_dev_audit_defaults();
+    }
+    {
+        std::println("\n--- #4260 AC2: production filter :defined-by uses find_define_by_name ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define fib4260 42)\")").has_value(), "4260 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4260 AC2: eval");
+        apply_production_audit_defaults();
+        CHECK(cs.eval("(define r4260d (query:filter (query:where :defined-by \"fib4260\")))").has_value(),
+              "4260 AC2: defined-by hit binds");
+        auto len = cs.eval("(length (hash-ref r4260d \"matches\"))");
+        CHECK(len && is_int(*len) && as_int(*len) == 1, "4260 AC2: define index hit → 1 match");
+        // Miss stays indexed-empty (no Soft size() scan).
+        CHECK(cs.eval("(define r4260m (query:filter (query:where :defined-by \"no-such-4260\")))")
+                  .has_value(),
+              "4260 AC2: defined-by miss binds");
+        auto lenm = cs.eval("(length (hash-ref r4260m \"matches\"))");
+        CHECK(lenm && is_int(*lenm) && as_int(*lenm) == 0,
+              "4260 AC2: production define miss → indexed-empty");
+        apply_dev_audit_defaults();
+    }
+    {
+        std::println("\n--- #4260 AC3: Soft filter still size() walk; source cites ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define soft4260 1)\")").has_value(), "4260 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4260 AC3: eval");
+        auto soft = cs.eval("(query:filter (query:where :node-type \"Define\"))");
+        CHECK(soft.has_value(), "4260 AC3: Soft filter returns");
+        CHECK(!(soft && is_hash(*soft)), "4260 AC3: Soft filter is bare list (not schema-2 auto)");
+        const auto qwsp = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(qwsp.find("Issue #4260") != std::string::npos, "4260 AC3: filter cites #4260");
+        CHECK(qwsp.find("snapshot_tag_all_arities") != std::string::npos,
+              "4260 AC3: filter uses snapshot_tag_all_arities");
+        const auto fpos = qwsp.find("add(\"query:filter\"");
+        CHECK(fpos != std::string::npos, "4260 AC3: query:filter present");
+        const auto fwin = qwsp.substr(fpos, 12000);
+        CHECK(fwin.find("find_define_by_name") != std::string::npos,
+              "4260 AC3: filter :defined-by routes find_define_by_name");
+        CHECK(fwin.find("production_defaults_active()") != std::string::npos,
+              "4260 AC3: index path gated on production_defaults_active");
+        {
+            std::ifstream f("tests/compiler/test_issue_4260.cpp");
+            CHECK(!f.good(), "4260 AC4: no tests/compiler/test_issue_4260.cpp per #81934");
+        }
+    }
+
     std::println("\n=== test_query_find_by_define: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
