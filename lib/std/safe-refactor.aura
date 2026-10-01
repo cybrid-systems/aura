@@ -82,7 +82,7 @@
                  (ast:restore snap-id)
                  (list 'rolled-back "post-verify-failed")))
               (else
-               (list 'applied apply-result)))))))))))
+               (list 'applied apply-result))))))))))
 
 ; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
 ;
@@ -168,5 +168,5 @@
               (list 'rejected
                     (if (string? apply-result)
                         apply-result
-                        "typecheck-status-not-ok")))))))))
+                        "typecheck-status-not-ok"))))))))))
 
