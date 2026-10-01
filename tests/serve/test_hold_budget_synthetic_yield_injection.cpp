@@ -2114,6 +2114,41 @@ int run_test_hold_budget_host_native_poll_4032() {
 }
 
 
+
+// Issue #4257: production outermost mutate wrapper arms #3254 synthetic
+// yield BEFORE fn(a) so mid-body cooperative edges unlock via #3222;
+// edge-free stays #4158 fail-closed (no foreign unlock).
+int run_test_hold_budget_prebody_synthetic_yield_4257() {
+    std::println("=== Issue #4257: pre-body synthetic yield arm + unlock inevitable ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    const auto mh = read_file("src/compiler/mutation_hold_budget.h");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mh.find("kMutationHoldBudgetPreBodySyntheticYieldIssue") != std::string::npos,
+          "4257: stamp in mutation_hold_budget.h");
+    CHECK(mh.find("4257") != std::string::npos, "4257: issue cite");
+    const auto addp = mut.find("auto add_mutate = ");
+    const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 20000);
+    const auto syn = aw.find("inject_synthetic_mutation_boundary_yield");
+    const auto fnp = aw.find("auto result = fn(a);");
+    CHECK(syn != std::string::npos && fnp != std::string::npos && syn < fnp,
+          "4257: synthetic yield armed BEFORE fn(a)");
+    CHECK(aw.find("Issue #4257") != std::string::npos, "4257: mutate wrapper cites issue");
+    CHECK(aw.find("force_release_hold_budget_inbody") != std::string::npos,
+          "4257: #3480 post-body force_release still present");
+    CHECK(mh.find("schema-4257") == std::string::npos, "4257: no new query key");
+    CHECK(mh.find("g_4257_") == std::string::npos, "4257: no new counter");
+    CHECK(read_file("tests/serve/test_issue_4257.cpp").empty(), "4257: no invent test file");
+    CHECK(read_file("docs/design/4257-prebody-synthetic-yield.md").empty(),
+          "4257: no docs/design");
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #4257 pre-body synthetic yield: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 // Issue #3859: quarantine-latency SLO (extend #3325) — the no-edge face
 // past 4× the inbody window bound bumps the quarantine counter once per
 // window; window end (holder gone / cancel consumed) clears the clock so
@@ -2357,6 +2392,9 @@ int main() {
     const int rc15 = run_test_hold_budget_host_native_poll_4032();
     if (rc15 != 0)
         return rc15;
+    const int rc16 = run_test_hold_budget_prebody_synthetic_yield_4257();
+    if (rc16 != 0)
+        return rc16;
     return rc1 != 0
                ? rc1
                : (rc2 != 0
