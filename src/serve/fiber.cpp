@@ -2269,6 +2269,16 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
 
     // Fiber-context path: register on scheduler joiner_map and park.
     if (g_current_fiber != nullptr && g_scheduler != nullptr) {
+        // Issue #4176: capture the joiner identity ONCE, before any yield.
+        // Re-reading the thread_local g_current_fiber after a BlockingIO
+        // park is unsafe: the compiler may cache the TLS base
+        // (mrs tpidr_el0) across Fiber::yield, and the joiner can be woken
+        // on a DIFFERENT worker after work-stealing migration. The stale
+        // base then reads null (or another fiber), so
+        // add_joiner(..., nullptr) returns false and the join silently
+        // degrades to Invalid — or a caller loop busy-spins. `self` is an
+        // ordinary local and is migration-invariant.
+        Fiber* self = g_current_fiber;
         // Fast re-check under race with completion.
         if (target->is_done())
             return finish(JoinStatus::Ok);
@@ -2282,6 +2292,9 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             target->release_orphan_roots();
             return finish(JoinStatus::Reclaimed);
         }
+        // This first registration happens before any yield, so the TLS read
+        // is fresh; every POST-yield access below uses `self`. (#4230
+        // source-cite pins this exact call shape.)
         if (!g_scheduler->add_joiner(target->id(), g_current_fiber)) {
             // Target vanished or not registered — recheck Done.
             if (target->is_done())
@@ -2298,7 +2311,7 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
                 const auto hs = aura::compiler::mutation_hold_live_snapshot();
                 if (hs.held && hs.fiber_id == target->id()) {
                     const auto d = dispose_no_edge_holder(target);
-                    g_scheduler->remove_joiner(target->id(), g_current_fiber);
+                    g_scheduler->remove_joiner(target->id(), self);
                     if (d == NoEdgeHolderDispose::Reclaimed) {
                         target->release_orphan_roots();
                         return finish(JoinStatus::Reclaimed);
@@ -2315,12 +2328,12 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
                 target->release_orphan_roots();
                 return finish(JoinStatus::Reclaimed);
             }
-            if (g_current_fiber->is_cancel_requested()) {
-                g_scheduler->remove_joiner(target->id(), g_current_fiber);
+            if (self->is_cancel_requested()) {
+                g_scheduler->remove_joiner(target->id(), self);
                 return finish(JoinStatus::Cancelled);
             }
             if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
-                g_scheduler->remove_joiner(target->id(), g_current_fiber);
+                g_scheduler->remove_joiner(target->id(), self);
                 return finish(JoinStatus::Timeout);
             }
             if (has_deadline) {
@@ -2329,19 +2342,19 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
                 // worker forever. Joiner stays registered for eventfd wake.
                 Fiber::yield(YieldReason::Explicit);
             } else {
-                g_current_fiber->set_state(FiberState::Waiting);
+                self->set_state(FiberState::Waiting);
                 Fiber::yield(YieldReason::BlockingIO);
                 // After resume: drain eventfd (non-blocking).
-                int evfd = g_current_fiber->eventfd();
+                int evfd = self->eventfd();
                 if (evfd >= 0) {
                     std::uint64_t val = 0;
                     while (::read(evfd, &val, sizeof(val)) > 0) {
                     }
                 }
-                g_current_fiber->set_state(FiberState::Running);
+                self->set_state(FiberState::Running);
             }
         }
-        g_scheduler->remove_joiner(target->id(), g_current_fiber);
+        g_scheduler->remove_joiner(target->id(), self);
         return finish(JoinStatus::Ok);
     }
 

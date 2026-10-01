@@ -2503,15 +2503,25 @@ static bool test_issue_4176_join_wake_protocol() {
     // re-register and re-park. Escapes: done / reclaimed.
     sched.spawn([&]() {
         joiner_f = aura::serve::g_current_fiber;
+        // Issue #4176: capture the joiner fiber ONCE (migration-invariant).
+        // Re-reading thread_local g_current_fiber after a BlockingIO park
+        // can hit a compiler-cached TLS base and observe the wrong worker's
+        // null — add_joiner(..., nullptr) then returns false and the loop
+        // starves the worker. `joiner_f` was captured at body start.
         while (!child_done.load(std::memory_order_acquire)) {
-            if (child_f == nullptr) {
+            if (child_f == nullptr || joiner_f == nullptr) {
                 Fiber::yield(YieldReason::Explicit);
                 continue;
             }
-            if (sched.add_joiner(child_f->id(), aura::serve::g_current_fiber)) {
+            if (sched.add_joiner(child_f->id(), joiner_f)) {
                 joiner_parks.fetch_add(1, std::memory_order_relaxed);
                 Fiber::yield(YieldReason::BlockingIO);
-                sched.remove_joiner(child_f->id(), aura::serve::g_current_fiber);
+                sched.remove_joiner(child_f->id(), joiner_f);
+            } else {
+                // Target vanished / done between the predicate check and the
+                // register: re-check cooperatively instead of busy-spinning
+                // the worker (the contract re-parks on every wake).
+                Fiber::yield(YieldReason::Explicit);
             }
         }
         joiner_finished.store(true, std::memory_order_release);
