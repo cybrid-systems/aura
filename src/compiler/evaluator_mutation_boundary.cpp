@@ -157,12 +157,25 @@ static thread_local bool g_tls_mutation_audit_wal_precommitted = false;
 // wrap restamp_all refill the full-tree eager face).
 static thread_local std::size_t g_tls_nested_hot_cone_from = ~std::size_t{0};
 
-static void restamp_nested_thin_hot_cone(aura::ast::FlatAST& ws, std::size_t log_from) {
+// Issue #4259: returns nodes restamped. Production widens thin-cone when
+// nested log delta exceeds cap (covers nested-touched before authority-gap
+// deny storm). Soft/Off: historical (delta > cap → 0).
+[[nodiscard]] static std::size_t restamp_nested_thin_hot_cone(aura::ast::FlatAST& ws,
+                                                              std::size_t log_from) {
     const auto delta = ws.mutation_log_size() > log_from ? ws.mutation_log_size() - log_from : 0;
     const auto budget = aura::ast::restamp_budget_nodes_effective();
     const auto cap = aura::ast::restamp_hot_cone_budget(budget == 0 ? 64u : budget);
-    (void)ws.restamp_hot_cone_after_budget(
-        (delta > 0 && delta <= static_cast<std::uint64_t>(cap)) ? cap : 0u, log_from);
+    std::uint32_t use = 0;
+    if (delta > 0) {
+        if (delta <= static_cast<std::uint64_t>(cap)) {
+            use = cap;
+        } else if (aura::compiler::typed_audit::production_defaults_active()) {
+            const auto bound = static_cast<std::uint64_t>(ws.size()) + 1ull;
+            const auto widen = delta < bound ? delta : bound;
+            use = static_cast<std::uint32_t>(widen > 0xffffffffull ? 0xffffffffu : widen);
+        }
+    }
+    return ws.restamp_hot_cone_after_budget(use, log_from);
 }
 
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk
@@ -1701,15 +1714,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             // fills eager=0 in ast_impl) — do not rely on a cross-module
             // clear_restamp_eager_bits fill.
             workspace_flat_->clear_restamp_eager_bits();
-            const auto delta = workspace_flat_->mutation_log_size() > cp.mutation_log_size
-                                   ? workspace_flat_->mutation_log_size() - cp.mutation_log_size
-                                   : 0;
-            const auto budget = aura::ast::restamp_budget_nodes_effective();
-            const auto cap = aura::ast::restamp_hot_cone_budget(budget == 0 ? 64u : budget);
             g_tls_nested_hot_cone_from = cp.mutation_log_size;
-            const auto n = workspace_flat_->restamp_hot_cone_after_budget(
-                (delta > 0 && delta <= static_cast<std::uint64_t>(cap)) ? cap : 0u,
-                cp.mutation_log_size);
+            // Issue #4259: widen thin-cone under production via helper.
+            const auto n = restamp_nested_thin_hot_cone(*workspace_flat_, cp.mutation_log_size);
             if (n > 0) {
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     m->nested_hot_cone_restamp_total.fetch_add(1, std::memory_order_relaxed);
