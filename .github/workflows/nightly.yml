@@ -121,7 +121,7 @@ jobs:
   tsan-smoke:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - uses: actions/checkout@v7
 
