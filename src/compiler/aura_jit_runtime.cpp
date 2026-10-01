@@ -2281,10 +2281,17 @@ static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
 }
 
 // Public C ABI: takes exclusive table lock (may rewrite capture cells).
-// Pure remount probe — does NOT set MustDeopt. Production sites that
-// must fail-closed use aura_remount_or_force_deopt (#2503).
+// Issue #4246: under production_defaults_active the bare ABI is a thin
+// wrapper over remount_or_force_deopt (#2503) so half-remount cannot
+// leave MustDeopt=0 / deopt_pending unset. Soft/Off keeps pure remount
+// for unit tests that probe remount mechanics alone.
 extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
                                              std::uint8_t linear_fp) {
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        return remount_or_force_deopt_unlocked(closure_id, live_env_gen, linear_fp,
+                                               aura_aot_func_table_epoch());
+    }
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     return aura_remount_closure_captures_unlocked(closure_id, live_env_gen, linear_fp);
 }

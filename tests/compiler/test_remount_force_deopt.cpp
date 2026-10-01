@@ -1459,6 +1459,20 @@ static void ac3812_4_soak_no_amplify() {
 
 } // namespace
 
+
+// Issue #4246: production bare remount wraps remount_or_force_deopt.
+static void ac4246_bare_remount_production_wraps() {
+    std::println("\n--- #4246 AC: production bare remount → MustDeopt path ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #4246") != std::string::npos, "4246: runtime cites #4246");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos &&
+              rt.find("aura_remount_closure_captures") != std::string::npos,
+          "4246: bare ABI gated on production_defaults_active");
+    CHECK(rt.find("remount_or_force_deopt_unlocked") != std::string::npos,
+          "4246: wraps shared fail path");
+    CHECK(read_file("tests/compiler/test_issue_4246.cpp").empty(), "4246: no invent");
+}
+
 int run_test_remount_force_deopt() {
     std::println("test_remount_force_deopt");
     ac1_cell_remap_force_deopt();
@@ -1513,6 +1527,8 @@ int run_test_remount_force_deopt() {
     ac3812_4_soak_no_amplify();
     std::println("\n=== Issue #3887: steal-mid AOT revalidate deferred; call-time dual-fresh ===");
     ac3887_call_time_dual_fresh_covers_post_steal_defuse();
+    std::println("\n=== Issue #4246: bare remount production MustDeopt wrap ===");
+    ac4246_bare_remount_production_wraps();
     if (g_failed)
         return 1;
     std::println(
