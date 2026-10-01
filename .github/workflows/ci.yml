@@ -197,7 +197,7 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     env:
       # Coverage sweep on GH runners: the 14-worker parallel burst SIGKILLs the
       # stdlib oneshot trio's freshly-forked interpreter children (guest-global
@@ -211,7 +211,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.9-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -242,7 +242,7 @@ jobs:
     timeout-minutes: 120
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - uses: actions/checkout@v7
       with:
@@ -253,7 +253,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.9-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -382,7 +382,7 @@ jobs:
                           # trap. Still uses slim matrix (no issue targets)
                           # to avoid the disk-full failure mode.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - uses: actions/checkout@v7
 
@@ -429,7 +429,7 @@ jobs:
                          # emit-binary is minutes. stdbuf is skipped under
                          # asan in build.py (libstdbuf.so vs libasan order).
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - uses: actions/checkout@v7
 
@@ -530,14 +530,14 @@ jobs:
                           # recent header changes (#2632-#2635) trigger
                           # full rebuild of all arena.ixx dependents.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.9-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -578,14 +578,14 @@ jobs:
       needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.9-${{ hashFiles('requirements-dev.txt') }}
 
     - uses: actions/cache@v6
       with:
@@ -624,7 +624,7 @@ jobs:
                           # AURA_LINK_JOBS=1 serializes link to avoid
                           # arena.ixx.o deadlock (#2636).
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
@@ -637,7 +637,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.9-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -661,7 +661,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.7
+      image: ghcr.io/cybrid-systems/dev:v1.0.9
     steps:
     - name: Download aura
       uses: actions/download-artifact@v8

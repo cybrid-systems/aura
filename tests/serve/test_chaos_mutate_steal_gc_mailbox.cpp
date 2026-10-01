@@ -715,8 +715,7 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
             // in the last RejectHard bits, the densify-busy sub-flag must be
             // attributable (or the composition arm was not the fail cause —
             // held-mirror alone). Always require the probe reader is wired.
-            const auto densify_seq =
-                aura::core::densify_consistency::last_densify_call_seq();
+            const auto densify_seq = aura::core::densify_consistency::last_densify_call_seq();
             const auto densify_busy =
                 aura::serve::steal_safety_last_reject_densify_in_flight_v_read();
             std::println("  #4258 densify-in-flight probe: call_seq={} densify_busy={} "

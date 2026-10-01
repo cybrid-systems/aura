@@ -738,7 +738,8 @@ int run_test_soa_dirty_aware_pipeline() {
             const auto win = svc.substr(def, 2500);
             CHECK(win.find("detail_escape_soa::run_escape_on_soa_fn") != std::string::npos,
                   "4262 AC1: delegates to columnar helper");
-            CHECK(win.find("std::vector<std::vector<aura::jit::FlatInstruction>>") == std::string::npos,
+            CHECK(win.find("std::vector<std::vector<aura::jit::FlatInstruction>>") ==
+                      std::string::npos,
                   "4262 AC1: no FlatInstruction AoS vector materialize");
             // Soft AoS grandfather retained
             CHECK(svc.find("void run(aura::ir::IRFunction& func)") != std::string::npos,
@@ -753,7 +754,6 @@ int run_test_soa_dirty_aware_pipeline() {
             CHECK(build.find("check_escape_soa_no_flat_4262") != std::string::npos,
                   "4262 AC4: build.py linter");
         }
-
     }
 
     // ── Issue #3502: production unwired pred ≠ DefaultAllDirty ──

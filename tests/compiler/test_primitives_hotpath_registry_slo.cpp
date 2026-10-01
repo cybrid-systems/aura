@@ -27,8 +27,8 @@ import aura.compiler.value;
 namespace aura_issue_805_detail {
 
 using aura::compiler::CompilerService;
-using aura::compiler::PrimFn;
 using aura::compiler::kPrimFnNoStdFunctionIssue;
+using aura::compiler::PrimFn;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -105,7 +105,8 @@ static void run_matrix(CompilerService& cs) {
             std::ifstream in(cand);
             if (!in)
                 continue;
-            return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
         }
         return {};
     };

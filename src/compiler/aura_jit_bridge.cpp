@@ -1446,9 +1446,8 @@ void apply_aot_staging_to_live() noexcept {
     // slots (hard-invalidate owner-scope parity #3300/#3750). Skip peer
     // overwrite and soft-stale the peer slot instead; only exchange slots
     // owned by the reloading eval (or unowned). Soft/single-eval unchanged.
-    const bool owner_filter =
-        aura::compiler::typed_audit::production_defaults_active() &&
-        aura_aot_state_map_size() > 1 && owner != 0;
+    const bool owner_filter = aura::compiler::typed_audit::production_defaults_active() &&
+                              aura_aot_state_map_size() > 1 && owner != 0;
     for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
         if (!g_aot_staging[i].written)
             continue;
@@ -1493,12 +1492,10 @@ void commit_func_table_swap() {
     // freeze g_aot_table_epoch so peer dual-fresh stays green; fan peer
     // soft-stale for reloaded names / hashes instead of a process-wide
     // bump. Soft/single-eval keep the shared epoch advance.
-    const auto owner_ptr = g_aot_register_owner_eval
-                               ? g_aot_register_owner_eval
-                               : g_aot_reemit_owner_eval;
-    const bool owner_scoped_reload =
-        aura::compiler::typed_audit::production_defaults_active() &&
-        aura_aot_state_map_size() > 1 && owner_ptr != nullptr;
+    const auto owner_ptr =
+        g_aot_register_owner_eval ? g_aot_register_owner_eval : g_aot_reemit_owner_eval;
+    const bool owner_scoped_reload = aura::compiler::typed_audit::production_defaults_active() &&
+                                     aura_aot_state_map_size() > 1 && owner_ptr != nullptr;
 
     std::uint64_t new_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
     if (owner_scoped_reload) {
@@ -1958,19 +1955,16 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
     // (ops/path class; old binary may still be env-fresh). Soft/Off: zero
     // extra when force mask idle / proof allows native.
     if (aura::compiler::typed_audit::production_defaults_active()) {
-        const auto fail = static_cast<AotReloadFail>(
-            aura_last_aot_reload_consistency_last_fail_reason());
-        const bool host_drift =
-            fail == AotReloadFail::Version || fail == AotReloadFail::Defuse ||
-            fail == AotReloadFail::Env || fail == AotReloadFail::Linear;
-        if (host_drift &&
-            (aura_last_aot_reload_consistency_would_allow_native() == 0 ||
-             aura_last_aot_reload_consistency_force_jit_mask() != 0)) {
+        const auto fail =
+            static_cast<AotReloadFail>(aura_last_aot_reload_consistency_last_fail_reason());
+        const bool host_drift = fail == AotReloadFail::Version || fail == AotReloadFail::Defuse ||
+                                fail == AotReloadFail::Env || fail == AotReloadFail::Linear;
+        if (host_drift && (aura_last_aot_reload_consistency_would_allow_native() == 0 ||
+                           aura_last_aot_reload_consistency_force_jit_mask() != 0)) {
             if (aot_metrics()) {
                 aot_metrics()->aot_stale_probe_hard_reject_total.fetch_add(
                     1, std::memory_order_relaxed);
-                aot_metrics()->aot_slot_stale_reject_total.fetch_add(1,
-                                                                     std::memory_order_relaxed);
+                aot_metrics()->aot_slot_stale_reject_total.fetch_add(1, std::memory_order_relaxed);
                 aot_metrics()->aot_forced_recompile_on_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
             }

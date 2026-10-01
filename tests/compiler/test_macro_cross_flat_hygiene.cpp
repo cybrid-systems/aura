@@ -561,7 +561,8 @@ static void ac3980_same_pool_densify_zeros() {
 // Issue #4249: Restricted via sandbox::set_mode alone (no production_defaults,
 // no g_macro_expand_sandbox_strict) still zeros schema/provenance on cross-flat.
 static void ac4249_sandbox_active_homology() {
-    std::println("\n--- #4249 AC: Restricted sandbox-active zeros homology (no production_defaults) ---");
+    std::println(
+        "\n--- #4249 AC: Restricted sandbox-active zeros homology (no production_defaults) ---");
     SandboxStrictGuard guard;
     aura_test_set_macro_expand_sandbox_strict(0);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
@@ -577,8 +578,7 @@ static void ac4249_sandbox_active_homology() {
     auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
     src.set_schema_cache(lam, /*tid=*/42);
     src.set_provenance(lam, /*prov=*/91);
-    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                       std::equal_to<>>
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
         nm;
     auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
                                    SyntaxMarker::MacroIntroduced);

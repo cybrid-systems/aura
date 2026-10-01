@@ -235,7 +235,8 @@ int run_test_query_find_by_define() {
         // Warm the tag_arity index (EagerAfterMutate / Lazy).
         (void)cs.eval("(query:pattern \"(define x y)\" :strict-arity #t)");
         apply_production_audit_defaults();
-        CHECK(cs.eval("(define r4260 (query:filter (query:where :node-type \"Define\")))").has_value(),
+        CHECK(cs.eval("(define r4260 (query:filter (query:where :node-type \"Define\")))")
+                  .has_value(),
               "4260 AC1: production filter :node-type binds");
         auto len = cs.eval("(length (hash-ref r4260 \"matches\"))");
         CHECK(len && is_int(*len) && as_int(*len) >= 1, "4260 AC1: indexed Define matches >= 1");
@@ -250,7 +251,8 @@ int run_test_query_find_by_define() {
         CHECK(cs.eval("(set-code \"(define fib4260 42)\")").has_value(), "4260 AC2: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "4260 AC2: eval");
         apply_production_audit_defaults();
-        CHECK(cs.eval("(define r4260d (query:filter (query:where :defined-by \"fib4260\")))").has_value(),
+        CHECK(cs.eval("(define r4260d (query:filter (query:where :defined-by \"fib4260\")))")
+                  .has_value(),
               "4260 AC2: defined-by hit binds");
         auto len = cs.eval("(length (hash-ref r4260d \"matches\"))");
         CHECK(len && is_int(*len) && as_int(*len) == 1, "4260 AC2: define index hit → 1 match");

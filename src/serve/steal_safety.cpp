@@ -200,8 +200,8 @@ namespace {
             fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
             if (bump_counters) {
                 note_steal_invariant_fail(StealInvariant::BoundarySafe);
-                g_steal_safety_last_reject_densify_in_flight.store(
-                    densify_busy ? 1u : 0u, std::memory_order_relaxed);
+                g_steal_safety_last_reject_densify_in_flight.store(densify_busy ? 1u : 0u,
+                                                                   std::memory_order_relaxed);
             }
         }
     }
