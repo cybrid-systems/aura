@@ -253,3 +253,4 @@ check_interior_int_remap_4244.py
 check_occurrence_owner_tc_steal_4252.py
 check_occurrence_drain_order_4250.py
 check_dep_closure_miss_4251.py
+check_relocate_identity_4243.py

@@ -7045,6 +7045,144 @@ static void ac4242_5_soft_off_noop_and_source() {
           "4242 AC5: no-owner apply binds through the guarded any-arena walk");
 }
 
+// ── Issue #4243: relocate alloc-fail collision must not drop the loser's
+// identity (#3464 residual; extends fail_closed per #81967) ──
+// The #3464 collision arm dropped the loser's DtorEntry (no dtor) once its
+// old slot had been recycled and reused; a LifetimePin / linear root that
+// still held loser.old then silently named the winner (the invalidate skip
+// set — built from this-window remap values — treated loser.old as already
+// remapped). Fix: (a) the collision arm NEVER drops the identity — it
+// restores the loser to a fresh tracked address; (b) the invalidate skip set
+// is the set of destinations whose pins remap_pins_pointing_to actually
+// rewrote this window (pins_rewritten_new), not the raw remap-value set.
+// The #2266/#2374/#3850 Moving-blocks-on-live-pin contract is NOT weakened:
+// the runtime ACs below drive the relocate path with no live pins.
+
+// AC1: alloc-fail relocate with no live pin — fail-closed and no identity
+// dropped (every object destroyed exactly once; a dropped identity would
+// skip its dtor).
+static void ac4243_1_alloc_fail_never_drops_identity() {
+    std::println("\n--- #4243 AC1: alloc-fail relocate never drops identity (no live pin) ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0,
+                                                        std::memory_order_relaxed); // Soft observe
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    g_3435_dtor_count.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        // Same-tier tracked objects (DtorCount3435 → 16B class). No
+        // LifetimePin: production Moving is fail-closed while any pin is
+        // live (src/core/arena.ixx pin_block), so the relocate path is
+        // driven exactly like #3435 AC1 / #3464 AC5 — no pins in the window.
+        auto* p0 = arena.create<DtorCount3435>(1);
+        auto* p1 = arena.create<DtorCount3435>(2);
+        auto* p2 = arena.create<DtorCount3435>(3);
+        CHECK(p0 && p1 && p2, "4243 AC1: create ok");
+        aura::ast::g_relocate_alloc_fail_inject_remaining.store(1, std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.untracked_kept_count >= 1, "4243 AC1: failed relocate bumped untracked_kept_count");
+        CHECK(r.moving_incomplete_remap, "4243 AC1: moving_incomplete_remap set (fail-closed)");
+        CHECK(r.pin_contract_held == false, "4243 AC1: pin_contract_held false (fail-closed)");
+    } // ~ASTArena runs the dtor entries
+    CHECK(g_3435_dtor_count.load(std::memory_order_relaxed) == 3,
+          "4243 AC1: all 3 identities survive — no DtorEntry dropped, no dtor skipped");
+}
+
+// AC2: no-pin Moving window over slot-covered small objects stays green and
+// every relocated identity resolves; a pin attached after the window at the
+// resolved home validates against the post-window generation (no aliased /
+// dangling identity left behind by the fail-closed relocate).
+static void ac4243_2_no_pin_window_green() {
+    std::println("\n--- #4243 AC2: no-pin Moving window green; remap resolves ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(7, 8, 9, 10);
+    auto* p1 = arena.create<Pod16>(17, 18, 19, 20);
+    auto* p2 = arena.create<Pod16>(27, 28, 29, 30);
+    CHECK(p0 && p1 && p2, "4243 AC2: create ok");
+    void* e0 = p0;
+    void* e1 = p1;
+    void* e2 = p2;
+    arena.register_external_root_slot_for_densify(&e0);
+    arena.register_external_root_slot_for_densify(&e1);
+    arena.register_external_root_slot_for_densify(&e2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(!r.moving_blocked_precondition, "4243 AC2: Moving not blocked (no live pin)");
+    CHECK(r.pin_contract_held, "4243 AC2: pin_contract_held true (no unremapped pin)");
+    CHECK(r.moved_live_objects, "4243 AC2: objects moved");
+    for (void* old : {static_cast<void*>(p0), static_cast<void*>(p1), static_cast<void*>(p2)}) {
+        void* neu = arena.resolve_object_remap(old);
+        CHECK(neu != nullptr, "4243 AC2: relocated identity resolves to a live home");
+        if (neu == nullptr)
+            continue;
+        // Post-window pin at the resolved home validates against the new gen.
+        aura::core::lifetime::LifetimePin pin;
+        pin.pin(neu, arena.generation(), arena.arena_id());
+        CHECK(pin.pinned() && pin.validate(arena.generation(), arena.arena_id()),
+              "4243 AC2: resolved home is a valid post-window identity");
+    }
+}
+
+// AC3: the invalidate skip set is the actually-rewritten destination set
+// (pins_rewritten_new) — the CALLER was tightened. The landed #2374 helper
+// (membership-only skipping) is deliberately unchanged; the signature cannot
+// express "ptr-in-set without a rewrite is not skip cover", so the fix lives
+// at the call site.
+static void ac4243_3_invalidate_skip_set_is_rewritten() {
+    std::println("\n--- #4243 AC3: invalidate skip set = actually-rewritten destinations ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    CHECK(ixx.find("pins_rewritten_new") != std::string::npos,
+          "4243 AC3: actually-rewritten destination set present");
+    CHECK(ixx.find("pins_rewritten_new.insert(new_ptr)") != std::string::npos,
+          "4243 AC3: set filled from remap_pins_pointing_to rewrites");
+    CHECK(ixx.find("pins_rewritten_new);") != std::string::npos,
+          "4243 AC3: invalidate consumes the rewritten set");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(lp.find("Issue #4243") != std::string::npos,
+          "4243 AC3: lifetime_pin.hh documents the tightened caller contract");
+    const auto t = read_file("tests/core/test_moving_compact.cpp");
+    CHECK(t.find("invalidate_pins_not_in_new_addrs") != std::string::npos,
+          "4243 AC3: #2374 membership-only helper contract still exercised");
+}
+
+// AC4: source-cite + linter + wiring + no invent.
+static void ac4243_4_source_and_linter() {
+    std::println("\n--- #4243 AC4: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    const auto build = read_file("build.py");
+    const auto test = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    CHECK(ixx.find("Issue #4243") != std::string::npos, "4243 AC4: arena.ixx cites #4243");
+    CHECK(ixx.find("g_relocate_collision_restore_total.fetch_add") != std::string::npos,
+          "4243 AC4: defensive collision-restore counter bumped");
+    CHECK(ixx.find("kept.push_back(DtorEntry{fresh ? fresh : p.old, p.dtor, p.size, p.align})") !=
+              std::string::npos,
+          "4243 AC4: collision loser restored to a tracked address");
+    CHECK(ixx.find("drop this identity from dtors_") == std::string::npos,
+          "4243 AC4: identity-drop arm removed (identity never dropped)");
+    CHECK(ixx.find("kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align})") !=
+              std::string::npos,
+          "4243 AC4: #3435 restore-to-old anchor preserved");
+    CHECK(build.find("check_relocate_identity_4243") != std::string::npos,
+          "4243 AC4: build.py wires linter");
+    CHECK(test.find("ac4243_1_alloc_fail_never_drops_identity") != std::string::npos,
+          "4243 AC4: test cites AC1");
+    std::ifstream invent("tests/core/test_issue_4243.cpp");
+    if (!invent.good())
+        invent.open("../tests/core/test_issue_4243.cpp");
+    CHECK(!invent.good(), "4243 AC4: no test_issue_4243.cpp per #81967");
+    const std::filesystem::path docs_design_4243 = "docs/design";
+    std::error_code ec_4243;
+    if (std::filesystem::is_directory(docs_design_4243, ec_4243)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design_4243, ec_4243)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("4243-") == std::string::npos,
+                  std::string("4243 AC4: no docs/design/") + name + " per #1655");
+        }
+    }
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -7903,6 +8041,13 @@ int run_test_moving_densify_fail_closed() {
     ac4242_3_dead_dest_never_rewritten();
     ac4242_4_multi_window_refuse_retained();
     ac4242_5_soft_off_noop_and_source();
+
+    std::println("\n=== Issue #4243: relocate alloc-fail collision never drops the loser "
+                 "identity (#3464 residual; extends fail_closed per #81967) ===");
+    ac4243_1_alloc_fail_never_drops_identity();
+    ac4243_2_no_pin_window_green();
+    ac4243_3_invalidate_skip_set_is_rewritten();
+    ac4243_4_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();

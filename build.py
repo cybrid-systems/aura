@@ -10155,6 +10155,27 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4251 dep-closure miss linter failed — run python3 scripts/check_dep_closure_miss_4251.py")
         return r
+    # Issue #4243 (P1: relocate alloc-fail collision drops identity; a pin on
+    # the reused neu stays live). Minimal fix: the #3464 collision arm in
+    # relocate_tracked_objects_for_moving_ no longer drops the loser's
+    # DtorEntry when its old slot was recycled and reused — it restores the
+    # loser to a fresh tracked address (never drop, never skip a dtor,
+    # defensive g_relocate_collision_restore_total). Caller-side: live_compact
+    # builds the invalidate skip set from pins actually rewritten this window
+    # (pins_rewritten_new), not the raw remap-value set, so a pin whose ptr()
+    # merely equals a winner's neu is fail-closed invalidated. The #3435
+    # restore-to-old anchor, the up-front pending recycle, and the per-iteration
+    # last_object_remap_[p.old] = neu publish are all kept. Gate pins the shape
+    # + runtime ACs (ac4243_1..4 in test_moving_densify_fail_closed.cpp) +
+    # build.py + allowlist wiring.
+    rri4243_script = ROOT / "scripts" / "check_relocate_identity_4243.py"
+    if not rri4243_script.exists():
+        fail(f"missing {rri4243_script}")
+        return 1
+    r = run([sys.executable, str(rri4243_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4243 relocate identity linter failed — run python3 scripts/check_relocate_identity_4243.py")
+        return r
     # Issue #4167 (P0: non-PACK production HOT_CONTRACT still loads the
     # harden armed cache; Soft-without-defaults Quiet OOB on view_at/as_*):
     # the production CMake face now DEFAULTS to AURA_PRODUCTION_PACK — the

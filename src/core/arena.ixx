@@ -625,6 +625,13 @@ export inline std::atomic<std::uint32_t> g_relocate_alloc_fail_inject_remaining{
 export inline void reset_relocate_alloc_fail_inject_for_test() noexcept {
     g_relocate_alloc_fail_inject_remaining.store(0, std::memory_order_relaxed);
 }
+// Issue #4243: defensive observability for the same-window collision arm of
+// relocate_tracked_objects_for_moving_. Under the recycle-after-success
+// invariant the arm is structurally unreachable (a failing pending's old
+// slot was never handed out), so a nonzero value flags an invariant
+// violation — the loser was restored to a fresh tracked slot instead of
+// being dropped. Observability only; no new query key / mid-struct counter.
+export inline std::atomic<std::uint64_t> g_relocate_collision_restore_total{0};
 // Issue #4066: test seam. Invoked on the densify thread while the #3210
 // inventory mutex is held and before small_pool_.recycle. Production:
 // nullptr, one relaxed load. The hook must not take that mutex.
@@ -2951,6 +2958,13 @@ public:
             // reconciliation (dedup by old address at the reconciliation
             // site; canaries are observe-only #3017/#3055 — not a family).
             std::unordered_set<void*> pins_honoring_old;
+            // Issue #4243: destinations whose pins were actually rewritten
+            // this window. invalidate may skip a pin ONLY when remap actually
+            // rewrote it — membership of ptr() in the raw remap-value set is
+            // not proof (the #4243 loser-alias: a pin on loser.old that was
+            // never remapped must not survive just because loser.old equals
+            // some winner's neu).
+            std::unordered_set<void*> pins_rewritten_new;
             std::vector<void*> root_remap_covered_old;
             std::vector<void*> linear_roots_covered_old;
             result.new_gen = generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -2967,22 +2981,20 @@ public:
                     remapped_pins += rr.remapped;
                     // Issue #3633: a pin actually remapped onto this old
                     // address = the object had pin cover (dedup key = old addr).
-                    if (rr.remapped > 0)
+                    if (rr.remapped > 0) {
                         pins_honoring_old.insert(old_ptr);
+                        pins_rewritten_new.insert(new_ptr);
+                    }
                 }
                 stats_.live_compact_remapped_pins_total += remapped_pins;
                 result.remapped_pins = remapped_pins;
             }
-            // Build set of new addresses for O(1) skip during invalidate pass.
-            // Remapped pins have ptr_ == this-window new; non-remapped pins
-            // have ptr_ NOT in this_window_remap's values. Invalidate the
-            // latter so dangling pointers fail closed (validate returns false).
-            std::unordered_set<void*> new_addrs;
-            if (result.moved_live_objects) {
-                new_addrs.reserve(this_window_remap.size() * 2);
-                for (const auto& [old_ptr, new_ptr] : this_window_remap)
-                    new_addrs.insert(new_ptr);
-            }
+            // Issue #4243: invalidate skip set = pins_rewritten_new, NOT the
+            // raw set of this-window remap values. A pin may be skipped only
+            // if remap_pins_pointing_to actually rewrote it this window; a
+            // pin whose ptr() merely equals some winner's neu (e.g. aliased
+            // loser.old) is fail-closed invalidated here instead of being
+            // silently kept live.
             // Issue #2266 AC1 — verify pin-or-remap hard contract. After the
             // remap walk + selective invalidate, every live pin for arena_id_
             // must either: (a) have been remapped to a new address (ptr_ no
@@ -3034,13 +3046,15 @@ public:
             // Issue #2374: selective invalidate via sharded registry (not the
             // legacy pin_registry() which was always empty post-#2342).
             // invalidate_pins_not_in_new_addrs walks all shards and unpins
-            // non-remapped pins for this arena; remapped pins (ptr_ in
-            // new_addrs) are skipped. verify_pins_under_moving_compact above
+            // non-remapped pins for this arena; skipped are ONLY the pins
+            // actually rewritten this window (#4243: the skip set is
+            // pins_rewritten_new — rewritten destinations — not the raw
+            // remap-value set). verify_pins_under_moving_compact above
             // is fail-closed for pins still on *old* densified addresses —
             // this pass is the complementary "null non-remapped / non-arena
             // pins" path (e.g. AC_M5 local-buffer pins).
-            const std::size_t invalidated =
-                aura::core::lifetime::invalidate_pins_not_in_new_addrs(arena_id_, new_addrs);
+            const std::size_t invalidated = aura::core::lifetime::invalidate_pins_not_in_new_addrs(
+                arena_id_, pins_rewritten_new);
             stats_.live_compact_invalidated_pins_total += invalidated;
             invoke_layout_change_(result.new_gen);
             // Issue #2267 / #2294: RootRemapPass — fires AFTER
@@ -3589,9 +3603,14 @@ private:
                 // would alias the arena table — two live objects sharing one
                 // pointer. Detect same-window collision: p.old is already
                 // owned by `kept` (a prior pending's committed neu) or
-                // remapped in last_object_remap_. If yes, drop this identity
-                // from dtors_ (bytes stay in Pending); the colliding owner
-                // already tracks the live object. The caller folds
+                // remapped in last_object_remap_.
+                // Issue #4243: when the collision is real the identity must
+                // NOT be dropped (the #3464 arm's old behavior) — the loser's
+                // storage was recycled and reused, so dropping its DtorEntry
+                // leaked the object (no dtor) while a pin / linear root that
+                // still held p.old silently named the winner. Restore the
+                // loser to a fresh tracked slot instead; the identity is
+                // NEVER dropped and no dtor is skipped. The caller folds
                 // untracked_kept_count > 0 into moving_incomplete_remap +
                 // pin_contract_held=false + production sticky-off (#2495
                 // face), so Phase-5 cannot publish a green Moving window
@@ -3608,9 +3627,22 @@ private:
                 }
                 if (!collided) {
                     kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align});
+                } else {
+                    // Issue #4243: collision arm — never drop the identity.
+                    // Last resort (no fresh slot either) still restores at
+                    // old: never skip a recycled object's dtor.
+                    void* fresh = small_pool_.try_allocate(p.size);
+                    if (!fresh) {
+                        try {
+                            fresh = resource_.allocate(p.size, p.align);
+                            stats_.used += p.size;
+                        } catch (...) {
+                            fresh = nullptr;
+                        }
+                    }
+                    g_relocate_collision_restore_total.fetch_add(1, std::memory_order_relaxed);
+                    kept.push_back(DtorEntry{fresh ? fresh : p.old, p.dtor, p.size, p.align});
                 }
-                // else: drop this identity from dtors_; bytes already
-                // copied in Pending.
                 if (out_untracked_kept_count)
                     ++*out_untracked_kept_count;
                 continue;
