@@ -22,14 +22,45 @@
 #      ones their test_X.cpp imports expect).
 #
 # Concurrency: ninja runs many jobs in parallel. ln -sfn is idempotent,
-# cp -f is atomic at the syscall level, and the source/cwd .gcm exists
-# briefly during the move but the post-processing is fast. Worst case
-# under heavy parallelism is a duplicate .gcm (a few hundred KB on
-# disk), never a corrupt one.
+# and publishing a shared-cache .gcm is atomic: we write a same-directory
+# temp file and rename(2) it into place (see publish_atomic below), so a
+# concurrent reader never observes a truncated BMI. cp -f alone is NOT
+# atomic — it truncates the destination in place, and a consumer that
+# opens the symlinked .gcm mid-copy can mmap a zero-length module file,
+# which GCC reports as EINVAL ('failed to read compiled module: Invalid
+# argument'). Worst case under heavy parallelism is now a duplicate .gcm
+# (a few hundred KB on disk), never a corrupt one.
 set -euo pipefail
 
 BUILD_DIR="${AURA_BUILD_DIR:-$PWD}"
 SHARED_GCM_ROOT="${AURA_SHARED_GCM_DIR:-$BUILD_DIR/module_cache}"
+
+# Publish a shared-cache .gcm atomically.
+#
+# cp -f truncates the destination in place and then writes it, so any
+# reader that opens the destination (via a consumer's symlink) between
+# truncate and write sees a zero-length / partial .gcm. GCC mmaps the
+# module file and reports EINVAL ('failed to read compiled module:
+# Invalid argument') for a 0-length BMI — exactly the CI build-test red.
+#
+# Instead, write to a same-directory temp file and rename(2) it into
+# place. On the same filesystem rename is atomic: readers observe either
+# the old complete file or the new complete file, never a partial one.
+publish_atomic() {
+    local from="$1" to="$2" tmp
+    tmp="$to.tmp.$$"
+    if cp -f "$from" "$tmp" 2>/dev/null && mv -f "$tmp" "$to" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+}
+
+# Best-effort cleanup of any temp file left behind on failure/early exit.
+cleanup_tmp_gcm() {
+    rm -f "$SHARED_GCM_ROOT"/*/*.tmp."$$" 2>/dev/null || true
+}
+trap cleanup_tmp_gcm EXIT
 
 # Extract the per-target dir from the -o path. e.g.
 #   CMakeFiles/test_issue_130.dir/src/compiler/lowering.ixx.o
@@ -84,6 +115,13 @@ set -e
 [ -n "$per_target_dir" ] || exit $RC
 per_target_dir="$BUILD_DIR/$per_target_dir"
 [ -d "$per_target_dir" ] || exit $RC
+
+# Never post-process after a FAILED compile (RC != 0). The sync/fan-out
+# below publishes BMIs into the shared cache and symlinks them into
+# consumer per-target dirs; doing that after a failed compile would
+# publish/link stale or partial artifacts. Bail out with the compiler's
+# status, before any sync or fan-out.
+[ "$RC" -eq 0 ] || exit "$RC"
 
 # Producer key = per-target dir basename (e.g. aura_test_objects.dir).
 # The shared cache for this producer is module_cache/<producer-key>/.
@@ -178,7 +216,7 @@ sync_gcm() {
            [ "${target%/*}" = "$PRODUCER_CACHE" ] && \
            [ -f "$target" ] && \
            { [ ! -f "$dst" ] || [ "$target" -nt "$dst" ]; }; then
-            cp -f "$target" "$dst" 2>/dev/null || true
+            publish_atomic "$target" "$dst" || true
             # Touch the per-target symlinks in consumers so ninja's
             # mtime-based dep tracking notices the update.
             for c in "${consumers[@]}"; do
@@ -192,7 +230,7 @@ sync_gcm() {
     # per-target dir AND in all consumer per-target dirs.
     if [ -f "$src" ]; then
         if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
-            cp -f "$src" "$dst" 2>/dev/null || true
+            publish_atomic "$src" "$dst" || true
         fi
         # Never fail the compile on a concurrent gcm restat race.
         rm -f "$src" 2>/dev/null || true
