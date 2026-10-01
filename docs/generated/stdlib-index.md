@@ -17,7 +17,7 @@
 | `std/atomic-swap` | `make-binding` `binding-id` `binding-target-version` `binding-artifact-id` `binding-pending-target-version` `binding-pending-artifact-id` `binding-dirty?` `binding-target` … (+15) | lib/std/atomic-swap.aura — Issue #1380 |
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/boids` | `boids:vec-add` `boids:vec-sub` `boids:vec-scale` `boids:vec-len` `boids:distance` `boids:separation` `boids:alignment` `boids:cohesion` … (+4) | lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim) |
-| `std/capability` | `capability-stack` `capability?` `check-capability` | std/capability.aura — Capability 标准库 |
+| `std/capability` | — | std/capability.aura — Capability discovery surface (Issue #4276) |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
 | `std/compat` | `query:siblings` `query:find-by-name` `query:nodes-with-marker` `query:subtree` | lib/std/compat.aura — temporary compatibility shims for demoted query:* |
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
@@ -80,7 +80,7 @@
 | `std/validate` | `json-type` `err` `check` `validate` `valid?` `error-count` | Aura JSON Schema Validator — 纯函数式 |
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
 | `std/verify` | `verify-output` | verify.aura — Output-verified code checking |
-| `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` | lib/std/workspace.aura — Workspace utilities (Issue #563) |
+| `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` | lib/std/workspace.aura — Workspace utilities (Issue #563 / #4274) |
 
 ## Engine primitives (#1552)
 
