@@ -720,13 +720,20 @@ static void ac3729_1_scope_export_import_recv() {
     )"));
     CHECK(join_cs2 && is_int(*join_cs2) && as_int(*join_cs2) == 1,
           "3729 AC1: Evaluator-2 join-via-token observes the returned string");
+    // Issue #4026 (AC1): recv on an import_proxy handle is a TYPED DENY in
+    // every posture (Soft+prod fail-closed, ownership) — the proxy must not
+    // dual-consume the shared mailbox with the source body. The original
+    // #3729 assertion ("recv succeeds on the shared mailbox") predates the
+    // #4026 gate and can never pass again; retarget to the deny contract,
+    // keeping the check just as strict (ok=#f, typed status, #4026 stamp).
     auto recv = cs2.eval(subst_token(R"(
         (let ((p (orch:agent-import-via-token "TOKEN")))
           (if (= (string-length p) 0)
               -1
               (let ((m (orch:agent-recv p :wait #t :timeout-ms 500)))
-                (if (and (hash-ref m "ok")
-                         (string=? (hash-ref m "payload" "") "ping-3729"))
+                (if (and (not (hash-ref m "ok"))
+                         (string=? (hash-ref m "status" "") "recv-proxy-denied")
+                         (= (hash-ref m "schema-4026" 0) 4026))
                     1 0))))
     )"));
     if (!(recv && is_int(*recv) && as_int(*recv) == 1)) {
@@ -739,7 +746,7 @@ static void ac3729_1_scope_export_import_recv() {
                      cs1.evaluator().handoff_tokens_->contains(hash));
     }
     CHECK(recv && is_int(*recv) && as_int(*recv) == 1,
-          "3729 AC1: import on Evaluator-2 recvs the shared mailbox");
+          "3729 AC1: import_proxy recv is a typed deny (#4026)");
     reset_all_agent_scopes_for_test();
 }
 
