@@ -1157,6 +1157,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         return mev("guard-reject", gr.error().message);
                     wrapper_guard = std::move(*gr);
                 }
+                // Issue #4257: production outermost — arm synthetic
+                // MutationBoundary yield (#3254) BEFORE fn(a) so any mid-body
+                // cooperative edge (check_gc_safepoint / yield / JIT poll /
+                // nested enter) consumes cancel + same-fiber force_release
+                // (#3222) without a second unlock protocol. Soft /
+                // !reject_enabled: skip. Edge-free busy-spin that never hits
+                // an edge stays fail-closed via #4158 quarantine dispose
+                // (foreign never unlocks unique_lock).
+                if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
+                    aura::compiler::mutation_hold_budget_reject_enabled()) {
+                    if (auto* cur = aura::serve::g_current_fiber)
+                        cur->inject_synthetic_mutation_boundary_yield();
+                }
                 auto result = fn(a);
                 // Issue #3480: poll existing inbody on the structural
                 // wrapper. A non-coop fn(a) never hits check_gc_safepoint;

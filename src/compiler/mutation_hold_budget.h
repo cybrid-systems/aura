@@ -560,6 +560,13 @@ inline constexpr std::uint32_t kHoldBudgetOpcodePollStride = 32;
 // foreign fiber never unlocks. Fail-closed face: Ready residual sticky +
 // join Reclaimed (#3826 / #3764). Soft/Off: zero force-unlock.
 inline constexpr int kMutationHoldBudgetHostNativePollExpandIssue = 4032;
+// Issue #4257: production outermost mutate wrapper arms #3254 synthetic
+// MutationBoundary yield before fn(a) so mid-body cooperative edges
+// inevitably consume cancel + #3222 same-fiber force_release (unlock).
+// Edge-free busy-spin (no edge ever) remains unsupported — #4158
+// quarantine dispose + structured admit refuse; foreign never unlocks.
+// Soft/Off: zero unlock. No second unlock protocol / no new counter.
+inline constexpr int kMutationHoldBudgetPreBodySyntheticYieldIssue = 4257;
 inline constexpr std::uint64_t kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4;
 inline std::atomic<std::uint64_t> g_hold_budget_no_edge_quarantine_total{0};
 // First no-edge sighting of the current window (steady ns; 0 = none).
