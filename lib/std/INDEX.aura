@@ -76,7 +76,7 @@
             "(partition (lambda (x) (> x 0)) (list -1 2 -3))"))
     (list "capability"
       (list "Capability discovery"
-            "(capability:list)"))
+            "(capability? \"Mutate\")"))
     (list "combinators"
       (list "Higher-order combinators"
             "(combinator:compose f g)"))
