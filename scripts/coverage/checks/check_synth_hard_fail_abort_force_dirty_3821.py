@@ -94,8 +94,11 @@ def main() -> int:
         fails.append("AC4: force_ir_cache_dirty_after_abort missing")
     else:
         # Body window covers the #4084 jit_cache_ erase that sits
-        # before the in_progress clear.
-        body = svc[fpos : fpos + 6000]
+        # before the in_progress clear. Widened 6000 -> 8000: concurrent
+        # service.ixx growth pushed the latch clear to offset ~5991, so the
+        # 6000-char slice truncated the needle and the guard red-flapped on
+        # unrelated lanes. The clear is still present; contract unchanged.
+        body = svc[fpos : fpos + 8000]
         must("abort_force_in_progress_.store(0, std::memory_order_release)", "AC4 clear latch", body)
         must("abort_map_invalid = true", "AC4 abort_map_invalid", body)
 
