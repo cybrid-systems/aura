@@ -629,19 +629,20 @@ static void ac22_source_gate_4265() {
 static void ac23_pick_best_prim_shadow_4273() {
     std::println("\n--- #4273 AC23: pick-best after workspace shadows > ---");
     CompilerService cs;
-    auto sc = cs.eval(
-        "(set-code \"(define > 42) (define (f x) (+ x 1)) (f 3)\")");
+    auto sc = cs.eval("(set-code \"(define > 42) (define (f x) (+ x 1)) (f 3)\")");
     CHECK(sc.has_value(), "AC23: set-code with (define > 42)");
     auto ec = cs.eval("(eval-current)");
     CHECK(ec.has_value(), "AC23: eval-current completes");
     // Direct prim call and pick-best lambda must still resolve language >
     auto gt = cs.eval("(> 3 1)");
-    CHECK(gt.has_value() && aura::compiler::types::is_bool(*gt) && aura::compiler::types::as_bool(*gt),
+    CHECK(gt.has_value() && aura::compiler::types::is_bool(*gt) &&
+              aura::compiler::types::as_bool(*gt),
           "AC23: Path B (> 3 1) still #t after workspace shadow dropped");
     auto def = cs.eval(std::string(kPickBestDef4265));
     CHECK(def.has_value(), "AC23: pick-best define");
     auto r = cs.eval("(pick-best (list 2 9 4))");
-    CHECK(r.has_value() && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 9,
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r) &&
+              aura::compiler::types::as_int(*r) == 9,
           "AC23: pick-best -> 9 (not cannot call: >)");
     CHECK(read_file("src/compiler/evaluator_primitives_eval.cpp").find("#4273") !=
               std::string::npos,

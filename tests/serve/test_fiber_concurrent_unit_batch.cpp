@@ -1506,10 +1506,11 @@ int run_4271_snapshot_deep_flat_cap_smoke() {
     std::int64_t first_id = -1;
     for (std::size_t i = 0; i < n; ++i) {
         // Mutate so each snapshot is a distinct generation.
-        CHECK(cs.eval(std::format(
-                          "(set-code \"(define (f x) (+ x {}))\\n(display (f 1))\\n(newline)\")", i))
-                  .has_value(),
-              "#4271 AC1: set-code loop");
+        CHECK(
+            cs.eval(std::format(
+                        "(set-code \"(define (f x) (+ x {}))\\n(display (f 1))\\n(newline)\")", i))
+                .has_value(),
+            "#4271 AC1: set-code loop");
         CHECK(cs.eval("(eval-current)").has_value(), "#4271 AC1: eval loop");
         auto snap = cs.eval(std::format("(ast:snapshot \"s{}\")", i));
         CHECK(snap && is_int(*snap), "#4271 AC1: snapshot");
@@ -1535,8 +1536,7 @@ int run_4271_snapshot_deep_flat_cap_smoke() {
     {
         const auto src = read_file_4271("src/compiler/evaluator.ixx");
         const auto ast = read_file_4271("src/compiler/evaluator_primitives_ast.cpp");
-        CHECK(src.find("kMaxAstSnapshotDeepFlats") != std::string::npos,
-              "#4271 AC3: cap constant");
+        CHECK(src.find("kMaxAstSnapshotDeepFlats") != std::string::npos, "#4271 AC3: cap constant");
         CHECK(ast.find("Issue #4271: drop oldest deep FlatAST") != std::string::npos,
               "#4271 AC3: trim at snapshot push");
     }

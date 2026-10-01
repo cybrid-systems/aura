@@ -149,8 +149,7 @@ int main() {
         CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 7,
               "AC7: vector-set! under eval-current -> 7 (not soft <error>)");
         // hash-set! face (same #3235 auto-Guard path)
-        const std::string src_h =
-            "(let ((h (make-hash))) (hash-set! h 1 9) (hash-ref h 1 -1))";
+        const std::string src_h = "(let ((h (make-hash))) (hash-set! h 1 9) (hash-ref h 1 -1))";
         auto sc2 = cs.eval(std::string("(set-code \"") + src_h + "\")");
         CHECK(sc2.has_value(), "AC7: set-code hash-set! program");
         auto r2 = cs.eval("(eval-current)");

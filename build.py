@@ -12703,7 +12703,18 @@ def _finish_overlap_issues(ctx: _BuildCtx) -> int:
         issue_label = f"fast ({len(issue_ninja)} targets{extra})"
 
     building_issues = issue_ninja is None or bool(issue_ninja)
-    issue_jobs = max(1, min(nproc, 4))
+    # Issue-target fan-out. The historical cap of 4 barely used wide boxes.
+    # Default to the full build job count; AURA_ISSUE_JOBS clamps it down
+    # when link thrash (mold/disk SIGBUS) needs containing.
+    issue_jobs = nproc
+    raw_issue_jobs = os.environ.get("AURA_ISSUE_JOBS", "").strip()
+    if raw_issue_jobs:
+        try:
+            requested = int(raw_issue_jobs)
+        except ValueError:
+            requested = 0
+        if requested > 0:
+            issue_jobs = max(1, min(nproc, requested))
 
     saved_limit = os.environ.get("AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS")
     try:

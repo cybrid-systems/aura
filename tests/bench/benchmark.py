@@ -122,9 +122,7 @@ def median_time(samples: list[float]) -> float:
 # ── Measurement helpers ───────────────────────────────────────
 
 
-def run_aura(
-    code: str, args: list[str] | None = None
-) -> tuple[str, str, float, int, bool]:
+def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float, int, bool]:
     """Run aura and return (stdout, stderr, elapsed_seconds, returncode, timed_out).
 
     Issue #4268: keep exit status + timeout on the result. A child that prints
