@@ -251,3 +251,4 @@ check_synthesize_optimize_score_4267.py
 check_setcode_pick_parity_4272_4273.py
 check_interior_int_remap_4244.py
 check_occurrence_owner_tc_steal_4252.py
+check_occurrence_drain_order_4250.py

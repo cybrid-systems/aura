@@ -235,6 +235,58 @@ int run_test_occurrence_persist_rehydrate() {
               "3614 AC3: no test_issue_3614.cpp");
     }
 
+    // -- Issue #4250: outermost Occurrence freeze must FOLLOW the
+    //    pending_full_solve drain (Occurrence == proof; no half-green).
+    //    #3190 ran the drain after maybe_persist_occurrence_snapshot, so the
+    //    buffer froze the pre-drain narrowing while the stamp below used the
+    //    post-drain CS. Reorder: drain -> persist -> stamp.
+    {
+        std::println("\n--- #4250: drain precedes the Occurrence persist freeze ---");
+        CHECK(true, "4250: issue stamp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto helper =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto persist_pos = emb.find("maybe_persist_occurrence_snapshot", helper);
+        const auto drain_pos = emb.find("drain_pending_full_solve_before_commit", helper);
+        // AC1: inside the persist helper body the drain is reached before the
+        // Occurrence persist write (the freeze observes the drained CS).
+        CHECK(helper != std::string::npos && persist_pos != std::string::npos &&
+                  drain_pos != std::string::npos && helper < drain_pos && drain_pos < persist_pos,
+              "4250 AC1: drain_pending_full_solve_before_commit precedes "
+              "maybe_persist_occurrence_snapshot in the helper");
+        // AC2: freeze -> note -> stamp phase order is unchanged (#2938/#2995/
+        // #3004 lineage).
+        const auto helper_end = emb.find("grant_type_export_authority", persist_pos);
+        const auto win = emb.substr(
+            helper, (helper_end == std::string::npos ? emb.size() : helper_end) - helper);
+        const auto note_pos = win.find("note_occurrence_commit_snapshot_written");
+        const auto stamp_pos = win.find("build_type_linear_commit_proof_from_live", note_pos);
+        CHECK(note_pos != std::string::npos && stamp_pos != std::string::npos &&
+                  note_pos < stamp_pos,
+              "4250 AC2: persist note still precedes the proof stamp (phase order kept)");
+        // AC3: the drain reject arm still clears the persist buffer + bumps the
+        // #3170 mismatch counter (no half-solve freeze) and the reordered site
+        // cites #4250.
+        const auto drain_win = win.substr(0, note_pos == std::string::npos ? win.size() : note_pos);
+        CHECK(drain_win.find("clear_occurrence_persist_buffer") != std::string::npos,
+              "4250 AC3: drain reject arm clears the Occurrence persist buffer");
+        CHECK(drain_win.find("bump_occurrence_persist_fingerprint_mismatch") != std::string::npos,
+              "4250 AC3: drain reject arm bumps the #3170 mismatch counter");
+        CHECK(win.find("Issue #4250") != std::string::npos,
+              "4250 AC3: ordering rationale cites #4250 at the reordered site");
+        // AC4: no new model / observability surface / docs / parallel test.
+        CHECK(read_file("src/compiler/observability_metrics.h").find("4250") == std::string::npos,
+              "4250 AC4: no new metrics field");
+        CHECK(read_file("docs/design/4250-*.md").empty(), "4250 AC4: no docs/design/4250-*");
+        CHECK(read_file("tests/compiler/test_issue_4250.cpp").empty(),
+              "4250 AC4: no test_issue_4250.cpp");
+        // AC5: Soft/Off zero-cost preserved — the drain stays production/Full
+        // gated (same #3190 face) and the helper is outermost-only.
+        CHECK(drain_win.find("production_defaults_active()") != std::string::npos &&
+                  drain_win.find("AuditStrategy::Full") != std::string::npos,
+              "4250 AC5: drain reject stays production/Full-gated (Soft observe-only)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
