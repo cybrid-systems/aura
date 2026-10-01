@@ -18,6 +18,9 @@
 ;     apply-fn:    0-arg, performs refactor
 ;     Returns (list 'applied result), (list 'rejected "reason"),
 ;             (list 'rolled-back "reason"), or (list 'error "reason")
+;             — including (list 'error "post-verify-error-raised") when
+;             post-verify throws (Issue #4266: the snapshot is restored
+;             in that case, never left mutated).
 ;
 ;   (safe-refactor:replace-fn fn-name new-body) → status
 ;     fn-name:  string
@@ -64,12 +67,22 @@
           (begin
             (ast:restore snap-id)
             (list 'error "apply-error-raised")))
-         ((not (post-verify))
-          (begin
-            (ast:restore snap-id)
-            (list 'rolled-back "post-verify-failed")))
+         ; Issue #4266: post-verify runs INSIDE the restore path — it used
+         ; to sit outside every try, so a throwing post-verify escaped
+         ; without restoring the snapshot and reported nothing.
          (else
-          (list 'applied apply-result)))))))
+          (let ((pv (try (post-verify) (catch (e) 'post-verify-error-raised))))
+            (cond
+              ((equal? pv 'post-verify-error-raised)
+               (begin
+                 (ast:restore snap-id)
+                 (list 'error "post-verify-error-raised")))
+              ((not pv)
+               (begin
+                 (ast:restore snap-id)
+                 (list 'rolled-back "post-verify-failed")))
+              (else
+               (list 'applied apply-result)))))))))))
 
 ; ── safe-refactor:replace-fn — atomic function replacement with typecheck gate ──
 ;
@@ -83,9 +96,13 @@
 ; by the appended one.
 ;
 ; Returns:
-;   (list 'applied snap-id)        — refactor applied, typecheck passed
-;   (list 'rejected "reason")      — empty source/body or typecheck failed
-;   (list 'error "reason")         — exception during set-code/typecheck
+;   (list 'applied snap-id)        — refactor applied, structured typecheck
+;                                    status ok (#t)
+;   (list 'rejected "reason")      — empty source/body, throw during
+;                                    set-code/typecheck, or typecheck
+;                                    failed: the diagnostics report rides
+;                                    the reason slot (Issue #4266)
+;   (list 'error "reason")         — unexpected internal status
 (define (safe-refactor:replace-fn fn-name new-body)
   ; Issue #2918: user-script intent → :workspace (not current eval frame).
   (let* ((current (try (current-source :workspace) (catch (e) "")))
@@ -108,20 +125,32 @@
                 (try
                   (begin
                     (set-code rebuilt)
-                    (typecheck-current)
-                    'ok)
+                    ; Issue #4266: structured status, never the raw
+                    ; (typecheck-current) report — that primitive embeds
+                    ; diagnostics in a returned STRING and returns normally
+                    ; on type errors, so the old (begin (set-code rebuilt)
+                    ; (typecheck-current) 'ok) arm reported 'applied for
+                    ; ill-typed replacements.
+                    (typecheck-status))
                   (catch (e) 'tc-error-raised))))
          (cond
            ((equal? apply-result 'tc-error-raised)
             (begin
               (ast:restore snap-id)
               (list 'rejected "typecheck-failed")))
-           ((equal? apply-result 'ok)
+           ; Issue #4266: applied ONLY on the structured ok status (#t).
+           ; Anything else (diagnostics report / #f) restores the snapshot
+           ; and is reported as rejected — the report rides the reason slot
+           ; so Agents get the details without parsing English to branch.
+           ((equal? apply-result #t)
             (list 'applied snap-id))
            (else
             (begin
               (ast:restore snap-id)
-              (list 'error "unknown")))))))))
+              (list 'rejected
+                    (if (string? apply-result)
+                        apply-result
+                        "typecheck-status-not-ok")))))))))
 
 ; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
 ;

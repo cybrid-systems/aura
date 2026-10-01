@@ -545,6 +545,18 @@ run_test "safe-refactor:pre-fail" "$(printf '(begin (require std/safe-refactor a
 
 # safe-refactor:check-and-apply all pass
 run_test "safe-refactor:applied" "$(printf '(begin (require std/safe-refactor all:) (display (safe-refactor:check-and-apply (lambda () #t) (lambda () #t) (lambda () (quote ok)))))')" "(applied ok)"
+
+# Issue #4266: (typecheck-status) is structured — #t on a clean workspace
+run_test "safe-refactor:tc-status-clean" "$(printf '(begin (require std/safe-refactor all:) (set-code "(define (g (: x Int)) x)") (display (typecheck-status)))')" "#t"
+
+# Issue #4266: replace-fn applies a well-typed replacement
+run_test "safe-refactor:replace-applies" "$(printf '(begin (require std/safe-refactor all:) (set-code "(define (g (: x Int)) x)") (display (car (safe-refactor:replace-fn "g" "(define (g (: x Int)) (+ x 1))"))))')" "applied"
+
+# Issue #4266: replace-fn REJECTS an ill-typed replacement (was: applied — the bug)
+run_test "safe-refactor:replace-rejects" "$(printf '(begin (require std/safe-refactor all:) (set-code "(define (g (: x Int)) x)") (display (car (safe-refactor:replace-fn "g" "(define (g (: x Int)) (g \\\"s\\\"))"))))')" "rejected"
+
+# Issue #4266: check-and-apply restores when post-verify throws (was: escaped, no restore)
+run_test "safe-refactor:post-verify-throw" "$(printf '(begin (require std/safe-refactor all:) (set-code "(define (g (: x Int)) x)") (display (car (safe-refactor:check-and-apply (lambda () #t) (lambda () (error "pv")) (lambda () (begin (set-code "(define (h (: x Int)) x)") 42))))))')" "error"
 # ── String corruption regression (Bug TBD) ───────────────
 # Triggered by sequence: r1 + r2(error, restores) + r3('fail', restores) + r4("hello")
 # Without the bug, the output would be "hello".

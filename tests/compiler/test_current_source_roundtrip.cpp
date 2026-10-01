@@ -27,6 +27,12 @@
 // Issue #4132: export names survive unparse — the Export case renders the
 // stored name children (never the empty params side-table), so
 // (export pick-best) round-trips through every current-source mode.
+//
+// Issue #4266: safe-refactor:replace-fn gates on the STRUCTURED typecheck
+// status — the new (typecheck-status) primitive (#t clean / diagnostics
+// report string / #f no-workspace), never the raw (typecheck-current)
+// string, which embeds diagnostics and returns normally on type errors;
+// check-and-apply restores the snapshot when post-verify throws.
 
 #include "test_harness.hpp"
 
@@ -45,8 +51,10 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_keyword;
 using aura::compiler::types::is_string;
@@ -63,6 +71,35 @@ static std::string eval_string(CompilerService& cs, std::string_view code) {
     if (idx >= heap.size())
         return {};
     return heap[idx];
+}
+
+// Issue #4266: structured-status probe — evaluates `code` and reports both
+// whether the result was a boolean and its value. #t/#f faces of
+// (typecheck-status) must be distinguishable from any string report.
+static bool eval_bool(CompilerService& cs, std::string_view code, bool* is_bool_out) {
+    auto r = cs.eval(code);
+    if (!r || !is_bool(*r)) {
+        if (is_bool_out)
+            *is_bool_out = false;
+        return false;
+    }
+    if (is_bool_out)
+        *is_bool_out = true;
+    return as_bool(*r);
+}
+
+// Issue #4266: escape `src` for embedding inside an Aura string literal
+// (same rules as set_code below — backslash and double-quote) so AC bodies
+// can pass replace-fn source strings through std::format safely.
+static std::string aura_escape(std::string_view src) {
+    std::string out;
+    out.reserve(src.size() + 8);
+    for (char c : src) {
+        if (c == '\\' || c == '"')
+            out += '\\';
+        out += c;
+    }
+    return out;
 }
 
 static bool set_code(CompilerService& cs, std::string_view src) {
@@ -499,6 +536,138 @@ static void ac4132_4_source_cite() {
           "4132 AC4: no test_issue_4132 file per #81934");
 }
 
+// ── Issue #4266: safe-refactor:replace-fn gates on structured typecheck status ──
+// (typecheck-current) embeds diagnostics in a returned STRING and returns
+// normally on type errors, so the old (try (begin (set-code rebuilt)
+// (typecheck-current) 'ok)) arm reported 'applied for ill-typed bodies.
+// Fix under test: (typecheck-status) primitive — #t clean / diagnostics
+// report string / #f no-workspace, sharing one traversal + Phase-5 cache
+// with typecheck-current — and replace-fn branches on it before reporting
+// applied; check-and-apply runs post-verify inside the restore path.
+
+static void ac4266_1_structured_status() {
+    std::println("\n--- #4266 AC1: typecheck-status structured (#t / report / #f) ---");
+    CompilerService cs;
+    bool got_bool = false;
+    const auto no_ws = eval_bool(cs, "(typecheck-status)", &got_bool);
+    CHECK(got_bool && !no_ws, "4266 AC1: no workspace → #f (never a report string)");
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 2))"), "4266 AC1: set-code clean");
+    const auto clean = eval_bool(cs, "(typecheck-status)", &got_bool);
+    CHECK(got_bool && clean, "4266 AC1: clean workspace → #t");
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 2)) (score \"s\")"),
+          "4266 AC1: set-code ill-typed");
+    const auto report = eval_string(cs, "(typecheck-status)");
+    CHECK(!report.empty() && report.find("diagnostics:") != std::string::npos,
+          "4266 AC1: ill-typed → diagnostics report string");
+    CHECK(eval_string(cs, "(typecheck-current)").find("diagnostics:") != std::string::npos,
+          "4266 AC1: typecheck-current string contract unchanged (shared core)");
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 3))"), "4266 AC1: clean mutation");
+    const auto again = eval_bool(cs, "(typecheck-status)", &got_bool);
+    CHECK(got_bool && again, "4266 AC1: clean again → #t (Phase-5 cache status parity)");
+}
+
+static void ac4266_2_replace_fn_applies_well_typed() {
+    std::println("\n--- #4266 AC2: replace-fn well-typed → (applied …) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require std/safe-refactor all:)").has_value(), "4266 AC2: require stdlib");
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 2))"), "4266 AC2: seed workspace");
+    const auto body = aura_escape("(define (score (: x Int)) (+ x 2))");
+    const auto status = eval_string(
+        cs,
+        std::format("(let ((st (safe-refactor:replace-fn \"score\" \"{}\"))) "
+                    "(if (and (pair? st) (equal? (car st) 'applied)) \"applied\" \"not-applied\"))",
+                    body));
+    CHECK(status == "applied", "4266 AC2: well-typed replacement reports applied");
+    CHECK(workspace_source(cs).find("(+ x 2)") != std::string::npos,
+          "4266 AC2: workspace carries the new body");
+}
+
+static void ac4266_3_replace_fn_rejects_and_restores() {
+    std::println("\n--- #4266 AC3: replace-fn ill-typed → rejected + snapshot restored ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require std/safe-refactor all:)").has_value(), "4266 AC3: require stdlib");
+    CHECK(set_code(cs, "(define (score (: x Int)) (* x 2))"), "4266 AC3: seed workspace");
+    const auto body = aura_escape("(define (score (: x Int)) (score \"not-an-int\"))");
+    const auto status = eval_string(
+        cs, std::format(
+                "(let ((st (safe-refactor:replace-fn \"score\" \"{}\"))) "
+                "(if (and (pair? st) (equal? (car st) 'rejected)) \"rejected\" \"not-rejected\"))",
+                body));
+    CHECK(status == "rejected", "4266 AC3: ill-typed replacement rejected (was: applied)");
+    CHECK(workspace_source(cs).find("not-an-int") == std::string::npos,
+          "4266 AC3: snapshot restored — ill-typed body absent from workspace");
+    bool got_bool = false;
+    const auto clean = eval_bool(cs, "(typecheck-status)", &got_bool);
+    CHECK(got_bool && clean, "4266 AC3: post-restore workspace typechecks clean");
+    const auto reason = eval_string(
+        cs, std::format("(car (cdr (safe-refactor:replace-fn \"score\" \"{}\")))", body));
+    CHECK(reason.find("diagnostics:") != std::string::npos,
+          "4266 AC3: rejected reason carries the diagnostics report (no English parsing)");
+}
+
+static void ac4266_4_check_apply_post_verify_throw_restores() {
+    std::println("\n--- #4266 AC4: check-and-apply post-verify throw → error + restored ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require std/safe-refactor all:)").has_value(), "4266 AC4: require stdlib");
+    CHECK(set_code(cs, "(define (seed (: x Int)) x)"), "4266 AC4: seed workspace");
+    const auto status =
+        eval_string(cs, "(let ((st (safe-refactor:check-and-apply (lambda () #t) "
+                        "(lambda () (error \"pv-boom\")) "
+                        "(lambda () (begin (set-code \"(define (mut (: x Int)) x)\") 42)))) "
+                        "(cond ((and (equal? (car st) 'error) "
+                        "(equal? (car (cdr st)) \"post-verify-error-raised\")) \"error-restored\") "
+                        "(else \"wrong-status\")))");
+    CHECK(status == "error-restored", "4266 AC4: throw → (error post-verify-error-raised)");
+    CHECK(workspace_source(cs).find("(define (mut") == std::string::npos,
+          "4266 AC4: snapshot restored — apply mutation rolled back (was: escaped)");
+}
+
+static void ac4266_5_check_apply_post_verify_false_still_rolls_back() {
+    std::println("\n--- #4266 AC5: check-and-apply post-verify #f → rolled-back (pin) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require std/safe-refactor all:)").has_value(), "4266 AC5: require stdlib");
+    CHECK(set_code(cs, "(define (seed (: x Int)) x)"), "4266 AC5: seed workspace");
+    const auto status =
+        eval_string(cs, "(let ((st (safe-refactor:check-and-apply (lambda () #t) (lambda () #f) "
+                        "(lambda () (begin (set-code \"(define (mut (: x Int)) x)\") 42)))) "
+                        "(cond ((and (equal? (car st) 'rolled-back) "
+                        "(equal? (car (cdr st)) \"post-verify-failed\")) \"rolled-back\") "
+                        "(else \"wrong-status\")))");
+    CHECK(status == "rolled-back", "4266 AC5: #f → (rolled-back post-verify-failed) preserved");
+    CHECK(workspace_source(cs).find("(define (mut") == std::string::npos,
+          "4266 AC5: mutation rolled back");
+}
+
+static void ac4266_6_source_cite() {
+    std::println("\n--- #4266 AC6: source-cite + wiring + no design doc ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto stdlib = read_file("lib/std/safe-refactor.aura");
+    const auto t = read_file("tests/compiler/test_current_source_roundtrip.cpp");
+    const auto sh = read_file("tests/python/run-tests.sh");
+    const auto lint = read_file("scripts/check_safe_refactor_typecheck_4266.py");
+    const auto build = read_file("build.py");
+    CHECK(prim.find("4266") != std::string::npos, "4266 AC6: primitive cites #4266");
+    CHECK(prim.find("typecheck-status") != std::string::npos, "4266 AC6: primitive registered");
+    CHECK(prim.find("run_workspace_typecheck") != std::string::npos,
+          "4266 AC6: shared core — one traversal, one cache, no second model");
+    CHECK(ixx.find("last_typecheck_ok_") != std::string::npos, "4266 AC6: cache parity field");
+    CHECK(stdlib.find("4266") != std::string::npos, "4266 AC6: stdlib cites #4266");
+    CHECK(stdlib.find("(typecheck-status)") != std::string::npos,
+          "4266 AC6: replace-fn gates on structured status");
+    CHECK(stdlib.find("post-verify-error-raised") != std::string::npos,
+          "4266 AC6: post-verify throw restore path present");
+    CHECK(t.find("ac4266_1_structured_status") != std::string::npos, "4266 AC6: AC1 test present");
+    CHECK(sh.find("4266") != std::string::npos, "4266 AC6: run-tests.sh smoke cases");
+    CHECK(!lint.empty() && lint.find("4266") != std::string::npos, "4266 AC6: linter present");
+    CHECK(build.find("check_safe_refactor_typecheck_4266") != std::string::npos,
+          "4266 AC6: build.py registration");
+    CHECK(read_file("docs/design/4266-replace-fn-typecheck.md").empty(),
+          "4266 AC6: no docs/design/4266-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_4266.cpp").empty(),
+          "4266 AC6: no test_issue_4266 file per #81934");
+}
+
 static void ac_wiring() {
     std::println("\n--- #2921 AC15: source + cmake wiring ---");
     const auto self = read_file("tests/compiler/test_current_source_roundtrip.cpp");
@@ -540,6 +709,13 @@ int run_test_current_source_roundtrip() {
     ac4132_2_export_roundtrip_reparse();
     ac4132_3_storage_and_eval_unchanged();
     ac4132_4_source_cite();
+    std::println("\n=== Issue #4266: replace-fn structured typecheck gate ===");
+    ac4266_1_structured_status();
+    ac4266_2_replace_fn_applies_well_typed();
+    ac4266_3_replace_fn_rejects_and_restores();
+    ac4266_4_check_apply_post_verify_throw_restores();
+    ac4266_5_check_apply_post_verify_false_still_rolls_back();
+    ac4266_6_source_cite();
     std::println("\n=== #2921/#2966: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

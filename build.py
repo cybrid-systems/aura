@@ -7951,6 +7951,20 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4132 export-name unparse linter failed — run python3 scripts/check_export_name_unparse_4132.py")
         return r
+    # Issue #4266: safe-refactor:replace-fn gates on the structured
+    # (typecheck-status) status — never the raw (typecheck-current) report
+    # string, which returns normally on type errors; check-and-apply
+    # restores the snapshot when post-verify throws.
+    srt4266_script = ROOT / "scripts" / "check_safe_refactor_typecheck_4266.py"
+    if not srt4266_script.exists():
+        fail(f"missing {srt4266_script}")
+        return 1
+    r = run([sys.executable, str(srt4266_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4266 safe-refactor typecheck-status linter failed — run python3 scripts/check_safe_refactor_typecheck_4266.py"
+        )
+        return r
     # Issue #4131: Soft oneshot survived the aura-build Soft verify timeout
     # SIGTERM (palindrome-linked-list / ugly-number) until killpg(SIGKILL).
     # POSIX carries an ancestor's SIG_IGN for TERM across execve, so a
