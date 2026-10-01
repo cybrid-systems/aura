@@ -164,7 +164,8 @@ int main() {
             auto sc2 = cs.eval(std::string("(set-code \"") + src_h + "\")");
             CHECK(sc2.has_value(), "AC7: set-code hash-set! program");
             auto r2 = cs.eval("(eval-current)");
-            CHECK(r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 9,
+            CHECK(r2 && aura::compiler::types::is_int(*r2) &&
+                      aura::compiler::types::as_int(*r2) == 9,
                   "AC7: hash-set! under eval-current -> 9");
         }
         CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp", "Issue #4272"),
