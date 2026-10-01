@@ -1,7 +1,8 @@
 # Aura CI — canonical workflow (Issue #1570 path map)
 #
 # THIS IS THE ONLY PR/main CI entrypoint.
-# Nightly / release live beside this file: nightly.yml, release.yml.
+# Nightly stress, nightly version tag, and release live beside this file:
+# nightly.yml, nightly-version.yml, release.yml.
 #
 # Wall-time layout (target):
 #   PR:

@@ -1,0 +1,82 @@
+# Move nightly-YYYY.MM.DD to the latest green main commit.
+#
+# Fires after the CI workflow succeeds on a push to main. The tag name
+# comes from that commit's committer date (UTC), not from when this job
+# runs. A later green descendant of the same day moves the tag forward.
+# An older run that finishes late does not move it backward.
+#
+# This is not nightly.yml (fuzz / TSAN / chaos) and not a v* release.
+# release.yml only runs for v* tags.
+name: Nightly version
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move today's nightly tag to this green commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          sha="${SHA}"
+
+          when=$(gh api "repos/${repo}/commits/${sha}" --jq '.commit.committer.date')
+          day="${when%%T*}"
+          tag="nightly-${day//-/.}"
+          ref="refs/tags/${tag}"
+          echo "candidate ${tag} -> ${sha} (committer ${when})"
+
+          for attempt in 1 2 3; do
+            current=$(gh api "repos/${repo}/git/ref/${ref}" --jq .object.sha 2>/dev/null || true)
+            if [[ -z "${current}" ]]; then
+              if gh api --method POST "repos/${repo}/git/refs" \
+                  -f ref="${ref}" -f sha="${sha}" >/dev/null; then
+                echo "created ${tag} -> ${sha}"
+                exit 0
+              fi
+              echo "create raced; retry ${attempt}"
+              continue
+            fi
+            if [[ "${current}" == "${sha}" ]]; then
+              echo "${tag} already at ${sha}"
+              exit 0
+            fi
+            status=$(gh api "repos/${repo}/compare/${current}...${sha}" --jq .status)
+            echo "compare ${current:0:12}...${sha:0:12} = ${status}"
+            case "${status}" in
+              ahead)
+                gh api --method PATCH "repos/${repo}/git/refs/tags/${tag}" \
+                  -f sha="${sha}" -F force=true >/dev/null
+                now=$(gh api "repos/${repo}/git/ref/${ref}" --jq .object.sha)
+                if [[ "${now}" == "${sha}" ]]; then
+                  echo "moved ${tag} -> ${sha}"
+                  exit 0
+                fi
+                echo "tag moved under us to ${now}; retry ${attempt}"
+                ;;
+              identical|behind|diverged)
+                echo "leave ${tag} at ${current} (${status} of ${sha})"
+                exit 0
+                ;;
+              *)
+                echo "unexpected compare status: ${status}" >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "failed to settle ${tag}" >&2
+          exit 1
