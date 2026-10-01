@@ -646,6 +646,142 @@ static_assert(ProductionPureWrapPass<EscapeAnalysisWrap>,
 // Issue #3701 / #3795: Production + soa_mod skips EscapeAnalysisWrap AoS run in
 // the incremental suite; columnar dirty-block escape via run_on_dirty_blocks_only /
 // run_dirty_escape_on_soa. Soft keeps the AoS grandfather.
+// Issue #4262: run_dirty_escape_on_soa peels SoA columns in place — no
+// FlatInstruction AoS vector materialize on the production dirty path.
+
+// Issue #4262: columnar escape on dirty SoA blocks — zero AoS instr
+// materialize. Soft EscapeAnalysisWrap::run(IRFunction&) grandfather
+// still uses aura::jit::run_escape_analysis on FlatInstruction vectors.
+export inline constexpr int kEscapeSoaNoFlatMaterializeIssue = 4262;
+
+namespace detail_escape_soa {
+
+inline void mark_escape(std::vector<std::uint8_t>& escape_map, std::uint32_t slot,
+                        std::uint32_t local_count) noexcept {
+    if (slot < local_count)
+        escape_map[slot] = 1;
+}
+
+// First pass + backward prop over dirty-block SoA column spans (no AoS copy).
+inline void run_escape_on_soa_fn(IRFunctionSoA& fn, std::vector<std::uint8_t>& escape_map) {
+    using aura::ir::IROpcode;
+    const std::uint32_t local_count = fn.local_count;
+    escape_map.assign(local_count, 0);
+
+    auto op0 = [&](std::uint32_t i) -> std::uint32_t {
+        return i < fn.operand0_.size() ? fn.operand0_[i] : 0u;
+    };
+    auto op1 = [&](std::uint32_t i) -> std::uint32_t {
+        return i < fn.operand1_.size() ? fn.operand1_[i] : 0u;
+    };
+    auto op2 = [&](std::uint32_t i) -> std::uint32_t {
+        return i < fn.operand2_.size() ? fn.operand2_[i] : 0u;
+    };
+    auto lin_at = [&](std::uint32_t i) -> std::uint8_t {
+        return i < fn.linear_ownership_states_.size() ? fn.linear_ownership_states_[i]
+                                                     : std::uint8_t{0};
+    };
+    auto ne_at = [&](std::uint32_t i) -> std::uint32_t {
+        return i < fn.narrow_evidence_.size() ? fn.narrow_evidence_[i] : 0u;
+    };
+
+    // Pass 1: mark escape points on dirty blocks only.
+    (void)fn.for_each_block(
+        [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+            for (std::uint32_t i = block.start_idx; i < block.end_idx && i < fn.opcodes_.size();
+                 ++i) {
+                const auto opc = fn.opcodes_[i];
+                const std::uint8_t lin = lin_at(i);
+                const std::uint32_t ne = ne_at(i);
+                if (lin != 0 && ne != 0)
+                    linear_occurrence_mutate::record_escape_violation_prevented();
+                switch (opc) {
+                    case IROpcode::Return:
+                        mark_escape(escape_map, op0(i), local_count);
+                        break;
+                    case IROpcode::Call: {
+                        mark_escape(escape_map, op0(i), local_count);
+                        const std::uint32_t arg_base = op1(i);
+                        const std::uint32_t arg_count = op2(i);
+                        for (std::uint32_t a = 0; a < arg_count && (arg_base + a) < local_count; ++a)
+                            escape_map[arg_base + a] = 1;
+                        break;
+                    }
+                    case IROpcode::Apply: {
+                        const std::uint32_t closure_slot = op0(i);
+                        const std::uint32_t arg_count = op1(i);
+                        mark_escape(escape_map, closure_slot, local_count);
+                        for (std::uint32_t a = 0;
+                             a < arg_count && (closure_slot + 1 + a) < local_count; ++a)
+                            escape_map[closure_slot + 1 + a] = 1;
+                        break;
+                    }
+                    case IROpcode::Capture:
+                    case IROpcode::CaptureRef:
+                        mark_escape(escape_map, op2(i), local_count);
+                        if (lin != 0) {
+                            mark_escape(escape_map, op0(i), local_count);
+                            mark_escape(escape_map, op2(i), local_count);
+                        }
+                        break;
+                    case IROpcode::CellSet:
+                        mark_escape(escape_map, op1(i), local_count);
+                        break;
+                    case IROpcode::HashSet:
+                        mark_escape(escape_map, op2(i), local_count);
+                        break;
+                    case IROpcode::PrimCall: {
+                        const std::uint32_t arg_base = op1(i);
+                        const std::uint32_t arg_count = op2(i);
+                        for (std::uint32_t a = 0; a < arg_count && (arg_base + a) < local_count; ++a)
+                            escape_map[arg_base + a] = 1;
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+        },
+        /*dirty_only=*/true);
+
+    // Pass 2: backward propagation (dirty blocks; same rules as jit path).
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        (void)fn.for_each_block(
+            [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                for (std::uint32_t i = block.start_idx; i < block.end_idx && i < fn.opcodes_.size();
+                     ++i) {
+                    const std::uint32_t result = op0(i);
+                    if (result >= local_count || !escape_map[result])
+                        continue;
+                    switch (fn.opcodes_[i]) {
+                        case IROpcode::Local:
+                            if (op1(i) < local_count && !escape_map[op1(i)]) {
+                                escape_map[op1(i)] = 1;
+                                changed = true;
+                            }
+                            break;
+                        case IROpcode::MakePair:
+                            if (op1(i) < local_count && !escape_map[op1(i)]) {
+                                escape_map[op1(i)] = 1;
+                                changed = true;
+                            }
+                            if (op2(i) < local_count && !escape_map[op2(i)]) {
+                                escape_map[op2(i)] = 1;
+                                changed = true;
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            },
+            /*dirty_only=*/true);
+    }
+}
+
+} // namespace detail_escape_soa
 
 export inline std::size_t run_dirty_escape_on_soa(IRModuleV2& soa_mod,
                                                   std::vector<std::vector<std::uint8_t>>& maps) {
@@ -666,43 +802,17 @@ export inline std::size_t run_dirty_escape_on_soa(IRModuleV2& soa_mod,
             aura::compiler::ir_soa_migration::record_dirty_block_skip(fn.blocks_.size());
             continue;
         }
-        std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(fn.blocks_.size());
+        // Issue #4262: peel dirty blocks in place — no AoS instr materialize.
         auto [runs, skips] = fn.for_each_block(
-            [&](std::uint32_t bid, BasicBlockSoA& block) {
-                if (bid >= flat_instrs.size())
-                    flat_instrs.resize(bid + 1);
-                auto& dest = flat_instrs[bid];
-                dest.reserve(block.end_idx > block.start_idx ? block.end_idx - block.start_idx : 0);
-                for (std::uint32_t i = block.start_idx; i < block.end_idx && i < fn.opcodes_.size();
-                     ++i) {
-                    const std::uint8_t lin = i < fn.linear_ownership_states_.size()
-                                                 ? fn.linear_ownership_states_[i]
-                                                 : std::uint8_t{0};
-                    const std::uint32_t ne =
-                        i < fn.narrow_evidence_.size() ? fn.narrow_evidence_[i] : 0u;
-                    if (lin != 0 && ne != 0)
-                        linear_occurrence_mutate::record_escape_violation_prevented();
-                    dest.push_back(
-                        {static_cast<std::uint32_t>(fn.opcodes_[i]),
-                         {i < fn.operand0_.size() ? fn.operand0_[i] : 0u,
-                          i < fn.operand1_.size() ? fn.operand1_[i] : 0u,
-                          i < fn.operand2_.size() ? fn.operand2_[i] : 0u,
-                          i < fn.operand3_.size() ? fn.operand3_[i] : 0u},
-                         i < fn.shape_ids_.size() ? fn.shape_ids_[i] : 0u,
-                         ne,
-                         i < fn.type_ids_.size() ? fn.type_ids_[i] : 0u,
-                         lin,
-                         std::uint8_t{0},
-                         i < fn.source_markers_.size() ? fn.source_markers_[i] : std::uint8_t{0},
-                         0u});
-                }
+            [&](std::uint32_t /*bid*/, BasicBlockSoA& /*block*/) {
+                // Counting-only walk; analysis is in run_escape_on_soa_fn.
             },
             /*dirty_only=*/true);
         if (skips)
             aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
         if (runs)
             aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
-        aura::jit::run_escape_analysis(flat_instrs, fn.local_count, maps[fi]);
+        detail_escape_soa::run_escape_on_soa_fn(fn, maps[fi]);
         ++updated;
     }
     return updated;

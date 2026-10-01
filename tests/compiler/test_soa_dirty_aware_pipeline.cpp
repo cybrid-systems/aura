@@ -718,6 +718,42 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(n_stable == 0, "3701 AC2: shape-stable reuses last maps");
         CHECK(maps[0].size() == 1 && maps[0][0] == 9,
               "3701 AC2: shape-stable dirty fn not rebuilt");
+
+        std::println("\n=== Issue #4262: SoA escape zero FlatInstruction materialize ===");
+        {
+            const auto svc = read_file("src/compiler/service.ixx");
+            CHECK(svc.find("kEscapeSoaNoFlatMaterializeIssue = 4262") != std::string::npos,
+                  "4262 AC1: issue stamp");
+            CHECK(svc.find("run_escape_on_soa_fn") != std::string::npos,
+                  "4262 AC1: columnar escape helper");
+            CHECK(svc.find("Issue #4262") != std::string::npos, "4262 AC1: cite");
+            // Production dirty peel must not allocate FlatInstruction vectors.
+            const auto helper = svc.find("run_escape_on_soa_fn");
+            CHECK(helper != std::string::npos, "4262 AC1: helper present");
+            const auto peel = svc.find("export inline std::size_t run_dirty_escape_on_soa");
+            // Find the definition (second occurrence after forward decl)
+            auto def = svc.find("export inline std::size_t run_dirty_escape_on_soa", peel + 10);
+            if (def == std::string::npos)
+                def = peel;
+            const auto win = svc.substr(def, 2500);
+            CHECK(win.find("detail_escape_soa::run_escape_on_soa_fn") != std::string::npos,
+                  "4262 AC1: delegates to columnar helper");
+            CHECK(win.find("std::vector<std::vector<aura::jit::FlatInstruction>>") == std::string::npos,
+                  "4262 AC1: no FlatInstruction AoS vector materialize");
+            // Soft AoS grandfather retained
+            CHECK(svc.find("void run(aura::ir::IRFunction& func)") != std::string::npos,
+                  "4262 AC3: Soft AoS run(IRFunction&) kept");
+            CHECK(svc.find("aura::jit::run_escape_analysis(flat_instrs") != std::string::npos,
+                  "4262 AC3: Soft FlatInstruction path retained on AoS");
+            CHECK(svc.find("schema-4262") == std::string::npos, "4262: no new query key");
+            CHECK(read_file("tests/compiler/test_issue_4262.cpp").empty(), "4262: no invent");
+            CHECK(read_file("docs/design/4262-escape-soa-no-flat.md").empty(),
+                  "4262: no docs/design");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_escape_soa_no_flat_4262") != std::string::npos,
+                  "4262 AC4: build.py linter");
+        }
+
     }
 
     // ── Issue #3502: production unwired pred ≠ DefaultAllDirty ──
