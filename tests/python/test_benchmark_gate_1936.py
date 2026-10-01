@@ -142,7 +142,6 @@ class BenchmarkGate1936(unittest.TestCase):
             finally:
                 m.UPDATES_LOG = original  # type: ignore[misc]
 
-
     def test_4268_exit_status_beats_stdout_match(self) -> None:
         """Issue #4268: printing expected value then exiting 1 must FAIL."""
         m = self.m
