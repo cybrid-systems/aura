@@ -6130,6 +6130,18 @@ public:
         // Issue #3258: bump gen first so lag check is visible.
         abort_force_generation_.fetch_add(1, std::memory_order_release);
         abort_force_in_progress_.store(1, std::memory_order_release);
+        // Issue #4256: fence dep_graph_generation_ at abort-begin so
+        // concurrent record_dependency during dual-topology restore
+        // stale-rejects (force_dirty also bumps after restore).
+        {
+            lock_order::OrderedUniqueLock<std::shared_mutex> dep_write(
+                dep_graph_mtx_, lock_order::Level::DepGraph);
+            dep_graph_generation_.fetch_add(1, std::memory_order_release);
+            metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
+            deferred_hybrid_armed_.store(1, std::memory_order_release);
+            deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     // Issue #3551: drop pre-abort irs + source_to_ir_map for one define
@@ -6166,6 +6178,23 @@ public:
         // do not bump generation a second time.
         if (abort_force_in_progress_.load(std::memory_order_acquire) == 0)
             begin_abort_ir_cache_force_fence();
+        // Issue #4256: bump dep_graph_generation_ under exclusive
+        // dep_graph_mtx_ so concurrent record_dependency mid-abort
+        // stale-rejects into deferred_hybrid_edges_ (abort does not
+        // bump mutation epoch — #4084). Lock order: DepGraph last
+        // (safe under mutate if held). Soft/Off: gen bump is abort-
+        // path only; IR observe-only contract unchanged.
+        {
+            lock_order::OrderedUniqueLock<std::shared_mutex> dep_write(
+                dep_graph_mtx_, lock_order::Level::DepGraph);
+            dep_graph_generation_.fetch_add(1, std::memory_order_release);
+            metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
+            // Arm deferred so a mid-abort reject after this bump is
+            // visible to the next peel impact_ub / force-full path.
+            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
+            deferred_hybrid_armed_.store(1, std::memory_order_release);
+            deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
+        }
         const auto gen = abort_force_generation_.load(std::memory_order_acquire);
         if (abort_force_hold_.load(std::memory_order_acquire) != 0) {
             while (abort_force_hold_.load(std::memory_order_acquire) != 0)
