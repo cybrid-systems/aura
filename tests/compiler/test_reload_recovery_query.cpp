@@ -1634,6 +1634,21 @@ static void ac3248_3_source_and_linter() {
 
 } // namespace
 
+
+// Issue #4247: host-drift reload fail makes aura_aot_probe_fn_ptr refuse.
+static void ac4247_probe_refuses_host_drift_demotion() {
+    std::println("\n--- #4247 AC: probe refuses when would_allow_native=false (Env/Version/Linear) ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #4247") != std::string::npos, "4247: bridge cites #4247");
+    CHECK(br.find("aura_last_aot_reload_consistency_would_allow_native") != std::string::npos,
+          "4247: probe consults would_allow_native");
+    CHECK(br.find("AotReloadFail::Env") != std::string::npos &&
+              br.find("host_drift") != std::string::npos,
+          "4247: host-drift class gate");
+    CHECK(read_file("tests/compiler/test_issue_4247.cpp").empty(), "4247: no invent");
+    CHECK(read_file("docs/design/4247-probe-force-jit.md").empty(), "4247: no docs/design");
+}
+
 int run_test_reload_recovery_query() {
     std::println("test_reload_recovery_query");
     // #3248 fail-exit soak first — leftover engine:metrics SIGSEGV later
@@ -1667,6 +1682,8 @@ int run_test_reload_recovery_query() {
     ac3025_reload_fail_stamps_proof();
     std::println("\n=== Issue #3978: 2-arg reload owner TLS fail-closed ===");
     ac3978_2arg_fail_stamps_proof();
+    std::println("\n=== Issue #4247: probe refuses demoted native ===");
+    ac4247_probe_refuses_host_drift_demotion();
     std::println("\n=== Issue #2927: AotReloadFail → force_jit group bits ===");
     ac2927_1_env_only_bit();
     ac2927_2_linear_and_proof_match();

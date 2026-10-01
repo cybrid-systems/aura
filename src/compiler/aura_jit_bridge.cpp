@@ -1858,6 +1858,35 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
         }
         return 0;
     }
+    // Issue #4247: reload-fail stamps force_jit / would_allow_native=false
+    // (#2845) but probe historically ignored them — Agents saw FallBackJit
+    // while direct AOT entry still returned the pre-fail fn_ptr. Under
+    // production, refuse (same soft_stale shape) when the last proof says
+    // native is demoted for a host-drift class (Version/Defuse/Env/Linear).
+    // Dlopen/Staging/Region/Other keep intentional "old stays probeable"
+    // (ops/path class; old binary may still be env-fresh). Soft/Off: zero
+    // extra when force mask idle / proof allows native.
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        const auto fail = static_cast<AotReloadFail>(
+            aura_last_aot_reload_consistency_last_fail_reason());
+        const bool host_drift =
+            fail == AotReloadFail::Version || fail == AotReloadFail::Defuse ||
+            fail == AotReloadFail::Env || fail == AotReloadFail::Linear;
+        if (host_drift &&
+            (aura_last_aot_reload_consistency_would_allow_native() == 0 ||
+             aura_last_aot_reload_consistency_force_jit_mask() != 0)) {
+            if (aot_metrics()) {
+                aot_metrics()->aot_stale_probe_hard_reject_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aot_metrics()->aot_slot_stale_reject_total.fetch_add(1,
+                                                                     std::memory_order_relaxed);
+                aot_metrics()->aot_forced_recompile_on_mismatch_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            return 0;
+        }
+    }
+    return ptr;
     return ptr;
 }
 
