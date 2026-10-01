@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PRIM = "src/compiler/evaluator_primitives_eval.cpp"
 IXX = "src/compiler/evaluator.ixx"
+UNPARSE = "src/core/ast_unparse.ixx"
 STDLIB = "lib/std/safe-refactor.aura"
 TEST = "tests/compiler/test_current_source_roundtrip.cpp"
 RUNTESTS = "tests/python/run-tests.sh"
@@ -50,6 +51,7 @@ AC_FUNCS = [
     "ac4266_4_check_apply_post_verify_throw_restores",
     "ac4266_5_check_apply_post_verify_false_still_rolls_back",
     "ac4266_6_source_cite",
+    "ac4266_7_set_code_invalidates_typecheck_cache",
 ]
 
 SMOKE_CASES = [
@@ -93,6 +95,7 @@ def main() -> int:
 
     prim = _read(PRIM)
     ixx = _read(IXX)
+    unparse = _read(UNPARSE)
     stdlib_live = _strip_aura_comments(_read(STDLIB))
     test = _read(TEST)
     runtests = _read(RUNTESTS)
@@ -118,6 +121,31 @@ def main() -> int:
         ixx.find("last_typecheck_ok_") > ixx.find("last_typecheck_result_") != -1
         and ixx.find("last_typecheck_result_") != -1,
         "AC1: parity field cached beside last_typecheck_result_",
+    )
+    # Issue #4266 follow-up: the Phase-5 report cache must be droppable on a
+    # whole-workspace replacement (fresh FlatAST has no dirty bits, so the
+    # has_dirty_subtree() gate cannot see set-code/load/restore).
+    must(
+        "invalidate_typecheck_report_cache" in ixx,
+        "AC1: typecheck report cache invalidation hook defined (SSOT, evaluator.ixx)",
+    )
+    must(
+        "invalidate_typecheck_report_cache" in prim,
+        "AC1: set-code / load-file paths drop the cached report",
+    )
+    must(
+        "invalidate_typecheck_report_cache" in _read("src/compiler/evaluator_primitives_ast.cpp"),
+        "AC1: ast:restore drops the cached report",
+    )
+    must(
+        "invalidate_typecheck_report_cache" in _read("src/compiler/evaluator_eval_flat.cpp"),
+        "AC1: snapshot restore drops the cached report",
+    )
+    # The workspace unparse must keep per-parameter type annotations, or the
+    # rebuilt source loses the ground signature the typechecker gates on.
+    must(
+        "param_annotations" in unparse,
+        "AC1: unparse renders Lambda::param_annotations (lossless round-trip)",
     )
 
     # ── AC2: stdlib gate ──

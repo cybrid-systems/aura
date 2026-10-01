@@ -562,6 +562,10 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         ev.last_set_code_error_kind_.clear();
         ev.last_set_code_error_msg_.clear();
         ev.last_eval_current_result_.reset();
+        // Issue #4266 follow-up: ast:restore swaps the workspace contents under
+        // the live flat, so the #159 clean-workspace gate sees no dirty bits —
+        // drop the cached typecheck report/status too.
+        ev.invalidate_typecheck_report_cache();
 
         // (#107 part 6) Direct path: copy from snapshot's flat/pool
         // into the workspace's flat/pool. This is the lossless

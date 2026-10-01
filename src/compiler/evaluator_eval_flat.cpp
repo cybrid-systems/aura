@@ -7962,6 +7962,10 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
     last_set_code_error_kind_.clear();
     last_set_code_error_msg_.clear();
     last_eval_current_result_.reset();
+    // Issue #4266 follow-up: snapshot contents are copied into the live flat,
+    // so the #159 clean-workspace gate sees no dirty bits — drop the cached
+    // typecheck report/status too.
+    invalidate_typecheck_report_cache();
     if (id < snapshot_flats_.size() && snapshot_flats_[id].has_flat && snapshot_flats_[id].flat &&
         snapshot_flats_[id].pool) {
         try {
