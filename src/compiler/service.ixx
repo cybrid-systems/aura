@@ -7539,8 +7539,17 @@ public:
             }
             const DefineDirtyMaskView* mask_ptr =
                 define_mask.block_dirty_per_func ? &define_mask : nullptr;
+            // Issue #4254: under dual-emit, this lower's SoA lives in
+            // pending_soa_snapshot_ until store_define_v2. Passing
+            // entry.soa_mod (pre-re-lower) lets prod_soa hot pack +
+            // sync_soa_dirty_blocks_into_aos peel stale SoA into the
+            // fresh AoS. Prefer pending when present.
+            IRModuleV2* soa_for_suite = &entry.soa_mod;
+            if (pending_soa_snapshot_ &&
+                !pending_soa_snapshot_->module.functions.empty())
+                soa_for_suite = &pending_soa_snapshot_->module;
             const auto clean_blocks_skipped =
-                run_incremental_dirty_pass_suite_(ir_mod, mask_ptr, &entry.soa_mod);
+                run_incremental_dirty_pass_suite_(ir_mod, mask_ptr, soa_for_suite);
             if (!entry.block_dirty_per_func_.empty()) {
                 metrics_.linear_post_mutate_enforcements_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -12676,7 +12685,14 @@ private:
         // #3701/#3795: Escape uses columnar run_dirty_escape_on_soa
         // (now ProductionPureWrapPass). InlinePass SoA stays the #3403
         // production dispatch target; do not add it to this AoS suite.
-        const bool soa_hot = soa_mod && !soa_mod->functions.empty();
+        // Issue #4254: when pending_soa_snapshot_ holds this lower's SoA,
+        // use it as PureWrap+sync authority — entry.soa_mod is still the
+        // pre-re-lower module until store_define_v2 attaches pending.
+        IRModuleV2* soa_auth = soa_mod;
+        if (pending_soa_snapshot_ &&
+            !pending_soa_snapshot_->module.functions.empty())
+            soa_auth = &pending_soa_snapshot_->module;
+        const bool soa_hot = soa_auth && !soa_auth->functions.empty();
         const bool prod_soa = soa_hot && aura::compiler::typed_audit::production_defaults_active();
         // Issue #3690 / Issue #3831: Production last-look at the suite envelope.
         // Storm-exit cooldown and dense-under-Global may all-1s rewrite;
@@ -12695,8 +12711,8 @@ private:
                         b = 1;
                 storm_full_view.block_dirty_per_func = &storm_full_bits;
                 mask_ptr = &storm_full_view;
-                if (soa_mod) {
-                    for (auto& fn : soa_mod->functions) {
+                if (soa_auth) {
+                    for (auto& fn : soa_auth->functions) {
                         if (fn.block_dirty_.size() < fn.blocks_.size())
                             fn.block_dirty_.resize(fn.blocks_.size(), 0);
                         fn.mark_all_blocks_dirty();
@@ -12746,8 +12762,8 @@ private:
         // Soak: production_soa_dirty_hot_pack_invocations_total advances from
         // this suite only when writeback SSOT is synced to match.
         if (prod_soa) {
-            (void)aura::compiler::run_production_soa_dirty_hot_pack(*soa_mod, &type_registry_);
-            (void)aura::compiler::sync_soa_dirty_blocks_into_aos(*soa_mod, ir_mod);
+            (void)aura::compiler::run_production_soa_dirty_hot_pack(*soa_auth, &type_registry_);
+            (void)aura::compiler::sync_soa_dirty_blocks_into_aos(*soa_auth, ir_mod);
         }
 
         std::size_t clean_skipped = 0;
