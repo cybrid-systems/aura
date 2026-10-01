@@ -1440,7 +1440,12 @@ static void ac3497_scope_spawn_pending_name() {
         AgentSpec a;
         a.name = "3497-clean";
         a.body = [] {};
+        // Issue #4238: distinct non-zero region keys — production same-scope
+        // spawn pair would otherwise be preempted by the region-key-missing
+        // admit gate instead of exercising the clean same-name append.
+        a.region_key = 1;
         const bool ok1 = scope.spawn(a).ok;
+        a.region_key = 2;
         const bool ok2 = scope.spawn(a).ok;
         CHECK(ok1 && ok2, "3497 AC2: both clean spawns ok");
         CHECK(scope.size() == 2, "3497 AC2: appends (no silent delete)");
@@ -1665,6 +1670,11 @@ static void ac3776_scope_done_husk_compact() {
         for (int i = 0; i < N; ++i) {
             AgentSpec a;
             a.name = "3776-c" + std::to_string(i);
+            // Issue #4238: distinct non-zero region keys — under production
+            // this scope carries N mutate agents, and the region-key-missing
+            // admit gate (#4238) would otherwise preempt the 2nd+ same-scope
+            // production spawn (default mutation_boundary=true, region_key=0).
+            a.region_key = static_cast<std::uint64_t>(1 + i);
             // Non-yielding body (no SchedRunner) — we force Done below.
             a.body = [] {
                 for (;;) {
@@ -3321,6 +3331,10 @@ static void ac4115_5_scope_soak_two_agents_pending_bounded_by_join() {
     for (int i = 0; i < 2; ++i) {
         AgentSpec a;
         a.name = "ac4115-soak-" + std::to_string(i);
+        // Issue #4238: distinct non-zero region keys — two same-scope
+        // production mutate agents would otherwise be preempted by the
+        // region-key-missing admit gate (only the first spawn admits).
+        a.region_key = static_cast<std::uint64_t>(1 + i);
         a.body = [run] {
             while (run->load(std::memory_order_acquire))
                 aura::orch::fiber_sleep_ms(2);
