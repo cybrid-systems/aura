@@ -1,0 +1,41 @@
+{
+  "issue": 4262,
+  "title": "Issue #4262: run_dirty_escape_on_soa zero FlatInstruction materialize",
+  "ok": "OK #4262 escape_soa_no_flat: columnar peel; Soft AoS grandfather kept",
+  "checks": [
+    {
+      "ac": "AC1-columnar",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4262",
+        "kEscapeSoaNoFlatMaterializeIssue = 4262",
+        "run_escape_on_soa_fn"
+      ]
+    },
+    {
+      "ac": "AC3-soft",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "DirtySoAEntryPass<EscapeAnalysisWrap>",
+        "aura::jit::run_escape_analysis(flat_instrs"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": ["4262 AC1", "4262 AC3"]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "build.py",
+      "contains": ["check_escape_soa_no_flat_4262", "Issue #4262"]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4262.cpp",
+        "docs/design/4262-escape-soa-no-flat.md"
+      ]
+    }
+  ]
+}

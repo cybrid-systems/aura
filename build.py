@@ -2690,6 +2690,19 @@ def cmd_lint():
             "Issue #3795 EscapeAnalysisWrap ProductionPureWrap linter failed — run python3 scripts/coverage/checks/check_escape_analysis_pure_wrap_3795.py"
         )
         return r
+    # Issue #4262: run_dirty_escape_on_soa columnar — zero FlatInstruction
+    # AoS materialize. Soft AoS grandfather retained. Extends
+    # test_soa_dirty_aware_pipeline; no invent / docs/design.
+    esnf4262_script = COVERAGE_CHECKS / "check_escape_soa_no_flat_4262.py"
+    if not esnf4262_script.exists():
+        fail(f"missing {esnf4262_script}")
+        return 1
+    r = run([sys.executable, str(esnf4262_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4262 escape SoA no-Flat materialize linter failed — run python3 scripts/coverage/checks/check_escape_soa_no_flat_4262.py"
+        )
+        return r
     # Issue #3796: coercion batch CI AC anchors + build-cwd harness
     ppw3796_script = COVERAGE_CHECKS / "check_occurrence_coercion_ci_ok_3796.py"
     if not ppw3796_script.exists():
@@ -18410,6 +18423,48 @@ def cmd_ir_soa_column_slab_upstream_4263():
 
 
 
+def cmd_escape_soa_no_flat_4262_coverage():
+    """Issue #4262: escape SoA dirty peel without FlatInstruction materialize."""
+    print(f"{B}=== Escape SoA no-Flat (#4262) ==={N}")
+    script = COVERAGE_CHECKS / "check_escape_soa_no_flat_4262.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("Escape SoA no-Flat (#4262) coverage contract rows failed")
+        return r
+    ok("Escape SoA no-Flat (#4262) coverage clean")
+    return 0
+
+
+def cmd_primfn_no_std_function_4261_coverage():
+    """Issue #4261: PrimFn no std::function — FnPtr / SBO trampoline."""
+    print(f"{B}=== PrimFn no std::function (#4261) ==={N}")
+    script = COVERAGE_CHECKS / "check_primfn_no_std_function_4261.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("PrimFn no std::function (#4261) coverage contract rows failed")
+        return r
+    ok("PrimFn no std::function (#4261) coverage clean")
+    return 0
+
+
+def cmd_primfn_no_std_function_4261():
+    """Issue #4261: PrimFn SBO/FnPtr — drop std::function type erasure."""
+    return cmd_primfn_no_std_function_4261_coverage()
+
+
+
+def cmd_escape_soa_no_flat_4262():
+    """Issue #4262: columnar escape — zero FlatInstruction on dirty peel."""
+    return cmd_escape_soa_no_flat_4262_coverage()
+
+
+
 def cmd_pure_anon_budget_skip_sticky_3851_coverage():
     """Issue #3851: budget-skip arms sticky overflow fence (#3323 SSOT)."""
     print(f"{B}=== pure-anon budget-skip sticky fence (#3851) ==={N}")
@@ -26664,6 +26719,7 @@ def main():
         "production-pure-wrap-soa-3454": cmd_production_pure_wrap_soa_3454_coverage,
         "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
         "escape-analysis-pure-wrap-3795": cmd_escape_analysis_pure_wrap_3795_coverage,
+        "escape-soa-no-flat-4262": cmd_escape_soa_no_flat_4262,
         "occurrence-coercion-ci-ok-3796": cmd_occurrence_coercion_ci_ok_3796_coverage,
         "occurrence-coercion-ci-ok-3796-coverage": cmd_occurrence_coercion_ci_ok_3796_coverage,
         "escape-analysis-pure-wrap-3795-coverage": cmd_escape_analysis_pure_wrap_3795_coverage,
