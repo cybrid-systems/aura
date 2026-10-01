@@ -1427,6 +1427,10 @@ aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void) {}
 extern "C" __attribute__((weak)) int aura_hot_update_storm_exit_force_full_active(void) {
     return 0;
 }
+
+extern "C" __attribute__((weak)) int aura_hot_update_storm_exit_suppress_shape_widen(void) {
+    return 0;
+}
 // Issue #2035: weak no-ops when hot_update_registry.cpp is not linked.
 extern "C" __attribute__((weak)) void aura_hot_update_notify_dirty_define(const char* /*name*/) {}
 // Issue #2601: weak no-op when full bridge not linked (light test bundles).
