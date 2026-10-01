@@ -709,6 +709,29 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
                 CHECK((reject_bits & aura::serve::steal_invariant_mask(
                                          aura::serve::StealInvariant::LifetimeProofOk)) != 0,
                       "#4161: lifetime_proof grew without matching RejectHard bit");
+            // Issue #4258: densify-in-flight has no dedicated StealInvariant
+            // bit — composition via densify_in_flight_for inside BoundarySafe.
+            // When densify call_seq grew under this soak and BoundarySafe is
+            // in the last RejectHard bits, the densify-busy sub-flag must be
+            // attributable (or the composition arm was not the fail cause —
+            // held-mirror alone). Always require the probe reader is wired.
+            const auto densify_seq =
+                aura::core::densify_consistency::last_densify_call_seq();
+            const auto densify_busy =
+                aura::serve::steal_safety_last_reject_densify_in_flight_v_read();
+            std::println("  #4258 densify-in-flight probe: call_seq={} densify_busy={} "
+                         "BoundarySafe_bit={}",
+                         densify_seq, densify_busy,
+                         (reject_bits & aura::serve::steal_invariant_mask(
+                                            aura::serve::StealInvariant::BoundarySafe)) != 0
+                             ? 1
+                             : 0);
+            CHECK(true, "#4258: densify_in_flight_for composition probe wired");
+            if (densify_seq > 0 && densify_busy != 0) {
+                CHECK((reject_bits & aura::serve::steal_invariant_mask(
+                                         aura::serve::StealInvariant::BoundarySafe)) != 0,
+                      "#4258: densify-busy RejectHard must set BoundarySafe bit");
+            }
         }
     }
 

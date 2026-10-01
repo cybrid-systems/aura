@@ -295,6 +295,11 @@ inline std::atomic<std::uint64_t> g_steal_safety_invariant_snapshot_fail_total{0
 // Bit-set of last RejectHard failing invariants (bit N = StealInvariant N).
 // Soft/quiet Ok path does not write (Agents read last RejectHard only).
 inline std::atomic<std::uint64_t> g_steal_safety_last_reject_invariant_bits{0};
+// Issue #4258: last RejectHard BoundarySafe was densify-in-flight (composition
+// sub-flag; NOT a new StealInvariant bit — Count stays 7). Soak (#4161)
+// probes this when densify call_seq>0 so a bypassed densify_in_flight_for
+// arm cannot silently pass bit-coverage alone. Soft: unread.
+inline std::atomic<std::uint32_t> g_steal_safety_last_reject_densify_in_flight{0};
 inline std::atomic<std::uint32_t> g_steal_safety_invariant_table_wired{1};
 
 [[nodiscard]] inline std::uint64_t steal_safety_transaction_calls_v_read() noexcept {
@@ -370,6 +375,10 @@ steal_safety_production_residual_sticky_fail_wired_v_read() noexcept {
 }
 [[nodiscard]] inline std::uint64_t steal_safety_last_reject_invariant_bits_v_read() noexcept {
     return g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+}
+// Issue #4258: 1 when last RejectHard BoundarySafe arm was densify-in-flight.
+[[nodiscard]] inline std::uint32_t steal_safety_last_reject_densify_in_flight_v_read() noexcept {
+    return g_steal_safety_last_reject_densify_in_flight.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint32_t steal_safety_invariant_table_wired_v_read() noexcept {
     return g_steal_safety_invariant_table_wired.load(std::memory_order_relaxed);
@@ -477,6 +486,7 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     // Issue #3162: reset sticky-fail bit so test scenarios start clean.
     g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     g_steal_safety_last_reject_invariant_bits.store(0, std::memory_order_relaxed);
+    g_steal_safety_last_reject_densify_in_flight.store(0, std::memory_order_relaxed);
     g_steal_decision_contention_total.store(0, std::memory_order_relaxed);
     g_steal_safety_between_clear_and_hard_and_hook = nullptr;
 }

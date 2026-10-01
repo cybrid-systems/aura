@@ -185,16 +185,24 @@ namespace {
     // (Moving relocate mid-window; no new StealInvariant bit).
     if (!skip(StealInvariant::BoundarySafe)) {
         bool boundary_unsafe = !stolen->is_at_mutation_boundary_safe(snap);
-        if (!boundary_unsafe) {
-            void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
-            if (victim_eval_id != nullptr &&
-                aura::core::densify_consistency::densify_in_flight_for(victim_eval_id))
-                boundary_unsafe = true;
+        // Issue #4258 / #3894: always consult densify_in_flight_for when the
+        // victim eval id is present (composition SSOT; no new StealInvariant
+        // bit). Record densify-busy sub-flag for soak attribution even when
+        // held-mirror already made BoundarySafe unsafe.
+        bool densify_busy = false;
+        void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+        if (victim_eval_id != nullptr &&
+            aura::core::densify_consistency::densify_in_flight_for(victim_eval_id)) {
+            boundary_unsafe = true;
+            densify_busy = true;
         }
         if (boundary_unsafe) {
             fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
-            if (bump_counters)
+            if (bump_counters) {
                 note_steal_invariant_fail(StealInvariant::BoundarySafe);
+                g_steal_safety_last_reject_densify_in_flight.store(
+                    densify_busy ? 1u : 0u, std::memory_order_relaxed);
+            }
         }
     }
     // StealInvariant::LayoutStampMatch
