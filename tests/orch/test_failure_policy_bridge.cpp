@@ -1360,7 +1360,7 @@ static void ac3726_2_restartn_has_batch_specs_not_s() {
     CHECK(s.fiber && !s.fiber->is_cancel_requested(), "3726 AC2: RestartN did not cancel S");
     CHECK(s.root && s.root->child_count() >= 1, "3726 AC2: child population exists");
     bool s_on_root = false;
-    bool batch_on_child = false;
+    bool batch_row_live_after_return = false;
     if (s.root) {
         for (const auto& h : s.root->handles()) {
             if (h.name == "S-3726")
@@ -1370,12 +1370,18 @@ static void ac3726_2_restartn_has_batch_specs_not_s() {
             auto& child = s.root->child_at(s.root->child_count() - 1);
             for (const auto& h : child.handles()) {
                 if (h.name.find("supervise-batch-") == 0)
-                    batch_on_child = true;
+                    batch_row_live_after_return = true;
             }
         }
     }
     CHECK(s_on_root, "3726 AC2: S stays on session root (not RestartN'd into child)");
-    CHECK(batch_on_child, "3726 AC2: batch closures spawned into child (specs_/handles)");
+    // Issue #4050 (AC1, later in this file at :1987): the watch-scope path
+    // JOINs the child before returning, so the batch rows are released (no
+    // live/done supervise-batch row, zero child reservation). The original
+    // #3726 claim that a live row is present in the child predates the join
+    // and is self-contradictory with #4050 AC1. Positive post-#4050 form:
+    CHECK(!batch_row_live_after_return,
+          "3726 AC2: batch child rows released after watch-scope join (#4050)");
     const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
     CHECK(q.find("child.spawn(std::move(spec))") != std::string::npos,
           "3726 AC2: watch_scope path spawns AgentSpec into child");
