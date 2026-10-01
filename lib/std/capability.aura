@@ -1,17 +1,11 @@
-; std/capability.aura — Capability 标准库
+; std/capability.aura — Capability discovery surface (Issue #4276)
 ;
-; 提供基于环境绑定的能力检查函数。
-; with-capability 是 C++ 树遍历特殊形式，将能力绑定在环境中。
-; 这里提供辅助函数。
+; capability?, check-capability, and capability-stack are C++ primitives
+; (evaluator_primitives_policy.cpp). This module must NOT define or export
+; them — a Scheme binding from (require "std/capability" all:) would shadow
+; the primitive and fail closed (#f for every name).
+;
+; with-capability stays a lexical stack push; has_capability stays the
+; registry check. Do not add a second predicate or query key.
 
-(export capability-stack capability? check-capability)
-
-; capability? — 检查名称是否是一个已知的能力
-(define (capability? name)
-  #f)  ; 运行时总是返回 #f（编译期信息）
-
-; check-capability — 是特殊形式的别名（C++ 树遍历器中实现）
-; 这里不重复实现，直接依赖树遍历器特殊形式
-
-; capability-stack — 返回当前作用域中所有活跃能力的列表
-; 实现在 C++ 树遍历器特殊形式中
+(export)
