@@ -136,17 +136,12 @@ export class PrimFn {
     static EvalValue invoke_erased(const void* obj, std::span<const EvalValue> args) {
         return (*static_cast<const F*>(obj))(args);
     }
-    template <class F>
-    static void clone_erased(void* dst, const void* src) {
+    template <class F> static void clone_erased(void* dst, const void* src) {
         ::new (dst) F(*static_cast<const F*>(src));
     }
-    template <class F>
-    static void destroy_erased(void* obj) {
-        static_cast<F*>(obj)->~F();
-    }
+    template <class F> static void destroy_erased(void* obj) { static_cast<F*>(obj)->~F(); }
 
-    template <class F>
-    void bind_callable(F&& f) {
+    template <class F> void bind_callable(F&& f) {
         using Decayed = std::decay_t<F>;
         clear();
         if constexpr (std::is_convertible_v<Decayed, FnPtr>) {
@@ -157,7 +152,8 @@ export class PrimFn {
         cloner_ = &clone_erased<Decayed>;
         destroyer_ = &destroy_erased<Decayed>;
         storage_size_ = sizeof(Decayed);
-        if constexpr (sizeof(Decayed) <= kSboBytes && alignof(Decayed) <= alignof(std::max_align_t)) {
+        if constexpr (sizeof(Decayed) <= kSboBytes &&
+                      alignof(Decayed) <= alignof(std::max_align_t)) {
             ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(f));
         } else {
             // Soft large-capture overflow: one heap box at registration, not per apply.
@@ -271,9 +267,7 @@ public:
         return (*this)(std::span<const EvalValue>(args.begin(), args.size()));
     }
 
-    explicit operator bool() const noexcept {
-        return ptr_ != nullptr || invoker_ != nullptr;
-    }
+    explicit operator bool() const noexcept { return ptr_ != nullptr || invoker_ != nullptr; }
 
     [[nodiscard]] bool is_function_pointer() const noexcept { return ptr_ != nullptr; }
 
@@ -441,7 +435,8 @@ public:
             PrimFn* raw = held.get();
             const char* name_cstr = name.c_str();
             hot_timing_held_.push_back(std::move(held));
-            PrimFn timed = [raw, name_cstr](std::span<const types::EvalValue> a) -> types::EvalValue {
+            PrimFn timed = [raw,
+                            name_cstr](std::span<const types::EvalValue> a) -> types::EvalValue {
                 if (!aura::core::arena_policy::in_render_hotpath())
                     return (*raw)(a);
                 const auto t0 = std::chrono::steady_clock::now();

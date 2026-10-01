@@ -7053,7 +7053,8 @@ static void ac4248_source_cite_remaining_arms() {
     CHECK(efl.find("parent_was_macro_spl") != std::string::npos, "4248 AC1: splice MI capture");
     CHECK(efl.find("node_was_macro_wrap") != std::string::npos, "4248 AC1: wrap MI capture");
     CHECK(efl.find("define_was_macro") != std::string::npos, "4248 AC1: rebind MI capture");
-    CHECK(efl.find("parent_was_macro_ins") != std::string::npos, "4248 AC1: insert-child MI capture");
+    CHECK(efl.find("parent_was_macro_ins") != std::string::npos,
+          "4248 AC1: insert-child MI capture");
     CHECK(efl.find("was_macro_inl") != std::string::npos, "4248 AC1: inline-call MI capture");
     CHECK(efl.find("match_was_macro") != std::string::npos, "4248 AC1: replace-pattern MI capture");
     CHECK(efl.find("was_macro_rv") != std::string::npos, "4248 AC1: replace-value MI capture");

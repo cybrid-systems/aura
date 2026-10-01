@@ -1923,8 +1923,7 @@ void register_workspace_query_primitives(
                         for (const auto& p : predicates) {
                             if (p.field != ":node-type" && p.field != ":tag")
                                 continue;
-                            aura::ast::NodeTag target_tag =
-                                static_cast<aura::ast::NodeTag>(-1);
+                            aura::ast::NodeTag target_tag = static_cast<aura::ast::NodeTag>(-1);
                             bool found_tag = false;
                             for (auto& m : aura::ast::kNodeMeta) {
                                 if (m.name == p.value && m.name != "<gap>") {

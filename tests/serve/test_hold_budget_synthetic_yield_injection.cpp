@@ -2114,7 +2114,6 @@ int run_test_hold_budget_host_native_poll_4032() {
 }
 
 
-
 // Issue #4257: production outermost mutate wrapper arms #3254 synthetic
 // yield BEFORE fn(a) so mid-body cooperative edges unlock via #3222;
 // edge-free stays #4158 fail-closed (no foreign unlock).
@@ -2140,8 +2139,7 @@ int run_test_hold_budget_prebody_synthetic_yield_4257() {
     CHECK(mh.find("schema-4257") == std::string::npos, "4257: no new query key");
     CHECK(mh.find("g_4257_") == std::string::npos, "4257: no new counter");
     CHECK(read_file("tests/serve/test_issue_4257.cpp").empty(), "4257: no invent test file");
-    CHECK(read_file("docs/design/4257-prebody-synthetic-yield.md").empty(),
-          "4257: no docs/design");
+    CHECK(read_file("docs/design/4257-prebody-synthetic-yield.md").empty(), "4257: no docs/design");
 
     int failed = aura::test::g_failed - saved_failed;
     int passed = aura::test::g_passed - saved_passed;

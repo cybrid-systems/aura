@@ -1637,7 +1637,8 @@ static void ac3248_3_source_and_linter() {
 
 // Issue #4247: host-drift reload fail makes aura_aot_probe_fn_ptr refuse.
 static void ac4247_probe_refuses_host_drift_demotion() {
-    std::println("\n--- #4247 AC: probe refuses when would_allow_native=false (Env/Version/Linear) ---");
+    std::println(
+        "\n--- #4247 AC: probe refuses when would_allow_native=false (Env/Version/Linear) ---");
     const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
     CHECK(br.find("Issue #4247") != std::string::npos, "4247: bridge cites #4247");
     CHECK(br.find("aura_last_aot_reload_consistency_would_allow_native") != std::string::npos,
