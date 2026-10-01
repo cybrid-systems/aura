@@ -143,5 +143,45 @@ class BenchmarkGate1936(unittest.TestCase):
                 m.UPDATES_LOG = original  # type: ignore[misc]
 
 
+    def test_4268_exit_status_beats_stdout_match(self) -> None:
+        """Issue #4268: printing expected value then exiting 1 must FAIL."""
+        m = self.m
+        cases = m.load_benchmark_cases()
+        bench = next(c for c in cases if c.expected_val is not None)
+        result = {
+            "stdout": str(bench.expected_val),
+            "stderr": "",
+            "returncode": 1,
+            "timed_out": False,
+        }
+        self.assertFalse(m.check_eval_result(bench, result))
+        result_ok = dict(result, returncode=0)
+        self.assertTrue(m.check_eval_result(bench, result_ok))
+        result_to = dict(result, returncode=-1, timed_out=True)
+        self.assertFalse(m.check_eval_result(bench, result_to))
+
+    def test_4268_measure_pipeline_records_returncode(self) -> None:
+        """Issue #4268: measure_pipeline keeps returncode/timed_out fields."""
+        m = self.m
+        original = m.run_aura
+
+        def stub(code, args=None):
+            return ("42", "", 0.001, 1, False)
+
+        m.run_aura = stub  # type: ignore[method-assign]
+        try:
+            cases = [c for c in m.load_benchmark_cases() if c.pipeline in ("eval", "ir")]
+            self.assertTrue(cases)
+            bench = cases[0]
+            result = m.measure_pipeline(bench.name, "42", "eval")
+            self.assertEqual(result["returncode"], 1)
+            self.assertFalse(result["timed_out"])
+            self.assertTrue(result["error"])
+            if bench.expected_val == 42:
+                self.assertFalse(m.check_eval_result(bench, result))
+        finally:
+            m.run_aura = original  # type: ignore[method-assign]
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -122,8 +122,14 @@ def median_time(samples: list[float]) -> float:
 # ── Measurement helpers ───────────────────────────────────────
 
 
-def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float]:
-    """Run aura and return (stdout, stderr, elapsed_seconds)."""
+def run_aura(
+    code: str, args: list[str] | None = None
+) -> tuple[str, str, float, int, bool]:
+    """Run aura and return (stdout, stderr, elapsed_seconds, returncode, timed_out).
+
+    Issue #4268: keep exit status + timeout on the result. A child that prints
+    the expected value and then exits non-zero must not look like PASS.
+    """
     cmd = [AURA]
     if args:
         cmd.extend(args)
@@ -135,9 +141,16 @@ def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float]
         stderr=subprocess.PIPE,
         text=True,
     )
-    stdout, stderr = proc.communicate(code + "\n", timeout=30)
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(code + "\n", timeout=30)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        stdout, stderr = proc.communicate()
     elapsed = time.perf_counter() - start
-    return stdout.strip(), stderr.strip(), elapsed
+    rc = proc.returncode if proc.returncode is not None else -1
+    return stdout.strip(), stderr.strip(), elapsed, rc, timed_out
 
 
 def measure_pipeline(name: str, code: str, pipeline: str) -> dict:
@@ -151,17 +164,28 @@ def measure_pipeline(name: str, code: str, pipeline: str) -> dict:
         "error": "",
         "passed": False,
         "memory_stats": {},
+        "returncode": 0,
+        "timed_out": False,
     }
 
     args_dict = {"eval": None, "ir": ["--ir"], "typecheck": ["--typecheck"]}
     args = args_dict.get(pipeline)
 
-    stdout, stderr, elapsed = run_aura(code, args)
+    stdout, stderr, elapsed, rc, timed_out = run_aura(code, args)
     result["time_s"] = round(elapsed, 6)
     result["stdout"] = stdout
     result["stderr"] = stderr
+    result["returncode"] = rc
+    result["timed_out"] = timed_out
 
-    # Check for crashes
+    # Issue #4268: timeout is never a successful short run.
+    if timed_out:
+        result["error"] = result["error"] or "timeout"
+    # Non-zero exit is a failure by default (stderr text alone is not enough).
+    elif rc != 0:
+        result["error"] = result["error"] or f"exit:{rc}"
+
+    # Check for crashes surfaced on stderr (keep prior signal).
     if stderr and "error:" in stderr and "coercion" not in stderr:
         result["error"] = stderr
 
@@ -170,6 +194,11 @@ def measure_pipeline(name: str, code: str, pipeline: str) -> dict:
 
 def check_typecheck_result(bench: BenchCase, result: dict) -> bool:
     """Check typecheck output against expected type string."""
+    # Issue #4268: exit status / timeout beat stdout matching.
+    if result.get("timed_out"):
+        return False
+    if result.get("returncode", 0) != 0:
+        return False
     out = result.get("stdout", "")
     if "parse error:" in out:
         return False
@@ -184,6 +213,11 @@ def check_typecheck_result(bench: BenchCase, result: dict) -> bool:
 
 def check_eval_result(bench: BenchCase, result: dict) -> bool:
     """Check eval/ir output against expected numeric value."""
+    # Issue #4268: non-zero exit / timeout cannot PASS even if stdout matched.
+    if result.get("timed_out"):
+        return False
+    if result.get("returncode", 0) != 0:
+        return False
     out = result.get("stdout", "")
     if "error:" in result.get("stderr", ""):
         if "coercion" in result.get("stderr", ""):
