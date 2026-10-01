@@ -2004,6 +2004,8 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
         storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
                                                std::memory_order_release);
         storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
+        // Issue #4255: Shape cleared — Shape-widen suppress latch drops.
+        storm_exit_suppress_shape_widen_.store(0, std::memory_order_release);
         // Issue #3101: on storm exit (Both/Global → None or Shape → None
         // with prior window), clear the partial_relower_threshold_forced
         // flag so the adaptive threshold can re-tighten from the existing
@@ -2039,6 +2041,9 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
         storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
                                                std::memory_order_release);
         storm_exit_force_full_apply_while_non_none_.store(1, std::memory_order_release);
+        // Issue #4255: arm Shape-widen suppress for the post-hysteresis
+        // Shape-still window (cleared on Shape→None or quiet deopt floor).
+        storm_exit_suppress_shape_widen_.store(1, std::memory_order_release);
     } else if (now != 0 && prev == 0) {
         // Issue #3163: storm entry edge (None → non-None) refreshes the
         // hysteresis window so alternating Shape↔Global storms get a full
@@ -2060,13 +2065,37 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
     while (left > 0) {
         if (storm_exit_force_full_remaining_.compare_exchange_weak(
                 left, left - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
-            if (left == 1)
+            // Issue #4255: do not clear apply_while_non_none on the last
+            // nominal consult while Shape still holds — quiet floor /
+            // Shape→None clear it so Shape-widen cannot re-arm on expiry.
+            if (left == 1 && now == 0)
                 storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
             return true;
         }
     }
+    // Issue #4255: Both→Shape window expired while Shape remains.
+    // Keep force-full until a quiet deopt floor holds, then clear
+    // suppress so prefer_partial_under_shape_storm may widen again.
+    if (apply_while_non_none && now != 0) {
+        if (!storm_exit_quiet_deopt_floor_())
+            return true;
+        storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
+        storm_exit_suppress_shape_widen_.store(0, std::memory_order_release);
+        return false;
+    }
     storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
     return false;
+}
+
+// Issue #4255: quiet floor for post-Both→Shape Shape-widen re-arm.
+// deopt_window_count must sit below max(1, soft_thr/10) so near-
+// threshold Global flicker cannot immediately re-trip after hysteresis.
+bool HotUpdateRegistry::storm_exit_quiet_deopt_floor_() const noexcept {
+    const auto deopts = deopt_window_count_.load(std::memory_order_relaxed);
+    const auto thr = deopt_storm_threshold_.load(std::memory_order_relaxed);
+    // Quiet = at or below 10% of soft Global threshold (min 1 when thr>0).
+    const std::uint64_t floor = (thr == 0) ? 0 : ((thr / 10) > 0 ? (thr / 10) : 1);
+    return deopts <= floor;
 }
 
 // Issue #2302: accessor for the 5-field ReloadRecovery state.
@@ -2288,6 +2317,7 @@ void HotUpdateRegistry::reset_deopt_storm_state_for_test() noexcept {
     hysteresis_prev_storm_level_.store(0, std::memory_order_relaxed);
     storm_exit_force_full_remaining_.store(0, std::memory_order_relaxed);
     storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_relaxed);
+    storm_exit_suppress_shape_widen_.store(0, std::memory_order_relaxed);
     // Keep lifetime counters (detected / observed / skips / bypass) for dashboards.
 }
 
@@ -3355,6 +3385,10 @@ extern "C" void aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(v
 
 extern "C" int aura_hot_update_storm_exit_force_full_active(void) {
     return aura::compiler::hot_update_registry().storm_exit_force_full_active() ? 1 : 0;
+}
+
+extern "C" int aura_hot_update_storm_exit_suppress_shape_widen(void) {
+    return aura::compiler::hot_update_registry().storm_exit_suppress_shape_widen() ? 1 : 0;
 }
 // Issue #2017: C entry for compact-env-frames / other module-partition callers.
 extern "C" void aura_hot_update_notify_epoch_bump(std::uint64_t epoch) {

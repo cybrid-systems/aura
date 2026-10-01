@@ -52,6 +52,7 @@ import aura.compiler.dirty_propagation; // DepGraph (Issue #2179)
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 // Issue #3070: Shape/Global → None hysteresis (force-full cooldown).
 extern "C" int aura_hot_update_storm_exit_force_full_active(void);
+extern "C" int aura_hot_update_storm_exit_suppress_shape_widen(void);
 // Issue #3101: clear the partial_relower_threshold_forced flag so the
 // adaptive threshold can re-tighten from cost history once the storm has
 // fully exited. Wired from HotUpdateRegistry::storm_exit_force_full_active
@@ -1437,6 +1438,12 @@ estimate_relower_blocks_impact_checked(std::size_t dirty_count,
 [[nodiscard]] inline bool prefer_partial_under_shape_storm(std::size_t dirty_count,
                                                            bool want_partial_base) noexcept {
     if (!storm_level_has_shape() || dirty_count == 0)
+        return want_partial_base;
+    // Issue #4255: after Both→Shape hysteresis expiry, do not re-enable
+    // Shape-widen until quiet deopt floor / Shape→None. Intentional
+    // Shape-only widen (#2212) still applies when the suppress latch is
+    // clear (None→Shape never sets it).
+    if (aura_hot_update_storm_exit_suppress_shape_widen() != 0)
         return want_partial_base;
     const auto thr = get_partial_relower_threshold();
     const auto wide = shape_storm_widened_threshold(thr);

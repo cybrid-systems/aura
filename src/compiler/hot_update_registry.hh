@@ -404,6 +404,11 @@ public:
     // with residual deopt window, arm a force-full cooldown. Returns 1
     // and consumes one consult while the cooldown is live.
     [[nodiscard]] bool storm_exit_force_full_active() noexcept;
+    // Issue #4255: true while Shape-widen must stay off after Both→Shape
+    // hysteresis (cleared on Shape→None or quiet deopt floor).
+    [[nodiscard]] bool storm_exit_suppress_shape_widen() const noexcept {
+        return storm_exit_suppress_shape_widen_.load(std::memory_order_acquire) != 0;
+    }
     // Issue #2093: reason-aware rollback hook. The per-reason atomic
     // counter + last-reason file-scope atomic are bumped here so the
     // Agent snapshot (taken via get_snapshot / get_stats_snapshot) can
@@ -1098,6 +1103,10 @@ private:
     // 8-consult force-full window applies while now!=0. None→Shape keeps 0
     // (#2212 Shape-only widen). Appended next to remaining (not metrics-middle).
     std::atomic<std::uint8_t> storm_exit_force_full_apply_while_non_none_{0};
+    // Issue #4255: after Both→Shape, suppress Shape-widen until quiet /
+    // Shape→None (distinct from the 8-consult force-full counter).
+    std::atomic<std::uint8_t> storm_exit_suppress_shape_widen_{0};
+    [[nodiscard]] bool storm_exit_quiet_deopt_floor_() const noexcept;
     // Issue #3513: 1 while facade reemit may see pre-store irs. Appended
     // at the hysteresis cluster (not a query-key / metrics-middle insert).
     std::atomic<std::uint8_t> ir_content_untrusted_for_native_{0};
@@ -1784,6 +1793,8 @@ void aura_hot_update_reset_deopt_storm_state_for_test(void);
 void aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void);
 // Issue #3070: 1 while storm-exit force-full cooldown is live (consumes one consult).
 int aura_hot_update_storm_exit_force_full_active(void);
+// Issue #4255: Shape-widen suppress latch (Both→Shape post-hysteresis).
+int aura_hot_update_storm_exit_suppress_shape_widen(void);
 // Issue #2017: module-safe C entry for epoch notify (compact-env-frames etc.).
 // Module partitions cannot attach HotUpdateRegistry (link discipline #1956).
 void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);
