@@ -21,6 +21,8 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
 
 #include <cstdint>
@@ -484,6 +486,10 @@ static void ac3278_source_cite() {
     CHECK(src.find("cross_flat && schema_homology_prod") != std::string::npos,
           "AC11: homology walk is cross_flat (flat or pool; #3980)");
     CHECK(src.find("Issue #3980") != std::string::npos, "AC11: runtime cites #3980");
+    CHECK(src.find("Issue #4249") != std::string::npos, "AC11: runtime cites #4249");
+    CHECK(src.find("is_sandbox_active()") != std::string::npos &&
+              src.find("schema_homology_prod") != std::string::npos,
+          "AC11: homology gate includes is_sandbox_active (#4249)");
     auto lint = read_file("scripts/coverage/checks/check_cross_flat_schema_homology_3278.py");
     CHECK(!lint.empty(), "AC11: linter present");
     CHECK(lint.find("3278") != std::string::npos, "AC11: linter cites #3278");
@@ -551,6 +557,50 @@ static void ac3980_same_pool_densify_zeros() {
 
 } // namespace
 
+
+// Issue #4249: Restricted via sandbox::set_mode alone (no production_defaults,
+// no g_macro_expand_sandbox_strict) still zeros schema/provenance on cross-flat.
+static void ac4249_sandbox_active_homology() {
+    std::println("\n--- #4249 AC: Restricted sandbox-active zeros homology (no production_defaults) ---");
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(0);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    // Soft clone first (sandbox Off) so production refuse surfaces don't
+    // reject the clone; then arm Restricted and re-run the homology walk
+    // via the test helper — the residual is the gate, not the refuse path.
+    FlatAST target;
+    StringPool target_pool;
+    FlatAST src;
+    StringPool src_pool;
+    auto x = src_pool.intern("x");
+    auto body = src.add_variable(x);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+    src.set_schema_cache(lam, /*tid=*/42);
+    src.set_provenance(lam, /*prov=*/91);
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        nm;
+    auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
+                                   SyntaxMarker::MacroIntroduced);
+    CHECK(cloned != NULL_NODE, "4249: Soft cross-flat clone ok");
+    CHECK(target.schema_cache(cloned) == 42u, "4249: Soft kept schema copy");
+    CHECK(target.provenance(cloned) == 91u, "4249: Soft kept provenance copy");
+    CHECK(target.is_macro_introduced(cloned), "4249: MacroIntroduced stays (pre)");
+    const auto prev = static_cast<aura::core::sandbox::SandboxMode>(
+        aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    const auto post = aura_test_cross_flat_expand_consistency(
+        static_cast<void*>(&target), static_cast<void*>(&target_pool), static_cast<void*>(&src),
+        static_cast<void*>(&src_pool), static_cast<std::uint32_t>(cloned));
+    CHECK(post == 0, "4249: homology re-run ok");
+    CHECK(target.schema_cache(cloned) == 0u, "4249: Restricted zeros schema_cache");
+    CHECK(target.provenance(cloned) == 0u, "4249: Restricted zeros provenance");
+    CHECK(target.is_macro_introduced(cloned), "4249: MacroIntroduced stays");
+    CHECK(src.schema_cache(lam) == 42u, "4249: source schema preserved");
+    aura::core::sandbox::set_mode(prev);
+    CHECK(read_file("tests/compiler/test_issue_4249.cpp").empty(), "4249: no invent");
+}
+
 int run_test_macro_cross_flat_hygiene() {
     std::println("=== Issue #2235 — cross-flat macro clone hygiene gate ===");
     ac_cross_flat_baseline();
@@ -567,6 +617,7 @@ int run_test_macro_cross_flat_hygiene() {
     ac3278_drift_fail_closed();
     ac3278_source_cite();
     ac3980_same_pool_densify_zeros();
+    ac4249_sandbox_active_homology();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

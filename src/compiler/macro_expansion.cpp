@@ -1703,7 +1703,14 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     // integers that are not target-table keys. Marker + kMacroExpansion
     // stay; only the non-homologous integers clear. Single-flat stays
     // the early-return above. No new metric, no new query key.
+    // Issue #4249: align homology walk with other clone production
+    // surfaces (ExpandCheckpointGuard / name_map claim / top-level
+    // serialize) that key on is_sandbox_active(). Restricted/Strict
+    // via set_effect_sandbox_mode alone (no production_defaults bundle)
+    // still clears copied schema_cache / provenance integers; Soft/Off
+    // keeps one sandbox load and skips the walk.
     const bool schema_homology_prod =
+        aura::core::sandbox::is_sandbox_active() ||
         aura::compiler::typed_audit::production_defaults_active() ||
         g_macro_expand_sandbox_strict.load(std::memory_order_relaxed) != 0;
     if (cross_flat && schema_homology_prod && new_root != aura::ast::NULL_NODE) {
