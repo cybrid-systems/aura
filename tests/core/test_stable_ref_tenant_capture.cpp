@@ -317,6 +317,13 @@ void ac3259_5_source_and_linter() {
           "3259 AC5: nested does not run full triad");
     CHECK(nwin.find("Issue #3259") != std::string::npos, "3259 AC5: nested cite");
     CHECK(nwin.find("Issue #3312") != std::string::npos, "3259 AC5: nested thin hot-cone #3312");
+    CHECK(nwin.find("Issue #4259") != std::string::npos ||
+              read_file("src/compiler/evaluator_mutation_boundary.cpp").find("Issue #4259") !=
+                  std::string::npos,
+          "4259: nested thin-cone widen under production");
+    CHECK(read_file("src/compiler/evaluator_mutation_boundary.cpp")
+                  .find("restamp_nested_thin_hot_cone") != std::string::npos,
+          "4259: thin-cone helper present");
     CHECK(sec.find("Issue #3259") != std::string::npos, "3259 AC5: stamp/allow cite");
     CHECK(!lint.empty() && lint.find("Issue #3259") != std::string::npos, "3259 AC5: linter");
     CHECK(build.find("check_restamp_hot_cone_budget_3259") != std::string::npos,
