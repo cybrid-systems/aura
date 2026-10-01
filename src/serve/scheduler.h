@@ -5,6 +5,7 @@
 #include "fiber.h"
 #include "worker.h"
 #include "metrics.h"
+#include "compiler/lock_order_audit.h" // #63723 follow-up: OwnedFibers audit rank
 #include <ucontext.h>
 #include <chrono>
 #include <deque>
@@ -236,7 +237,25 @@ private:
     // corruption that produces these stale entries is a
     // separate root-cause investigation; this is a minimal
     // defensive guard).
+    // Thread-safety (#63723 follow-up, orch batch rc=139 family):
+    // owned_fibers_ is mutated ONLY under owned_fibers_mutex_ - spawn()
+    // push_back (scheduler.cpp) and ~Scheduler clear. Callers here run on
+    // worker threads (WorkerThread::run - has_waiting_fibers) and on the
+    // IO thread event dispatch, but the scan used to run WITHOUT the
+    // mutex. A concurrent spawn push_back reallocation then freed the
+    // vector storage mid-iteration, and the f.get() load read a unique_ptr
+    // out of freed memory - the intermittent SIGSEGV seen as
+    // WorkerThread::run / has_waiting_fibers / unique_ptr element get
+    // (documented leftover-scheduler-fiber UAF family). Take the lock:
+    // the three call sites order WaitMap(8) -> OwnedFibers(10) ascending
+    // (has_waiting_fibers and the stdin-broadcast dispatch) or take
+    // OwnedFibers alone (the fiber-eventfd dispatch), and no path acquires
+    // WaitMap/Joiner while OwnedFibers is held. on_fiber_done /
+    // reap_orphans_now only reach Joiner(9) and never take OwnedFibers,
+    // so there is no inversion.
     bool owned_fibers_end_contains(const Fiber* fiber) const {
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
         for (const auto& f : owned_fibers_) {
             if (f.get() == fiber)
                 return true;
@@ -304,7 +323,9 @@ private:
     // Issue #707: per-scheduler fiber ownership so ~Fiber returns
     // per-fiber stack storage to the bounded pool on teardown.
     std::vector<std::unique_ptr<Fiber>> owned_fibers_;
-    std::mutex owned_fibers_mutex_;
+    // mutable: owned_fibers_end_contains() runs from the const
+    // has_waiting_fibers() / const event-dispatch paths (#63723).
+    mutable std::mutex owned_fibers_mutex_;
 
     // Issue #2782: AgentScope (and similar) observers notified before
     // fiber teardown so borrowed Scheduler* / Fiber* can be nulled.

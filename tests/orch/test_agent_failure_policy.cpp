@@ -1572,6 +1572,53 @@ int run_test_agent_failure_policy() {
         }
     }
 
+    // ── AC: owned_fibers_ scan vs concurrent spawn (UAF regression) ──
+    // Scheduler::owned_fibers_end_contains() scans owned_fibers_ from
+    // worker/IO threads; spawn() push_backs into it under
+    // owned_fibers_mutex_. The #63723 guard read the vector WITHOUT that
+    // mutex, so a concurrent spawn reallocation could free the storage
+    // mid-scan, crashing the unique_ptr element get under
+    // WorkerThread::run / has_waiting_fibers / owned_fibers_end_contains
+    // (the orch batch rc=139 family). Stress the invariant: many
+    // foreign-thread spawns while the worker parks in has_waiting_fibers.
+    {
+        std::println("\n--- #63723 UAF: owned_fibers_ scan vs concurrent spawn ---");
+        constexpr int kRounds = 6;
+        constexpr int kThreads = 4;
+        constexpr int kPerThread = 20;
+        int rounds_ok = 0;
+        for (int round = 0; round < kRounds; ++round) {
+            // Declare the flag before the Scheduler so it outlives the
+            // Scheduler/SchedRunner teardown that destroys the fibers.
+            std::atomic<int> uaf_done{0};
+            Scheduler uaf_sched(1);
+            SchedRunner uaf_runner(uaf_sched);
+            std::vector<std::thread> uaf_spawners;
+            for (int t = 0; t < kThreads; ++t) {
+                uaf_spawners.emplace_back([&] {
+                    for (int i = 0; i < kPerThread; ++i) {
+                        Fiber* f = uaf_sched.spawn(
+                            [&uaf_done] { uaf_done.fetch_add(1, std::memory_order_relaxed); },
+                            64 * 1024);
+                        if (!f)
+                            return;
+                    }
+                });
+            }
+            for (auto& th : uaf_spawners)
+                th.join();
+            const auto uaf_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (uaf_done.load(std::memory_order_relaxed) < kThreads * kPerThread &&
+                   std::chrono::steady_clock::now() < uaf_deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            if (uaf_done.load(std::memory_order_relaxed) == kThreads * kPerThread)
+                ++rounds_ok;
+        }
+        CHECK(rounds_ok == kRounds, "63723 UAF: concurrent foreign-thread spawns all dispatched "
+                                    "(owned_fibers_ scan locked)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
