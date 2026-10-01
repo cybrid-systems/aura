@@ -1106,6 +1106,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 // is_done() never fires), or target unregistered
                 // (re-resolve via g_fiber_lookup → fall through to the
                 // result fetch).
+                // Issue #4176: capture the joiner fiber pointer ONCE,
+                // before any yield. Re-reading thread_local g_current_fiber
+                // after a BlockingIO park is unsafe: the compiler may cache
+                // the TLS base (mrs tpidr_el0) across Fiber::yield, and the
+                // joiner can be woken on a DIFFERENT worker after
+                // work-stealing migration. The stale base then reads null,
+                // add_joiner(..., nullptr) returns false, and the join
+                // degrades / busy-spins (sock stall, IO thread idle in
+                // ep_poll). `joiner_fiber` is migration-invariant.
+                auto* joiner_fiber = aura::serve::g_current_fiber;
                 while (true) {
                     if (target->is_done() || target->is_reclaimed())
                         break;
@@ -1113,7 +1123,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                         break; // target unregistered — result fetch below
                     if (!(aura::serve::g_scheduler &&
                           aura::serve::g_scheduler->add_joiner(static_cast<std::uint64_t>(fid),
-                                                               aura::serve::g_current_fiber)))
+                                                               joiner_fiber)))
                         break;
                     joiner_target_id = static_cast<std::uint64_t>(fid);
                     // Issue #2869 / #4053: unlock denseness body mutex across
@@ -1125,8 +1135,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     // After wakeup: either the target's on_fiber_done
                     // wrote our eventfd (target done — fetch below),
                     // or a spurious/early wake fired (loop re-parks).
-                    aura::serve::g_scheduler->remove_joiner(joiner_target_id,
-                                                            aura::serve::g_current_fiber);
+                    aura::serve::g_scheduler->remove_joiner(joiner_target_id, joiner_fiber);
                 }
                 // (If add_joiner failed — e.g. target was
                 // destroyed between the lookup and the add —
