@@ -745,6 +745,11 @@ inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcep
 // are fail-closed via unpin_on_compact. Distinct from verify_pins_under_
 // moving_compact (which only detects pins still pointing at *old* densified
 // addresses). Returns # invalidated.
+// Issue #4243: the caller's skip set must contain ONLY destinations whose
+// pins remap_pins_pointing_to actually rewrote this window (the arena's
+// pins_rewritten_new), NOT the raw set of this-window remap values — a pin
+// whose ptr() merely equals some moved object's neu without a rewrite is
+// fail-closed invalidated here instead of being silently kept live.
 inline std::size_t
 invalidate_pins_not_in_new_addrs(std::uint64_t arena_id,
                                  const std::unordered_set<void*>& new_addrs) noexcept {
