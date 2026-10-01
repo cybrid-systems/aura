@@ -6134,8 +6134,8 @@ public:
         // concurrent record_dependency during dual-topology restore
         // stale-rejects (force_dirty also bumps after restore).
         {
-            lock_order::OrderedUniqueLock<std::shared_mutex> dep_write(
-                dep_graph_mtx_, lock_order::Level::DepGraph);
+            lock_order::OrderedUniqueLock<std::shared_mutex> dep_write(dep_graph_mtx_,
+                                                                       lock_order::Level::DepGraph);
             dep_graph_generation_.fetch_add(1, std::memory_order_release);
             metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
@@ -6185,8 +6185,8 @@ public:
         // (safe under mutate if held). Soft/Off: gen bump is abort-
         // path only; IR observe-only contract unchanged.
         {
-            lock_order::OrderedUniqueLock<std::shared_mutex> dep_write(
-                dep_graph_mtx_, lock_order::Level::DepGraph);
+            lock_order::OrderedUniqueLock<std::shared_mutex> dep_write(dep_graph_mtx_,
+                                                                       lock_order::Level::DepGraph);
             dep_graph_generation_.fetch_add(1, std::memory_order_release);
             metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
             // Arm deferred so a mid-abort reject after this bump is
@@ -7574,8 +7574,7 @@ public:
             // sync_soa_dirty_blocks_into_aos peel stale SoA into the
             // fresh AoS. Prefer pending when present.
             IRModuleV2* soa_for_suite = &entry.soa_mod;
-            if (pending_soa_snapshot_ &&
-                !pending_soa_snapshot_->module.functions.empty())
+            if (pending_soa_snapshot_ && !pending_soa_snapshot_->module.functions.empty())
                 soa_for_suite = &pending_soa_snapshot_->module;
             const auto clean_blocks_skipped =
                 run_incremental_dirty_pass_suite_(ir_mod, mask_ptr, soa_for_suite);
@@ -12718,8 +12717,7 @@ private:
         // use it as PureWrap+sync authority — entry.soa_mod is still the
         // pre-re-lower module until store_define_v2 attaches pending.
         IRModuleV2* soa_auth = soa_mod;
-        if (pending_soa_snapshot_ &&
-            !pending_soa_snapshot_->module.functions.empty())
+        if (pending_soa_snapshot_ && !pending_soa_snapshot_->module.functions.empty())
             soa_auth = &pending_soa_snapshot_->module;
         const bool soa_hot = soa_auth && !soa_auth->functions.empty();
         const bool prod_soa = soa_hot && aura::compiler::typed_audit::production_defaults_active();
