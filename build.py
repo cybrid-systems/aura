@@ -15815,6 +15815,32 @@ def cmd_outermost_persist_order_3614_coverage():
     return 0
 
 
+def cmd_occurrence_drain_order_4250_coverage():
+    """Issue #4250: outermost Occurrence freeze observed the pre-drain CS while
+    the TypeLinearCommitProof stamped after the helper's pending_full_solve
+    drain used the post-drain CS (#3190 ordering residual). A concurrent
+    densify/steal rehydrate restored the pre-drain narrowing under a post-drain
+    proof (half-green Occurrence vs proof). Fix: reorder inside
+    aura_outermost_success_persist_occurrence to drain -> persist -> stamp so the
+    frozen snapshot and the proof share the drained CS — the same phase order
+    #3031 (composite_txn_commit) and #3512 already use. The drain reject arm
+    still clears the persist buffer + bumps the #3170 mismatch counter. Soft/Off
+    stays zero-cost (drain remains production/Full gated in the same arm). No new
+    counter / query key; no docs/design/4250-*; no tests/**/test_issue_4250.cpp.
+    """
+    print(f"{B}=== occurrence drain order (#4250) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_drain_order_4250.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence drain order (#4250) contract rows failed")
+        return 1
+    ok("occurrence drain order (#4250) clean")
+    return 0
+
+
 def cmd_moving_cover_reconciliation_3633_coverage():
     """Issue #3633: Moving densify cover is create-site-defined (pin / slot /
     RootRemapPass) — an arena-tracked small-pool object whose only live
@@ -25380,6 +25406,7 @@ def cmd_gate():
         or cmd_remount_densify_pairing_strip_3612_coverage()
         or cmd_mailbox_holder_send_lock_order_3613_coverage()
         or cmd_outermost_persist_order_3614_coverage()
+        or cmd_occurrence_drain_order_4250_coverage()
         or cmd_dual_graph_parity_cone_3615_coverage()
         or cmd_chaos_guard_hold_smoke_3620_coverage()
         or cmd_steal_identity_proof_3621_coverage()
@@ -26349,6 +26376,7 @@ def main():
         "remount-densify-pairing-strip-3612": cmd_remount_densify_pairing_strip_3612_coverage,
         "mailbox-holder-send-lock-order-3613": cmd_mailbox_holder_send_lock_order_3613_coverage,
         "outermost-persist-order-3614": cmd_outermost_persist_order_3614_coverage,
+        "occurrence-drain-order-4250": cmd_occurrence_drain_order_4250_coverage,
         "dual-graph-parity-cone-3615": cmd_dual_graph_parity_cone_3615_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,

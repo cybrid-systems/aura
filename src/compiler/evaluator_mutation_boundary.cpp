@@ -710,24 +710,23 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             return;
         }
     }
-    // (1) Persist live goals into the long-lived side buffer when enabled.
-    // Issue #3225: append seqlocks the persist log (production) so a
-    // concurrent densify/steal rehydrate cannot freeze a torn fingerprint.
-    const auto written = tc->maybe_persist_occurrence_snapshot(mutation_id);
-    // (2) Issue #2938: note commit-snapshot write (production/Full + non-empty).
-    if (written > 0) {
-        aura::compiler::typed_audit::note_occurrence_commit_snapshot_written(
-            mutation_id, static_cast<std::uint64_t>(written));
-    }
-    // (2.5) Issue #3190: drain pending_full_solve / locality residual before
-    // the outermost-success TypeLinearCommitProof stamp. Production/Full/Strict:
-    // force escalate → if still unsolved, hard-reject with force_reason 16
-    // (do NOT stamp green proof). Soft: observe only. Quiet (no residual):
-    // two size reads, zero extra atomics. Sibling #3031 already covers the
-    // composite_txn_commit / lockless batch paths (drain runs at the start of
-    // composite_txn_commit body); this site closes the residual SOLVED-with-dirty
-    // window that the outermost stamp could otherwise observe after a deferred
-    // delta. Anti SOLVED-with-dirty across batch.
+    // (1) Issue #3190 / #4250 (order, not a missing drain): drain
+    // pending_full_solve / locality residual BEFORE the outermost Occurrence
+    // persist write. #3190 originally ran this drain AFTER the helper's
+    // Occurrence persist write, so the buffer froze the
+    // pre-drain narrowing while the TypeLinearCommitProof stamped below was
+    // built from the post-drain CS. The drain's escalate_if_production() full
+    // solve can re-narrow live goals even when it returns SOLVED, so a
+    // concurrent densify/steal rehydrate restored the pre-drain snapshot under
+    // a post-drain proof (half-green Occurrence vs proof). The freeze must
+    // observe the drained CS: drain → persist → stamp, the same phase order
+    // #3031 (composite_txn_commit) and #3512 (stage expected after SDO+drain)
+    // already use. Sibling #3031 covers the composite_txn_commit / lockless
+    // batch paths; this site closes the residual SOLVED-with-dirty window the
+    // outermost stamp could otherwise observe after a deferred delta.
+    // Production/Full/Strict: force escalate → if still unsolved, hard-reject
+    // with force_reason 16 (do NOT stamp green proof). Soft: observe only.
+    // Quiet (no residual): two size reads, zero extra atomics.
     {
         auto* pre_stamp_cs = &tc->constraint_system();
         std::vector<aura::compiler::Constraint> drain_unresolved;
@@ -765,6 +764,17 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             // Soft: observe only, commit may succeed (drain already bumped
             // g_pending_full_solve_residual_observe_total in the helper).
         }
+    }
+    // (2) Persist live goals into the long-lived side buffer when enabled.
+    // Issue #3225: append seqlocks the persist log (production) so a
+    // concurrent densify/steal rehydrate cannot freeze a torn fingerprint.
+    // Issue #4250: the freeze now observes the drained CS from (1), so the
+    // snapshot fingerprint matches the post-drain proof stamped below.
+    const auto written = tc->maybe_persist_occurrence_snapshot(mutation_id);
+    // (3) Issue #2938: note commit-snapshot write (production/Full + non-empty).
+    if (written > 0) {
+        aura::compiler::typed_audit::note_occurrence_commit_snapshot_written(
+            mutation_id, static_cast<std::uint64_t>(written));
     }
     // Issue #3237: concurrent densify / nested abort recovery can latch
     // pending_full_solve residual AFTER drain SOLVED. Production/Full
