@@ -56,9 +56,36 @@ publish_atomic() {
     return 1
 }
 
+# Atomically install (or refresh) a BMI symlink LINK -> TARGET.
+#
+# The per-target .gcm files are read by concurrent compiles, so the swap has
+# to be atomic: removing the link and re-creating it leaves a window in which
+# the module path does not exist at all, and a reader that opens it during
+# that window dies with "failed to read compiled module" even though the BMI
+# was produced. Create the link under a temp name and rename(2) it into
+# place, so readers observe either the old complete link or the new complete
+# link. Also refuse to link to a TARGET that does not exist yet: a dangling
+# BMI symlink is worse than no link, because it turns a deterministic
+# missing-module error into an intermittent read error.
+link_bmi_atomic() {
+    local target="$1" link="$2" tmp
+    [ -e "$target" ] || return 1
+    # Do not clobber a directory (mv would move into it instead of over it).
+    [ -d "$link" ] && return 1
+    tmp="$link.tmp.$$"
+    if ln -sfn "$target" "$tmp" 2>/dev/null && mv -f "$tmp" "$link" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+}
+
 # Best-effort cleanup of any temp file left behind on failure/early exit.
 cleanup_tmp_gcm() {
     rm -f "$SHARED_GCM_ROOT"/*/*.tmp."$$" 2>/dev/null || true
+    # link_bmi_atomic temp links live beside the per-target .gcm files,
+    # not under SHARED_GCM_ROOT, so clear those too.
+    rm -f "$BUILD_DIR"/CMakeFiles/*/*.tmp."$$" 2>/dev/null || true
 }
 trap cleanup_tmp_gcm EXIT
 
@@ -232,12 +259,22 @@ sync_gcm() {
         if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
             publish_atomic "$src" "$dst" || true
         fi
-        # Never fail the compile on a concurrent gcm restat race.
-        rm -f "$src" 2>/dev/null || true
-        ln -sfn "$dst" "$src" 2>/dev/null || true
-        for c in "${consumers[@]}"; do
-            ln -sfn "$dst" "$c/$gcm_name" 2>/dev/null || true
-        done
+        # Publish-then-link, never delete-then-link. If the shared-cache
+        # copy is not present (publish failed - e.g. a sibling launcher in
+        # this same dir removed this real .gcm between our -f check and the
+        # cp), keep the real BMI in place. The old sequence
+        #   rm -f "$src"; ln -sfn "$dst" "$src"
+        # deleted the only complete copy and replaced it with a DANGLING
+        # symlink, so the next reader (a sibling compile in this dir, or a
+        # consumer import) died with "failed to read compiled module" while
+        # a retry - once the cache copy existed - succeeded.
+        if [ -f "$dst" ]; then
+            # Never fail the compile on a concurrent gcm restat race.
+            link_bmi_atomic "$dst" "$src" || true
+            for c in "${consumers[@]}"; do
+                link_bmi_atomic "$dst" "$c/$gcm_name" || true
+            done
+        fi
     fi
 }
 
@@ -272,7 +309,7 @@ if [ -d "$PRODUCER_CACHE" ]; then
         for c in "${consumers[@]}"; do
             # Skip the producer's own dir; that's already handled.
             [ "$c" = "$per_target_dir" ] && continue
-            ln -sfn "$gcm_file" "$c/$name" 2>/dev/null || true
+            link_bmi_atomic "$gcm_file" "$c/$name" || true
         done
     done
 fi
