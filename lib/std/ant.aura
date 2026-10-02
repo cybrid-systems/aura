@@ -131,7 +131,7 @@
                   (let ((name-end (string-index src " " start)))
                     (if (= name-end -1) names
                       (let ((name (substring src start name-end)))
-                        (scan name-end (cons name names))))))))))))))
+                        (scan name-end (cons name names)))))))))))))
 
 
 ; Find first numeric value in expected string
@@ -254,4 +254,4 @@
                                            (string-append "colony:tweak-" (number->string delta)))
                                    (try-deltas rest-ds (+ d-tried 1)))))))))))))
 
-              (#t (search-all rest-strat tried best-out))))))))))
+              (#t (search-all rest-strat tried best-out)))))))))

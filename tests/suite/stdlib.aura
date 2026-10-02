@@ -14,7 +14,7 @@
   (check= 6 (foldr + 0 (list 1 2 3)))
   (check= (1 2 3) (take-while (lambda (x) (< x 4)) (list 1 2 3 4 5)))
   (check= (4 5) (drop-while (lambda (x) (< x 4)) (list 1 2 3 4 5)))
-  (check= ((1 4) (2 5) (3 6)) (zip (list 1 2 3) (list 4 5 6)))))
+  (check= ((1 4) (2 5) (3 6)) (zip (list 1 2 3) (list 4 5 6))))
 
 (test-suite "stdlib:math"
   (require std/math)
@@ -24,7 +24,7 @@
   (check= 120 (factorial 5))
   (check (odd? 3))
   (check (even? 4))
-  (check>= 3.14 (pi))))
+  (check>= 3.14 (pi)))
 
 (test-suite "stdlib:string"
   (require std/string)
@@ -41,7 +41,7 @@
   ;; Issue #3920: string-find (haystack, needle) → index or -1
   (check= 2 (string-find "ab(lambda" "(lambda"))
   (check= 0 (string-find "(lambda (x) x)" "(lambda"))
-  (check= -1 (string-find "abc" "(lambda"))))
+  (check= -1 (string-find "abc" "(lambda")))
 
 (test-suite "stdlib:json"
   (require std/json)
@@ -59,7 +59,7 @@
 
 (test-suite "stdlib:validate"
   (require std/validate)
-  (check (valid? (validate '{"type": "number"} 42))))
+  (check (valid? (validate "{\"type\": \"number\"}" 42))))
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; std/net — HTTP client + URL utilities

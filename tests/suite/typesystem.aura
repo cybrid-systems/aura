@@ -147,7 +147,7 @@
   ;; 9. Multi-ctor covered with wildcard for rest
   (check= 1
     (begin (define-type (Season) (Spring) (Summer) (Fall) (Winter))
-      (let ((x Spring)) (match x ((Spring) 1) (_ 0))))))
+      (let ((x Spring)) (match x ((Spring) 1) (_ 0)))))
 
 (test-suite "typesystem:value-restriction"
   (check= 42

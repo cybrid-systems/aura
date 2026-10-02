@@ -533,6 +533,33 @@ NodeId parse_if(ParserState& s) {
 
 NodeId parse_lambda(ParserState& s) {
     auto tok = s.lex.consume(); // 'lambda'
+    // (lambda xs body...) — rest-args shorthand. A failed consume of the
+    // param list used to leave the ')' for the top-level reader; #4272
+    // now hard-fails that leftover instead of skipping it.
+    if (s.lex.peek().kind == TokenKind::Identifier) {
+        auto rest = s.lex.consume();
+        std::vector<SymId> params;
+        std::vector<NodeId> annots;
+        params.push_back(s.pool.intern(std::string(rest.text)));
+        annots.push_back(NULL_NODE);
+        std::vector<NodeId> body_exprs;
+        while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
+            auto be = parse_expr(s);
+            if (be != NULL_NODE)
+                body_exprs.push_back(be);
+            if (s.lex.peek().kind == TokenKind::RParen)
+                break;
+        }
+        if (s.lex.peek().kind == TokenKind::RParen)
+            s.lex.consume();
+        if (body_exprs.empty())
+            return NULL_NODE;
+        auto body = body_exprs.size() == 1 ? body_exprs[0]
+                                           : s.flat.add_begin(body_exprs.data(), body_exprs.size());
+        auto lid = s.flat.add_lambda(params, annots, body, /*dotted=*/true);
+        s.flat.set_loc(lid, tok.line, tok.column);
+        return lid;
+    }
     if (s.lex.consume().kind != TokenKind::LParen)
         return NULL_NODE;
 

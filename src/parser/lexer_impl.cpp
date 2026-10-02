@@ -40,7 +40,7 @@ Token Lexer::advance() {
                 return read_number();
             if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' ||
                 c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':' ||
-                c == '&')
+                c == '&' || c == '%')
                 return read_identifier();
             if (c == '"')
                 return read_string();
@@ -270,7 +270,7 @@ Token Lexer::read_identifier() {
         char c = source_[pos_];
         if (std::isalnum((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' ||
             c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':' ||
-            c == '&')
+            c == '&' || c == '%')
             pos_++;
         else
             break;

@@ -28,4 +28,4 @@
 
 (test-suite "module:require-compat"
   (require std/math all:)
-  (check (>= (sqrt 16) 4.0))))
+  (check (>= (sqrt 16) 4.0)))

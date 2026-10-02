@@ -54,7 +54,7 @@
 (test-suite "orch:parallel-single"
   (orch:define-role "inc" (cons (lambda (x) (+ x 1)) "direct"))
   (let ((r (orch:parallel (list inc) 0)))
-    (and (pair? r) (= (car r) 1)))))
+    (and (pair? r) (= (car r) 1))))
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; P1: Agent lifecycle — spawn, ask, status, stop, restart

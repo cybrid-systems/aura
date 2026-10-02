@@ -638,9 +638,18 @@ int run_test_agent_ask_typed_corr() {
         spec4049.attach_mailbox = true;
         spec4049.mailbox_high_water = 16;
         spec4049.keepalive_interval_ms = 0;
+        // Default mutation_boundary attaches the mailbox for the whole
+        // empty body and #2312 answers every ask with backpressure before
+        // the stale-handoff recv arm. Pure reasoning, then wait until the
+        // fiber has detached.
+        spec4049.mutation_boundary = false;
         spec4049.body = [] {};
         b4049 = spawn_agent_with_mailbox(sched4049, std::move(spec4049));
         CHECK(b4049.ok && b4049.mailbox != nullptr, "4049 AC5: B spawned");
+        if (b4049.fiber) {
+            for (int i = 0; i < 400 && !b4049.fiber->is_done(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
 
         std::atomic<bool> running4049{true};
         aura::serve::Fiber dummy4049([] {});
@@ -685,9 +694,11 @@ int run_test_agent_ask_typed_corr() {
         // Bounded retry: if the asker pops the reply inside the sub-µs
         // push→clear window (race lost), this attempt delivers Ok; a fresh
         // ask gets a properly cleared stale message.
-        for (int attempt = 0; attempt < 3 && !stale_seen4049; ++attempt) {
+        for (int attempt = 0; attempt < 8 && !stale_seen4049; ++attempt) {
             r4049 = agent_ask(b4049, "stale-ping-4049", /*timeout_ms=*/10000);
             stale_seen4049 = std::string_view(r4049.status) == "handoff-required";
+            if (!stale_seen4049)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         CHECK(stale_seen4049 && !r4049.ok,
               std::format("4049 AC5: stale held_ref reply → handoff-required (status={})",
