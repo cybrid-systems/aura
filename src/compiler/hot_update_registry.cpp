@@ -904,6 +904,12 @@ void HotUpdateRegistry::reset_residual_force_observe_for_test() noexcept {
 // next observe. The FallBackJit path cannot no-op: its covered clear
 // always changes the face, so no re-arm is needed there. Still no
 // playbook auto-execution.
+//
+// Issue #4290: multi-eval overlay (eval_force_live_ > 1) also drives one
+// ResidualForceHeal min-dirty pass per peer slot whose mask is still
+// outside last_reemit_success, with force_owner_tls set to that peer.
+// The owner word is restored. live<=1 / idle / Soft add no drive, and
+// peer bits are not wholesale-cleared.
 void HotUpdateRegistry::observe_residual_force_stale() noexcept {
     if (aura_production_defaults_active_probe() == 0)
         return; // Soft / Off: zero extra walk
@@ -967,6 +973,7 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
             // auto-heal is ResidualForceHeal (not Cascade dirty). Storm-clear
             // / drain still use CoverageVerify via the default argument.
             (void)maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal);
+            nudge_peer_residual_force_heal();
             // Issue #4147: re-arm the one-shot cap when the heal was a
             // no-op. If the residual mask is unchanged vs the armed
             // generation, the cap above would block every later retry
@@ -998,6 +1005,29 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         last_force_jit_repromote_at_epoch_notify_.store(
             epoch_notify_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
+}
+
+void HotUpdateRegistry::nudge_peer_residual_force_heal() noexcept {
+    // Single-eval and idle overlay: the owner drive is the only pass.
+    // Do not walk slots (#3096 / #4147 windows stay one heal).
+    if (eval_force_live_.load(std::memory_order_relaxed) <= 1)
+        return;
+    const auto saved = force_eval_owner_.load(std::memory_order_relaxed);
+    void* saved_tls = aura_aot_get_reemit_owner_eval();
+    const auto cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        const auto key = eval_force_slots_[i].eval.load(std::memory_order_relaxed);
+        if (key == 0 || key == saved)
+            continue;
+        const auto smask = eval_force_slots_[i].mask.load(std::memory_order_relaxed);
+        if ((smask & ~cov) == 0)
+            continue;
+        force_eval_owner_.store(key, std::memory_order_relaxed);
+        aura_aot_set_reemit_owner_eval(reinterpret_cast<void*>(key));
+        (void)maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal);
+    }
+    force_eval_owner_.store(saved, std::memory_order_relaxed);
+    aura_aot_set_reemit_owner_eval(saved_tls);
 }
 
 extern "C" std::uint64_t aura_hot_update_residual_force_mask(void) {

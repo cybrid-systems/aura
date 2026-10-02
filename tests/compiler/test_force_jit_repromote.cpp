@@ -4,6 +4,7 @@
 //          Issue #2895 — last success coverage + partial re-promote knobs
 //          (refine #2502/#2601).
 //          Issue #3541 — partial clear is per-eval; peer overlay bits stay.
+//          Issue #4290 — ResidualForceHeal also drives peer EvalForceSlots.
 //
 //   #2502 AC1: force-JIT Defuse → N successful reemits, no storm → bit cleared
 //   #2502 AC2: storm active or new fail reason in window → no re-promote
@@ -706,6 +707,124 @@ static void ac4289_noslot_refuses_process_clear() {
     clear_idle(reg);
 }
 
+// ── #4290: peer slot gets one ResidualForceHeal drive; bits stay put ──
+static void ac4290_peer_slot_heal_nudge() {
+    std::println("\n--- #4290: peer EvalForceSlot ResidualForceHeal nudge ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA4290));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB4290));
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+
+    aura_aot_set_reemit_owner_eval(eval_a);
+    reg.set_force_eval_owner(eval_a);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    aura_aot_set_reemit_owner_eval(eval_b);
+    reg.set_force_eval_owner(eval_b);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+
+    // Heal A. B's Env stays in its slot and in the process word.
+    aura_aot_set_reemit_owner_eval(eval_a);
+    reg.set_force_eval_owner(eval_a);
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_a) & defuse_bit) == 0,
+          "4290: A Defuse cleared");
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_b) & env_bit) != 0,
+          "4290: B Env still demoted");
+    CHECK((reg.last_reemit_success_region_mask() & defuse_bit) != 0, "4290: A coverage stamped");
+    CHECK((reg.residual_force_mask() & env_bit) != 0, "4290: B residual remains");
+
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev_prod = prod.load(std::memory_order_relaxed);
+    prod.store(1, std::memory_order_relaxed);
+    const char* old_cv = std::getenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+    const bool had_cv = old_cv != nullptr;
+    const std::string saved_cv = had_cv ? std::string(old_cv) : std::string();
+    setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
+
+    reg.reset_residual_force_observe_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.reset_exhausted_min_dirty_retry_for_test();
+    reg.exhaust_retry_for_test();
+    reg.reset_coverage_verify_for_test();
+    reg.set_force_eval_owner(eval_a);
+    aura_aot_set_reemit_owner_eval(eval_a);
+
+    const auto sched0 = reg.coverage_verify_scheduled_total();
+    const auto heal0 = reg.residual_force_auto_heal_total();
+    const auto b_mask = reg.force_jit_regions_mask_for_eval(eval_b);
+    const auto a_mask = reg.force_jit_regions_mask_for_eval(eval_a);
+    for (int i = 0; i < 300; ++i)
+        reg.observe_residual_force_stale();
+
+    CHECK(reg.residual_force_auto_heal_total() == heal0 + 1, "4290: one age-window heal");
+    CHECK(reg.coverage_verify_scheduled_total() == sched0 + 2, "4290: owner drive plus peer drive");
+    CHECK(reg.force_jit_regions_mask_for_eval(eval_b) == b_mask,
+          "4290: B slot not wholesale-cleared");
+    CHECK(reg.force_jit_regions_mask_for_eval(eval_a) == a_mask, "4290: A slot unchanged");
+    CHECK((reg.last_reemit_success_region_mask() & defuse_bit) != 0, "4290: A green coverage kept");
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & env_bit) != 0,
+          "4290: process word keeps B");
+
+    // live==1: the peer walk does not add a second drive.
+    clear_idle(reg);
+    prod.store(1, std::memory_order_relaxed);
+    void* only = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x14290));
+    aura_aot_set_reemit_owner_eval(only);
+    reg.set_force_eval_owner(only);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    reg.reset_residual_force_observe_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.reset_exhausted_min_dirty_retry_for_test();
+    reg.exhaust_retry_for_test();
+    reg.reset_coverage_verify_for_test();
+    for (int i = 0; i < 300; ++i)
+        reg.observe_residual_force_stale();
+    CHECK(reg.coverage_verify_scheduled_total() == 1, "4290: single-eval is one drive");
+
+    // Soft / Off still returns before the heal and the peer walk.
+    clear_idle(reg);
+    prod.store(0, std::memory_order_relaxed);
+    aura_aot_set_reemit_owner_eval(eval_a);
+    reg.set_force_eval_owner(eval_a);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    aura_aot_set_reemit_owner_eval(eval_b);
+    reg.set_force_eval_owner(eval_b);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    reg.reset_residual_force_observe_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.exhaust_retry_for_test();
+    reg.reset_coverage_verify_for_test();
+    const auto soft_heal = reg.residual_force_auto_heal_total();
+    for (int i = 0; i < 300; ++i)
+        reg.observe_residual_force_stale();
+    CHECK(reg.residual_force_auto_heal_total() == soft_heal, "4290: Soft observe does not heal");
+    CHECK(reg.coverage_verify_scheduled_total() == 0, "4290: Soft schedules nothing");
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_b) & env_bit) != 0, "4290: Soft leaves B");
+
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("Issue #4290") != std::string::npos, "4290: cite");
+    CHECK(cpp.find("nudge_peer_residual_force_heal") != std::string::npos, "4290: helper");
+    CHECK(cpp.find("eval_force_live_.load(std::memory_order_relaxed) <= 1") != std::string::npos,
+          "4290: live<=1 guard");
+    CHECK(cpp.find("schema-4290") == std::string::npos, "4290: no query key");
+    CHECK(read_file("tests/compiler/test_issue_4290.cpp").empty(), "4290: no new test file");
+
+    if (had_cv)
+        setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", saved_cv.c_str(), 1);
+    else
+        unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+    prod.store(prev_prod, std::memory_order_relaxed);
+    clear_idle(reg);
+}
+
 // ── #3541 AC2: nullptr owner keeps legacy process-word partial ──
 static void ac3541_legacy_null_owner() {
     std::println("\n--- #3541 AC2: nullptr owner is the legacy process-word path ---");
@@ -861,6 +980,7 @@ int run_test_force_jit_repromote() {
     ac2949_production_only_covered_default();
     ac3541_peer_bits_preserved();
     ac4289_noslot_refuses_process_clear();
+    ac4290_peer_slot_heal_nudge();
     ac3541_legacy_null_owner();
     ac3541_idle_zero_cost();
     ac3541_soft_no_abort();
@@ -868,7 +988,8 @@ int run_test_force_jit_repromote() {
     ac3682_idle_cascade_no_coverage();
     if (g_failed)
         return 1;
-    std::println("force-jit re-promote #2502/#2895/#2949/#2978/#3541: OK ({} passed)", g_passed);
+    std::println("force-jit re-promote #2502/#2895/#2949/#2978/#3541/#4290: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 
