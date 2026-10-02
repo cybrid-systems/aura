@@ -6369,14 +6369,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 (void)r;
             }
             if (!auto_recover_attempted) {
-                // Issue #3782: LCP skip-compact leaves had_moving_densify=false
-                // (no relocate) but the densify face still failed closed —
-                // publish as an attempted densify with pin held false so
-                // window_would_allow_mutate is false (mirrors #3200 soft-gate
-                // blocked window: had=true, pin=false, objects_moved=0).
-                const bool publish_had = had_moving_densify || densify_entry_lcp_blocked;
+                // Issue #3782: LCP skip publishes had=true, pin=false.
+                const bool blocked = densify_moving_blocked;
+                const bool publish_had = had_moving_densify || densify_entry_lcp_blocked || blocked;
+                const bool pin_for_publish =
+                    pin_contract_held && densify_consistency.pin_ok && !blocked;
                 aura::core::moving_densify_health::publish_last_moving_densify_window(
-                    publish_had, pin_contract_held && densify_consistency.pin_ok, incomplete,
+                    publish_had, pin_for_publish, incomplete,
                     static_cast<std::uint64_t>(densify_objects_moved),
                     static_cast<std::uint64_t>(densify_untracked_kept),
                     static_cast<std::uint64_t>(densify_root_remap_fails),
@@ -6385,6 +6384,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Issue #3955: sticky recover densify ran lock-held; release now
             // (idempotent with #3894 happy-path unlock after compact).
             release_workspace_then_drain_after_densify_();
+            // Issue #4288: soft-gate blocked is folded into the publish above.
         }
         // Issue #2975: production hard gate on every outermost Phase-5 exit
         // (success *and* non-intentional-failure). Shared residual leftover

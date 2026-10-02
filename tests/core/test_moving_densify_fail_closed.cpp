@@ -4940,6 +4940,67 @@ static void ac4287_blocked_retry_publish_closes_window() {
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
 }
 
+static void ac4288_phase5_blocked_publish_closes_window() {
+    std::println("\n--- #4288: Phase-5 soft-gate publish does not vacuous-green would_allow ---");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #4288") != std::string::npos, "4288: Phase-5 publish cites blocked");
+    CHECK(mut.find("publish_had = had_moving_densify || densify_entry_lcp_blocked || blocked") !=
+              std::string::npos,
+          "4288: publish_had folds densify_moving_blocked");
+    CHECK(mut.find("pin_for_publish =\n                    pin_contract_held && "
+                   "densify_consistency.pin_ok && !blocked") != std::string::npos ||
+              mut.find("pin_contract_held && densify_consistency.pin_ok && !blocked") !=
+                  std::string::npos,
+          "4288: published pin folds blocked");
+    CHECK(read_file("tests/core/test_issue_4288.cpp").empty(), "4288: no invent");
+    CHECK(read_file("docs/design/4288-phase5-blocked-publish.md").empty(), "4288: no docs/design");
+
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
+    // Prior members leave a live densify-fail admit snapshot. A clean
+    // override lets Phase-5 run; the publish under test is the Moving window.
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    auto& ev = cs.evaluator();
+    int sentinel = 0;
+    aura::ast::note_temporary_moving_live_ptr(&sentinel);
+    // Soft-gate moves nothing, so Phase-5 does not bump the fail counter
+    // (that bump is gated on had_moving_densify). Success must not bump.
+    const auto success0 = aura::ast::g_moving_unified_success_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    auto g = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    if (!g.has_value()) {
+        CHECK(false, std::format("4288: guard acquire ({})", g.error().message));
+    } else {
+        g.value().reset();
+        const auto hs = aura::core::moving_densify_health::snapshot();
+        CHECK(!hs.would_allow_mutate, "4288: soft-gate publish keeps would_allow false");
+        CHECK(hs.objects_moved == 0, "4288: soft-gate moved nothing");
+        CHECK(!hs.pin_contract_held, "4288: published pin is false");
+        CHECK(hs.agent_throttle, "4288: production-hard throttle is set");
+        CHECK(aura::ast::g_moving_unified_success_total.load(std::memory_order_relaxed) == success0,
+              "4288: unified success stays false");
+    }
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
 static void ac4143_4_wiring_no_invent() {
     std::println("\n--- #4143 AC4: wiring + no invented model ---");
     const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -8061,6 +8122,7 @@ int run_test_moving_densify_fail_closed() {
     ac4143_3_source_cite_clear_after_retry();
     ac4143_4_wiring_no_invent();
     ac4287_blocked_retry_publish_closes_window();
+    ac4288_phase5_blocked_publish_closes_window();
 
     std::println("\n=== Issue #4144: EnvFrame pool_ aliases get lasting slot remap "
                  "(#3647 sibling; extends fail_closed per #81967) ===");
