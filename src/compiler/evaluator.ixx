@@ -7332,7 +7332,8 @@ public:
             , scope_tenant_(o.scope_tenant_)
             , scope_mid_(o.scope_mid_)
             , fiber_id_(o.fiber_id_)
-            , active_(o.active_) {
+            , active_(o.active_)
+            , prev_quota_tenant_(o.prev_quota_tenant_) {
             o.active_ = false;
             o.ev_ = nullptr;
         }
@@ -7354,6 +7355,10 @@ public:
         std::uint64_t scope_mid_ = 0;
         std::uint32_t fiber_id_ = 0;
         bool active_ = false;
+        // Issue #4279: quota TLS at enter. Release restores it so a scope
+        // that bound the entered principal cannot leave that bucket on the
+        // worker. Append-only.
+        std::uint64_t prev_quota_tenant_ = 0;
     };
     void grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
                                    std::uint16_t effect_bits) noexcept;

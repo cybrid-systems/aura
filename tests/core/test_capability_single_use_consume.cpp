@@ -34,6 +34,7 @@
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
+#include "core/resource_quota.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
@@ -1689,6 +1690,145 @@ static void ac4278_4_source_cite() {
     CHECK(read_file("tests/core/test_issue_4278.cpp").empty(), "4278 AC4: no test_issue_4278.cpp");
     CHECK(!std::filesystem::exists("docs/design/4278-sticky-string-caps.md"),
           "4278 AC4: no docs/design");
+    reset_all();
+}
+
+// ── Issue #4279: principal switch must follow into quota TLS ────────
+// Per-tenant ResourceQuota keys off current_quota_tenant(). Changing
+// the capability principal without that TLS charges the previous bucket.
+
+static void ac4279_cleanup_quota() {
+    using aura::core::resource_quota::clear_quota_per_tenant_test_override;
+    using aura::core::resource_quota::reset_process_resource_quota_for_test;
+    using aura::core::resource_quota::set_current_quota_tenant;
+    reset_process_resource_quota_for_test();
+    clear_quota_per_tenant_test_override();
+    set_current_quota_tenant(0);
+}
+
+static void ac4279_1_scope_binds_and_restores() {
+    std::println("\n--- #4279 AC1: TenantScope binds quota TLS and restores ---");
+    reset_all();
+    using aura::core::resource_quota::current_quota_tenant;
+    using aura::core::resource_quota::set_current_quota_tenant;
+    using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+    set_quota_per_tenant_enabled_for_test(true);
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& a = cs_a.evaluator();
+    auto& b = cs_b.evaluator();
+    a.set_capability_tenant_id(11);
+    b.set_capability_tenant_id(22);
+    ac4278_arm_restricted(a);
+    ac4278_arm_restricted(b);
+    set_current_quota_tenant(11);
+    a.set_tenant_principal(11);
+    CHECK(current_quota_tenant() == 11, "4279 AC1: principal 11 binds quota TLS");
+    CHECK(b.capability_tenant_id() == 22, "4279 AC1: evaluator B principal untouched");
+    {
+        Evaluator::TenantScope outer(a, 22);
+        CHECK(a.capability_tenant_id() == 22, "4279 AC1: scope enters 22");
+        CHECK(current_quota_tenant() == 22, "4279 AC1: quota TLS follows scope 22");
+        CHECK(b.capability_tenant_id() == 22, "4279 AC1: B still 22 inside A's scope");
+        {
+            Evaluator::TenantScope inner(a, 33);
+            CHECK(current_quota_tenant() == 33, "4279 AC1: nested scope binds 33");
+            CHECK(a.capability_tenant_id() == 33, "4279 AC1: nested principal is 33");
+        }
+        CHECK(current_quota_tenant() == 22, "4279 AC1: inner exit restores 22");
+        CHECK(a.capability_tenant_id() == 22, "4279 AC1: inner exit restores principal 22");
+    }
+    CHECK(current_quota_tenant() == 11, "4279 AC1: outer exit restores quota TLS 11");
+    CHECK(a.capability_tenant_id() == 11, "4279 AC1: outer exit restores principal 11");
+    CHECK(b.capability_tenant_id() == 22, "4279 AC1: B principal unchanged after A's scopes");
+    ac4279_cleanup_quota();
+    reset_all();
+}
+
+static void ac4279_2_stale_tls_cannot_charge_other_tenant() {
+    std::println("\n--- #4279 AC2: scope tenant cannot exhaust the previous bucket ---");
+    reset_all();
+    using aura::core::resource_quota::current_quota_tenant;
+    using aura::core::resource_quota::Dimension;
+    using aura::core::resource_quota::process_resource_quota;
+    using aura::core::resource_quota::set_current_quota_tenant;
+    using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+    set_quota_per_tenant_enabled_for_test(true);
+    auto& pq = process_resource_quota();
+    pq.set_limit(Dimension::Fibers, 100);
+    pq.set_tenant_limit(11, Dimension::Fibers, 1);
+    pq.set_tenant_limit(22, Dimension::Fibers, 50);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(11);
+    ac4278_arm_restricted(ev);
+    set_current_quota_tenant(11);
+    {
+        Evaluator::TenantScope scope(ev, 22);
+        CHECK(current_quota_tenant() == 22, "4279 AC2: consume key is the scope principal");
+        CHECK(!pq.check_and_consume(Dimension::Fibers, 5, current_quota_tenant()).has_value(),
+              "4279 AC2: five fibers charge the scope tenant");
+        CHECK(pq.tenant_used(22, Dimension::Fibers) == 5, "4279 AC2: bucket 22 holds the consume");
+        CHECK(pq.tenant_used(11, Dimension::Fibers) == 0, "4279 AC2: bucket 11 was not charged");
+    }
+    CHECK(current_quota_tenant() == 11, "4279 AC2: exit restores tenant 11");
+    CHECK(!pq.check_and_consume(Dimension::Fibers, 1, current_quota_tenant()).has_value(),
+          "4279 AC2: tenant 11 still has its own fiber");
+    auto denied = pq.check_and_consume(Dimension::Fibers, 1, current_quota_tenant());
+    CHECK(denied.has_value(), "4279 AC2: tenant 11 saturates on its own limit");
+    CHECK(pq.tenant_used(22, Dimension::Fibers) == 5, "4279 AC2: 22 stays at the in-scope consume");
+    ac4279_cleanup_quota();
+    reset_all();
+}
+
+static void ac4279_3_soft_and_map_off_skip() {
+    std::println("\n--- #4279 AC3: Soft/Off and a dark map do not touch quota TLS ---");
+    reset_all();
+    using aura::core::resource_quota::current_quota_tenant;
+    using aura::core::resource_quota::set_current_quota_tenant;
+    using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+    set_quota_per_tenant_enabled_for_test(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+    set_current_quota_tenant(3);
+    ev.set_tenant_principal(9);
+    CHECK(current_quota_tenant() == 3, "4279 AC3: Off principal switch leaves quota TLS");
+    {
+        Evaluator::TenantScope scope(ev, 9);
+        CHECK(current_quota_tenant() == 3, "4279 AC3: Off scope does not bind quota TLS");
+    }
+    CHECK(current_quota_tenant() == 3, "4279 AC3: Off scope exit leaves quota TLS");
+    set_quota_per_tenant_enabled_for_test(false);
+    ac4278_arm_restricted(ev);
+    set_current_quota_tenant(3);
+    ev.set_tenant_principal(9);
+    CHECK(current_quota_tenant() == 3, "4279 AC3: Restricted with the map off leaves quota TLS");
+    ac4279_cleanup_quota();
+    reset_all();
+}
+
+static void ac4279_4_source_cite() {
+    std::println("\n--- #4279 AC4: source-cite quota TLS sync; no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(sec.find("Issue #4279") != std::string::npos, "4279 AC4: set_tenant_principal cites");
+    CHECK(sec.find("bind_quota_tls_to_principal") != std::string::npos, "4279 AC4: bind helper");
+    CHECK(sec.find("prev_quota_tenant_") != std::string::npos,
+          "4279 AC4: scope snapshots quota TLS");
+    CHECK(ixx.find("prev_quota_tenant_") != std::string::npos, "4279 AC4: ixx field");
+    const auto rel = fiber.find("aura_fiber_release_tenant_scope_after_yield");
+    CHECK(rel != std::string::npos, "4279 AC4: yield release present");
+    const auto cite = fiber.find("Issue #4279", rel);
+    const auto restore = fiber.find("g_fiber_prev_quota_tenant", rel);
+    CHECK(cite != std::string::npos && restore != std::string::npos && cite < restore,
+          "4279 AC4: scope release runs before the ambient quota restore");
+    CHECK(read_file("tests/core/test_issue_4279.cpp").empty(), "4279 AC4: no test_issue_4279.cpp");
+    CHECK(!std::filesystem::exists("docs/design/4279-quota-tls-principal.md"),
+          "4279 AC4: no docs/design");
     reset_all();
 }
 
@@ -4024,6 +4164,10 @@ int run_test_capability_single_use_consume() {
         ac4278_2_no_session_refuses_write_side();
         ac4278_3_soft_off_stays_sticky();
         ac4278_4_source_cite();
+        ac4279_1_scope_binds_and_restores();
+        ac4279_2_stale_tls_cannot_charge_other_tenant();
+        ac4279_3_soft_and_map_off_skip();
+        ac4279_4_source_cite();
         // Issue #3279: session_bound orphan fail-closed sweep.
         ac3279_1_soft_observe_only();
         ac3279_2_production_revoke();
@@ -4676,6 +4820,10 @@ int run_test_inert_session_mid_3723() {
     ac4278_2_no_session_refuses_write_side();
     ac4278_3_soft_off_stays_sticky();
     ac4278_4_source_cite();
+    ac4279_1_scope_binds_and_restores();
+    ac4279_2_stale_tls_cannot_charge_other_tenant();
+    ac4279_3_soft_and_map_off_skip();
+    ac4279_4_source_cite();
     ac3902_1_soft_epoch0_consume_honest_unset();
     ac3902_2_hard_face_invent_1();
     ac3902_3_real_epoch_passthrough();
