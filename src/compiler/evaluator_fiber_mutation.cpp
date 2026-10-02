@@ -1497,6 +1497,11 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
             aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
         }
     }
+    // Issue #4278: string caps are not registry rows. Retire after the
+    // registry lock drops so an abort that never reaches Guard dtor
+    // cannot leave compile / compile-dirty / compile-deopt live. A later
+    // dtor retire of the same mid is a no-op.
+    retire_session_string_caps(mid);
 }
 
 // Issue #2932: hold-budget overtime forced outermost fail-closed at a
@@ -3044,13 +3049,26 @@ extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber) {
         ev->complete_post_join_linear_enforcement(joined_fiber);
     // Issue #3563: always revoke session grants on join Done (even when
     // no Evaluator is attached — registry-only).
-    if (auto* f = static_cast<aura::serve::Fiber*>(joined_fiber))
+    // Issue #4278: capture the session mid before the registry revoke
+    // clears it, then drop write-side string caps on the attached
+    // Evaluator. Registry lock is not held across the string retire.
+    if (auto* f = static_cast<aura::serve::Fiber*>(joined_fiber)) {
+        const auto mid = f->session_mid();
         revoke_session_grants_on_fiber_join(f);
+        if (ev && mid != 0)
+            ev->retire_session_string_caps(mid);
+    }
 }
 
 extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber) {
-    if (auto* f = static_cast<aura::serve::Fiber*>(joined_fiber))
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (auto* f = static_cast<aura::serve::Fiber*>(joined_fiber)) {
+        const auto mid = f->session_mid();
         revoke_session_grants_on_fiber_join(f);
+        // Issue #4278: same string retire as the full join hook.
+        if (ev && mid != 0)
+            ev->retire_session_string_caps(mid);
+    }
 }
 
 // Issue #1880 / #2118 / #2555: thread-local TransactionGuard for orch agent body

@@ -7113,6 +7113,10 @@ public:
     // registry mutex the wrapper holds.
     void grant_capability(std::string cap, bool single_use, bool session_bound,
                           std::uint64_t provenance_mutation_id);
+    // Issue #4278: drop write-side SECURITY_EXEMPT strings bound to `mid`.
+    // Called from outermost Guard exit and fiber-join revoke. mid==0 or an
+    // empty table is a no-op (Soft/Off never records).
+    void retire_session_string_caps(std::uint64_t mid) noexcept;
     void bump_capability_denial() noexcept {
         capability_denial_count_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -16364,6 +16368,16 @@ private:
     bool expected_occurrence_fp_staged_ = false;
     // Issue #3658: type dirty txn + mirror ran this outermost boundary.
     bool type_dirty_txn_this_boundary_ = false;
+    // Issue #4278: write-side SECURITY_EXEMPT names (compile /
+    // compile-dirty / compile-deopt) bound to the outermost session mid
+    // that granted them. Read-only observability (compile-stats, query,
+    // sandbox, macro, exception-control) stays sticky — those names do
+    // not gate a sandboxed write prim. Append-only at struct end.
+    struct SessionStringCap {
+        std::string name;
+        std::uint64_t mid = 0;
+    };
+    std::vector<SessionStringCap> session_string_caps_;
 };
 
 
