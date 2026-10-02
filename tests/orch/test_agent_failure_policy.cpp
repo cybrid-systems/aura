@@ -146,6 +146,49 @@ static void ac3208_stop(AgentScope& scope, std::atomic<bool>& keep) {
     }
 }
 
+// Issue #4022: watch_agent_liveness returns Alive as soon as the body
+// clock is younger than stall_ms. A sleep that starts at spawn races a
+// late first schedule (CI jobs>1): the entry seed lands inside the stall
+// window, RestartN never runs, and restart_denied stays 0. Publish the
+// handle after emplace (the fiber can run before handles_.back() exists),
+// wait until that body has noted progress, then age that stamp past
+// stall_ms before watch.
+struct ProgressArm {
+    std::atomic<AgentHandle*> self{nullptr};
+    std::atomic<int> noted{0};
+};
+
+static void progress_stall_body(ProgressArm& arm, std::atomic<bool>& keep, bool exit_on_cancel) {
+    AgentHandle* h = nullptr;
+    for (;;) {
+        h = arm.self.load(std::memory_order_acquire);
+        if (h)
+            break;
+        if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+            return;
+        fiber_sleep_ms(1);
+    }
+    note_agent_progress(*h);
+    arm.noted.store(1, std::memory_order_release);
+    while (keep.load(std::memory_order_relaxed)) {
+        if (exit_on_cancel &&
+            ((h->fiber && h->fiber->is_cancel_requested()) ||
+             (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())))
+            return;
+        fiber_sleep_ms(50);
+    }
+}
+
+// False when the body never published a progress stamp.
+static bool wait_progress_then_age(ProgressArm& arm, int stall_ms) {
+    for (int i = 0; i < 400 && arm.noted.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    if (arm.noted.load(std::memory_order_acquire) == 0)
+        return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(stall_ms + 80));
+    return true;
+}
+
 // #3433: Timeout + still-running is Reclaimed-defer (RestartN/Cancel skip).
 // Join-fail fuel needs the body to exit on cancel so drain can complete.
 constexpr std::uint64_t kJoinFailDrainMs = 500;
@@ -1384,6 +1427,7 @@ int run_test_agent_failure_policy() {
             Scheduler sched(1);
             SchedRunner runner(sched);
             std::atomic<bool> keep{true};
+            ProgressArm arm;
             AgentScope scope(sched);
             AgentSpec spec;
             spec.name = "4022-soft-quota";
@@ -1391,18 +1435,16 @@ int run_test_agent_failure_policy() {
             spec.keepalive_interval_ms = 50;
             // Ignore cancel so Soft's immediate replace races while the
             // fiber slot is still held (quota deny stays reliable).
-            spec.body = [&] {
-                note_agent_progress(scope.handles_mut().back());
-                while (keep.load(std::memory_order_relaxed))
-                    fiber_sleep_ms(50);
-            };
+            spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/false); };
             auto& h0 = scope.spawn(spec);
             CHECK(h0.ok && h0.fiber, "4022 AC1: initial spawn ok");
+            arm.self.store(&h0, std::memory_order_release);
+            CHECK(wait_progress_then_age(arm, /*stall_ms=*/100),
+                  "4022 AC1: body noted progress before quota");
             const auto used = pq.used(Dimension::Fibers);
             CHECK(!pq.check_and_consume(Dimension::Fibers, 1).has_value(),
                   "4022 AC1: phantom fiber hold");
             pq.set_limit(Dimension::Fibers, used); // used=used+1 > limit; after exit used==limit
-            std::this_thread::sleep_for(std::chrono::milliseconds(180));
             const auto rst0 =
                 g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
             const auto den0 = g_orch_module_stats.agent_restart_spawn_denied_total.load(
@@ -1449,20 +1491,22 @@ int run_test_agent_failure_policy() {
             Scheduler sched(1);
             SchedRunner runner(sched);
             std::atomic<bool> keep{true};
+            ProgressArm arm;
             AgentScope scope(sched);
             AgentSpec spec;
             spec.name = "4022-prod-quota";
             spec.attach_mailbox = false;
             spec.keepalive_interval_ms = 50;
             // Exits on cancel so production drain completes, then spawn denies.
-            spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
+            spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/true); };
             auto& h0 = scope.spawn(spec);
             CHECK(h0.ok && h0.fiber, "4022 AC2: spawn ok");
+            arm.self.store(&h0, std::memory_order_release);
+            CHECK(wait_progress_then_age(arm, /*stall_ms=*/100), "4022 AC2: body noted progress");
             const auto used = pq.used(Dimension::Fibers);
             CHECK(!pq.check_and_consume(Dimension::Fibers, 1).has_value(),
                   "4022 AC2: phantom fiber hold");
             pq.set_limit(Dimension::Fibers, used);
-            std::this_thread::sleep_for(std::chrono::milliseconds(180));
             const auto rst0 =
                 g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
             const auto den0 = g_orch_module_stats.agent_restart_spawn_denied_total.load(
@@ -1515,21 +1559,21 @@ int run_test_agent_failure_policy() {
             Scheduler sched(1);
             SchedRunner runner(sched);
             std::atomic<bool> keep{true};
+            ProgressArm arm;
             AgentScope scope(sched);
             AgentSpec spec;
             spec.name = "4022-soft-zf";
             spec.attach_mailbox = false;
             spec.keepalive_interval_ms = 50;
-            spec.body = [&] {
-                note_agent_progress(scope.handles_mut().back());
-                while (keep.load(std::memory_order_relaxed))
-                    fiber_sleep_ms(50);
-            };
-            CHECK(scope.spawn(spec).ok, "4022 Soft ZF: spawn");
+            spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/false); };
+            auto& h0 = scope.spawn(spec);
+            CHECK(h0.ok, "4022 Soft ZF: spawn");
+            arm.self.store(&h0, std::memory_order_release);
+            CHECK(wait_progress_then_age(arm, /*stall_ms=*/100),
+                  "4022 Soft ZF: body noted progress");
             const auto used = pq.used(Dimension::Fibers);
             CHECK(!pq.check_and_consume(Dimension::Fibers, 1).has_value(), "4022 Soft ZF: hold");
             pq.set_limit(Dimension::Fibers, used);
-            std::this_thread::sleep_for(std::chrono::milliseconds(180));
             const auto cancel0 = g_orch_module_stats.agent_join_fail_action_cancel_total.load(
                 std::memory_order_relaxed);
             AgentFailurePolicy pol;

@@ -56,8 +56,10 @@ using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -211,9 +213,30 @@ static void ac3691_quote_lambda_impact_uses_prod_helper() {
     apply_production_audit_defaults();
     auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3691\")");
     CHECK(mut.has_value() && !is_error(*mut), "3691 soak: mutate lambda body");
+    auto src_after_mut = cs.eval("(current-source :workspace)");
     CHECK(cs.eval("(eval-current)").has_value(), "3691 soak: re-eval");
     auto r = cs.eval("(f)");
-    CHECK(r && is_int(*r) && as_int(*r) == 9, "3691 soak: mutated lambda");
+    std::string got = "3691 soak: mutated lambda";
+    if (!r)
+        got += " (no value: " + r.error().format() + ")";
+    else if (is_error(*r))
+        got += " (error value)";
+    else if (!is_int(*r))
+        got += " (not int)";
+    else
+        got += " (got " + std::to_string(as_int(*r)) + ")";
+    auto append_src = [&](const char* tag, const auto& src) {
+        if (src && is_string(*src)) {
+            const auto idx = as_string_idx(*src);
+            const auto heap = cs.evaluator().string_heap();
+            if (idx < heap.size())
+                got += std::string(" ") + tag + "=" + std::string(heap[idx]);
+        }
+    };
+    append_src("pre", src_after_mut);
+    if (auto src = cs.eval("(current-source :workspace)"); src)
+        append_src("src", src);
+    CHECK(r && is_int(*r) && as_int(*r) == 9, got);
     apply_dev_audit_defaults();
     CHECK(cs.eval("(f)").has_value(), "3691 AC3: Soft still evals");
 }
