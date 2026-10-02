@@ -742,12 +742,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
-            // Issue #4141: planned_keys >= live insert_kv + 8 (#3339 Agent
-            // decision headroom contract). Live was 177 (+2 #4141 stamps =
-            // 179) against planned 186 — headroom 9, one additive key from
-            // breach. Raise to 192 and raise planned with every appended
-            // batch.
-            constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 192;
+            // Issue #4141 / #4285: planned_keys >= live insert_kv + 8
+            // (#3339 Agent decision headroom). #4141 raised this from 186
+            // after live 177 (+2 stamps = 179) left headroom 9. #4285
+            // re-counted the handler: 179 live insert_kv, so live+16 =
+            // 195 and planned 192 is short of that buffer. Raise to 208
+            // (live+16 holds; query_hash_capacity_for stays at cap 512).
+            // No appended keys. Later batches still raise planned with
+            // the keys. Capability-effect stays on the #3339 pin list.
+            constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 208;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys));
             if (!ht)

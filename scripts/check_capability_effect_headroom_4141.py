@@ -12,9 +12,9 @@
 # (check_agent_decision_facade_headroom_3339.py).
 #
 # AC1 — the capability-effect-stats handler sizes its table from
-#       kCapabilityEffectStatsPlannedKeys = 192 via
+#       kCapabilityEffectStatsPlannedKeys = 208 via
 #       query_hash_capacity_for (no magic 186), live insert_kv (179 incl.
-#       the schema-4141 / issue-4141 stamps) + 8 <= 192 holds, and the
+#       the schema-4141 / issue-4141 stamps) + 8 <= 208 holds, and the
 #       handler keeps the bounded-probe overflowed=true contract feeding
 #       query_hash_finish.
 # AC2 — append-only keys: the legacy decision keys stay (no rename) —
@@ -35,6 +35,13 @@
 #       #81934); no test_issue_4141.cpp; no docs/design/4141-* (per
 #       #1655); linter wired in build.py + on the frozen allowlist.
 #
+# Issue #4285 is the same near-breach, filed against review tip 3534bec
+# (177 live / planned 186, headroom 9). #4141 raised planned to 192.
+# Re-count at the current tip is 179 live, so live+16 = 195 and 192 is
+# short of the requested buffer. Planned is 208 (no new keys). The
+# #3339 checker still fails when planned < actual + 8. No query:4285,
+# no test_issue_4285.cpp, no docs/design/4285-*.
+#
 # Self-test:
 #   python3 scripts/check_capability_effect_headroom_4141.py
 from __future__ import annotations
@@ -45,7 +52,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADROOM = 8
-PLANNED = 192
+PLANNED = 208
+BUFFER = 16
 INSERT_RE = re.compile(r'insert_kv(?:_str)?\(\s*"([^"]+)"')
 
 
@@ -66,10 +74,11 @@ def main() -> int:
     test = read("tests/compiler/test_engine_metrics_facade.cpp")
     build = read("build.py")
     allow = read("scripts/coverage/root_check_allowlist.txt")
+    effect_live = -1
 
     # AC1: planned constant + capacity helper + headroom math.
     must(
-        "constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 192",
+        "constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 208",
         "AC1 planned constant",
         sec,
     )
@@ -90,8 +99,9 @@ def main() -> int:
         else:
             block = sec[i : j + 80]
             keys = INSERT_RE.findall(block)
-            if len(keys) + HEADROOM > PLANNED:
-                fails.append(f"AC1: live {len(keys)} + {HEADROOM} > planned {PLANNED}")
+            effect_live = len(keys)
+            if effect_live + HEADROOM > PLANNED:
+                fails.append(f"AC1: live {effect_live} + {HEADROOM} > planned {PLANNED}")
             must("bool overflowed = false", "AC1 overflowed flag", block)
             must("overflowed = true", "AC1 bounded insert stamps overflow", block)
             must("return query_hash_finish(ht, ev.string_heap_, overflowed)", "AC1 finish", block)
@@ -143,6 +153,32 @@ def main() -> int:
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
     must("check_capability_effect_headroom_4141", "AC5 build.py wiring", build)
     must("check_capability_effect_headroom_4141.py", "AC5 allowlist entry", allow)
+
+    # Issue #4285: recount and keep the live+16 buffer. No new key.
+    must("Issue #4141 / #4285", "4285: handler cites #4285 beside #4141", sec)
+    must("kCapabilityEffectStatsPlannedKeys = 208", "4285: planned is 208", sec)
+    if effect_live < 0:
+        fails.append("4285: capability-effect live insert_kv was not counted")
+    elif effect_live + BUFFER > PLANNED:
+        fails.append(f"4285: live {effect_live} + {BUFFER} > planned {PLANNED}")
+    must("query:capability-effect-stats", "4285: #3339 still pins capability-effect", checker)
+    must(
+        "kCapabilityEffectStatsPlannedKeys",
+        "4285: #3339 pins the planned constant",
+        checker,
+    )
+    must("planned < actual + HEADROOM", "4285: #3339 fails when live+8 exceeds planned", checker)
+    must("ac4141_2_no_overflow", "4285: production hash-overflow test retained", test)
+    must("ac4141_4_soft", "4285: Soft overflow test retained", test)
+    must("ac4285_recount", "4285: facade test cites the recount", test)
+    must("ac4285_no_invent", "4285: facade test forbids a new issue test", test)
+    if "query:4285" in sec:
+        fails.append("4285: new query key (forbidden)")
+    if list((ROOT / "tests").rglob("test_issue_4285.cpp")):
+        fails.append("4285: tests/**/test_issue_4285.cpp present (forbidden)")
+    design = ROOT / "docs" / "design"
+    if design.is_dir() and list(design.glob("4285-*")):
+        fails.append("4285: docs/design/4285-* present (forbidden)")
 
     if fails:
         for f in fails:
