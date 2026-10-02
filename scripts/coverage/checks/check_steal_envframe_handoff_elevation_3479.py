@@ -3,8 +3,11 @@
 
 #2632 AC3 stub called handoff_ref on a dummy StableNodeRef. Closure/cell
 arena pointers in refreshed frames were not slotted or canaried.
-Production now walks EvalValue variants: lasting member ptrs skipped
-(#3368 XOR); else #3274 slot XOR #3210 canary; real body_id handoff_ref.
+Production walks EvalValue variants: lasting member ptrs, closures_
+slot values, and EnvFrame.pool_ are skipped (#3368 XOR, #4286).
+Any other pointer is bind_temporary_moving_live_ptr_any_arena + RAII
+own_noted after the shard locks drop (#4124). A nullptr-slot
+note_ffi_opaque_alias_densify_cover left the #3210 inventory live.
 Soft / empty bindings: no extra walk.
 
 Contract:
@@ -54,7 +57,10 @@ def main() -> int:
         must("Issue #3479", "AC1 cite", win)
         must("is_closure", "AC1 closure walk", win)
         must("is_cell", "AC1 cell walk", win)
-        must("note_ffi_opaque_alias_densify_cover", "AC1 elevate", win)
+        must("Issue #4286", "AC1 #4286 cite", win)
+        must("bind_temporary_moving_live_ptr_any_arena", "AC1 #4286 bind", win)
+        must("own_noted", "AC1 #4286 unnote", win)
+        must_not("note_ffi_opaque_alias_densify_cover(", "AC1 #4286 no permanent note", win)
         must("handoff_ref(make_stamped_ref", "AC1 real handoff", win)
         must_not("StableNodeRef dummy", "AC1 no dummy", win)
         must_not("handoff_ref(std::move(dummy))", "AC1 no dummy call", win)
@@ -70,6 +76,10 @@ def main() -> int:
     must("3479 AC5: apply after steal refresh uses live identity or refuses cleanly", "AC5 live", test)
     must("3479 AC2: Soft refresh completes", "AC5 AC2", test)
     must("3479 AC3: XOR skip lasting member ptr", "AC5 AC3", test)
+    must("4286: steal refresh leaves #3210 inventory unchanged", "AC5 #4286 live", test)
+    must_not("schema-4286", "AC5 #4286 no query key", fm)
+    if (ROOT / "tests" / "compiler" / "test_issue_4286.cpp").is_file():
+        fails.append("AC5: test_issue_4286.cpp present (forbidden #81967)")
 
     must_not("schema-3479", "AC4 no query key", fm)
     must_not("g_3479_", "AC4 no g_3479_*", fm)
@@ -85,6 +95,8 @@ def main() -> int:
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("3479-*")):
+            fails.append(f"AC5: docs/design/{f.name} present")
+        for f in sorted(docs.glob("4286-*")):
             fails.append(f"AC5: docs/design/{f.name} present")
 
     if fails:
