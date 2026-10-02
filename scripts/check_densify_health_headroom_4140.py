@@ -35,6 +35,13 @@
 #       #81934); no test_issue_4140.cpp; no docs/design/4140-* (per
 #       #1655); linter wired in build.py + on the frozen allowlist.
 #
+# Issue #4284 is the same residual, filed against review tip 3534bec
+# (live 79, capacity_for(84), densify absent from the #3339 pin list).
+# The current handler already sizes from planned 96 and this linter
+# plus check_agent_decision_facade_headroom_3339.py count insert_kv.
+# Re-count must keep live+8 <= 96. No further bump, no appended keys,
+# no query:4284, no test_issue_4284.cpp, no docs/design/4284-*.
+#
 # Self-test:
 #   python3 scripts/check_densify_health_headroom_4140.py
 from __future__ import annotations
@@ -66,6 +73,7 @@ def main() -> int:
     test = read("tests/compiler/test_engine_metrics_facade.cpp")
     build = read("build.py")
     allow = read("scripts/coverage/root_check_allowlist.txt")
+    densify_live = -1
 
     # AC1: planned constant + capacity helper + headroom math.
     must("constexpr std::size_t kArenaMovingDensifyHealthPlannedKeys = 96", "AC1 planned constant", obsjit)
@@ -82,8 +90,9 @@ def main() -> int:
         else:
             block = obsjit[i : j + 80]
             keys = INSERT_RE.findall(block)
-            if len(keys) + HEADROOM > PLANNED:
-                fails.append(f"AC1: live {len(keys)} + {HEADROOM} > planned {PLANNED}")
+            densify_live = len(keys)
+            if densify_live + HEADROOM > PLANNED:
+                fails.append(f"AC1: live {densify_live} + {HEADROOM} > planned {PLANNED}")
             must("bool overflowed = false", "AC1 overflowed flag", block)
             must("overflowed = true", "AC1 bounded insert stamps overflow", block)
             must("return query_hash_finish(ht, ev.string_heap_, overflowed)", "AC1 finish", block)
@@ -126,6 +135,31 @@ def main() -> int:
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
     must("check_densify_health_headroom_4140", "AC5 build.py wiring", build)
     must("check_densify_health_headroom_4140.py", "AC5 allowlist entry", allow)
+
+    # Issue #4284: pin the existing #4140 close. Recount live insert_kv;
+    # do not require a planned bump past 96 or a new key.
+    must("Issue #4140 / #4284", "4284: handler cites #4284 beside #4140", obsjit)
+    must("kArenaMovingDensifyHealthPlannedKeys = 96", "4284: planned stays 96", obsjit)
+    if densify_live < 0:
+        fails.append("4284: densify live insert_kv was not counted")
+    elif densify_live + HEADROOM > PLANNED:
+        fails.append(f"4284: live {densify_live} + {HEADROOM} > planned {PLANNED}")
+    must("query:arena-moving-densify-health", "4284: #3339 still pins densify", checker)
+    must(
+        "kArenaMovingDensifyHealthPlannedKeys",
+        "4284: #3339 pins the planned constant",
+        checker,
+    )
+    must("planned < actual + HEADROOM", "4284: #3339 fails when live+8 exceeds planned", checker)
+    must("ac4140_2_no_overflow", "4284: production hash-overflow test retained", test)
+    must("ac4140_4_soft", "4284: Soft overflow test retained", test)
+    if "query:4284" in obsjit:
+        fails.append("4284: new query key (forbidden)")
+    if list((ROOT / "tests").rglob("test_issue_4284.cpp")):
+        fails.append("4284: tests/**/test_issue_4284.cpp present (forbidden)")
+    design = ROOT / "docs" / "design"
+    if design.is_dir() and list(design.glob("4284-*")):
+        fails.append("4284: docs/design/4284-* present (forbidden)")
 
     if fails:
         for f in fails:

@@ -20,6 +20,12 @@ handler checks overflow via its bounded local insert_kv lambda (overflowed
 flag into query_hash_finish), not insert_kv_checked — same hash-overflow
 contract.
 
+Issue #4284: re-count at the current tip is 81 live insert_kv
+(live+8 = 89 <= planned 96). The #4140 raise already closed the
+underheadroom this issue reported against tip 3534bec (capacity_for(84),
+densify missing from this pin list). The pin stays; do not bump planned
+and do not add a query key.
+
 Issue #4141: query:capability-effect-stats (Agent security stats facade)
 joins the same headroom CI — live 177 (+2 #4141 stamps) against planned
 186 left headroom 9, one additive key from the live+8=185 breach; planned
@@ -164,8 +170,9 @@ def main() -> int:
         ("query:reload-recovery-state", mut, "kReloadRecoveryStatePlannedKeys"),
         # Issue #3807: primary Agent soak surface (~390 live / planned 512)
         ("query:orch-module-stats", agent, "kOrchModuleStatsPlannedKeys"),
-        # Issue #4140: densify-health joins the Agent decision headroom gate
-        # (live 79 + 2 stamps; planned 84 < live+8 → raised to 96)
+        # Issue #4140 / #4284: densify-health joins the Agent decision
+        # headroom gate. Re-count holds at planned 96 (81 live, live+8
+        # = 89); do not bump further until a later batch needs it.
         ("query:arena-moving-densify-health", obsjit, "kArenaMovingDensifyHealthPlannedKeys"),
         # Issue #4141: capability-effect-stats joins the Agent decision
         # headroom gate (live 177 + 2 stamps; planned 186 left headroom 9,

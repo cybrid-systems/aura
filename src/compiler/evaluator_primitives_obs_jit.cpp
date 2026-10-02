@@ -12339,11 +12339,13 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             totals.moving_blocked_precondition_total =
                 aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
             const auto s = mdh::snapshot(totals);
-            // Issue #4140: planned_keys >= live insert_kv + 8 (#3339 Agent
-            // decision headroom contract). Live was 79 (+2 #4140 stamps =
-            // 81); planned 84 sat under live+8=87, so the next additive
-            // batch could overflow without CI catching it. Raise to 96 and
-            // raise planned with every appended batch.
+            // Issue #4140 / #4284: planned_keys >= live insert_kv + 8
+            // (#3339 Agent decision headroom). #4140 raised this from 84
+            // after live 79 (+2 stamps = 81) made live+8 = 87. #4284
+            // re-counted the handler: 81 live insert_kv, live+8 = 89 <=
+            // 96, so planned stays 96 — no further bump, no appended
+            // keys. Later batches still raise planned with the keys.
+            // Densify stays on the #3339 pin list.
             constexpr std::size_t kArenaMovingDensifyHealthPlannedKeys = 96;
             auto* ht = FlatHashTable::create(
                 query_hash_capacity_for(kArenaMovingDensifyHealthPlannedKeys));
