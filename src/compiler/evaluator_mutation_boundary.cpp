@@ -4251,6 +4251,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 aura::compiler::g_mutation_hold_live_session_mid.store(0,
                                                                        std::memory_order_release);
             }
+            // Issue #4278: write-side string caps do not bump
+            // capability_live_session_grants, so the production/live
+            // short-circuit above must not skip them. Registry lock is
+            // not held.
+            ev_->retire_session_string_caps(session_mid_at_enter_);
             session_mid_at_enter_ = 0;
         }
         return; // Issue #1590: quota soft-reject never entered a boundary
@@ -4438,6 +4443,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                                        std::memory_order_release);
             }
         }
+        // Issue #4278: retire write-side SECURITY_EXEMPT strings bound to
+        // this session mid after the registry lock drops. Soft/Off never
+        // records, so an empty table is a no-op. Abort that already
+        // retired the same mid is idempotent.
+        if (ev_)
+            ev_->retire_session_string_caps(session_mid_at_enter_);
     }
     // Issue #2847: region type/occurrence commit bind. When this Guard
     // admitted a non-zero cone/ImpactScope mask, any OccurrenceGoal

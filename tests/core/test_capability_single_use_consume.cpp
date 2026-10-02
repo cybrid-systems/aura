@@ -1537,6 +1537,161 @@ static void ac4277_5_source_cite() {
     reset_all();
 }
 
+// ── Issue #4278: write-side SECURITY_EXEMPT strings die with the session
+// compile / compile-dirty / compile-deopt never enter the effect registry,
+// so session revoke used to leave them sticky. They now bind to the
+// published fiber session mid and are erased on outermost exit.
+// compile-stats stays sticky (read-only observability).
+
+static void ac4278_drop_shared_pin() {
+    while (Evaluator::eval_current_holds_shared_pin())
+        Evaluator::note_eval_current_shared_exit();
+}
+
+static void ac4278_arm_restricted(Evaluator& ev) {
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+}
+
+static void ac4278_1_outermost_exit_retires_write_side() {
+    std::println("\n--- #4278 AC1: outermost exit retires compile-dirty ---");
+    reset_all();
+    ac4278_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::serve::clear_current_fiber_session_mid();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(4278);
+    ac4278_arm_restricted(ev);
+    ev.clear_boundary_audit_mid_for_test();
+    const auto base = ev.granted_capability_count();
+    CHECK(!ev.has_capability("compile-dirty"), "4278 AC1: no compile-dirty before grant");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(!g.is_inert(), "4278 AC1: live outermost guard");
+        CHECK(g.is_outermost(), "4278 AC1: guard is outermost");
+        // Host thread has no Fiber, so current_fiber_session_mid() stays 0.
+        // The Guard still publishes session_mid_at_enter_ on the hold snapshot.
+        CHECK(aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) != 0,
+              "4278 AC1: session mid published");
+        ev.grant_capability("compile-dirty");
+        ev.grant_capability("compile");
+        ev.grant_capability("compile-deopt");
+        ev.grant_capability("compile-stats");
+        CHECK(ev.has_capability("compile-dirty"), "4278 AC1: compile-dirty live inside session");
+        CHECK(ev.has_capability("compile"), "4278 AC1: compile live inside session");
+        CHECK(ev.has_capability("compile-deopt"), "4278 AC1: compile-deopt live inside session");
+        CHECK(ev.has_capability("compile-stats"), "4278 AC1: compile-stats live inside session");
+        CHECK(ev.granted_capability_count() == base + 4, "4278 AC1: four strings landed");
+    }
+    CHECK(!ev.has_capability("compile-dirty"), "4278 AC1: compile-dirty retired on outermost exit");
+    CHECK(!ev.has_capability("compile"), "4278 AC1: compile retired on outermost exit");
+    CHECK(!ev.has_capability("compile-deopt"), "4278 AC1: compile-deopt retired on outermost exit");
+    CHECK(ev.has_capability("compile-stats"), "4278 AC1: compile-stats stays (read-only)");
+    CHECK(ev.granted_capability_count() == base + 1, "4278 AC1: only compile-stats remains");
+    CHECK(!ev.require_effect(kEffectMutate, "test:4278-ac1"),
+          "4278 AC1: require_effect(Mutate) still denies");
+    bool ok2 = true;
+    {
+        Evaluator::MutationBoundaryGuard g2(ev, &ok2);
+        CHECK(!g2.is_inert(), "4278 AC1: second guard live");
+        ev.grant_capability("compile-dirty");
+        CHECK(ev.has_capability("compile-dirty"), "4278 AC1: re-grant lands in a new session");
+    }
+    CHECK(!ev.has_capability("compile-dirty"), "4278 AC1: re-grant dies with the new session");
+    CHECK(ev.has_capability("compile-stats"), "4278 AC1: compile-stats still sticky");
+    reset_all();
+}
+
+static void ac4278_2_no_session_refuses_write_side() {
+    std::println("\n--- #4278 AC2: no session mid refuses write-side strings ---");
+    reset_all();
+    ac4278_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::serve::clear_current_fiber_session_mid();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(4);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(42782);
+    ac4278_arm_restricted(ev);
+    ev.clear_boundary_audit_mid_for_test();
+    CHECK(aura::serve::current_fiber_session_mid() == 0, "4278 AC2: no live session mid");
+    const auto n = ev.granted_capability_count();
+    ev.grant_capability("compile-dirty");
+    ev.grant_capability("compile");
+    ev.grant_capability("compile-deopt");
+    CHECK(ev.granted_capability_count() == n, "4278 AC2: refused grant leaves no string");
+    CHECK(!ev.has_capability("compile-dirty"), "4278 AC2: compile-dirty does not stick");
+    CHECK(!ev.has_capability("compile"), "4278 AC2: compile does not stick");
+    CHECK(!ev.has_capability("compile-deopt"), "4278 AC2: compile-deopt does not stick");
+    ev.grant_capability("compile-stats");
+    CHECK(ev.has_capability("compile-stats"),
+          "4278 AC2: compile-stats still grants outside a session");
+    CHECK(ev.granted_capability_count() == n + 1, "4278 AC2: only compile-stats was pushed");
+    reset_all();
+}
+
+static void ac4278_3_soft_off_stays_sticky() {
+    std::println("\n--- #4278 AC3: Soft/Off does not record or erase ---");
+    reset_all();
+    ac4278_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::serve::clear_current_fiber_session_mid();
+    reset_mutation_epoch_for_test();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(42783);
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+    ev.clear_boundary_audit_mid_for_test();
+    const auto before = ev.granted_capability_count();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        ev.grant_capability("compile-dirty");
+        CHECK(ev.granted_capability_count() == before + 1, "4278 AC3: Off grant landed");
+    }
+    CHECK(ev.granted_capability_count() == before + 1, "4278 AC3: Off exit does not erase");
+    ac4278_arm_restricted(ev);
+    CHECK(ev.has_capability("compile-dirty"),
+          "4278 AC3: Off compile-dirty still authorizes after Restricted");
+    reset_all();
+}
+
+static void ac4278_4_source_cite() {
+    std::println("\n--- #4278 AC4: source-cite session string retire; no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(sec.find("Issue #4278") != std::string::npos, "4278 AC4: grant cites");
+    CHECK(sec.find("session_retires_write_side_cap") != std::string::npos,
+          "4278 AC4: write-side predicate");
+    CHECK(sec.find("compile-stats, query, sandbox, macro, exception-control stay") !=
+              std::string::npos,
+          "4278 AC4: read-only names stay sticky");
+    CHECK(sec.find("retire_session_string_caps") != std::string::npos, "4278 AC4: retire helper");
+    CHECK(ixx.find("retire_session_string_caps") != std::string::npos,
+          "4278 AC4: ixx declares retire");
+    CHECK(boundary.find("Issue #4278") != std::string::npos, "4278 AC4: outermost dtor cites");
+    CHECK(boundary.find("retire_session_string_caps") != std::string::npos,
+          "4278 AC4: dtor retires strings");
+    CHECK(fiber.find("Issue #4278") != std::string::npos, "4278 AC4: fiber join cites");
+    CHECK(fiber.find("retire_session_string_caps") != std::string::npos,
+          "4278 AC4: fiber join retires strings");
+    CHECK(read_file("tests/core/test_issue_4278.cpp").empty(), "4278 AC4: no test_issue_4278.cpp");
+    CHECK(!std::filesystem::exists("docs/design/4278-sticky-string-caps.md"),
+          "4278 AC4: no docs/design");
+    reset_all();
+}
+
 // ── Issue #3279: session_bound orphan fail-closed sweep ─────────────
 // session_bound_orphan_detected_total was metric-only (declared, never
 // bumped). Under production long-run, a lost Guard / abort-without-mid-
@@ -3865,6 +4020,10 @@ int run_test_capability_single_use_consume() {
         ac4277_3_dual_eval_and_steal();
         ac4277_4_retain_and_soft();
         ac4277_5_source_cite();
+        ac4278_1_outermost_exit_retires_write_side();
+        ac4278_2_no_session_refuses_write_side();
+        ac4278_3_soft_off_stays_sticky();
+        ac4278_4_source_cite();
         // Issue #3279: session_bound orphan fail-closed sweep.
         ac3279_1_soft_observe_only();
         ac3279_2_production_revoke();
@@ -4513,6 +4672,10 @@ int run_test_inert_session_mid_3723() {
     ac4277_3_dual_eval_and_steal();
     ac4277_4_retain_and_soft();
     ac4277_5_source_cite();
+    ac4278_1_outermost_exit_retires_write_side();
+    ac4278_2_no_session_refuses_write_side();
+    ac4278_3_soft_off_stays_sticky();
+    ac4278_4_source_cite();
     ac3902_1_soft_epoch0_consume_honest_unset();
     ac3902_2_hard_face_invent_1();
     ac3902_3_real_epoch_passthrough();

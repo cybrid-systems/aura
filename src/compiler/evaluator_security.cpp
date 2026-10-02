@@ -24,6 +24,7 @@ module;
 #include "observability_metrics.h"
 // Issue #2883: resume_had_mismatch / g_current_fiber for hard principal deny.
 #include "serve/fiber.h"
+#include "mutation_hold_budget.h" // #4278: host-thread session mid lives on the hold snapshot
 
 module aura.compiler.evaluator;
 
@@ -207,6 +208,33 @@ void Evaluator::grant_capability(std::string cap) {
                      /*provenance_mutation_id=*/0);
 }
 
+namespace {
+
+    // Issue #4278: exact write-side names. compile-stats is intentionally
+    // absent — it does not open the dirty / deopt prim gates.
+    [[nodiscard]] bool session_retires_write_side_cap(std::string_view name) noexcept {
+        using aura::compiler::security::kCapCompile;
+        using aura::compiler::security::kCapCompileDeopt;
+        using aura::compiler::security::kCapCompileDirty;
+        return name == std::string_view(kCapCompile) ||
+               name == std::string_view(kCapCompileDirty) ||
+               name == std::string_view(kCapCompileDeopt);
+    }
+
+    // Fiber body: Fiber::session_mid is what the outermost Guard published.
+    // Host thread: set_current_fiber_session_mid is a no-op (no Fiber), and the
+    // same session_mid_at_enter_ is stored on the hold snapshot (#2944/#3048).
+    // A bare Mutation epoch is not a session the dtor will revoke once
+    // production mints a distinct mid (#3964).
+    [[nodiscard]] std::uint64_t published_session_mid_for_string_cap() noexcept {
+        const auto fiber_mid = aura::serve::current_fiber_session_mid();
+        if (fiber_mid != 0)
+            return fiber_mid;
+        return aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
+    }
+
+} // namespace
+
 // Issue #3436: explicit-lifetime mirror form. grant_effect_* wrappers call
 // this AFTER their registry write and lock release so the legacy string
 // mirror (granted_capabilities_ push + self-tenant registry row) carries
@@ -301,6 +329,43 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
                 m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #4278: Effect::None never writes a by_tenant row, so
+    // session / steal / scope revoke cannot see it. Write-side names
+    // that gate sandboxed compile prims (compile, compile-dirty,
+    // compile-deopt) bind to the published session mid (fiber session mid,
+    // else the host hold snapshot) and die with that mid. No published
+    // session → pop the string (fail-closed; a bare Mutation epoch is
+    // not a session the dtor will revoke).
+    // compile-stats, query, sandbox, macro, exception-control stay
+    // sticky: read-only observability, not a write prim. Soft/Off
+    // records nothing.
+    if (eff == Effect::None) {
+        const bool production = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+        if (production && session_retires_write_side_cap(granted_capabilities_.back())) {
+            const auto mid = published_session_mid_for_string_cap();
+            if (mid == 0) {
+                granted_capabilities_.pop_back();
+                return;
+            }
+            session_string_caps_.push_back(SessionStringCap{granted_capabilities_.back(), mid});
+        }
+    }
+}
+
+void Evaluator::retire_session_string_caps(std::uint64_t mid) noexcept {
+    if (mid == 0 || session_string_caps_.empty())
+        return;
+    for (const auto& row : session_string_caps_) {
+        if (row.mid != mid)
+            continue;
+        granted_capabilities_.erase(
+            std::remove(granted_capabilities_.begin(), granted_capabilities_.end(), row.name),
+            granted_capabilities_.end());
+    }
+    session_string_caps_.erase(
+        std::remove_if(session_string_caps_.begin(), session_string_caps_.end(),
+                       [mid](const SessionStringCap& row) noexcept { return row.mid == mid; }),
+        session_string_caps_.end());
 }
 
 bool Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
