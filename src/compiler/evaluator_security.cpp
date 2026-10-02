@@ -114,22 +114,26 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
         (eff != Effect::None) && ((static_cast<std::uint16_t>(eff) &
                                    (static_cast<std::uint16_t>(Effect::TenantAdmin) |
                                     static_cast<std::uint16_t>(Effect::MacroSelfEvo))) != 0);
-    // Explicit "*" in any layer grants non-TA/MSE effect-mapped caps +
-    // string-only caps. TA/MSE queries always fall through to
-    // effects_effective_for (#3876; still the #3144 effects_for strip).
+    // Explicit "*" grants non-TA/MSE effect-mapped caps + string-only
+    // caps. TA/MSE queries always fall through to effects_effective_for
+    // (#3876; still the #3144 effects_for strip).
     // Issue #4058: the with-capability stack is lexical scope only (the
     // check-capability / capability-stack readouts scan it); it is NOT an
-    // authorization oracle. A pushed "*" satisfies nothing here — the
-    // wildcard check reads the granted_capabilities_ string mirror only.
+    // authorization oracle. A pushed "*" satisfies nothing here.
+    // Issue #4277: the granted_capabilities_ mirror is necessary but not
+    // sufficient. Session / steal / single-use revoke clears the by_tenant
+    // row and leaves the string. A stranded "*" must not authorize
+    // mutate / io-read / compile. Consult the same live+retain predicate
+    // as effects_effective_for. Soft/Off already returned above.
     if (!is_ta_mse_eff) {
-        const auto wildcard_held = [&]() noexcept {
-            for (const auto& cap : granted_capabilities_) {
-                if (cap == kCapWildcard)
-                    return true;
+        bool mirror_wildcard = false;
+        for (const auto& cap : granted_capabilities_) {
+            if (cap == kCapWildcard) {
+                mirror_wildcard = true;
+                break;
             }
-            return false;
-        }();
-        if (wildcard_held)
+        }
+        if (mirror_wildcard && g_capability_registry().holds_live_wildcard(capability_tenant_id_))
             return true;
     }
     // Delegate to effect matrix when name maps to a known Effect bit.

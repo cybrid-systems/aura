@@ -1510,6 +1510,31 @@ struct CapabilityRegistry {
         return effects_effective_for(tenant);
     }
 
+    // Issue #4277: live `"*"` under the same skip rules as
+    // effects_effective_for (revoked, stolen, grant_epoch < min_valid).
+    // Soft/Off min_valid is 0, matching that predicate. Unlocked read —
+    // same race contract as effects_effective_for; has_capability calls
+    // this only after its Soft/Off short-circuit.
+    [[nodiscard]] bool holds_live_wildcard(TenantId tenant) const {
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return false;
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const auto min_valid = (mode == EffectSandboxMode::Off)
+                                   ? std::uint64_t{0}
+                                   : grant_min_valid_epoch_.load(std::memory_order_acquire);
+        for (const auto& g : it->second) {
+            if (g.name != "*")
+                continue;
+            if (g.revoked || g.stolen)
+                continue;
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid)
+                continue;
+            return true;
+        }
+        return false;
+    }
+
     // Issue #3141: wildcard-only detection. Returns true if tenant holds
     // kCapWildcard ("*") string grant AND no non-wildcard grant contributing
     // Effect::TenantAdmin. Caller MUST hold `mtx`. Distinguishes "TenantAdmin

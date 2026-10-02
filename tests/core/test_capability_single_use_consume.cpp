@@ -1378,6 +1378,165 @@ static void ac3997_4_source_cite() {
     reset_all();
 }
 
+// ── Issue #4277: stranded "*" mirror must not authorize ─────────────
+// Session / steal / single-use revoke clears by_tenant and leaves the
+// per-Evaluator string. has_capability used to return true for every
+// non-TA/MSE name. The short-circuit now requires a live+retain "*".
+
+static void arm_4277_restricted(Evaluator& ev) {
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+}
+
+static void ac4277_1_session_revoke_closes_wildcard_gates() {
+    std::println("\n--- #4277 AC1: session revoke closes stranded-* gates ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(11);
+    ev.grant_capability("tenant-admin");
+    arm_4277_restricted(ev);
+    ev.note_boundary_audit_mid_for_test(427701);
+    ev.grant_capability("*");
+    const auto mirrored = ev.granted_capability_count();
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(11, "*", g) && !g.revoked && g.session_bound,
+          "4277 AC1: live session * landed");
+    CHECK(ev.has_capability("mutate"), "4277 AC1: live * grants mutate");
+    CHECK(ev.has_capability("io-read"), "4277 AC1: live * grants io-read");
+    CHECK(ev.has_capability("compile"), "4277 AC1: live * grants compile");
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(427701);
+    CHECK(n >= 1, "4277 AC1: session revoke cleared *");
+    CHECK(ev.granted_capability_count() == mirrored, "4277 AC1: mirror string stays stranded");
+    CHECK(ev.has_capability("tenant-admin"), "4277 AC1: durable TA survives session revoke");
+    // "*" query is any-bit overlap with the full mask, so durable TA still
+    // answers it. The stranded-mirror bug is the other names.
+    CHECK(!ev.has_capability("mutate"), "4277 AC1: stranded * does not grant mutate");
+    CHECK(!ev.has_capability("io-read"), "4277 AC1: stranded * does not grant io-read");
+    CHECK(!ev.has_capability("compile"), "4277 AC1: stranded * does not grant compile");
+    CHECK(!ev.require_effect(kEffectMutate, "test:4277-ac1"),
+          "4277 AC1: require_effect(Mutate) still denies");
+    const auto* se = ring_lookup_reason("mutate-deny", 32);
+    if (se == nullptr)
+        se = ring_lookup_reason("via-wildcard-denied", 32);
+    CHECK(se != nullptr, "4277 AC1: mutate deny SE");
+    ev.note_boundary_audit_mid_for_test(427702);
+    ev.grant_capability("mutate");
+    CHECK(ev.has_capability("mutate"), "4277 AC1: named mutate re-grant still lands");
+    CHECK(!ev.has_capability("compile"), "4277 AC1: re-grant does not revive compile via *");
+    CHECK(!ev.has_capability("io-read"), "4277 AC1: re-grant does not revive io-read via *");
+    reset_all();
+}
+
+static void ac4277_2_stolen_wildcard_does_not_authorize() {
+    std::println("\n--- #4277 AC2: stolen * does not authorize ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(12);
+    ev.grant_capability("tenant-admin");
+    arm_4277_restricted(ev);
+    ev.note_boundary_audit_mid_for_test(427711);
+    ev.grant_capability("*");
+    const auto mirrored = ev.granted_capability_count();
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(12, "*", g) && !g.revoked && g.session_bound,
+          "4277 AC2: live session *");
+    CHECK(g_capability_registry().mark_session_bound_stolen(12, g.bound_mutation_id, 0),
+          "4277 AC2: steal marks the session *");
+    CHECK(ev.granted_capability_count() == mirrored, "4277 AC2: mirror stays stranded");
+    CHECK(!g_capability_registry().holds_live_wildcard(12), "4277 AC2: stolen * is not live");
+    CHECK(!ev.has_capability("mutate"), "4277 AC2: stolen * does not grant mutate");
+    CHECK(!ev.has_capability("io-read"), "4277 AC2: stolen * does not grant io-read");
+    CHECK(!ev.has_capability("compile"), "4277 AC2: stolen * does not grant compile");
+    CHECK(!ev.require_effect(kEffectMutate, "test:4277-ac2"), "4277 AC2: require_effect denies");
+    reset_all();
+}
+
+static void ac4277_3_dual_eval_and_steal() {
+    std::println("\n--- #4277 AC3: dual Evaluator strand + steal revoke ---");
+    reset_all();
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& a = cs_a.evaluator();
+    auto& b = cs_b.evaluator();
+    a.set_capability_tenant_id(13);
+    b.set_capability_tenant_id(14);
+    a.grant_capability("tenant-admin");
+    arm_4277_restricted(a);
+    a.note_boundary_audit_mid_for_test(427721);
+    a.grant_capability("*");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(13, "*", g) && !g.revoked && g.session_bound,
+          "4277 AC3: A's session * landed");
+    const auto b_mirror = b.granted_capability_count();
+    const auto n =
+        aura::core::capability::revoke_session_grants_on_steal_or_abort(g.bound_mutation_id, true);
+    CHECK(n >= 1, "4277 AC3: steal revoke cleared *");
+    CHECK(b.granted_capability_count() == b_mirror, "4277 AC3: B mirror untouched");
+    CHECK(!a.has_capability("compile"), "4277 AC3: A stranded * denies compile");
+    CHECK(!a.has_capability("io-read"), "4277 AC3: A stranded * denies io-read");
+    CHECK(!a.has_capability("mutate"), "4277 AC3: A stranded * denies mutate");
+    CHECK(!b.has_capability("compile"), "4277 AC3: B empty mirror denies compile");
+    CHECK(!b.has_capability("io-read"), "4277 AC3: B empty mirror denies io-read");
+    CHECK(!b.has_capability("mutate"), "4277 AC3: B empty mirror denies mutate");
+    CHECK(!a.require_effect(kEffectMutate, "test:4277-ac3"), "4277 AC3: A mutate deny");
+    CHECK(!b.require_effect(kEffectMutate, "test:4277-ac3b"), "4277 AC3: B mutate deny");
+    reset_all();
+}
+
+static void ac4277_4_retain_and_soft() {
+    std::println("\n--- #4277 AC4: retain-expired * denies; Soft/Off stays open ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService soft;
+    auto& evs = soft.evaluator();
+    CHECK(evs.has_capability("compile"), "4277 AC4: Soft/Off allows compile with no grant");
+    CHECK(evs.has_capability("io-read"), "4277 AC4: Soft/Off allows io-read with no grant");
+
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(14);
+    ev.grant_capability("tenant-admin");
+    arm_4277_restricted(ev);
+    while (current_mutation_epoch() < 2)
+        bump_mutation_epoch(1);
+    ev.note_boundary_audit_mid_for_test(427731);
+    ev.grant_capability("*");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(14, "*", g) && !g.revoked, "4277 AC4: * landed");
+    CHECK(g.grant_epoch != 0, "4277 AC4: grant_epoch is retain-eligible");
+    CHECK(ev.has_capability("compile"), "4277 AC4: live * grants compile before retain");
+    g_capability_registry().set_grant_min_valid_epoch(g.grant_epoch + 1);
+    CHECK(!g_capability_registry().holds_live_wildcard(14), "4277 AC4: retain drops live *");
+    CHECK(!ev.has_capability("compile"), "4277 AC4: retain-expired * does not grant compile");
+    CHECK(!ev.has_capability("io-read"), "4277 AC4: retain-expired * does not grant io-read");
+    CHECK(!ev.has_capability("mutate"), "4277 AC4: retain-expired * does not grant mutate");
+    reset_all();
+}
+
+static void ac4277_5_source_cite() {
+    std::println("\n--- #4277 AC5: source-cite live wildcard; no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(sec.find("Issue #4277") != std::string::npos, "4277 AC5: has_capability cites");
+    CHECK(cap.find("holds_live_wildcard") != std::string::npos, "4277 AC5: registry helper");
+    const auto fn = sec.find("bool Evaluator::has_capability");
+    CHECK(fn != std::string::npos, "4277 AC5: has_capability present");
+    const auto off = sec.find("if (!sandbox_mode_ && effect_sandbox_mode() == 0)");
+    const auto live = sec.find("holds_live_wildcard");
+    CHECK(off != std::string::npos && live != std::string::npos && off < live,
+          "4277 AC5: Soft/Off return stays before the live-* consult");
+    CHECK(cap.find("g.revoked || g.stolen") != std::string::npos, "4277 AC5: skips revoked/stolen");
+    CHECK(cap.find("g.grant_epoch < min_valid") != std::string::npos, "4277 AC5: retain skip");
+    CHECK(read_file("tests/core/test_issue_4277.cpp").empty(), "4277 AC5: no test_issue_4277.cpp");
+    CHECK(!std::filesystem::exists("docs/design/4277-stranded-wildcard.md"),
+          "4277 AC5: no docs/design");
+    reset_all();
+}
+
 // ── Issue #3279: session_bound orphan fail-closed sweep ─────────────
 // session_bound_orphan_detected_total was metric-only (declared, never
 // bumped). Under production long-run, a lost Guard / abort-without-mid-
@@ -3701,6 +3860,11 @@ int run_test_capability_single_use_consume() {
         ac3997_2_regrant_loop_no_wedge();
         ac3997_3_soft_string_dedup_unchanged();
         ac3997_4_source_cite();
+        ac4277_1_session_revoke_closes_wildcard_gates();
+        ac4277_2_stolen_wildcard_does_not_authorize();
+        ac4277_3_dual_eval_and_steal();
+        ac4277_4_retain_and_soft();
+        ac4277_5_source_cite();
         // Issue #3279: session_bound orphan fail-closed sweep.
         ac3279_1_soft_observe_only();
         ac3279_2_production_revoke();
@@ -4344,6 +4508,11 @@ int run_test_inert_session_mid_3723() {
     ac3997_2_regrant_loop_no_wedge();
     ac3997_3_soft_string_dedup_unchanged();
     ac3997_4_source_cite();
+    ac4277_1_session_revoke_closes_wildcard_gates();
+    ac4277_2_stolen_wildcard_does_not_authorize();
+    ac4277_3_dual_eval_and_steal();
+    ac4277_4_retain_and_soft();
+    ac4277_5_source_cite();
     ac3902_1_soft_epoch0_consume_honest_unset();
     ac3902_2_hard_face_invent_1();
     ac3902_3_real_epoch_passthrough();
