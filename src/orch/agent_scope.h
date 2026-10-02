@@ -386,7 +386,8 @@ struct ScopeWatchResult {
     std::size_t body_stalled = 0;
     std::size_t helper_stalled = 0;
     // Issue #4022: RestartN spawn-admit deny (quota/BP/gate/tenant).
-    // Appended at struct END — does not burn max_restarts.
+    // Issue #4281: region-key-missing on stored specs_ uses the same
+    // field. Appended at struct END — does not burn max_restarts.
     std::size_t restart_denied = 0;
 };
 
@@ -554,9 +555,10 @@ public:
         // (same predicate as parallel_intend; env escape
         // AURA_PARALLEL_REQUIRE_REGION_KEYS / explicit 0 off-switch).
         // Keys are never auto-invented; Soft / Off stay observation-only
-        // (one production load). RestartN re-spawn
-        // (try_restart_from_spec_) bypasses this gate by design —
-        // supervision replay keeps its fuel.
+        // (one production load). RestartN (try_restart_from_spec_)
+        // re-checks the same predicate over specs_ as stored (#4281) —
+        // the candidate is already in the table, so it is not appended
+        // again.
         if (region_key_missing_admit_deny_unlocked_(spec)) {
             serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
                 .fetch_add(1, std::memory_order_relaxed);
@@ -1824,11 +1826,24 @@ private:
     // within max_restarts and spec present. Returns true on re-spawn.
     // Issue #4022: spawn-admit deny is NOT success — keep husk, do not
     // burn restart_counts_ / do not reset consecutive_stall_counts_.
+    // Issue #4281: production re-checks the #4238 predicate over specs_
+    // as stored (no-arg overload — the spec is already in the table; a
+    // second copy would make a single keyless agent look like two).
+    // Deny bumps the existing counters, sets Other, and returns before
+    // replace so the live husk stays. Soft / Off: one production load.
     bool try_restart_from_spec_(std::size_t i, const AgentFailurePolicy& policy) noexcept {
         if (!sched_) {
             g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
                 1, std::memory_order_relaxed);
             return false;
+        }
+        if (region_key_missing_admit_deny_unlocked_()) {
+            serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
+                .fetch_add(1, std::memory_order_relaxed);
+            g_orch_module_stats.agent_restart_spawn_denied_total.fetch_add(
+                1, std::memory_order_relaxed);
+            last_restart_deny_class_ = AgentDenyClass::Other;
+            return false; // keep existing husk; do not burn restart_counts_
         }
         if (policy.restart_backoff_ms > 0)
             fiber_sleep_ms(policy.restart_backoff_ms);
@@ -1925,26 +1940,27 @@ private:
     }
 
     // Issue #4238: candidate-admit face of the #3803 isolation SSOT.
-    // decide_isolation over specs_ region_keys PLUS the incoming spec —
-    // the same construction observe_isolation_unlocked_ uses, evaluated
-    // before admit so a missing-keys scope never silently serializes on
-    // agent_apply_mu_ (#3728). Production-only: Soft / Off is one atomic
-    // load and out (observation stays zero-cost). Deny needs the issue's
-    // ≥2 mutate-agent floor plus the shared #3353 env escape
-    // (AURA_PARALLEL_REQUIRE_REGION_KEYS / explicit off). No second
+    // decide_isolation over specs_ region_keys, plus `extra` when the
+    // caller is a fresh spawn (the candidate is not stored yet). RestartN
+    // passes nullptr (#4281): the spec is already in specs_, and appending
+    // it again would deny a single keyless agent. Production-only: Soft /
+    // Off is one atomic load and out (observation stays zero-cost). Deny
+    // needs the issue's ≥2 mutate-agent floor plus the shared #3353 env
+    // escape (AURA_PARALLEL_REQUIRE_REGION_KEYS / explicit off). No second
     // isolation model, no key synthesis, no AgentRegistry.
-    [[nodiscard]] bool region_key_missing_admit_deny_unlocked_(const AgentSpec& spec) const {
+    [[nodiscard]] bool region_key_missing_stored_deny_unlocked_(const AgentSpec* extra) const {
         const bool production = aura::compiler::typed_audit::production_defaults_active();
         if (!production)
             return false;
         constexpr std::size_t kCap = 64;
-        const std::size_t n = specs_.size() + 1;
+        const std::size_t n = specs_.size() + (extra != nullptr ? 1u : 0u);
         serve::parallel_orch::IsolationDecision dec;
         if (n <= kCap) {
             serve::parallel_orch::TaskSpec stack[kCap]{};
-            for (std::size_t i = 0; i < specs_.size(); ++i)
+            for (std::size_t i = 0; i < specs_.size() && i < kCap; ++i)
                 stack[i].region_key = specs_[i].region_key;
-            stack[specs_.size()].region_key = spec.region_key;
+            if (extra != nullptr && specs_.size() < kCap)
+                stack[specs_.size()].region_key = extra->region_key;
             dec = serve::parallel_orch::decide_isolation(
                 serve::parallel_orch::ParallelPolicy{},
                 std::span<const serve::parallel_orch::TaskSpec>(stack, n),
@@ -1953,21 +1969,34 @@ private:
             std::vector<serve::parallel_orch::TaskSpec> tasks(n);
             for (std::size_t i = 0; i < specs_.size(); ++i)
                 tasks[i].region_key = specs_[i].region_key;
-            tasks[specs_.size()].region_key = spec.region_key;
+            if (extra != nullptr)
+                tasks[specs_.size()].region_key = extra->region_key;
             dec = serve::parallel_orch::decide_isolation(serve::parallel_orch::ParallelPolicy{},
                                                          tasks, /*pure_mode=*/false);
         }
         if (!serve::parallel_orch::region_key_missing_serialized(dec, /*pure_mode=*/false, n,
                                                                  production))
             return false;
-        std::size_t mutate_n = spec.mutation_boundary ? 1u : 0u;
+        std::size_t mutate_n = 0;
         for (const auto& s : specs_)
             if (s.mutation_boundary)
                 ++mutate_n;
+        if (extra != nullptr && extra->mutation_boundary)
+            ++mutate_n;
         if (mutate_n < 2)
             return false;
         return serve::parallel_orch::parallel_require_region_keys_deny(production,
                                                                        /*mutate_batch=*/true);
+    }
+
+    // Fresh spawn: specs_ plus the candidate.
+    [[nodiscard]] bool region_key_missing_admit_deny_unlocked_(const AgentSpec& spec) const {
+        return region_key_missing_stored_deny_unlocked_(&spec);
+    }
+
+    // RestartN: specs_ as stored. Do not append the candidate again.
+    [[nodiscard]] bool region_key_missing_admit_deny_unlocked_() const {
+        return region_key_missing_stored_deny_unlocked_(nullptr);
     }
 
     [[nodiscard]] std::size_t live_handle_count_unlocked_() const noexcept {

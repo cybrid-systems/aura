@@ -10038,7 +10038,8 @@ def cmd_lint():
     # predicate, ≥2 mutate floor, #3353 env escape), the typed deny face
     # reusing region_key_missing_serialized_total (no new query key),
     # Soft/Off zero-cost, no AgentRegistry / key synthesis, #3803
-    # observation face + RestartN bypass kept, runtime ACs dispatched
+    # observation face kept; RestartN re-checks stored specs_ (#4281),
+    # runtime ACs dispatched
     # (ac4238_region_key_admit_deny in test_agent_scope.cpp), build.py +
     # allowlist wiring.
     scra4238_script = ROOT / "scripts" / "check_scope_region_admit_4238.py"

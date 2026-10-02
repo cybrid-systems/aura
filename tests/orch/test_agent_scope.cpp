@@ -1911,6 +1911,256 @@ static void ac4238_region_key_admit_deny() {
     }
 }
 
+// Issue #4281: RestartN re-checks the #4238 predicate over specs_ as
+// stored. Soft-seeded keyless agents deny after the production flip;
+// distinct keys and a single keyless agent still restart; Soft does not.
+static void ac4281_restart_region_key_recheck() {
+    RestoreSandbox restore_sandbox;
+    RkeysEnvGuard4238 rkeys_guard;
+    std::println("\n--- #4281 AC1–AC5: RestartN region-key recheck ---");
+
+    auto set_prod = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+        aura::core::cpp26::note_hot_contract_harden_armed(on);
+    };
+    auto miss_total = [] {
+        return aura::serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
+            .load(std::memory_order_relaxed);
+    };
+
+    struct StallArm {
+        std::atomic<AgentHandle*> self{nullptr};
+        std::atomic<int> noted{0};
+    };
+    auto body_for = [](StallArm& arm, std::atomic<bool>& keep) {
+        return [&arm, &keep] {
+            AgentHandle* h = nullptr;
+            for (;;) {
+                h = arm.self.load(std::memory_order_acquire);
+                if (h)
+                    break;
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                aura::orch::fiber_sleep_ms(1);
+            }
+            aura::orch::note_agent_progress(*h);
+            arm.noted.store(1, std::memory_order_release);
+            while (keep.load(std::memory_order_relaxed)) {
+                if ((h->fiber && h->fiber->is_cancel_requested()) ||
+                    (aura::serve::g_current_fiber &&
+                     aura::serve::g_current_fiber->is_cancel_requested()))
+                    return;
+                aura::orch::fiber_sleep_ms(20);
+            }
+        };
+    };
+
+    struct WatchFacts {
+        bool spawn0 = false;
+        bool spawn1 = false;
+        bool progressed = false;
+        ScopeWatchResult wr{};
+        bool same_fiber0 = false;
+        bool same_fiber1 = false;
+        bool ok0 = false;
+        bool ok1 = false;
+        std::string name0;
+        std::string name1;
+        std::uint64_t miss_delta = 0;
+        std::uint64_t restart_delta = 0;
+        std::uint64_t denied_delta = 0;
+        std::uint64_t exhausted_delta = 0;
+        aura::orch::AgentDenyClass deny_class = aura::orch::AgentDenyClass::None;
+    };
+
+    auto watch_n = [&](int count, bool prod_at_spawn, bool prod_at_watch, std::uint64_t k0,
+                       std::uint64_t k1, const char* n0, const char* n1) {
+        WatchFacts f;
+        set_prod(prod_at_spawn);
+        ::setenv("AURA_SANDBOX", "off", 1);
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        // Two workers so a production drain can observe cancel on every
+        // stalled body. Scheduler(1) often defers the second fiber (#4003).
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        std::atomic<bool> keep{true};
+        StallArm a0;
+        StallArm a1;
+        AgentSpec s0;
+        s0.name = n0;
+        s0.body = body_for(a0, keep);
+        s0.attach_mailbox = false;
+        s0.keepalive_interval_ms = 50;
+        s0.region_key = k0;
+        s0.mutation_boundary = true;
+        f.spawn0 = scope.spawn(std::move(s0)).ok;
+        if (count > 1) {
+            AgentSpec s1;
+            s1.name = n1;
+            s1.body = body_for(a1, keep);
+            s1.attach_mailbox = false;
+            s1.keepalive_interval_ms = 50;
+            s1.region_key = k1;
+            s1.mutation_boundary = true;
+            f.spawn1 = scope.spawn(std::move(s1)).ok;
+        }
+        if (f.spawn0 && (count == 1 || f.spawn1)) {
+            auto hs = scope.handles_mut();
+            a0.self.store(&hs[0], std::memory_order_release);
+            if (count > 1)
+                a1.self.store(&hs[1], std::memory_order_release);
+            for (int i = 0; i < 400; ++i) {
+                const bool ready = a0.noted.load(std::memory_order_acquire) == 1 &&
+                                   (count == 1 || a1.noted.load(std::memory_order_acquire) == 1);
+                if (ready)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            f.progressed = a0.noted.load(std::memory_order_acquire) == 1 &&
+                           (count == 1 || a1.noted.load(std::memory_order_acquire) == 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+            set_prod(prod_at_watch);
+            Fiber* p0 = hs[0].fiber;
+            Fiber* p1 = count > 1 ? hs[1].fiber : nullptr;
+            const auto m0 = miss_total();
+            const auto r0 = g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto d0 = g_orch_module_stats.agent_restart_spawn_denied_total.load(
+                std::memory_order_relaxed);
+            const auto e0 =
+                g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed);
+            aura::orch::AgentFailurePolicy pol;
+            pol.on_stall = aura::orch::AgentFailureAction::RestartN;
+            pol.max_restarts = 2;
+            pol.consecutive_stall_limit = 5;
+            pol.restart_backoff_ms = 0;
+            pol.restart_drain_ms = 300;
+            f.wr = scope.watch_all(/*stall_timeout_ms=*/100, pol);
+            auto after = scope.handles();
+            f.same_fiber0 = !after.empty() && after[0].fiber == p0;
+            f.same_fiber1 = count > 1 && after.size() > 1 && after[1].fiber == p1;
+            f.ok0 = !after.empty() && after[0].ok;
+            f.ok1 = count > 1 && after.size() > 1 && after[1].ok;
+            f.name0 = !after.empty() ? after[0].name : std::string{};
+            f.name1 = count > 1 && after.size() > 1 ? after[1].name : std::string{};
+            f.miss_delta = miss_total() - m0;
+            f.restart_delta =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) - r0;
+            f.denied_delta = g_orch_module_stats.agent_restart_spawn_denied_total.load(
+                                 std::memory_order_relaxed) -
+                             d0;
+            f.exhausted_delta =
+                g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed) -
+                e0;
+            f.deny_class = scope.last_restart_deny_class();
+        }
+        keep.store(false, std::memory_order_relaxed);
+        scope.cancel_all();
+        (void)scope.join_all(std::optional<std::uint64_t>{800});
+        set_prod(false);
+        return f;
+    };
+
+    // AC1: Soft replay of two keyless mutate agents is unchanged.
+    {
+        const auto f = watch_n(2, /*prod_at_spawn=*/false, /*prod_at_watch=*/false, 0, 0,
+                               "4281-soft-a", "4281-soft-b");
+        CHECK(f.spawn0 && f.spawn1, "4281 AC1: Soft keyless pair admits");
+        CHECK(f.progressed, "4281 AC1: both bodies noted progress");
+        CHECK(f.wr.restart_attempted == 2, "4281 AC1: both RestartN attempted");
+        CHECK(f.wr.restart_ok == 2, "4281 AC1: Soft replay still restarts");
+        CHECK(f.wr.restart_denied == 0, "4281 AC1: Soft does not deny");
+        CHECK(f.wr.restart_deferred_body_live == 0, "4281 AC1: Soft never defers");
+        CHECK(f.miss_delta == 0, "4281 AC1: region counter untouched");
+        CHECK(f.restart_delta == 2, "4281 AC1: agent_restart_total +2");
+        CHECK(f.denied_delta == 0, "4281 AC1: spawn-denied counter untouched");
+        CHECK(!f.same_fiber0 && !f.same_fiber1, "4281 AC1: replacement fibers installed");
+    }
+
+    // AC2: Soft-seed two key=0 mutate agents, flip production, RestartN
+    // denies. Husk stays (same fiber, still ok). max_restarts not burned.
+    {
+        const auto f = watch_n(2, /*prod_at_spawn=*/false, /*prod_at_watch=*/true, 0, 0,
+                               "4281-flip-a", "4281-flip-b");
+        CHECK(f.spawn0 && f.spawn1, "4281 AC2: Soft seed admits both");
+        CHECK(f.progressed, "4281 AC2: both bodies noted progress");
+        CHECK(f.wr.restart_attempted == 2, "4281 AC2: both RestartN attempted");
+        CHECK(f.wr.restart_ok == 0, "4281 AC2: production keyless RestartN denied");
+        CHECK(f.wr.restart_denied >= 1, "4281 AC2: at least one restart_denied");
+        CHECK(f.wr.restart_denied + f.wr.restart_deferred_body_live == f.wr.restart_attempted,
+              "4281 AC2: every attempt denied or drain-deferred");
+        CHECK(f.miss_delta == f.wr.restart_denied,
+              "4281 AC2: region_key_missing_serialized_total matches denials");
+        CHECK(f.denied_delta == f.wr.restart_denied,
+              "4281 AC2: agent_restart_spawn_denied_total matches denials");
+        CHECK(f.restart_delta == 0, "4281 AC2: agent_restart_total not burned");
+        CHECK(f.exhausted_delta == 0, "4281 AC2: max_restarts not exhausted");
+        CHECK(f.same_fiber0 && f.same_fiber1, "4281 AC2: existing husk kept");
+        CHECK(f.ok0 && f.ok1, "4281 AC2: husk stays ok (not a spawn-failed replace)");
+        CHECK(f.name0 == "4281-flip-a" && f.name1 == "4281-flip-b", "4281 AC2: names unchanged");
+        CHECK(f.deny_class == aura::orch::AgentDenyClass::Other, "4281 AC2: deny class Other");
+    }
+
+    // AC3: distinct non-zero keys still restart under production.
+    {
+        const auto f = watch_n(2, /*prod_at_spawn=*/true, /*prod_at_watch=*/true, 11, 22,
+                               "4281-key-a", "4281-key-b");
+        const int replaced = (!f.same_fiber0 ? 1 : 0) + (!f.same_fiber1 ? 1 : 0);
+        CHECK(f.spawn0 && f.spawn1, "4281 AC3: distinct keys admit");
+        CHECK(f.progressed, "4281 AC3: both bodies noted progress");
+        CHECK(f.wr.restart_attempted == 2, "4281 AC3: both RestartN attempted");
+        CHECK(f.wr.restart_denied == 0, "4281 AC3: no region deny");
+        CHECK(f.wr.restart_ok >= 1, "4281 AC3: distinct-key RestartN still ok");
+        CHECK(f.wr.restart_ok + f.wr.restart_deferred_body_live == f.wr.restart_attempted,
+              "4281 AC3: every attempt restarted or drain-deferred");
+        CHECK(f.miss_delta == 0, "4281 AC3: region counter untouched");
+        CHECK(f.restart_delta == f.wr.restart_ok, "4281 AC3: agent_restart_total matches oks");
+        CHECK(f.denied_delta == 0, "4281 AC3: spawn-denied counter untouched");
+        CHECK(replaced == static_cast<int>(f.wr.restart_ok),
+              "4281 AC3: replacement fibers installed");
+        CHECK(f.ok0 && f.ok1, "4281 AC3: restarted handles ok");
+    }
+
+    // AC4: one keyless agent is not a missing-keys batch (specs_ only,
+    // not specs_ plus a second copy of the candidate).
+    {
+        const auto f =
+            watch_n(1, /*prod_at_spawn=*/true, /*prod_at_watch=*/true, 0, 0, "4281-one", "unused");
+        CHECK(f.spawn0, "4281 AC4: single keyless spawn admits");
+        CHECK(f.progressed, "4281 AC4: body noted progress");
+        CHECK(f.wr.restart_deferred_body_live == 0, "4281 AC4: drain finished");
+        CHECK(f.wr.restart_ok == 1, "4281 AC4: single-agent RestartN still ok");
+        CHECK(f.wr.restart_denied == 0, "4281 AC4: not denied as a fake pair");
+        CHECK(f.miss_delta == 0, "4281 AC4: region counter untouched");
+        CHECK(f.restart_delta == 1, "4281 AC4: agent_restart_total +1");
+        CHECK(!f.same_fiber0, "4281 AC4: replacement fiber installed");
+        CHECK(f.ok0, "4281 AC4: restarted handle ok");
+    }
+
+    // AC5: source cite. No new query key, no AgentRegistry, no invented artifacts.
+    {
+        set_prod(false);
+        const auto scope_src = read_file("src/orch/agent_scope.h");
+        CHECK(scope_src.find("Issue #4281") != std::string::npos, "4281 AC5: cites #4281");
+        CHECK(scope_src.find("region_key_missing_admit_deny_unlocked_()") != std::string::npos,
+              "4281 AC5: RestartN calls the no-arg admit helper");
+        CHECK(scope_src.find("region_key_missing_stored_deny_unlocked_(nullptr)") !=
+                  std::string::npos,
+              "4281 AC5: no-arg path evaluates specs_ only");
+        CHECK(scope_src.find("bypasses this gate by design") == std::string::npos,
+              "4281 AC5: RestartN bypass comment removed");
+        CHECK(scope_src.find("class AgentRegistry") == std::string::npos,
+              "4281 AC5: no AgentRegistry");
+        CHECK(scope_src.find("query:4281") == std::string::npos, "4281 AC5: no query:4281");
+        CHECK(read_file("tests/orch/test_issue_4281.cpp").empty(),
+              "4281 AC5: no test_issue_4281.cpp");
+        CHECK(read_file("docs/design/4281-restart-region-admit.md").empty(),
+              "4281 AC5: no docs/design/4281-*");
+    }
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -1947,6 +2197,7 @@ int run_test_agent_scope() {
     ac3366_6_source_cite_and_no_invent();
     ac3442_scope_message_resolve();
     ac4238_region_key_admit_deny();
+    ac4281_restart_region_key_recheck();
 
     std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216/#3442: passed={} "
                  "failed={} ===",

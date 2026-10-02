@@ -27,10 +27,12 @@ Fix shape (no second isolation model; keys are never auto-invented):
   - Soft / Off: one production_defaults_active load and out — observation
     stays zero-cost; no getenv on the Soft path.
   - #3803 observe_isolation keeps its join/workflow observation face;
-    RestartN re-spawn (try_restart_from_spec_) bypasses the gate by
-    design so supervision replay keeps its fuel; adopt() untouched;
-    orch:scope-spawn surfaces the deny through the existing !handle.ok
-    typed-reject mapping (#3366).
+    RestartN re-spawn (try_restart_from_spec_) re-checks the same
+    predicate over specs_ as stored (#4281 — no second candidate, or a
+    single keyless agent looks like two). Deny keeps the husk, bumps
+    the existing counters, and does not burn max_restarts. adopt()
+    untouched; orch:scope-spawn surfaces the deny through the existing
+    !handle.ok typed-reject mapping (#3366).
 
 Contract (one row per AC):
   AC1  agent_scope.h spawn() hosts the admit gate before emplace: cites
@@ -49,7 +51,7 @@ Contract (one row per AC):
   AC4  runtime ACs dispatched in tests/orch/test_agent_scope.cpp
        (ac4238_region_key_admit_deny in run_test_agent_scope, AC1–AC7
        labels); no tests/**/test_issue_4238.cpp; no docs/design/4238-*;
-       RestartN bypass comment present
+       RestartN calls the no-arg admit helper before replace (#4281)
   AC5  build.py wiring + scripts/coverage/root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
@@ -154,8 +156,8 @@ def main() -> int:
         fails.append("AC4: tests/orch/test_issue_4238.cpp must not exist")
     if _read("docs/design/4238-scope-region-admit.md"):
         fails.append("AC4: docs/design/4238-* must not exist")
-    # RestartN bypass stays by design: the restart helper must not route
-    # through the admit gate.
+    # RestartN (#4281) re-checks stored specs_ before replace. The
+    # no-arg overload does not append the candidate a second time.
     restart = window(
         scope_src,
         "bool try_restart_from_spec_(std::size_t i, const AgentFailurePolicy& policy) noexcept",
@@ -163,7 +165,42 @@ def main() -> int:
         "AC4-restart",
     )
     must("spawn_agent_with_mailbox(*sched_, specs_[i])", "AC4-restart", restart)
-    absent("region_key_missing_admit_deny_unlocked_", "AC4-restart", restart)
+    must("region_key_missing_admit_deny_unlocked_()", "AC4-restart", restart)
+    absent("region_key_missing_admit_deny_unlocked_(spec", "AC4-restart", restart)
+    absent("bypasses this gate by design", "AC4-restart", scope_src)
+    hi = restart.find("region_key_missing_admit_deny_unlocked_()")
+    sp = restart.find("spawn_agent_with_mailbox")
+    if hi == -1 or sp == -1 or hi > sp:
+        fails.append("AC4-restart: admit helper must run before spawn_agent_with_mailbox")
+    pre = restart[hi:sp] if hi != -1 and sp != -1 and hi < sp else ""
+    must("region_key_missing_serialized_total", "AC4-restart", pre)
+    must("agent_restart_spawn_denied_total", "AC4-restart", pre)
+    must("last_restart_deny_class_ = AgentDenyClass::Other", "AC4-restart", pre)
+    must("return false;", "AC4-restart", pre)
+    absent("handles_[i]", "AC4-restart", pre)
+    ref = window(
+        scope_src,
+        "bool region_key_missing_admit_deny_unlocked_(const AgentSpec& spec) const",
+        "bool region_key_missing_admit_deny_unlocked_() const",
+        "AC1-ref",
+    )
+    must("region_key_missing_stored_deny_unlocked_(&spec)", "AC1-ref", ref)
+    noarg = window(
+        scope_src,
+        "bool region_key_missing_admit_deny_unlocked_() const",
+        "live_handle_count_unlocked_",
+        "AC4-noarg",
+    )
+    must("region_key_missing_stored_deny_unlocked_(nullptr)", "AC4-noarg", noarg)
+    absent("extra->region_key", "AC4-noarg", noarg)
+    must("static void ac4281_restart_region_key_recheck()", "AC4", test_src)
+    must("ac4281_restart_region_key_recheck();", "AC4", test_src)
+    for ac in ("4281 AC1", "4281 AC2", "4281 AC3", "4281 AC4", "4281 AC5"):
+        must(ac, "AC4", test_src)
+    if _read("tests/orch/test_issue_4281.cpp"):
+        fails.append("AC4: tests/orch/test_issue_4281.cpp must not exist")
+    if _read("docs/design/4281-restart-region-admit.md"):
+        fails.append("AC4: docs/design/4281-* must not exist")
     # Prim mapping the Aura face rides on stays intact.
     must("!handle.ok", "AC4-prim", prim_src)
 

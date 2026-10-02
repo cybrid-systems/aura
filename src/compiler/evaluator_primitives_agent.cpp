@@ -3659,7 +3659,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // region_keys → typed deny, no spawn, no put. Same counter and
             // missing-or-overlap-keys face as Scope. Soft / Off: one
             // production load and out. Keys are never invented. Scope
-            // spawn and RestartN keep their own gate.
+            // spawn and RestartN keep their own gates (#4238 / #4281).
             if (aura::compiler::typed_audit::production_defaults_active() && ev.agent_names_) {
                 std::vector<std::uint64_t> live_keys;
                 ev.agent_names_->append_live_region_keys(live_keys, name);
