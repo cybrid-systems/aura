@@ -3888,7 +3888,8 @@ int main() {
         // eff is computed BEFORE the wildcard short-circuit (otherwise the
         // is_ta_mse_eff guard cannot steer TA/MSE queries to effects_for).
         const auto eff_pos = sec.find("const Effect eff = effect_for_cap_name(needed);");
-        const auto wild_pos = sec.find("if (wildcard_held)");
+        // Issue #4277: live registry row, not the old wildcard_held lambda.
+        const auto wild_pos = sec.find("holds_live_wildcard(capability_tenant_id_)");
         CHECK(eff_pos != std::string::npos && wild_pos != std::string::npos && eff_pos < wild_pos,
               "3411 AC1: eff computed before wildcard short-circuit (TA/MSE routing)");
         // is_ta_mse_eff guards TA / MSE bits from the wildcard short-circuit.
@@ -3928,10 +3929,11 @@ int main() {
               "3411 AC2: Soft/Off short-circuit via force_bind intact");
 
         std::println("\n--- #3411 AC3: wildcard still grants non-TA/MSE + string-only ---");
-        // The wildcard_held lambda + early return must still exist (non-TA/MSE
-        // and string-only caps still wildcard-grant; AC3 mutate / render).
-        CHECK(sec.find("wildcard_held") != std::string::npos &&
-                  sec.find("if (wildcard_held)") != std::string::npos,
+        // Issue #4277: the short-circuit is holds_live_wildcard under
+        // !is_ta_mse_eff. Non-TA/MSE and string-only caps still wildcard-grant.
+        const auto gate = sec.find("if (!is_ta_mse_eff)");
+        const auto live = sec.find("holds_live_wildcard(capability_tenant_id_)");
+        CHECK(gate != std::string::npos && live != std::string::npos && gate < live,
               "3411 AC3: wildcard short-circuit preserved for non-TA/MSE");
         // string-only legacy caps path still present.
         CHECK(sec.find("Legacy string-only caps keep the list path.") != std::string::npos,

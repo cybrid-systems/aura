@@ -67,12 +67,16 @@ def main() -> int:
     # AC1 — has_capability computes eff before wildcard short-circuit + TA/MSE routing.
     if "Issue #3411" not in sec:
         fails.append("AC1: evaluator_security.cpp missing 'Issue #3411' marker")
+    # Issue #4277: the short-circuit is the live registry row
+    # (holds_live_wildcard), not a stranded granted_capabilities_ "*".
+    # Order is unchanged: eff / is_ta_mse_eff still precede it, so TA/MSE
+    # queries never take the wildcard return.
     eff_pos = sec.find("const Effect eff = effect_for_cap_name(needed);")
-    wild_pos = sec.find("if (wildcard_held)")
+    wild_pos = sec.find("holds_live_wildcard(capability_tenant_id_)")
     if eff_pos < 0:
         fails.append("AC1: evaluator_security.cpp missing 'const Effect eff = effect_for_cap_name(needed);' line")
     if wild_pos < 0:
-        fails.append("AC1: evaluator_security.cpp missing 'if (wildcard_held)' short-circuit")
+        fails.append("AC1: evaluator_security.cpp missing live-wildcard short-circuit")
     if eff_pos > 0 and wild_pos > 0 and eff_pos > wild_pos:
         fails.append(
             "AC1: eff must be computed BEFORE the wildcard short-circuit "
@@ -114,7 +118,10 @@ def main() -> int:
             fails.append("AC2: Soft/Off short-circuit via force_bind missing")
 
     # AC3 — Wildcard still grants non-TA/MSE + string-only caps.
-    if "wildcard_held" not in sec or "if (wildcard_held)" not in sec:
+    # The return sits under !is_ta_mse_eff and requires a live "*" row.
+    gate_pos = sec.find("if (!is_ta_mse_eff)")
+    live_pos = sec.find("holds_live_wildcard(capability_tenant_id_)")
+    if gate_pos < 0 or live_pos < 0 or gate_pos > live_pos:
         fails.append("AC3: wildcard short-circuit must remain for non-TA/MSE + string-only")
     if "Legacy string-only caps keep the list path." not in sec:
         fails.append("AC3: string-only caps list path comment / code missing")
