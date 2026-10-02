@@ -140,6 +140,22 @@ def main() -> int:
         "recovery-reason clear is unified-green gated and sticky_cleared resolves post-publish",
     )
 
+    no_doc_4287 = not any((ROOT / "docs" / "design").glob("4287-*")) if (ROOT / "docs" / "design").exists() else True
+    good = (
+        "Issue #4287" in win
+        and "const bool pin_for_publish = compact_r.pin_contract_held && !blocked;" in code_only
+        and "/*had_moving_densify=*/true, pin_for_publish," in code_only
+        and "/*pin_contract_held=*/false" in deny_body
+        and "4287: blocked publish closes would_allow" in tst
+        and not (ROOT / "tests" / "core" / "test_issue_4287.cpp").exists()
+        and no_doc_4287
+    )
+    report(
+        "AC6",
+        good,
+        "recovery retry publish folds blocked into pin (#4287); LCP-deny pin=false stays",
+    )
+
     no_doc = not any((ROOT / "docs" / "design").glob("4143-*")) if (ROOT / "docs" / "design").exists() else True
     good = (
         "ac4143_1_deny_recover_never_drops_sticky" in tst

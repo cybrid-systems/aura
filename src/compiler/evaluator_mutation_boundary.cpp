@@ -8138,9 +8138,13 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             const auto root_fail =
                 static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total +
                                            compact_r.root_remap_closure_capture_fail_total);
+            // Issue #4287: soft-gate keeps default pin true with
+            // objects_moved==0. Fold blocked so would_allow is not
+            // vacuous-green. Sticky clear stays unified-success.
+            const bool blocked = compact_r.moving_blocked_precondition_any;
+            const bool pin_for_publish = compact_r.pin_contract_held && !blocked;
             aura::core::moving_densify_health::publish_last_moving_densify_window(
-                /*had_moving_densify=*/true, compact_r.pin_contract_held,
-                compact_r.moving_incomplete_remap_any,
+                /*had_moving_densify=*/true, pin_for_publish, compact_r.moving_incomplete_remap_any,
                 static_cast<std::uint64_t>(compact_r.objects_moved_total),
                 static_cast<std::uint64_t>(compact_r.untracked_kept_total), root_fail,
                 static_cast<std::uint64_t>(compact_r.external_roots_prep_registered_total));
