@@ -82,9 +82,22 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
 }
 
 // Hold agent_apply_mu_ for `hold_ms` (simulates apply_closure under the gate).
-void hold_apply_mu(std::mutex& mu, int hold_ms) {
+// inflight/peak, when set, record how many holders overlapped. Distinct
+// per-Evaluator mutexes reach 2; one shared mutex stays at 1. Wall-clock
+// slack is not that oracle: CI stretches a 120ms sleep past kHoldMs*2-40
+// while the two sections still overlap.
+void hold_apply_mu(std::mutex& mu, int hold_ms, std::atomic<int>* inflight = nullptr,
+                   std::atomic<int>* peak = nullptr) {
     std::lock_guard lock(mu);
+    if (inflight != nullptr && peak != nullptr) {
+        const int now = inflight->fetch_add(1, std::memory_order_acq_rel) + 1;
+        int seen = peak->load(std::memory_order_relaxed);
+        while (now > seen && !peak->compare_exchange_weak(seen, now, std::memory_order_relaxed)) {
+        }
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
+    if (inflight != nullptr)
+        inflight->fetch_sub(1, std::memory_order_acq_rel);
 }
 
 } // namespace
@@ -162,13 +175,15 @@ int run_test_agent_apply_mutex() {
         Scheduler s2(2);
         SchedRunner r1(s1);
         SchedRunner r2(s2);
+        std::atomic<int> inflight{0};
+        std::atomic<int> peak{0};
 
         AgentSpec sp1;
         sp1.name = "ac2-a";
-        sp1.body = [&mu1] { hold_apply_mu(mu1, kHoldMs); };
+        sp1.body = [&mu1, &inflight, &peak] { hold_apply_mu(mu1, kHoldMs, &inflight, &peak); };
         AgentSpec sp2;
         sp2.name = "ac2-b";
-        sp2.body = [&mu2] { hold_apply_mu(mu2, kHoldMs); };
+        sp2.body = [&mu2, &inflight, &peak] { hold_apply_mu(mu2, kHoldMs, &inflight, &peak); };
 
         const auto t0 = std::chrono::steady_clock::now();
         auto h1 = spawn_agent_with_mailbox(s1, std::move(sp1));
@@ -182,12 +197,17 @@ int run_test_agent_apply_mutex() {
                                  .count();
         CHECK(j1.status == JoinStatus::Ok || (h1.fiber && h1.fiber->is_done()), "AC2: h1 done");
         CHECK(j2.status == JoinStatus::Ok || (h2.fiber && h2.fiber->is_done()), "AC2: h2 done");
-        // Concurrent: ~120ms, not ~240ms. Allow slack for CI noise.
-        CHECK(wall_ms < (kHoldMs * 2 - 40),
-              std::format("AC2: wall {}ms ~max not sum (hold={}ms)", wall_ms, kHoldMs).c_str());
+        // Overlap is the contract (~max, not the sum). A shared mutex cannot
+        // reach 2. Wall clock only checks that the hold actually ran; CI
+        // stretches sleep_for past kHoldMs*2-40 without serializing.
+        CHECK(peak.load(std::memory_order_relaxed) >= 2,
+              std::format("AC2: overlapped holders {} wall {}ms ~max not sum (hold={}ms)",
+                          peak.load(std::memory_order_relaxed), wall_ms, kHoldMs)
+                  .c_str());
         CHECK(wall_ms >= (kHoldMs - 40),
               std::format("AC2: wall {}ms at least one hold", wall_ms).c_str());
-        std::println("  AC2 wall={}ms (hold={}ms each, concurrent)", wall_ms, kHoldMs);
+        std::println("  AC2 wall={}ms peak={} (hold={}ms each, concurrent)", wall_ms,
+                     peak.load(std::memory_order_relaxed), kHoldMs);
     }
 
     // ── AC3: single Evaluator multi-agent still serialized ──

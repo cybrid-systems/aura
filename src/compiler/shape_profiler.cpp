@@ -359,6 +359,7 @@ std::size_t ShapeProfiler::shard_index(FnKey fn) noexcept {
 }
 
 std::unique_lock<std::shared_mutex> ShapeProfiler::unique_lock_shard_(std::size_t i) const {
+    shard_unique_lock_total_.fetch_add(1, std::memory_order_relaxed);
     auto& mtx = shards_[i % kShapeProfilerShardCount].mtx;
     std::unique_lock<std::shared_mutex> lock(mtx, std::try_to_lock);
     if (!lock.owns_lock()) {
