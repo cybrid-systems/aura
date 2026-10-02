@@ -866,6 +866,9 @@ public:
 private:
     HotUpdateRegistry() = default;
 
+    // Issue #4290: one ResidualForceHeal min-dirty drive per peer slot.
+    void nudge_peer_residual_force_heal() noexcept;
+
     void notify_deopt_storm_locked(std::uint64_t deopts_in_window,
                                    std::uint64_t window_ms) noexcept;
 
