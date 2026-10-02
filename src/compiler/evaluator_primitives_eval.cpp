@@ -10,6 +10,7 @@ module;
 #include "prim_names.h"            // #904
 #include "security_capabilities.h" // Issue #2485: kCapIoRead for load
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/workspace_epoch.hh" // Issue #3691: bump_mutation_epoch on set-code
 
 module aura.compiler.evaluator;
 
@@ -437,6 +438,16 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     wf->revive_all_slots_after_null_root_recycle();
                 }
             }
+            // Issue #3691: installing a workspace is a Mutation-epoch event.
+            // Production require_effect refuses a session-less peek (epoch 0)
+            // even when the effect sandbox is Off (#3843 / #4241). set-code
+            // used to leave that epoch at 0, so a later (mutate:set-body)
+            // after apply_production_audit_defaults was effect-denied and
+            // the live define stayed on the old lambda. Bump once when the
+            // epoch is still unset. Do not mint a phantom mid inside
+            // require_effect, and do not advance an epoch a caller already set.
+            if (ev.workspace_flat_ != nullptr && aura::core::current_mutation_epoch() == 0)
+                aura::core::bump_mutation_epoch();
             return make_bool(true);
         });
 
