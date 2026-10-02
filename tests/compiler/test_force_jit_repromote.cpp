@@ -662,6 +662,50 @@ static void ac3541_peer_bits_preserved() {
     clear_idle(reg);
 }
 
+// ── #4289: cap-full owner must not process-word-clear peer slot bits ──
+static void ac4289_noslot_refuses_process_clear() {
+    std::println("\n--- #4289: no-slot owner refuses process-word clear ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    void* peers[aura::compiler::kEvalForceSlotCap];
+    for (std::size_t i = 0; i < aura::compiler::kEvalForceSlotCap; ++i) {
+        peers[i] = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x428900u + i));
+        aura_aot_set_reemit_owner_eval(peers[i]);
+        reg.set_force_eval_owner(peers[i]);
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        CHECK((reg.force_jit_regions_mask_for_eval(peers[i]) & defuse_bit) != 0,
+              "4289: peer slot armed");
+    }
+    void* ninth = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x428909u));
+    aura_aot_set_reemit_owner_eval(ninth);
+    reg.set_force_eval_owner(ninth);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK(reg.force_jit_regions_mask_for_eval(ninth) == 0, "4289: 9th eval has no slot");
+    const auto before = reg.reload_recovery_state().force_jit_regions_mask;
+    CHECK((before & defuse_bit) != 0, "4289: process word has peer Defuse");
+    CHECK((before & env_bit) != 0, "4289: process word has 9th Env");
+
+    const auto peer0 = reg.force_mask_peer_residual_total();
+    reg.note_reemit_success_coverage(defuse_bit | env_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+    const auto after = reg.reload_recovery_state().force_jit_regions_mask;
+    CHECK((after & defuse_bit) != 0, "4289: peer Defuse stays in the process word");
+    CHECK((after & env_bit) != 0, "4289: 9th Env stays fail-closed");
+    CHECK((reg.force_jit_regions_mask_for_eval(peers[0]) & defuse_bit) != 0,
+          "4289: peer slot mask unchanged");
+    CHECK(reg.force_mask_peer_residual_total() > peer0, "4289: peer-residual bumped");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("Issue #4289") != std::string::npos, "4289: cite");
+    CHECK(read_file("tests/compiler/test_issue_4289.cpp").empty(), "4289: no invent");
+    clear_idle(reg);
+}
+
 // ── #3541 AC2: nullptr owner keeps legacy process-word partial ──
 static void ac3541_legacy_null_owner() {
     std::println("\n--- #3541 AC2: nullptr owner is the legacy process-word path ---");
@@ -816,6 +860,7 @@ int run_test_force_jit_repromote() {
     ac2895_source_cite();
     ac2949_production_only_covered_default();
     ac3541_peer_bits_preserved();
+    ac4289_noslot_refuses_process_clear();
     ac3541_legacy_null_owner();
     ac3541_idle_zero_cost();
     ac3541_soft_no_abort();

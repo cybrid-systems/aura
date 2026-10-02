@@ -736,6 +736,13 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
                 force_jit_stable_successes_.store(0, std::memory_order_relaxed);
                 return;
             }
+        } else if (eval_force_live_.load(std::memory_order_relaxed) != 0) {
+            // Issue #4289: overlay is live but this owner has no slot
+            // (cap full, or TLS miss). Do not process-word-clear bits peer
+            // slots still hold. Keep the demotion and rebuild the streak.
+            force_mask_peer_residual_total_.fetch_add(1, std::memory_order_relaxed);
+            force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+            return;
         } else {
             const auto clear_bits = mask & last_cov;
             if (clear_bits == 0) {
