@@ -1191,14 +1191,26 @@ int run_test_agent_failure_policy() {
             const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
                 std::memory_order_relaxed);
             ac3208_set_prod(true);
-            for (int i = 0; i < 8; ++i) {
+            // Restart while the scope agent is the only spec. Adopting a
+            // bare handle first would store a second keyless mutate spec
+            // and #4281 would deny the replay (the old bypass).
+            {
                 AgentSpec spec;
                 spec.name = "3250-soak-scope";
                 spec.attach_mailbox = false;
                 spec.body = [&] { ac_loop_until_cancel(keep); };
                 scope.spawn(spec);
+                JoinPolicy jp{};
+                jp.primary_ms = 1;
+                jp.drain_ms = kJoinFailDrainMs;
+                AgentFailurePolicy pol;
+                pol.on_join_fail = AgentFailureAction::RestartN;
+                pol.max_restarts = 8;
+                (void)scope.join_all(jp, pol);
+            }
+            for (int i = 0; i < 4; ++i) {
                 AgentSpec bare_spec;
-                bare_spec.name = "3250-soak-bare";
+                bare_spec.name = std::format("3250-soak-bare-{}", i);
                 bare_spec.attach_mailbox = false;
                 bare_spec.body = [&] { ac_loop_until_cancel(keep); };
                 scope.adopt_handle_without_spec_for_test(
