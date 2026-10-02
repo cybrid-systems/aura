@@ -3652,6 +3652,49 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     return build_orch_hash(rkv);
                 }
             }
+
+            // Issue #4280: name-table plane shares the #4238 admit predicate.
+            // Production + ≥2 live mutate slots in THIS table (spawn-agent
+            // defaults mutation_boundary) with <2 distinct non-zero
+            // region_keys → typed deny, no spawn, no put. Same counter and
+            // missing-or-overlap-keys face as Scope. Soft / Off: one
+            // production load and out. Keys are never invented. Scope
+            // spawn and RestartN keep their own gate.
+            if (aura::compiler::typed_audit::production_defaults_active() && ev.agent_names_) {
+                std::vector<std::uint64_t> live_keys;
+                ev.agent_names_->append_live_region_keys(live_keys, name);
+                std::vector<aura::serve::parallel_orch::TaskSpec> tasks(live_keys.size() + 1);
+                for (std::size_t ki = 0; ki < live_keys.size(); ++ki)
+                    tasks[ki].region_key = live_keys[ki];
+                tasks.back().region_key = region_key;
+                if (tasks.size() >= 2) {
+                    const auto dec = aura::serve::parallel_orch::decide_isolation(
+                        aura::serve::parallel_orch::ParallelPolicy{}, tasks,
+                        /*pure_mode=*/false);
+                    const bool missing = aura::serve::parallel_orch::region_key_missing_serialized(
+                        dec, /*pure_mode=*/false, tasks.size(), /*production=*/true);
+                    if (missing && aura::serve::parallel_orch::parallel_require_region_keys_deny(
+                                       /*production=*/true, /*mutate_batch=*/true)) {
+                        aura::serve::parallel_orch::g_parallel_orch_stats
+                            .region_key_missing_serialized_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        auto nidx = ev.push_string_heap(name);
+                        auto eidx = ev.push_string_heap(
+                            "orch:spawn-agent: region-key-missing spawn deny (#4280)");
+                        std::vector<std::pair<std::string, EvalValue>> rkv = {
+                            {"ok", make_bool(false)},        {"id", make_int(0)},
+                            {"name", make_string(nidx)},     {"schema", make_int(1588)},
+                            {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(false)},
+                            {"error", make_string(eidx)},
+                        };
+                        add_deny_class(
+                            rkv, aura::orch::AgentDenyClass::Other,
+                            aura::serve::parallel_orch::kSerializedReasonMissingOrOverlapKeys, 0,
+                            /*emit_retry=*/false);
+                        return build_orch_hash(rkv);
+                    }
+                }
+            }
             orch_sched.ensure(2);
             auto body = [&ev, cid, region_key]() {
                 if (!cid)

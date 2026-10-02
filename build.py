@@ -10049,6 +10049,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4238 scope region admit linter failed — run python3 scripts/check_scope_region_admit_4238.py")
         return r
+    # Issue #4280 (P1: bare orch:spawn-agent / name-table admits N
+    # Serialized mutate agents under production — dual-track vs the
+    # #4238 Scope deny). The name-table plane now runs the same
+    # decide_isolation + region_key_missing_serialized + #3353 deny
+    # before spawn/put. AgentHandle carries region_key. Soft/Off stays
+    # one production load. No new query key, no AgentRegistry.
+    ntra4280_script = ROOT / "scripts" / "check_name_table_region_admit_4280.py"
+    if not ntra4280_script.exists():
+        fail(f"missing {ntra4280_script}")
+        return 1
+    r = run([sys.executable, str(ntra4280_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4280 name-table region admit linter failed — run python3 scripts/check_name_table_region_admit_4280.py"
+        )
+        return r
     # Issue #4239 (P1: require_effect hard face resurrects the TypeLinear
     # proof stamp after join(0)==0 refuse — EffectAllow/grant-bind ran on a
     # stale proof mid P while the mid-fallback-refused SE (#2836/#3054)

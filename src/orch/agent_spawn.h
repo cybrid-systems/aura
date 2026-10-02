@@ -1825,6 +1825,10 @@ struct AgentHandle {
     // cleanup releases the handle. Reclaimed / must-wait keeps the +1.
     // A retry join must not subtract again. Appended at END (#3461).
     bool agents_active_held = false;
+    // Issue #4280: AgentSpec.region_key copied at spawn so the name-table
+    // admit gate can see keys already admitted (0 = Serialized). Scope
+    // admit reads specs_, not this field. Appended at END (#3461).
+    std::uint64_t region_key = 0;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1865,7 +1869,8 @@ struct AgentHandle {
         , quota_recycled_pending(o.quota_recycled_pending)
         , import_proxy(o.import_proxy)
         , source_live(std::move(o.source_live))
-        , agents_active_held(o.agents_active_held) {
+        , agents_active_held(o.agents_active_held)
+        , region_key(o.region_key) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1905,6 +1910,7 @@ struct AgentHandle {
         o.import_proxy = false;           // #3930 / #3461 END field
         o.source_live.reset();            // #4004 / #3461 END field
         o.agents_active_held = false;     // #4097 / #3461 END field
+        o.region_key = 0;                 // #4280 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1951,6 +1957,7 @@ struct AgentHandle {
             import_proxy = o.import_proxy;
             source_live = std::move(o.source_live);
             agents_active_held = o.agents_active_held;
+            region_key = o.region_key; // #4280 / #3461 END field
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1982,6 +1989,7 @@ struct AgentHandle {
             o.import_proxy = false;           // #3930 / #3461 END field
             o.source_live.reset();            // #4004 / #3461 END field
             o.agents_active_held = false;     // #4097 / #3461 END field
+            o.region_key = 0;                 // #4280 / #3461 END field
         }
         return *this;
     }
@@ -2504,6 +2512,9 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
+    // Issue #4280: keep the admitted key on the handle. Name-table put
+    // moves `h`; the Scope plane still reads AgentSpec::region_key.
+    h.region_key = spec.region_key;
     // Issue #3147: persist effective bp_scope_id on the handle so
     // agent_send / emit_keepalive BP arms route to the correct scope
     // gauge (process bucket when empty / "-", scope gauge otherwise).

@@ -189,6 +189,24 @@ struct AgentNameTable {
         return find(name);
     }
 
+    // Issue #4280: region keys of live name-table slots for the spawn-agent
+    // admit gate. Excludes `exclude_name` (same-name respawn is one agent)
+    // and Done-path / abandoned husks. This table only — not a process walk
+    // and not an AgentRegistry. Caller is production; Soft never calls.
+    void append_live_region_keys(std::vector<std::uint64_t>& out, std::string_view exclude_name) {
+        std::lock_guard<std::mutex> lock(impl_->mu_);
+        for (const auto& [n, slot] : impl_->agents_) {
+            if (n == exclude_name)
+                continue;
+            if (!slot.ok)
+                continue;
+            if (aura::orch::slot_is_reclaimable_clean(slot) ||
+                aura::orch::slot_is_abandoned_live(slot))
+                continue;
+            out.push_back(slot.region_key);
+        }
+    }
+
     // Snapshot for cleanup at ~Evaluator. Caller owns the returned vector;
     // AgentHandle destructors release arena reservation. The map is
     // cleared so the destructor doesn't double-release.
