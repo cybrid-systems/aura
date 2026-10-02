@@ -169,6 +169,39 @@ def main() -> int:
         "AC5: compensating overflow-refuse PostureObserve still emitted",
     )
 
+    # Issue #4283 is the same residual as #4142, filed against an older
+    # tip. The three Agent queries already expose the faces; do not add a
+    # key, a second suggested-next, or a trail Success for mid=0.
+    must("Issue #4142 / #4283" in tmh, "4283: fold cites #4283 beside #4142")
+    must("query:security-audit" in tmh and "query:security-posture" in tmh, "4283: cites the three query faces")
+    must(
+        'insert_kv(\n                    "wal-overflow-wrap-refuse-total"' in prim
+        or '"wal-overflow-wrap-refuse-total"' in prim,
+        "4283: security-posture exposes wal-overflow-wrap-refuse-total",
+    )
+    must('"wal-append-fail-total"' in prim, "4283: security-posture exposes wal-append-fail-total")
+    must(
+        "query:security-audit" in prim and "filt_reason" in prim,
+        "4283: security-audit keeps the reason filter",
+    )
+    for needle, label in [
+        ("4142 AC1: refuse-only mid folds suggested-next=inspect-deny", "4283: AC1 inspect-deny"),
+        ("4142 AC2: security-audit mutation-id filter shows the miss row", "4283: AC2 audit row"),
+        ("forensic_mid_has_wal_append_miss(4142002)", "4283: AC2 forensic join"),
+        ("4142 AC3: wrap-refuse counter bumped", "4283: AC3 wrap-refuse"),
+        ("4142 AC3: older overflow mid preserved", "4283: AC3 no overwrite"),
+        ("4142 AC4: post-wrap all-miss + live refuse counter stays inspect-deny", "4283: AC4 no false-green"),
+        ("4142 AC5: Soft fold pushes nothing", "4283: AC5 Soft zero extra"),
+        ("4142 AC5: mid=0 stays none", "4283: AC5 mid=0 none"),
+    ]:
+        must(needle in tst, label)
+    must("query:4283" not in prim and "query:4283" not in tmh, "4283: no new query key")
+    must(
+        not glob.glob(str(ROOT / "tests" / "**" / "test_issue_4283.cpp"), recursive=True),
+        "4283: no tests/**/test_issue_4283.cpp",
+    )
+    must(not glob.glob(str(ROOT / "docs" / "design" / "4283-*")), "4283: no docs/design/4283-*")
+
     if failures:
         print(f"\ncheck_wal_miss_refuse_next_4142: {len(failures)} row(s) failed")
         return 1
