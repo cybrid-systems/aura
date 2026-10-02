@@ -153,6 +153,8 @@ def main() -> int:
     must("planned < actual + HEADROOM", "4284: #3339 fails when live+8 exceeds planned", checker)
     must("ac4140_2_no_overflow", "4284: production hash-overflow test retained", test)
     must("ac4140_4_soft", "4284: Soft overflow test retained", test)
+    must("ac4284_recount", "4284: facade test cites the recount", test)
+    must("ac4284_no_invent", "4284: facade test forbids a new issue test", test)
     if "query:4284" in obsjit:
         fails.append("4284: new query key (forbidden)")
     if list((ROOT / "tests").rglob("test_issue_4284.cpp")):

@@ -279,9 +279,10 @@ int main() {
               "3339 AC5: no docs/design/3339-*");
     }
 
-    // ── Issue #4140: arena-moving-densify-health joins #3339 headroom ──
+    // ── Issue #4140 / #4284: arena-moving-densify-health headroom ──
     // planned 84 sat under live+8 (79+8=87); raised to 96 and pinned in
-    // the #3339 CI. Runs before :prefix catalog dump.
+    // the #3339 CI. #4284 re-counted 81 live insert_kv (live+8 = 89 <=
+    // 96) and does not bump further. Runs before :prefix catalog dump.
     {
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
         using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -319,6 +320,12 @@ int main() {
               "ac4140_1_headroom: #3339 CI pins densify");
         CHECK(headroom.find("kArenaMovingDensifyHealthPlannedKeys") != std::string::npos,
               "ac4140_1_headroom: #3339 CI pins the densify planned constant");
+        CHECK(obsjit.find("Issue #4140 / #4284") != std::string::npos,
+              "ac4284_recount: handler cites #4284; planned stays 96");
+        CHECK(read_file("tests/compiler/test_issue_4284.cpp").empty(),
+              "ac4284_no_invent: no test_issue_4284.cpp");
+        CHECK(read_file("docs/design/4284-densify-headroom.md").empty(),
+              "ac4284_no_invent: no docs/design/4284-*");
 
         reset_for_test();
         apply_dev_audit_defaults();
