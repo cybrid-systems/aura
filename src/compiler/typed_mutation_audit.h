@@ -250,12 +250,17 @@ decide_evolution_suggested_next(const EvolutionSuggestedNextInput& in) noexcept 
     // call a rollback or SE deny "ok". Observe only — no playbook, no reemit.
     if (in.typed_outcome == 2 || in.typed_outcome == 3 || in.last_se_denied)
         return EvolutionSuggestedNext::InspectDeny;
-    // Issue #4142: miss/refuse-only evidence must not fold to "ok" either —
-    // a refused overflow mid's newest SE is a denied=false PostureObserve
-    // ("overflow-refuse") and a wrapped-out mid may have no row at all, so
-    // the #4064 deny arm never fires for exactly the long-run WAL stress
-    // this residue describes. Observe only — still no playbook / reemit;
-    // the Soft + mid=0 short-circuits above are untouched.
+    // Issue #4142 / #4283: miss/refuse-only evidence must not fold to "ok"
+    // either — a refused overflow mid's newest SE is a denied=false
+    // PostureObserve ("overflow-refuse") and a wrapped-out mid may have
+    // no row at all, so the #4064 deny arm never fires for exactly the
+    // long-run WAL stress this residue describes. The same fold is the
+    // Agent face: query:evolution-audit-decision yields inspect-deny,
+    // query:security-audit shows the miss/refuse row, and
+    // query:security-posture exposes the refuse / append-fail counters.
+    // Observe only — still no playbook / reemit, no second bus, no
+    // invented Success. Soft + mid=0 short-circuits above are untouched
+    // (mid=0 stays none; mid-fallback-refused is the mid=0 refuse face).
     if (in.wal_miss_refuse_evidence)
         return EvolutionSuggestedNext::InspectDeny;
     if (in.schedule_would_deny || in.posture_degraded)
