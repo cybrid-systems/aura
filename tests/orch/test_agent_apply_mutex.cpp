@@ -336,15 +336,22 @@ int run_test_agent_apply_mutex() {
         auto r = cs.eval(R"(
             (begin
               (orch:spawn-agent "c-3728" (lambda () 1))
-              (orch:spawn-agent "d-3728" (lambda () 1))
-              (let ((jc (orch:agent-join "c-3728" :timeout-ms 2000))
-                    (jd (orch:agent-join "d-3728" :timeout-ms 2000)))
-                (if (and (hash-ref jc "ok") (hash-ref jd "ok")) 1 0)))
+              (let ((d (orch:spawn-agent "d-3728" (lambda () 1)))
+                    (jc (orch:agent-join "c-3728" :timeout-ms 2000)))
+                (if (and (hash-ref jc "ok")
+                         (not (hash-ref d "ok"))
+                         (string=? (hash-ref d "deny-detail" "")
+                                   "missing-or-overlap-keys"))
+                    1 0)))
         )");
-        CHECK(r && is_int(*r) && as_int(*r) == 1, "3728 AC2: omitted-key agents joined");
+        // Issue #4280: a second keyless name-table mutate agent is the
+        // Scope deny face, not a second serialized admit. The one that
+        // landed still takes agent_apply_mu_ (omitted key stays Serialized).
+        CHECK(r && is_int(*r) && as_int(*r) == 1,
+              "3728 AC2: omitted key serializes; second keyless spawn denied (#4280)");
         const auto acq1 =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        CHECK(acq1 >= acq0 + 2, "3728 AC2: missing region_key still takes agent_apply_mu_");
+        CHECK(acq1 >= acq0 + 1, "3728 AC2: missing region_key still takes agent_apply_mu_");
         set_prod_3728(false);
     }
 

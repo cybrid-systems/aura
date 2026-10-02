@@ -30,6 +30,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "compiler/agent_name_table.h"
 #include "compiler/handoff_token_stash.hh"
@@ -814,6 +815,195 @@ static void ac3729_5_soft_miss_and_source() {
 // per slot_is_reclaimable_clean. Long-run unique-name spawn+join left
 // such husks in the table until ~Evaluator; the put-path sweep (#3944)
 // erases them cross-name under production. Soft keeps them (zero cost).
+// Issue #4280: bare orch:spawn-agent shares the #4238 region-key admit
+// deny. Production + ≥2 live name-table mutate slots with <2 distinct
+// non-zero keys → typed deny, no put. Soft admits. Distinct keys admit.
+static void ac4280_name_table_region_key_admit() {
+    std::println("\n--- #4280 AC1–AC6: name-table region-key-missing admit deny ---");
+    struct RkeysGuard {
+        bool had = false;
+        std::string prev;
+        RkeysGuard() {
+            const char* e = std::getenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+            had = e != nullptr;
+            if (had)
+                prev = e;
+        }
+        ~RkeysGuard() {
+            if (had)
+                ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", prev.c_str(), 1);
+            else
+                ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        }
+    } rkeys_guard;
+    (void)rkeys_guard;
+    auto miss_total = [] {
+        return aura::serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
+            .load(std::memory_order_relaxed);
+    };
+
+    // AC1: Soft — N keyless spawn-agent still admit. Counter untouched.
+    {
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(false);
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        CompilerService cs;
+        const auto m0 = miss_total();
+        auto a = cs.eval(R"((hash-ref (orch:spawn-agent "4280-soft-a" (lambda () 1)) "ok"))");
+        auto b = cs.eval(R"((hash-ref (orch:spawn-agent "4280-soft-b" (lambda () 1)) "ok"))");
+        CHECK(a && is_bool(*a) && as_bool(*a), "4280 AC1: Soft keyless pair admits");
+        CHECK(b && is_bool(*b) && as_bool(*b), "4280 AC1: Soft second keyless spawn admits");
+        CHECK(cs.evaluator().agent_names_->find("4280-soft-a") != nullptr, "4280 AC1: first put");
+        CHECK(cs.evaluator().agent_names_->find("4280-soft-b") != nullptr, "4280 AC1: second put");
+        CHECK(miss_total() == m0, "4280 AC1: deny counter untouched in Soft");
+        (void)cs.eval(R"((orch:agent-join "4280-soft-a" :timeout-ms 2000))");
+        (void)cs.eval(R"((orch:agent-join "4280-soft-b" :timeout-ms 2000))");
+        reset_all_agent_scopes_for_test();
+    }
+
+    // AC2: production + second keyless name → typed deny, no put.
+    {
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(true);
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        CompilerService cs;
+        const auto m0 = miss_total();
+        auto r = cs.eval(R"ac2(
+            (begin
+              (orch:spawn-agent "4280-prod-a" (lambda () 1))
+              (let ((d (orch:spawn-agent "4280-prod-b" (lambda () 1))))
+                (let ((err (hash-ref d "error" "")))
+                  (orch:agent-join "4280-prod-a" :timeout-ms 2000)
+                  (if (and (not (hash-ref d "ok"))
+                           (= (hash-ref d "id") 0)
+                           (string=? (hash-ref d "deny-detail" "")
+                                     "missing-or-overlap-keys")
+                           (string=? (substring err
+                                                (- (string-length err) 7)
+                                                (string-length err))
+                                     "(#4280)"))
+                      1 0))))
+        )ac2");
+        CHECK(r && is_int(*r) && as_int(*r) == 1,
+              "4280 AC2: second keyless spawn ok=#f + missing-or-overlap-keys");
+        CHECK(cs.evaluator().agent_names_->find("4280-prod-b") == nullptr,
+              "4280 AC2: denied spawn is not put");
+        CHECK(miss_total() == m0 + 1, "4280 AC2: region_key_missing_serialized_total +1");
+        ac3727_set_prod(false);
+        reset_all_agent_scopes_for_test();
+    }
+
+    // AC3: AURA_PARALLEL_REQUIRE_REGION_KEYS=0 admits the second keyless spawn.
+    {
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(true);
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
+        CompilerService cs;
+        const auto m0 = miss_total();
+        auto a = cs.eval(R"((hash-ref (orch:spawn-agent "4280-esc-a" (lambda () 1)) "ok"))");
+        auto b = cs.eval(R"((hash-ref (orch:spawn-agent "4280-esc-b" (lambda () 1)) "ok"))");
+        CHECK(a && is_bool(*a) && as_bool(*a), "4280 AC3: env=0 admits the keyless pair");
+        CHECK(b && is_bool(*b) && as_bool(*b), "4280 AC3: env=0 second keyless spawn admits");
+        CHECK(miss_total() == m0, "4280 AC3: escape does not bump the deny counter");
+        (void)cs.eval(R"((orch:agent-join "4280-esc-a" :timeout-ms 2000))");
+        (void)cs.eval(R"((orch:agent-join "4280-esc-b" :timeout-ms 2000))");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ac3727_set_prod(false);
+        reset_all_agent_scopes_for_test();
+    }
+
+    // AC4: distinct non-zero keys admit. Same-name replace of the only
+    // live slot also admits (exclude_name — one agent, not two).
+    {
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(true);
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        CompilerService cs;
+        const auto m0 = miss_total();
+        auto a = cs.eval(
+            R"((hash-ref (orch:spawn-agent "4280-key-a" (lambda () 1) :region-key 11) "ok"))");
+        auto b = cs.eval(
+            R"((hash-ref (orch:spawn-agent "4280-key-b" (lambda () 1) :region-key 22) "ok"))");
+        CHECK(a && is_bool(*a) && as_bool(*a), "4280 AC4: distinct keys admit");
+        CHECK(b && is_bool(*b) && as_bool(*b), "4280 AC4: second distinct key admits");
+        CHECK(miss_total() == m0, "4280 AC4: distinct keys do not deny");
+        // Same-name respawn is one agent: the walk drops that name. A
+        // completed production slot is #3467, so this is the table helper.
+        {
+            AgentNameTable table;
+            auto only = make_minimal_handle("only-4280", 71);
+            only.region_key = 7;
+            CHECK(table.put(std::move(only)) != nullptr, "4280 AC4: helper slot put");
+            std::vector<std::uint64_t> excluded;
+            table.append_live_region_keys(excluded, "only-4280");
+            CHECK(excluded.empty(), "4280 AC4: same-name replace is not a second agent");
+            std::vector<std::uint64_t> kept;
+            table.append_live_region_keys(kept, "other-4280");
+            CHECK(kept.size() == 1 && kept[0] == 7, "4280 AC4: other live keys stay");
+        }
+        (void)cs.eval(R"((orch:agent-join "4280-key-a" :timeout-ms 2000))");
+        (void)cs.eval(R"((orch:agent-join "4280-key-b" :timeout-ms 2000))");
+        ac3727_set_prod(false);
+        reset_all_agent_scopes_for_test();
+    }
+
+    // AC5: Scope #4238 path still denies a second keyless scope-spawn.
+    {
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(true);
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        CompilerService cs;
+        auto r = cs.eval(R"(
+            (begin
+              (orch:scope-spawn "4280-scope-a")
+              (let ((h (orch:scope-spawn "4280-scope-b")))
+                (if (not (hash-ref h "ok")) 1 0)))
+        )");
+        CHECK(r && is_int(*r) && as_int(*r) == 1, "4280 AC5: Scope #4238 deny unchanged");
+        (void)cs.eval(R"((orch:scope-cancel-all))");
+        (void)cs.eval(R"((orch:scope-join-all :timeout-ms 800))");
+        ac3727_set_prod(false);
+        reset_all_agent_scopes_for_test();
+    }
+
+    // AC6: source cite. No new query key, no AgentRegistry, no key synthesis.
+    {
+        ac3727_set_prod(false);
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim.find("Issue #4280") != std::string::npos, "4280 AC6: prim cites #4280");
+        CHECK(prim.find("append_live_region_keys") != std::string::npos,
+              "4280 AC6: name-table key walk");
+        CHECK(prim.find("decide_isolation") != std::string::npos,
+              "4280 AC6: decide_isolation SSOT");
+        CHECK(prim.find("region_key_missing_serialized") != std::string::npos,
+              "4280 AC6: #3243 predicate reused");
+        CHECK(prim.find("parallel_require_region_keys_deny") != std::string::npos,
+              "4280 AC6: #3353 deny face reused");
+        CHECK(prim.find("region-key-missing spawn deny (#4280)") != std::string::npos,
+              "4280 AC6: typed error");
+        CHECK(prim.find("class AgentRegistry") == std::string::npos, "4280 AC6: no AgentRegistry");
+        CHECK(prim.find("auto_region_key") == std::string::npos, "4280 AC6: keys never invented");
+        CHECK(prim.find("query:4280") == std::string::npos, "4280 AC6: no new query key");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn.find("h.region_key = spec.region_key") != std::string::npos,
+              "4280 AC6: handle stamps region_key");
+        const auto table = read_file("src/compiler/agent_name_table.h");
+        CHECK(table.find("append_live_region_keys") != std::string::npos, "4280 AC6: table helper");
+        const auto scope = read_file("src/orch/agent_scope.h");
+        CHECK(scope.find("region_key_missing_admit_deny_unlocked_") != std::string::npos,
+              "4280 AC6: Scope #4238 gate remains");
+        CHECK(read_file("tests/orch/test_issue_4280.cpp").empty(),
+              "4280 AC6: no test_issue_4280.cpp");
+        CHECK(read_file("docs/design/4280-name-table-region-admit.md").empty(),
+              "4280 AC6: no docs/design/4280-*");
+        CHECK(read_file("build.py").find("check_name_table_region_admit_4280") != std::string::npos,
+              "4280 AC6: build.py wires the linter");
+        CHECK(read_file("scripts/coverage/root_check_allowlist.txt")
+                      .find("check_name_table_region_admit_4280.py") != std::string::npos,
+              "4280 AC6: allowlist entry");
+    }
+}
+
 static void ac3944_1_prod_sweeps_cross_name_husks() {
     std::println("\n--- #3944: cross-name Done-husk sweep (production) ---");
     ac3727_set_prod(true);
@@ -904,8 +1094,10 @@ int run_test_agent_name_table_isolation() {
     ac3729_4_join_observe_only();
     ac3729_5_soft_miss_and_source();
     ac3944_1_prod_sweeps_cross_name_husks();
-    std::println("\n=== #2078/#3125/#3442/#3467/#3598/#3727/#3729/#3944: passed={} failed={} ===",
-                 g_passed, g_failed);
+    ac4280_name_table_region_key_admit();
+    std::println(
+        "\n=== #2078/#3125/#3442/#3467/#3598/#3727/#3729/#3944/#4280: passed={} failed={} ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
