@@ -9,7 +9,8 @@
 # owing ensure_reclaimed_cleanup / Scope sweep / join. This is the
 # capability boundary above single-Evaluator MVP for multi-agent long-run
 # coordination — NOT fixed by a process-global AgentRegistry, and no
-# ownership-moving saga is invented here (product ask tracked in #4139).
+# ownership-moving saga is invented here. Issue #4282 records the
+# product decision: stay observe-only; no ownership-transfer prim.
 # Fix shape: document + production observability — the
 # handoff_join_via_token_source_pending_total counter (appended at
 # OrchModuleStats struct END, no mid-struct insert / no key rename) bumps
@@ -202,6 +203,28 @@ def main() -> int:
         fails.append("AC4: linter must be registered in build.py")
     if "check_join_token_observe_4139.py" not in allow_src:
         fails.append("AC4: linter must be on the root check allowlist")
+
+    # Issue #4282: the product ask is decided — keep the #4139 observe-only
+    # ceiling. Do not add a transfer prim, a query key, or a new test file.
+    if "Issue #4282" not in spawn_raw:
+        fails.append("4282: agent_spawn.h must cite the observe-only product decision")
+    if "observe-only HandoffToken is the multi-Evaluator ceiling" not in spawn_raw:
+        fails.append("4282: decision must name the observe-only ceiling")
+    if "no ownership-transfer prim" not in spawn_raw:
+        fails.append("4282: decision must refuse an ownership-transfer prim")
+    for forbidden in (
+        "transfer_handoff_ownership",
+        "ownership_transfer_prim",
+        "move_handoff_ownership",
+    ):
+        if forbidden in spawn:
+            fails.append(f"4282: {forbidden} must not exist (observe-only ceiling)")
+    if (ROOT / "tests/orch/test_issue_4282.cpp").exists():
+        fails.append("4282: tests/orch/test_issue_4282.cpp must not exist")
+    if list((ROOT / "docs" / "design").glob("4282-*")):
+        fails.append("4282: docs/design/4282-* must not exist")
+    if "query:4282" in spawn_raw or "query:4282" in prim:
+        fails.append("4282: no new query key")
 
     if fails:
         for f in fails:

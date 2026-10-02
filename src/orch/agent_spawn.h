@@ -3534,7 +3534,15 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
 // pending-source snapshot so production hosts can alarm on the
 // belief-vs-owed gap. Documentation + observability only — ownership
 // never moves here (no ownership-transfer saga, no process-global
-// AgentRegistry; the ownership question is a product ask in #4139).
+// AgentRegistry).
+//
+// Issue #4282: product decision — session-local Scope plus this
+// observe-only HandoffToken is the multi-Evaluator ceiling. There is
+// no ownership-transfer prim: importer Ok does not ensure, sweep, or
+// unpublish on the source. The source Evaluator still owes
+// ensure_reclaimed_cleanup / Scope sweep / name unpublish after an
+// importer-visible Ok while source_must_wait_reclaimed. Soft/Off stay
+// observe-only. Hosts close the loop on the source Evaluator.
 //
 // Same shape as wait_reclaimed_body (#2924): read fiber pointer,
 // cooperative poll loop with host-thread sleep, deadline-driven
