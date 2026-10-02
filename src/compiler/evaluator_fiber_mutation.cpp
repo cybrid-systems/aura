@@ -4758,9 +4758,11 @@ std::size_t Evaluator::refresh_stale_macro_frames(std::uint64_t /*hint_env_id*/,
         const auto md = ws->macro_dirty(id);
         const bool has_expansion = (md & kExpansion) != 0;
         if (is_macro && !has_expansion) {
-            // Marker present without expansion bit — hygiene drift.
-            // Re-stamp expansion provenance (non-destructive) if API allows.
-            // Count as prevented so agents can observe steal/GC races.
+            // Issue #4291: MacroIntroduced without kMacroExpansion is
+            // drift. Re-OR the expansion bit (same fetch_or as
+            // restamp_macro_introduced_generations). Count the repair
+            // so agents still observe the steal/GC race.
+            ws->apply_macro_dirty_bits(id, kExpansion);
             ++stale_prevented;
             ++repaired;
         } else if (!is_macro && has_expansion) {

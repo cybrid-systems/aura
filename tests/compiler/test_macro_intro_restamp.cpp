@@ -260,6 +260,56 @@ static void ac5_query_surface() {
         CHECK(true, "macro-hygiene-stats sibling surface soft (may be schema-dependent)");
 }
 
+// Issue #4291: refresh_stale_macro_frames re-ORs kMacroExpansion when
+// the MacroIntroduced marker remains and the expansion bit was lost.
+static void ac4291_refresh_reors_lost_expansion() {
+    std::println("\n--- #4291: refresh re-ORs lost kMacroExpansion ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(+ 1 1)\")").has_value(), "4291: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4291: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr && ws->size() > 0, "4291: workspace");
+    if (!ws || ws->size() == 0)
+        return;
+    aura::ast::NodeId id = NULL_NODE;
+    for (aura::ast::NodeId i = 0; i < ws->size(); ++i) {
+        if (ws->is_live_node(i)) {
+            id = i;
+            break;
+        }
+    }
+    CHECK(id != NULL_NODE, "4291: live node");
+    if (id == NULL_NODE)
+        return;
+    ws->set_marker(id, SyntaxMarker::MacroIntroduced);
+    ws->clear_macro_dirty_all();
+    constexpr auto kExp = static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    CHECK(ws->is_macro_introduced(id), "4291: marker remains");
+    CHECK((ws->macro_dirty(id) & kExp) == 0, "4291: expansion lost");
+    CHECK(ws->validate_macro_hygiene_invariants() > 0, "4291: invariant sees the loss");
+    const auto n = cs.evaluator().refresh_stale_macro_frames(0, 0);
+    CHECK(n > 0, "4291: refresh repaired");
+    CHECK((ws->macro_dirty(id) & kExp) != 0, "4291: expansion re-OR'd");
+    CHECK(ws->validate_macro_hygiene_invariants() == 0, "4291: invariants clean after refresh");
+    std::string fiber;
+    for (const char* p : {"src/compiler/evaluator_fiber_mutation.cpp",
+                          "../src/compiler/evaluator_fiber_mutation.cpp",
+                          "../../src/compiler/evaluator_fiber_mutation.cpp"}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        fiber.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        break;
+    }
+    CHECK(fiber.find("Issue #4291") != std::string::npos, "4291: cite");
+    CHECK(fiber.find("apply_macro_dirty_bits(id, kExpansion)") != std::string::npos,
+          "4291: re-OR call");
+    CHECK(fiber.find("schema-4291") == std::string::npos, "4291: no query key");
+    CHECK(!std::ifstream("tests/compiler/test_issue_4291.cpp").good() &&
+              !std::ifstream("../tests/compiler/test_issue_4291.cpp").good(),
+          "4291: no new test file");
+}
+
 } // namespace
 
 int main() {
@@ -268,6 +318,7 @@ int main() {
     ac3_nested_expand_and_mutate();
     ac4_file_level_lockstep();
     ac5_query_surface();
+    ac4291_refresh_reors_lost_expansion();
     if (g_failed)
         return 1;
     std::println("macro intro restamp subtree (#2096): OK ({} passed)", g_passed);
