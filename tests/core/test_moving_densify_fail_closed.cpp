@@ -4898,6 +4898,46 @@ static void ac4143_3_source_cite_clear_after_retry() {
     }
     CHECK(code_only.find("moving_compact_enabled()") == std::string::npos,
           "4143 AC3: recovery gate no longer sticky-gated (code-only check)");
+    CHECK(win.find("Issue #4287") != std::string::npos, "4287: recovery publish cites blocked pin");
+    CHECK(code_only.find("pin_for_publish = compact_r.pin_contract_held && !blocked") !=
+              std::string::npos,
+          "4287: published pin folds moving_blocked_precondition");
+    CHECK(code_only.find("/*had_moving_densify=*/true, pin_for_publish,") != std::string::npos,
+          "4287: retry publish uses pin_for_publish");
+    CHECK(read_file("tests/core/test_issue_4287.cpp").empty(), "4287: no invent");
+    CHECK(read_file("docs/design/4287-recovery-blocked-publish.md").empty(),
+          "4287: no docs/design");
+}
+
+static void ac4287_blocked_retry_publish_closes_window() {
+    std::println("\n--- #4287: temp-canary soft-gate retry does not vacuous-green would_allow ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    auto& ev = cs.evaluator();
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    int sentinel = 0;
+    aura::ast::note_temporary_moving_live_ptr(&sentinel);
+    const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+    const auto hs = aura::core::moving_densify_health::snapshot();
+    CHECK(rec.densify_retried, "4287: retry densify ran");
+    CHECK(!rec.sticky_cleared, "4287: blocked retry keeps sticky_cleared false");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "4287: sticky stays armed");
+    CHECK(!hs.would_allow_mutate, "4287: blocked publish closes would_allow");
+    CHECK(hs.objects_moved == 0, "4287: soft-gate moved nothing");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
 }
 
 static void ac4143_4_wiring_no_invent() {
@@ -8020,6 +8060,7 @@ int run_test_moving_densify_fail_closed() {
     ac4143_2_green_retry_clears_post_publish();
     ac4143_3_source_cite_clear_after_retry();
     ac4143_4_wiring_no_invent();
+    ac4287_blocked_retry_publish_closes_window();
 
     std::println("\n=== Issue #4144: EnvFrame pool_ aliases get lasting slot remap "
                  "(#3647 sibling; extends fail_closed per #81967) ===");
