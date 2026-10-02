@@ -104,7 +104,7 @@
           (let ((vi (vector-ref v i)))
             (if (< vi best-val)
               (loop (+ i 1) i vi)
-              (loop (+ i 1) best-i best-val)))))))))
+              (loop (+ i 1) best-i best-val))))))))
 
 (define (vec:argmax v)
   (let ((n (vector-length v)))
@@ -114,7 +114,7 @@
           (let ((vi (vector-ref v i)))
             (if (> vi best-val)
               (loop (+ i 1) i vi)
-              (loop (+ i 1) best-i best-val)))))))))
+              (loop (+ i 1) best-i best-val))))))))
 
 ; ── Slice / Concat ──────────────────────────────────────────
 

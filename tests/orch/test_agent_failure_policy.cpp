@@ -411,17 +411,19 @@ int run_test_agent_failure_policy() {
         AgentScope scope(sched);
         AgentSpec spec;
         spec.name = "cancel-stall-test";
-        spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep_running); };
+        // Entry seed + note_agent_progress refresh the body clock. A fixed
+        // 180ms sleep races a late first schedule and watch reports Alive.
+        ProgressArm arm;
+        spec.body = [&] { progress_stall_body(arm, keep_running, /*exit_on_cancel=*/true); };
         // ProgressClock mode: body owns keepalive via note_agent_progress.
         // MailboxKeepalive would spawn a helper that keeps the agent alive.
         spec.attach_mailbox = false;
         spec.mailbox_high_water = 16;
         spec.keepalive_interval_ms = 50;
         AgentHandle& h = scope.spawn(spec);
-
-        // watch_agent_liveness returns Alive immediately while age < stall_ms.
-        // Wait past the stall window so silence is observable on the first call.
-        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        CHECK(h.ok && h.fiber, "AC2: spawn ok");
+        arm.self.store(&h, std::memory_order_release);
+        CHECK(wait_progress_then_age(arm, /*stall_ms=*/100), "AC2: body noted progress");
 
         // Default policy = Cancel (no restart). Stall should
         // request_cancel + bump stalled_agents_total.
@@ -468,20 +470,20 @@ int run_test_agent_failure_policy() {
         const std::string name_a = "restart-test-A";
         AgentSpec spec_a;
         spec_a.name = name_a;
-        spec_a.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep_running); };
+        ProgressArm arm;
+        spec_a.body = [&] { progress_stall_body(arm, keep_running, /*exit_on_cancel=*/true); };
         // ProgressClock (no mailbox helper) so body silence produces stalls.
         spec_a.attach_mailbox = false;
         spec_a.mailbox_high_water = 16;
         spec_a.keepalive_interval_ms = 50;
         // Spawn the initial agent.
-        scope.spawn(spec_a);
+        auto& h_a = scope.spawn(spec_a);
+        CHECK(h_a.ok && h_a.fiber, "AC3: spawn ok");
+        arm.self.store(&h_a, std::memory_order_release);
         // Capture the original fiber id for comparison.
-        const std::uint64_t first_fiber_id =
-            scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+        const std::uint64_t first_fiber_id = h_a.fiber->id();
         std::println("  first_fiber_id={}", first_fiber_id);
-
-        // Age past stall window so ProgressClock silence is Stalled.
-        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        CHECK(wait_progress_then_age(arm, /*stall_ms=*/100), "AC3: body noted progress");
 
         // RestartN policy: max_restarts=2, consecutive_stall_limit=3
         // (so the circuit doesn't fire on the first stall).
@@ -1299,16 +1301,17 @@ int run_test_agent_failure_policy() {
         spec.name = "4003-spin";
         spec.attach_mailbox = true;
         spec.keepalive_interval_ms = 50;
-        spec.body = [&] {
-            aura::orch::note_agent_progress(scope.handles_mut().back());
-            while (keep.load(std::memory_order_relaxed)) {
-            }
-        };
+        ProgressArm arm;
+        spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/false); };
         auto& h = scope.spawn(spec);
         CHECK(h.ok && h.fiber, "4003 AC1: spawn");
+        arm.self.store(&h, std::memory_order_release);
         const auto first_id = h.fiber->id();
         const auto reserved0 = h.reserved_memory_bytes;
-        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        // Production + mailbox may not enter the body before the spawn
+        // seed is already older than stall_ms. The wait still ages a note
+        // that does arrive; a missing note has already aged the seed.
+        (void)wait_progress_then_age(arm, /*stall_ms=*/100);
         AgentFailurePolicy pol;
         pol.on_stall = AgentFailureAction::RestartN;
         pol.max_restarts = 2;
@@ -1340,10 +1343,13 @@ int run_test_agent_failure_policy() {
         spec.name = "4003-soft";
         spec.attach_mailbox = false;
         spec.keepalive_interval_ms = 50;
-        spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
-        scope.spawn(spec);
-        const auto first_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
-        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        ProgressArm arm;
+        spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/true); };
+        auto& h = scope.spawn(spec);
+        CHECK(h.ok && h.fiber, "4003 AC2: spawn");
+        arm.self.store(&h, std::memory_order_release);
+        const auto first_id = h.fiber->id();
+        CHECK(wait_progress_then_age(arm, /*stall_ms=*/100), "4003 AC2: body noted progress");
         AgentFailurePolicy pol;
         pol.on_stall = AgentFailureAction::RestartN;
         pol.max_restarts = 2;
@@ -1370,9 +1376,14 @@ int run_test_agent_failure_policy() {
         spec.attach_mailbox = true;
         spec.mailbox_high_water = 64;
         spec.keepalive_interval_ms = 50;
-        spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
+        // Default mutation_boundary holds the fiber unsafe while the body
+        // runs, and push then returns backpressure (#2312).
+        spec.mutation_boundary = false;
+        ProgressArm arm;
+        spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/true); };
         auto& h = scope.spawn(spec);
         CHECK(h.ok && h.mailbox, "4003 AC3: mailbox");
+        arm.self.store(&h, std::memory_order_release);
         for (int i = 0; i < 3; ++i) {
             aura::serve::mf_mailbox::MailMessage m;
             m.payload = "q";
@@ -1380,7 +1391,7 @@ int run_test_agent_failure_policy() {
         }
         const auto queued = h.mailbox->size();
         CHECK(queued >= 1, "4003 AC3: queued work");
-        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        (void)wait_progress_then_age(arm, /*stall_ms=*/100);
         AgentFailurePolicy pol;
         pol.on_stall = AgentFailureAction::RestartN;
         pol.max_restarts = 2;

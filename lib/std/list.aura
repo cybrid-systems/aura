@@ -98,11 +98,17 @@
 
 ; take: R7RS / SRFI-1 (lst k) — align with native #4177; Soft oneshot
 ; previously shadowed native with count-first (take n lst) (#4221).
+; A non-integer count must be an error value. Coercing it through
+; (- k 1) prints a type mismatch and returns a list, so error? is false.
 (define (take lst n)
-  (let loop ((k n) (xs lst) (acc (list)))
-    (if (or (= k 0) (null? xs))
-      (reverse acc)
-      (loop (- k 1) (cdr xs) (cons (car xs) acc)))))
+  (if (integer? n)
+    (if (>= n 0)
+      (let loop ((k n) (xs lst) (acc (list)))
+        (if (or (= k 0) (null? xs))
+          (reverse acc)
+          (loop (- k 1) (cdr xs) (cons (car xs) acc))))
+      (error "take: count must be a non-negative integer"))
+    (error "take: count must be a non-negative integer")))
 
 (define (skip n lst)
   (let loop ((k n) (xs lst))

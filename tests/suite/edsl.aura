@@ -330,7 +330,7 @@
   (define diff2 (ast:diff s2))
   ;; Both should be valid lists
   (check (list? diff1))
-  (check (list? diff2))))
+  (check (list? diff2)))
 
 (test-suite "snapshot:list-after-multiple"
   (set-code "(define (f x) (+ x 1))")
@@ -339,7 +339,7 @@
   (ast:snapshot "b")
   ;; List should contain at least 2 snapshots
   (let ((lst (stats:get "ast:list-snapshots")))
-    (check (>= (length lst) 2)))))
+    (check (>= (length lst) 2))))
 
 
 
@@ -430,7 +430,7 @@
   (let ((root (query:root)))
     (check (not (mutate:splice root 0 "splice")))))
   ;; splice with no code args should return #f
-  (check (not (mutate:splice 0 0 "splice"))))
+  (check (not (mutate:splice 0 0 "splice")))
 
 
 ;; ═══════════════════════════════════════════════════════════════
@@ -666,7 +666,7 @@
   (workspace :lock w1 #t)
   (workspace :switch w1)
   ;; set-code should also be rejected
-  (check (not (set-code "(define y 2)")))))
+  (check (not (set-code "(define y 2)"))))
 
 
 ;; ═══════════════════════════════════════════════════════════════
@@ -719,13 +719,13 @@
   (workspace :switch cid)
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   ;; Discard should reset to parent
-  (check (workspace:discard cid))))
+  (check (workspace:discard cid)))
 
 (test-suite "ws:discard-no-own-flat"
   (set-code "(define (f x) (+ x 1))")
   (define cid (workspace :create "child"))
   ;; Child has no own flat (COW) — discard should be a no-op
-  (check (workspace:discard cid))))
+  (check (workspace:discard cid)))
 
 (test-suite "ws:discard-invalid-id"
   (set-code "(define x 1)")
@@ -750,7 +750,7 @@
 (test-suite "synth:fill-multi-param"
   (set-code "(begin)")
   (synthesize:register-template "handler"
-    "(define (handle-{r} req) (query "{q}"))" "r" "q")
+    "(define (handle-{r} req) (query \"{q}\"))" "r" "q")
   (check (synthesize:fill "handler" "users" "select *")))
 
 (test-suite "synth:list-templates"
@@ -1028,7 +1028,7 @@
   (rule:remove 'save-test-rule)
   (let ((count (rule:load "/tmp/aura-test-rules.json")))
     (check (> count 0))
-    (check (pair? (rule:status 'save-test-rule))))))
+    (check (pair? (rule:status 'save-test-rule)))))
 
 (test-suite "rule-p2:violations-empty-workspace"
   (require "std/rule" all:)
@@ -1385,7 +1385,7 @@
 (test-suite "edsl:query-index"
   (set-code "(define (add x y) (+ x y))(define (mul x y) (* x y))")
   (check (query:reaches))
-  (let ((stats (engine:metrics \"query:index-stats\")))
+  (let ((stats (engine:metrics "query:index-stats")))
     (check (pair? stats))
     (check (> (length stats) 0))))
 

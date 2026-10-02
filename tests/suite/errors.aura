@@ -167,7 +167,7 @@
 (test-suite "apply-fix:closure-unchanged"
   (let ((code "(define (f x) (* x 2))"))
     (check (check-success
-      (apply-fix code (diagnose "program returned closure")) (list "define"))))))
+      (apply-fix code (diagnose "program returned closure")) (list "define")))))
 
 ;; ── apply-fix: comprehensive require patterns ─────────────
 
@@ -203,7 +203,7 @@
          (fixed (apply-fix (apply-fix code (diagnose "unbound variable: map"))
                           (diagnose "unbound variable: hash-ref"))))
     (check (check-success fixed (list "std/list")))
-    (check (check-success fixed (list "std/hash"))))))
+    (check (check-success fixed (list "std/hash")))))
 
 ;; ── apply-fix: already correct code ──────────────────────
 
@@ -212,13 +212,13 @@
          (fixed (apply-fix code (diagnose "unbound variable: for-each"))))
     ;; Should still have exactly one std/list
     (check (check-success fixed (list "std/list")))
-    (check (check-success fixed (list "for-each"))))))
+    (check (check-success fixed (list "for-each")))))
 
 (test-suite "apply-fix:already-requires-std-hash"
   (let* ((code "(require \"std/hash\" all:)\n(define (f) (hash-ref h 'key))")
          (fixed (apply-fix code (diagnose "unbound variable: hash-ref"))))
     (check (check-success fixed (list "std/hash")))
-    (check (check-success fixed (list "hash-ref"))))))
+    (check (check-success fixed (list "hash-ref")))))
 
 ;; ── apply-fix: define-function with various names ─────────
 
@@ -226,12 +226,12 @@
   (let ((fixed (apply-fix "(display (my-custom-func 42 7))"
                           (diagnose "unbound variable: my-custom-func"))))
     (check (check-success fixed (list "my-custom-func")))
-    (check (check-success fixed (list "define"))))))
+    (check (check-success fixed (list "define")))))
 
 (test-suite "apply-fix:define-stub-for-unknown"
   (let ((fixed (apply-fix "(display (some-func))"
                           (diagnose "unbound variable: some-func"))))
-    (check (check-success fixed (list "some-func"))))))
+    (check (check-success fixed (list "some-func")))))
 
 ;; ── apply-fix: edge cases ────────────────────────────────
 
@@ -241,7 +241,7 @@
 (test-suite "apply-fix:empty-code-string"
   (let ((fixed (apply-fix "" (diagnose "unbound variable: for-each"))))
     (check (check-success fixed (list "std/list")))
-    (check (check-success fixed (list "require"))))))
+    (check (check-success fixed (list "require")))))
 
 (test-suite "apply-fix:failure-returns-bool-false"
   (check (= (apply-fix "code" #f) #f)))
@@ -253,7 +253,7 @@
          (fixed (apply-fix code diag))
          (re-diag (diagnose "unbound variable: for-each")))
     (check (check-success fixed (list "std/list")))
-    (check (check-success fixed (list "for-each"))))))
+    (check (check-success fixed (list "for-each")))))
 
 ;; ── self-healing integration tests (鸿渐于陆) ────────────────
 ;; These test the full heal cycle: code → error → diagnose → apply-fix → verify
@@ -334,7 +334,7 @@
          (fixed1 (apply-fix code diag1))
          (fixed2 (try (apply-fix fixed1 diag2) (catch (e) fixed1))))
     (check (check-success fixed2 (list "std/list")))
-    (check (check-success fixed2 (list "std/hash"))))))
+    (check (check-success fixed2 (list "std/hash")))))
 
 (test-suite "heal:idempotent-no-change-needed"
   ;; Code that already has the right require — apply-fix no-ops
@@ -357,7 +357,7 @@
          (healed (and (string? fixed) (not (string=? fixed code)))))
     (check healed)
     (check (check-success fixed (list "std/hash")))
-    (check (check-success fixed (list "hash-ref"))))))
+    (check (check-success fixed (list "hash-ref")))))
 
 (test-suite "heal:diagnose-execute-roundtrip"
   ;; End-to-end: error → diagnose → apply-fix → execute fixed code → check output
@@ -369,7 +369,7 @@
          (has-require (check-success fixed-code (list "require" "std/list")))
          (has-original (check-success fixed-code (list "for-each" "display"))))
     (check has-require)
-    (check has-original))))
+    (check has-original)))
 
 ;; ── heal primitive tests (std/heal.aura) ───────────────────
 

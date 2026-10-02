@@ -377,6 +377,10 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
     )
     if bin_name in _VERY_HEAVY_JIT:
         return timeout * 10  # 600s — jit_late1 wall under load
+    # 16 members; per-scope BP windows already approach the 90s isolate.
+    # *4 (240s) killed the suite while later members were still passing.
+    if bin_name == "test_orch_agent_batch":
+        return timeout * 10  # 600s
     if bin_name in _VERY_HEAVY:
         return timeout * 4  # 240s; isolate alarm is 90s/member
     if is_heavy:
