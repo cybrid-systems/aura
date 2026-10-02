@@ -233,6 +233,18 @@ namespace {
         return aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
     }
 
+    // Issue #4279: same gate as the fiber resume rebind, but keyed to the
+    // capability principal the caller just stored. Map-off is the Soft/Off
+    // zero-cost path (quota_per_tenant_enabled is false under AURA_SANDBOX=off
+    // unless a test override or multi-tenant arm is on).
+    void bind_quota_tls_to_principal(bool production, std::uint64_t tenant_id) noexcept {
+        if (!production)
+            return;
+        if (!::aura::core::resource_quota::quota_per_tenant_enabled())
+            return;
+        ::aura::core::resource_quota::set_current_quota_tenant(tenant_id);
+    }
+
 } // namespace
 
 // Issue #3436: explicit-lifetime mirror form. grant_effect_* wrappers call
@@ -1991,6 +2003,9 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
                                             "allow-cross-needs-tenant-admin",
                                             /*denied=*/true, fid);
                 capability_tenant_id_ = tenant_id;
+                // Issue #4279: the principal changed even though the
+                // allow-cross flag was refused. Quota TLS follows it.
+                bind_quota_tls_to_principal(force_bind, tenant_id);
                 return; // refuse the flag — leave allow_cross_tenant_ unchanged
             }
             capability_tenant_id_ = tenant_id;
@@ -2042,6 +2057,11 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
             }
         }
     }
+    // Issue #4279: in-process consume/check reads current_quota_tenant().
+    // A principal switch that leaves the previous bucket (or tenant 0)
+    // charges the wrong ResourceQuota map. Restricted/Strict + per-tenant
+    // map only. Soft/Off and a dark map skip (zero extra).
+    bind_quota_tls_to_principal(sandbox_mode_ != 0 || effect_sandbox_mode() != 0, tenant_id);
 }
 
 // Issue #2055: RAII TenantScope — snapshot principal at fiber entry so a
@@ -2064,6 +2084,8 @@ Evaluator::TenantScope::TenantScope(Evaluator& ev, std::uint64_t tenant_id, std:
     // (M_live != M_enter); release must key M_enter, not M_live.
     if (scope_mid_ == 0)
         scope_mid_ = ::aura::core::current_mutation_epoch();
+    // Issue #4279: snapshot before set_tenant_principal rebinds quota TLS.
+    prev_quota_tenant_ = ::aura::core::resource_quota::current_quota_tenant();
     ev.set_tenant_principal(tenant_id, name, allow_cross);
 }
 
@@ -2102,6 +2124,10 @@ void Evaluator::TenantScope::release() noexcept {
         // Restore prior principal under the same lock (#3207 happens-before).
         ev_->set_capability_tenant_id(prev_tenant_);
         ev_->allow_cross_tenant_ = prev_allow_cross_;
+        // Issue #4279: release does not call set_tenant_principal, so the
+        // quota TLS bound at enter would otherwise stick. Restore the
+        // enter snapshot. Soft/Off and a dark map no-op.
+        bind_quota_tls_to_principal(production, prev_quota_tenant_);
         active_ = false;
         return;
     }
@@ -2109,6 +2135,8 @@ void Evaluator::TenantScope::release() noexcept {
     // Issue #2659: Evaluator-local only — no global write.
     ev_->set_capability_tenant_id(prev_tenant_);
     ev_->allow_cross_tenant_ = prev_allow_cross_;
+    // Issue #4279: same quota-TLS restore as the locked path.
+    bind_quota_tls_to_principal(production, prev_quota_tenant_);
     active_ = false;
 }
 

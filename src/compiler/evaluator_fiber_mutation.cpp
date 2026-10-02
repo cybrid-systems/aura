@@ -3593,6 +3593,13 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
 }
 
 extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
+    // Release the scope first. Issue #4279: TenantScope::release restores
+    // the quota TLS it snapshotted at enter (the post-#3668 bind). The
+    // pre-resume ambient restore stays last so yield still returns to
+    // that baseline instead of the scope snapshot.
+    if (g_fiber_tenant_scope)
+        g_fiber_tenant_scope->release();
+    g_fiber_tenant_scope.reset();
     // Issue #3668: restore the pre-resume quota TLS (pairs with the
     // rebind in the resume install) so the next fiber on this worker
     // starts from the ambient tenant baseline, not the yielded tenant.
@@ -3600,12 +3607,6 @@ extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
         aura::core::resource_quota::set_current_quota_tenant(g_fiber_prev_quota_tenant);
         g_fiber_quota_tenant_bound = false;
     }
-    // Release (does not destroy) — restore previous principal so a
-    // subsequent resume of a different fiber on the same worker starts
-    // from a clean baseline.
-    if (g_fiber_tenant_scope)
-        g_fiber_tenant_scope->release();
-    g_fiber_tenant_scope.reset();
     // Issue #2883: clear per-resume hard-face flag on the yielding
     // fiber so a subsequent resume on a matching principal can run
     // side-effects without spurious deny from the previous resume's
