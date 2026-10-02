@@ -47,9 +47,9 @@ module;
 module aura.compiler.evaluator;
 
 import std;
-import aura.core.lifetime_pin; // Issue #2888: unified proof pin axis
-import aura.core.arena;        // Issue #3479: note_ffi_opaque_alias_densify_cover (slot XOR canary)
-import aura.compiler.value;    // Issue #3479: is_closure / is_cell on EnvFrame bindings
+import aura.core.lifetime_pin;     // Issue #2888: unified proof pin axis
+import aura.core.arena;            // Issue #3479 / #4286: bind_temporary_moving_live_ptr_any_arena
+import aura.compiler.value;        // Issue #3479: is_closure / is_cell on EnvFrame bindings
 import aura.compiler.type_checker; // Issue #2910: rehydrate + CS goal freeze on steal stamp
 
 extern "C" {
@@ -4517,6 +4517,11 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
     std::size_t bridge_mismatch = 0;
     std::size_t invalid_or_oob = 0;
     bool need_compact = false;
+    // Issue #4286: non-lasting pointers are bound after the shard locks
+    // drop. Densify walks those shards while holding the #3210 inventory
+    // mutex (on_arena_compact_hook); binding under the locks would invert
+    // that order.
+    std::vector<void*> steal_elevate_bind;
 
     {
         // Shared locks while inspecting; refresh_stale_frame_in_walk needs
@@ -4588,24 +4593,40 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         }
 
         // Issue #2632 AC3. Issue #3479: post-steal elevation of EnvFrame
-        // cell/closure identities. Dummy StableNodeRef was not cover —
-        // Closure.flat/pool living in bindings are not lasting void**
-        // slots and were not canaried. Production walks EvalValue
-        // cell/closure variants: lasting Evaluator member pointers are
-        // skipped (#3368 XOR); otherwise #3274 slot XOR #3210 canary.
+        // cell/closure identities. Dummy StableNodeRef was not cover.
+        // Production walks EvalValue cell/closure variants. Issue #4286:
+        // lasting pointers (Evaluator members, closures_ slot values
+        // #3647, EnvFrame.pool_ #4144) return — densify entry already
+        // covers them, and a nullptr-slot note left a #3210 canary with
+        // no unnote (#3368 dual-note, #3857 soft-gate). Any other pointer
+        // is recorded and bound after the shard locks drop (#4124).
         // Real Closure.body_id goes through handoff_ref (no dummy).
         // Soft / empty bindings: zero extra walk (AC2).
         if (refreshed > 0 && workspace_flat_ &&
             aura::compiler::typed_audit::production_defaults_active()) {
             auto lasting_member_ptr = [&](void* p) noexcept {
-                return p == workspace_flat_ || p == workspace_pool_ || p == current_flat_ ||
-                       p == current_pool_ || p == mutate_target_flat_ || p == mutate_target_pool_;
+                const auto* vp = static_cast<const void*>(p);
+                if (vp == static_cast<const void*>(workspace_flat_) ||
+                    vp == static_cast<const void*>(workspace_pool_) ||
+                    vp == static_cast<const void*>(current_flat_) ||
+                    vp == static_cast<const void*>(current_pool_) ||
+                    vp == static_cast<const void*>(mutate_target_flat_) ||
+                    vp == static_cast<const void*>(mutate_target_pool_))
+                    return true;
+                for (const auto& cl_sh : closures_shards_)
+                    for (const auto& kv : cl_sh.map)
+                        if (vp == static_cast<const void*>(kv.second.flat) ||
+                            vp == static_cast<const void*>(kv.second.pool))
+                            return true;
+                for (const auto& fr : env_frames_)
+                    if (vp == static_cast<const void*>(fr.pool_))
+                        return true;
+                return false;
             };
             auto elevate_ptr = [&](void* p) noexcept {
                 if (!p || lasting_member_ptr(p))
                     return; // #3368: do not dual-note a lasting slot value
-                aura::ast::note_ffi_opaque_alias_densify_cover(p, nullptr,
-                                                               "steal-envframe-binding");
+                steal_elevate_bind.push_back(p);
             };
             auto elevate_closure = [&](const types::EvalValue& v) {
                 if (!types::is_closure(v))
@@ -4643,6 +4664,17 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 }
             }
         }
+    }
+
+    // Issue #4286 / #4124: bind outside the shard locks, then RAII-unnote
+    // before this refresh returns. Soft / !moving: bind notes nothing.
+    for (void* p : steal_elevate_bind) {
+        bool noted = false;
+        void* bound = aura::ast::bind_temporary_moving_live_ptr_any_arena(p, &noted);
+        if (!noted)
+            continue;
+        aura::ast::TemporaryMovingLivePtrCanary guard;
+        guard.own_noted(bound);
     }
 
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics());

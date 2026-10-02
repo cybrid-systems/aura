@@ -126,9 +126,10 @@ int run_test_fiber_migration_refresh() {
         CHECK(efm.find("StableRefRefreshSite::Steal") != std::string::npos, "Steal restamp site");
         CHECK(efm.find("linear_post_mutate_enforce") != std::string::npos, "linear enforce");
         CHECK(efm.find("probe_and_repin_linear_on_steal") != std::string::npos, "linear probe");
-        // Guard exit still has its own restamp (no regression of #2090 path).
+        // Guard exit restamp lives with the steal restamp helper (#2090 /
+        // unified entry). mutation_boundary no longer names it directly.
         auto g = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        CHECK(g.find("restamp_pinned_stable_refs") != std::string::npos, "Guard exit restamp");
+        CHECK(efm.find("restamp_pinned_stable_refs") != std::string::npos, "Guard exit restamp");
         CHECK(g.find("clear_gc_defer_for_evaluator") != std::string::npos, "Guard GC clear");
     }
 
@@ -173,8 +174,11 @@ int run_test_fiber_migration_refresh() {
               "3479 AC1: dummy StableNodeRef gone");
         CHECK(win.find("is_closure") != std::string::npos, "3479 AC1: walks closure variants");
         CHECK(win.find("is_cell") != std::string::npos, "3479 AC1: walks cell variants");
-        CHECK(win.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
-              "3479 AC1: slot XOR canary elevation");
+        CHECK(win.find("bind_temporary_moving_live_ptr_any_arena") != std::string::npos,
+              "3479 AC1: #4286 bind elevation");
+        CHECK(win.find("own_noted") != std::string::npos, "3479 AC1: #4286 RAII unnote");
+        CHECK(win.find("note_ffi_opaque_alias_densify_cover(") == std::string::npos,
+              "3479 AC1: no permanent nullptr-slot note");
         CHECK(win.find("handoff_ref(make_stamped_ref") != std::string::npos,
               "3479 AC1: real body_id handoff_ref");
 
@@ -217,6 +221,18 @@ int run_test_fiber_migration_refresh() {
         auto r = cs.eval("(captured 4)");
         CHECK(r && is_int(*r) && as_int(*r) == 7,
               "3479 AC5: apply after steal refresh uses live identity or refuses cleanly");
+        std::vector<void*> canaries_before;
+        std::vector<void*> canaries_after;
+        (void)aura::ast::snapshot_temporary_moving_live_ptrs(canaries_before);
+        (void)cs.evaluator().refresh_stale_frames_after_steal(0, 0);
+        (void)aura::ast::snapshot_temporary_moving_live_ptrs(canaries_after);
+        CHECK(canaries_before.size() == canaries_after.size(),
+              "4286: steal refresh leaves #3210 inventory unchanged");
+        CHECK(win.find("Issue #4286") != std::string::npos, "4286: elevation cites bind contract");
+        CHECK(efm.find("schema-4286") == std::string::npos, "4286: no schema-4286");
+        CHECK(read_file("tests/compiler/test_issue_4286.cpp").empty(), "4286: no invent");
+        CHECK(read_file("docs/design/4286-steal-elevation-canary.md").empty(),
+              "4286: no docs/design");
         aura::ast::set_moving_compact_enabled(prev_mv);
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         aura::compiler::typed_audit::reset_for_test();
