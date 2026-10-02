@@ -342,10 +342,10 @@ int main() {
               "ac4140_5_no_invent: no docs/design/4140-*");
     }
 
-    // ── Issue #4141: capability-effect-stats joins #3339 headroom ──
-    // planned 186 sat at headroom 9 (177 live; live+8 = 185, one additive
-    // key from breach); raised to 192 and pinned in the #3339 CI. Runs
-    // before :prefix catalog dump.
+    // ── Issue #4141 / #4285: capability-effect-stats headroom ──
+    // planned 186 sat at headroom 9 (177 live; live+8 = 185). #4141
+    // raised it to 192. #4285 re-counted 179 live (live+16 = 195) and
+    // raised planned to 208. No new keys. Runs before :prefix catalog dump.
     {
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
         using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -371,8 +371,14 @@ int main() {
         CHECK(hash_int(cs, cexpr, "issue-4141") == 4141, "4141 AC1: issue-4141 additive stamp");
 
         const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
-        CHECK(sec.find("kCapabilityEffectStatsPlannedKeys = 192") != std::string::npos,
-              "ac4141_1_headroom: kCapabilityEffectStatsPlannedKeys = 192");
+        CHECK(sec.find("kCapabilityEffectStatsPlannedKeys = 208") != std::string::npos,
+              "ac4141_1_headroom: kCapabilityEffectStatsPlannedKeys = 208");
+        CHECK(sec.find("Issue #4141 / #4285") != std::string::npos,
+              "ac4285_recount: handler cites #4285; planned is 208");
+        CHECK(read_file("tests/compiler/test_issue_4285.cpp").empty(),
+              "ac4285_no_invent: no test_issue_4285.cpp");
+        CHECK(read_file("docs/design/4285-capability-effect-headroom.md").empty(),
+              "ac4285_no_invent: no docs/design/4285-*");
         CHECK(sec.find("query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys)") !=
                   std::string::npos,
               "ac4141_1_headroom: capacity helper consumes the planned constant");

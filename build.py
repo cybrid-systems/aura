@@ -8522,7 +8522,9 @@ def cmd_lint():
     # Issue #4141 (observability, P1): query:capability-effect-stats
     # planned_keys headroom — live insert_kv 177 (+2 #4141 stamps) against
     # planned 186 left headroom 9 (live+8 = 185, one additive key from the
-    # #3339 breach). Gate pins: planned 192 via
+    # #3339 breach). #4285 re-counted 179 live insert_kv (live+16 = 195),
+    # so planned is 208 rather than 192 (no new key). Gate pins that
+    # constant via
     # query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys) (no
     # magic 186), the bounded local insert_kv lambda keeps the
     # overflowed=true contract into query_hash_finish, append-only stamps

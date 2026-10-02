@@ -32,6 +32,10 @@ joins the same headroom CI — live 177 (+2 #4141 stamps) against planned
 raised to 192 via kCapabilityEffectStatsPlannedKeys. Same bounded local
 insert_kv lambda / overflowed flag contract as densify (#4140).
 
+Issue #4285: re-count at the current tip is 179 live insert_kv.
+live+16 = 195, so planned 192 was short of the requested buffer.
+Planned is 208. No new query key. The +8 gate above still applies.
+
 Contract (one row per AC):
   AC1  planned >= actual + 8 on evolution-audit-decision /
        security-posture / type-linear-commit-health /
@@ -174,9 +178,9 @@ def main() -> int:
         # headroom gate. Re-count holds at planned 96 (81 live, live+8
         # = 89); do not bump further until a later batch needs it.
         ("query:arena-moving-densify-health", obsjit, "kArenaMovingDensifyHealthPlannedKeys"),
-        # Issue #4141: capability-effect-stats joins the Agent decision
-        # headroom gate (live 177 + 2 stamps; planned 186 left headroom 9,
-        # one additive key from breach → raised to 192)
+        # Issue #4141 / #4285: capability-effect-stats joins the Agent
+        # decision headroom gate. Re-count is 179 live; planned 208
+        # covers live+16 = 195. No new key.
         ("query:capability-effect-stats", sec, "kCapabilityEffectStatsPlannedKeys"),
     ]
 
