@@ -1,16 +1,18 @@
 {
   "issue": 3479,
   "title": "Issue #3479: FiberSteal EnvFrame cell/closure elevation (dummy handoff_ref gone)",
-  "ok": "OK: Issue #3479 steal EnvFrame elevation — dummy gone; slot XOR canary",
+  "ok": "OK: Issue #3479 steal EnvFrame elevation — dummy gone; #4286 bind then unnote",
   "checks": [
     {
       "ac": "AC1-walk",
       "path": "src/compiler/evaluator_fiber_mutation.cpp",
       "contains": [
         "Issue #3479",
+        "Issue #4286",
         "is_closure",
         "is_cell",
-        "note_ffi_opaque_alias_densify_cover",
+        "bind_temporary_moving_live_ptr_any_arena",
+        "own_noted",
         "handoff_ref(make_stamped_ref"
       ]
     },
