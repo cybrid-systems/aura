@@ -456,6 +456,12 @@ public:
     [[nodiscard]] std::uint64_t lock_contended_total() const noexcept {
         return lock_contended_total_.load(std::memory_order_relaxed);
     }
+    // Issue #3357: shard unique_lock acquisitions. try_lock misses are not
+    // the amortisation oracle — a longer merge section loses the CPU more
+    // often, so one sample can show more misses with fewer acquisitions.
+    [[nodiscard]] std::uint64_t shard_unique_lock_total() const noexcept {
+        return shard_unique_lock_total_.load(std::memory_order_relaxed);
+    }
     // Issue #3357: TLS merge batches (unique_lock amortisation). 0 when
     // TLS merge disabled / ≤1 observation per window (no extra atomic).
     [[nodiscard]] std::uint64_t tls_merge_batches_total() const noexcept {
@@ -630,6 +636,8 @@ private:
     std::array<ProfileShard, kShapeProfilerShardCount> shards_{};
     // Issue #2141 / #2937: process-wide contention counter (any shard/config).
     mutable std::atomic<std::uint64_t> lock_contended_total_{0};
+    // Issue #3357: one increment per unique_lock_shard_ call (try miss or not).
+    mutable std::atomic<std::uint64_t> shard_unique_lock_total_{0};
     // Issue #3357: TLS merge batch counter (bumped only on merge, not on
     // the ≤1 unique_lock path).
     std::atomic<std::uint64_t> tls_merge_batches_total_{0};

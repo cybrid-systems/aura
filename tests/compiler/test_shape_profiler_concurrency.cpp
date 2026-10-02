@@ -306,7 +306,12 @@ static void ac3271_5_source_and_linter() {
 static void ac3357_1_hot_fnkey_less_contention() {
     std::println("\n--- #3357 AC1: TLS merge lowers unique_lock pressure on hot FnKey ---");
     CHECK(kShapeTlsRecordMergeIssue == 3357, "3357 AC1: stamp");
-    auto soak = [](bool tls) -> std::uint64_t {
+    struct Soak {
+        std::uint64_t contended = 0;
+        std::uint64_t batches = 0;
+        std::uint64_t unique_locks = 0;
+    };
+    auto soak = [](bool tls) -> Soak {
         ShapeProfiler sp;
         sp.set_tls_merge_enabled(tls);
         std::atomic<bool> start{false};
@@ -323,13 +328,22 @@ static void ac3357_1_hot_fnkey_less_contention() {
         t2.join();
         t3.join();
         sp.flush_tls_records();
-        return sp.lock_contended_total();
+        return Soak{sp.lock_contended_total(), sp.tls_merge_batches_total(),
+                    sp.shard_unique_lock_total()};
     };
-    const auto c_off = soak(false);
-    const auto c_on = soak(true);
-    std::println("  lock_contended tls-off={} tls-on={} batch={}", c_off, c_on,
-                 kShapeTlsMergeBatch);
-    CHECK(c_on <= c_off, "3357 AC1: TLS merge lock_contended_total <= baseline");
+    const auto off = soak(false);
+    const auto on = soak(true);
+    std::println("  lock_contended tls-off={} tls-on={} unique_locks off={} on={} batches off={} "
+                 "on={} batch={}",
+                 off.contended, on.contended, off.unique_locks, on.unique_locks, off.batches,
+                 on.batches, kShapeTlsMergeBatch);
+    // try_lock misses track preemption inside the critical section, not how
+    // many unique_locks the hot FnKey took. The merge section is longer, so
+    // one sample can show more misses while taking ~1/8 the acquisitions.
+    CHECK(off.batches == 0, "3357 AC1: TLS off does not batch");
+    CHECK(on.batches > off.batches, "3357 AC1: TLS merge batches the hot FnKey");
+    CHECK(on.unique_locks * 2 < off.unique_locks,
+          "3357 AC1: TLS merge shard unique_locks <= half the baseline");
 }
 
 static void ac3357_2_stability_unchanged() {

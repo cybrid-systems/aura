@@ -411,6 +411,10 @@ void ac7_3676_skip_refuse_join_context() {
     // mid=0 and joins the live fiber; tenant stays 0 (no principal).
     set_strategy(AuditStrategy::Full);
     ta::clear_boundary_audit_mid(); // one-shot refuse SE TLS: allow emit
+    // Issue #3691 bumps a zero Mutation epoch on set-code, and #3296
+    // prefers that epoch over the process-origin refuse. This row is the
+    // epoch==0 matrix (same re-zero as #3971 below).
+    ::aura::core::reset_mutation_epoch_for_test();
     const auto refuse0 =
         load_u64(g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total);
     const auto mid = ta::resolve_audit_mutation_id();
