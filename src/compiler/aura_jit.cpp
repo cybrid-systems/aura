@@ -431,6 +431,9 @@ struct LLVMBuilder {
     // Hash table direct accessor (Phase 4c): returns FlatHashTable*, then GEP
     llvm::Function* fn_hash_get_flat_table = nullptr;
     llvm::Function* fn_hash_key_eq = nullptr;
+    // Issue #4319: same splitmix + linear probe as aura_hash_set_checked.
+    llvm::Function* fn_hash_splitmix = nullptr;
+    llvm::Function* fn_hash_probe = nullptr;
     // Issue #157 Phase 2b: workspace read/write lock primitives
     // (declared from the runtime hooks table; no-op when no
     // CompilerService is registered). OpHashRef's inline IR scan
@@ -685,15 +688,19 @@ struct LLVMBuilder {
             fn_hash_key_eq =
                 llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                        llvm::Function::ExternalLinkage, "aura_hash_key_eq", mod);
+            fn_hash_splitmix = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                                      llvm::Function::ExternalLinkage,
+                                                      "aura_hash_splitmix64", mod);
+            fn_hash_probe = llvm::Function::Create(
+                llvm::FunctionType::get(i64, {i64, i64, i64}, false),
+                llvm::Function::ExternalLinkage, "aura_hash_probe_slot", mod);
         }
 
-        // Issue #157 Phase 2b: workspace lock/unlock declarations for
-        // OpHashRef inline IR scan. The inline scan must hold the read
-        // lock for its entire duration so that aura_hash_set /
-        // aura_hash_remove / FlatHashTable::rebuild cannot tear the
-        // FlatHashTable pointer or its metadata / keys / values arrays.
-        // Acquired before fn_hash_get_flat_table, released in done_bb
-        // (the only block that exits the inline IR region).
+        // Issue #157 / #4319: workspace read lock around the OpHashRef
+        // probe. Acquired before fn_hash_get_flat_table. The occupied
+        // path copies the key and value, drops the lock, calls
+        // aura_hash_key_eq (that call takes g_string_pool_mtx), then
+        // reacquires before the next probe. done_bb releases it.
         fn_lock_workspace_read = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                                         llvm::Function::ExternalLinkage,
                                                         "aura_lock_workspace_read", mod);
@@ -2226,12 +2233,11 @@ struct LLVMBuilder {
                 auto i8_ptr = llvm::PointerType::getUnqual(ctx);
                 auto i64_ptr = llvm::PointerType::getUnqual(ctx);
 
-                // Issue #157 Phase 2b: acquire read lock before
-                // fn_hash_get_flat_table. Held across the entire
-                // inline IR scan (live_bb through done_bb), released
-                // in done_bb. This makes the FlatHashTable pointer
-                // fetch + the GEPs + loads safe vs concurrent
-                // aura_hash_set / aura_hash_remove / rebuild.
+                // Issue #157 / #4319: acquire the read lock before
+                // fn_hash_get_flat_table. Held across the probe loads.
+                // Dropped only around aura_hash_key_eq so the string
+                // pool mutex is not nested under it, then reacquired
+                // before the next probe. Released in done_bb.
                 irb->CreateCall(llvm::FunctionCallee(fn_lock_workspace_read),
                                 llvm::ArrayRef<llvm::Value*>{});
 
@@ -2244,6 +2250,8 @@ struct LLVMBuilder {
                 auto live_bb = llvm::BasicBlock::Create(ctx, "hlive", func);
                 auto loop_bb = llvm::BasicBlock::Create(ctx, "hloop", func);
                 auto check_bb = llvm::BasicBlock::Create(ctx, "hchk", func);
+                auto tomb_bb = llvm::BasicBlock::Create(ctx, "htomb", func);
+                auto occ_bb = llvm::BasicBlock::Create(ctx, "hocc", func);
                 auto cmp_bb = llvm::BasicBlock::Create(ctx, "hcmp", func);
                 auto next_bb = llvm::BasicBlock::Create(ctx, "hnext", func);
                 auto found_bb = llvm::BasicBlock::Create(ctx, "hfnd", func);
@@ -2280,51 +2288,70 @@ struct LLVMBuilder {
                 auto vals_raw = irb->CreateGEP(i8_ty, ht_ptr, vals_offset);
                 auto vals_ptr = irb->CreateBitCast(vals_raw, i64_ptr);
 
-                // Build the scan loop entirely in LLVM IR
-                //    for i = 0..capacity:
-                //      if metadata[i] == 0xFF: continue
-                //      if key_eq(keys[i], key_val): return values[i]
-                //    return void sentinel (11)
-
-
+                // Issue #4319: same open-address probe as aura_hash_set_checked
+                // (splitmix64, then (h + i) % cap). Empty stops. Tombstone
+                // continues without aura_hash_key_eq. The workspace read
+                // lock is dropped before that call so it is not held across
+                // g_string_pool_mtx. Miss returns the void sentinel 11.
+                // FlatHashTable itself is unchanged.
+                auto hash_key = irb->CreateCall(llvm::FunctionCallee(fn_hash_splitmix),
+                                                llvm::ArrayRef<llvm::Value*>{key_val});
                 irb->CreateBr(loop_bb);
 
-                // ── Loop header (PHI for index) ──
+                // ── Loop header (PHI for probe step) ──
                 irb->SetInsertPoint(loop_bb);
                 auto phi_idx = irb->CreatePHI(i64_ty, 2, "hidx");
                 phi_idx->addIncoming(c64(0), live_bb);
 
-                // Check: i < capacity?
                 auto at_end = irb->CreateICmpUGE(phi_idx, capacity);
                 irb->CreateCondBr(at_end, miss_bb, check_bb);
 
-                // ── Check metadata[i] ──
+                // ── Probe slot, then metadata ──
                 irb->SetInsertPoint(check_bb);
-                auto meta_gep = irb->CreateGEP(i8_ty, meta_ptr, phi_idx);
+                auto slot =
+                    irb->CreateCall(llvm::FunctionCallee(fn_hash_probe),
+                                    llvm::ArrayRef<llvm::Value*>{hash_key, phi_idx, capacity});
+                auto meta_gep = irb->CreateGEP(i8_ty, meta_ptr, slot);
                 auto meta_val = irb->CreateLoad(i8_ty, meta_gep);
                 auto is_empty =
                     irb->CreateICmpEQ(meta_val, irb->getInt8(aura::compiler::hash::kEmptySlot));
-                irb->CreateCondBr(is_empty, next_bb, cmp_bb);
+                // Empty ends the probe. Do not call eq.
+                irb->CreateCondBr(is_empty, miss_bb, tomb_bb);
 
-                // ── Compare keys[i] with key_val ──
+                irb->SetInsertPoint(tomb_bb);
+                auto is_tomb = irb->CreateICmpEQ(meta_val, irb->getInt8(0x7F));
+                // Tombstone: keep probing, do not call eq.
+                irb->CreateCondBr(is_tomb, next_bb, occ_bb);
+
+                // Occupied is the exact 0x80 marker hash-set writes, not
+                // "high bit set". Anything else keeps probing without eq.
+                irb->SetInsertPoint(occ_bb);
+                auto is_occ = irb->CreateICmpEQ(meta_val, irb->getInt8(0x80));
+                irb->CreateCondBr(is_occ, cmp_bb, next_bb);
+
+                // ── Occupied: copy key and value, then compare unlocked ──
                 irb->SetInsertPoint(cmp_bb);
-                auto key_gep = irb->CreateGEP(i64_ty, keys_ptr, phi_idx);
+                auto key_gep = irb->CreateGEP(i64_ty, keys_ptr, slot);
                 auto stored_key = irb->CreateLoad(i64_ty, key_gep);
+                auto val_gep = irb->CreateGEP(i64_ty, vals_ptr, slot);
+                auto val_ld = irb->CreateLoad(i64_ty, val_gep);
+                irb->CreateCall(llvm::FunctionCallee(fn_unlock_workspace_read),
+                                llvm::ArrayRef<llvm::Value*>{});
                 auto eq_res = irb->CreateCall(llvm::FunctionCallee(fn_hash_key_eq),
                                               llvm::ArrayRef<llvm::Value*>{stored_key, key_val});
+                irb->CreateCall(llvm::FunctionCallee(fn_lock_workspace_read),
+                                llvm::ArrayRef<llvm::Value*>{});
                 auto eq = irb->CreateICmpNE(eq_res, c64(0));
                 irb->CreateCondBr(eq, found_bb, next_bb);
 
-                // ── Next iteration ──
+                // ── Next probe step ──
                 irb->SetInsertPoint(next_bb);
                 auto next_idx = irb->CreateAdd(phi_idx, c64(1));
                 phi_idx->addIncoming(next_idx, next_bb);
                 irb->CreateBr(loop_bb);
 
-                // ── Found: load values[i] ──
+                // ── Found: value was copied under the read lock ──
                 irb->SetInsertPoint(found_bb);
-                auto val_gep = irb->CreateGEP(i64_ty, vals_ptr, phi_idx);
-                auto val_ld = irb->CreateLoad(i64_ty, val_gep);
                 irb->CreateBr(done_bb);
 
                 // ── Miss: void sentinel ──
@@ -2338,11 +2365,9 @@ struct LLVMBuilder {
                 phi_result->addIncoming(c64(11), miss_bb); // void sentinel
                 phi_result->addIncoming(c64(11), null_bb); // null case returns void
                 store(result_slot, phi_result);
-                // Issue #157 Phase 2b: release read lock after the
-                // result is stored. done_bb is the sole exit for the
-                // inline IR region (null_bb branches here, miss_bb
-                // branches here, found_bb branches here, the loop
-                // backedge stays within the lock).
+                // Issue #157 / #4319: release the read lock on the way out.
+                // cmp_bb drops it only around aura_hash_key_eq and takes it
+                // back before found_bb / next_bb, so done_bb still owns it.
                 irb->CreateCall(llvm::FunctionCallee(fn_unlock_workspace_read),
                                 llvm::ArrayRef<llvm::Value*>{});
                 return true;
@@ -2675,6 +2700,8 @@ int64_t aura_hash_remove(int64_t, int64_t);
 struct FlatHashTable;
 const FlatHashTable* aura_hash_get_flat_table(int64_t);
 int64_t aura_hash_key_eq(int64_t, int64_t);
+std::uint64_t aura_hash_splitmix64(std::int64_t);
+std::uint64_t aura_hash_probe_slot(std::uint64_t, std::uint64_t, std::uint64_t);
 void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t));
 void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t));
 // Float/string pool functions (defined in aura_jit_runtime.cpp)
@@ -3097,6 +3124,8 @@ struct AuraJIT::Impl {
         reg("aura_set_hash_str_eq_callback", (void*)aura_set_hash_str_eq_callback);
         reg("aura_set_hash_str_convert_callback", (void*)aura_set_hash_str_convert_callback);
         reg("aura_hash_key_eq", (void*)aura_hash_key_eq);
+        reg("aura_hash_splitmix64", (void*)aura_hash_splitmix64);
+        reg("aura_hash_probe_slot", (void*)aura_hash_probe_slot);
 
         // Issue #195: register the per-fiber exception state
         // API and the C personality function. The JIT-compiled
