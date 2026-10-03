@@ -171,12 +171,28 @@ def main() -> int:
     jit_caller = "aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),"
     if jit_caller in vec:
         fails.append("AC5: tree-walker gate still passes the JIT owner (#4296)")
+
+    def _face_and_op(src: str, op: str) -> bool:
+        # clang-format breaks after effect_sandbox_mode() once the call
+        # exceeds the column limit, so the op literal may sit on the next
+        # line. The window still ties this face argument to this op.
+        face = "ev.effect_sandbox_mode()"
+        lit = f'"{op}"'
+        at = 0
+        while True:
+            at = src.find(face, at)
+            if at < 0:
+                return False
+            if lit in src[at : at + 96]:
+                return True
+            at += len(face)
+
     for op in ("hash-ref", "hash-has-key?", "hash-set!", "hash-remove!"):
         if caller_needle not in vec:
             fails.append(f"AC5: {op} gate call missing (executing-evaluator caller)")
         if f'"{op}")' not in vec:
             fails.append(f"AC5: op name {op} not passed to the gate")
-        if f'ev.effect_sandbox_mode(), "{op}"' not in vec:
+        if not _face_and_op(vec, op):
             fails.append(f"AC5: {op} gate does not pass ev.effect_sandbox_mode()")
     gate_calls = vec.count("aura_hash_gate_checked(hidx,")
     if gate_calls != 4:
