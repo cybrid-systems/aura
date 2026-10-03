@@ -2257,6 +2257,20 @@ extern "C" int aura_evaluator_try_restore_macro_expand_checkpoint(void) {
 // Issue #3062: install / commit the same panic-checkpoint brick used by
 // MutationBoundary so a top-level (no-boundary) production expand can
 // refuse a half-expanded tree. Soft/Off never calls these.
+// Issue #4101: expand_inner must not install a panic snapshot on the
+// flat eval_flat is truncating. set-code restore reparses :workspace
+// into a different FlatAST and detaches the caller.
+extern "C" int aura_evaluator_expand_flat_is_workspace(const void* flat) noexcept {
+    if (flat == nullptr)
+        return 0;
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return 0;
+    return (ev->workspace_flat() == flat || ev->current_flat() == flat) ? 1 : 0;
+}
+
 extern "C" int aura_evaluator_try_save_macro_expand_checkpoint(void) {
     auto* ev = Evaluator::yield_hook_evaluator();
     if (!ev)

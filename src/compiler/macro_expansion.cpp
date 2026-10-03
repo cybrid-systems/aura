@@ -32,6 +32,14 @@ extern "C" __attribute__((weak)) int aura_evaluator_try_save_macro_expand_checkp
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_evaluator_commit_macro_expand_checkpoint(void) {}
+// Issue #4101: panic restore set-codes :workspace into a new flat.
+// 1 when `flat` is the live workspace or current tree (truncate belt
+// owns that rollback). Weak 0 when no Evaluator is linked.
+extern "C" __attribute__((weak)) int
+aura_evaluator_expand_flat_is_workspace(const void* flat) noexcept {
+    (void)flat;
+    return 0;
+}
 extern "C" std::uint64_t aura_fiber_current_id();
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker,
                                                     int was_violation);
@@ -97,14 +105,6 @@ namespace aura::compiler::macro_exp {
 // Returns 1 only when *this* call installed a checkpoint we must later
 // restore or commit. Soft/Off never calls this (zero-cost). Existing
 // NameMapCheckpoint + steal-abort paths are unchanged.
-// Issue #4077: expand_inner_macros does not install a checkpoint.
-// restore_panic_checkpoint is legal only when this expand's save
-// returned owned. A false result keeps a Guard-owned snapshot for
-// the Guard dtor (commit on success, restore on success==false).
-[[nodiscard]] static bool expand_inner_checkpoint_owned() noexcept {
-    return false;
-}
-
 [[nodiscard]] static int install_macro_expand_checkpoint() noexcept {
     if (aura_evaluator_mutation_boundary_depth() > 0)
         return 0;
@@ -115,10 +115,59 @@ namespace aura::compiler::macro_exp {
     return aura_evaluator_try_save_macro_expand_checkpoint();
 }
 
+// Issue #4292: per-frame ownership for expand_inner_macros. The entry
+// frame installs when production and no checkpoint is active. Nested
+// frames push their own record but install_macro_expand_checkpoint
+// returns 0 (live snapshot or MutationBoundary) — no re-claim, and
+// not s_hygiene_depth. A frame restores or commits only the snapshot
+// it saved. Issue #4077: a false owned bit leaves a Guard snapshot
+// for the Guard dtor.
+namespace {
+    struct InnerExpandCkptFrame;
+    thread_local InnerExpandCkptFrame* g_inner_expand_ckpt = nullptr;
+
+    struct InnerExpandCkptFrame {
+        bool owned = false;
+        bool consumed = false;
+        InnerExpandCkptFrame* prev = nullptr;
+        explicit InnerExpandCkptFrame(bool production) noexcept {
+            prev = g_inner_expand_ckpt;
+            g_inner_expand_ckpt = this;
+            if (production)
+                owned = install_macro_expand_checkpoint() != 0;
+        }
+        void restore_if_owned() noexcept {
+            if (!owned || consumed)
+                return;
+            consumed = true;
+            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+        }
+        ~InnerExpandCkptFrame() {
+            if (owned && !consumed)
+                aura_evaluator_commit_macro_expand_checkpoint();
+            g_inner_expand_ckpt = prev;
+        }
+        InnerExpandCkptFrame(const InnerExpandCkptFrame&) = delete;
+        InnerExpandCkptFrame& operator=(const InnerExpandCkptFrame&) = delete;
+    };
+} // namespace
+
+// Issue #4077: restore is legal only when this frame's save returned
+// owned. Nested and Guard-owned frames report false.
+[[nodiscard]] static bool expand_inner_checkpoint_owned() noexcept {
+    return g_inner_expand_ckpt != nullptr && g_inner_expand_ckpt->owned &&
+           !g_inner_expand_ckpt->consumed;
+}
+
+static void restore_owned_inner_expand_checkpoint() noexcept {
+    if (g_inner_expand_ckpt != nullptr)
+        g_inner_expand_ckpt->restore_if_owned();
+}
+
 // Issue #3470: inner expand deny codes that must roll back qq-unwrap
-// set_child. clone / macro_expand_all_body own the expand checkpoint;
-// expand_inner_macros only try_restore + belt-restore the parent slot
-// (no second install / no extra Soft walk).
+// set_child. When a checkpoint is already active, expand_inner_macros
+// only try_restore + belt-restore the parent slot. Issue #4292 installs
+// one checkpoint at entry when none is active. Soft/Off does not save.
 [[nodiscard]] bool inner_expand_production_limit_deny() noexcept {
     // Issue #4034: codes 1/2/3/6/7 consult per-fiber last_limit_reason
     // first (same face as #3787 deny_all for 8/9/10). Process-global is
@@ -3345,6 +3394,10 @@ aura::ast::NodeId expand_inner_macros(
     // Issue #3470: Restricted/Strict refuse qq-unwrap half-writes.
     // Soft/Off keeps historical half-write (one sandbox load; no ckpt).
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
+    // Issue #4292 / #4101: side flat only. Workspace uses truncate_to;
+    // set-code would detach the caller. Nested sees the same flat.
+    const bool in_place_workspace = aura_evaluator_expand_flat_is_workspace(flat) != 0;
+    [[maybe_unused]] InnerExpandCkptFrame expand_ckpt(production_surface && !in_place_workspace);
     if (depth >= max_depth) {
         // Issue #3470: inner depth ceiling is DepthLimit (2), not PassLimit (3).
         // Issue #3304 / #3029: public note API (stable Agent reason).
@@ -3390,9 +3443,9 @@ aura::ast::NodeId expand_inner_macros(
         // is wired (standalone FlatAST). Soft/Off keeps the rewrite.
         if (production_surface && inner_expand_production_limit_deny()) {
             // Issue #4077: do not set-code a Guard-owned checkpoint.
-            // This expander never saved one (expand_inner_checkpoint_owned).
+            // Issue #4292: restore only when this frame installed one.
             if (expand_inner_checkpoint_owned())
-                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+                restore_owned_inner_expand_checkpoint();
             if (rewrote)
                 flat->set_child(parent_id, unwrap_ci, root);
             return root;
@@ -3477,6 +3530,13 @@ aura::ast::NodeId expand_inner_macros(
                     if (cloned == NULL_NODE) {
                         if (rest_spine_pending && production_surface)
                             flat->truncate_to(rest_spine_ckpt);
+                        // Issue #4292: a clone that produced no body is
+                        // not a successful expand. Capability / same-flat
+                        // rejects do not all stamp the depth predicate;
+                        // committing would publish this frame's snapshot
+                        // as success. Restore only when this frame saved.
+                        if (expand_inner_checkpoint_owned())
+                            restore_owned_inner_expand_checkpoint();
                         return root;
                     }
                     // Recursively expand inner macros in the cloned body
@@ -3491,10 +3551,12 @@ aura::ast::NodeId expand_inner_macros(
                         // Issue #4077: set-code only a checkpoint this expand
                         // installed. A Guard snapshot stays live until the
                         // dtor (depth is 0 after the stack pop, so depth is
-                        // not ownership). Truncate this expand's clone on
-                        // the flat being expanded (#3890 / #3979).
+                        // not ownership). Issue #4292: this frame owns one
+                        // when the entry install returned non-zero.
+                        // Truncate this expand's clone on the flat being
+                        // expanded (#3890 / #3979).
                         if (expand_inner_checkpoint_owned())
-                            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+                            restore_owned_inner_expand_checkpoint();
                         flat->truncate_to(clone_ckpt);
                         return root;
                     }
@@ -3554,11 +3616,11 @@ aura::ast::NodeId expand_inner_macros(
         (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
         if (production_surface && inner_expand_production_limit_deny()) {
             // Issue #4077: set-code only a checkpoint this expand
-            // installed — mirrored from the macro-call arms (the
-            // expander installs none today; a Guard snapshot stays
-            // live for the Guard dtor).
+            // installed. A Guard snapshot stays live for the Guard
+            // dtor. Issue #4292: nested frames do not re-claim, so
+            // only the entry that saved restores.
             if (expand_inner_checkpoint_owned())
-                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+                restore_owned_inner_expand_checkpoint();
             std::vector<aura::ast::NodeId> current_children;
             {
                 auto rv_now = flat->get(root);

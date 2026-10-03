@@ -2327,6 +2327,139 @@ static void ac4151_source_wiring() {
     reset_all();
 }
 
+// Issue #4292: a production expand_inner_macros with no live checkpoint
+// installs one for that frame. Nested frames do not re-claim. Soft does
+// not save. Success commits; deny restores once.
+static void ac4292_inner_owns_checkpoint_when_idle() {
+    std::println("\n--- #4292: inner expand owns an idle ExpandCheckpoint ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    reset_all();
+    apply_dev_audit_defaults();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "4292: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4292: eval");
+    auto& ev = cs.evaluator();
+    CHECK(!ev.has_panic_checkpoint(), "4292: idle before expand");
+    const auto saves0 = ev.get_panic_checkpoint_save_count();
+    const auto restores0 = ev.get_panic_checkpoint_restore_count();
+    const auto commits0 = ev.get_panic_checkpoint_commit_count();
+
+    auto fill_recursive = [](FlatAST& side, StringPool& pool, FlatAST& body_flat,
+                             StringPool& body_pool, aura::ast::NodeId& root_call) {
+        auto m_body_one = body_flat.add_literal(1);
+        auto m_body_self = body_flat.add_variable(body_pool.intern("m"));
+        std::array<aura::ast::NodeId, 1> body_args{m_body_one};
+        auto m_body_call = body_flat.add_call(m_body_self, body_args);
+        auto one_id = side.add_literal(1);
+        std::array<aura::ast::NodeId, 1> call_args{one_id};
+        root_call = side.add_call(side.add_variable(pool.intern("m")), call_args);
+        return m_body_call;
+    };
+
+    {
+        StringPool pool;
+        FlatAST side;
+        StringPool body_pool;
+        FlatAST body_flat;
+        aura::ast::NodeId root_call = NULL_NODE;
+        auto m_body_call = fill_recursive(side, pool, body_flat, body_pool, root_call);
+        std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            macros;
+        macros["m"] = aura::compiler::macro_exp::MacroExpansionDef{
+            {"one"}, false, &body_flat, &body_pool, m_body_call};
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        (void)aura::compiler::macro_exp::expand_inner_macros(&side, &pool, root_call, 0, 2, macros);
+        CHECK(ev.get_panic_checkpoint_save_count() == saves0, "4292: Soft did not save");
+        CHECK(ev.get_panic_checkpoint_restore_count() == restores0, "4292: Soft did not restore");
+        CHECK(ev.get_panic_checkpoint_commit_count() == commits0, "4292: Soft did not commit");
+        CHECK(!ev.has_panic_checkpoint(), "4292: Soft left no checkpoint");
+    }
+
+    grant_self_evo_production();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    {
+        StringPool pool;
+        FlatAST side;
+        StringPool body_pool;
+        FlatAST body_flat;
+        auto body = body_flat.add_literal(7);
+        std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            macros;
+        macros["id"] = aura::compiler::macro_exp::MacroExpansionDef{
+            {"x"}, false, &body_flat, &body_pool, body};
+        auto one_id = side.add_literal(1);
+        std::array<aura::ast::NodeId, 1> call_args{one_id};
+        auto root_call = side.add_call(side.add_variable(pool.intern("id")), call_args);
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out =
+            aura::compiler::macro_exp::expand_inner_macros(&side, &pool, root_call, 0, 8, macros);
+        CHECK(out != NULL_NODE && side.get(out).tag == aura::ast::NodeTag::LiteralInt &&
+                  side.get(out).int_value == 7,
+              "4292: success splices literal 7");
+        CHECK(!ev.has_panic_checkpoint(), "4292: success committed the checkpoint");
+        CHECK(ev.get_panic_checkpoint_save_count() == saves0 + 1, "4292: success saved once");
+        CHECK(ev.get_panic_checkpoint_commit_count() == commits0 + 1,
+              "4292: success committed once");
+        CHECK(ev.get_panic_checkpoint_restore_count() == restores0,
+              "4292: success did not restore");
+    }
+
+    // Success commit can move the capability epoch. Re-bind before the
+    // deny leg so the clone is allowed to reach the depth ceiling.
+    reset_all();
+    grant_self_evo_production();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    {
+        StringPool pool;
+        FlatAST side;
+        StringPool body_pool;
+        FlatAST body_flat;
+        aura::ast::NodeId root_call = NULL_NODE;
+        auto m_body_call = fill_recursive(side, pool, body_flat, body_pool, root_call);
+        std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            macros;
+        macros["m"] = aura::compiler::macro_exp::MacroExpansionDef{
+            {"one"}, false, &body_flat, &body_pool, m_body_call};
+        const auto size0 = side.size();
+        const auto restores1 = ev.get_panic_checkpoint_restore_count();
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out =
+            aura::compiler::macro_exp::expand_inner_macros(&side, &pool, root_call, 0, 2, macros);
+        CHECK(out == root_call, "4292: deny returns the original call");
+        CHECK(side.size() == size0, "4292: deny leaves no half-expand");
+        CHECK(!ev.has_panic_checkpoint(), "4292: deny cleared the checkpoint");
+        // Restore set-codes :workspace ("(define base 10)"). That eval
+        // arms its own panic guards, which bump save and commit outside
+        // the expand C ABI. Nested frames must not re-claim: exactly one
+        // restore, and the side flat stays the pre-expand tree.
+        CHECK(ev.get_panic_checkpoint_restore_count() == restores1 + 1,
+              "4292: nested frames did not re-claim");
+        auto* after = ev.workspace_flat();
+        bool saw10 = false;
+        if (after) {
+            for (aura::ast::NodeId id = 0; id < after->size(); ++id) {
+                if (after->is_live_node(id) && after->tag(id) == aura::ast::NodeTag::LiteralInt &&
+                    after->get(id).int_value == 10)
+                    saw10 = true;
+            }
+        }
+        CHECK(saw10, "4292: workspace base 10 survived the side-flat restore");
+    }
+
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("Issue #4292") != std::string::npos, "4292: cite");
+    CHECK(me.find("InnerExpandCkptFrame") != std::string::npos, "4292: frame owner");
+    CHECK(me.find("schema-4292") == std::string::npos, "4292: no query key");
+    CHECK(read_file("tests/compiler/test_issue_4292.cpp").empty(), "4292: no new test file");
+    CHECK(read_file("docs/design/4292-inner-expand-checkpoint.md").empty(), "4292: no design doc");
+    reset_all();
+    apply_dev_audit_defaults();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -2398,6 +2531,8 @@ int run_test_macro_hygiene_limits() {
     ac4151_nested_cascade_rolls_back();
     ac4151_full_expand_unaffected();
     ac4151_source_wiring();
+    std::println("\n=== Issue #4292: inner expand owns an idle ExpandCheckpoint ===");
+    ac4292_inner_owns_checkpoint_when_idle();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
