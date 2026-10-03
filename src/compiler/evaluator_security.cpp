@@ -2220,6 +2220,34 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
     return ok;
 }
 
+bool Evaluator::inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
+                                           std::uint16_t required_effects,
+                                           std::string_view op) noexcept {
+    // Issue #4298: same production face as the #4057 g_pair_slots arm.
+    // Soft/Off returns before either per-evaluator stamp array is read.
+    const auto mode = effect_sandbox_mode();
+    const bool prod = mode != 0 && (mode == 2 || ::aura::core::sandbox::is_strict() ||
+                                    ::aura::core::provenance::multi_tenant_env_active());
+    if (!prod)
+        return true;
+    const auto& stamps = vector_heap ? vector_slot_tenants_ : pair_slot_tenants_;
+    // 0 (or a short array) is a slot that never went through cons/list/vector
+    // mint. Those internal pairs stay on the historical in-range path so a
+    // non-zero tenant can still car its own unstamped lists. A real mint
+    // stores tenant+1, so a tenant-0 cons is owner 0 and refuses a non-zero
+    // caller — the same fail-closed shape as an unstamped g_pair_slots entry.
+    if (idx >= stamps.size())
+        return true;
+    const auto rec = stamps[idx];
+    if (rec == 0)
+        return true;
+    const auto owner = rec - 1;
+    if (owner == capability_tenant_id_)
+        return true;
+    (void)check_workspace_isolation(capability_tenant_id_, owner, required_effects, op);
+    return false;
+}
+
 // Issue #3802: host FS path-prefix isolation for EXEMPT_2ARG write-file /
 // sys-* under Restricted+MT / Strict. Soft/Off / single-tenant Restricted
 // passthrough (AC2). Cross-tenant / escape → IsolationDeny SE reason

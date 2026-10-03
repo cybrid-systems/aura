@@ -1581,6 +1581,138 @@ static void ac4296_executing_evaluator_hash_gate() {
     set_mode(SandboxMode::Off);
 }
 
+// Issue #4298: in-range cons/vector slots on one Evaluator are mailbox
+// indices. TenantScope rebinds the same heap; the prod face must refuse a
+// foreign set-car!/set-cdr!/vector-set! and must not return the payload.
+static void ac4298_inrange_pair_vector_tenant() {
+    std::println("\n--- #4298: in-range pair/vector tenant stamp ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+    auto cons_fn = ev.primitives().lookup("cons");
+    auto car_fn = ev.primitives().lookup("car");
+    auto cdr_fn = ev.primitives().lookup("cdr");
+    auto set_car_fn = ev.primitives().lookup("set-car!");
+    auto set_cdr_fn = ev.primitives().lookup("set-cdr!");
+    auto vec_fn = ev.primitives().lookup("vector");
+    auto vref_fn = ev.primitives().lookup("vector-ref");
+    auto vset_fn = ev.primitives().lookup("vector-set!");
+    CHECK(cons_fn && car_fn && cdr_fn && set_car_fn && set_cdr_fn && vec_fn && vref_fn && vset_fn,
+          "4298: pair and vector prims present");
+    if (!(cons_fn && car_fn && cdr_fn && set_car_fn && set_cdr_fn && vec_fn && vref_fn &&
+          vset_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    aura::compiler::types::EvalValue pair;
+    aura::compiler::types::EvalValue vec;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        pair = (*cons_fn)({make_int(1), make_int(2)});
+        vec = (*vec_fn)({make_int(10), make_int(20)});
+    }
+    CHECK(!is_error(pair), "4298: tenant 7 cons");
+    CHECK(!is_error(vec), "4298: tenant 7 vector");
+
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({pair, make_int(9)});
+        auto sd = (*set_cdr_fn)({pair, make_int(8)});
+        auto vs = (*vset_fn)({vec, make_int(0), make_int(99)});
+        CHECK(is_error(sc), "4298: tenant 9 set-car! denied");
+        CHECK(is_error(sd), "4298: tenant 9 set-cdr! denied");
+        CHECK(is_error(vs), "4298: tenant 9 vector-set! denied");
+        auto rc = (*car_fn)({pair});
+        auto rd = (*cdr_fn)({pair});
+        auto rv = (*vref_fn)({vec, make_int(0)});
+        CHECK(is_error(rc), "4298: tenant 9 car does not return the payload");
+        CHECK(is_error(rd), "4298: tenant 9 cdr does not return the payload");
+        CHECK(is_error(rv), "4298: tenant 9 vector-ref does not return the payload");
+        CHECK(ring_has_isolation_deny("set-car!"), "4298: IsolationDeny set-car!");
+        CHECK(ring_has_isolation_deny("set-cdr!"), "4298: IsolationDeny set-cdr!");
+        CHECK(ring_has_isolation_deny("vector-set!"), "4298: IsolationDeny vector-set!");
+        CHECK(ring_has_isolation_deny("car"), "4298: IsolationDeny car");
+        CHECK(ring_has_isolation_deny("vector-ref"), "4298: IsolationDeny vector-ref");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto rc = (*car_fn)({pair});
+        auto rd = (*cdr_fn)({pair});
+        auto rv = (*vref_fn)({vec, make_int(0)});
+        CHECK(is_int(rc) && as_int(rc) == 1, "4298: slot car unchanged after foreign write");
+        CHECK(is_int(rd) && as_int(rd) == 2, "4298: slot cdr unchanged after foreign write");
+        CHECK(is_int(rv) && as_int(rv) == 10, "4298: vector element unchanged");
+        auto sc = (*set_car_fn)({pair, make_int(3)});
+        auto sd = (*set_cdr_fn)({pair, make_int(4)});
+        auto vs = (*vset_fn)({vec, make_int(0), make_int(30)});
+        CHECK(!is_error(sc) && !is_error(sd) && !is_error(vs), "4298: owner mutates");
+        auto rc2 = (*car_fn)({pair});
+        auto rd2 = (*cdr_fn)({pair});
+        auto rv2 = (*vref_fn)({vec, make_int(0)});
+        CHECK(is_int(rc2) && as_int(rc2) == 3, "4298: owner set-car! landed");
+        CHECK(is_int(rd2) && as_int(rd2) == 4, "4298: owner set-cdr! landed");
+        CHECK(is_int(rv2) && as_int(rv2) == 30, "4298: owner vector-set! landed");
+    }
+
+    // Tenant 0's cons is a real stamp (not the never-stamped hole) and
+    // refuses a non-zero caller.
+    aura::compiler::types::EvalValue zpair;
+    {
+        aura::compiler::Evaluator::TenantScope t0(ev, 0);
+        zpair = (*cons_fn)({make_int(5), make_int(6)});
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({zpair, make_int(7)});
+        auto rc = (*car_fn)({zpair});
+        CHECK(is_error(sc), "4298: tenant-0 cons set-car! from tenant 9 denied");
+        CHECK(is_error(rc), "4298: tenant-0 cons car from tenant 9 denied");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t0(ev, 0);
+        auto rc = (*car_fn)({zpair});
+        CHECK(is_int(rc) && as_int(rc) == 5, "4298: tenant 0 still reads its cons");
+    }
+
+    // Soft/Off: foreign in-range write lands and the stamp array is not consulted.
+    reset_security_event_ring_for_test();
+    ev.set_effect_sandbox_mode(0);
+    aura::compiler::types::EvalValue soft_pair;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        soft_pair = (*cons_fn)({make_int(1), make_int(2)});
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({soft_pair, make_int(11)});
+        auto rc = (*car_fn)({soft_pair});
+        CHECK(!is_error(sc), "4298: Off set-car! kept");
+        CHECK(is_int(rc) && as_int(rc) == 11, "4298: Off write visible, stamp not loaded");
+        CHECK(!ring_has_isolation_deny("set-car!"), "4298: Off records no IsolationDeny");
+    }
+
+    const auto pair_src = read_file("src/compiler/evaluator_primitives_pair.cpp");
+    const auto scpos = pair_src.find("add, ev, \"set-car!\"");
+    CHECK(scpos != std::string::npos, "4298: set-car! body located");
+    if (scpos != std::string::npos) {
+        const auto win = pair_src.substr(scpos, 3500);
+        CHECK(win.find("inrange_slot_tenant_allows") != std::string::npos,
+              "4298: in-range arm consults the mint stamp");
+        CHECK(win.find("g_pair_slot_tenants") != std::string::npos,
+              "4298: #4057 g_pair_slots arm kept");
+        CHECK(win.find("require_effect") == std::string::npos,
+              "4298: set-car! window stays body-choke-free");
+    }
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -3250,6 +3382,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4296: interpreter hash principal is the executing Evaluator ──
     ac4296_executing_evaluator_hash_gate();
+
+    // ── Issue #4298: in-range cons/vector tenant stamp ──
+    ac4298_inrange_pair_vector_tenant();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

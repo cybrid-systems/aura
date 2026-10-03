@@ -208,6 +208,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (auto it = a.rbegin(); it != a.rend(); ++it) {
                 auto id = pairs.size();
                 pairs.push_back({*it, result});
+                ev.note_inrange_pair_mint(id); // Issue #4298
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -396,6 +397,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (auto it = cars.rbegin(); it != cars.rend(); ++it) {
                 auto id = pairs.size();
                 pairs.push_back({*it, result});
+                ev.note_inrange_pair_mint(id); // Issue #4298
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -449,6 +451,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (const auto& car : cars) {
                 auto new_id = pairs.size();
                 pairs.push_back({car, result});
+                ev.note_inrange_pair_mint(new_id); // Issue #4298
                 result = make_pair(new_id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -506,6 +509,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
                 auto id = pairs.size();
                 pairs.push_back({*it, result});
+                ev.note_inrange_pair_mint(id); // Issue #4298
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -569,6 +573,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
                 auto id = pairs.size();
                 pairs.push_back({*it, result});
+                ev.note_inrange_pair_mint(id); // Issue #4298
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -631,7 +636,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return result;
                 auto new_id = pairs.size();
                 pairs.push_back({pairs[idx].car, result});
-                ev.bump_pair_alloc_count(); // Issue #614
+                ev.note_inrange_pair_mint(new_id); // Issue #4298
+                ev.bump_pair_alloc_count();        // Issue #614
                 result = make_pair(new_id);
                 v = pairs[idx].cdr;
             }
@@ -645,7 +651,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     break;
                 auto nid = pairs.size();
                 pairs.push_back({pairs[idx].car, final});
-                ev.bump_pair_alloc_count(); // Issue #614
+                ev.note_inrange_pair_mint(nid); // Issue #4298
+                ev.bump_pair_alloc_count();     // Issue #614
                 final = make_pair(nid);
                 result = pairs[idx].cdr;
             }
@@ -766,6 +773,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
                 auto new_id = pairs.size();
                 pairs.push_back({make_int(*it), result});
+                ev.note_inrange_pair_mint(new_id); // Issue #4298
                 result = make_pair(new_id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));

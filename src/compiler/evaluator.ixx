@@ -5497,6 +5497,11 @@ private:
     std::pmr::monotonic_buffer_resource runtime_resource_;
     std::pmr::vector<types::EvalValue> cells_{&runtime_resource_};
     std::pmr::vector<Pair> pairs_{&runtime_resource_};
+    // Issue #4298: owner record parallel to pairs_. 0 = never stamped
+    // (internal push, not a cons/list mint). A mint stores tenant+1 so
+    // tenant 0 is distinct from that hole. Not process-global — g_pair_slot_tenants
+    // stays the JIT tail (#4057).
+    std::vector<std::uint64_t> pair_slot_tenants_;
 
 public:
     // Issue #1397: uniform mutex guarding `cells_` / `pairs_` /
@@ -6727,6 +6732,9 @@ private:
     std::string last_warn_level_;
 
     std::vector<std::vector<types::EvalValue>> vector_heap_;
+    // Issue #4298: owner record parallel to vector_heap_. Same encoding as
+    // pair_slot_tenants_ (0 = never stamped, else tenant+1).
+    std::vector<std::uint64_t> vector_slot_tenants_;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
     // Issue #68: depth counter (was bool) so nested `intend` calls
@@ -7368,6 +7376,24 @@ public:
                                                  std::uint64_t ref_tenant = 0,
                                                  std::uint16_t required_effects = 0,
                                                  std::string_view op = "workspace") noexcept;
+    // Issue #4298: record the executing tenant on a cons/list or vector mint.
+    // Encoding is tenant+1; 0 stays "never stamped".
+    void note_inrange_pair_mint(std::size_t idx) noexcept {
+        if (pair_slot_tenants_.size() <= idx)
+            pair_slot_tenants_.resize(idx + 1, 0);
+        pair_slot_tenants_[idx] = capability_tenant_id_ + 1;
+    }
+    void note_inrange_vector_mint(std::size_t idx) noexcept {
+        if (vector_slot_tenants_.size() <= idx)
+            vector_slot_tenants_.resize(idx + 1, 0);
+        vector_slot_tenants_[idx] = capability_tenant_id_ + 1;
+    }
+    // Prod face only. true = caller may read or write the slot. false = mismatch
+    // already audited; caller must leave the slot unchanged and not return it.
+    // Soft/Off returns before either stamp array is touched.
+    [[nodiscard]] bool inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
+                                                  std::uint16_t required_effects,
+                                                  std::string_view op) noexcept;
     // Issue #3802: Restricted+MT / Strict host-path isolation for
     // EXEMPT_2ARG write-file / sys-* (path-prefix under tenant root).
     // Soft/Off / single-tenant Restricted → passthrough (out unchanged).
