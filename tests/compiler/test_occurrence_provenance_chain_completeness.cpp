@@ -43,8 +43,10 @@ using aura::compiler::g_coercion_provenance_complete_total;
 using aura::compiler::g_coercion_provenance_miss_total;
 using aura::compiler::g_coercion_provenance_sentinel_total;
 using aura::compiler::kCoercionProvenanceSentinelBase;
+using aura::compiler::typed_audit::commit_audit_blame_ok;
 using aura::compiler::typed_audit::commit_readiness;
 using aura::compiler::typed_audit::CommitReadinessInput;
+using aura::compiler::typed_audit::CompositeTxnCommitResult;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -326,6 +328,128 @@ static void ac8_blame_ok_vacuous_mutated() {
         CHECK(in.blame_ok, "4171 AC4: vacuous empty→ok preserved when not mutated");
         const auto r = commit_readiness(in);
         CHECK(r.would_allow_commit, "4171 AC4: commit allowed (no mutation → blame moot)");
+    }
+
+    // Issue #4294: same formula, commit-audit scope only. Unscoped fill
+    // (AC1–AC4 above) stays the eval license. These ACs drive
+    // commit_audit_blame_ok + commit_readiness step 4, then the
+    // composite_txn_commit consumer. They do not publish a proof face.
+    {
+        std::println("\n--- #4294 AC1: production commit-audit empty+dirty CS denies ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/true);
+        CommitReadinessInput in{};
+        in.blame_hard = true;
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(in.blame_ok, "4294 AC1: unscoped fill stays vacuous (eval license)");
+        CHECK(in.cs_has_work, "4294 AC1: dirty CS");
+        const bool mutated = cs.evaluator().txn_dirty() || in.cs_has_work;
+        in.blame_ok = commit_audit_blame_ok(/*chain_complete=*/false, /*frames_empty=*/true,
+                                            mutated, in.blame_hard);
+        CHECK(!in.blame_ok, "4294 AC1: commit-audit empty+mutated → blame_ok false");
+        const auto r = commit_readiness(in);
+        CHECK(!r.would_allow_commit, "4294 AC1: would_allow_commit false");
+        CHECK(r.force_reason == "blame", "4294 AC1: force_reason blame");
+    }
+    {
+        std::println("\n--- #4294 AC2: Soft commit-audit empty frames still allow ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/true);
+        CommitReadinessInput in{};
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        const bool mutated = cs.evaluator().txn_dirty() || in.cs_has_work;
+        in.blame_hard = false;
+        in.blame_ok = commit_audit_blame_ok(/*chain_complete=*/false, /*frames_empty=*/true,
+                                            mutated, in.blame_hard);
+        CHECK(in.blame_ok, "4294 AC2: Soft vacuous empty→ok");
+        const auto r = commit_readiness(in);
+        CHECK(r.would_allow_commit, "4294 AC2: Soft observe allows");
+    }
+    {
+        std::println("\n--- #4294 AC3: complete frames allow under commit-audit ---");
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_complete_blame_for_test();
+        CommitReadinessInput in{};
+        in.blame_hard = true;
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(in.blame_ok, "4294 AC3: unscoped complete stays ok");
+        in.blame_ok = commit_audit_blame_ok(/*chain_complete=*/true, /*frames_empty=*/false,
+                                            /*mutated=*/true, in.blame_hard);
+        CHECK(in.blame_ok, "4294 AC3: complete chain → blame_ok");
+        const auto r = commit_readiness(in);
+        CHECK(r.would_allow_commit, "4294 AC3: commit allowed");
+        CHECK(r.force_reason == "ok", "4294 AC3: force_reason ok");
+    }
+    {
+        std::println("\n--- #4294 AC4: license fill untouched; quiet commit-audit stays ok ---");
+        const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+        const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+        CHECK(boundary.find("out->blame_ok = bc.is_complete() || bc.frames.empty();") !=
+                  std::string::npos,
+              "4294 AC4: unscoped fill stays vacuous");
+        CHECK(boundary.find("!mutated && bc.frames.empty()") == std::string::npos,
+              "4294 AC4: deny arm stays off the eval-serving fill");
+        CHECK(hdr.find("commit_audit_blame_ok") != std::string::npos, "4294 AC4: helper in audit");
+        CHECK(etc.find("commit_audit_blame_ok") != std::string::npos,
+              "4294 AC4: composite consumer calls helper");
+        const auto bpos =
+            hdr.find("inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(");
+        const auto bend = hdr.find(
+            "inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outcome(",
+            bpos == std::string::npos ? 0 : bpos);
+        CHECK(bpos != std::string::npos && bend != std::string::npos && bend > bpos,
+              "4294 AC4: proof builder located");
+        if (bpos != std::string::npos && bend != std::string::npos && bend > bpos) {
+            const auto body = hdr.substr(bpos, bend - bpos);
+            CHECK(body.find("commit_readiness_live_policy()") != std::string::npos,
+                  "4294 AC4: proof still reads the unscoped live policy");
+            CHECK(body.find("commit_audit_blame_ok") == std::string::npos,
+                  "4294 AC4: proof publisher does not take the commit-audit deny");
+        }
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/false);
+        CommitReadinessInput in{};
+        in.blame_hard = true;
+        aura::compiler::typed_audit::aura_typed_audit_fill_from_live_tc(&cs.evaluator(), &in);
+        CHECK(!in.cs_has_work, "4294 AC4: quiet CS");
+        CHECK(!cs.evaluator().txn_dirty(), "4294 AC4: txn not dirty");
+        const bool mutated = cs.evaluator().txn_dirty() || in.cs_has_work;
+        in.blame_ok = commit_audit_blame_ok(/*chain_complete=*/false, /*frames_empty=*/true,
+                                            mutated, in.blame_hard);
+        CHECK(in.blame_ok, "4294 AC4: empty + not mutated stays ok");
+        const auto r = commit_readiness(in);
+        CHECK(r.would_allow_commit, "4294 AC4: quiet commit-audit allows");
+    }
+    {
+        std::println("\n--- #4294 AC5: composite consumer denies txn_dirty + empty frames ---");
+        const bool prev_require = aura::compiler::require_blame_complete_on_commit();
+        aura::compiler::set_require_blame_complete_on_commit(true);
+        CompilerService cs;
+        cs.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/false);
+        cs.evaluator().note_txn_dirty();
+        CompositeTxnCommitResult cr{};
+        const bool committed = cs.evaluator().composite_txn_commit(
+            /*mid=*/4294, "commit-audit-empty", 0, 0, 1, /*nested=*/true, /*batch=*/true, &cr);
+        CHECK(!cr.blame_ok, "4294 AC5: composite blame_ok false");
+        CHECK(!committed, "4294 AC5: composite commit rejected");
+        aura::compiler::set_require_blame_complete_on_commit(false);
+        CompilerService soft;
+        soft.evaluator().inject_commit_cs_empty_blame_for_test(/*with_cs_work=*/false);
+        soft.evaluator().note_txn_dirty();
+        CompositeTxnCommitResult cr_soft{};
+        (void)soft.evaluator().composite_txn_commit(4294, "commit-audit-soft", 0, 0, 1, true, true,
+                                                    &cr_soft);
+        CHECK(cr_soft.blame_ok, "4294 AC5: Soft/require-off composite keeps blame_ok");
+        CompilerService done;
+        done.evaluator().inject_commit_cs_complete_blame_for_test();
+        done.evaluator().note_txn_dirty();
+        aura::compiler::set_require_blame_complete_on_commit(true);
+        CompositeTxnCommitResult cr_done{};
+        (void)done.evaluator().composite_txn_commit(4294, "commit-audit-complete", 0, 0, 1, true,
+                                                    true, &cr_done);
+        CHECK(cr_done.blame_ok, "4294 AC5: complete frames stay blame_ok under require");
+        aura::compiler::set_require_blame_complete_on_commit(prev_require);
     }
 }
 
