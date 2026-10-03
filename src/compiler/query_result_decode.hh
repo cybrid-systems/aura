@@ -32,20 +32,16 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                                 std::uint64_t current_tenant_id,
                                 std::uint64_t current_fiber_id) noexcept {
     const bool hard = aura::compiler::typed_audit::production_defaults_active();
-    // Issue #4315: set-code rebirth restarts gen/wrap/cow. Reject a hash
-    // stamped for a different install before the match loop. Soft does
-    // not publish an install id, so this compare stays off that face.
-    // install_id 0 means the live flat was not published by production
-    // set-code; those hashes keep the historical checks.
-    if (hard && flat.install_id() != 0 && qr.epoch.workspace_id != flat.install_id()) {
-        aura::core::note_query_result_stale();
-        return aura::core::QueryResultFreshness::StaleByEpoch;
-    }
     // Issue #3660: empty matches stay Fresh-after-epoch (do not consult
     // the whole-table mutation epoch). QueryEpoch finish_query_epoch
     // still returns query-epoch-stale when generation moves in-flight.
     if (qr.match_count == 0)
         return aura::core::QueryResultFreshness::Fresh;
+    // Issue #4315: production set-code install id, after the empty Fresh.
+    if (hard && flat.install_id() != 0 && qr.epoch.workspace_id != flat.install_id()) {
+        aura::core::note_query_result_stale();
+        return aura::core::QueryResultFreshness::StaleByEpoch;
+    }
     // Issue #3451 / #3989: leftover-unless-eager. Nested gap and
     // outermost over-budget leftover deny held QueryResult unless the
     // node is inside the eager cone (occupancy/gen can match on
