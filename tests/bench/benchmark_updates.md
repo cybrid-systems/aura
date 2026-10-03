@@ -3,6 +3,13 @@
 Log of intentional baseline refreshes (Issue #1936).
 Each `--update` with `--rationale` appends an entry here.
 
+## 2026-10-04 — #4320 interactive replace and string-ref
+
+- **Rationale:** Record one `replace-value` on a one-define workspace, the same op and a six-op batch on a seed the size of the glyphlings catalog, and a 2000-step `string-ref` walk. Existing case times are unchanged. The second stdout line is the in-process millisecond delta.
+- **Cases:** 59 (passed=59, failed=0). New: replace_value_one_4320, replace_value_seed_4320, replace_batch_six_4320, string_ref_walk_4320.
+- **Total time_s (median suite sum):** 6.462
+- **Command:** hand-added records from a local 3-sample run (no full `--update`)
+
 ## 2026-07-22 — orch / multi-agent CI noise (meta only)
 
 - **Rationale:** CI strict SLO failed `multi_agent_pipeline` / `par_orch_3_agents` /

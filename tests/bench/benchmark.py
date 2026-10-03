@@ -122,15 +122,25 @@ def median_time(samples: list[float]) -> float:
 # ── Measurement helpers ───────────────────────────────────────
 
 
-def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float, int, bool]:
+def run_aura(
+    code: str,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[str, str, float, int, bool]:
     """Run aura and return (stdout, stderr, elapsed_seconds, returncode, timed_out).
 
     Issue #4268: keep exit status + timeout on the result. A child that prints
     the expected value and then exits non-zero must not look like PASS.
+    Issue #4320: optional per-case env (sandbox off, force-soa). Unset env
+    inherits the parent process, so existing cases stay on the default face.
     """
     cmd = [AURA]
     if args:
         cmd.extend(args)
+    proc_env = None
+    if env:
+        proc_env = os.environ.copy()
+        proc_env.update({str(k): str(v) for k, v in env.items()})
     start = time.perf_counter()
     proc = subprocess.Popen(
         cmd,
@@ -138,6 +148,7 @@ def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=proc_env,
     )
     timed_out = False
     try:
@@ -151,7 +162,12 @@ def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float,
     return stdout.strip(), stderr.strip(), elapsed, rc, timed_out
 
 
-def measure_pipeline(name: str, code: str, pipeline: str) -> dict:
+def measure_pipeline(
+    name: str,
+    code: str,
+    pipeline: str,
+    env: dict[str, str] | None = None,
+) -> dict:
     """Run a single benchmark and return measurements."""
     result = {
         "name": name,
@@ -169,7 +185,7 @@ def measure_pipeline(name: str, code: str, pipeline: str) -> dict:
     args_dict = {"eval": None, "ir": ["--ir"], "typecheck": ["--typecheck"]}
     args = args_dict.get(pipeline)
 
-    stdout, stderr, elapsed, rc, timed_out = run_aura(code, args)
+    stdout, stderr, elapsed, rc, timed_out = run_aura(code, args, env)
     result["time_s"] = round(elapsed, 6)
     result["stdout"] = stdout
     result["stderr"] = stderr
@@ -294,7 +310,7 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
         samples: list[float] = []
         result: dict = {}
         for _ in range(runs):
-            result = measure_pipeline(bench.name, bench.code, bench.pipeline)
+            result = measure_pipeline(bench.name, bench.code, bench.pipeline, env=bench.env)
             samples.append(float(result["time_s"]))
         result["time_samples"] = [round(s, 6) for s in samples]
         result["time_s"] = round(median_time(samples), 6)
