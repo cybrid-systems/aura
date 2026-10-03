@@ -16,6 +16,7 @@ class BenchCase:
     expected_val: Any = None
     expected_type: str | None = None
     expected_err: str | None = None
+    env: dict[str, str] | None = None
 
 
 @dataclass
@@ -38,6 +39,7 @@ def load_benchmark_cases() -> list[BenchCase]:
             expected_val=item.get("expected_val"),
             expected_type=item.get("expected_type"),
             expected_err=item.get("expected_err"),
+            env=item.get("env") if isinstance(item.get("env"), dict) else None,
         )
         for item in _load_raw()
     ]

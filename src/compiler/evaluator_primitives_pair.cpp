@@ -735,7 +735,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(1, "(string) -> int", "Number of characters in a string."));
     register_prim(
         add, ev, "string-ref",
-        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2) {
                 auto __i =
                     static_cast<std::uint64_t>(ev.push_string_heap("string-ref: too few args"));
@@ -743,20 +743,28 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 error_values.push_back(make_string(__i));
                 return make_error(__e);
             }
-            std::string s;
-            if (is_string(a[0]))
-                s = ev.copy_string_heap_at(as_string_idx(a[0]));
-            else if (is_int(a[0]))
-                s = std::to_string(as_int(a[0]));
             auto pos = static_cast<std::size_t>(as_int(a[1]));
-            if (pos >= s.size()) {
+            auto oob = [&]() {
                 auto __i = static_cast<std::uint64_t>(
                     ev.push_string_heap("string-ref: index out of bounds"));
                 auto __e = error_values.size();
                 error_values.push_back(make_string(__i));
                 return make_error(__e);
+            };
+            // Issue #4320: one locked byte, not a copy of the heap string.
+            if (is_string(a[0])) {
+                int byte = ev.string_heap_byte_at(as_string_idx(a[0]), pos);
+                if (byte < 0)
+                    return oob();
+                return make_int(byte);
             }
-            return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
+            if (is_int(a[0])) {
+                auto s = std::to_string(as_int(a[0]));
+                if (pos >= s.size())
+                    return oob();
+                return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
+            }
+            return oob();
         },
         pure_general(2, "(string int) -> int", "Character code at index."));
     register_prim(

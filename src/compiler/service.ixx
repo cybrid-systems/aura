@@ -10041,11 +10041,11 @@ public:
                             auto callee_name = std::string(p.resolve(callee_v.sym_id));
                             if (callee_name == "fiber:spawn" || callee_name == "fiber:join")
                                 needs_fallback = true;
-                            // asan-verify Begin-gate (937d53d22): `while` bodies are not
-                            // IR-lowerable — an IR-cached fn with a while loop silently miscomputes
-                            // (loop never runs; the multi-session leak oracle returned growth=0 →
-                            // vacuous PASS). Route the define to walker-define (Allow) or
-                            // hard-error (Forbidden) via the define-path gate.
+                            // Non-lambda (while cond body) lowers to Branch/Jump (#4320).
+                            // Lambda form still goes through the while primitive, and an
+                            // IR-cached define that only Call'd it miscomputed (loop never
+                            // ran; multi-session leak oracle returned growth=0). Keep the
+                            // fallback bit so Allow uses the walker and Forbidden hard-errors.
                             else if (callee_name == "while")
                                 needs_fallback = true;
                         }

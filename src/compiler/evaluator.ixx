@@ -8745,6 +8745,18 @@ public:
             return {};
         return string_heap_[idx];
     }
+    // Issue #4320: string-ref reads one byte under the same lock.
+    // Copying the whole heap string made a multi-thousand-step walk
+    // allocate a fresh std::string on every index. -1 is OOB / missing.
+    [[nodiscard]] int string_heap_byte_at(std::size_t idx, std::size_t pos) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        if (idx >= string_heap_.size())
+            return -1;
+        const auto& s = string_heap_[idx];
+        if (pos >= s.size())
+            return -1;
+        return static_cast<int>(static_cast<unsigned char>(s[pos]));
+    }
     // Issue #2652: process-wide mutex for g_hash_tables mutation + string
     // key compare (hash-set! / hash-ref under multi-fiber stats-bump).
     // Nested with alloc_storage_lock_ when both are needed: take this outer,

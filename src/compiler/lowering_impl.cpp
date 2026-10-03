@@ -1059,6 +1059,33 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
+                // Issue #4320: (while cond body) re-evaluates both arms.
+                // A general Call lowered the arms once, so force-soa ran
+                // the body a single time. Lambda arms stay on the while
+                // primitive (it applies the closures). Same split as the
+                // tree walker.
+                if (callee_name == "while" && v.children.size() >= 3 && state.cur_func) {
+                    auto c1 = flat.get(v.child(1));
+                    auto c2 = flat.get(v.child(2));
+                    if (c1.tag != NodeTag::Lambda && c2.tag != NodeTag::Lambda) {
+                        auto head = state.alloc_block();
+                        state.emit(IROpcode::Jump, head);
+                        state.cur_block = head;
+                        auto cond_slot =
+                            lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                        auto body_blk = state.alloc_block();
+                        auto done_blk = state.alloc_block();
+                        state.emit(IROpcode::Branch, cond_slot, body_blk, done_blk);
+                        state.cur_block = body_blk;
+                        (void)lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+                        state.emit(IROpcode::Jump, head);
+                        state.cur_block = done_blk;
+                        auto result_slot = state.alloc_local();
+                        state.emit(IROpcode::ConstVoid, result_slot);
+                        return result_slot;
+                    }
+                }
+
                 // Check if callee is a cached define function (now handled by Variable handler)
                 // Fall through to general function call path
             }
