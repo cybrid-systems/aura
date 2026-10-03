@@ -4778,6 +4778,188 @@ static void ac4234_5_source_cite() {
           "4234 AC5: no docs/design/4234-*");
 }
 
+// Issue #4297: wildcard_ok must not suppress single-use consume of rows
+// that contributed the required bits. A session row bound to another mid
+// stays for outermost exit. Soft/Off + `*` does not grow a consume fence.
+
+static EffectProvenance prov4297(std::uint64_t mid) {
+    EffectProvenance p{};
+    p.mutation_id = mid;
+    p.epoch = mid;
+    return p;
+}
+
+static void ac4297_arm_restricted() {
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+}
+
+static void ac4297_1_wildcard_consumes_star_and_sibling() {
+    std::println("\n--- #4297 AC1: * does not suppress single-use consume ---");
+    ac4297_arm_restricted();
+    constexpr std::uint64_t tenant = 429701;
+    const auto prov = prov4297(91);
+    const auto star = aura::core::capability::effect_for_cap_name("*");
+    auto& reg = g_capability_registry();
+    CHECK(reg.grant(tenant, "*", star, prov, /*single_use=*/true, /*session_bound=*/true),
+          "4297 AC1: * row lands");
+    // caller_principal 0 + session_bound is the authorized same-tenant mint
+    // (#3996). A non-session Mutate grant needs TenantAdmin.
+    CHECK(reg.grant(tenant, "mut-sib", Effect::Mutate, prov, /*single_use=*/true,
+                    /*session_bound=*/true),
+          "4297 AC1: sibling Mutate lands");
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    const bool ok1 = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                             "4297-ac1-1", /*wildcard_ok=*/true,
+                                             /*sandbox_active=*/true);
+    CHECK(ok1, "4297 AC1: first Mutate allows");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() ==
+              consumed0 + 2,
+          "4297 AC1: * and sibling both consumed");
+    CapabilityGrant star_row{};
+    CapabilityGrant sib{};
+    CHECK(reg.find_grant(tenant, "*", star_row) && star_row.revoked, "4297 AC1: * revoked");
+    CHECK(reg.find_grant(tenant, "mut-sib", sib) && sib.revoked, "4297 AC1: sibling revoked");
+    CHECK(ring_lookup_reason("single-use-consumed", 32) != nullptr,
+          "4297 AC1: reason single-use-consumed");
+    const bool ok2 = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                             "4297-ac1-2", /*wildcard_ok=*/true,
+                                             /*sandbox_active=*/true);
+    CHECK(!ok2, "4297 AC1: second Mutate denies");
+}
+
+static void ac4297_2_deny_does_not_consume() {
+    std::println("\n--- #4297 AC2: deny does not consume under wildcard_ok ---");
+    ac4297_arm_restricted();
+    constexpr std::uint64_t tenant = 429702;
+    const auto prov = prov4297(92);
+    auto& reg = g_capability_registry();
+    CHECK(reg.grant(tenant, "mut-only", Effect::Mutate, prov, /*single_use=*/true,
+                    /*session_bound=*/true),
+          "4297 AC2: Mutate row lands");
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    const bool denied = check_and_record_effect(Effect::Write, Effect::Write, prov, tenant,
+                                                "4297-ac2-deny", /*wildcard_ok=*/true,
+                                                /*sandbox_active=*/true);
+    CHECK(!denied, "4297 AC2: Write denies");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() == consumed0,
+          "4297 AC2: deny does not consume");
+    CapabilityGrant row{};
+    CHECK(reg.find_grant(tenant, "mut-only", row) && !row.revoked, "4297 AC2: Mutate still live");
+    const bool ok = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                            "4297-ac2-allow", /*wildcard_ok=*/true,
+                                            /*sandbox_active=*/true);
+    CHECK(ok, "4297 AC2: Mutate still allows once");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() ==
+              consumed0 + 1,
+          "4297 AC2: the allow consumes");
+}
+
+static void ac4297_3_other_session_mid_stays() {
+    std::println("\n--- #4297 AC3: other-mid session row stays for outermost exit ---");
+    ac4297_arm_restricted();
+    constexpr std::uint64_t tenant = 429703;
+    const auto stale = prov4297(7);
+    const auto fresh = prov4297(9);
+    auto& reg = g_capability_registry();
+    CHECK(reg.grant(tenant, "stale-sess", Effect::Mutate, stale, /*single_use=*/true,
+                    /*session_bound=*/true),
+          "4297 AC3: stale session row lands");
+    CHECK(reg.grant(tenant, "fresh-mut", Effect::Mutate, fresh, /*single_use=*/true,
+                    /*session_bound=*/true),
+          "4297 AC3: fresh Mutate lands");
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    const bool ok = check_and_record_effect(Effect::Mutate, Effect::Mutate, fresh, tenant,
+                                            "4297-ac3", /*wildcard_ok=*/true,
+                                            /*sandbox_active=*/true);
+    CHECK(ok, "4297 AC3: fresh mid allows");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() ==
+              consumed0 + 1,
+          "4297 AC3: only the contributing row is consumed");
+    CapabilityGrant stale_row{};
+    CapabilityGrant fresh_row{};
+    CHECK(reg.find_grant(tenant, "stale-sess", stale_row) && !stale_row.revoked &&
+              stale_row.session_bound,
+          "4297 AC3: other-mid session row stays");
+    CHECK(reg.find_grant(tenant, "fresh-mut", fresh_row) && fresh_row.revoked,
+          "4297 AC3: fresh row consumed");
+    CHECK(reg.session_bound_entries_alive(tenant) == 1, "4297 AC3: one session row still live");
+    const auto n = reg.revoke_session_grants_for_mid(7);
+    CHECK(n >= 1, "4297 AC3: outermost exit revokes the leftover session row");
+    CHECK(reg.session_bound_entries_alive(tenant) == 0, "4297 AC3: live session rows cleared");
+}
+
+static void ac4297_4_steal_resume_no_double_consume() {
+    std::println("\n--- #4297 AC4: steal then resume does not double-consume ---");
+    ac4297_arm_restricted();
+    constexpr std::uint64_t tenant = 429704;
+    const auto prov = prov4297(94);
+    auto& reg = g_capability_registry();
+    CHECK(reg.grant(tenant, "steal-su", Effect::Mutate, prov, /*single_use=*/true,
+                    /*session_bound=*/true),
+          "4297 AC4: session single-use lands");
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    const auto n =
+        aura::core::capability::revoke_session_grants_on_steal_or_abort(94, /*steal=*/true);
+    CHECK(n >= 1, "4297 AC4: steal revokes");
+    const bool first = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                               "4297-ac4-1", /*wildcard_ok=*/true,
+                                               /*sandbox_active=*/true);
+    const bool second = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                                "4297-ac4-2", /*wildcard_ok=*/true,
+                                                /*sandbox_active=*/true);
+    CHECK(!first && !second, "4297 AC4: resume denies");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() == consumed0,
+          "4297 AC4: stolen row is not consumed");
+    CHECK(ring_lookup_reason("single-use-consumed", 32) == nullptr,
+          "4297 AC4: no single-use-consumed on the deny path");
+}
+
+static void ac4297_5_soft_off_no_consume_fence() {
+    std::println("\n--- #4297 AC5: Soft/Off + * does not consume ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    constexpr std::uint64_t tenant = 429705;
+    const auto prov = prov4297(95);
+    auto& reg = g_capability_registry();
+    CHECK(reg.grant(tenant, "mut-off", Effect::Mutate, prov, /*single_use=*/true,
+                    /*session_bound=*/false),
+          "4297 AC5: Off single-use lands");
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    const bool a = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                           "4297-ac5-1", /*wildcard_ok=*/true,
+                                           /*sandbox_active=*/false);
+    const bool b = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                           "4297-ac5-2", /*wildcard_ok=*/true,
+                                           /*sandbox_active=*/false);
+    CHECK(a && b, "4297 AC5: Off still allows both calls");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() == consumed0,
+          "4297 AC5: * held on Off does not consume");
+    CapabilityGrant row{};
+    CHECK(reg.find_grant(tenant, "mut-off", row) && !row.revoked, "4297 AC5: row stays live");
+}
+
+static void ac4297_6_source_cite() {
+    std::println("\n--- #4297 AC6: source-cite ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #4297") != std::string::npos, "4297 AC6: consume cites #4297");
+    CHECK(cap.find("(!wildcard_ok || need_grant)") != std::string::npos,
+          "4297 AC6: * does not suppress an armed consume");
+    CHECK(cap.find("via-wildcard-denied") != std::string::npos,
+          "4297 AC6: wildcard deny hint stays");
+    CHECK(cap.find("g.bound_mutation_id != prov.mutation_id") != std::string::npos,
+          "4297 AC6: other-mid session row is not consumed");
+    CHECK(!std::filesystem::exists("docs/design/4297-wildcard-single-use.md"),
+          "4297 AC6: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_4297.cpp"),
+          "4297 AC6: no tests/issues invent");
+}
+
 int run_test_inert_session_mid_3723() {
     std::println("=== Issue #3723: inert MutationBoundaryGuard does not publish session mid ===");
     // Issue #4038: host-cohort revoke + provenance stale-row skip + epoch-0
@@ -4847,6 +5029,12 @@ int run_test_inert_session_mid_3723() {
     ac4234_3_soft_off_exec_sticky();
     ac4234_4_durable_exec_session_bound();
     ac4234_5_source_cite();
+    ac4297_1_wildcard_consumes_star_and_sibling();
+    ac4297_2_deny_does_not_consume();
+    ac4297_3_other_session_mid_stays();
+    ac4297_4_steal_resume_no_double_consume();
+    ac4297_5_soft_off_no_consume_fence();
+    ac4297_6_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
