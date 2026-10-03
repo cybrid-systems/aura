@@ -1029,7 +1029,19 @@ static void ac4110_source_cite() {
     CHECK(vec.find("aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),") ==
               std::string::npos,
           "4110 cite: tree-walker gates do not pass the JIT owner (#4296)");
-    CHECK(vec.find("ev.effect_sandbox_mode(), \"hash-ref\"") != std::string::npos,
+    // clang-format may break after effect_sandbox_mode(); the op literal
+    // still has to sit in the same call.
+    auto face_gates_op = [](const std::string& src, std::string_view op) {
+        const std::string face = "ev.effect_sandbox_mode()";
+        const std::string lit = std::format("\"{}\"", op);
+        for (std::size_t at = src.find(face); at != std::string::npos;
+             at = src.find(face, at + face.size())) {
+            if (src.substr(at, 96).find(lit) != std::string::npos)
+                return true;
+        }
+        return false;
+    };
+    CHECK(face_gates_op(vec, "hash-ref"),
           "4110 cite: hash-ref gate reads the executing evaluator face");
     CHECK(vec.find("\"hash-ref\"))") != std::string::npos, "4110 cite: hash-ref gate op");
     CHECK(vec.find("\"hash-has-key?\"))") != std::string::npos, "4110 cite: hash-has-key? gate op");
