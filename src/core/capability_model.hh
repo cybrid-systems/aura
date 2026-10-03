@@ -2284,14 +2284,18 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         reg.record_audit(required, actual, tenant, prov, !allowed, op, reason_hint);
 
         // Issue #2586: single-use grant auto-revoke on successful allow.
-        // Skip under wildcard_ok (wildcard grants all bits; single_use grant
-        // was not necessary for allow and must stay intact). Skip when
-        // required is None (no effect to match grants against).
+        // Skip when required is None (no effect to match grants against).
+        // Issue #4297: holding `*` must not skip that consume. A production
+        // `grant_capability("*")` is itself single_use, and a sibling
+        // single-use Mutate on the same tenant contributed the same bits.
+        // wildcard_ok stays a deny-reason hint only (`via-wildcard-denied`).
+        // Soft/Off (`need_grant` false) does not grow a consume fence just
+        // because `*` is held; the non-wildcard #2586 Off counter stays.
         // Issue #3207: consume + live_session_grants fetch_sub stay under
         // this same lock (no lock-drop vs TenantScope cascade revoke).
         // Issue #3209: stolen skip below is the resume-after-steal deny
         // (no single-use-consumed) when mark_stolen happened-before this lock.
-        if (allowed && required != Effect::None && !wildcard_ok) {
+        if (allowed && required != Effect::None && (!wildcard_ok || need_grant)) {
             auto it = reg.by_tenant.find(tenant);
             if (it != reg.by_tenant.end()) {
                 for (auto& g : it->second) {
@@ -2303,6 +2307,16 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                     if (g.stolen)
                         continue;
                     if (!has_effect(g.effects, required))
+                        continue;
+                    // Issue #4297 / #4038: a session row bound to another mid
+                    // did not contribute bits (effects_for_locked skips it).
+                    // Leave it for outermost exit / steal / abort.
+                    const bool other_session_mid = prov.mutation_id != 0 &&
+                                                   (mode == EffectSandboxMode::Restricted ||
+                                                    mode == EffectSandboxMode::Strict) &&
+                                                   g.session_bound &&
+                                                   g.bound_mutation_id != prov.mutation_id;
+                    if (other_session_mid)
                         continue;
                     const bool was_session = g.session_bound;
                     g.revoked = true;

@@ -581,6 +581,10 @@ static void ac9_grant_mid_joins_boundary_typedmid() {
         aura::core::capability::Effect::Mutate, aura::core::capability::Effect::Mutate, call, 7,
         "test-3646-ac9", false, true);
     CHECK(ok, "3646 AC1: effect check at mid 77 joins the grant row");
+    // Issue #4296: query hashes stamp the JIT owner hook. Unwired owner is
+    // 0, so hash-ref under Strict only admits tenant 0. The effect check
+    // above already ran as tenant 7.
+    ev.set_capability_tenant_id(0);
     auto se77 =
         cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 77) \"se-count\")");
     CHECK(se77 && aura::compiler::types::is_int(*se77) && aura::compiler::types::as_int(*se77) >= 1,
