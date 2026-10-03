@@ -1378,6 +1378,67 @@ static void ac3636_advisory() {
     CHECK(r1.force_reason_code == r0b.force_reason_code, "3636 AC9: force_reason unchanged");
 }
 
+// Issue #4306: a skeleton reemit returns the candidate count and must
+// not stamp heal coverage. A real install (success count > 0) still stamps.
+static void ac4306_skeleton_reemit_does_not_stamp_heal() {
+    std::println("\n--- #4306: skeleton reemit does not stamp heal coverage ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto fn = cpp.find("HotUpdateRegistry::decide_and_reemit");
+    CHECK(fn != std::string::npos, "4306: decide_and_reemit");
+    if (fn != std::string::npos) {
+        const auto win = cpp.substr(fn, 2200);
+        CHECK(win.find("aura_reemit_success_count") != std::string::npos,
+              "4306: stamp gated on installed count");
+        CHECK(win.find("return n") != std::string::npos, "4306: public return unchanged");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4306.cpp").empty(), "4306: no test_issue file");
+    CHECK(read_file("docs/design/4306-heal-stamp.md").empty(), "4306: no docs/design");
+
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.reset_coverage_verify_for_test();
+    reg.set_force_jit_repromote_window(3);
+    reg.set_force_jit_repromote_require_pending_idle(false);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    CHECK((reg.force_jit_regions_mask() & defuse) != 0, "4306: force bit set");
+    reg.maybe_force_jit_repromote_on_clean_success();
+    CHECK(reg.force_jit_stable_successes() == 1, "4306: streak seeded");
+    const auto promo0 = reg.force_jit_repromote_total();
+
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_4306_skel"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    const auto n =
+        reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    CHECK(aura_reemit_success_count() == 0, "4306: skeleton installs nothing");
+    CHECK(n == aura_reemit_dirty_count(), "4306: return stays the candidate count");
+    CHECK((reg.last_reemit_success_region_mask() & defuse) == 0,
+          "4306: skeleton does not stamp the heal bit");
+    CHECK(reg.force_jit_stable_successes() == 0, "4306: zero successes reset the streak");
+    CHECK(reg.force_jit_repromote_total() == promo0, "4306: zero successes do not re-promote");
+
+    feed.cursor = 0;
+    reg.reset_coverage_verify_for_test();
+    (void)reg.maybe_coverage_verify_min_dirty(
+        aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    CHECK(reg.coverage_verify_success_total() == 0,
+          "4306: n>0 with nothing installed is not covered");
+
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int main() {
@@ -1454,6 +1515,8 @@ int main() {
     ac3976_soft_wholesale_unchanged();
     reset_runtime_after_cs();
     ac3976_soak_two_force_reasons();
+    reset_runtime_after_cs();
+    ac4306_skeleton_reemit_does_not_stamp_heal();
     reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

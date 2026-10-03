@@ -109,7 +109,12 @@ std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
     // provider-not-wired already no-op there). Extra work only on n>0
     // when force-JIT bits are live and last_success was not stamped.
     const auto n = aura_reemit_aot_for_dirty(defuse_version);
-    if (n > 0) {
+    // Issue #4306: n is the candidate count when no host emit installed a
+    // ScalarFn (skeleton / default-LLVM miss returns to_re_emit). Heal
+    // coverage is an install. g_last_reemit_success_count is that count.
+    // Public return stays n.
+    const auto installed = aura_reemit_success_count();
+    if (n > 0 && installed > 0) {
         const auto demoted = force_jit_regions_mask_.load(std::memory_order_relaxed);
         if (demoted != 0) {
             // Pipeline body already called on_reemit_pipeline_call.
@@ -611,7 +616,9 @@ bool HotUpdateRegistry::maybe_coverage_verify_min_dirty(ReemitReason reason) noe
     consume_exhausted_min_dirty_retry_attempt();
     aot_exhausted_min_dirty_retry_total_.fetch_add(1, std::memory_order_relaxed);
     const auto n = decide_and_reemit(aura_get_aot_defuse_version(), reason);
-    if (n > 0) {
+    // Issue #4306: a would-reemit (n>0, nothing installed) is not covered.
+    const auto installed = aura_reemit_success_count();
+    if (n > 0 && installed > 0) {
         aot_exhausted_min_dirty_retry_success_total_.fetch_add(1, std::memory_order_relaxed);
         coverage_verify_success_total_.fetch_add(1, std::memory_order_relaxed);
     }
