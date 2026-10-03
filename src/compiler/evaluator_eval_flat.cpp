@@ -531,6 +531,11 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
                                                      const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
+    // Issue #4304: same first probe as the closure arm (#4125), before
+    // seq-skip. Phase-5 holds in-flight through publish, so a warm Allow
+    // TLS must not enter native on the previous green window.
+    if (aura::core::densify_consistency::densify_in_flight_for(eval_id))
+        return true;
     // Issue #4006: same seq-match skip as the closure arm.
     switch (densify_refuse_seq_skip(arena)) {
         case DensifySeqSkip::Allow:

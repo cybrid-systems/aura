@@ -7284,6 +7284,95 @@ static void ac4243_4_source_and_linter() {
     }
 }
 
+// Issue #4304: Phase-5 DensifyInFlightGuard spans compact through
+// publish_last_moving_densify_window, including the LCP-blocked synthetic
+// publish. FFI refuse reads densify_in_flight_for before seq-skip.
+// Soft/Off still returns at the production gate. Recover's happy-path
+// publish stays inside DensifyInFlightGuard densify_inflight.
+static void ac4304_phase5_inflight_spans_publish() {
+    std::println("\n--- #4304: Phase-5 in-flight spans publish; FFI reads it ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto cite = mb.find("Issue #3894: compact under workspace_mtx_");
+    CHECK(cite != std::string::npos, "4304: #3894 cite remains");
+    if (cite != std::string::npos) {
+        const auto hwin = mb.substr(cite, 1600);
+        const auto gpos = hwin.find("DensifyInFlightGuard");
+        const auto skip = hwin.find("if (!densify_entry_lcp_blocked)");
+        const auto cpos = hwin.find("compact_all_moving_pinned");
+        const auto rpos = hwin.find("release_workspace_then_drain_after_densify_()");
+        CHECK(gpos != std::string::npos && skip != std::string::npos && cpos != std::string::npos &&
+                  gpos < skip && skip < cpos,
+              "4304: in-flight armed before the LCP skip and compact");
+        CHECK(rpos != std::string::npos && cpos < rpos, "4304: compact still before unlock");
+    }
+    const auto phase5_pub = mb.find("publish_last_moving_densify_window(", cite);
+    CHECK(phase5_pub != std::string::npos, "4304: Phase-5 publish present");
+    if (phase5_pub != std::string::npos) {
+        const auto after = mb.substr(phase5_pub, 900);
+        const auto reset_at = after.find("phase5_densify_inflight.reset()");
+        const auto pub_end = after.find(");");
+        CHECK(reset_at != std::string::npos && pub_end != std::string::npos && pub_end < reset_at,
+              "4304: in-flight drops after the Phase-5 publish");
+    }
+    const auto moving = mb.find("if (aura::ast::moving_compact_enabled())");
+    const auto arm = mb.find("phase5_densify_inflight =");
+    CHECK(moving != std::string::npos && arm != std::string::npos && moving < arm,
+          "4304: arm only inside moving_compact_enabled");
+    const auto rec = mb.find("Evaluator::recover_moving_sticky_densify_off");
+    CHECK(rec != std::string::npos, "4304: recover fn");
+    if (rec != std::string::npos) {
+        const auto recwin = mb.substr(rec, 8000);
+        const auto g = recwin.find("DensifyInFlightGuard densify_inflight");
+        CHECK(g != std::string::npos,
+              "4304: recover still names DensifyInFlightGuard densify_inflight");
+        if (g != std::string::npos) {
+            const auto happy = recwin.find("publish_last_moving_densify_window(", g);
+            CHECK(happy != std::string::npos && happy > g,
+                  "4304: recover happy-path publish stays inside the guard");
+        }
+    }
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto ffi = flat.find("static bool production_ffi_apply_densify_hard_refuse");
+    CHECK(ffi != std::string::npos, "4304: FFI refuse located");
+    if (ffi != std::string::npos) {
+        const auto body = flat.substr(ffi, 1800);
+        const auto gpos = body.find("production_defaults_active()");
+        const auto ipos = body.find("densify_in_flight_for(eval_id)");
+        const auto spos = body.find("densify_refuse_seq_skip");
+        CHECK(gpos != std::string::npos && ipos != std::string::npos && gpos < ipos,
+              "4304: FFI in-flight probe after the production gate");
+        CHECK(spos != std::string::npos && ipos < spos,
+              "4304: FFI in-flight probe before seq-skip");
+        CHECK(body.find("Issue #4304") != std::string::npos, "4304: FFI cites the issue");
+    }
+    const auto clo = flat.find("static bool production_apply_closure_densify_hard_refuse");
+    if (clo != std::string::npos) {
+        const auto body = flat.substr(clo, 2000);
+        const auto gpos = body.find("production_defaults_active()");
+        const auto ipos = body.find("densify_in_flight_for(eval_id)");
+        const auto spos = body.find("densify_refuse_seq_skip");
+        CHECK(gpos != std::string::npos && ipos != std::string::npos && spos != std::string::npos &&
+                  gpos < ipos && ipos < spos,
+              "4304: closure arm order unchanged");
+    }
+    CHECK(flat.find("schema-4304") == std::string::npos &&
+              flat.find("g_4304_") == std::string::npos,
+          "4304: no new query key or counter");
+    CHECK(mb.find("schema-4304") == std::string::npos && mb.find("g_4304_") == std::string::npos,
+          "4304: boundary has no new query key or counter");
+    CHECK(read_file("docs/design/4304-phase5-densify-inflight.md").empty(), "4304: no docs/design");
+    CHECK(read_file("tests/core/test_issue_4304.cpp").empty(), "4304: no invent test");
+    // RAII shape the Phase-5 holder uses: armed while the guard lives, clear after.
+    int dummy = 0;
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard g(static_cast<const void*>(&dummy));
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(&dummy),
+              "4304: in-flight armed for the publish gap");
+    }
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(&dummy),
+          "4304: in-flight clear after the guard drops");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -8151,6 +8240,9 @@ int run_test_moving_densify_fail_closed() {
     ac4243_2_no_pin_window_green();
     ac4243_3_invalidate_skip_set_is_rewritten();
     ac4243_4_source_and_linter();
+
+    std::println("\n=== Issue #4304: Phase-5 in-flight spans publish; FFI reads it ===");
+    ac4304_phase5_inflight_spans_publish();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
