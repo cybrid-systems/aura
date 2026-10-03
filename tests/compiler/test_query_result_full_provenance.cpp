@@ -3629,20 +3629,254 @@ void test_ac4164_3_source_cite() {
     std::size_t sec_hits = 0;
     for (std::size_t pos = 0; (pos = sec.find(cite, pos)) != std::string::npos; pos += cite.size())
         ++sec_hits;
-    expect_eq_i64("4164 AC3: security TU cites #4164 at 3 stamp sites + belt", 4,
+    // Issue #4314 removed the export-stamp occupancy remake, so the
+    // security TU keeps the make_stamped_ref / make_stamped_safe_ref cites
+    // plus the refused-layout belt (the fourth export-stamp cite moved).
+    expect_eq_i64("4164 AC3: security TU cites #4164 at stamp sites + belt", 3,
                   static_cast<std::int64_t>(sec_hits));
     std::size_t thread_hits = 0;
     const std::string thread_tok = "production_defaults_active());";
     for (std::size_t pos = 0; (pos = sec.find(thread_tok, pos)) != std::string::npos;
          pos += thread_tok.size())
         ++thread_hits;
-    expect_eq_i64("4164 AC3: three production threading sites", 3,
+    expect_eq_i64("4164 AC3: production threading at stamped-ref faces", 2,
                   static_cast<std::int64_t>(thread_hits));
     // No per-issue test file (per #81934 the family test is extended).
     {
         std::ifstream f("tests/compiler/test_issue_4164.cpp");
         expect_true("4164 AC3: no tests/compiler/test_issue_4164.cpp", !f.good());
     }
+}
+
+// Issue #4314: production stamp must not occupancy-remake a packed v2
+// ref whose captured wrap or cow is 0. 0 is the first cycle, not a
+// missing layout. After the live epoch advances, query and mutate both
+// return stale-ref. Soft brace-init {id, gen} still fills wrap/cow.
+
+void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
+    std::print("AC4314/AC1 -- production wrap/cow 0 stays captured; advance is stale-ref\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4314 AC1: set-code",
+                cs.eval("(set-code \"(define w4314 (lambda () 1))\")").has_value());
+    expect_true("4314 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4314 AC1: workspace", flat != nullptr);
+    expect_eq_i64("4314 AC1: capture wrap is 0", 0, static_cast<std::int64_t>(flat->wrap_epoch()));
+    expect_eq_i64("4314 AC1: capture cow is 0", 0,
+                  static_cast<std::int64_t>(flat->workspace_cow_epoch()));
+    expect_true("4314 AC1: bind find",
+                cs.eval("(define qr4314 (query :find \"w4314\"))").has_value());
+    auto nmatches = cs.eval("(length (hash-ref qr4314 \"matches\"))");
+    expect_true("4314 AC1: find has a match",
+                nmatches && is_int(*nmatches) && as_int(*nmatches) >= 1);
+    const char* idx = as_int(*nmatches) > 1 ? " :index 0" : "";
+    const std::string bind_held =
+        std::string("(define held4314 (query:as-stable-ref qr4314") + idx + "))";
+    expect_true("4314 AC1: bind packed v2 at wrap 0", cs.eval(bind_held).has_value());
+    auto held_car = cs.eval("(car held4314)");
+    expect_true("4314 AC1: packed car is NodeId", held_car && is_int(*held_car));
+
+    auto expect_stale = [&](const char* label, const char* expr) {
+        const std::string def = std::string("(define ") + label + " " + expr + ")";
+        expect_true(std::string("4314 AC1: bind ") + label, cs.eval(def).has_value());
+        auto eq = cs.eval(std::string("(and (pair? ") + label + " (equal? (car " + label +
+                          ") \"stale-ref\"))");
+        expect_true(std::string("4314 AC1: ") + label + " is stale-ref",
+                    eq && is_bool(*eq) && as_bool(*eq));
+    };
+    // define installs a workspace binding and can advance generation
+    // before the init runs. Resolve probes eval the call directly so
+    // the just-captured ref is still the live occupant.
+    auto is_stale_ref_pair = [](const auto& v, auto& ev) {
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::as_string_idx;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::is_string;
+        if (!v || !is_pair(*v))
+            return false;
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return false;
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        return si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+    };
+    auto expect_resolves_hash = [&](const char* label, const char* expr) {
+        auto v = cs.eval(expr);
+        expect_true(std::string("4314 AC1: ") + label + " returns", v.has_value());
+        expect_true(std::string("4314 AC1: ") + label + " is not stale-ref",
+                    !is_stale_ref_pair(v, cs.evaluator()));
+        expect_true(std::string("4314 AC1: ") + label + " is schema-2 hash", v && is_hash(*v));
+    };
+    // A root node has no parent. parent-stable then returns void, which
+    // is a resolve, not an error pair. Children of that node are a hash.
+    auto expect_resolves = [&](const char* label, const char* expr) {
+        auto v = cs.eval(expr);
+        expect_true(std::string("4314 AC1: ") + label + " returns", v.has_value());
+        expect_true(std::string("4314 AC1: ") + label + " is not stale-ref",
+                    !is_stale_ref_pair(v, cs.evaluator()));
+    };
+
+    flat->set_wrap_epoch_for_test(1);
+    expect_stale("ch4314", "(query :children held4314)");
+    expect_stale("pa4314", "(query :parent-stable held4314)");
+    expect_stale("as4314", "(query:as-stable-ref held4314)");
+    expect_stale("mu4314", "(mutate:replace-subtree held4314 \"(lambda () 2)\")");
+
+    // Re-query after the advance. The pre-advance QueryResult hash is
+    // itself stale; a ref captured now carries the live wrap. Each
+    // probe recaptures so one successful export cannot move generation
+    // out from under the next probe.
+    auto recapture = [&](const char* qr_name, const char* label) {
+        const std::string find = std::string("(define ") + qr_name + " (query :find \"w4314\"))";
+        expect_true(std::string("4314 AC1: re-find ") + label, cs.eval(find).has_value());
+        const std::string pack =
+            std::string("(define fresh4314 (query:as-stable-ref ") + qr_name + idx + "))";
+        expect_true(std::string("4314 AC1: pack ") + label, cs.eval(pack).has_value());
+        auto car = cs.eval("(car fresh4314)");
+        expect_true(std::string("4314 AC1: ") + label + " car is NodeId", car && is_int(*car));
+    };
+    recapture("qr4314w", "post-wrap children");
+    expect_resolves_hash("chf4314", "(query :children fresh4314)");
+    recapture("qr4314p", "post-wrap parent");
+    expect_resolves("paf4314", "(query :parent-stable fresh4314)");
+    recapture("qr4314a", "post-wrap as-stable-ref");
+    auto as_fresh = cs.eval("(query:as-stable-ref fresh4314)");
+    expect_true("4314 AC1: asf4314 returns", as_fresh.has_value());
+    expect_true("4314 AC1: asf4314 is not stale-ref", !is_stale_ref_pair(as_fresh, cs.evaluator()));
+    {
+        using aura::compiler::types::is_pair;
+        expect_true("4314 AC1: asf4314 repacks the captured node", as_fresh && is_pair(*as_fresh));
+    }
+    flat->set_wrap_epoch_for_test(0);
+    apply_dev_audit_defaults();
+
+    // Cow advance on a fresh service. The wrap probes above already
+    // exercised ensure/stamp enough to trip a later restamp-lag.
+    apply_dev_audit_defaults();
+    CompilerService cs2;
+    expect_true("4314 AC1: cow set-code",
+                cs2.eval("(set-code \"(define c4314 (lambda () 1))\")").has_value());
+    expect_true("4314 AC1: cow eval", cs2.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* flat2 = cs2.evaluator().workspace_flat();
+    expect_true("4314 AC1: cow workspace", flat2 != nullptr);
+    expect_eq_i64("4314 AC1: cow capture epoch is 0", 0,
+                  static_cast<std::int64_t>(flat2->workspace_cow_epoch()));
+    expect_true("4314 AC1: cow bind find",
+                cs2.eval("(define qr4314c0 (query :find \"c4314\"))").has_value());
+    auto n2 = cs2.eval("(length (hash-ref qr4314c0 \"matches\"))");
+    expect_true("4314 AC1: cow find has a match", n2 && is_int(*n2) && as_int(*n2) >= 1);
+    const char* idx2 = as_int(*n2) > 1 ? " :index 0" : "";
+    const std::string bind_held2 =
+        std::string("(define held4314c (query:as-stable-ref qr4314c0") + idx2 + "))";
+    expect_true("4314 AC1: cow bind packed v2", cs2.eval(bind_held2).has_value());
+    flat2->set_workspace_cow_epoch(1);
+    auto expect_stale2 = [&](const char* label, const char* expr) {
+        auto v = cs2.eval(expr);
+        expect_true(std::string("4314 AC1: ") + label + " is stale-ref",
+                    is_stale_ref_pair(v, cs2.evaluator()));
+    };
+    auto error_kind = [](const auto& v, auto& ev) -> std::string {
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::as_string_idx;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::is_string;
+        if (!v || !is_pair(*v))
+            return {};
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return {};
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        if (si >= ev.string_heap().size())
+            return {};
+        return ev.string_heap()[si];
+    };
+    expect_stale2("chc4314", "(query :children held4314c)");
+    expect_stale2("pac4314", "(query :parent-stable held4314c)");
+    expect_stale2("asc4314", "(query:as-stable-ref held4314c)");
+    // The mutate wrapper turns an aborted outermost boundary into
+    // persist-reject after the body has already refused the stale handle.
+    // Either kind means the replacement did not commit.
+    auto mu = cs2.eval("(mutate:replace-subtree held4314c \"(lambda () 4)\")");
+    const auto mu_kind = error_kind(mu, cs2.evaluator());
+    expect_true("4314 AC1: cow mutate refuses stale handle",
+                mu_kind == "stale-ref" || mu_kind == "persist-reject");
+    auto still = cs2.eval("(c4314)");
+    expect_true("4314 AC1: cow mutate did not commit",
+                still && is_int(*still) && as_int(*still) == 1);
+    expect_true("4314 AC1: cow re-find",
+                cs2.eval("(define qr4314c1 (query :find \"c4314\"))").has_value());
+    const std::string bind_fresh2 =
+        std::string("(define fresh4314c (query:as-stable-ref qr4314c1") + idx2 + "))";
+    expect_true("4314 AC1: cow pack after advance", cs2.eval(bind_fresh2).has_value());
+    auto cow_kids = cs2.eval("(query :children fresh4314c)");
+    expect_true("4314 AC1: cow fresh children returns", cow_kids.has_value());
+    expect_true("4314 AC1: cow fresh children is not stale-ref",
+                !is_stale_ref_pair(cow_kids, cs2.evaluator()));
+    expect_true("4314 AC1: cow fresh children is schema-2 hash", cow_kids && is_hash(*cow_kids));
+    flat2->set_workspace_cow_epoch(0);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4314_2_soft_brace_remake_unchanged() {
+    std::print("AC4314/AC2 -- Soft brace-init still fills wrap/cow\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4314 AC2: set-code",
+                cs.eval("(set-code \"(define s4314 (lambda () 1))\")").has_value());
+    expect_true("4314 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    expect_true("4314 AC2: workspace", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4314 AC2: live node", live != aura::ast::NULL_NODE);
+    flat->set_wrap_epoch_for_test(1);
+    const auto prev =
+        aura::core::provenance::g_query_stable_ref_unstamped_prevented_total_atomic().load(
+            std::memory_order_relaxed);
+    aura::ast::FlatAST::StableNodeRef brace{};
+    brace.id = live;
+    brace.gen = flat->generation();
+    ev.stamp_query_stable_ref_export(brace);
+    expect_true("4314 AC2: brace id kept", brace.id == live);
+    expect_eq_i64("4314 AC2: brace wrap filled from live", 1,
+                  static_cast<std::int64_t>(brace.wrap_epoch));
+    expect_eq_i64("4314 AC2: brace cow filled from live",
+                  static_cast<std::int64_t>(flat->workspace_cow_epoch()),
+                  static_cast<std::int64_t>(brace.cow_epoch_at_capture));
+    expect_true("4314 AC2: unstamped_prevented advanced",
+                aura::core::provenance::g_query_stable_ref_unstamped_prevented_total_atomic().load(
+                    std::memory_order_relaxed) > prev);
+    flat->set_wrap_epoch_for_test(0);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4314_3_source_cite() {
+    std::print("AC4314/AC3 -- source-cite production mismatch leaves captured gen\n");
+    std::ifstream f_sec("src/compiler/evaluator_security.cpp");
+    std::string sec((std::istreambuf_iterator<char>(f_sec)), std::istreambuf_iterator<char>());
+    expect_true("4314 AC3: security TU readable", !sec.empty());
+    expect_true("4314 AC3: cites #4314", sec.find("Issue #4314") != std::string::npos);
+    expect_true("4314 AC3: production mismatch compares wrap and cow",
+                sec.find("ref.wrap_epoch != we || ref.cow_epoch_at_capture != ce") !=
+                    std::string::npos);
+    expect_true("4314 AC3: Soft remake stays make_ref_layout(id, false)",
+                sec.find("make_ref_layout(id, false)") != std::string::npos);
+    expect_true("4314 AC3: no test_issue_4314.cpp",
+                !std::ifstream("tests/compiler/test_issue_4314.cpp").good());
+    expect_true("4314 AC3: no docs/design",
+                !std::ifstream("docs/design/4314-query-stamp-wrap-zero.md").good());
 }
 
 int main() {
@@ -3799,10 +4033,14 @@ int main() {
     test_ac4164_1_prod_stamped_ref_refuses_free_slot();
     test_ac4164_2_layout_paint_soft_kept_prod_refused();
     test_ac4164_3_source_cite();
+    test_ac4314_1_prod_captured_zero_is_stale_after_advance();
+    test_ac4314_2_soft_brace_remake_unchanged();
+    test_ac4314_3_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
     std::print("All #4162 query free-slot AC tests PASSED\n");
     std::print("All #4164 ref-layout gen-paint AC tests PASSED\n");
+    std::print("All #4314 captured-zero stamp AC tests PASSED\n");
     return 0;
 }
