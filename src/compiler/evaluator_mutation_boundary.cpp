@@ -5943,6 +5943,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // without setting had_moving_densify — that flag still means
         // relocated live objects for invalidate/pairing).
         bool densify_entry_lcp_blocked = false;
+        // Issue #4304: the guard is not movable. Armed only inside
+        // moving_compact_enabled(); reset after the Phase-5 publish.
+        // Null on Soft / Moving off — no in-flight store.
+        std::unique_ptr<aura::core::densify_consistency::DensifyInFlightGuard>
+            phase5_densify_inflight;
         // Issue #2497 / #2559: baseline ownership-scan fail counter BEFORE the
         // Moving densify window opens. Any fail delta across compact + pairing
         // + injected tests must suppress Phase 5 success the same way
@@ -6020,10 +6025,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
             }
             aura::ast::AdaptiveCompactResult compact_r{};
-            if (!densify_entry_lcp_blocked) {
-                // Issue #3894: compact under workspace_mtx_ + densify-in-flight.
-                aura::core::densify_consistency::DensifyInFlightGuard densify_inflight(
+            // Issue #3894: compact under workspace_mtx_ + densify-in-flight.
+            // Issue #4304: armed before the LCP skip so the synthetic publish
+            // is inside the same guard as compact. Held until after publish.
+            phase5_densify_inflight =
+                std::make_unique<aura::core::densify_consistency::DensifyInFlightGuard>(
                     static_cast<const void*>(ev_));
+            if (!densify_entry_lcp_blocked) {
                 compact_r = ev_->arena_group_ ? ev_->arena_group_->compact_all_moving_pinned()
                                               : aura::ast::AdaptiveCompactResult{};
                 if (compact_r.bytes_reclaimed_total > 0) {
@@ -6037,11 +6045,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // result (objects_moved==0). Face fails via pin_contract.
                 compact_r.pin_contract_held = false;
             }
-            // Issue #3185 AC1 / #3782: densify-entry LCP block surface.
-            // Force pin_contract_held=false so the unified success gate
-            // (same surface as pin_contract / moving_incomplete_remap) catches
-            // the block. Soft / Off already short-circuits above (poll.present
-            // false in quiet path → zero extra work).
+            // Issue #3185 AC1 / #3782: LCP block forces pin_contract_held false.
             pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             release_workspace_then_drain_after_densify_();
             had_moving_densify = compact_r.moved_live_objects;
@@ -6386,6 +6390,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     static_cast<std::uint64_t>(densify_root_remap_fails),
                     static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
             }
+            // Issue #4304: in-flight drops only after this publish. When the
+            // retry already published, recover's guard cleared the bit and
+            // this reset is empty. Soft never armed the pointer.
+            phase5_densify_inflight.reset();
             // Issue #3955: sticky recover densify ran lock-held; release now
             // (idempotent with #3894 happy-path unlock after compact).
             release_workspace_then_drain_after_densify_();
