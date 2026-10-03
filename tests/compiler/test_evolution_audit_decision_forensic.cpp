@@ -112,7 +112,7 @@ static void ac3_soft_zero_cost() {
 static void ac4_capacity_schema() {
     std::println("\n--- AC4: capacity / schema ---");
     auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 80") != std::string::npos,
           "planned_keys 72 (#3339 Agent facade headroom)");
     CHECK(src.find("insert_kv(\"schema-3152\", 3152)") != std::string::npos,
           "schema-3152 sentinel present");
@@ -172,7 +172,7 @@ static void ac7_typed_summary_3242() {
               std::string::npos,
           "typed-summary-from-wal key");
     CHECK(src.find("insert_kv(\"schema-3242\",") != std::string::npos, "schema-3242");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 80") != std::string::npos,
           "planned keys 72 (#3339 headroom)");
 }
 
@@ -417,8 +417,8 @@ static void ac14_wiring_non_goals_4240() {
     CHECK(allow.find("check_wal_prune_fold_4240.py") != std::string::npos,
           "root allowlist lists the #4240 linter");
     auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
-          "planned_keys stays 72 (no new query key)");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 80") != std::string::npos,
+          "planned_keys is 80 after last-se-op (#4303)");
     // No insert_kv row cites 4240 (suggested-next stays the observable).
     std::size_t p = 0;
     bool kv_4240 = false;

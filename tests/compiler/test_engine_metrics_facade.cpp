@@ -261,8 +261,8 @@ int main() {
         CHECK(evix.find("kAgentDecisionFacadeHeadroom = 8") != std::string::npos,
               "3339 AC1: headroom constant 8");
         const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
-        CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
-              "ac3339_3_plus20: planned 72 so +20 dummy keys without raise fails CI");
+        CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 80") != std::string::npos,
+              "ac3339_3_plus20: planned 80 so +20 dummy keys without raise fails CI");
         CHECK(sec.find("kSecurityPosturePlannedKeys = 128") != std::string::npos,
               "3339 AC1 / #3499: posture planned 128 (2225 merge headroom)");
 

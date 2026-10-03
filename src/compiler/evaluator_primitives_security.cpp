@@ -6225,11 +6225,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 4 additive keys (wal-full-scan-hit + wal-segments-scanned +
             //   schema-3970 + issue-3970, #3970)
             // + 1 additive key (typed-trail-wrap-risk, #4028 observe-only)
-            // = 63 live keys. Issue #3339: planned 72 (>= 63+8=71 headroom;
-            // +20 dummy keys without a raise must fail the CI headroom
-            // gate). Additive insert_kv must raise planned_keys; this
-            // Agent facade forbids hash-overflow.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 72;
+            // = 63 live keys before #4303.
+            // Issue #4303: +1 last-se-op (64 live). 64+8=72 spends the
+            // old plan, so planned is 80 and the next batch still has
+            // slack. +20 dummy keys without a raise must still fail the
+            // CI headroom gate. Additive insert_kv must raise planned_keys;
+            // this Agent facade forbids hash-overflow.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 80;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -6274,6 +6276,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
             std::string last_se_reason_str;       // Issue #3149: SE reason[64] string snapshot
+            std::string last_se_op_str;           // Issue #4303: e.op[40], empty if no same-mid row
             // Issue #3284: SE match discipline — when a join mid is in
             // scope (explicit arg or default last-stamped path), ONLY
             // accept SE rows with e.mutation_id == join_mid; never publish
@@ -6306,6 +6309,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (e.reason[0] != '\0') {
                         const auto n = strnlen(e.reason, sizeof(e.reason) - 1);
                         last_se_reason_str.assign(e.reason, n);
+                    }
+                    // Issue #4303: reason[64] keeps 63 bytes. op[40] still
+                    // holds the operator the formatter put in the cut tail.
+                    // Do not rewrite last-se-reason.
+                    if (e.op[0] != '\0') {
+                        const auto n = strnlen(e.op, sizeof(e.op) - 1);
+                        last_se_op_str.assign(e.op, n);
                     }
                     break;
                 }
@@ -6623,6 +6633,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(filt_mid && proof_mid != join_mid ? 0 : proof_mid));
             insert_kv("last-se-reason-code", last_se_reason_code);
             insert_kv_str("last-se-reason", last_se_reason_str);
+            // Issue #4303: additive. Empty when this join has no same-mid SE.
+            insert_kv_str("last-se-op", last_se_op_str);
             insert_kv("last-se-denied", last_se_denied);
             // Issue #3284: additive se-mid-miss — 1 when a join mid is in
             // scope but no SE row shares e.mutation_id == join_mid (typed
