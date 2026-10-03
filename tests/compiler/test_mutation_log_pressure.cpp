@@ -10,11 +10,15 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 import std;
@@ -31,7 +35,9 @@ using aura::ast::MutationStatus;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -206,6 +212,148 @@ static void ac3_capability_gate() {
     CHECK(src.find("required_effects") != std::string::npos, "required_effects on meta");
     // Source documents Agent policy.
     CHECK(src.find("Issue #2201") != std::string::npos, "cites #2201");
+
+    // Issue #4313: compact takes the same Guard as rollback before the log moves.
+    const auto begin = src.find("add(\"mutation-log-compact\"");
+    const auto end = src.find("set_meta_for_name(\"mutation-log-compact\"", begin);
+    CHECK(begin != std::string::npos && end != std::string::npos && end > begin,
+          "compact lambda window");
+    if (begin != std::string::npos && end != std::string::npos && end > begin) {
+        const auto window = src.substr(begin, end - begin);
+        const auto acq = window.find("mutate_dispatch_try_acquire");
+        const auto comp = window.find("->compact_mutation_log");
+        const auto ro = window.find("workspace_read_only_");
+        CHECK(acq != std::string::npos && comp != std::string::npos && acq < comp,
+              "try_acquire precedes compact_mutation_log");
+        CHECK(ro != std::string::npos && ro < comp, "read-only check precedes compact");
+    }
+}
+
+// Issue #4313: acquire failure leaves the log alone; a live outermost
+// Guard excludes compact until it drops. Nested acquire is depth-only.
+static void ac5_guard_before_compact() {
+    std::println("\n--- #4313: mutation-log-compact takes MutationBoundaryGuard ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_resource_quota_mutations(0);
+    ev.reset_mutation_quota_used();
+    struct RestoreQuota {
+        CompilerService& cs;
+        Evaluator& ev;
+        ~RestoreQuota() {
+            (void)cs.eval("(workspace :unlock 0)");
+            ev.set_resource_quota_mutations(0);
+            ev.reset_mutation_quota_used();
+        }
+    } restore{cs, ev};
+
+    CHECK(cs.eval("(set-code \"(define a 0)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    for (int i = 0; i < 24; ++i)
+        (void)cs.typed_mutate(std::format("(mutate:rebind \"a\" \"{}\")", i));
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "workspace flat");
+    if (!flat)
+        return;
+    const auto seeded = flat->mutation_log_size();
+    CHECK(seeded >= 1, "log seeded");
+    // workspace_read_only_ is private. workspace:create installs the
+    // tree; locking the active root sets the same flag the primitive reads.
+    auto created = cs.eval("(workspace :create \"ro-4313\")");
+    CHECK(created && is_int(*created), "workspace tree for read-only");
+    auto lk = cs.eval("(workspace :lock 0 #t)");
+    CHECK(lk && is_bool(*lk) && as_bool(*lk), "lock active workspace");
+    const auto ro_sz = flat->mutation_log_size();
+    auto ro = cs.eval("(mutation-log-compact 0)");
+    CHECK(ro.has_value() && is_int(*ro) && as_int(*ro) == -1, "read-only compact returns -1");
+    CHECK(flat->mutation_log_size() == ro_sz, "read-only leaves log size unchanged");
+    auto un = cs.eval("(workspace :unlock 0)");
+    CHECK(un && is_bool(*un) && as_bool(*un), "unlock active workspace");
+
+    ev.set_resource_quota_mutations(1);
+    ev.reset_mutation_quota_used();
+    {
+        bool ok = true;
+        auto burned = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+        CHECK(burned.has_value(), "quota burn acquire");
+    }
+    const auto q_sz = flat->mutation_log_size();
+    auto qr = cs.eval("(mutation-log-compact 0)");
+    CHECK(qr.has_value() && is_int(*qr) && as_int(*qr) == -1, "quota reject returns -1");
+    CHECK(flat->mutation_log_size() == q_sz, "quota reject leaves log size unchanged");
+    ev.set_resource_quota_mutations(0);
+    ev.reset_mutation_quota_used();
+
+    {
+        bool ok = true;
+        auto outer = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+        CHECK(outer.has_value(), "outermost guard");
+        if (outer) {
+            bool ok2 = true;
+            auto inner = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok2);
+            CHECK(inner.has_value(), "nested acquire is depth-only");
+        }
+    }
+
+    auto* metrics = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(metrics != nullptr, "compiler metrics");
+    if (!metrics)
+        return;
+    const auto sz_before = flat->mutation_log_size();
+    const auto forced_before =
+        metrics->mutation_log_forced_compact_total.load(std::memory_order_relaxed);
+
+    std::atomic<int> phase{0};
+    std::atomic<std::int64_t> b_code{-2};
+    std::thread b([&] {
+        while (phase.load(std::memory_order_acquire) == 0)
+            std::this_thread::yield();
+        if (phase.load(std::memory_order_acquire) < 0) {
+            b_code.store(-4, std::memory_order_release);
+            return;
+        }
+        auto r = cs.eval("(mutation-log-compact 1)");
+        if (r && is_int(*r))
+            b_code.store(as_int(*r), std::memory_order_release);
+        else
+            b_code.store(-3, std::memory_order_release);
+    });
+
+    bool ok = true;
+    auto holder_r = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    if (!holder_r) {
+        phase.store(-1, std::memory_order_release);
+        b.join();
+        CHECK(false, "overlap holder acquire");
+        return;
+    }
+    auto holder = std::move(*holder_r);
+    const auto snap = metrics->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    phase.store(1, std::memory_order_release);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    bool saw_b = false;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (metrics->mutation_guard_try_acquire_total.load(std::memory_order_relaxed) > snap) {
+            saw_b = true;
+            break;
+        }
+        if (b_code.load(std::memory_order_acquire) != -2)
+            break;
+        std::this_thread::yield();
+    }
+    const auto sz_mid = flat->mutation_log_size();
+    const auto forced_mid =
+        metrics->mutation_log_forced_compact_total.load(std::memory_order_relaxed);
+    holder.reset();
+    b.join();
+    CHECK(saw_b, "compact entered try_acquire while outermost guard held");
+    CHECK(sz_mid == sz_before, "log size unchanged while outermost guard held");
+    CHECK(forced_mid == forced_before, "compact_mutation_log did not run under the holder");
+    CHECK(b_code.load(std::memory_order_acquire) >= 0,
+          "compact returns dropped count after release");
+    CHECK(metrics->mutation_log_forced_compact_total.load(std::memory_order_relaxed) >
+              forced_before,
+          "forced compact counted after the guard dropped");
 }
 
 // ── AC4: schema + rollback after compact ────────────────────
@@ -258,6 +406,7 @@ int run_test_mutation_log_pressure() {
     ac2_high_volume_compact();
     ac3_capability_gate();
     ac4_schema_and_rollback();
+    ac5_guard_before_compact();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
