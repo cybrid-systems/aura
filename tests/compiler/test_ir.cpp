@@ -2473,6 +2473,168 @@ int main() {
             apply_dev_audit_defaults();
         }
 
+        // ── Issue #4317: consistent_subtype ground fallback and Dynamic
+        // arm follow consistent_unify's hard face. Function decomposition
+        // calls consistent_subtype, so unequal grounds fail closed.
+        // Soft stays true. Int↔Float stays the numeric coercion. ──
+        {
+            using aura::compiler::CompilerMetrics;
+            using aura::compiler::ConstraintSystem;
+            using aura::compiler::GradualPermissiveness;
+            using aura::compiler::InferenceEngine;
+            using aura::compiler::TypeChecker;
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::compiler::typed_audit::AuditStrategy;
+            using aura::compiler::typed_audit::get_strategy;
+            using aura::compiler::typed_audit::production_defaults_active;
+            using aura::compiler::typed_audit::production_hard_face_active;
+            using aura::compiler::typed_audit::set_strategy;
+            using aura::core::TypeRegistry;
+            using aura::diag::ErrorKind;
+
+            struct ProdScope {
+                ProdScope() { apply_production_audit_defaults(); }
+                ~ProdScope() { apply_dev_audit_defaults(); }
+            };
+
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto str_int = treg.register_func({treg.string_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                if (!cs.consistent_unify(str_int, int_int) &&
+                    !cs.consistent_unify(int_int, str_int)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4317_1_func_grounds_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4317_1_func_grounds_prod_false");
+                }
+            }
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto str_int = treg.register_func({treg.string_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                if (cs.consistent_unify(str_int, int_int) &&
+                    cs.consistent_unify(int_int, str_int)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4317_1_func_grounds_soft_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4317_1_func_grounds_soft_true");
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto fl = treg.lookup_type("Float");
+                const auto lin = treg.register_linear(treg.int_type());
+                if (fl.valid() && !cs.consistent_subtype(treg.string_type(), treg.int_type()) &&
+                    cs.consistent_subtype(treg.int_type(), fl) &&
+                    cs.consistent_subtype(fl, treg.int_type()) &&
+                    cs.consistent_subtype(treg.dynamic_type(), treg.dynamic_type()) &&
+                    !cs.consistent_unify(treg.dynamic_type(), lin) &&
+                    cs.consistent_unify(cs.fresh_var(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4317_2_subtype_grounds_prod");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4317_2_subtype_grounds_prod");
+                }
+            }
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+                CompilerMetrics metrics;
+                cs.set_metrics(&metrics);
+                cs.set_active_mutation_id(4317);
+                const auto before =
+                    metrics.dynamic_degrade_with_blame_total.load(std::memory_order_relaxed);
+                const bool soft_ground = cs.consistent_subtype(treg.string_type(), treg.int_type());
+                const bool soft_dyn = cs.consistent_subtype(treg.dynamic_type(), treg.int_type());
+                const bool bumped = metrics.dynamic_degrade_with_blame_total.load(
+                                        std::memory_order_relaxed) > before;
+                if (soft_ground && soft_dyn && bumped) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4317_2_soft_accept_bumps_blame");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4317_2_soft_accept_bumps_blame");
+                }
+            }
+            {
+                apply_dev_audit_defaults();
+                const auto save = get_strategy();
+                set_strategy(AuditStrategy::Full);
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+                const auto dyn_int = treg.register_func({treg.dynamic_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                const bool ok = !production_defaults_active() && production_hard_face_active() &&
+                                !cs.consistent_unify(dyn_int, int_int) &&
+                                !cs.consistent_unify(int_int, dyn_int) &&
+                                !cs.consistent_unify(treg.dynamic_type(), treg.int_type());
+                set_strategy(save);
+                apply_dev_audit_defaults();
+                if (ok) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4317_3_full_without_defaults");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4317_3_full_without_defaults");
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                DiagnosticCollector diag;
+                InferenceEngine ie(treg, diag);
+                ie.set_gradual_permissiveness(GradualPermissiveness::Strict);
+                const auto str_int = treg.register_func({treg.string_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                TypeChecker tc(treg);
+                tc.set_gradual_permissiveness(GradualPermissiveness::Strict);
+                aura::diag::DiagnosticCollector d2;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat(
+                    "(let ((f (lambda ((: x Int)) x))) (f \"hi\"))", flat, pool);
+                bool saw_te = false;
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    flat.root = pr.root;
+                    (void)tc.infer_flat(flat, pool, pr.root, d2);
+                    for (const auto& d : d2.diagnostics()) {
+                        if (d.kind == ErrorKind::TypeError &&
+                            d.message.find("argument") != std::string::npos)
+                            saw_te = true;
+                    }
+                }
+                if (pr.success && saw_te && tc.last_coercions().empty() &&
+                    !ie.is_coercible(str_int, int_int)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4317_4_arg_ground_typeerror_no_cast");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4317_4 parse={} te={} coercions={}",
+                                 pr.success, saw_te, tc.last_coercions().size());
+                }
+            }
+            apply_dev_audit_defaults();
+        }
+
         // ── Issue #4107: production if-join / arith peel ground gate —
         // synthesis must not publish a solved type without the gate. ──
         {
