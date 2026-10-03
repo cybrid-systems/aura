@@ -3870,6 +3870,8 @@ extern "C" int aura_closure_check_aot_stable_id_policy(int64_t closure_id) noexc
 //   2) Remap when stable_func_id matches and clear the flag; on miss
 //      keep MustDeopt + batch_deopt_for so the next aura_closure_call
 //      force-deopts instead of running old native.
+// Issue #4308: defined after the jit tables. Caller holds the workspace write lock.
+static std::int64_t jit_id_for_registered_name(const char* name) noexcept;
 extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch) {
@@ -4036,9 +4038,20 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             continue;
         }
 
-        // Atomic-from-callers' view: all fields under exclusive table lock.
-        g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
+        // Issue #4308: match_id is the AOT stable id. g_closure_func_ids
+        // indexes g_jit_fns (primary or overflow). Dispatch prefers that
+        // column over the name map, so storing the stable id runs whatever
+        // ScalarFn already occupies g_jit_fns[match_id]. Point a named
+        // closure at the jit id whose body is the ScalarFn just registered
+        // under cname. A name-map miss leaves the existing jit index and
+        // does not publish match_id. Stable-id membership still restamps
+        // below (#2542). This path does not bump g_aot_table_epoch.
         g_closure_stable_func_ids[cid] = match_id;
+        const std::int64_t jit_id = (named && cname != nullptr) ? jit_id_for_registered_name(cname)
+                                                                : static_cast<std::int64_t>(-1);
+        if (jit_id >= 0)
+            g_closure_func_ids[cid] = jit_id;
+        // Atomic-from-callers' view: remaining fields under exclusive table lock.
         g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
         stamp_closure_table_epoch_locked(cid); // Issue #3471: remap retargeted catalog
         // Issue #2542: restamp env_gen to live env-frame generation so
@@ -4259,6 +4272,28 @@ static std::atomic<std::uint64_t> g_jit_fns_limit_warnings{0};
 static std::unordered_map<std::string, JitFnEntry, aura::core::TransparentStringHash,
                           std::equal_to<>>
     g_jit_fns_by_name;
+
+// Issue #4308: jit index of the ScalarFn registered under name, or -1.
+// Scans the primary table, then the overflow map. Does not take a lock
+// and does not bump g_aot_table_epoch. Caller already holds the workspace
+// write lock (aura_remap_live_closures_after_reemit).
+static std::int64_t jit_id_for_registered_name(const char* name) noexcept {
+    if (name == nullptr || name[0] == '\0')
+        return -1;
+    const auto nit = g_jit_fns_by_name.find(std::string_view(name));
+    if (nit == g_jit_fns_by_name.end() || nit->second.fn == nullptr)
+        return -1;
+    const auto want = nit->second.fn;
+    for (int slot = 0; slot < 512; ++slot) {
+        if (g_jit_fns[slot].fn == want)
+            return slot;
+    }
+    for (const auto& ov : g_jit_fns_overflow) {
+        if (ov.second.fn == want)
+            return ov.first;
+    }
+    return -1;
+}
 
 static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                               int32_t local_count, int32_t arg_count, int32_t env_count) {
