@@ -971,6 +971,29 @@ namespace aura::compiler {
 // so persist-reject / wrapper reset cannot export a green stale pin
 // (post-mutate gen against the rolled-back tree) before the Guard dtor
 // triad. Soft/Off: this helper already returned (zero extra).
+void Evaluator::restore_abort_type_face(MutationCheckpoint& cp) noexcept {
+    if (cp.type_face_restored || !cp.type_face_captured)
+        return;
+    if (!(typed_audit::production_defaults_active() ||
+          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+        return;
+    if (workspace_flat_ && cp.type_column_snapshot.captured)
+        workspace_flat_->restore_type_columns(std::move(cp.type_column_snapshot));
+    // Issue #4310: infer writes the persistent TypeChecker's solve_delta_cs_.
+    // The commit handle is that same object once stashed, or a second copy.
+    // Restore both when they differ. Do not create a checker here.
+    if (cp.cs_high_water.captured) {
+        auto* persistent = static_cast<TypeChecker*>(persistent_typechecker());
+        auto* commit = static_cast<TypeChecker*>(commit_type_checker_handle());
+        if (persistent)
+            persistent->constraint_system().restore_abort_high_water(
+                ConstraintSystem::AbortCsHighWater{cp.cs_high_water});
+        if (commit && commit != persistent)
+            commit->constraint_system().restore_abort_high_water(std::move(cp.cs_high_water));
+    }
+    cp.type_face_restored = true;
+}
+
 void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
     if (!(typed_audit::production_defaults_active() ||
           typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
@@ -1013,6 +1036,9 @@ void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
             tc->constraint_system().restore_or_clear_occurrence_to_entry(cp.occurrence_entry_size);
         typed_audit::note_3158_occurrence_abort_restore(dropped);
     }
+    // Issue #4310: type columns + CS high-water in this same transaction.
+    // Occurrence discard/rehydrate above is unchanged.
+    restore_abort_type_face(cp);
     cp.topology_restored = true;
     last_boundary_rollback_stats_ = stats;
     typed_audit::end_mid_abort_authority(cp.audit_mid);
@@ -1173,6 +1199,20 @@ void Evaluator::enter_mutation_boundary() {
     // no structural write. Cheap: single handle acquire + size read.
     if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle())) {
         cp.occurrence_entry_size = tc->constraint_system().occurrence_goals_size();
+    }
+    // Issue #4310: production/Full copies type columns and the CS
+    // high-water with the occurrence baseline. Soft/Off and lightweight
+    // skip the copies (type_face_captured stays false).
+    if (!lightweight && (typed_audit::production_defaults_active() ||
+                         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        if (workspace_flat_)
+            cp.type_column_snapshot = workspace_flat_->snapshot_type_columns();
+        void* tc_h = persistent_typechecker();
+        if (!tc_h)
+            tc_h = commit_type_checker_handle();
+        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_h))
+            cp.cs_high_water = tc->constraint_system().snapshot_abort_high_water();
+        cp.type_face_captured = true;
     }
     // Issue #3379: outermost enter — note the current Evaluator for
     // commit_readiness_live_policy to fill solve_status / linear_ok /
@@ -1587,6 +1627,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             // observe_total without entering the restore_or_clear_ path.
             aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
         }
+        // Issue #4310: outermost !success puts type columns and the CS
+        // high-water back. Persist-reject already set type_face_restored.
+        if (typed_audit::production_defaults_active() ||
+            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+            restore_abort_type_face(cp);
         // Issue #3116: last_coercions_ + TLS active context (half-green residual).
         dual_clear_coercion_state_on_abort();
         // Issue #3193: persist clear on the abort body (before hold ends)
@@ -2159,6 +2204,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
                                 dropped);
                         }
+                        restore_abort_type_face(cp);
                     } else {
                         aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
                     }
@@ -2489,6 +2535,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                     aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
                                         dropped);
                                 }
+                                restore_abort_type_face(cp);
                                 aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             } else {
@@ -2664,6 +2711,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
                                 dropped);
                         }
+                        restore_abort_type_face(cp);
                         aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
                             1, std::memory_order_relaxed);
                     } else {

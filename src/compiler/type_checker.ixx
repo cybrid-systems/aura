@@ -1312,6 +1312,81 @@ public:
         return dropped;
     }
 
+    // Issue #4310: production/Full boundary enter copies the solve face
+    // that infer writes beside occurrence goals. Abort truncates the
+    // constraint and ADT tables to that high-water and puts the
+    // union-find arrays and the four root sets back. Occurrence goals
+    // stay on restore_or_clear_occurrence_to_entry.
+    struct AbortCsHighWater {
+        bool captured = false;
+        std::size_t constraints_size = 0;
+        std::vector<std::int64_t> parent;
+        std::vector<std::uint32_t> rank;
+        std::vector<aura::core::TypeId> binding;
+        std::size_t adt_match_goals_size = 0;
+        std::unordered_set<std::uint32_t> touched_roots;
+        std::unordered_set<std::uint32_t> occurrence_priority_roots;
+        std::unordered_set<std::uint32_t> let_poly_dirty_roots;
+        std::unordered_set<std::uint32_t> pending_full_solve_roots;
+    };
+    [[nodiscard]] AbortCsHighWater snapshot_abort_high_water() const {
+        AbortCsHighWater h;
+        h.captured = true;
+        h.constraints_size = constraints_.size();
+        h.parent = parent_;
+        h.rank = rank_;
+        h.binding = binding_;
+        h.adt_match_goals_size = adt_match_goals_.size();
+        h.touched_roots = touched_roots_;
+        h.occurrence_priority_roots = occurrence_priority_roots_;
+        h.let_poly_dirty_roots = let_poly_dirty_roots_;
+        h.pending_full_solve_roots = pending_full_solve_roots_;
+        return h;
+    }
+    void restore_abort_high_water(AbortCsHighWater&& h) noexcept {
+        if (!h.captured)
+            return;
+        if (constraints_.size() > h.constraints_size) {
+            constraints_.resize(h.constraints_size);
+            if (constraint_dirty_.size() > h.constraints_size)
+                constraint_dirty_.resize(h.constraints_size);
+            dirty_count_ = 0;
+            for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+                if (constraint_dirty_[i])
+                    ++dirty_count_;
+            }
+            for (auto it = var_to_constraints_.begin(); it != var_to_constraints_.end();) {
+                auto& vec = it->second;
+                std::erase_if(vec, [&](std::size_t idx) { return idx >= h.constraints_size; });
+                if (vec.empty())
+                    it = var_to_constraints_.erase(it);
+                else
+                    ++it;
+            }
+        }
+        parent_ = std::move(h.parent);
+        rank_ = std::move(h.rank);
+        binding_ = std::move(h.binding);
+        if (adt_match_goals_.size() > h.adt_match_goals_size)
+            adt_match_goals_.resize(h.adt_match_goals_size);
+        touched_roots_ = std::move(h.touched_roots);
+        occurrence_priority_roots_ = std::move(h.occurrence_priority_roots);
+        let_poly_dirty_roots_ = std::move(h.let_poly_dirty_roots);
+        pending_full_solve_roots_ = std::move(h.pending_full_solve_roots);
+    }
+    [[nodiscard]] std::size_t constraints_size() const noexcept { return constraints_.size(); }
+    [[nodiscard]] std::size_t union_find_size() const noexcept { return parent_.size(); }
+    void grow_union_find_for_test() {
+        parent_.push_back(-1);
+        rank_.push_back(0);
+        binding_.push_back({});
+    }
+    void seed_abort_priority_roots_for_test(std::uint32_t rep) {
+        touched_roots_.insert(rep);
+        occurrence_priority_roots_.insert(rep);
+        let_poly_dirty_roots_.insert(rep);
+    }
+
     // Issue #2644: batch-level TypeVar refined consistency (anti SOLVED-but-drift).
     // Groups occurrence_goals_ by UF rep and checks pairwise consistent_unify
     // / subtype either direction. Returns true when all live goals for the same

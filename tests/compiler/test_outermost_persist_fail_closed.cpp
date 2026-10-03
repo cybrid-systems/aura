@@ -133,6 +133,145 @@ void arm_linear_pending_3697() {
 
 } // namespace
 
+// Issue #4310: production persist-reject and outermost abort put type
+// columns and the solve_delta high-water back. Soft does not copy.
+static void ac4310_abort_restores_type_columns_and_cs() {
+    std::println("\n--- #4310: abort restores type columns and CS high-water ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto helper = emb.find("void Evaluator::restore_abort_type_face");
+    const auto win = helper == std::string::npos ? std::string{} : emb.substr(helper, 1800);
+    CHECK(emb.find("Issue #4310") != std::string::npos, "4310: boundary cite");
+    CHECK(win.find("restore_type_columns") != std::string::npos, "4310: restores columns");
+    CHECK(win.find("restore_abort_high_water") != std::string::npos, "4310: restores CS");
+    CHECK(win.find("invalidate_persistent_typechecker") == std::string::npos,
+          "4310: helper does not drop the persistent checker");
+    CHECK(ast.find("void restore_type_columns") != std::string::npos, "4310: column restore");
+    CHECK(ast.find("bump_type_cache_generation()") != std::string::npos,
+          "4310: generation bump stays available");
+    CHECK(emb.find("defuse_version_.fetch_add(1, std::memory_order_release);") != std::string::npos,
+          "4310: enter defuse bump stays");
+    CHECK(read_file("tests/compiler/test_issue_4310.cpp").empty(), "4310: no test_issue file");
+    CHECK(read_file("docs/design/4310-type-column-abort.md").empty(), "4310: no design doc");
+
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4310: warm");
+    CHECK(cs.eval("(set-code \"(define f (+ 1 2))\")").has_value(), "4310: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4310: eval");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "4310: typecheck");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4310: workspace");
+    const auto lit = ws ? find_literal_int(*ws, 1) : aura::ast::NULL_NODE;
+    const auto call = ws ? find_first_tag(*ws, aura::ast::NodeTag::Call) : aura::ast::NULL_NODE;
+    CHECK(lit != aura::ast::NULL_NODE, "4310: literal");
+    CHECK(call != aura::ast::NULL_NODE, "4310: call");
+    auto* tc = static_cast<TypeChecker*>(cs.evaluator().persistent_typechecker());
+    if (!tc)
+        tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle());
+    CHECK(tc != nullptr, "4310: type checker");
+    if (!ws || !tc || lit == aura::ast::NULL_NODE || call == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        reset_for_test();
+        return;
+    }
+    const auto type0 = ws->type_id(lit);
+    const auto call_type0 = ws->type_id(call);
+    const auto gen_col0 = ws->type_cache_gen(lit);
+    const auto bind0 = ws->type_cache_binding_gen(lit);
+    const auto schema0 = ws->schema_cache(lit);
+    const auto cache_gen0 = ws->type_cache_generation();
+    const auto cs_n0 = tc->constraint_system().constraints_size();
+    const auto uf0 = tc->constraint_system().union_find_size();
+    const auto adt0 = tc->constraint_system().adt_match_goals_size();
+    const auto pending0 = tc->constraint_system().pending_full_solve_roots_size();
+    const auto touched0 = tc->constraint_system().touched_roots_size();
+    const auto occ_pri0 = tc->constraint_system().occurrence_priority_roots_size();
+    const auto let0 = tc->constraint_system().let_poly_dirty_roots_size();
+    const auto goals0 = tc->constraint_system().occurrence_goals_size();
+    const auto defuse0 = cs.evaluator().defuse_version();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(cs.evaluator().defuse_version() > defuse0, "4310: enter still bumps defuse");
+        ws->set_type(lit, 0x4310);
+        ws->set_schema_cache(lit, 0x4310);
+        ws->set_type_with_binding_gen(lit, 0x4310, 0x4310, 0x4310);
+        ws->set_type(call, 0x4310);
+        const auto extra = ws->add_literal(99);
+        ws->set_type(extra, 0x4310);
+        aura::compiler::Constraint c;
+        c.kind = aura::compiler::Constraint::EQUAL;
+        tc->constraint_system().add(c);
+        tc->constraint_system().note_adt_match_goal(7, 8, 9);
+        tc->constraint_system().seed_pending_full_solve_root_for_test(42);
+        tc->constraint_system().seed_abort_priority_roots_for_test(43);
+        tc->constraint_system().grow_union_find_for_test();
+        const auto gen_before = ws->type_cache_generation();
+        cs.evaluator().restore_checkpoint_topology_for_persist_reject();
+        CHECK(ws->type_id(lit) == type0, "4310: literal type restored");
+        CHECK(ws->type_id(call) == call_type0, "4310: call type restored");
+        CHECK(ws->type_cache_gen(lit) == gen_col0, "4310: cache gen column restored");
+        CHECK(ws->type_cache_binding_gen(lit) == bind0, "4310: binding gen restored");
+        CHECK(ws->schema_cache(lit) == schema0, "4310: schema cache restored");
+        CHECK(ws->type_id(extra) == 0, "4310: node added in the boundary is zero");
+        CHECK(ws->type_cache_generation() > gen_before, "4310: cache generation bumped once");
+        CHECK(tc->constraint_system().constraints_size() == cs_n0, "4310: constraints truncated");
+        CHECK(tc->constraint_system().union_find_size() == uf0, "4310: union-find restored");
+        CHECK(tc->constraint_system().adt_match_goals_size() == adt0, "4310: adt goals truncated");
+        CHECK(tc->constraint_system().pending_full_solve_roots_size() == pending0,
+              "4310: pending roots restored");
+        CHECK(tc->constraint_system().touched_roots_size() == touched0, "4310: touched restored");
+        CHECK(tc->constraint_system().occurrence_priority_roots_size() == occ_pri0,
+              "4310: occurrence priority restored");
+        CHECK(tc->constraint_system().let_poly_dirty_roots_size() == let0,
+              "4310: let-poly restored");
+        CHECK(tc->constraint_system().occurrence_goals_size() == goals0,
+              "4310: occurrence goals left to their own restore");
+        ok = false;
+    }
+    CHECK(ws->type_id(call) == call_type0, "4310: call type still the enter id after dtor");
+    CHECK(ws->type_cache_generation() > cache_gen0, "4310: generation stays bumped");
+
+    // Outermost !success, without calling the persist-reject helper.
+    ws->set_type(lit, type0);
+    const auto type_again = ws->type_id(lit);
+    bool ok2 = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok2);
+        ws->set_type(lit, 0x4311);
+        tc->constraint_system().add({});
+        ok2 = false;
+    }
+    CHECK(ws->type_id(lit) == type_again, "4310: outermost abort restores the column");
+    CHECK(tc->constraint_system().constraints_size() == cs_n0,
+          "4310: outermost abort truncates constraints");
+
+    apply_dev_audit_defaults();
+    reset_for_test();
+    CompilerService cs_soft;
+    CHECK(cs_soft.eval("(set-code \"(define s 1)\")").has_value(), "4310: soft set-code");
+    auto* ws_soft = cs_soft.evaluator().workspace_flat();
+    const auto lit_s = ws_soft ? find_literal_int(*ws_soft, 1) : aura::ast::NULL_NODE;
+    CHECK(lit_s != aura::ast::NULL_NODE, "4310: soft literal");
+    if (ws_soft && lit_s != aura::ast::NULL_NODE) {
+        const auto soft_before = ws_soft->type_id(lit_s);
+        bool ok_s = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs_soft.evaluator(), &ok_s);
+            ws_soft->set_type(lit_s, 0x4310);
+            cs_soft.evaluator().restore_checkpoint_topology_for_persist_reject();
+            CHECK(ws_soft->type_id(lit_s) == 0x4310, "4310: soft helper does not copy columns");
+            ok_s = false;
+        }
+        CHECK(ws_soft->type_id(lit_s) == 0x4310, "4310: soft abort does not restore columns");
+        (void)soft_before;
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
 int run_test_outermost_persist_fail_closed() {
     std::println("=== Issue #3376: outermost persist fail-closed (no half-green) ===");
     CHECK(true, "3376: issue stamp");
@@ -1009,6 +1148,7 @@ int run_test_outermost_persist_fail_closed() {
         reset_for_test();
     }
 
+    ac4310_abort_restores_type_columns_and_cs();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
