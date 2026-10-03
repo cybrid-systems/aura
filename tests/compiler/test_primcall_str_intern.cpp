@@ -8,6 +8,8 @@
 //   AC4: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "compiler/hash_meta.h"
+#include "compiler/runtime_shared.h"
 #include "compiler/value_tags.h"
 
 #include <cstdlib>
@@ -31,6 +33,11 @@ using aura::test::g_passed;
 
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key);
 extern "C" void aura_test_set_string_pool_slot(std::size_t idx, const char* s);
+extern "C" std::uint64_t aura_hash_splitmix64(std::int64_t key);
+extern "C" std::uint64_t aura_hash_probe_slot(std::uint64_t h, std::uint64_t i, std::uint64_t cap);
+extern "C" const FlatHashTable* aura_hash_get_flat_table(std::int64_t hash_val);
+extern "C" void aura_test_reset_hash_key_eq_calls() noexcept;
+extern "C" std::uint64_t aura_test_hash_key_eq_calls() noexcept;
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -205,6 +212,160 @@ static void ac4318_hash_key_eq_v2() {
     CHECK(aura_hash_key_eq(i1, i1) == 1, "4318: identical fixnum bits");
 }
 
+// Same stop rules as OpHashRef: empty ends, tombstone skips, only 0x80
+// calls aura_hash_key_eq. The IR emits this probe; the tally is the
+// call count the acceptance compares to capacity.
+static std::int64_t probe_like_ir(const FlatHashTable* ht, std::int64_t key) {
+    const auto cap = ht->capacity;
+    const auto h = aura_hash_splitmix64(key);
+    const auto* meta = ht->metadata();
+    const auto* keys = ht->keys();
+    const auto* vals = ht->values();
+    for (std::uint64_t i = 0; i < cap; ++i) {
+        const auto slot = aura_hash_probe_slot(h, i, cap);
+        const auto m = meta[slot];
+        if (m == aura::compiler::hash::kEmptySlot)
+            return 11;
+        if (m == 0x7F)
+            continue;
+        if (m != 0x80)
+            continue;
+        if (aura_hash_key_eq(keys[slot], key) != 0)
+            return vals[slot];
+    }
+    return 11;
+}
+
+static std::int64_t key_with_first_slot(std::uint64_t cap, bool slot0) {
+    for (std::int64_t k = 1; k < 4096; ++k) {
+        const auto slot = aura_hash_probe_slot(aura_hash_splitmix64(k), 0, cap);
+        if ((slot == 0) == slot0)
+            return k;
+    }
+    return 1;
+}
+
+// Issue #4319: OpHashRef open-addresses from splitmix64. An empty slot
+// ends the probe. A tombstone does not. A hash-set key is found at its
+// hashed slot, and eq runs once for a direct hit, not once per slot.
+static void ac4319_ophashref_hashed_probe() {
+    std::println("\n--- #4319: OpHashRef hashed probe ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto op = jit.find("case OpHashRef:");
+    const auto set = jit.find("case OpHashSet:");
+    CHECK(op != std::string::npos && set != std::string::npos && op < set, "4319: OpHashRef case");
+    if (op != std::string::npos && set > op) {
+        const auto win = jit.substr(op, set - op);
+        CHECK(win.find("fn_hash_splitmix") != std::string::npos, "4319: splitmix call");
+        CHECK(win.find("fn_hash_probe") != std::string::npos, "4319: probe call");
+        CHECK(win.find("CreateCondBr(is_empty, miss_bb, tomb_bb)") != std::string::npos,
+              "4319: empty ends at miss");
+        CHECK(win.find("CreateCondBr(is_tomb, next_bb, occ_bb)") != std::string::npos,
+              "4319: tombstone continues");
+        CHECK(win.find("getInt8(0x80)") != std::string::npos, "4319: occupied is 0x80");
+        const auto unlock = win.find("fn_unlock_workspace_read");
+        const auto eq = win.find("fn_hash_key_eq");
+        const auto relock =
+            (eq == std::string::npos) ? std::string::npos : win.find("fn_lock_workspace_read", eq);
+        CHECK(unlock != std::string::npos && eq != std::string::npos &&
+                  relock != std::string::npos && unlock < eq && eq < relock,
+              "4319: read lock dropped around key eq");
+        CHECK(win.find("c64(11)") != std::string::npos, "4319: miss sentinel 11");
+    }
+    CHECK(jit.find("reg(\"aura_hash_splitmix64\"") != std::string::npos,
+          "4319: splitmix registered");
+    CHECK(jit.find("reg(\"aura_hash_probe_slot\"") != std::string::npos, "4319: probe registered");
+    CHECK(read_file("tests/compiler/test_issue_4319.cpp").empty(), "4319: no test_issue file");
+    CHECK(read_file("docs/design/4319-hash-ref-probe.md").empty(), "4319: no docs/design");
+    CHECK(aura_hash_probe_slot(5, 0, 0) == 0, "4319: cap 0 probe is 0");
+
+    constexpr std::uint64_t cap = 32;
+    const auto hit0 = key_with_first_slot(cap, true);
+    auto* full = FlatHashTable::create(cap);
+    CHECK(full != nullptr, "4319: cap-32 table");
+    if (full != nullptr) {
+        for (std::uint64_t i = 0; i < cap; ++i) {
+            full->metadata()[i] = 0x80;
+            full->keys()[i] = 100000 + static_cast<std::int64_t>(i);
+            full->values()[i] = 1;
+        }
+        const auto slot = aura_hash_probe_slot(aura_hash_splitmix64(hit0), 0, cap);
+        CHECK(slot == 0, "4319: chosen key hashes to slot 0");
+        full->keys()[slot] = hit0;
+        full->values()[slot] = 4319;
+        aura_test_reset_hash_key_eq_calls();
+        CHECK(probe_like_ir(full, hit0) == 4319, "4319: slot-0 hit returns the value");
+        const auto calls = aura_test_hash_key_eq_calls();
+        CHECK(calls == 1, "4319: slot-0 hit calls eq once");
+        CHECK(calls < cap, "4319: eq calls stay below capacity");
+        FlatHashTable::destroy(full);
+    }
+
+    const auto buried = key_with_first_slot(cap, false);
+    auto* stopped = FlatHashTable::create(cap);
+    CHECK(stopped != nullptr, "4319: empty-stop table");
+    if (stopped != nullptr) {
+        const auto h = aura_hash_splitmix64(buried);
+        const auto s0 = aura_hash_probe_slot(h, 0, cap);
+        const auto s1 = aura_hash_probe_slot(h, 1, cap);
+        CHECK(s0 != 0, "4319: buried key does not start at slot 0");
+        CHECK(s0 != s1, "4319: probe step moves");
+        stopped->metadata()[s1] = 0x80;
+        stopped->keys()[s1] = buried;
+        stopped->values()[s1] = 99;
+        if (s0 != 0) {
+            stopped->metadata()[0] = 0x80;
+            stopped->keys()[0] = buried;
+            stopped->values()[0] = 111;
+        }
+        aura_test_reset_hash_key_eq_calls();
+        CHECK(probe_like_ir(stopped, buried) == 11, "4319: empty ends the probe");
+        CHECK(aura_test_hash_key_eq_calls() == 0, "4319: empty does not call eq");
+        FlatHashTable::destroy(stopped);
+    }
+
+    auto* tombs = FlatHashTable::create(cap);
+    CHECK(tombs != nullptr, "4319: tombstone table");
+    if (tombs != nullptr) {
+        const auto h = aura_hash_splitmix64(buried);
+        const auto s0 = aura_hash_probe_slot(h, 0, cap);
+        const auto s1 = aura_hash_probe_slot(h, 1, cap);
+        tombs->metadata()[s0] = 0x7F;
+        tombs->metadata()[s1] = 0x80;
+        tombs->keys()[s1] = buried;
+        tombs->values()[s1] = 4242;
+        if (s0 != 0 && s1 != 0) {
+            tombs->metadata()[0] = 0x80;
+            tombs->keys()[0] = buried;
+            tombs->values()[0] = 111;
+        }
+        aura_test_reset_hash_key_eq_calls();
+        CHECK(probe_like_ir(tombs, buried) == 4242, "4319: tombstone does not end the probe");
+        CHECK(aura_test_hash_key_eq_calls() == 1, "4319: tombstone does not call eq");
+        FlatHashTable::destroy(tombs);
+    }
+
+    const auto placed = key_with_first_slot(cap, false);
+    const auto hash = aura_hash_alloc_tenant(4319);
+    const auto pair = aura_alloc_pair_tenant(placed, 5150, 4319);
+    CHECK(hash >= 0 && pair != 0, "4319: alloc hash and pair");
+    CHECK(aura_hash_set_checked(hash, pair, 4319, 0) == 0, "4319: hash-set");
+    CHECK(aura_hash_ref_checked(hash, placed, 4319, 0) == 5150, "4319: hash-set key is found");
+    const auto* live = aura_hash_get_flat_table(hash);
+    CHECK(live != nullptr && live->capacity >= cap, "4319: live table");
+    if (live != nullptr) {
+        const auto slot = aura_hash_probe_slot(aura_hash_splitmix64(placed), 0, live->capacity);
+        CHECK(slot != 0, "4319: placed key is not slot 0");
+        CHECK(live->metadata()[slot] == 0x80, "4319: hashed slot occupied");
+        CHECK(live->keys()[slot] == placed, "4319: key stored at the hashed slot");
+        aura_test_reset_hash_key_eq_calls();
+        CHECK(probe_like_ir(live, placed) == 5150, "4319: probe finds the hash-set key");
+        const auto calls = aura_test_hash_key_eq_calls();
+        CHECK(calls == 1, "4319: direct hit calls eq once");
+        CHECK(calls < live->capacity, "4319: eq calls are the probe length");
+    }
+}
+
 } // namespace
 
 int run_test_primcall_str_intern() {
@@ -215,6 +376,7 @@ int run_test_primcall_str_intern() {
     ac4_source_gate();
     ac3703_quote_intern_lock();
     ac4318_hash_key_eq_v2();
+    ac4319_ophashref_hashed_probe();
     std::println("\n=== #2577: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

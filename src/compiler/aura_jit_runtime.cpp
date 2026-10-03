@@ -845,11 +845,9 @@ extern "C" void aura_yield_mutation_boundary() {
 // exceeded in practice because tables are sized to the expected
 // number of entries.
 //
-// Note: the JIT inlines its own scan loop in OpHashRef/OpHashSet/
-// OpHashRemove (see aura_jit.cpp:940+). That loop still does a
-// linear scan; updating the JIT inlined version to match is
-// deferred to a follow-up issue (the inlined version is already
-// a constant-factor optimization for the hot path).
+// Issue #4319: OpHashRef calls aura_hash_splitmix64 / aura_hash_probe_slot
+// (these helpers). Empty stops. Tombstone continues. aura_hash_key_eq runs
+// only on HASH_OCCUPIED, and the workspace read lock is not held across it.
 // Issue #908: alias canonical empty-slot sentinel.
 static constexpr uint8_t HASH_EMPTY = aura::compiler::hash::kEmptySlot;
 static constexpr uint8_t HASH_OCCUPIED = 0x80;
@@ -873,11 +871,21 @@ static inline uint64_t probe_slot(uint64_t h, uint64_t i, uint64_t cap) {
     return (h + i) % cap;
 }
 
+// Issue #4319: OpHashRef calls the same hash and probe as hash-set.
+extern "C" std::uint64_t aura_hash_splitmix64(std::int64_t key) {
+    return splitmix64_hash(key);
+}
+extern "C" std::uint64_t aura_hash_probe_slot(std::uint64_t h, std::uint64_t i, std::uint64_t cap) {
+    if (cap == 0)
+        return 0;
+    return probe_slot(h, i, cap);
+}
+
 extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
     // Issue #157 Phase 2: read lock — reads g_hash_tables[hidx].
     // The pointer is only safe to dereference while the lock is
-    // held; the JIT OpHashRef inline IR (aura_jit.cpp:~1080+)
-    // holds the read lock around the entire inline scan.
+    // held. OpHashRef (#4319) drops that lock around aura_hash_key_eq
+    // after copying the key and value.
     aura_lock_workspace_read();
     const FlatHashTable* ht = nullptr;
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
@@ -6389,7 +6397,21 @@ extern "C" void aura_test_set_string_pool_slot(std::size_t idx, const char* s) {
     g_string_pool[idx] = s ? s : "";
 }
 
+// Issue #4319: test-only tally beside aura_hash_key_eq. Not a metrics
+// struct field and not a query key. OpHashRef's probe length is this
+// count, not the table capacity.
+static std::atomic<std::uint64_t> g_test_hash_key_eq_calls{0};
+
+extern "C" void aura_test_reset_hash_key_eq_calls() noexcept {
+    g_test_hash_key_eq_calls.store(0, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_test_hash_key_eq_calls() noexcept {
+    return g_test_hash_key_eq_calls.load(std::memory_order_relaxed);
+}
+
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
+    g_test_hash_key_eq_calls.fetch_add(1, std::memory_order_relaxed);
     // Identical bits return before any pool lock.
     if (stored_key == search_key)
         return 1;
