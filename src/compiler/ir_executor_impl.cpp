@@ -69,6 +69,7 @@ using types::make_closure;
 using types::make_error;
 using types::make_float;
 using types::make_int;
+using types::make_keyword;
 using types::make_pair;
 using types::make_primitive;
 using types::make_string;
@@ -892,7 +893,25 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // prim_heap + string_heap_ → O(iterations) growth for
                     // (display "lit") in IR-path loops. Same pool index ⇒
                     // same content for this module_; reuse first materialize.
+                    // Issue #4321: operands[2]==1 is a keyword literal.
                     const std::uint32_t pool_idx = ops[1];
+                    if (ops[2] != 0) {
+                        if (auto cit = const_keyword_cache_.find(pool_idx);
+                            cit != const_keyword_cache_.end()) {
+                            locals[ops[0]] = cit->second;
+                            break;
+                        }
+                        EvalValue val = make_void();
+                        if (context_.evaluator) {
+                            std::string_view content;
+                            if (pool_idx < module_.string_pool.size())
+                                content = module_.string_pool[pool_idx];
+                            val = context_.evaluator->intern_keyword(content);
+                        }
+                        const_keyword_cache_.emplace(pool_idx, val);
+                        locals[ops[0]] = val;
+                        break;
+                    }
                     if (auto cit = const_string_cache_.find(pool_idx);
                         cit != const_string_cache_.end()) {
                         locals[ops[0]] = cit->second;

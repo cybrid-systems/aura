@@ -386,6 +386,7 @@ struct LLVMBuilder {
     llvm::Function* fn_alloc_float = nullptr;
     llvm::Function* fn_float_ref = nullptr;
     llvm::Function* fn_alloc_string = nullptr;
+    llvm::Function* fn_intern_keyword = nullptr; // Issue #4321
     llvm::Function* fn_string_ref = nullptr;
     // L2 specialization: unchecked pair access (skips tag check)
     llvm::Function* fn_pair_car_unchecked = nullptr;
@@ -660,6 +661,11 @@ struct LLVMBuilder {
         fn_alloc_string =
             llvm::Function::Create(llvm::FunctionType::get(i64, {ptr_i8}, false),
                                    llvm::Function::ExternalLinkage, "aura_alloc_string", mod);
+        // Issue #4321: ConstString operands[2]==1. Same ABI as
+        // aura_alloc_string; the runtime interns into keyword_table_.
+        fn_intern_keyword =
+            llvm::Function::Create(llvm::FunctionType::get(i64, {ptr_i8}, false),
+                                   llvm::Function::ExternalLinkage, "aura_intern_keyword", mod);
         fn_alloc_float = llvm::Function::Create(
             llvm::FunctionType::get(i64, {llvm::Type::getDoubleTy(ctx)}, false),
             llvm::Function::ExternalLinkage, "aura_alloc_float", mod);
@@ -1309,6 +1315,15 @@ struct LLVMBuilder {
                 // follow-up.
                 if (metrics) {
                     metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
+                }
+                // Issue #4321: operands[2]==1 is a keyword literal.
+                // Text that starts with ':' is not the signal — a
+                // string literal ":find" stays aura_alloc_string.
+                if (inst.ops[2] != 0) {
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_intern_keyword),
+                                                llvm::ArrayRef<llvm::Value*>{str_ptr});
+                    store(inst.ops[0], call);
+                    return true;
                 }
                 auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_string),
                                             llvm::ArrayRef<llvm::Value*>{str_ptr});
@@ -2708,6 +2723,7 @@ void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t));
 int64_t aura_alloc_float(double);
 double aura_float_ref(int64_t);
 int64_t aura_alloc_string(const char*);
+int64_t aura_intern_keyword(const char*); // Issue #4321
 const char* aura_string_ref(int64_t);
 const char* aura_jit_string_content(int64_t);
 // Drop stubs: Aura uses bump allocator, no per-value GC needed.
@@ -3101,6 +3117,7 @@ struct AuraJIT::Impl {
         reg("aura_alloc_float", (void*)aura_alloc_float);
         reg("aura_float_ref", (void*)aura_float_ref);
         reg("aura_alloc_string", (void*)aura_alloc_string);
+        reg("aura_intern_keyword", (void*)aura_intern_keyword); // Issue #4321
         reg("aura_string_ref", (void*)aura_string_ref);
         reg("aura_jit_string_content", (void*)aura_jit_string_content);
         reg("aura_drop_pair", (void*)aura_drop_pair);

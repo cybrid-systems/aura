@@ -105,6 +105,13 @@ aura_set_lock_hooks(void (* /*lock_read*/)(void*), void (* /*unlock_read*/)(void
 extern "C" __attribute__((weak)) void
 aura_set_top_cell_getter(std::int64_t (* /*fn*/)(void*, std::int64_t), void* /*user_data*/) {}
 
+// Issue #4321: strong body is aura_jit_runtime.cpp. Non-JIT links
+// of service.ixx need this no-op; do not stub aura_intern_keyword
+// here (a weak def in test_objects would preempt the JIT body).
+extern "C" __attribute__((weak)) void
+aura_set_keyword_hooks(std::int64_t (* /*intern*/)(void*, const char*),
+                       const char* (* /*name*/)(void*, std::int64_t), void* /*user_data*/) {}
+
 // aura_get_aot_metrics / aura_set_aot_metrics live in runtime_ssot.cpp.
 // aura_aot_func_table_epoch / aura_aot_bump_func_table_epoch /
 // aura_set/get_aot_live_env_frame_version /

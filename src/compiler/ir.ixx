@@ -58,8 +58,12 @@ export enum class IROpcode : std::uint8_t {
     CellGet, // read from cell: result_slot, cell_id
     // Type coercion (L6.6b)
     CastOp, // runtime type check: result_slot, value_slot, type_tag
-    // String support
-    ConstString, // load string constant: result_slot, string_index
+    // String support.
+    // operands[2] == 0: string. operands[2] == 1: keyword literal (#4321).
+    // The flag stays outside kOpcodeInfo operand_count so DCE does not
+    // treat the 1 as a local slot. A string whose text starts with ':'
+    // is still a string; only this flag interns a keyword.
+    ConstString, // load string constant: result_slot, string_index, keyword?
     // Primitive call (for non-arithmetic primitives like string ops)
     PrimCall, // call prim by id: prim_id, packed_args(arg_begin, arg_count), result_slot
     // Primitive value (load a primitive function value)
@@ -322,7 +326,7 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {kIrOpcodeDisplayNames[26], 2, false}, // CellSet
     {kIrOpcodeDisplayNames[27], 2, true},  // CellGet
     {kIrOpcodeDisplayNames[28], 3, true},  // CastOp
-    {kIrOpcodeDisplayNames[29], 2, true},  // ConstString
+    {kIrOpcodeDisplayNames[29], 2, true},  // ConstString (ops[2]=1 keyword, #4321)
     {kIrOpcodeDisplayNames[30], 3, true},  // PrimCall
     {kIrOpcodeDisplayNames[31], 2, true},  // Primitive
     {kIrOpcodeDisplayNames[32], 2, true},  // ConstBool

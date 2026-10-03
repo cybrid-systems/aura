@@ -259,6 +259,25 @@ static void install_lock_and_topcell_hooks_for_eval(aura::compiler::Evaluator* e
             return evp->cells()[static_cast<std::size_t>(idx)].val;
         },
         static_cast<void*>(ev));
+    // Issue #4321: JIT keyword literals intern into this evaluator.
+    aura_set_keyword_hooks(
+        [](void* e, const char* name) -> int64_t {
+            auto* evp = static_cast<aura::compiler::Evaluator*>(e);
+            if (!evp)
+                return 0;
+            return evp->intern_keyword(name ? std::string_view(name) : std::string_view{}).val;
+        },
+        [](void* e, int64_t idx) -> const char* {
+            auto* evp = static_cast<aura::compiler::Evaluator*>(e);
+            if (!evp || idx < 0)
+                return nullptr;
+            const auto& kt = evp->keyword_table();
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= kt.size())
+                return nullptr;
+            return kt[u].c_str();
+        },
+        static_cast<void*>(ev));
 }
 
 static void pop_lock_hooks_for_eval(aura::compiler::Evaluator* ev) {
@@ -6897,6 +6916,9 @@ public:
             for (const auto& instr : bb.instructions) {
                 if (instr.opcode != aura::ir::IROpcode::ConstString)
                     continue;
+                // Issue #4321: keyword literals are not name refs.
+                if (instr.operands[2] != 0)
+                    continue;
                 const auto idx = instr.operands[1];
                 if (idx < strings.size() && strings[idx] == mutated_name)
                     return true;
@@ -6929,6 +6951,9 @@ public:
         for (std::size_t bi = 0; bi < nfn.blocks.size(); ++bi) {
             for (const auto& instr : nfn.blocks[bi].instructions) {
                 if (instr.opcode != aura::ir::IROpcode::ConstString)
+                    continue;
+                // Issue #4321: keyword literals are not name refs.
+                if (instr.operands[2] != 0)
                     continue;
                 const auto idx = instr.operands[1];
                 if (idx < entry.strings.size() && entry.strings[idx] == mutated_name) {

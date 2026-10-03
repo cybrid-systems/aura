@@ -3082,6 +3082,9 @@ private:
                         }
                         break;
                     case aura::ir::IROpcode::ConstString:
+                        // Issue #4321: operands[2]==1 is a keyword, not a string.
+                        if (instr.operands[2] != 0)
+                            break;
                         if (instr.type_id == 0 && reg_) {
                             inferred = reg_->string_type().index;
                             is_const_ground = true;
