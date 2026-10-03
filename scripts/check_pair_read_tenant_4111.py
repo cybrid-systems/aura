@@ -15,8 +15,10 @@
 #       precedes the isolation call, which precedes the slot read - Soft/Off
 #       never reads the tenant array (zero-cost contract) and a denied read
 #       never dereferences the slot.
-# AC3 - the local pairs_ branch stays first and unconditional (own-pair
-#       reads unchanged); the reader lambdas capture &ev.
+# AC3 - the local pairs_ branch stays first. Issue #4298 gates it: a
+#       foreign cons/list mint refuses before the payload is returned
+#       (inrange_slot_tenant_allows, required_effects 0). Own-tenant and
+#       Soft/Off still return pairs[id].car/cdr. Reader lambdas capture &ev.
 # AC4 - the caar/cadr/... shorthands never fall through to g_pair_slots
 #       (documented no-fallthrough; no shorthand touches the tenant array).
 # AC5 - no new query keys / metrics fields in the reader gates (the deny
@@ -123,8 +125,16 @@ def main() -> int:
             fails.append("AC2: " + op + " gate shape incomplete (positions)")
         elif not (p1 < p2 < p3 < p4):
             fails.append("AC2: " + op + " ordering is not probe<load<deny<read")
-        # AC3: local pairs_ branch first and unconditional
-        m5 = re.search(r"if \(id < (\w+)\.size\(\)\)\n +return \1\[id\]\." + op + ";", win)
+        # AC3: local pairs_ branch stays first. #4298 consults the mint
+        # stamp before returning the payload; the shared-slot #4111 gate
+        # (face_name) still follows that branch.
+        m5 = re.search(
+            r"if \(id < (\w+)\.size\(\)\) \{\s*"
+            r"if \(!ev\.inrange_slot_tenant_allows\(id, false,\s*0, \"" + op + r"\"\)\) \{.*?"
+            r"return \1\[id\]\." + op + r";",
+            win,
+            re.S,
+        )
         if not m5:
             fails.append("AC3: " + op + " local-branch shape not found")
         elif m5.start() > p1:
