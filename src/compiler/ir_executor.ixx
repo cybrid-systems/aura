@@ -328,6 +328,10 @@ private:
     // has the same content for the bound module_; cache the EvalValue
     // (prim_heap index) and reuse. Miss materializes once.
     std::unordered_map<std::uint32_t, EvalValue> const_string_cache_;
+    // Issue #4321: keyword literals share the string pool index with a
+    // string of the same text (add_string dedups). Cache them apart so
+    // ":find" the string and :find the keyword do not alias.
+    std::unordered_map<std::uint32_t, EvalValue> const_keyword_cache_;
 
     // Explicit call stack: replaces C++ recursion for closure calls
     std::vector<ExecFrame> call_stack_;

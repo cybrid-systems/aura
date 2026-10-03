@@ -7,6 +7,7 @@
 
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
+#include <cstdlib> // setenv / unsetenv (#4321)
 
 import std;
 import aura.core;
@@ -425,6 +426,83 @@ bool test_keyword_intern_reuses_table_slot() {
     return true;
 }
 
+// Issue #4321: force-soa must lower :foo to a keyword, not fixnum 0.
+// A string whose text starts with ':' stays a string. (query :find …)
+// is a real :find dispatch (no-workspace here), not bad-arg from op 0.
+bool test_force_soa_keyword_literal_4321() {
+    struct EnvGuard {
+        EnvGuard() {
+            setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
+            setenv("AURA_SANDBOX", "off", 1);
+        }
+        ~EnvGuard() {
+            unsetenv("AURA_PIPELINE_STRICT");
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_FORCE_IR");
+        }
+    } guard;
+
+    auto kind_of = [](aura::compiler::CompilerService& cs,
+                      const aura::compiler::types::EvalValue& v) -> std::string {
+        if (!aura::compiler::types::is_pair(v))
+            return {};
+        const auto& pairs = cs.evaluator().pairs();
+        const auto idx = aura::compiler::types::as_pair_idx(v);
+        if (idx >= pairs.size() || !aura::compiler::types::is_string(pairs[idx].car))
+            return {};
+        const auto sidx = aura::compiler::types::as_string_idx(pairs[idx].car);
+        const auto heap = cs.evaluator().string_heap();
+        if (sidx >= heap.size())
+            return {};
+        return std::string(heap[sidx]);
+    };
+
+    auto check_one = [&](const char* force_ir) -> bool {
+        if (force_ir)
+            setenv("AURA_FORCE_IR", force_ir, 1);
+        else
+            unsetenv("AURA_FORCE_IR");
+        const char* label = force_ir ? "interpreter" : "default";
+        aura::compiler::CompilerService cs;
+        auto& kt = cs.evaluator().keyword_table();
+        kt.push_back(":aura-4321-kw");
+        const auto expect = kt.size() - 1;
+        auto lit = cs.eval(":aura-4321-kw");
+        if (!lit || !aura::compiler::types::is_keyword(*lit) ||
+            aura::compiler::types::as_keyword_idx(*lit) != expect ||
+            cs.evaluator().keyword_table().size() != expect + 1) {
+            std::println(std::cerr, "FAIL: #4321 {} keyword literal", label);
+            if (!lit)
+                std::println(std::cerr, "  eval error: {}", lit.error().message);
+            return false;
+        }
+        auto str = cs.eval("(keyword? \":aura-4321-kw\")");
+        if (!str || !aura::compiler::types::is_bool(*str) || aura::compiler::types::as_bool(*str)) {
+            std::println(std::cerr, "FAIL: #4321 {} colon string became a keyword", label);
+            return false;
+        }
+        auto q = cs.eval("(query :find \"live\")");
+        if (!q) {
+            std::println(std::cerr, "FAIL: #4321 {} query: {}", label, q.error().message);
+            return false;
+        }
+        auto kind = kind_of(cs, *q);
+        if (kind != "no-workspace") {
+            std::println(std::cerr, "FAIL: #4321 {} query kind '{}' (want no-workspace)", label,
+                         kind);
+            return false;
+        }
+        return true;
+    };
+
+    if (!check_one(nullptr))
+        return false;
+    if (!check_one("1"))
+        return false;
+    std::println("force-soa keyword literal (#4321): OK");
+    return true;
+}
+
 // ── Issue #4129: character literal reader ──────────────────────
 // Pre-fix, `#` (unless #t/#f/#() lexed as TokenKind::Error and
 // parse_list's error recovery consumed it as a closing ')': every
@@ -572,6 +650,8 @@ int main() {
     if (!test_sym_intern_pool_isolation())
         return 1;
     if (!test_keyword_intern_reuses_table_slot())
+        return 1;
+    if (!test_force_soa_keyword_literal_4321())
         return 1;
     if (!test_character_literal_4129())
         return 1;

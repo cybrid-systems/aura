@@ -241,6 +241,17 @@ static std::uint32_t lower_flat_expr(
         }
         case NodeTag::Variable: {
             auto name = pool.resolve(v.sym_id);
+            // Issue #4321: :foo is a keyword literal, same split as
+            // eval_flat. An unknown name used to fall through to
+            // ConstI64 0, so (query :find …) saw op 0 and
+            // :sync-query-index? was ignored. A LiteralString whose
+            // text starts with ':' stays a string (operands[2]==0).
+            if (!name.empty() && name[0] == ':') {
+                auto si = state.module.add_string(std::string(name));
+                auto slot = state.alloc_local();
+                state.emit(IROpcode::ConstString, slot, si, /*keyword=*/1);
+                return slot;
+            }
             // Issue #2292: self-recursion must emit MakeClosure(self_func_id)
             // BEFORE outer Define's Cell binding is consulted. Otherwise the
             // body captures a cell that is empty in a fresh IRInterpreter

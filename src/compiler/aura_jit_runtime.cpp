@@ -761,6 +761,7 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
 }
 
 extern "C" void aura_clear_top_cell_getter_if_user(void* user);
+extern "C" void aura_clear_keyword_hooks_if_user(void* user);
 extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
 
 static void clear_evaluator_runtime_hooks_impl(void* user) {
@@ -772,6 +773,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
             g_lock_hooks = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     aura_clear_top_cell_getter_if_user(user);
+    aura_clear_keyword_hooks_if_user(user);
 }
 
 namespace {
@@ -5220,6 +5222,68 @@ extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
     return result;
 }
 
+// Issue #4321: JIT keyword literals. The intern callback writes
+// Evaluator::keyword_table_ (same slots the tree walker uses).
+// No workspace lock here: try_jit_execute already holds the mutate
+// shared lock, and nesting the workspace lock deadlocks. The walker
+// interns the same way on the eval thread.
+namespace {
+    struct KeywordHooks {
+        int64_t (*intern)(void*, const char*) = nullptr;
+        const char* (*name)(void*, int64_t) = nullptr;
+        void* user = nullptr;
+    };
+    KeywordHooks g_keyword_hooks;
+    std::mutex g_keyword_hooks_mtx;
+} // namespace
+
+extern "C" void aura_set_keyword_hooks(int64_t (*intern)(void*, const char*),
+                                       const char* (*name)(void*, int64_t), void* user_data) {
+    std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+    g_keyword_hooks.intern = intern;
+    g_keyword_hooks.name = name;
+    g_keyword_hooks.user = user_data;
+}
+
+extern "C" void aura_clear_keyword_hooks_if_user(void* user) {
+    if (!user)
+        return;
+    std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+    if (g_keyword_hooks.user == user)
+        g_keyword_hooks = {};
+}
+
+int64_t aura_intern_keyword(const char* name) {
+    int64_t (*fn)(void*, const char*) = nullptr;
+    void* user = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+        fn = g_keyword_hooks.intern;
+        user = g_keyword_hooks.user;
+    }
+    if (!fn)
+        return 0;
+    return fn(user, name ? name : "");
+}
+
+extern "C" const char* aura_keyword_name(int64_t idx) {
+    static thread_local std::string tls;
+    const char* (*fn)(void*, int64_t) = nullptr;
+    void* user = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+        fn = g_keyword_hooks.name;
+        user = g_keyword_hooks.user;
+    }
+    if (!fn || idx < 0)
+        return nullptr;
+    const char* s = fn(user, idx);
+    if (!s)
+        return nullptr;
+    tls = s;
+    return tls.c_str();
+}
+
 // === Cell runtime ===
 static std::vector<int64_t> g_cell_heap;
 // Issue #4093: owner-principal stamps parallel to g_cell_heap (entry i is
@@ -6230,6 +6294,19 @@ void aura_display_value(int64_t val, int64_t write_mode) {
     // Float v2 (if available)
     if (aura::compiler::types::is_float_raw_v2(val)) {
         fprintf(stdout, "%g", aura_float_ref(val));
+        fflush(stdout);
+        return;
+    }
+    // Issue #4321: keyword ref. Print the interned name (:find),
+    // not the raw tagged bits.
+    if (aura::compiler::types::is_ref(val) &&
+        aura::compiler::types::ref_type(val) == aura::compiler::types::RefKeyword) {
+        const auto kidx = aura::compiler::types::ref_index(val);
+        const char* s = aura_keyword_name(static_cast<int64_t>(kidx));
+        if (s && s[0] != '\0')
+            fputs(s, stdout);
+        else
+            fprintf(stdout, ":%zu", static_cast<size_t>(kidx));
         fflush(stdout);
         return;
     }

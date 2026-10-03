@@ -478,6 +478,11 @@ extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
 // Issue #272 Cycle 5: TopCellLoad bridge to evaluator_.cells().
 extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* user_data);
 extern "C" void aura_clear_top_cell_getter_if_user(void* user);
+// Issue #4321: JIT ConstString operands[2]==1. intern writes a
+// keyword EvalValue; name reads keyword_table_[idx] for display.
+extern "C" void aura_set_keyword_hooks(int64_t (*intern)(void*, const char*),
+                                       const char* (*name)(void*, int64_t), void* user_data);
+extern "C" void aura_clear_keyword_hooks_if_user(void* user);
 
 // Issue #452: AOT bridge metrics pointer (aot_stale_reject_count_,
 // aot_region_mismatch_, aot_hot_update_success_). Defined in

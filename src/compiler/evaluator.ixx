@@ -1959,6 +1959,18 @@ public:
     std::pmr::vector<Pair>& pairs() { return pairs_; }
     std::span<const std::string> keyword_table() const { return keyword_table_; }
     std::vector<std::string>& keyword_table() { return keyword_table_; }
+    // Issue #4321: intern :foo. Reuse an existing slot so identity
+    // (eq? of a keyword a primitive already pushed) holds. The leading
+    // ':' stays in the table, matching eval_flat.
+    [[nodiscard]] types::EvalValue intern_keyword(std::string_view name) {
+        for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
+            if (keyword_table_[ki] == name)
+                return types::make_keyword(static_cast<std::uint64_t>(ki));
+        }
+        auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
+        keyword_table_.emplace_back(name);
+        return types::make_keyword(kidx);
+    }
 
     // Issue #135: read-only access to the string heap for tests
     // that need to verify string-valued results (e.g. comparing
