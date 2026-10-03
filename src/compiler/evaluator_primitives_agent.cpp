@@ -3404,6 +3404,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         kv.emplace_back("schema-3220", make_int(aura::orch::kReclaimedPendingLifecycleIssue));
         kv.emplace_back("issue-3220", make_int(aura::orch::kReclaimedPendingLifecycleIssue));
     };
+    // Issue #4300: belt reject at body entry is a committed state, not an
+    // alive-window transient. scope-resolve shares the directory projection
+    // (one string, same key the join hash already emits); production-only
+    // intern so Soft / Off pay zero extra (one defaults load).
+    auto add_body_not_run_lifecycle = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv,
+                                            bool rejected) {
+        if (!rejected)
+            return;
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        auto lidx = ev.push_string_heap("body-not-run");
+        kv.emplace_back("lifecycle", make_string(lidx));
+        kv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
+    };
 
     // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
     // Lazy-init: shared across calls in-process; stopped on process exit.
@@ -5158,8 +5172,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // pins it). After scope slot dropped (empty session) → not-found.
     add("orch:scope-resolve",
         [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
-         add_reclaimed_pending_lifecycle, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+         add_reclaimed_pending_lifecycle, add_body_not_run_lifecycle, parse_scope_addr_kw,
+         resolve_scope_addr, make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:scope-resolve: usage (orch:scope-resolve name "
@@ -5256,8 +5270,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"issue-3050", make_int(3050)},
             };
             // Issue #3220: additive lifecycle while reservation still held.
-            add_reclaimed_pending_lifecycle(kv, hp->must_wait_reclaimed ||
-                                                    hp->reclaimed_deferred_cleanup);
+            // Issue #4300: else share the directory/join body-not-run string
+            // when the body try_acquire belt rejected (status stays as-is).
+            if (hp->must_wait_reclaimed || hp->reclaimed_deferred_cleanup)
+                add_reclaimed_pending_lifecycle(kv, true);
+            else
+                add_body_not_run_lifecycle(kv, hp->body_acquire_rejected());
             // Issue #3216: scope-handle plane (production-only intern).
             add_identity_plane(kv, "scope-handle");
             return build_orch_hash(kv);

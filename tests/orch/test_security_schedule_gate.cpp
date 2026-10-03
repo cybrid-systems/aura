@@ -47,6 +47,7 @@
 #include "core/sandbox.hh"
 #include "core/wal_append_fail_slo.h"
 #include "core/resource_quota.hh"
+#include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "orch/sched_runner_test_helper.h"
 #include "serve/fiber.h"
@@ -58,6 +59,7 @@ extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
 extern "C" void aura_query_hash_reset_overflow_for_test(void);
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -66,9 +68,11 @@ extern "C" void aura_query_hash_reset_overflow_for_test(void);
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.value;
 
 namespace {
@@ -1109,6 +1113,163 @@ int run_test_security_schedule_gate() {
         reset_orch_security_schedule_counters_for_test();
     }
 
+    // ── #4300: body-entry belt reject survives is_done on both planes ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        std::println("\n--- #4300: body-not-run reaches directory/scope-resolve ---");
+        const char* prev_sb_4300 = std::getenv("AURA_SANDBOX");
+        const std::string prev_sb_4300_s = prev_sb_4300 ? prev_sb_4300 : "";
+        // Consume the host mutation budget while Soft (the host Guard
+        // succeeds there), then flip to production so the fiber body belt
+        // rejects with TryAcquire before the security-schedule observe
+        // branch, while the spawn preflight itself still admits.
+        ::setenv("AURA_SANDBOX", "off", 1);
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        using ScopeEval = std::remove_reference_t<decltype(cs.evaluator())>;
+        using Guard = ScopeEval::MutationBoundaryGuard;
+
+        // Exhaust the host mutation budget so the body-entry belt
+        // (aura_orch_agent_body_try_acquire_ex) returns TryAcquire while the
+        // spawn itself is admitted — the #3014 AC7 host-side pre-consume.
+        auto arm_body_reject_4300 = [&]() {
+            ev.set_resource_quota_mutations(1);
+            ev.reset_mutation_quota_used();
+            bool armed_ok = true;
+            auto gr = Guard::try_acquire(ev, 1, &armed_ok);
+            CHECK(gr.has_value(), "4300: pre-consume host mutation budget");
+            if (gr)
+                (*gr).reset();
+        };
+        auto wait_done_4300 = [](aura::orch::AgentHandle* h) {
+            for (int i = 0; h && h->fiber && i < 600; ++i) {
+                if (h->fiber->is_done())
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+
+        // ── Production: reject at body entry, row survives is_done ──
+        arm_body_reject_4300();
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        apply_production_audit_defaults();
+        (void)cs.eval(R"((orch:scope-spawn "rej-4300" (lambda () 1)))");
+        auto* scope_4300 = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+        CHECK(scope_4300 != nullptr, "4300: per-evaluator scope after scope-spawn");
+        aura::orch::AgentHandle* hp = scope_4300 ? scope_4300->find("rej-4300") : nullptr;
+        CHECK(hp != nullptr && hp->ok && hp->fiber != nullptr,
+              "4300: production spawn admitted with committed fiber");
+        wait_done_4300(hp);
+        CHECK(hp != nullptr && hp->fiber && hp->fiber->is_done(),
+              "4300 AC: rejected fiber reaches is_done");
+        CHECK(hp != nullptr && hp->body_acquire_rejected(),
+              "4300 AC: body try_acquire reject bit set");
+        CHECK(hp != nullptr && hp->reserved_memory_bytes != 0,
+              "4300 AC: reservation still held before join");
+        if (scope_4300) {
+            const auto snap = scope_4300->directory_snapshot();
+            bool found = false, life = false, done = false;
+            for (const auto& e : snap.entries) {
+                if (e.name != "rej-4300")
+                    continue;
+                found = true;
+                life = (e.lifecycle == "body-not-run");
+                done = (e.status == "done");
+            }
+            CHECK(found, "4300 AC: directory still lists the done-but-unjoined row");
+            CHECK(done, "4300 AC: directory status may stay done");
+            CHECK(life, "4300 AC: directory lifecycle=body-not-run after is_done");
+        }
+        auto res_held =
+            cs.eval(R"((if (hash-ref (orch:scope-resolve "rej-4300") "reservation-held") 1 0))");
+        CHECK(res_held && is_int(*res_held) && as_int(*res_held) == 1,
+              "4300: scope-resolve reservation-held before join");
+        auto sr_life = cs.eval(
+            R"((if (string=? (hash-ref (orch:scope-resolve "rej-4300") "lifecycle") "body-not-run") 1 0))");
+        CHECK(sr_life && is_int(*sr_life) && as_int(*sr_life) == 1,
+              "4300 AC: scope-resolve lifecycle=body-not-run after is_done");
+        // Join still reports the typed deny and releases the reservation.
+        // Single join: the Done path retires the slot, so both keys must be
+        // read off the same returned hash (a second join is not-found).
+        auto jhash = cs.eval(
+            R"((let ((h (orch:agent-join "rej-4300" :timeout-ms 5000))) (if (hash-has-key? h "body-acquire-rejected") (if (string=? (hash-ref h "lifecycle") "body-not-run") 1 0) 0)))");
+        CHECK(jhash && is_int(*jhash) && as_int(*jhash) == 1,
+              "4300 AC: join hash carries body-acquire-rejected + lifecycle=body-not-run");
+        auto* hp_after = scope_4300 ? scope_4300->find("rej-4300") : nullptr;
+        CHECK(hp_after == nullptr || hp_after->reserved_memory_bytes == 0,
+              "4300 AC: join releases the reservation");
+
+        // ── Production success control: no lifecycle on either plane ──
+        ev.set_resource_quota_mutations(0);
+        ev.reset_mutation_quota_used();
+        (void)cs.eval(R"((orch:scope-spawn "ok-4300" (lambda () 1)))");
+        auto* scope_ok = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+        aura::orch::AgentHandle* hk = scope_ok ? scope_ok->find("ok-4300") : nullptr;
+        wait_done_4300(hk);
+        CHECK(hk != nullptr && !hk->body_acquire_rejected(), "4300: success body not rejected");
+        if (scope_ok) {
+            const auto snap = scope_ok->directory_snapshot();
+            for (const auto& e : snap.entries) {
+                if (e.name == "ok-4300")
+                    CHECK(e.lifecycle.empty(), "4300 AC: success directory gains no lifecycle");
+            }
+        }
+        auto ok_key =
+            cs.eval(R"((if (hash-has-key? (orch:scope-resolve "ok-4300") "lifecycle") 1 0))");
+        CHECK(ok_key && is_int(*ok_key) && as_int(*ok_key) == 0,
+              "4300 AC: success scope-resolve gains no lifecycle");
+        (void)cs.eval(R"((orch:agent-join "ok-4300" :timeout-ms 2000))");
+
+        // ── Soft / Off: same belt reject, no lifecycle intern ──
+        ::setenv("AURA_SANDBOX", "off", 1);
+        apply_dev_audit_defaults();
+        arm_body_reject_4300();
+        (void)cs.eval(R"((orch:scope-spawn "rej-4300-soft" (lambda () 1)))");
+        auto* scope_soft = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+        aura::orch::AgentHandle* hs = scope_soft ? scope_soft->find("rej-4300-soft") : nullptr;
+        wait_done_4300(hs);
+        CHECK(hs != nullptr && hs->body_acquire_rejected(),
+              "4300: Soft belt still rejects (body skipped)");
+        if (scope_soft) {
+            const auto snap = scope_soft->directory_snapshot();
+            for (const auto& e : snap.entries) {
+                if (e.name == "rej-4300-soft")
+                    CHECK(e.lifecycle.empty(), "4300 AC: Soft directory interns no lifecycle");
+            }
+        }
+        auto soft_key =
+            cs.eval(R"((if (hash-has-key? (orch:scope-resolve "rej-4300-soft") "lifecycle") 1 0))");
+        CHECK(soft_key && is_int(*soft_key) && as_int(*soft_key) == 0,
+              "4300 AC: Soft scope-resolve interns no lifecycle");
+        (void)cs.eval(R"((orch:agent-join "rej-4300-soft" :timeout-ms 2000))");
+
+        // ── Source-cite: one projection, two readers, no alive conjunct ──
+        const auto scope_src_4300 = read_file("src/orch/agent_scope.h");
+        CHECK(scope_src_4300.find("h.body_acquire_rejected() && e.status == \"alive\"") ==
+                  std::string::npos,
+              "4300 source: directory drops the alive-window conjunct");
+        CHECK(scope_src_4300.find("Issue #3251 / #4300") != std::string::npos,
+              "4300 source: directory cites #4300");
+        const auto prim_src_4300 = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim_src_4300.find("add_body_not_run_lifecycle") != std::string::npos,
+              "4300 source: scope-resolve shares the body-not-run helper");
+        CHECK(prim_src_4300.find("add_body_not_run_lifecycle(kv, hp->body_acquire_rejected())") !=
+                  std::string::npos,
+              "4300 source: scope-resolve reader wired to the reject bit");
+
+        ev.set_resource_quota_mutations(0);
+        ev.reset_mutation_quota_used();
+        aura::core::resource_quota::reset_process_resource_quota_for_test();
+        if (prev_sb_4300_s.empty())
+            ::unsetenv("AURA_SANDBOX");
+        else
+            ::setenv("AURA_SANDBOX", prev_sb_4300_s.c_str(), 1);
+        apply_dev_audit_defaults();
+    }
+
     {
         // Issue #3932: named scope A starve/p99 must not ScheduleGate
         // tenant B spawn with a distinct bp_scope_id.
@@ -1325,6 +1486,7 @@ int run_test_security_schedule_gate() {
         g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
         reset_capability_deny_storm_window_for_test();
     }
+
 
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();

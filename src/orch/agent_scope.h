@@ -1646,9 +1646,14 @@ private:
             if ((h.must_wait_reclaimed || h.reclaimed_deferred_cleanup) &&
                 aura::compiler::typed_audit::production_defaults_active())
                 e.lifecycle = "reclaimed-pending";
-            else if (h.body_acquire_rejected() && e.status == "alive" &&
+            // Issue #4300: the belt reject is committed at body entry and
+            // the fiber exits as soon as it is scheduled, so the old
+            // e.status == "alive" window was a race. Project the lifecycle
+            // even when is_done() already set status = "done" — the
+            // reservation (not the status) is what pins the row until join.
+            else if (h.body_acquire_rejected() &&
                      aura::compiler::typed_audit::production_defaults_active())
-                e.lifecycle = "body-not-run"; // Issue #3251
+                e.lifecycle = "body-not-run"; // Issue #3251 / #4300
             if (filter.alive_only && e.status != "alive")
                 continue;
             if (!filter.name_prefix.empty()) {
