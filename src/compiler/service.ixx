@@ -5404,9 +5404,19 @@ public:
             return mask;
         }
 
+        // Issue #4311: production store_define_v2 / cache_define drop
+        // __top__. size>=2 is then [body, nested], not [__top__, body].
+        // Only a real leading __top__ shifts the body to index 1.
+        [[nodiscard]] std::size_t body_idx() const noexcept {
+            if (irs.size() >= 2 && irs[0].name == "__top__")
+                return 1;
+            return 0;
+        }
+
         // Issue #1915: body-only dirty stamp (prefer partial re-lower).
         // Dual-shape: irs[0]=__top__ (kept clean), irs[1]=body (all blocks dirty).
-        // Single-fn: body at irs[0]. Returns # of blocks marked.
+        // Single-fn and dropped-__top__ production store: body at irs[0].
+        // Returns # of blocks marked.
         std::size_t mark_body_only_dirty() {
             if (irs.empty()) {
                 mark_all_blocks_dirty();
@@ -5414,7 +5424,7 @@ public:
             }
             if (block_dirty_per_func_.size() < irs.size())
                 block_dirty_per_func_.resize(irs.size());
-            const std::size_t body_idx = irs.size() >= 2 ? 1 : 0;
+            const std::size_t body_idx = this->body_idx();
             if (body_idx >= block_dirty_per_func_.size() ||
                 block_dirty_per_func_[body_idx].empty()) {
                 // Resize body bitmask from irs layout.
@@ -5430,8 +5440,10 @@ public:
                 mark_all_blocks_dirty();
                 return dirty_block_count();
             }
-            // Keep __top__ clean when dual-shape.
-            if (body_idx == 1 && !block_dirty_per_func_[0].empty()) {
+            // Keep __top__ clean only when it is actually the prefix.
+            // Issue #4311: do not clear irs[0] on a dropped-__top__ bundle.
+            if (body_idx == 1 && !irs.empty() && irs[0].name == "__top__" &&
+                !block_dirty_per_func_[0].empty()) {
                 for (auto& b : block_dirty_per_func_[0])
                     b = 0;
             }
@@ -7654,7 +7666,9 @@ public:
     //   - Replaces ir_cache_v2_[name].irs[func_idx] in place
     //   - Clears the per-block dirty bits for that function
     //     (the new IR is presumed correct)
-    //   - Mirrors the new function into ir_cache_[name] (v1)
+    //   - Mirrors the new function into ir_cache_[name] (v1).
+    //     Same dropped-__top__ layout uses func_idx; a __top__ prefix
+    //     on only one cache keeps func_idx-1 (#4311).
     //   - Runs per-function passes (compute_kind, constant_fold)
     //     on the new function, matching what cache_define does
     //     for the full-bundle path.
@@ -7827,11 +7841,21 @@ public:
         if (entry.dirty_block_count() == 0) {
             entry.dirty = false;
         }
-        // Mirror to v1 cache. The v1 cache stores the function
-        // in ir_cache_[name]; we need to find and replace.
+        // Mirror to v1 cache. cache_define and the post-store mirror
+        // both drop __top__, so production v1 and v2 share an index.
+        // Issue #4311: write [func_idx] for that shape. A leading
+        // __top__ on only one side keeps the historical func_idx-1 map
+        // (v2 prefix / v1 dropped, or the reverse).
         auto v1_it = ir_cache_.find(name);
-        if (v1_it != ir_cache_.end() && func_idx > 0 && (func_idx - 1) < v1_it->second.size()) {
-            v1_it->second[func_idx - 1] = entry.irs[func_idx];
+        if (v1_it != ir_cache_.end() && !v1_it->second.empty() && !entry.irs.empty()) {
+            const bool v1_top = v1_it->second[0].name == "__top__";
+            const bool v2_top = entry.irs[0].name == "__top__";
+            if (v1_top != v2_top) {
+                if (func_idx > 0 && (func_idx - 1) < v1_it->second.size())
+                    v1_it->second[func_idx - 1] = entry.irs[func_idx];
+            } else if (func_idx < v1_it->second.size()) {
+                v1_it->second[func_idx] = entry.irs[func_idx];
+            }
         }
         // Issue #2045: patch source_to_ir_map for the re-lowered function
         // so next impact_scope uses the new layout (no under-invalidation).
@@ -9173,17 +9197,22 @@ public:
     }
 
     // Issue #4103: dual-shape body-only dirty. Prepends a clean __top__
-    // when the stored bundle dropped it, marks only irs[1], and optionally
-    // poisons operand[3] of every function after that index so a restamp
-    // of the partial peel is distinguishable from store_define_v2.
-    // Clears soa_mod so the SoA gate does not force full on the shape
-    // insert. Returns irs.size() (0 if the name is missing).
-    std::size_t plant_body_only_dirty_for_test(const std::string& name, bool poison_after_body) {
+    // when the stored bundle dropped it, marks only the body, and
+    // optionally poisons operand[3] of every function after the body so
+    // a restamp of the partial peel is distinguishable from
+    // store_define_v2. Clears soa_mod so the SoA gate does not force
+    // full on the shape insert. Returns irs.size() (0 if the name is
+    // missing).
+    // Issue #4311: prepend_synthetic_top=false leaves the production
+    // store shape [body, nested] (no inserted __top__). Default true
+    // keeps the #4103 oracle.
+    std::size_t plant_body_only_dirty_for_test(const std::string& name, bool poison_after_body,
+                                               bool prepend_synthetic_top = true) {
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end() || it->second.irs.empty())
             return 0;
         auto& entry = it->second;
-        if (entry.irs[0].name != "__top__") {
+        if (prepend_synthetic_top && entry.irs[0].name != "__top__") {
             aura::ir::IRFunction top;
             top.id = 0;
             top.name = "__top__";
@@ -9199,7 +9228,11 @@ public:
         entry.clear_all_instruction_dirty();
         (void)entry.mark_body_only_dirty();
         if (poison_after_body) {
-            for (std::size_t fi = 2; fi < entry.irs.size(); ++fi) {
+            // __top__ prefix: body at 1, poison nested at >=2 (unchanged
+            // #4103 oracle). Dropped __top__: body at 0, poison >=1.
+            const std::size_t poison_from =
+                (!entry.irs.empty() && entry.irs[0].name == "__top__") ? 2 : 1;
+            for (std::size_t fi = poison_from; fi < entry.irs.size(); ++fi) {
                 auto& fn = entry.irs[fi];
                 if (fn.blocks.empty()) {
                     aura::ir::BasicBlock blk;

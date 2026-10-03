@@ -507,6 +507,21 @@ int run_test_cascade_relower_silent_skip() {
             CHECK(planted == 2, std::format("4103 plain irs.size={} == 2", planted));
             const auto* before = cs.get_define_v2("plain4103");
             CHECK(before != nullptr, "4103 plain entry");
+            CHECK(!before->irs.empty() && before->irs[0].name == "__top__",
+                  "4103 plain bundle still starts with __top__");
+            CHECK(before->block_dirty_view().size() >= 2, "4103 plain dual mask");
+            {
+                bool top_clean = true;
+                for (auto b : before->block_dirty_view()[0])
+                    if (b)
+                        top_clean = false;
+                bool body_dirty = false;
+                for (auto b : before->block_dirty_view()[1])
+                    if (b)
+                        body_dirty = true;
+                CHECK(top_clean, "4103 __top__ at index 0 stays clean");
+                CHECK(body_dirty, "4103 body at index 1 is dirty");
+            }
             CHECK(cs.lookup_define_v2("plain4103", before->source_hash) == 1,
                   "4103 plain lookup 1 while body-dirty");
             set_strategy(AuditStrategy::Full);
@@ -559,6 +574,202 @@ int run_test_cascade_relower_silent_skip() {
                   "4103 Soft peel does not full-relower");
         }
 
+        auto any_dirty = [](const std::vector<std::uint8_t>& mask) {
+            for (auto b : mask)
+                if (b)
+                    return true;
+            return false;
+        };
+        auto poisoned_after_body = [](const CompilerService::IRCacheEntry& e) {
+            const std::size_t body = (e.irs.size() >= 2 && e.irs[0].name == "__top__") ? 1 : 0;
+            for (std::size_t fi = body + 1; fi < e.irs.size(); ++fi) {
+                for (const auto& b : e.irs[fi].blocks) {
+                    for (const auto& ins : b.instructions) {
+                        if (ins.operands[3] == 0x4103u)
+                            return true;
+                    }
+                }
+            }
+            return false;
+        };
+        auto has_const_i64 = [](const aura::ir::IRFunction& fn, std::uint32_t imm) {
+            for (const auto& b : fn.blocks) {
+                for (const auto& ins : b.instructions) {
+                    if (ins.opcode == aura::ir::IROpcode::ConstI64 && ins.operands[1] == imm)
+                        return true;
+                }
+            }
+            return false;
+        };
+
+        // Issue #4311: production store shape [body, nested] (no __top__).
+        // Body-dirty hits index 0; #4103 size > dirty_idx+1 force-fulls
+        // before any restamp. Nested poison must not survive.
+        {
+            CompilerService fresh;
+            CHECK(cache_define(fresh, nested_src, "outer4103"), "4311 fresh nested cache");
+            const auto* fresh_e = fresh.get_define_v2("outer4103");
+            CHECK(fresh_e != nullptr && fresh_e->irs.size() == 2, "4311 fresh irs.size()==2");
+            CHECK(fresh_e->irs[0].name != "__top__", "4311 fresh cache dropped __top__");
+            const auto fresh_fp = bundle_fp(*fresh_e);
+
+            CompilerService cs;
+            CHECK(cache_define(cs, nested_src, "outer4103"), "4311 nested cache");
+            const auto planted = cs.plant_body_only_dirty_for_test("outer4103", true, false);
+            CHECK(planted == 2, std::format("4311 dropped-top irs.size={} == 2", planted));
+            const auto* before = cs.get_define_v2("outer4103");
+            CHECK(before != nullptr && before->irs[0].name != "__top__",
+                  "4311 plant does not prepend __top__");
+            CHECK(before->block_dirty_view().size() >= 2, "4311 dual mask");
+            CHECK(any_dirty(before->block_dirty_view()[0]), "4311 dirties the real body at 0");
+            CHECK(!any_dirty(before->block_dirty_view()[1]),
+                  "4311 leaves the nested function clean");
+            CHECK(poisoned_after_body(*before), "4311 sentinel planted on nested IR");
+            CHECK(!before->content_stored_this_epoch, "4311 content not stored while body-dirty");
+            CHECK(cs.lookup_define_v2("outer4103", before->source_hash) == 1,
+                  "4311 lookup stays 1 until a full store");
+            set_strategy(AuditStrategy::Full);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            set_partial_relower_threshold(1);
+            auto* m = metrics_of(cs);
+            const auto impact0 =
+                m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            CHECK(cs.relower_define_from_workspace_for_test("outer4103"), "4311 nested relower");
+            const auto* after = cs.get_define_v2("outer4103");
+            CHECK(after != nullptr, "4311 entry after relower");
+            CHECK(!poisoned_after_body(*after), "4311 full store replaced poisoned nested IR");
+            CHECK(after->content_stored_this_epoch, "4311 content stored by full re-lower");
+            CHECK(cs.lookup_define_v2("outer4103", after->source_hash) == 0,
+                  "4311 lookup 0 only after the body was replaced");
+            CHECK(bundle_fp(*after) == fresh_fp, "4311 IR matches a full lower");
+            CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > impact0,
+                  "4311 reuses partial_forced_full_by_impact_total");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
+                  "4311 fell through to full re-lower");
+            CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) > per0,
+                  "4311 still entered the single-function peel before refusing the restamp");
+        }
+
+        // Size == 1 dropped-__top__ still peels (no nested sibling). The
+        // workspace impact_ub==0 full fallback is unchanged; this direct
+        // relower must not grow the #4103 sibling gate onto size 1.
+        {
+            CompilerService cs;
+            CHECK(cache_define(cs, plain_src, "plain4103"), "4311 size1 cache");
+            const auto planted = cs.plant_body_only_dirty_for_test("plain4103", false, false);
+            CHECK(planted == 1, std::format("4311 size1 irs.size={} == 1", planted));
+            const auto* before = cs.get_define_v2("plain4103");
+            CHECK(before != nullptr && before->irs[0].name != "__top__",
+                  "4311 size1 has no __top__");
+            CHECK(!before->block_dirty_view().empty() && any_dirty(before->block_dirty_view()[0]),
+                  "4311 size1 dirties index 0");
+            set_strategy(AuditStrategy::Full);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            set_partial_relower_threshold(1);
+            auto* m = metrics_of(cs);
+            const auto impact0 =
+                m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            CHECK(cs.relower_define_from_workspace_for_test("plain4103"), "4311 size1 relower");
+            const auto* after = cs.get_define_v2("plain4103");
+            CHECK(after != nullptr && after->content_stored_this_epoch,
+                  "4311 size1 content stored");
+            CHECK(cs.lookup_define_v2("plain4103", after->source_hash) == 0,
+                  "4311 size1 peel clean-hits");
+            CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) > per0,
+                  "4311 size1 took the per-function peel");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) == full0,
+                  "4311 size1 did not fall through to full");
+            CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) == impact0,
+                  "4311 size1 does not force-full");
+        }
+
+        // Soft / Off on the production shape: zero-extra peel stays.
+        // Dirties index 0 and leaves the nested sentinel in place.
+        {
+            CompilerService cs;
+            CHECK(cache_define(cs, nested_src, "outer4103"), "4311 soft nested cache");
+            const auto planted = cs.plant_body_only_dirty_for_test("outer4103", true, false);
+            CHECK(planted == 2, std::format("4311 soft irs.size={} == 2", planted));
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            set_strategy(AuditStrategy::Sampled);
+            set_partial_relower_threshold(1);
+            auto* m = metrics_of(cs);
+            const auto impact0 =
+                m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            CHECK(cs.relower_define_from_workspace_for_test("outer4103"), "4311 soft relower");
+            const auto* after = cs.get_define_v2("outer4103");
+            CHECK(after != nullptr && poisoned_after_body(*after),
+                  "4311 Soft peel leaves nested IR on the pre-mutate body");
+            CHECK(after->content_stored_this_epoch, "4311 Soft peel stores the peeled function");
+            CHECK(cs.lookup_define_v2("outer4103", after->source_hash) == 0,
+                  "4311 Soft single-function peel clean-hits");
+            CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) == impact0,
+                  "4311 Soft peel does not force-full");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) == full0,
+                  "4311 Soft peel does not full-relower");
+        }
+
+        // Production body-expression set-body. Nested IR is one straight-line
+        // function with >= default threshold instructions and < threshold
+        // blocks. lookup must not clean-hit while irs[0] still lacks the
+        // new body's constant. let (not cons) keeps the return type a
+        // lambda so production solve_delta stays SOLVED; a rejected
+        // mutate abort-clears irs before the sweep.
+        {
+            reset_partial_relower_threshold_for_test();
+            const auto thr_now = get_partial_relower_threshold();
+            set_strategy(AuditStrategy::Full);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            const char* fat_src =
+                R"src((set-code "(define (fat4311 x) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) 8)))"))src";
+            CompilerService cs;
+            CHECK(cache_define(cs, fat_src, "fat4311"), "4311 fat cache");
+            const auto* pre = cs.get_define_v2("fat4311");
+            CHECK(pre != nullptr && pre->irs.size() == 2, "4311 fat shape [body, nested]");
+            CHECK(pre->irs[0].name != "__top__", "4311 fat dropped __top__");
+            std::size_t nested_instrs = 0;
+            for (const auto& b : pre->irs[1].blocks)
+                nested_instrs += b.instructions.size();
+            const auto nested_blocks = pre->irs[1].blocks.size();
+            CHECK(nested_instrs >= thr_now,
+                  std::format("4311 nested instrs {} >= threshold {}", nested_instrs, thr_now));
+            CHECK(nested_blocks > 0 && nested_blocks < thr_now,
+                  std::format("4311 nested blocks {} < threshold {}", nested_blocks, thr_now));
+            CHECK(!has_const_i64(pre->irs[0], 41), "4311 pre-mutate body has no 41");
+            auto* m = metrics_of(cs);
+            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+            const auto ran0 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
+            auto setb = cs.eval(
+                R"ev((mutate:set-body "fat4311" "(let ((z (+ x 41))) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) z)))" "#4311"))ev");
+            CHECK(setb && aura::compiler::types::is_bool(*setb) &&
+                      aura::compiler::types::as_bool(*setb),
+                  "4311 body-expression set-body");
+            const auto* after = cs.get_define_v2("fat4311");
+            CHECK(after != nullptr && !after->irs.empty(), "4311 entry after set-body has IR");
+            if (after != nullptr && !after->irs.empty()) {
+                CHECK(after->irs[0].name != "__top__",
+                      "4311 post-mutate cache still dropped __top__");
+                const bool body_rewritten = has_const_i64(after->irs[0], 41);
+                const int look = cs.lookup_define_v2("fat4311", after->source_hash);
+                CHECK(body_rewritten, "4311 sweep rewrote irs[0] to the new body");
+                CHECK(look != 0 || body_rewritten,
+                      "4311 lookup must not clean-hit a pre-mutate body");
+            }
+            CHECK(m->cascade_relower_ran_total.load(std::memory_order_relaxed) > ran0,
+                  "4311 cascade relower ran");
+            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
+                  "4311 sweep took full re-lower");
+        }
+
         // Source cite: new gate, plus unknown-callee and abort-stale still force full.
         {
             const auto svc = read_file("src/compiler/service.ixx");
@@ -593,6 +804,23 @@ int run_test_cascade_relower_silent_skip() {
             CHECK(read_file("tests/compiler/test_issue_4103.cpp").empty(),
                   "4103 no test_issue_4103.cpp");
             CHECK(read_file("docs/design/4103-nested-relower.md").empty(), "4103 no design note");
+            const auto at4311 = svc.find("Issue #4311:");
+            CHECK(at4311 != std::string::npos, "4311 cite present");
+            const auto win4311 = svc.substr(at4311, 700);
+            CHECK(win4311.find("irs[0].name == \"__top__\"") != std::string::npos,
+                  "4311 cite: body index checks __top__");
+            CHECK(win4311.find("return 0") != std::string::npos,
+                  "4311 cite: dropped __top__ stays index 0");
+            const auto v1at = svc.find("Issue #4311: write [func_idx]");
+            CHECK(v1at != std::string::npos, "4311 v1 mirror cite");
+            const auto v1win = svc.substr(v1at, 1200);
+            CHECK(v1win.find("func_idx - 1") != std::string::npos,
+                  "4311 cite: __top__ prefix keeps func_idx-1");
+            CHECK(v1win.find("v1_it->second[func_idx]") != std::string::npos,
+                  "4311 cite: dropped-top v1 uses func_idx");
+            CHECK(read_file("tests/compiler/test_issue_4311.cpp").empty(),
+                  "4311 no test_issue_4311.cpp");
+            CHECK(read_file("docs/design/4311-dropped-top-body.md").empty(), "4311 no design note");
         }
     }
 
