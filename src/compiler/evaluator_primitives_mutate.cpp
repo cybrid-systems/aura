@@ -884,17 +884,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return false;
             ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(ev.pairs_[p_cow].car));
             rest = ev.pairs_[p_cow].cdr;
-            // fiber (optional) + boundary (optional)
-            if (is_pair(rest)) {
-                const auto p_fiber = as_pair_idx(rest);
-                if (is_int(ev.pairs_[p_fiber].car))
-                    ref.fiber_id = static_cast<std::uint32_t>(as_int(ev.pairs_[p_fiber].car));
-                rest = ev.pairs_[p_fiber].cdr;
-                if (is_pair(rest)) {
-                    const auto p_boundary = as_pair_idx(rest);
-                    if (is_int(ev.pairs_[p_boundary].car))
-                        ref.boundary_pinned = as_int(ev.pairs_[p_boundary].car) != 0;
+            // fiber (int), boundary (bool), install id (int). The first int
+            // is fiber. A later int is the #4315 install id. A bool is the
+            // boundary pin and is skipped.
+            bool saw_fiber = false;
+            while (is_pair(rest)) {
+                const auto p = as_pair_idx(rest);
+                if (static_cast<std::size_t>(p) >= ev.pairs_.size())
+                    break;
+                if (is_int(ev.pairs_[p].car)) {
+                    const auto n = as_int(ev.pairs_[p].car);
+                    if (!saw_fiber) {
+                        ref.fiber_id = static_cast<std::uint32_t>(n);
+                        saw_fiber = true;
+                    } else {
+                        ref.install_id_at_capture = static_cast<std::uint32_t>(n);
+                    }
                 }
+                rest = ev.pairs_[p].cdr;
             }
             return true;
         };
@@ -3260,25 +3267,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             const auto p_cow = ev.pairs_.size();
             ev.pairs_.push_back(
                 {make_int(static_cast<std::int64_t>(ref.cow_epoch_at_capture)), make_void()});
-            std::size_t last_inner = p_cow;
-            if (ref.fiber_id != 0) {
+            std::size_t tail = p_cow;
+            // Issue #4315: when the ref carries an install id, write fiber
+            // even if it is 0 so the following int is unambiguously the
+            // install id (a lone int after cow is fiber).
+            if (ref.fiber_id != 0 || ref.install_id_at_capture != 0) {
                 const auto p_fiber = ev.pairs_.size();
                 ev.pairs_.push_back(
                     {make_int(static_cast<std::int64_t>(ref.fiber_id)), make_void()});
+                ev.pairs_[p_cow].cdr = make_pair(p_fiber);
+                tail = p_fiber;
                 if (ref.boundary_pinned) {
                     const auto p_boundary = ev.pairs_.size();
                     ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
                     ev.pairs_[p_fiber].cdr = make_pair(p_boundary);
+                    tail = p_boundary;
                 }
-                ev.pairs_[p_cow].cdr = make_pair(p_fiber);
-                last_inner = p_fiber;
             } else if (ref.boundary_pinned) {
                 const auto p_boundary = ev.pairs_.size();
                 ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
                 ev.pairs_[p_cow].cdr = make_pair(p_boundary);
-                last_inner = p_boundary;
+                tail = p_boundary;
             }
-            (void)last_inner; // spine is fully wired below; suppress unused if no optionals
+            if (ref.install_id_at_capture != 0) {
+                const auto p_inst = ev.pairs_.size();
+                ev.pairs_.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.install_id_at_capture)), make_void()});
+                ev.pairs_[tail].cdr = make_pair(p_inst);
+            }
             // Wire the spine: (tenant . (cow . ...)) ← (cow . ...)
             ev.pairs_[p_tenant].cdr = make_pair(p_cow);
             // (wrap . (tenant . (cow . ...))) ← (tenant . ...)

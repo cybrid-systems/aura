@@ -11,6 +11,7 @@ module;
 #include "security_capabilities.h" // Issue #2485: kCapIoRead for load
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/workspace_epoch.hh" // Issue #3691: bump_mutation_epoch on set-code
+#include "typed_mutation_audit.h"  // Issue #4315: production_defaults_active on set-code
 
 module aura.compiler.evaluator;
 
@@ -448,6 +449,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // require_effect, and do not advance an epoch a caller already set.
             if (ev.workspace_flat_ != nullptr && aura::core::current_mutation_epoch() == 0)
                 aura::core::bump_mutation_epoch();
+            // Issue #4315: production set-code publishes a new FlatAST whose
+            // generation/wrap/cow restart at the birth values. Stamp a
+            // monotonic install id so a ref or schema-2 hash from the
+            // previous install fails freshness. Soft leaves the id at 0.
+            if (ev.workspace_flat_ != nullptr &&
+                aura::compiler::typed_audit::production_defaults_active())
+                ev.workspace_flat_->publish_install_id();
             return make_bool(true);
         });
 

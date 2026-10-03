@@ -2153,6 +2153,11 @@ public:
     mutable std::pmr::vector<std::uint8_t> occ_stale_;
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
+    // Issue #4315: monotonic id of the FlatAST set-code published.
+    // 0 means this object was not published by production set-code
+    // (unit flats, Soft). Rebirth restarts generation_/wrap/cow, so
+    // is_valid compares this against the ref's install_id_at_capture.
+    std::uint32_t install_id_ = 0;
     std::pmr::vector<std::uint16_t> node_gen_;
     // Issue #261: free-list of recycled NodeId slots. Slots on the
     // free list have node_gen_[id] == 0 (tombstone). add_node()
@@ -8144,6 +8149,10 @@ public:
         // "no provenance tenant constraint"). Round-trips on the
         // v2 wire format (#2198); v1 buffers default tenant_id=0.
         std::uint64_t tenant_id = 0;
+        // Issue #4315: FlatAST install id at capture. 0 means the flat
+        // had none (Soft / not published by set-code). Not the layer
+        // index in workspace_id.
+        std::uint32_t install_id_at_capture = 0;
 
         // Issue #738: mark this ref as pinned across a COW
         // boundary (no-op on the ref itself; Evaluator
@@ -8276,15 +8285,19 @@ public:
             const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
             restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
         }
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             0,
-                             0,
-                             0,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
+        StableNodeRef ref{id,
+                          generation_,
+                          next_mutation_id_,
+                          0,
+                          0,
+                          0,
+                          wrap_epoch_.load(std::memory_order_relaxed),
+                          subtree_generation(id),
+                          workspace_cow_epoch_};
+        // Issue #4315: capture the publish id. 0 on flats set-code did
+        // not publish (Soft and unit flats).
+        ref.install_id_at_capture = install_id_;
+        return ref;
     }
 
     // Issue #191: make a StableNodeRef capturing the current
@@ -8451,7 +8464,9 @@ public:
                        // every ~2.6e14 mutates).
                        ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed) &&
                        // Issue #1500: COW epoch must match unless pinned.
-                       (ref.boundary_pinned || ref.cow_epoch_at_capture == workspace_cow_epoch_))) {
+                       (ref.boundary_pinned || ref.cow_epoch_at_capture == workspace_cow_epoch_) &&
+                       // Issue #4315: production set-code install. 0 is not a fence.
+                       (install_id_ == 0 || ref.install_id_at_capture == install_id_))) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
@@ -8462,6 +8477,11 @@ public:
         // Issue #1500: enforce cow_epoch unless pin_for_cow() allows
         // the ref to survive a lazy clone boundary.
         if (ok && !ref.boundary_pinned && ref.cow_epoch_at_capture != workspace_cow_epoch_) {
+            ok = false;
+        }
+        // Issue #4315: a birth-gen ref from the previous set-code install
+        // carries the same gen/wrap/cow. The install id is the fence.
+        if (ok && install_id_ != 0 && ref.install_id_at_capture != install_id_) {
             ok = false;
         }
         if (!ok) {
@@ -8530,6 +8550,17 @@ public:
     // so AI agents can checkpoint / compact before the next
     // generation_ wrap creates a wave of false-positive refs in
     // their long-running workspaces.
+    // Issue #4315: mint one id for this FlatAST. Production set-code
+    // calls this when it publishes the workspace. Soft does not.
+    void publish_install_id() noexcept {
+        static std::atomic<std::uint32_t> next{1};
+        auto id = next.fetch_add(1, std::memory_order_relaxed);
+        if (id == 0)
+            id = next.fetch_add(1, std::memory_order_relaxed);
+        install_id_ = id;
+    }
+    [[nodiscard]] std::uint32_t install_id() const noexcept { return install_id_; }
+
     [[nodiscard]] std::uint32_t wrap_epoch() const noexcept {
         return wrap_epoch_.load(std::memory_order_relaxed);
     }

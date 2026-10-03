@@ -32,6 +32,15 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                                 std::uint64_t current_tenant_id,
                                 std::uint64_t current_fiber_id) noexcept {
     const bool hard = aura::compiler::typed_audit::production_defaults_active();
+    // Issue #4315: set-code rebirth restarts gen/wrap/cow. Reject a hash
+    // stamped for a different install before the match loop. Soft does
+    // not publish an install id, so this compare stays off that face.
+    // install_id 0 means the live flat was not published by production
+    // set-code; those hashes keep the historical checks.
+    if (hard && flat.install_id() != 0 && qr.epoch.workspace_id != flat.install_id()) {
+        aura::core::note_query_result_stale();
+        return aura::core::QueryResultFreshness::StaleByEpoch;
+    }
     // Issue #3660: empty matches stay Fresh-after-epoch (do not consult
     // the whole-table mutation epoch). QueryEpoch finish_query_epoch
     // still returns query-epoch-stale when generation moves in-flight.
@@ -158,7 +167,7 @@ template <typename StringHeap, typename PairVec>
         return false;
     auto* ht = g_hash_tables[hidx];
     std::int64_t mut = -1, gen = -1, wrap = 0, cow = 0, tenant = 0, fiber = 0, mid = 0, tag = 0,
-                 schema3137 = 0;
+                 schema3137 = 0, workspace_id = 0;
     types::EvalValue matches = make_void();
     bool have_matches = false;
     auto meta = ht->metadata();
@@ -203,12 +212,17 @@ template <typename StringHeap, typename PairVec>
             // Issue #3696: production omits this key. Soft hashes may
             // still carry it; occupancy resolve does not consult mid.
             mid = n;
+        else if (s == "workspace-id")
+            // Issue #4315: set-code install id. 0 on flats that were not
+            // published by production set-code.
+            workspace_id = n;
     }
     if (tag == 0 && schema3137 == 0 && mut < 0)
         return false;
     out = {};
     out.epoch.mutation_epoch = static_cast<std::uint64_t>(mut < 0 ? 0 : mut);
     out.epoch.generation = static_cast<std::uint64_t>(gen < 0 ? 0 : gen);
+    out.epoch.workspace_id = static_cast<std::uint32_t>(workspace_id < 0 ? 0 : workspace_id);
     const auto reserved = schema3137 != 0 ? aura::core::kQueryResultMatchSchema2Prod
                                           : (tag != 0 ? aura::core::kQueryResultMatchSchema2
                                                       : static_cast<std::uint8_t>(0));
