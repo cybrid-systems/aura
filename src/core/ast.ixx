@@ -4809,8 +4809,22 @@ public:
         // Sync first: a never-synced / post-copy tree has empty
         // child_count_ with dense_dirty_ == true. Bounding on the
         // empty column before rebuild would return {} for every id.
-        if (dense_dirty_)
-            sync_dense_columns_from_pcv();
+        // Issue #4312: one rebuild at a time on structural_mtx_
+        // (same mutex set_child holds). Callers may already hold
+        // the workspace shared lock; this function does not take it.
+        // shared_mutex is not recursive — drop shared before unique.
+        // No caller holds structural unique across this function
+        // (set_child_locked does not call it).
+        std::shared_lock<std::shared_mutex> rlock(structural_mtx_.mutable_get());
+        while (dense_dirty_) {
+            rlock.unlock();
+            {
+                std::unique_lock<std::shared_mutex> wlock(structural_mtx_.mutable_get());
+                if (dense_dirty_)
+                    sync_dense_columns_from_pcv();
+            }
+            rlock.lock();
+        }
         if (id >= child_count_.size())
             return {};
         const auto begin = child_begin_[id];
@@ -4849,7 +4863,7 @@ public:
     // child_begin_ / child_count_ from the legacy children_ PCV
     // vector. Called by children_columnar(id) when dense_dirty_ is
     // set. O(total children); runs once per structural-mutation
-    // batch.
+    // batch. Caller holds structural_mtx_ uniquely (#4312).
     void sync_dense_columns_from_pcv() const {
         dense_columns_pcv_sync_total_.fetch_add(1, std::memory_order_relaxed);
         child_data_.clear();
