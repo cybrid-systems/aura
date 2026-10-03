@@ -35,9 +35,11 @@
 #       runtime_ssot.cpp next to g_hash_tables (same SSOT link-order
 #       class), stamped at every g_hash_tables.push_back alloc site
 #       (the `hash` prim + the three agent-runtime sites) at the publish
-#       point from aura_jit_owner_capability_tenant(), and stamped by the
-#       aura_hash_alloc_tenant C-ABI alloc seam (#4036 explicit-tenant
-#       form — light-link binaries cannot read the strong hook).
+#       point. Issue #4296: those interpreter/agent stamps use the
+#       executing evaluator (ev.capability_tenant_id()), not the JIT
+#       owner hook. aura_hash_alloc_tenant still stamps the explicit
+#       tenant (#4036 light-link form). JIT aura_new_cell / aura_hash_set
+#       / aura_hash_ref keep the owner hooks.
 # AC5 — aura_hash_ref_checked arms the face probe before the table scan
 #       (deny → not-found sentinel, access skipped) with the production
 #       aura_hash_ref wrapper delegating hook values; aura_hash_set keeps
@@ -196,12 +198,16 @@ def main() -> int:
         "src/compiler/evaluator_primitives_vector.cpp": 1,
         "src/compiler/evaluator_primitives_agent.cpp": 3,
     }
-    stamp_line = "g_hash_tenants[hidx] = aura_jit_owner_capability_tenant()"
+    # Issue #4296: interpreter/agent mints stamp the executing evaluator.
+    stamp_line = "g_hash_tenants[hidx] = ev.capability_tenant_id()"
+    old_stamp = "g_hash_tenants[hidx] = aura_jit_owner_capability_tenant()"
     for rel, want in expected_sites.items():
         src = _strip_cpp_comments(_read(rel))
         got = src.count(stamp_line)
         if got != want:
             fails.append(f"AC4: {rel} expected {want} hash-alloc stamp(s), found {got}")
+        if old_stamp in src:
+            fails.append(f"AC4: {rel} still stamps the JIT owner (#4296)")
         idx = 0
         for _ in range(got):
             idx = src.find(stamp_line, idx)

@@ -39,6 +39,7 @@
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
+#include "core/workspace_isolation.hh"
 
 #include <algorithm>
 #include <array>
@@ -665,12 +666,16 @@ static void ac4093_source_cite() {
           "4093 cite: runtime_ssot.cpp defines g_hash_tenants");
     const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
     const auto ag = read_file("src/compiler/evaluator_primitives_agent.cpp");
-    CHECK(vec.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
+    // Issue #4296: interpreter/agent mints stamp the executing evaluator.
+    // JIT aura_new_cell / aura_hash_set / aura_hash_ref keep the owner hook
+    // (cited above on the runtime TU).
+    CHECK(vec.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
+          "4093 cite: hash prim stamps the executing evaluator (#4296)");
+    CHECK(vec.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") ==
               std::string::npos,
-          "4093 cite: hash prim stamps the owner tenant");
-    CHECK(ag.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
-              std::string::npos,
-          "4093 cite: agent hash alloc sites stamp the owner tenant");
+          "4093 cite: hash prim no longer stamps the JIT owner (#4296)");
+    CHECK(ag.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
+          "4093 cite: agent hash alloc sites stamp the executing evaluator (#4296)");
     const auto svc = read_file("src/compiler/service.ixx");
     CHECK(svc.find("aura_jit_owner_sandbox_mode") != std::string::npos &&
               svc.find("owner->effect_sandbox_mode()") != std::string::npos,
@@ -1010,21 +1015,22 @@ static void ac4110_source_cite() {
     const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
     CHECK(qw.find("make_query_result_hash") != std::string::npos,
           "4110 cite: make_query_result_hash mint is in the stamped sweep set");
-    // #4093-pinned inline stamps stay (the helper is additive, no rewrite).
+    // Issue #4296: inline stamps stay, principal is the executing evaluator
+    // (the helper above still stamps from the JIT owner hook).
     const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
-    CHECK(vec.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
-              std::string::npos,
-          "4110 cite: vector hash prim inline stamp (#4093) intact");
+    CHECK(vec.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
+          "4110 cite: vector hash prim stamps the executing evaluator (#4296)");
     const auto ag = read_file("src/compiler/evaluator_primitives_agent.cpp");
-    CHECK(ag.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") !=
+    CHECK(ag.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
+          "4110 cite: agent hash alloc stamps the executing evaluator (#4296)");
+    // The four tree-walker prims gate before the probe with this evaluator.
+    CHECK(vec.find("aura_hash_gate_checked(hidx, ev.capability_tenant_id(),") != std::string::npos,
+          "4110 cite: tree-walker gates pass the executing evaluator");
+    CHECK(vec.find("aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),") ==
               std::string::npos,
-          "4110 cite: agent hash alloc inline stamps (#4093) intact");
-    // The four tree-walker prims gate before the probe with owner-hook values.
-    CHECK(vec.find("aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),") !=
-              std::string::npos,
-          "4110 cite: tree-walker gates pass the owner-hook caller");
-    CHECK(vec.find("aura_jit_owner_sandbox_mode(), \"hash-ref\"") != std::string::npos,
-          "4110 cite: hash-ref gate reads the owner face hook");
+          "4110 cite: tree-walker gates do not pass the JIT owner (#4296)");
+    CHECK(vec.find("ev.effect_sandbox_mode(), \"hash-ref\"") != std::string::npos,
+          "4110 cite: hash-ref gate reads the executing evaluator face");
     CHECK(vec.find("\"hash-ref\"))") != std::string::npos, "4110 cite: hash-ref gate op");
     CHECK(vec.find("\"hash-has-key?\"))") != std::string::npos, "4110 cite: hash-has-key? gate op");
     CHECK(vec.find("\"hash-set!\"))") != std::string::npos, "4110 cite: hash-set! gate op");
@@ -1358,6 +1364,209 @@ static void ac4134_4_require_effect_precedes_store() {
     const auto choke_cell = rt.find("aura_jit_owner_require_effect(aura::compiler::security::"
                                     "kEffectMutate, \"cell-set!\") == 0");
     CHECK(choke_cell != std::string::npos, "4134 AC4: cell-set! Mutate choke present");
+}
+
+// Issue #4296: interpreter hash mint + hash-ref/has-key?/set!/remove!
+// authorize the executing Evaluator, not the JIT owner. JIT C ABI keeps
+// the owner hooks. Soft/Off (face 0) does not read g_hash_tenants.
+static aura::compiler::types::EvalValue
+call_hash_op(aura::compiler::Evaluator& ev, std::string_view name,
+             std::initializer_list<aura::compiler::types::EvalValue> args) {
+    auto pfn = ev.primitives().lookup(name);
+    if (!pfn)
+        return make_void();
+    const std::vector<aura::compiler::types::EvalValue> v(args);
+    return (*pfn)(v);
+}
+
+static bool raw_hash_int_is(std::uint64_t hidx, std::int64_t key, std::int64_t expect) {
+    if (hidx >= g_hash_tables.size() || g_hash_tables[hidx] == nullptr)
+        return false;
+    auto* ht = g_hash_tables[hidx];
+    const auto meta = ht->metadata();
+    const auto keys = ht->keys();
+    const auto vals = ht->values();
+    const auto want = make_int(key).val;
+    for (std::uint64_t i = 0; i < ht->capacity; ++i) {
+        if (meta[i] == 0xFF)
+            continue;
+        if (keys[i] == want)
+            return vals[i] == make_int(expect).val;
+    }
+    return false;
+}
+
+static bool ring_has_isolation_deny(std::string_view op) {
+    using aura::core::security_event::SecurityEventKind;
+    const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    const std::size_t rn = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+    for (std::size_t i = 0; i < rn; ++i) {
+        const auto& e = g_security_event_ring().ring[i];
+        if (e.denied && e.kind == SecurityEventKind::IsolationDeny && std::string_view(e.op) == op)
+            return true;
+    }
+    return false;
+}
+
+static void ac4296_executing_evaluator_hash_gate() {
+    std::println("\n--- #4296: hash stamp/gate uses the executing Evaluator ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& a = cs_a.evaluator();
+    auto& b = cs_b.evaluator();
+    a.set_effect_sandbox_mode(2); // process face Strict; both evaluators read it
+    a.set_capability_tenant_id(7);
+    b.set_capability_tenant_id(9);
+    CHECK(aura_jit_owner_capability_tenant() == 0, "4296: JIT ctx starts unwired");
+    CHECK(a.effect_sandbox_mode() == 2 && b.effect_sandbox_mode() == 2,
+          "4296: production face is Strict");
+
+    const auto hv = call_hash_op(a, "hash", {make_int(1), make_int(42)});
+    CHECK(is_hash(hv), "4296: tenant 7 hash mints");
+    if (!is_hash(hv)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        a.set_effect_sandbox_mode(0);
+        return;
+    }
+    const auto hidx = as_hash_idx(hv);
+    CHECK(hidx < g_hash_tenants.size() && g_hash_tenants[hidx] == 7,
+          "4296: unwired JIT stamps tenant 7, not owner 0");
+    const auto own = call_hash_op(a, "hash-ref", {hv, make_int(1)});
+    CHECK(is_int(own) && as_int(own) == 42, "4296: tenant 7 reads its own hash");
+
+    auto& iso = aura::core::workspace_isolation::g_tenant_isolation_metrics();
+    const auto prevented0 =
+        iso.tenant_boundary_violation_prevented_total.load(std::memory_order_relaxed);
+    const auto set_b = call_hash_op(b, "hash-set!", {hv, make_int(1), make_int(99)});
+    (void)set_b;
+    const auto ref_b = call_hash_op(b, "hash-ref", {hv, make_int(1)});
+    const auto has_b = call_hash_op(b, "hash-has-key?", {hv, make_int(1)});
+    const auto rm_b = call_hash_op(b, "hash-remove!", {hv, make_int(1)});
+    CHECK(is_void(ref_b), "4296: unwired JIT, tenant 9 hash-ref returns no value");
+    CHECK(is_bool(has_b) && !as_bool(has_b), "4296: unwired JIT, tenant 9 hash-has-key? is #f");
+    CHECK(is_bool(rm_b) && !as_bool(rm_b), "4296: unwired JIT, tenant 9 hash-remove! is #f");
+    CHECK(raw_hash_int_is(hidx, 1, 42), "4296: unwired JIT, hash-set! leaves the slot unchanged");
+    const auto own_after = call_hash_op(a, "hash-ref", {hv, make_int(1)});
+    CHECK(is_int(own_after) && as_int(own_after) == 42,
+          "4296: tenant 7 still reads 42 after tenant 9");
+    // IsolationDeny and tenant_boundary_violation_prevented_total are
+    // recorded only inside the strong owner hook (service.ixx →
+    // check_workspace_isolation). This batch NEEDs
+    // libaura_jit_light_test_objects.so first, so the weak stub wins ELF
+    // search, returns 0, and records nothing. The local stamp compare is
+    // what this binary can observe. A second ev.check_workspace_isolation
+    // in the prim would double-record on the production link.
+    const auto prevented1 =
+        iso.tenant_boundary_violation_prevented_total.load(std::memory_order_relaxed);
+
+    // JIT ctx installed on Evaluator A only. When the strong hook is the
+    // one ELF resolved, the owner tenant is 7 while B executes as 9.
+    cs_a.register_jit_primitives();
+    const bool strong_owner = aura_jit_owner_capability_tenant() == 7;
+    if (strong_owner) {
+        CHECK(prevented1 > prevented0, "4296: unwired strong owner bumps the isolation counter");
+    } else {
+        CHECK(aura_jit_owner_capability_tenant() == 0,
+              "4296: light-link stub interposes the owner hook");
+        CHECK(prevented1 == prevented0,
+              "4296: light-link stub does not bump the isolation counter");
+    }
+    reset_security_event_ring_for_test();
+    (void)call_hash_op(b, "hash-set!", {hv, make_int(1), make_int(99)});
+    if (strong_owner) {
+        CHECK(ring_has_isolation_deny("hash-set!"),
+              "4296: tenant 9 hash-set! records IsolationDeny");
+    } else {
+        CHECK(!ring_has_isolation_deny("hash-set!"),
+              "4296: light-link stub records no IsolationDeny on hash-set!");
+    }
+    CHECK(raw_hash_int_is(hidx, 1, 42), "4296: hash-set! leaves the slot unchanged");
+    reset_security_event_ring_for_test();
+    const auto ref_wired = call_hash_op(b, "hash-ref", {hv, make_int(1)});
+    CHECK(is_void(ref_wired), "4296: tenant 9 hash-ref returns no value");
+    if (strong_owner) {
+        CHECK(ring_has_isolation_deny("hash-ref"), "4296: tenant 9 hash-ref records IsolationDeny");
+    } else {
+        CHECK(!ring_has_isolation_deny("hash-ref"),
+              "4296: light-link stub records no IsolationDeny on hash-ref");
+    }
+    reset_security_event_ring_for_test();
+    const auto rm_wired = call_hash_op(b, "hash-remove!", {hv, make_int(1)});
+    CHECK(is_bool(rm_wired) && !as_bool(rm_wired), "4296: tenant 9 hash-remove! is #f");
+    if (strong_owner) {
+        CHECK(ring_has_isolation_deny("hash-remove!"),
+              "4296: tenant 9 hash-remove! records IsolationDeny");
+    } else {
+        CHECK(!ring_has_isolation_deny("hash-remove!"),
+              "4296: light-link stub records no IsolationDeny on hash-remove!");
+    }
+    CHECK(raw_hash_int_is(hidx, 1, 42), "4296: remove deny leaves 42 in the slot");
+    const auto own_wired = call_hash_op(a, "hash-ref", {hv, make_int(1)});
+    CHECK(is_int(own_wired) && as_int(own_wired) == 42,
+          "4296: tenant 7 own hash still succeeds with JIT on A");
+
+    // Same evaluator, TenantScope rebinds the principal. JIT stays on A
+    // (tenant 7), so a JIT-owner stamp would label B's mint as 7.
+    {
+        aura::compiler::Evaluator::TenantScope scope(b, 7);
+        const auto h7 = call_hash_op(b, "hash", {make_int(3), make_int(30)});
+        CHECK(is_hash(h7), "4296: TenantScope 7 mints");
+        if (is_hash(h7)) {
+            const auto i7 = as_hash_idx(h7);
+            CHECK(i7 < g_hash_tenants.size() && g_hash_tenants[i7] == 7,
+                  "4296: TenantScope 7 stamp is 7");
+            const auto r7 = call_hash_op(b, "hash-ref", {h7, make_int(3)});
+            CHECK(is_int(r7) && as_int(r7) == 30, "4296: TenantScope 7 reads its mint");
+            {
+                aura::compiler::Evaluator::TenantScope scope9(b, 9);
+                (void)call_hash_op(b, "hash-set!", {h7, make_int(3), make_int(31)});
+                CHECK(raw_hash_int_is(i7, 3, 30), "4296: TenantScope 9 hash-set! leaves 30");
+                const auto r9 = call_hash_op(b, "hash-ref", {h7, make_int(3)});
+                CHECK(is_void(r9), "4296: TenantScope 9 hash-ref returns no value");
+            }
+            const auto back = call_hash_op(b, "hash-ref", {h7, make_int(3)});
+            CHECK(is_int(back) && as_int(back) == 30, "4296: TenantScope 7 still reads 30");
+        }
+    }
+    {
+        aura::compiler::Evaluator::TenantScope scope9(b, 9);
+        const auto h9 = call_hash_op(b, "hash", {make_int(4), make_int(40)});
+        CHECK(is_hash(h9), "4296: TenantScope 9 mints");
+        if (is_hash(h9)) {
+            const auto i9 = as_hash_idx(h9);
+            if (strong_owner) {
+                CHECK(aura_jit_owner_capability_tenant() == 7, "4296: JIT owner still A's 7");
+            } else {
+                CHECK(aura_jit_owner_capability_tenant() == 0,
+                      "4296: light-link stub still reports owner 0");
+            }
+            CHECK(i9 < g_hash_tenants.size() && g_hash_tenants[i9] == 9,
+                  "4296: TenantScope 9 stamp is 9, not the JIT owner");
+            const auto r9 = call_hash_op(b, "hash-ref", {h9, make_int(4)});
+            CHECK(is_int(r9) && as_int(r9) == 40, "4296: TenantScope 9 reads its own mint");
+            {
+                aura::compiler::Evaluator::TenantScope scope7(b, 7);
+                const auto r7 = call_hash_op(b, "hash-ref", {h9, make_int(4)});
+                CHECK(is_void(r7), "4296: TenantScope 7 cannot read tenant 9's hash");
+                CHECK(raw_hash_int_is(i9, 4, 40), "4296: tenant 9 slot unchanged");
+            }
+        }
+    }
+
+    // Face 0: historical shared read/write, no tenant load.
+    a.set_effect_sandbox_mode(0);
+    CHECK(a.effect_sandbox_mode() == 0 && b.effect_sandbox_mode() == 0, "4296: face back to Off");
+    (void)call_hash_op(b, "hash-set!", {hv, make_int(1), make_int(77)});
+    CHECK(raw_hash_int_is(hidx, 1, 77), "4296: Off hash-set! from tenant 9 lands");
+    const auto soft_b = call_hash_op(b, "hash-ref", {hv, make_int(1)});
+    const auto soft_a = call_hash_op(a, "hash-ref", {hv, make_int(1)});
+    CHECK(is_int(soft_b) && as_int(soft_b) == 77, "4296: Off tenant 9 reads the shared write");
+    CHECK(is_int(soft_a) && as_int(soft_a) == 77, "4296: Off tenant 7 sees tenant 9's write");
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
 }
 
 int run_test_dispatch_required_effects() {
@@ -3026,6 +3235,9 @@ int run_test_dispatch_required_effects() {
     ac4134_2_unwired_hook_denies();
     ac4134_3_soft_zero_cost();
     ac4134_4_require_effect_precedes_store();
+
+    // ── Issue #4296: interpreter hash principal is the executing Evaluator ──
+    ac4296_executing_evaluator_hash_gate();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

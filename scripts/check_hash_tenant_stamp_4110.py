@@ -24,14 +24,17 @@
 #       hash, query tail / lifecycle / reflect / type-stats / obs-mid,
 #       mutation, memory, obs jit/eval, messaging, stdlib review, persist,
 #       json, compile, evaluator.ixx, workspace tree).
-# AC4 — the #4093-pinned inline stamps stay intact (evaluator_primitives_
-#       vector.cpp hash prim, evaluator_primitives_agent.cpp,
-#       aura_jit_runtime.cpp aura_hash_alloc_tenant) — the helper is
-#       additive; the pinned stamps are not rewritten.
+# AC4 — inline stamps stay on the hash prim and the three agent sites,
+#       plus aura_hash_alloc_tenant. Issue #4296 retargeted the
+#       interpreter/agent stamps to ev.capability_tenant_id() (the
+#       executing evaluator). The helper and the JIT C ABI keep the
+#       owner hook. The helper stays additive.
 # AC5 — hash-ref / hash-has-key? / hash-set! / hash-remove! in
 #       evaluator_primitives_vector.cpp call aura_hash_gate_checked with
-#       the owner-hook values (caller + face) BEFORE the probe, one gate
-#       per op name; armed deny returns void / #f without storing.
+#       the executing evaluator's tenant and sandbox mode BEFORE the
+#       probe, one gate per op name; armed deny returns void / #f
+#       without storing. JIT aura_hash_set / aura_hash_ref keep the
+#       owner hooks.
 # AC6 — aura_jit_runtime.cpp defines aura_hash_gate_checked with the face
 #       probe (jit_tenant_gate_armed) preceding any g_hash_tenants load
 #       (Soft/Off zero-cost contract) and the deny routed through
@@ -148,31 +151,41 @@ def main() -> int:
     elif qw.count("make_query_result_hash") < qw.count(CALL):
         pass  # helper call after the mint's push verified by the count above
 
-    # ── AC4: #4093-pinned inline stamps intact (helper is additive) ──
-    if "g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();" not in vec:
-        fails.append("AC4: vector hash prim inline stamp (#4093 pin) removed")
+    # ── AC4: inline stamps present; #4296 executing-evaluator principal ──
+    stamp = "g_hash_tenants[hidx] = ev.capability_tenant_id();"
+    jit_stamp = "g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();"
+    if stamp not in vec:
+        fails.append("AC4: vector hash prim does not stamp ev.capability_tenant_id()")
+    if jit_stamp in vec:
+        fails.append("AC4: vector hash prim still stamps the JIT owner (#4296)")
     ag = _strip_cpp_comments(_read("src/compiler/evaluator_primitives_agent.cpp"))
-    if ag.count("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") < 3:
-        fails.append("AC4: agent hash alloc inline stamps (#4093 pin) reduced")
+    if ag.count(stamp) < 3:
+        fails.append("AC4: agent hash alloc inline stamps reduced below 3")
+    if jit_stamp in ag:
+        fails.append("AC4: agent hash alloc still stamps the JIT owner (#4296)")
     if "aura_hash_alloc_tenant" not in rt:
         fails.append("AC4: aura_hash_alloc_tenant seam (#4093 pin) removed")
 
     # ── AC5: the four tree-walker prims gate before the probe ──
+    caller_needle = "aura_hash_gate_checked(hidx, ev.capability_tenant_id(),"
+    jit_caller = "aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),"
+    if jit_caller in vec:
+        fails.append("AC5: tree-walker gate still passes the JIT owner (#4296)")
     for op in ("hash-ref", "hash-has-key?", "hash-set!", "hash-remove!"):
-        needle = "aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),"
-        if needle not in vec:
-            fails.append(f"AC5: {op} gate call missing (owner-hook caller)")
+        if caller_needle not in vec:
+            fails.append(f"AC5: {op} gate call missing (executing-evaluator caller)")
         if f'"{op}")' not in vec:
             fails.append(f"AC5: op name {op} not passed to the gate")
+        if f'ev.effect_sandbox_mode(), "{op}"' not in vec:
+            fails.append(f"AC5: {op} gate does not pass ev.effect_sandbox_mode()")
     gate_calls = vec.count("aura_hash_gate_checked(hidx,")
     if gate_calls != 4:
         fails.append(f"AC5: expected 4 tree-walker gate calls, found {gate_calls}")
     probes = vec.count("auto* ht = g_hash_tables[hidx];")
     if probes < 4:
         fails.append("AC5: probe shape changed (auto* ht = g_hash_tables[hidx])")
-    # the production wrapper delegation (owner face) must stay on the gate
-    if 'aura_jit_owner_sandbox_mode(), "hash-ref"' not in vec:
-        fails.append("AC5: hash-ref gate does not read the owner face hook")
+    if 'aura_jit_owner_sandbox_mode(), "hash-ref"' in vec:
+        fails.append("AC5: hash-ref gate still reads the JIT owner face (#4296)")
 
     # ── AC6: seam body — face probe precedes the stamp load; deny via gate ──
     seam_at = rt.find('extern "C" bool aura_hash_gate_checked(')
