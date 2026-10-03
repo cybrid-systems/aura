@@ -388,6 +388,12 @@ struct CloneSessionPolicy {
     // parent restore fires even when the process steal counter is a weak
     // 0-stub after the nested return. Not TLS.
     bool* nested_steal_abort = nullptr;
+    // Issue #4309: id >= owned_floor && id < target.size() is this walk's
+    // allocation. Sentinel (-1) snapshots target.size() at depth-0 entry,
+    // after the session overwrite below. Rest-spine callers pass the size
+    // from before the spine add_* so the fresh list/pair stays owned and
+    // substituted caller args do not. Nested frames copy this field; not TLS.
+    std::size_t owned_floor = static_cast<std::size_t>(-1);
 };
 
 // Issue #3685: session-aware ceiling — process-wide test override wins,
@@ -1590,7 +1596,8 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
                                                  aura::ast::StringPool& target_pool,
                                                  aura::ast::FlatAST& source,
                                                  aura::ast::StringPool& source_pool,
-                                                 aura::ast::NodeId new_root = aura::ast::NULL_NODE);
+                                                 aura::ast::NodeId new_root = aura::ast::NULL_NODE,
+                                                 std::size_t owned_floor = 0);
 
 // Issue #2235: C-linkage test helper that invokes
 // `ensure_cross_flat_expand_consistency` directly. The function is
@@ -1726,11 +1733,10 @@ static void restamp_after_qq_unwrap(aura::ast::FlatAST& flat, aura::ast::NodeId 
 // Single-flat clones remain an early-return (AC4 zero-perf-regression
 // contract preserved — the hot in-flat path used by macro_expand_all
 // is unaffected).
-static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
-                                                 aura::ast::StringPool& target_pool,
-                                                 aura::ast::FlatAST& source,
-                                                 aura::ast::StringPool& source_pool,
-                                                 aura::ast::NodeId new_root) {
+static void
+ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
+                                     aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
+                                     aura::ast::NodeId new_root, std::size_t owned_floor) {
     const bool cross_flat = (&target != &source) || (&target_pool != &source_pool);
     if (!cross_flat)
         return;                             // AC4: single-flat path stays zero-overhead.
@@ -1782,12 +1788,19 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
         constexpr std::uint32_t kSchemaIdMax = 1u << 24; // #2859 bound
         std::size_t drift = 0;
         std::size_t prov_zeroed = 0;
+        // Issue #4309: owned iff this frame allocated it.
+        // id >= owned_floor && id < target.size(). Subst hits and
+        // dotted-rest remaining args fail; fresh spine passes.
+        auto owned = [&](aura::ast::NodeId id) noexcept {
+            return static_cast<std::size_t>(id) >= owned_floor && id < target.size();
+        };
         std::vector<aura::ast::NodeId> stack;
-        stack.push_back(new_root);
+        if (owned(new_root))
+            stack.push_back(new_root);
         while (!stack.empty()) {
             auto cur = stack.back();
             stack.pop_back();
-            if (cur == aura::ast::NULL_NODE || cur >= target.size())
+            if (!owned(cur))
                 continue;
             const auto sid = target.schema_cache(cur);
             if (sid != 0) {
@@ -1803,7 +1816,7 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
             }
             const auto cv = target.get(cur);
             for (auto child : cv.children) {
-                if (child != aura::ast::NULL_NODE)
+                if (owned(child))
                     stack.push_back(child);
             }
         }
@@ -1875,14 +1888,26 @@ aura::ast::NodeId clone_macro_body(
                              std::equal_to<>>* subst,
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker) {
+    aura::ast::SyntaxMarker cloned_marker, std::size_t owned_floor) {
     // Issue #2806 / #3028: public API is always top-level depth=0.
     // session_depth_limit=0 → compute at entry from capability+runtime (not TLS).
+    // Issue #4309: sentinel lets depth-0 snapshot target.size() before add_*.
+    // An explicit floor (rest spine checkpoint) rides the session, which
+    // nested frames copy. Depth stays the explicit argument.
+    if (owned_floor == static_cast<std::size_t>(-1)) {
+        return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
+                                         name_map, cloned_marker, /*hygiene_depth=*/0,
+                                         /*session_depth_limit=*/0,
+                                         /*in_quote=*/false,
+                                         /*qq_depth=*/0, CloneSessionPolicy{});
+    }
+    CloneSessionPolicy session{};
+    session.owned_floor = owned_floor;
     return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
                                      name_map, cloned_marker, /*hygiene_depth=*/0,
                                      /*session_depth_limit=*/0,
                                      /*in_quote=*/false,
-                                     /*qq_depth=*/0, CloneSessionPolicy{});
+                                     /*qq_depth=*/0, session);
 }
 
 static aura::ast::NodeId clone_macro_body_at_depth(
@@ -2166,8 +2191,16 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     } top_cap_guard{hygiene_depth};
     // Issue #3685: depth==0 armed the guard and captured the session from
     // check_macro_self_evo; nested calls keep the caller's session.
+    // Issue #4309: capture the caller's floor before depth-0 replaces the
+    // session with the guard's policy (that aggregate leaves the sentinel).
+    const std::size_t entry_floor = session.owned_floor;
     if (hygiene_depth == 0)
         session = top_cap_guard.session;
+    if (entry_floor != static_cast<std::size_t>(-1))
+        session.owned_floor = entry_floor;
+    else if (hygiene_depth == 0)
+        session.owned_floor = target.size();
+    const std::size_t owned_floor = session.owned_floor;
     // Issue #3981: depth==0 owns the nested-steal sticky. Nested frames
     // copy the pointer through CloneSessionPolicy (not TLS).
     bool steal_abort_sticky = false;
@@ -3132,12 +3165,21 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             const std::uint32_t src_prov = source.provenance(body_id);
             const std::uint32_t origin =
                 src_prov != 0 ? src_prov : static_cast<std::uint32_t>(body_id == 0 ? 1 : body_id);
+            // Issue #4309: a node is owned iff this frame allocated it:
+            // id >= size_at_frame_entry && id < target.size().
+            // Record target.size() before this frame's add_* calls.
+            // Subst hits and dotted-rest remaining args fail owned().
+            // Fresh clone nodes and the dotted-rest list/pair spine pass.
+            auto owned = [&](aura::ast::NodeId id) noexcept {
+                return static_cast<std::size_t>(id) >= owned_floor && id < target.size();
+            };
             std::vector<aura::ast::NodeId> stack;
-            stack.push_back(new_id);
+            if (owned(new_id))
+                stack.push_back(new_id);
             while (!stack.empty()) {
                 auto cur = stack.back();
                 stack.pop_back();
-                if (cur == aura::ast::NULL_NODE)
+                if (!owned(cur))
                     continue;
                 target.apply_macro_dirty_bits(
                     cur, static_cast<std::uint8_t>(
@@ -3155,7 +3197,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 std::vector<aura::ast::NodeId> walk_children(cv.children.begin(),
                                                              cv.children.end());
                 for (auto child : walk_children) {
-                    if (child != aura::ast::NULL_NODE)
+                    if (owned(child))
                         stack.push_back(child);
                 }
             }
@@ -3168,7 +3210,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // Single-flat and recursive frames are no-op (perf-stable for the
     // hot in-flat path used by macro_expand_all).
     if (cross_flat_top && new_id != NULL_NODE) {
-        ensure_cross_flat_expand_consistency(target, target_pool, source, source_pool, new_id);
+        ensure_cross_flat_expand_consistency(target, target_pool, source, source_pool, new_id,
+                                             owned_floor);
     }
     // Issue #3303: steal mid-clone → fail-closed at ALL depths. Was:
     // depth==0 only — nested clone walks left a residual race window
@@ -3544,9 +3587,14 @@ aura::ast::NodeId expand_inner_macros(
                     // truncate the committed MI body when no Guard owns the
                     // range (C-ABI ckpt restore does not drop those nodes).
                     const auto clone_ckpt = rest_spine_pending ? rest_spine_ckpt : flat->size();
+                    const std::size_t clone_floor =
+                        rest_spine_pending ? rest_spine_ckpt : static_cast<std::size_t>(-1);
+                    // clang-format off
                     auto cloned =
                         clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id, &subst,
-                                         &rename_map, aura::ast::SyntaxMarker::MacroIntroduced);
+                                         &rename_map, aura::ast::SyntaxMarker::MacroIntroduced,
+                                         clone_floor);
+                    // clang-format on
                     if (cloned == NULL_NODE) {
                         if (rest_spine_pending && production_surface)
                             flat->truncate_to(rest_spine_ckpt);
@@ -3762,6 +3810,7 @@ struct PassLoopCallerRollback {
     bool armed = false;
     decltype(std::declval<aura::ast::FlatAST&>().snapshot_children()) children;
     aura::ast::FlatAST::MarkerProvenanceSnapshot markers;
+    std::vector<std::uint8_t> macro_dirty_prefix;
     void arm(aura::ast::FlatAST& tree) {
         if (armed)
             return;
@@ -3769,6 +3818,7 @@ struct PassLoopCallerRollback {
         markers = tree.snapshot_marker_provenance();
         flat = &tree;
         size0 = tree.size();
+        tree.snapshot_macro_dirty_prefix(size0, macro_dirty_prefix);
         armed = true;
     }
     // Truncate before restore so free_orphan does not push ids the
@@ -3780,6 +3830,7 @@ struct PassLoopCallerRollback {
         const auto keep = size0;
         auto snap = std::move(children);
         auto marks = std::move(markers);
+        auto dirty = std::move(macro_dirty_prefix);
         armed = false;
         flat = nullptr;
         try {
@@ -3787,6 +3838,8 @@ struct PassLoopCallerRollback {
                 tree->truncate_to(keep);
             tree->restore_children(std::move(snap));
             tree->restore_marker_provenance(std::move(marks));
+            // Issue #4309: prefix only. Success path does not roll back.
+            tree->restore_macro_dirty_prefix(dirty);
         } catch (...) {
             // [SILENCE-PRIM-#615] child restore failed; still drop the refused tail.
             if (tree->size() > keep)
@@ -3968,7 +4021,8 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                             rename_map;
                         auto expanded = clone_macro_body(
                             flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst, &rename_map,
-                            /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
+                            /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced,
+                            rest_spine_pending ? rest_spine_ckpt : static_cast<std::size_t>(-1));
                         if (expanded == NULL_NODE) {
                             if (rest_spine_pending && production_surface)
                                 flat.truncate_to(rest_spine_ckpt);

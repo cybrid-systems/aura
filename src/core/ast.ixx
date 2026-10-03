@@ -3197,6 +3197,26 @@ public:
         return n;
     }
 
+    // Issue #4309: copy/restore macro_dirty_ for ids < n. Pass-loop deny
+    // rolls the prefix back when a walk wrote it. Not a metrics field.
+    void snapshot_macro_dirty_prefix(std::size_t n, std::vector<std::uint8_t>& out) const {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
+        const std::size_t lim = n < macro_dirty_.size() ? n : macro_dirty_.size();
+        out.resize(lim);
+        for (std::size_t i = 0; i < lim; ++i) {
+            out[i] = std::atomic_ref<std::uint8_t>(macro_dirty_[i]).load(std::memory_order_acquire);
+        }
+    }
+    void restore_macro_dirty_prefix(const std::vector<std::uint8_t>& snap) {
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+        const std::size_t lim =
+            snap.size() < macro_dirty_.size() ? snap.size() : macro_dirty_.size();
+        for (std::size_t i = 0; i < lim; ++i) {
+            std::atomic_ref<std::uint8_t>(macro_dirty_[i])
+                .store(snap[i], std::memory_order_release);
+        }
+    }
+
 public:
     // Low-level raw node creation (for advanced mutation).
     // Creates a minimal node with the given tag and default fields.
@@ -3741,7 +3761,11 @@ public:
         if (parent_.size() < size())
             parent_.resize(size(), NULL_NODE);
         for (auto cid : children_[id]) {
-            if (cid != NULL_NODE && cid < parent_.size())
+            if (cid == NULL_NODE || cid >= parent_.size())
+                continue;
+            // Issue #4309: fresh NULL parents still link. A live parent
+            // (caller subst / dotted-rest arg) is not retargeted.
+            if (parent_[cid] == NULL_NODE || parent_[cid] == id)
                 parent_[cid] = id;
         }
         // Issue #1689: bulk parent rewrite — reindex on next lookup.

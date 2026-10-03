@@ -119,6 +119,42 @@ int run_test_stamp_rest_param_hygiene_marker() {
               "AC2: kMacroExpansion dirty retained");
     }
 
+    // Issue #4309: a live parent on a remaining arg is not stolen by the
+    // fresh list spine, stamp, or restamp.
+    {
+        std::println("\n--- #4309: rest spine does not steal a live parent ---");
+        FlatAST src;
+        StringPool sp;
+        auto body = src.add_literal(static_cast<std::int64_t>(0));
+        FlatAST target;
+        StringPool tp;
+        auto a1 = target.add_variable(tp.intern("a"));
+        target.set_provenance(a1, 3);
+        target.set_schema_cache(a1, 4);
+        const std::array<aura::ast::NodeId, 1> held{a1};
+        auto hold = target.add_call(target.add_variable(tp.intern("hold")),
+                                    std::span<const aura::ast::NodeId>{held});
+        CHECK(target.parent_of(a1) == hold, "4309: a1 parented at hold");
+        auto list_var = target.add_variable(tp.intern("list"));
+        auto list_call = target.add_call(list_var, std::span<const aura::ast::NodeId>{held});
+        CHECK(target.parent_of(a1) == hold, "4309: add_call does not steal");
+        aura_test_call_stamp_rest_param_hygiene(
+            static_cast<void*>(&target), static_cast<void*>(&src), static_cast<std::uint32_t>(body),
+            static_cast<std::uint32_t>(list_call));
+        (void)target.restamp_macro_introduced_generations();
+        (void)target.restamp_macro_introduced_subtree(list_call);
+        CHECK(target.is_macro_introduced(list_call), "4309: spine is MacroIntroduced");
+        CHECK(target.is_macro_introduced(list_var), "4309: list head is MacroIntroduced");
+        CHECK(!target.is_macro_introduced(a1), "4309: remaining arg stays User");
+        CHECK(target.parent_of(a1) == hold, "4309: remaining parent unchanged");
+        CHECK(target.provenance(a1) == 3u, "4309: remaining provenance unchanged");
+        CHECK(target.schema_cache(a1) == 4u, "4309: remaining schema unchanged");
+        CHECK((target.macro_dirty(a1) &
+               static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion)) ==
+                  0,
+              "4309: remaining arg gains no kMacroExpansion");
+    }
+
     // ── AC3: already-marked → skipped ──
     {
         std::println("\n--- AC3: re-stamp skips already MacroIntroduced ---");

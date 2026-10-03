@@ -5164,7 +5164,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Issue #4101: clone_ckpt is the size before the
                                 // rest spine and the clone, same as reexpand_call.
                                 // An inner deny truncates this range so the caller
-                                // flat does not keep the MacroIntroduced clone.
+                                // flat does not keep the MacroIntroduced clone
+                                // (half-expanded body is not evaluated).
                                 const auto clone_ckpt =
                                     rest_spine_pending ? rest_spine_ckpt : f->size();
                                 // Clone the macro body with substitution +
@@ -5181,7 +5182,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto* src_pool = md.pool ? md.pool : p;
                                 auto expanded = clone_macro_body(
                                     *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
-                                    /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
+                                    /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced,
+                                    rest_spine_pending ? rest_spine_ckpt
+                                                       : static_cast<std::size_t>(-1));
                                 if (expanded == aura::ast::NULL_NODE) {
                                     // Issue #3817: production rewind pre-clone
                                     // MacroIntroduced rest spine. #4101:
@@ -7697,7 +7700,8 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         const auto clone_ckpt = rest_spine_pending ? rest_spine_ckpt : flat.size();
         auto expanded =
             clone_macro_body(flat, pool, *src_flat, *src_pool, md.body_id, &subst_map, &rename_map,
-                             /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
+                             /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced,
+                             rest_spine_pending ? rest_spine_ckpt : static_cast<std::size_t>(-1));
         if (expanded == NULL_NODE) {
             if (aura::core::sandbox::is_sandbox_active())
                 flat.truncate_to(clone_ckpt);

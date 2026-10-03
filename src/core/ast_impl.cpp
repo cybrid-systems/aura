@@ -1080,7 +1080,10 @@ std::size_t FlatAST::restamp_macro_introduced_generations() {
         // Parent/child consistency: MacroIntroduced node owns its children.
         if (id < children_.size()) {
             for (NodeId cid : children_[id]) {
-                if (cid != NULL_NODE && cid < parent_.size())
+                if (cid == NULL_NODE || cid >= parent_.size())
+                    continue;
+                // Issue #4309: never steal a live parent (subst / rest arg).
+                if (parent_[cid] == NULL_NODE || parent_[cid] == id)
                     parent_[cid] = id;
             }
         }
@@ -1119,7 +1122,10 @@ std::size_t FlatAST::restamp_macro_introduced_subtree(NodeId root) {
             // Parent/child consistency: MacroIntroduced node owns its children.
             if (id < children_.size()) {
                 for (NodeId cid : children_[id]) {
-                    if (cid != NULL_NODE && cid < parent_.size())
+                    if (cid == NULL_NODE || cid >= parent_.size())
+                        continue;
+                    // Issue #4309: never steal a live parent (subst / rest arg).
+                    if (parent_[cid] == NULL_NODE || parent_[cid] == id)
                         parent_[cid] = id;
                 }
             }
