@@ -550,6 +550,22 @@ static void emit_hygiene_limit_se(std::uint8_t code, std::uint32_t fiber_id) noe
     g_hygiene_violation_se_emit_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #4293: production cross-flat expand zeros non-homologous
+// provenance table indices. MacroIntroduced stays. One observe-only
+// MacroHygiene row per walk (denied=false) so Agent replay sees
+// cross-flat-provenance-zeroed. Not a last_limit stamp and not a
+// new counter — the expand itself still succeeds.
+static void note_cross_flat_provenance_zeroed() noexcept {
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    const auto mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    const auto epoch = aura::core::current_mutation_epoch();
+    emit_security_event_durable(SecurityEventKind::MacroHygiene, tenant_for_macro_self_evo_check(),
+                                mid, epoch,
+                                /*effect_bits=*/0, "macro-hygiene", "cross-flat-provenance-zeroed",
+                                /*denied=*/false, /*fiber_id=*/0);
+}
+
 void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id, std::uint8_t code) noexcept {
     // Issue #3215 / #3341: extra store only on reject/detection (callers
     // already returned on the quiet !is_macro_introduced / rest-already-stamped
@@ -1765,6 +1781,7 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     if (cross_flat && schema_homology_prod && new_root != aura::ast::NULL_NODE) {
         constexpr std::uint32_t kSchemaIdMax = 1u << 24; // #2859 bound
         std::size_t drift = 0;
+        std::size_t prov_zeroed = 0;
         std::vector<aura::ast::NodeId> stack;
         stack.push_back(new_root);
         while (!stack.empty()) {
@@ -1778,9 +1795,12 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
                     ++drift;                     // non-homologous / OOB → fail-closed signal
                 target.set_schema_cache(cur, 0); // re-stamp against target env
             }
-            // Issue #3340: zero leftover provenance table indices. 0 = none.
-            if (target.provenance(cur) != 0)
+            // Issue #3340 / #4293: zero leftover provenance table indices.
+            // 0 = none. Non-homologous ints are not live authority.
+            if (target.provenance(cur) != 0) {
                 target.set_provenance(cur, 0);
+                ++prov_zeroed;
+            }
             const auto cv = target.get(cur);
             for (auto child : cv.children) {
                 if (child != aura::ast::NULL_NODE)
@@ -1794,6 +1814,8 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
                          "target.size()=%zu new_root=%u (OOB schema id re-stamped fail-closed)\n",
                          drift, target.size(), static_cast<unsigned>(new_root));
         }
+        if (prov_zeroed > 0)
+            note_cross_flat_provenance_zeroed();
     }
     // Issue #2235: production always-on validate (was #ifndef NDEBUG).
     // Normal-case: restamp auto-clears kMacroExpansion bit on every
