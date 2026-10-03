@@ -4527,6 +4527,132 @@ static void ac4251_4_source_cite_and_debug_removed() {
           "4251 AC4: read-only membership probe wired");
 }
 
+// Issue #4317: consistent_subtype's ground fallback and Dynamic arm
+// follow consistent_unify's hard face. Function decomposition calls
+// consistent_subtype, so (-> String Int) ~ (-> Int Int) fails closed
+// in production. Soft stays true. Int↔Float stays the numeric coercion.
+// Dynamic <: Dynamic stays true (reflexive). var~Dynamic still binds.
+static void ac4317_unequal_grounds_in_consistent_subtype() {
+    std::println("\n--- #4317: consistent_subtype rejects unequal grounds ---");
+    using aura::compiler::GradualPermissiveness;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::typed_audit::production_hard_face_active;
+    using aura::compiler::typed_audit::set_strategy;
+
+    {
+        ProdScope3253 prod;
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        const auto str_int = reg.register_func({reg.string_type()}, reg.int_type());
+        const auto int_int = reg.register_func({reg.int_type()}, reg.int_type());
+        CHECK(!cs.consistent_unify(str_int, int_int),
+              "4317 AC1: prod (-> String Int) ~ (-> Int Int) false");
+        CHECK(!cs.consistent_unify(int_int, str_int), "4317 AC1: prod reverse false");
+    }
+    {
+        apply_dev_audit_defaults();
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        const auto str_int = reg.register_func({reg.string_type()}, reg.int_type());
+        const auto int_int = reg.register_func({reg.int_type()}, reg.int_type());
+        CHECK(cs.consistent_unify(str_int, int_int), "4317 AC1: soft stays true");
+        CHECK(cs.consistent_unify(int_int, str_int), "4317 AC1: soft reverse true");
+    }
+    {
+        ProdScope3253 prod;
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        const auto fl = reg.lookup_type("Float");
+        CHECK(fl.valid(), "4317 AC2: Float registered");
+        CHECK(!cs.consistent_subtype(reg.string_type(), reg.int_type()),
+              "4317 AC2: String <: Int false");
+        CHECK(cs.consistent_subtype(reg.int_type(), fl), "4317 AC2: Int <: Float true");
+        CHECK(cs.consistent_subtype(fl, reg.int_type()), "4317 AC2: Float <: Int true");
+        CHECK(cs.consistent_subtype(reg.dynamic_type(), reg.dynamic_type()),
+              "4317 AC2: Dynamic <: Dynamic true");
+        const auto lin = reg.register_linear(reg.int_type());
+        CHECK(!cs.consistent_unify(reg.dynamic_type(), lin), "4317: Dynamic ~ Linear still false");
+        CHECK(cs.consistent_unify(cs.fresh_var(), reg.dynamic_type()),
+              "4317: var~Dynamic still binds");
+        // Production Balanced subtype is hard-faced; unify's own ground
+        // arm still requires Strict, so Int~String stays consistent there.
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        CHECK(!cs.consistent_subtype(reg.string_type(), reg.int_type()),
+              "4317 AC2: prod Balanced String <: Int false");
+        CHECK(cs.consistent_unify(reg.string_type(), reg.int_type()),
+              "4317: unify ground arm stays Strict-only");
+    }
+    {
+        apply_dev_audit_defaults();
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        CHECK(cs.consistent_subtype(reg.string_type(), reg.int_type()),
+              "4317 AC2: soft String <: Int true");
+        CompilerMetrics metrics;
+        cs.set_metrics(&metrics);
+        cs.set_active_mutation_id(4317);
+        const auto before =
+            metrics.dynamic_degrade_with_blame_total.load(std::memory_order_relaxed);
+        CHECK(cs.consistent_subtype(reg.dynamic_type(), reg.int_type()),
+              "4317: soft Dynamic <: Int true");
+        CHECK(metrics.dynamic_degrade_with_blame_total.load(std::memory_order_relaxed) > before,
+              "4317: soft accept bumps dynamic_degrade_with_blame_total");
+    }
+    {
+        apply_dev_audit_defaults();
+        const auto save = get_strategy();
+        set_strategy(AuditStrategy::Full);
+        CHECK(!production_defaults_active(), "4317 AC3: Full, defaults off");
+        CHECK(production_hard_face_active(), "4317 AC3: Full is the hard face");
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        const auto dyn_int = reg.register_func({reg.dynamic_type()}, reg.int_type());
+        const auto int_int = reg.register_func({reg.int_type()}, reg.int_type());
+        CHECK(!cs.consistent_unify(dyn_int, int_int),
+              "4317 AC3: Full+!defaults (-> Dynamic Int) ~ (-> Int Int) false");
+        CHECK(!cs.consistent_unify(int_int, dyn_int), "4317 AC3: reverse false");
+        CHECK(!cs.consistent_unify(reg.dynamic_type(), reg.int_type()),
+              "4317 AC3: top-level Dynamic~Int still false");
+        set_strategy(save);
+        apply_dev_audit_defaults();
+    }
+    {
+        ProdScope3253 prod;
+        TypeRegistry reg;
+        DiagnosticCollector diag;
+        InferenceEngine ie(reg, diag);
+        ie.set_gradual_permissiveness(GradualPermissiveness::Strict);
+        const auto str_int = reg.register_func({reg.string_type()}, reg.int_type());
+        const auto int_int = reg.register_func({reg.int_type()}, reg.int_type());
+        CHECK(!ie.is_coercible(str_int, int_int), "4317 AC4: function pair is not a CastOp");
+    }
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto fn = impl.find("bool ConstraintSystem::consistent_subtype");
+    const auto fn_end = impl.find("bool ConstraintSystem::consistent_instance", fn);
+    CHECK(fn != std::string::npos && fn_end != std::string::npos && fn_end > fn,
+          "4317: consistent_subtype");
+    const auto body = (fn == std::string::npos || fn_end == std::string::npos || fn_end <= fn)
+                          ? std::string{}
+                          : impl.substr(fn, fn_end - fn);
+    CHECK(body.find("Issue #4317") != std::string::npos, "4317: cite");
+    CHECK(body.find("production_hard_face_active()") != std::string::npos,
+          "4317: hard face in subtype");
+    CHECK(body.find("TypeTag::INT") != std::string::npos &&
+              body.find("TypeTag::FLOAT") != std::string::npos,
+          "4317: Int↔Float tags");
+    CHECK(impl.find("schema-4317") == std::string::npos, "4317: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4317.cpp").empty(), "4317: no invent");
+    CHECK(read_file("docs/design/4317-unequal-grounds.md").empty(), "4317: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 static void ac4251_5_source_and_linter() {
     std::println("\n--- #4251 AC5: linter wired; no invent ---");
     const auto lint = read_file("scripts/check_dep_closure_miss_4251.py");
@@ -4707,6 +4833,8 @@ int run_test_solve_delta_unresolved_export() {
     ac4251_3_uf_merge_retargets_pending();
     ac4251_4_source_cite_and_debug_removed();
     ac4251_5_source_and_linter();
+    std::println("\n=== Issue #4317: consistent_subtype unequal grounds ===");
+    ac4317_unequal_grounds_in_consistent_subtype();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

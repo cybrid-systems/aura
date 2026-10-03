@@ -2082,13 +2082,17 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
 
     const bool dyn_sub = sub == reg_.dynamic_type();
     const bool dyn_sup = sup == reg_.dynamic_type();
+    // Issue #4317: production_hard_face (Full before defaults) matches
+    // consistent_unify. Soft/Balanced still accept and still record blame.
+    // Dynamic <: Dynamic already returned above (sub == sup).
+    const bool hard = aura::compiler::typed_audit::production_hard_face_active() ||
+                      (unify_gradual_mode_ == GradualPermissiveness::Strict &&
+                       aura::compiler::typed_audit::production_defaults_active());
     if (dyn_sub || dyn_sup) {
-        // Issue #3768: Production Strict — Dynamic arms match
-        // consistent_unify. Function/ADT args are not the Dynamic
-        // singleton at the unify root; without this gate
-        // `(-> Dynamic Int) ~ (-> Int Int)` slides via contravariance.
-        if (unify_gradual_mode_ == GradualPermissiveness::Strict &&
-            aura::compiler::typed_audit::production_defaults_active()) {
+        // Issue #3768: function/ADT args are not the Dynamic singleton
+        // at the unify root; without this gate `(-> Dynamic Int) ~
+        // (-> Int Int)` slides via contravariance.
+        if (hard && sub != sup) {
             if (metrics_ && active_mutation_id_ != 0) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                 m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
@@ -2122,8 +2126,22 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
         return consistent_subtype(f_sub->ret, f_sup->ret);
     }
 
-    // Non-function, non-variable ground types are consistent
-    // (runtime coercion applies)
+    // Issue #4317: non-function grounds are not silently consistent.
+    // Function decomposition above calls this function, so unequal
+    // parameter/return grounds (String vs Int) fail closed here.
+    // Int↔Float stays the single numeric coercion. Mixed func/ground
+    // falls through.
+    if (!reg_.is_var(sub) && !reg_.is_var(sup) && !f_sub && !f_sup) {
+        if (hard) {
+            const auto a = reg_.tag_of(sub);
+            const auto b = reg_.tag_of(sup);
+            const bool numeric = (a == TypeTag::INT && b == TypeTag::FLOAT) ||
+                                 (a == TypeTag::FLOAT && b == TypeTag::INT);
+            if (a != b && !numeric)
+                return false;
+        }
+        return true;
+    }
     return true;
 }
 
