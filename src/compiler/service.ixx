@@ -8201,6 +8201,52 @@ public:
         metrics_.partial_forced_full_by_impact_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #3255: a Soft NodeId drop can land after the last dirty peel.
+    // The helper above returns immediately when want_partial is false, and
+    // relower never calls it when the cache is already clean. Dedup
+    // record_dependency only remirrors its own edge, so root→leaf stays
+    // missing. Restore at the end of every relower. Already-consistent is
+    // a shared walk only — no exclusive lock, no counter bump (AC3).
+    // Unslotted string edges stay inconsistent under production (#3657);
+    // rebuild still skips them.
+    void restore_soft_dual_graph_parity_after_relower_() {
+        bool graphs_ok = true;
+        {
+            lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
+                                                                  lock_order::Level::DepGraph);
+            graphs_ok = aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                                 dep_name_to_slot_);
+        }
+        if (graphs_ok)
+            return;
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        if (aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                     dep_name_to_slot_))
+            return;
+        aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
+                                                                  dep_name_to_slot_);
+        metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
+        aura::compiler::dirty::g_dual_dep_graph_parity_fail_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>
+            affected;
+        for (const auto& [callee_name, callee_entry] : dep_graph_) {
+            (void)callee_name;
+            for (const auto& caller_name : callee_entry.called_by)
+                affected.insert(caller_name);
+        }
+        for (const auto& caller_name : affected) {
+            auto cit2 = ir_cache_v2_.find(caller_name);
+            if (cit2 != ir_cache_v2_.end()) {
+                cit2->second.dirty = true;
+                cit2->second.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(cit2->second);
+            }
+        }
+        metrics_.partial_forced_full_by_impact_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #3615: cone-wide dual-graph parity check. Extends #3486 (which
     // only consulted dirty_names.front()) to walk every name in the cone
     // and detect Soft-erased holes: a root whose dep_graph_[root].called_by
@@ -9071,6 +9117,8 @@ public:
                 }
             }
         }
+        // Issue #3255: clean-cache relower still closes a post-peel fork.
+        restore_soft_dual_graph_parity_after_relower_();
         return ok;
     }
 
