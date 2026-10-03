@@ -89,6 +89,8 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
     // move-semantics to avoid copies where possible.
     std::pmr::vector<Pair> new_pairs{&runtime_resource_};
     new_pairs.reserve(n_old); // upper bound
+    std::vector<std::uint64_t> new_pair_tenants;
+    new_pair_tenants.reserve(n_old);
     std::int64_t new_idx = 0; // remap entries are signed (-1 = dead)
     for (std::size_t i = 0; i < n_old; ++i) {
         // If live_mask is empty, treat all as live.
@@ -100,12 +102,17 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
         if (is_live) {
             pair_remap_.push_back(new_idx);
             new_pairs.push_back(std::move(pairs_[i]));
+            // Issue #4298: the owner record is index-parallel. Move it with
+            // the live slot (missing tail stays never-stamped).
+            const std::uint64_t stamp = (i < pair_slot_tenants_.size()) ? pair_slot_tenants_[i] : 0;
+            new_pair_tenants.push_back(stamp);
             ++new_idx;
         } else {
             pair_remap_.push_back(-1);
         }
     }
     pairs_ = std::move(new_pairs);
+    pair_slot_tenants_ = std::move(new_pair_tenants);
     // Issue #3742: compact_pairs only densifies the pairs_ vector.
     // Live Closure/EnvFrame/cell/vector EvalValues still hold old pair
     // indices (RootRemapPass is object-remap, not pair-id). Rewrite via

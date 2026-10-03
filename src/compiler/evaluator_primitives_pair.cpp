@@ -120,6 +120,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 auto pid = pairs.size();
                 pairs.push_back(
                     {make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
+                ev.note_inrange_pair_mint(pid); // Issue #4298
                 result = make_pair(pid);
             }
             return result;
@@ -221,6 +222,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             }
             auto id = pairs.size();
             pairs.push_back({a[0], a[1]});
+            ev.note_inrange_pair_mint(id); // Issue #4298
             return make_pair(id);
         },
         pure_general(2, "(any any) -> pair", "Construct a pair."));
@@ -233,8 +235,17 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                                             primitive_error_counter);
             }
             auto id = as_pair_idx(a[0]);
-            if (id < pairs.size())
+            if (id < pairs.size()) {
+                // Issue #4298: mailbox of an in-range pair index. Prod face
+                // compares the mint stamp and does not return the payload.
+                if (!ev.inrange_slot_tenant_allows(id, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "car")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "car: cross-tenant pair slot read denied (#4298)",
+                                                primitive_error_counter);
+                }
                 return pairs[id].car;
+            }
             // Fallback to shared pair storage (JIT/arena pairs)
             if (id < g_pair_slots.size() && g_pair_slots[id]) {
                 // Issue #4111: g_pair_slots index space is process-shared - the
@@ -284,8 +295,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                                             primitive_error_counter);
             }
             auto id = as_pair_idx(a[0]);
-            if (id < pairs.size())
+            if (id < pairs.size()) {
+                // Issue #4298: same in-range read gate as car.
+                if (!ev.inrange_slot_tenant_allows(id, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "cdr")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "cdr: cross-tenant pair slot read denied (#4298)",
+                                                primitive_error_counter);
+                }
                 return pairs[id].cdr;
+            }
             // Fallback to shared pair storage (JIT/arena pairs)
             if (id < g_pair_slots.size() && g_pair_slots[id]) {
                 // Issue #4111: g_pair_slots index space is process-shared - the
@@ -565,6 +584,15 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             std::lock_guard lock(ev.alloc_storage_lock_);
             auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
+                // Issue #4298: in-range pairs_ skipped the #4057 owner compare.
+                // Prod face audits a foreign mint and leaves the slot unchanged.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   aura::compiler::security::kEffectMutate,
+                                                   "set-car!")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "set-car!: cross-tenant pair slot write "
+                                                "denied (#4298)");
+                }
                 pairs[idx].car = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
                 // Issue #4057: g_pair_slots index space is process-shared — a
@@ -609,6 +637,14 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             std::lock_guard lock(ev.alloc_storage_lock_);
             auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
+                // Issue #4298: same in-range write gate as set-car!.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   aura::compiler::security::kEffectMutate,
+                                                   "set-cdr!")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "set-cdr!: cross-tenant pair slot write "
+                                                "denied (#4298)");
+                }
                 pairs[idx].cdr = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
                 // Issue #4057: same cross-tenant arm as set-car! — the

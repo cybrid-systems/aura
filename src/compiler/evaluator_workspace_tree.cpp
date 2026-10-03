@@ -375,6 +375,9 @@ bool Evaluator::restore_panic_checkpoint() {
         }
         if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
             pairs_.resize(panic_safe_pairs_size_);
+            // Issue #4298: a reused index must not keep the truncated slot's owner.
+            if (pair_slot_tenants_.size() > pairs_.size())
+                pair_slot_tenants_.resize(pairs_.size());
         }
         // Issue #425: post-truncate size verification. The
         // mutation stack may have been re-entered between save

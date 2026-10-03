@@ -390,6 +390,7 @@ Evaluator::~Evaluator() {
         cl_sh.map.clear();
     cells_.clear();
     pairs_.clear();
+    pair_slot_tenants_.clear(); // Issue #4298: drop owner records with the slots
     error_values_.clear();
     opaque_heap_.clear();
     string_heap_.clear();

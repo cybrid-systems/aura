@@ -9,6 +9,7 @@ module;
 #include "hash_meta.h"        // FNV constants (#901)
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
+#include "security_side_effect.hh"    // Issue #4298: kEffectMutate on the in-range consult
 
 module aura.compiler.evaluator;
 
@@ -220,12 +221,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             std::vector<EvalValue> elems(a.begin(), a.end());
             auto idx = vector_heap.size();
             vector_heap.push_back(std::move(elems));
+            ev.note_inrange_vector_mint(idx); // Issue #4298
             return make_vector(idx);
         },
         pure_general(255, "(...vals) -> vector", "Construct a vector from arguments."));
     register_prim(
         add, ev, "vector-ref",
-        [&vector_heap, &string_heap, &error_values,
+        [&ev, &vector_heap, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_vector(a[0])) {
                 return make_primitive_error(string_heap, error_values, "vector-ref: not a vector",
@@ -237,6 +239,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return make_primitive_error(string_heap, error_values,
                                             "vector-ref: index out of bounds",
                                             primitive_error_counter);
+            }
+            // Issue #4298: do not return a foreign tenant's element.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
+                                               "vector-ref")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector-ref: cross-tenant vector slot read denied (#4298)",
+                    primitive_error_counter);
             }
             return vector_heap[idx][pos];
         },
@@ -262,6 +272,16 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return make_primitive_error(string_heap, error_values,
                                             "vector-set!: index out of bounds",
                                             primitive_error_counter);
+            }
+            // Issue #4298: in-range vector_heap had no owner compare. Prod face
+            // audits a foreign mint and leaves the element unchanged.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true,
+                                               aura::compiler::security::kEffectMutate,
+                                               "vector-set!")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector-set!: cross-tenant vector slot write denied (#4298)",
+                    primitive_error_counter);
             }
             vector_heap[idx][pos] = a[2];
             return make_void();
@@ -351,12 +371,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             std::vector<EvalValue> elems(n, init);
             auto idx = vector_heap.size();
             vector_heap.push_back(std::move(elems));
+            ev.note_inrange_vector_mint(idx); // Issue #4298
             return make_vector(idx);
         },
         pure_general(2, "(int any) -> vector", "Allocate a vector filled with a value."));
     register_prim(
         add, ev, "list->vector",
-        [&pairs, &vector_heap](std::span<const EvalValue> a) {
+        [&ev, &pairs, &vector_heap](std::span<const EvalValue> a) {
             std::vector<EvalValue> elems;
             if (!a.empty()) {
                 auto v = a[0];
@@ -370,12 +391,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             auto idx = vector_heap.size();
             vector_heap.push_back(std::move(elems));
+            ev.note_inrange_vector_mint(idx); // Issue #4298
             return make_vector(idx);
         },
         pure_general(1, "(list) -> vector", "Convert a list to a vector."));
     register_prim(
         add, ev, "vector->list",
-        [&pairs, &vector_heap, &string_heap, &error_values,
+        [&ev, &pairs, &vector_heap, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty() || !is_vector(a[0])) {
                 return make_primitive_error(string_heap, error_values, "vector->list: not a vector",
@@ -391,6 +413,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
                 auto pid = pairs.size();
                 pairs.push_back({*it, result});
+                ev.note_inrange_pair_mint(pid); // Issue #4298
                 result = make_pair(pid);
             }
             return result;

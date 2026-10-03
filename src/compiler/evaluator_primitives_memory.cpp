@@ -234,6 +234,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.string_heap_.shrink_to_fit();
             ev.pairs_.clear();
             ev.pairs_.shrink_to_fit();
+            ev.pair_slot_tenants_.clear(); // Issue #4298
+            ev.pair_slot_tenants_.shrink_to_fit();
             // Issue #2486: cells_ was skipped — gc-stats reports cells:N but
             // gc-heap left stale cell slots, so a "stronger reset" was a lie
             // and (cell) ids could alias post-gc garbage. Clear with the other
@@ -249,6 +251,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             g_hash_tables.shrink_to_fit();
             ev.vector_heap_.clear();
             ev.vector_heap_.shrink_to_fit();
+            ev.vector_slot_tenants_.clear(); // Issue #4298
+            ev.vector_slot_tenants_.shrink_to_fit();
             ev.opaque_heap_.clear();
             ev.opaque_heap_.shrink_to_fit();
             // gc-heap is a stronger reset than gc-temp; also clear
@@ -335,6 +339,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         g_hash_tables.shrink_to_fit();
         ev.vector_heap_.clear();
         ev.vector_heap_.shrink_to_fit();
+        ev.vector_slot_tenants_.clear(); // Issue #4298
+        ev.vector_slot_tenants_.shrink_to_fit();
         ev.opaque_heap_.clear();
         ev.opaque_heap_.shrink_to_fit();
 
