@@ -3423,10 +3423,7 @@ aura::ast::NodeId expand_inner_macros(
             for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
                 if (parent_children[ci] == root) {
                     flat->set_child(parent_id, ci, unwrapped);
-                    // Issue #2809: targeted restamp of (parent_id, ci,
-                    // unwrapped) — not restamp_all_node_generations
-                    // (O(N) per unwrap → O(N×M) under multi-pass expand).
-                    restamp_after_qq_unwrap(*flat, parent_id, ci, unwrapped);
+                    restamp_after_qq_unwrap(*flat, parent_id, ci, unwrapped); // #2809
                     unwrap_ci = ci;
                     rewrote = true;
                     break;
@@ -3443,7 +3440,8 @@ aura::ast::NodeId expand_inner_macros(
         // is wired (standalone FlatAST). Soft/Off keeps the rewrite.
         if (production_surface && inner_expand_production_limit_deny()) {
             // Issue #4077: do not set-code a Guard-owned checkpoint.
-            // Issue #4292: restore only when this frame installed one.
+            // Issue #4292: owned frame calls
+            // aura_evaluator_try_restore_macro_expand_checkpoint.
             if (expand_inner_checkpoint_owned())
                 restore_owned_inner_expand_checkpoint();
             if (rewrote)
