@@ -234,6 +234,96 @@ static void ac6_lagging_column_fail_closed() {
     CHECK(victim.get(0).tag == NodeTag::LiteralInt, "AC6: covered id still reads LiteralInt");
 }
 
+// Issue #4312: two readers rebuild dense columns once; equal-length
+// set_child does not rebuild and cannot race the span construction.
+static void ac7_children_columnar_single_flight() {
+    std::println("\n--- #4312: children_columnar single-flight rebuild ---");
+    auto ast = read_file("src/core/ast.ixx");
+    const auto sig = ast.find("SafePCVSpan<NodeId> children_columnar(NodeId id) const");
+    const auto sync_fn = ast.find("void sync_dense_columns_from_pcv()", sig);
+    CHECK(sig != std::string::npos && sync_fn != std::string::npos && sync_fn > sig,
+          "children_columnar definition");
+    if (sig != std::string::npos && sync_fn != std::string::npos && sync_fn > sig) {
+        const auto window = ast.substr(sig, sync_fn - sig);
+        CHECK(window.find("structural_mtx_") != std::string::npos, "rebuild locks structural_mtx_");
+        CHECK(window.find("mutable_get()") != std::string::npos, "const method uses mutable_get");
+        CHECK(window.find("if (dense_dirty_)") != std::string::npos, "dirty check remains");
+        CHECK(window.find("sync_dense_columns_from_pcv();") != std::string::npos,
+              "sync under the unique lock");
+        CHECK(window.find("child_data_.data() + begin, count") != std::string::npos,
+              "span still views child_data_");
+        CHECK(window.find("workspace_mtx_") == std::string::npos,
+              "children_columnar does not take the workspace mutex");
+    }
+
+    FlatAST flat;
+    const auto fn = flat.add_literal(1);
+    std::vector<NodeId> args;
+    args.reserve(4);
+    for (int i = 0; i < 4; ++i)
+        args.push_back(flat.add_literal(10 + i));
+    const auto call = flat.add_call(fn, args);
+    CHECK(flat.dense_children_dirty(), "dense columns start dirty");
+    CHECK(flat.dense_columns_pcv_sync_total() == 0, "no rebuild yet");
+
+    std::atomic<int> ready{0};
+    std::atomic<int> go{0};
+    std::vector<NodeId> got0;
+    std::vector<NodeId> got1;
+    auto run = [&](std::vector<NodeId>* out) {
+        ready.fetch_add(1, std::memory_order_acq_rel);
+        while (go.load(std::memory_order_acquire) == 0)
+            std::this_thread::yield();
+        auto span = flat.children_columnar(call);
+        out->reserve(span.size());
+        for (NodeId id : span)
+            out->push_back(id);
+    };
+    std::thread t0(run, &got0);
+    std::thread t1(run, &got1);
+    while (ready.load(std::memory_order_acquire) < 2)
+        std::this_thread::yield();
+    go.store(1, std::memory_order_release);
+    t0.join();
+    t1.join();
+
+    CHECK(flat.dense_columns_pcv_sync_total() == 1, "one dense rebuild");
+    CHECK(!flat.dense_children_dirty(), "columns clean after rebuild");
+    CHECK(got0.size() == args.size() + 1, "reader 0 child count");
+    CHECK(got0 == got1, "both readers observe the same child list");
+    if (!got0.empty())
+        CHECK(got0[0] == fn, "call child 0 is the function");
+
+    const auto sync_after = flat.dense_columns_pcv_sync_total();
+    std::atomic<int> bad{0};
+    std::thread writer([&] {
+        for (int i = 0; i < 300; ++i)
+            flat.set_child(call, 1, args[static_cast<std::size_t>(i) % args.size()]);
+    });
+    std::thread reader([&] {
+        for (int i = 0; i < 300; ++i) {
+            auto span = flat.children_columnar(call);
+            if (span.size() != args.size() + 1) {
+                bad.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            for (NodeId id : span) {
+                bool known = (id == fn);
+                for (NodeId a : args)
+                    if (id == a)
+                        known = true;
+                if (!known)
+                    bad.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    writer.join();
+    reader.join();
+    CHECK(bad.load() == 0, "equal-length set_child stays inside the child set");
+    CHECK(flat.dense_columns_pcv_sync_total() == sync_after,
+          "in-place set_child does not rebuild dense columns");
+}
+
 } // namespace
 
 int run_test_flatast_soa_read_guard() {
@@ -244,6 +334,7 @@ int run_test_flatast_soa_read_guard() {
     ac4_hotpath_get();
     ac5_gate();
     ac6_lagging_column_fail_closed();
+    ac7_children_columnar_single_flight();
     std::println("\n=== #2488 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
