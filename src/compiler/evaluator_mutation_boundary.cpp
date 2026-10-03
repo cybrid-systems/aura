@@ -4261,6 +4261,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         return; // Issue #1590: quota soft-reject never entered a boundary
                 // Issue #3743: never-entered inert does not restamp (no gen bump).
     }
+    // Issue #4302: remember this evaluator's action mid, including 0,
+    // before exit clears the fiber session mid and the boundary TLS note.
+    // Nested guards are not outermost. Moved-from guards have ev_ == nullptr.
+    if (is_outermost_ && ev_)
+        ev_->note_last_completed_audit_mid(session_mid_at_enter_);
     // Issue #1897 / #1818 class: auto-flip success_flag when an
     // exception is unwinding through the Guard and the caller did
     // not mark_failed / set flag=false. Without this, dtor would

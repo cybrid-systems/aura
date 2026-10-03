@@ -237,6 +237,11 @@ struct EvolutionSuggestedNextInput {
     // at all, so neither reaches the last_se_denied arm. Folded from
     // already-loaded faces by the caller; never set under Soft / mid=0.
     bool wal_miss_refuse_evidence = false;
+    // Issue #4302: same-mid SE reason is the stable mid-fallback refuse.
+    // Sticky join mid 0 is not Success, but this refuse is InspectDeny.
+    // A bare mid 0 (no deny bit, reason not this string) stays None.
+    // Append-only — wal_miss_refuse_evidence alone still does not deny mid 0.
+    bool reason_is_mid_fallback_refused = false;
 };
 
 // Pure: same input → same output. No atomics / WAL / mutate.
@@ -244,8 +249,15 @@ struct EvolutionSuggestedNextInput {
 decide_evolution_suggested_next(const EvolutionSuggestedNextInput& in) noexcept {
     if (!in.production_defaults)
         return EvolutionSuggestedNext::SoftObserve;
-    if (in.join_mid == 0)
+    // Issue #4302: mid 0 is not an invented Success. A same-action refuse
+    // (SE denied, or reason mid-fallback-refused) is InspectDeny. Bare
+    // mid 0 with no SE stays None. wal_miss_refuse_evidence alone does
+    // not flip this arm (#4142: the bit at mid 0 stays None).
+    if (in.join_mid == 0) {
+        if (in.last_se_denied || in.reason_is_mid_fallback_refused)
+            return EvolutionSuggestedNext::InspectDeny;
         return EvolutionSuggestedNext::None;
+    }
     // Issue #4064: a green schedule / commit / densify / playbook must not
     // call a rollback or SE deny "ok". Observe only — no playbook, no reemit.
     if (in.typed_outcome == 2 || in.typed_outcome == 3 || in.last_se_denied)
@@ -259,8 +271,8 @@ decide_evolution_suggested_next(const EvolutionSuggestedNextInput& in) noexcept 
     // query:security-audit shows the miss/refuse row, and
     // query:security-posture exposes the refuse / append-fail counters.
     // Observe only — still no playbook / reemit, no second bus, no
-    // invented Success. Soft + mid=0 short-circuits above are untouched
-    // (mid=0 stays none; mid-fallback-refused is the mid=0 refuse face).
+    // invented Success. Soft short-circuit above is untouched. Bare mid 0
+    // stays None; a mid-fallback-refused row at mid 0 is InspectDeny (#4302).
     if (in.wal_miss_refuse_evidence)
         return EvolutionSuggestedNext::InspectDeny;
     if (in.schedule_would_deny || in.posture_degraded)

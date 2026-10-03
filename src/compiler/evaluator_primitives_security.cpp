@@ -6255,13 +6255,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t proof_mid =
                 g_tls_boundary_audit_noted ? g_tls_boundary_audit_mid : last_stamped;
             // Issue #3738: explicit 0 is a legal join key (refuse class,
-            // same as query:security-audit #3462). Omitted / non-int still
-            // uses last_stamped.
+            // same as query:security-audit #3462).
+            // Issue #4302: omitted arg joins THIS evaluator's last completed
+            // action mid, including sticky 0. Process-global last_stamped
+            // is only the fallback before any outermost exit. join==0 with
+            // that slot valid is a real same-mid filter, not "any row".
             const bool filt_mid = !args.empty() && is_int(args[0]);
+            const bool completed_valid = ev.has_last_completed_audit_mid();
             const std::uint64_t want_mid =
-                filt_mid ? static_cast<std::uint64_t>(as_int(args[0])) : last_stamped;
+                filt_mid ? static_cast<std::uint64_t>(as_int(args[0]))
+                         : (completed_valid ? ev.last_completed_audit_mid() : last_stamped);
             const std::uint64_t join_mid = want_mid;
-            const bool se_filter_by_mid = filt_mid || join_mid != 0;
+            const bool se_filter_by_mid = filt_mid || completed_valid || join_mid != 0;
 
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
@@ -6733,6 +6738,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 // already loaded above. Still observe-only.
                 nin.typed_outcome = static_cast<std::uint8_t>(typed_outcome);
                 nin.last_se_denied = last_se_denied != 0;
+                // Issue #4302: mid 0 + this reason is InspectDeny. The
+                // string compare is on the row already loaded above.
+                nin.reason_is_mid_fallback_refused =
+                    last_se_reason_str.find("mid-fallback-refused") != std::string::npos;
                 // Issue #4142: refuse + append-miss faces feed the fold.
                 // Production/Full only — the leading (A || B) && guard
                 // short-circuits so Soft / WAL-off never reaches the
