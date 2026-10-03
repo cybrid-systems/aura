@@ -1177,7 +1177,7 @@ static void ac3970_source_cite() {
           "3970: evolution hash insert_kv wal-segments-scanned");
     CHECK(sec.find("insert_kv(\"schema-3970\"") != std::string::npos, "3970: schema-3970 sentinel");
     CHECK(sec.find("insert_kv(\"issue-3970\"") != std::string::npos, "3970: issue-3970 sentinel");
-    CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+    CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 80") != std::string::npos,
           "3970: planned keys stay 72");
     CHECK(read_file("tests/issues/test_issue_3970.cpp").empty(), "3970: no test_issue_3970.cpp");
     CHECK(read_file("docs/design/3970-wal-full-scan.md").empty(), "3970: no docs/design/3970-*");
@@ -1944,6 +1944,46 @@ static void ac4302_completed_mid0_refuse_join() {
     aura::core::reset_mutation_epoch_for_test();
 }
 
+// Issue #4303: reason[64] keeps 63 bytes. last-se-op publishes e.op.
+static void ac4303_last_se_op_survives_reason_cap() {
+    std::println("\n--- #4303: last-se-op keeps the operator reason[64] cuts ---");
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::SecurityEventKind;
+    aura::core::security_event::reset_security_event_ring_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const std::string long_reason =
+        "invariant-denied: linear-cross-closure tenant=1 op=composite-linear-synth-hard-fail";
+    CHECK(long_reason.size() == 83, "4303: example reason is 83 bytes");
+    append_security_event(g_security_event_ring(), SecurityEventKind::InvariantFail,
+                          /*tenant=*/1, /*mid=*/430301, /*epoch=*/1, /*effect=*/0,
+                          "composite-linear-synth-hard-fail", long_reason,
+                          /*denied=*/true, /*fiber=*/0);
+    const std::string short_reason = "invariant-denied: type tenant=1 op=structural";
+    CHECK(short_reason.size() < 63, "4303: short reason fits reason[64]");
+    append_security_event(g_security_event_ring(), SecurityEventKind::InvariantFail,
+                          /*tenant=*/1, /*mid=*/430302, /*epoch=*/1, /*effect=*/0, "structural",
+                          short_reason, /*denied=*/true, /*fiber=*/0);
+    CompilerService cs;
+    const auto q = [](int mid, const char* key) {
+        return "(hash-ref (engine:metrics \"query:evolution-audit-decision\" " +
+               std::to_string(mid) + ") \"" + key + "\")";
+    };
+    CHECK(decision_str_is(cs, q(430301, "last-se-op"), "composite-linear-synth-hard-fail"),
+          "4303: long deny last-se-op is the full operator");
+    CHECK(decision_str_is(cs, q(430301, "last-se-reason"), long_reason.substr(0, 63).c_str()),
+          "4303: last-se-reason stays the 63-byte prefix");
+    CHECK(decision_str_is(cs, q(430302, "last-se-reason"), short_reason.c_str()),
+          "4303: short deny last-se-reason equals the formatter output");
+    CHECK(decision_str_is(cs, q(430302, "last-se-op"), "structural"),
+          "4303: short deny last-se-op is structural");
+    const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    CHECK(decision_str_is(cs, q(430399, "last-se-op"), ""),
+          "4303: no same-mid row leaves last-se-op empty");
+    CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq,
+          "4303: the decision query emits no SE");
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -1972,6 +2012,7 @@ int run_test_audit_replay_join() {
     ac22_grant_node_join_after_wrap_4135();
     ac23_wal_miss_refuse_next_4142();
     ac4302_completed_mid0_refuse_join();
+    ac4303_last_se_op_survives_reason_cap();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

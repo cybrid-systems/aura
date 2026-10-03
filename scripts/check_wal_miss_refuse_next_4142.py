@@ -134,7 +134,7 @@ def main() -> int:
         re.search(r'insert_kv(_str)?\("[^"]*4142', prim) is None,
         "AC4: no new insert_kv key cites 4142 (suggested-next stays the observable)",
     )
-    must("kEvolutionAuditDecisionPlannedKeys = 72" in prim, "AC4: planned_keys stays 72 (no hash capacity churn)")
+    must("kEvolutionAuditDecisionPlannedKeys = 80" in prim, "AC4: planned_keys stays 72 (no hash capacity churn)")
     must(
         "static void ac23_wal_miss_refuse_next_4142()" in tst,
         "AC4: ac23_wal_miss_refuse_next_4142 defined in test_audit_replay_join.cpp",

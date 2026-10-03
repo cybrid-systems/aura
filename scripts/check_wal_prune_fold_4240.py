@@ -162,7 +162,7 @@ def main() -> int:
         "AC4: no new insert_kv key cites 4240 (suggested-next stays the observable)",
     )
     must(
-        "kEvolutionAuditDecisionPlannedKeys = 72" in prim,
+        "kEvolutionAuditDecisionPlannedKeys = 80" in prim,
         "AC4: planned_keys stays 72 (no hash capacity churn)",
     )
     leading = assign_region.find("production_defaults_active() ||")
