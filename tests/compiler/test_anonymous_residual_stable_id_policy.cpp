@@ -36,6 +36,10 @@ extern "C" void aura_register_fn(std::int64_t func_id,
                                  std::int64_t (*fn)(std::int64_t*, std::uint32_t),
                                  std::int32_t local_count, std::int32_t arg_count,
                                  std::int32_t env_count);
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
 
 namespace {
 
@@ -3237,6 +3241,98 @@ static void ac4025_source_and_soft_wholesale() {
 }
 
 
+// Issue #4307: residual tick and covered-named walk pass the live linear
+// fingerprint. Matching non-zero does not MustDeopt when env/defuse match.
+// A drifted non-zero still MustDeopts and aura_closure_call returns 0.
+// Pure-anon drain keeps linear_fp=0 (captures already filtered).
+static std::int64_t ac4307_installed_body(std::int64_t*, std::uint32_t) {
+    return 4307;
+}
+
+static void ac4307_live_linear_fp_residual_and_covered() {
+    std::println("\n--- #4307: residual + covered remount use live linear fingerprint ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #4307") != std::string::npos, "4307: runtime cites");
+    const auto drain = rt.find("aura_pure_anon_bg_remount_drain");
+    CHECK(drain != std::string::npos, "4307: pure-anon drain present");
+    if (drain != std::string::npos) {
+        const auto win = rt.substr(drain, 6000);
+        CHECK(win.find("/*linear_fp=*/0") != std::string::npos,
+              "4307: pure-anon drain still passes linear_fp=0");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4307.cpp").empty(), "4307: no test_issue file");
+    CHECK(read_file("docs/design/4307-residual-linear-fp.md").empty(), "4307: no docs/design");
+
+    const auto defuse0 = aura_get_aot_defuse_version();
+    const auto env0 = aura_get_aot_live_env_frame_version();
+    const auto lin0 = aura_get_aot_live_linear_state_fingerprint();
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto prod0 = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_live_env_frame_version(0);
+    aura_set_aot_live_linear_state_fingerprint(7);
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_force_skip(0);
+
+    constexpr std::int64_t kJit = 412607;
+    aura_register_fn_named("ac4307_residual", kJit, &ac4307_installed_body, 0, 0, 0);
+    const auto cid = aura_alloc_closure(kJit);
+    CHECK(cid >= 0, "4307: residual alloc");
+    aura_closure_set_name(cid, "ac4307_residual");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_residual_remount_ok_total_v_read() > ok0, "4307: matching tick walked");
+    CHECK(aura_closure_get_must_deopt(cid) == 0,
+          "4307: matching non-zero fingerprint does not MustDeopt");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 4307, "4307: matching call runs installed body");
+
+    aura_set_aot_live_linear_state_fingerprint(9);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "4307: drifted fingerprint MustDeopts");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "4307: drifted call returns 0");
+
+    // Budget 0 still returns before the walk (drift stays MustDeopt).
+    aura_closure_set_must_deopt(cid, 0);
+    aura_residual_live_closure_remount_tick(0);
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "4307: budget 0 does not walk");
+
+    // Covered named walk after a real ScalarFn install.
+    aura_set_aot_live_linear_state_fingerprint(7);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    constexpr std::uint32_t kSid = 430701u;
+    aura_register_fn_named("ac4307_covered", kJit, &ac4307_installed_body, 0, 0, 0);
+    const auto named = aura_alloc_closure(kJit);
+    CHECK(named >= 0, "4307: covered alloc");
+    aura_closure_set_name(named, "ac4307_covered");
+    aura_test_set_closure_stable_func_id(named, kSid);
+    aura_closure_set_must_deopt(named, 0);
+    reg.note_relower_success_define(kSid);
+    CHECK(reg.relower_success_define_active(), "4307: define side active");
+    const auto cok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    aura_sync_remount_covered_named_live_closures(/*mask=*/1, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > cok0, "4307: covered walk ran");
+    CHECK(aura_closure_get_must_deopt(named) == 0,
+          "4307: covered matching linear stays MustDeopt 0");
+    ctr.production_defaults_active.store(prod0, std::memory_order_relaxed);
+    CHECK(aura_closure_call(named, nullptr, 0) == 4307, "4307: covered install still callable");
+
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_residual_remount_state();
+    aura_set_aot_defuse_version(defuse0);
+    aura_set_aot_live_env_frame_version(env0);
+    aura_set_aot_live_linear_state_fingerprint(lin0);
+    ctr.production_defaults_active.store(prod0, std::memory_order_relaxed);
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -3682,6 +3778,8 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac4025_nudge_after_heal_clear();
     ac4025_soft_storm_keeps_leave_native();
     ac4025_source_and_soft_wholesale();
+    std::println("\n=== Issue #4307: residual + covered live linear fingerprint ===");
+    ac4307_live_linear_fp_residual_and_covered();
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"

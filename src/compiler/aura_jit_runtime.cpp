@@ -3090,6 +3090,9 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
                 continue;
             // Issue #3060: remount fail uses the shared MustDeopt path
             // (remount_or_force_deopt_unlocked_no_call_time_counter).
+            // Issue #4307: this drain already skipped env/linear captures
+            // (aura_closure_has_env_or_linear_captures_unlocked). Keep
+            // linear_fp=0; do not special-case 0 as "skip linear" elsewhere.
             if (remount_or_force_deopt_unlocked_no_call_time_counter(cid, live_env,
                                                                      /*linear_fp=*/0,
                                                                      table_epoch) != 0)
@@ -3445,6 +3448,9 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 
             const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
             const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+            // Issue #4307: same fingerprint as the #4075 named walk.
+            // Passing 0 fails every non-zero g_closure_linear_state.
+            const auto linear_fp = aura_get_aot_live_linear_state_fingerprint();
             const std::uint64_t start =
                 g_residual_remount_cursor.load(std::memory_order_relaxed) % nslots;
 
@@ -3466,8 +3472,7 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 
             auto heal_slot = [&](std::size_t cid) -> bool {
                 if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                        static_cast<std::int64_t>(cid), live_env,
-                        /*linear_fp=*/0, table_epoch) != 0) {
+                        static_cast<std::int64_t>(cid), live_env, linear_fp, table_epoch) != 0) {
                     // Issue #3503: env_gen only; MustDeopt stays if dual-fresh miss.
                     note_capture_remount_ok_keep_epochs_unlocked(cid, live_env);
                     ++ok;
@@ -3687,6 +3692,8 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        // Issue #4307: same fingerprint as the #4075 named walk.
+        const auto linear_fp = aura_get_aot_live_linear_state_fingerprint();
 
         std::uint64_t used = 0;
         for (std::size_t cid = 0; cid < nslots; ++cid) {
@@ -3707,8 +3714,7 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
             }
             ++used;
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                    static_cast<std::int64_t>(cid), live_env,
-                    /*linear_fp=*/0, table_epoch) != 0) {
+                    static_cast<std::int64_t>(cid), live_env, linear_fp, table_epoch) != 0) {
                 // Issue #3503: env_gen only; MustDeopt stays if dual-fresh miss.
                 note_capture_remount_ok_keep_epochs_unlocked(cid, live_env);
                 ++ok;
