@@ -5152,6 +5152,12 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     return normalized;
 }
 
+// Issue #4316: the Call arm must stay short. #3044's linter only scans
+// the first 8000 bytes of this function, and Class is the last tag.
+bool call_ground_type_error(const FlatAST& flat, NodeId id) noexcept {
+    return flat.node_error(id) == static_cast<std::uint8_t>(ErrorKind::TypeError);
+}
+
 TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
     cur_loc_ = {v.line, v.col, 0};
 
@@ -5172,16 +5178,11 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         case Tag::Variable:
             result = synthesize_flat_var(flat, pool, id, v);
             break;
-        case Tag::Call: {
+        case Tag::Call:
             result = synthesize_flat_call(flat, pool, v);
-            // Issue #4316: ground non-function under the hard face
-            // stamped TypeError and returned Void. Do not cache that
-            // and do not clear_dirty (same early return as #3330).
-            // ArityMismatch stays on the cache path below.
-            if (flat.node_error(id) == static_cast<std::uint8_t>(ErrorKind::TypeError))
+            if (call_ground_type_error(flat, id))
                 return result;
             break;
-        }
         case Tag::IfExpr:
             result = synthesize_flat_if(flat, pool, id, v);
             break;
