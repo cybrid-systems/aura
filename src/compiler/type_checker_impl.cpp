@@ -5002,6 +5002,14 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     // can demote this export (see the authoritative store below).
     const std::size_t diag_count_before_synthesis = diag_.diagnostics().size();
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
+    // Issue #4316: a ground non-function call returns Void before the
+    // Call arm caches. Remember that result — the solve-failure arm
+    // below overwrites `result` with Dynamic, and the root set_type
+    // would then clear_dirty a green cache.
+    const auto synth_result = result;
+    const bool call_ground_refused =
+        flat.get(id).tag == NodeTag::Call &&
+        flat.node_error(id) == static_cast<std::uint8_t>(ErrorKind::TypeError);
     cs_.set_delta_record_mode(false);
     std::vector<Constraint> unresolved;
     SolveResult solve_status = SolveResult::SOLVED;
@@ -5130,6 +5138,10 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
             result = reg_.dynamic_type();
         }
     }
+    if (call_ground_refused) {
+        // Do not republish Void or clear_dirty on the root Call.
+        return synth_result;
+    }
     auto normalized = cs_.normalize(result);
     // Update the root's cached type with the final resolved type after solving.
     // Individual sub-nodes' caches are updated during their synthesize_flat calls.
@@ -5160,9 +5172,16 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         case Tag::Variable:
             result = synthesize_flat_var(flat, pool, id, v);
             break;
-        case Tag::Call:
+        case Tag::Call: {
             result = synthesize_flat_call(flat, pool, v);
+            // Issue #4316: ground non-function under the hard face
+            // stamped TypeError and returned Void. Do not cache that
+            // and do not clear_dirty (same early return as #3330).
+            // ArityMismatch stays on the cache path below.
+            if (flat.node_error(id) == static_cast<std::uint8_t>(ErrorKind::TypeError))
+                return result;
             break;
+        }
         case Tag::IfExpr:
             result = synthesize_flat_if(flat, pool, id, v);
             break;
@@ -6009,6 +6028,26 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     // Unknown function type: check args dynamically
     for (std::size_t i = 1; i < v.children.size(); i++)
         synthesize_flat(flat, pool, v.child(i), flat.get(v.child(i)));
+
+    // Issue #4316: a concrete non-function callee is not a gradual
+    // success under the production hard face. Type variables and
+    // Dynamic stay on the return below (var ~ Dynamic binds Any).
+    // Empty Call already returned fresh_var() above.
+    func_type = cs_.find(func_type);
+    if (!reg_.func_of(func_type) && !reg_.module_of(func_type)) {
+        const bool ground = func_type.valid() && !reg_.is_var(func_type) &&
+                            func_type != reg_.dynamic_type() &&
+                            reg_.linear_of(func_type) == nullptr;
+        const bool hard = aura::compiler::typed_audit::production_hard_face_active();
+        if (ground && hard) {
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                                    "cannot apply non-function " + reg_.format_type(func_type),
+                                    cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
+            flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::TypeError));
+            return reg_.void_type();
+        }
+    }
     return reg_.dynamic_type();
 }
 

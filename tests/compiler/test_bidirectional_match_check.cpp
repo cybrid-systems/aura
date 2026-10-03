@@ -16,6 +16,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/mutation_concurrency_health.hh"
+#include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
@@ -533,6 +534,294 @@ static void ac3518_empty_linear_call_no_dynamic() {
     apply_dev_audit_defaults();
 }
 
+// Issue #4316: production synthesize_flat_call must not accept a ground
+// non-function callee as Dynamic. Var / Dynamic callees stay gradual.
+static void ac4316_ground_non_function_call() {
+    std::println("\n--- #4316: production ground non-function call is TypeError ---");
+    using aura::ast::NodeTag;
+    using aura::compiler::CompilerMetrics;
+    using aura::compiler::ConstraintSystem;
+    using aura::compiler::GradualPermissiveness;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::typed_audit::production_hard_face_active;
+    using aura::compiler::typed_audit::set_strategy;
+    using aura::diag::ErrorKind;
+
+    struct ProdScope {
+        ProdScope() { apply_production_audit_defaults(); }
+        ~ProdScope() { apply_dev_audit_defaults(); }
+    };
+
+    struct Infer {
+        aura::core::TypeId ty{};
+        aura::ast::NodeId root = aura::ast::NULL_NODE;
+        bool saw_apply = false;
+        bool saw_arity = false;
+        bool saw_te = false;
+        bool authoritative = true;
+        bool parsed = false;
+    };
+    auto infer_src = [](std::string_view src, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                        aura::core::TypeRegistry& treg, aura::diag::DiagnosticCollector& diag,
+                        TypeChecker& tc) -> Infer {
+        Infer r;
+        diag.clear();
+        auto pr = aura::parser::parse_to_flat(src, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return r;
+        r.parsed = true;
+        r.root = pr.root;
+        flat.root = pr.root;
+        r.ty = tc.infer_flat(flat, pool, pr.root, diag);
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == ErrorKind::TypeError) {
+                r.saw_te = true;
+                if (d.message.find("cannot apply non-function") != std::string::npos)
+                    r.saw_apply = true;
+            }
+            if (d.kind == ErrorKind::ArityMismatch)
+                r.saw_arity = true;
+        }
+        r.authoritative = tc.type_export_is_authoritative();
+        return r;
+    };
+    auto first_call = [](const aura::ast::FlatAST& flat) -> aura::ast::NodeId {
+        for (aura::ast::NodeId id = 0; id < static_cast<aura::ast::NodeId>(flat.size()); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Call && !v.children.empty())
+                return id;
+        }
+        return aura::ast::NULL_NODE;
+    };
+
+    apply_dev_audit_defaults();
+
+    // AC1: Production (1 2) and (let ((x 1)) (x 2)) are TypeError.
+    // The Call node is not cached (gen stays 0, which a set_type of
+    // Dynamic would stamp) and is not clear_dirty'd.
+    {
+        std::println("\n--- 4316 AC1: Production (1 2) ---");
+        ProdScope prod;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(treg);
+        auto pr = aura::parser::parse_to_flat("(1 2)", flat, pool);
+        CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "4316 AC1: parse (1 2)");
+        flat.bump_type_cache_generation();
+        flat.mark_dirty(pr.root);
+        const auto call = pr.root;
+        CHECK(flat.get(call).tag == NodeTag::Call, "4316 AC1: root is Call");
+        diag.clear();
+        auto ty = tc.infer_flat(flat, pool, call, diag);
+        bool saw = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == ErrorKind::TypeError &&
+                d.message.find("cannot apply non-function") != std::string::npos)
+                saw = true;
+        }
+        CHECK(saw, "4316 AC1: (1 2) TypeError");
+        CHECK(ty == treg.void_type(), "4316 AC1: (1 2) returns Void, not Dynamic");
+        CHECK(ty != treg.dynamic_type(), "4316 AC1: result is not Dynamic");
+        CHECK(flat.type_cache_gen(call) == 0, "4316 AC1: Call not cached as Dynamic");
+        CHECK(flat.is_dirty(call), "4316 AC1: Call not clear_dirty'd");
+        CHECK(flat.node_error(call) == static_cast<std::uint8_t>(ErrorKind::TypeError),
+              "4316 AC1: node error TypeError");
+        CHECK(!tc.type_export_is_authoritative(), "4316 AC1: export not authoritative");
+    }
+    {
+        std::println("\n--- 4316 AC1: Production (let ((x 1)) (x 2)) ---");
+        ProdScope prod;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(treg);
+        auto pr = aura::parser::parse_to_flat("(let ((x 1)) (x 2))", flat, pool);
+        const auto call = first_call(flat);
+        CHECK(pr.success && call != aura::ast::NULL_NODE, "4316 AC1: let call parsed");
+        flat.bump_type_cache_generation();
+        flat.mark_dirty(call);
+        diag.clear();
+        auto ty = tc.infer_flat(flat, pool, pr.root, diag);
+        bool saw = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == ErrorKind::TypeError &&
+                d.message.find("cannot apply non-function") != std::string::npos)
+                saw = true;
+        }
+        CHECK(saw, "4316 AC1: (let ((x 1)) (x 2)) TypeError");
+        CHECK(ty == treg.void_type(), "4316 AC1: let body is Void");
+        CHECK(flat.type_cache_gen(call) == 0, "4316 AC1: inner Call not cached");
+        CHECK(flat.is_dirty(call), "4316 AC1: inner Call not clear_dirty'd");
+        CHECK(flat.node_error(call) == static_cast<std::uint8_t>(ErrorKind::TypeError),
+              "4316 AC1: inner Call node error");
+    }
+    {
+        std::println("\n--- 4316 AC1: Full without production_defaults ---");
+        apply_dev_audit_defaults();
+        const auto save = get_strategy();
+        set_strategy(AuditStrategy::Full);
+        CHECK(!production_defaults_active(), "4316 AC1: Full, defaults off");
+        CHECK(production_hard_face_active(), "4316 AC1: Full is the hard face");
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(treg);
+        auto r = infer_src("(1 2)", flat, pool, treg, diag, tc);
+        CHECK(r.saw_apply && r.ty == treg.void_type(),
+              "4316 AC1: Full+!defaults (1 2) TypeError Void");
+        set_strategy(save);
+        apply_dev_audit_defaults();
+    }
+
+    // AC2: type-var and Dynamic callees stay Dynamic. Soft ground callee
+    // stays today's Dynamic. Soft Dynamic accept with a mutation id still
+    // bumps dynamic_degrade_with_blame_total.
+    {
+        std::println("\n--- 4316 AC2: var / Any callee and soft ground ---");
+        ProdScope prod;
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(treg);
+        {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto r = infer_src("(lambda (f) (f 1))", flat, pool, treg, diag, tc);
+            auto* ft = treg.func_of(r.ty);
+            CHECK(r.parsed && ft && ft->args.size() == 1 && treg.is_var(ft->args[0]) &&
+                      ft->ret == treg.dynamic_type() && !r.saw_apply,
+                  "4316 AC2: type-var callee still Dynamic");
+        }
+        {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto r = infer_src("(lambda ((: f Any)) (f 1))", flat, pool, treg, diag, tc);
+            auto* ft = treg.func_of(r.ty);
+            CHECK(r.parsed && ft && ft->args.size() == 1 && ft->args[0] == treg.dynamic_type() &&
+                      ft->ret == treg.dynamic_type() && !r.saw_apply,
+                  "4316 AC2: Dynamic callee still Dynamic");
+        }
+    }
+    {
+        apply_dev_audit_defaults();
+        CHECK(!production_hard_face_active(), "4316 AC2: Soft is not the hard face");
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(treg);
+        auto pr = aura::parser::parse_to_flat("(1 2)", flat, pool);
+        CHECK(pr.success, "4316 AC2: soft parse");
+        flat.bump_type_cache_generation();
+        flat.mark_dirty(pr.root);
+        auto ty = tc.infer_flat(flat, pool, pr.root, diag);
+        bool saw = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.message.find("cannot apply non-function") != std::string::npos)
+                saw = true;
+        }
+        CHECK(ty == treg.dynamic_type() && !saw, "4316 AC2: soft ground callee stays Dynamic");
+        CHECK(!flat.is_dirty(pr.root) && flat.type_cache_gen(pr.root) != 0,
+              "4316 AC2: soft still caches Dynamic and clear_dirty");
+
+        CompilerMetrics metrics;
+        ConstraintSystem cs(treg);
+        cs.set_metrics(&metrics);
+        cs.set_active_mutation_id(4316);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        const auto before =
+            metrics.dynamic_degrade_with_blame_total.load(std::memory_order_relaxed);
+        CHECK(cs.consistent_unify(treg.dynamic_type(), treg.int_type()),
+              "4316 AC2: soft Dynamic~Int still true");
+        CHECK(metrics.dynamic_degrade_with_blame_total.load(std::memory_order_relaxed) > before,
+              "4316 AC2: mutation id bumps dynamic_degrade_with_blame_total");
+    }
+
+    // AC3: FuncType callee unchanged, including arity errors. Module arm
+    // still returns before the ground reject.
+    {
+        std::println("\n--- 4316 AC3: FuncType call and arity ---");
+        ProdScope prod;
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(treg);
+        {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto r = infer_src("((lambda (x) x) 1)", flat, pool, treg, diag, tc);
+            CHECK(r.parsed && r.ty == treg.int_type() && !r.saw_apply && !r.saw_arity,
+                  "4316 AC3: FuncType callee unchanged");
+        }
+        {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat("((lambda (x y) 42) 1)", flat, pool);
+            CHECK(pr.success, "4316 AC3: arity parse");
+            flat.bump_type_cache_generation();
+            flat.mark_dirty(pr.root);
+            diag.clear();
+            auto ty = tc.infer_flat(flat, pool, pr.root, diag);
+            bool arity = false;
+            bool apply = false;
+            for (const auto& d : diag.diagnostics()) {
+                if (d.kind == ErrorKind::ArityMismatch)
+                    arity = true;
+                if (d.message.find("cannot apply non-function") != std::string::npos)
+                    apply = true;
+            }
+            CHECK(arity && !apply && ty == treg.int_type(),
+                  "4316 AC3: arity error still returns the function result");
+            CHECK(!flat.is_dirty(pr.root) && flat.type_cache_gen(pr.root) != 0,
+                  "4316 AC3: arity still caches and clear_dirty");
+            CHECK(flat.node_error(pr.root) != static_cast<std::uint8_t>(ErrorKind::TypeError),
+                  "4316 AC3: arity is not the ground TypeError");
+        }
+    }
+    {
+        const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        const auto call_fn = impl.find("TypeId InferenceEngine::synthesize_flat_call(");
+        const auto call_end = impl.find("InferenceEngine::synthesize_flat_call_arith", call_fn);
+        CHECK(call_fn != std::string::npos && call_end != std::string::npos && call_end > call_fn,
+              "4316 AC3: synthesize_flat_call");
+        const auto body = impl.substr(call_fn, call_end - call_fn);
+        const auto mod = body.find("reg_.module_of(func_type)");
+        const auto ground = body.find("cannot apply non-function");
+        const auto empty = body.find("cs_.fresh_var()");
+        CHECK(empty != std::string::npos && mod != std::string::npos &&
+                  ground != std::string::npos && empty < mod && mod < ground,
+              "4316 AC3: empty Call, ModuleType, then ground reject");
+        CHECK(impl.find("Issue #4316") != std::string::npos, "4316: cite");
+        CHECK(read_file("docs/design/4316-ground-non-function-call.md").empty(),
+              "4316: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_4316.cpp").empty(), "4316: no invent");
+    }
+    apply_dev_audit_defaults();
+}
+
 static void ac3830_empty_type_annotation_no_dynamic() {
     std::println("\n--- #3830 AC1–AC3: empty TypeAnnotation never Dynamic ---");
     using aura::ast::NodeTag;
@@ -944,6 +1233,7 @@ int run_test_bidirectional_match_check() {
     ac3044_exhaustive_tag_coverage();
     ac3432_empty_pair_no_dynamic();
     ac3518_empty_linear_call_no_dynamic();
+    ac4316_ground_non_function_call();
     ac3830_empty_type_annotation_no_dynamic();
     {
         std::println("\n--- #3516: check_flat Set stamps TypeError on unify false ---");
