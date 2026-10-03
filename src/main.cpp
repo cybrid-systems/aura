@@ -337,6 +337,153 @@ parse_json_command(std::string_view line) {
     return result;
 }
 
+// ── Lazy soft oneshot std prelude (#4178–#4219 follow-up) ───────────────
+// The prelude auto-loads std/list, std/string, std/hash and std/math for
+// every oneshot invocation (`aura -e` / file / pipe / --load). Loading all
+// four eagerly costs ~28ms even when a program references none of them.
+// This scan over-approximates which modules a program can possibly need:
+//   * any identifier token equal to one of the module's (export …) names
+//     triggers that module's require;
+//   * programs using dynamic evaluation or module loading (eval/require/
+//     import/use/read/load/string->symbol/macro forms) fall back to the
+//     full eager prelude.
+// Over-approximation only ever loads a module that the eager prelude would
+// have loaded anyway, so observable semantics are unchanged; the relative
+// load order (list, string, hash, math) is preserved. Any read/parse
+// failure is treated as "may use" so the eager behaviour is the fallback.
+static bool tokenize_identifiers(const std::string& s, std::set<std::string>& out) {
+    std::string cur;
+    auto flush = [&]() {
+        if (!cur.empty()) {
+            out.insert(cur);
+            cur.clear();
+        }
+    };
+    for (char c : s) {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        const bool ident = std::isalnum(uc) || c == '_' || c == '-' || c == '?' || c == '!' ||
+                           c == '*' || c == '<' || c == '>' || c == '=' || c == '+' || c == '%' ||
+                           c == '&' || c == '|' || c == '^' || c == '~';
+        if (ident)
+            cur += c;
+        else
+            flush();
+    }
+    flush();
+    return !out.empty();
+}
+
+static bool extract_module_export_names(const std::string& text, std::set<std::string>& out) {
+    const auto p = text.find("(export");
+    if (p == std::string::npos)
+        return false;
+    std::size_t i = p + 7; // past "(export"
+    int depth = 1;
+    bool in_str = false;
+    std::string cur;
+    auto flush = [&]() {
+        if (!cur.empty()) {
+            out.insert(cur);
+            cur.clear();
+        }
+    };
+    for (; i < text.size(); ++i) {
+        char c = text[i];
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (c == ';') {
+            while (i < text.size() && text[i] != '\n')
+                ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            flush();
+            continue;
+        }
+        if (c == '(' || c == '[') {
+            ++depth;
+            flush();
+            continue;
+        }
+        if (c == ')' || c == ']') {
+            flush();
+            if (--depth == 0)
+                break;
+            continue;
+        }
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            flush();
+            continue;
+        }
+        cur += c;
+    }
+    return !out.empty();
+}
+
+static bool oneshot_source_may_use_module(const std::set<std::string>& source_tokens,
+                                          const std::string& module_path) {
+    std::ifstream mf(module_path);
+    if (!mf)
+        return true; // cannot inspect → keep eager (old semantics)
+    std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+    std::set<std::string> exports;
+    if (!extract_module_export_names(text, exports))
+        return true;
+    for (const auto& name : exports) {
+        if (source_tokens.count(name))
+            return true;
+    }
+    return false;
+}
+
+// Build the oneshot std prelude, requiring only the modules the program can
+// reference. Returns empty when no module is needed. Dynamic / module-loading
+// programs keep the full eager prelude.
+static std::string build_lazy_oneshot_std_prelude(const std::string& source) {
+    static const std::string std_root = aura::compiler::paths::resolve_stdlib_root();
+    static const std::set<std::string> kEagerFallbackTokens = {"eval",
+                                                               "eval-current",
+                                                               "read",
+                                                               "load",
+                                                               "require",
+                                                               "import",
+                                                               "use",
+                                                               "string->symbol",
+                                                               "symbol->string",
+                                                               "macro",
+                                                               "defmacro",
+                                                               "define-macro",
+                                                               "macroexpand",
+                                                               "macroexpand-1",
+                                                               "syntax-rules",
+                                                               "define-syntax",
+                                                               "quasiquote",
+                                                               "unquote",
+                                                               "unquote-splicing"};
+    std::set<std::string> toks;
+    tokenize_identifiers(source, toks);
+    for (const auto& t : kEagerFallbackTokens) {
+        if (toks.count(t)) {
+            return "(require \"std/list\" all:)(require \"std/string\" all:)"
+                   "(require \"std/hash\" all:)(require \"std/math\" all:)";
+        }
+    }
+    std::string prelude;
+    for (const char* mod : {"list", "string", "hash", "math"}) {
+        if (oneshot_source_may_use_module(toks, std_root + mod + ".aura"))
+            prelude += std::string("(require \"std/") + mod + "\" all:)";
+    }
+    return prelude;
+}
+
 int main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -1985,20 +2132,21 @@ int main(int argc, char* argv[]) {
         }
         std::string content((std::istreambuf_iterator<char>(f)), {});
         aura::compiler::CompilerService cs;
-        // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file.
+        // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file,
+        // now demand-loaded: only the std modules this program references are
+        // evaluated (see build_lazy_oneshot_std_prelude).
         {
-            static constexpr const char* kSoftOneshotStdPrelude = "(require \"std/list\" all:)"
-                                                                  "(require \"std/string\" all:)"
-                                                                  "(require \"std/hash\" all:)"
-                                                                  "(require \"std/math\" all:)";
-            if (auto pre = cs.eval(kSoftOneshotStdPrelude); !pre) {
-                std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
-                             pre.error().format_with_source(kSoftOneshotStdPrelude));
-                return 1;
+            std::string prelude = build_lazy_oneshot_std_prelude(content);
+            if (!prelude.empty()) {
+                if (auto pre = cs.eval(prelude); !pre) {
+                    std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
+                                 pre.error().format_with_source(prelude));
+                    return 1;
+                }
+                // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
+                // for native filter/map (IR MakeClosure stubs return empty).
+                cs.sync_soft_export_cells_for_ir();
             }
-            // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
-            // for native filter/map (IR MakeClosure stubs return empty).
-            cs.sync_soft_export_cells_for_ir();
         }
         auto result = cs.eval(content);
         if (!result) {
@@ -3061,18 +3209,17 @@ int main(int argc, char* argv[]) {
     // std semantics. Prefer Soft std auto-load over aura-build soft_*.aura
     // host fills (three-layer: Soft runtime/std, not gold host workarounds).
     {
-        static constexpr const char* kSoftOneshotStdPrelude = "(require \"std/list\" all:)"
-                                                              "(require \"std/string\" all:)"
-                                                              "(require \"std/hash\" all:)"
-                                                              "(require \"std/math\" all:)";
-        if (auto pre = cs.eval(kSoftOneshotStdPrelude); !pre) {
-            std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
-                         pre.error().format_with_source(kSoftOneshotStdPrelude));
-            return 1;
+        std::string prelude = build_lazy_oneshot_std_prelude(all_input);
+        if (!prelude.empty()) {
+            if (auto pre = cs.eval(prelude); !pre) {
+                std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
+                             pre.error().format_with_source(prelude));
+                return 1;
+            }
+            // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
+            // for native filter/map (IR MakeClosure stubs return empty).
+            cs.sync_soft_export_cells_for_ir();
         }
-        // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
-        // for native filter/map (IR MakeClosure stubs return empty).
-        cs.sync_soft_export_cells_for_ir();
     }
     // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
     // ONE cs.eval pass, matching the --load entry. Per-expression eval
