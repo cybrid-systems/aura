@@ -6266,7 +6266,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 filt_mid ? static_cast<std::uint64_t>(as_int(args[0]))
                          : (completed_valid ? ev.last_completed_audit_mid() : last_stamped);
             const std::uint64_t join_mid = want_mid;
-            const bool se_filter_by_mid = filt_mid || completed_valid || join_mid != 0;
+            // #3284 pins the prefix `filt_mid || join_mid != 0`. Completed
+            // mid 0 (#4302) still filters; it is an extra term, not a
+            // replacement of that pin.
+            const bool se_filter_by_mid = filt_mid || join_mid != 0 || completed_valid;
 
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
