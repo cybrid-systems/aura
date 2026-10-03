@@ -203,6 +203,11 @@ void register_workspace_query_primitives(
                                 std::uint32_t workspace_id = 0) -> aura::core::QueryEpoch {
         const auto gen = flat ? static_cast<std::uint64_t>(flat->generation())
                               : aura::core::kWorkspaceEpochUnset;
+        // Issue #4315: a caller that does not pass a layer id gets the
+        // flat's set-code install id (0 when this flat was not published
+        // by production set-code). The schema-2 hash key is workspace-id.
+        if (workspace_id == 0 && flat != nullptr)
+            workspace_id = flat->install_id();
         return aura::core::capture_query_epoch(gen, workspace_id);
     };
     auto end_query_epoch = [&mev](const aura::core::QueryEpoch& start, aura::ast::FlatAST* flat,
@@ -528,19 +533,23 @@ void register_workspace_query_primitives(
                 return false;
             ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(ws.pairs[p_cow].car));
             rest = ws.pairs[p_cow].cdr;
-            // fiber (optional) + boundary (optional)
-            if (is_pair(rest)) {
-                const auto p_fiber = as_pair_idx(rest);
-                if (static_cast<std::size_t>(p_fiber) < ws.pairs.size() &&
-                    is_int(ws.pairs[p_fiber].car))
-                    ref.fiber_id = static_cast<std::uint32_t>(as_int(ws.pairs[p_fiber].car));
-                rest = ws.pairs[p_fiber].cdr;
-                if (is_pair(rest)) {
-                    const auto p_boundary = as_pair_idx(rest);
-                    if (static_cast<std::size_t>(p_boundary) < ws.pairs.size() &&
-                        is_int(ws.pairs[p_boundary].car))
-                        ref.boundary_pinned = as_int(ws.pairs[p_boundary].car) != 0;
+            // fiber (int), boundary (bool), install id (int). The first int
+            // is fiber. A later int is the #4315 install id.
+            bool saw_fiber = false;
+            while (is_pair(rest)) {
+                const auto p = as_pair_idx(rest);
+                if (static_cast<std::size_t>(p) >= ws.pairs.size())
+                    break;
+                if (is_int(ws.pairs[p].car)) {
+                    const auto n = as_int(ws.pairs[p].car);
+                    if (!saw_fiber) {
+                        ref.fiber_id = static_cast<std::uint32_t>(n);
+                        saw_fiber = true;
+                    } else {
+                        ref.install_id_at_capture = static_cast<std::uint32_t>(n);
+                    }
                 }
+                rest = ws.pairs[p].cdr;
             }
             return true;
         };

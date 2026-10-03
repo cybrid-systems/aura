@@ -3879,6 +3879,145 @@ void test_ac4314_3_source_cite() {
                 !std::ifstream("docs/design/4314-query-stamp-wrap-zero.md").good());
 }
 
+// Issue #4315: production set-code publishes a new install id. A
+// schema-2 hash or packed v2 from the previous install is stale-ref
+// even though gen/wrap/cow restart at the birth values. Soft does not
+// mint an id.
+
+void test_ac4315_1_set_code_rebirth_stales_prior_install() {
+    std::print("AC4315/AC1 -- production set-code rebirth is stale-ref\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto set_ok = [&](const char* label, const char* src) {
+        auto v = cs.eval(std::string("(set-code \"") + src + "\")");
+        expect_true(label, v && is_bool(*v) && as_bool(*v));
+    };
+    set_ok("4315 AC1: set-code A", "(define a4315 (lambda () 1))");
+    expect_true("4315 AC1: eval A", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("4315 AC1: bind find A",
+                cs.eval("(define qr4315a (query :find \"a4315\"))").has_value());
+    auto n = cs.eval("(length (hash-ref qr4315a \"matches\"))");
+    expect_true("4315 AC1: find A has a match", n && is_int(*n) && as_int(*n) >= 1);
+    const char* idx = as_int(*n) > 1 ? " :index 0" : "";
+    const std::string bind =
+        std::string("(define held4315 (query:as-stable-ref qr4315a") + idx + "))";
+    expect_true("4315 AC1: bind packed A", cs.eval(bind).has_value());
+    auto held_car = cs.eval("(car held4315)");
+    expect_true("4315 AC1: packed car is NodeId", held_car && is_int(*held_car));
+
+    set_ok("4315 AC1: set-code B", "(define b4315 (lambda () 2))");
+    auto is_stale = [&](const auto& v) {
+        if (!v || !is_pair(*v))
+            return false;
+        auto& ev = cs.evaluator();
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return false;
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        return si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+    };
+    auto kind_of = [&](const auto& v) -> std::string {
+        if (!v || !is_pair(*v))
+            return {};
+        auto& ev = cs.evaluator();
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return {};
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        if (si >= ev.string_heap().size())
+            return {};
+        return ev.string_heap()[si];
+    };
+    auto ch = cs.eval("(query :children held4315)");
+    expect_true("4315 AC1: packed children is stale-ref", is_stale(ch));
+    auto as_old = cs.eval(std::string("(query:as-stable-ref qr4315a") + idx + ")");
+    expect_true("4315 AC1: prior hash as-stable-ref is stale-ref", is_stale(as_old));
+    auto mu = cs.eval("(mutate:replace-subtree held4315 \"(lambda () 9)\")");
+    const auto mu_kind = kind_of(mu);
+    expect_true("4315 AC1: mutate refuses the previous install",
+                mu_kind == "stale-ref" || mu_kind == "persist-reject");
+    expect_true("4315 AC1: eval B", cs.eval("(eval-current)").has_value());
+    auto body = cs.eval("(b4315)");
+    expect_true("4315 AC1: node B is unchanged", body && is_int(*body) && as_int(*body) == 2);
+
+    expect_true("4315 AC1: find B",
+                cs.eval("(define qr4315b (query :find \"b4315\"))").has_value());
+    const std::string bind_b =
+        std::string("(define held4315b (query:as-stable-ref qr4315b") + idx + "))";
+    expect_true("4315 AC1: pack B", cs.eval(bind_b).has_value());
+    auto ch_b = cs.eval("(query :children held4315b)");
+    expect_true("4315 AC1: same-install children returns", ch_b.has_value());
+    expect_true("4315 AC1: same-install children is not stale-ref", !is_stale(ch_b));
+    expect_true("4315 AC1: same-install children is schema-2 hash", ch_b && is_hash(*ch_b));
+    apply_dev_audit_defaults();
+}
+
+void test_ac4315_2_soft_rebirth_has_no_install_fence() {
+    std::print("AC4315/AC2 -- Soft set-code does not install-fence\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto set_ok = [&](const char* src) {
+        auto v = cs.eval(std::string("(set-code \"") + src + "\")");
+        expect_true("4315 AC2: set-code", v && is_bool(*v) && as_bool(*v));
+    };
+    set_ok("(define s4315 (lambda () 1))");
+    expect_true("4315 AC2: eval", cs.eval("(eval-current)").has_value());
+    expect_true("4315 AC2: bind find",
+                cs.eval("(define qr4315s (query :find \"s4315\"))").has_value());
+    expect_true("4315 AC2: bind ref",
+                cs.eval("(define held4315s (query:as-stable-ref qr4315s))").has_value());
+    set_ok("(define s4315b (lambda () 2))");
+    auto ch = cs.eval("(query :children held4315s)");
+    bool stale = false;
+    if (ch && is_pair(*ch)) {
+        auto& ev = cs.evaluator();
+        const auto p = static_cast<std::size_t>(as_pair_idx(*ch));
+        if (p < ev.pairs().size() && is_string(ev.pairs()[p].car)) {
+            const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+            stale = si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+        }
+    }
+    expect_true("4315 AC2: Soft rebirth is not install-stale", ch.has_value() && !stale);
+    apply_dev_audit_defaults();
+}
+
+void test_ac4315_3_source_cite() {
+    std::print("AC4315/AC3 -- source-cite install id on set-code and freshness\n");
+    std::ifstream f_eval("src/compiler/evaluator_primitives_eval.cpp");
+    std::string ev((std::istreambuf_iterator<char>(f_eval)), std::istreambuf_iterator<char>());
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    expect_true("4315 AC3: set-code cites #4315", ev.find("Issue #4315") != std::string::npos);
+    expect_true("4315 AC3: set-code publishes install id",
+                ev.find("publish_install_id()") != std::string::npos);
+    expect_true("4315 AC3: freshness cites #4315", dec.find("Issue #4315") != std::string::npos);
+    expect_true("4315 AC3: freshness compares install id",
+                dec.find("qr.epoch.workspace_id != flat.install_id()") != std::string::npos);
+    expect_true("4315 AC3: no test_issue_4315.cpp",
+                !std::ifstream("tests/compiler/test_issue_4315.cpp").good());
+    expect_true("4315 AC3: no docs/design",
+                !std::ifstream("docs/design/4315-set-code-install.md").good());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -4036,11 +4175,15 @@ int main() {
     test_ac4314_1_prod_captured_zero_is_stale_after_advance();
     test_ac4314_2_soft_brace_remake_unchanged();
     test_ac4314_3_source_cite();
+    test_ac4315_1_set_code_rebirth_stales_prior_install();
+    test_ac4315_2_soft_rebirth_has_no_install_fence();
+    test_ac4315_3_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
     std::print("All #4162 query free-slot AC tests PASSED\n");
     std::print("All #4164 ref-layout gen-paint AC tests PASSED\n");
     std::print("All #4314 captured-zero stamp AC tests PASSED\n");
+    std::print("All #4315 set-code install AC tests PASSED\n");
     return 0;
 }
