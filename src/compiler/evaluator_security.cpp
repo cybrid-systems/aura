@@ -2588,18 +2588,20 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
         }
         const auto we = workspace_flat_->wrap_epoch();
         const auto ce = workspace_flat_->workspace_cow_epoch();
-        // Brace-init {id, gen} leaves wrap/cow at 0 while advanced workspaces
-        // have non-zero state; layout-only capture always matches FlatAST.
-        const bool layout_missing =
-            (we != 0 && ref.wrap_epoch == 0) || (ce != 0 && ref.cow_epoch_at_capture == 0);
+        const bool hard = aura::compiler::typed_audit::production_defaults_active();
+        // Issue #4314: production v2 writes wrap and cow even when they
+        // are 0. A captured 0 is the first cycle, not a missing layout.
+        // Mismatch leaves the captured gen so ensure_valid_or_refresh
+        // returns stale-ref. Do not occupancy-remake onto the live node.
+        if (hard && (ref.wrap_epoch != we || ref.cow_epoch_at_capture != ce))
+            return;
+        // Soft brace-init {id, gen} still fills wrap/cow when the workspace
+        // has moved and the captured fields are 0.
+        const bool layout_missing = !hard && ((we != 0 && ref.wrap_epoch == 0) ||
+                                              (ce != 0 && ref.cow_epoch_at_capture == 0));
         if (layout_missing) {
             const auto id = ref.id;
-            // Issue #4164: thread the production face — a free slot can
-            // never be layout-stamped epoch-fresh here (post-gate
-            // defense-in-depth); a NULL_NODE layout hits the early return
-            // below instead of stamping a tombstone green.
-            ref = workspace_flat_->make_ref_layout(
-                id, aura::compiler::typed_audit::production_defaults_active());
+            ref = workspace_flat_->make_ref_layout(id, false);
             // Issue #3230: layout gen is post-mutate authority. Do not
             // paint a pre-mutate gen onto a remade layout.
             ::aura::core::provenance::record_query_stable_ref_unstamped_prevented();
