@@ -5828,6 +5828,42 @@ public:
         provenance_ = std::move(snap.provenance);
     }
 
+    // Issue #4310: type columns written by infer inside a production/Full
+    // boundary. Empty captured means Soft/Off (or lightweight) — restore
+    // keeps the live columns. A captured snapshot restores the enter
+    // prefix and zeros nodes added during the boundary, then bumps
+    // type_cache_generation_ once so a later cache hit cannot trust the
+    // aborted stamp.
+    struct TypeColumnSnapshot {
+        bool captured = false;
+        std::pmr::vector<std::uint32_t> type_id;
+        std::pmr::vector<std::uint32_t> type_cache_gen;
+        std::pmr::vector<std::uint32_t> type_cache_binding_gen;
+        std::pmr::vector<std::uint32_t> schema_cache;
+    };
+    [[nodiscard]] TypeColumnSnapshot snapshot_type_columns() const {
+        return TypeColumnSnapshot{true, type_id_, type_cache_gen_, type_cache_binding_gen_,
+                                  schema_cache_};
+    }
+    void restore_type_columns(TypeColumnSnapshot&& snap) noexcept {
+        if (!snap.captured)
+            return;
+        auto apply = [&](auto& live, auto& saved) {
+            const auto n_enter = saved.size();
+            if (live.size() < n_enter)
+                live.resize(n_enter, 0);
+            for (std::size_t i = 0; i < n_enter; ++i)
+                live[i] = saved[i];
+            for (std::size_t i = n_enter; i < live.size(); ++i)
+                live[i] = 0;
+        };
+        apply(type_id_, snap.type_id);
+        apply(type_cache_gen_, snap.type_cache_gen);
+        apply(type_cache_binding_gen_, snap.type_cache_binding_gen);
+        apply(schema_cache_, snap.schema_cache);
+        bump_type_cache_generation();
+    }
+
     // Issue #2959: Guard abort dual topology path — mutation-log rollback
     // + children_ snapshot restore + parent_ rebuild + dual canary, all
     // under ONE StructuralMutationGuard so densify/steal cannot observe

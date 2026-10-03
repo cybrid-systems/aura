@@ -82,6 +82,7 @@ import aura.diag;
 import aura.compiler.value;
 import aura.compiler.evaluator_pure;
 import aura.compiler.root_remap_pass; // Issue #2294: RootRemapPass install
+import aura.compiler.type_checker;    // Issue #4310: abort CS high-water on the checkpoint
 
 namespace aura::compiler {
 
@@ -14580,6 +14581,13 @@ public:
         // on production hard-face enter. Empty on Soft/Off and lightweight
         // so abort does not copy or restore those columns.
         aura::ast::FlatAST::MarkerProvenanceSnapshot marker_provenance_snapshot;
+        // Issue #4310: production/Full enter copies type columns and the
+        // solve_delta_cs_ high-water. Soft/Off and lightweight leave
+        // type_face_captured false so abort does not copy or truncate.
+        bool type_face_captured = false;
+        bool type_face_restored = false;
+        aura::ast::FlatAST::TypeColumnSnapshot type_column_snapshot;
+        ConstraintSystem::AbortCsHighWater cs_high_water;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
@@ -14661,6 +14669,9 @@ public:
     // (AbortRestore) after dual-topology restore so pins / node_gen
     // cannot stay at the post-mutate gen against the rolled-back tree.
     void restore_checkpoint_topology_for_persist_reject() noexcept;
+    // Issue #4310: after dual-topology restore, put type columns and the
+    // CS high-water back. Idempotent. Soft/Off (uncaptured) is a no-op.
+    void restore_abort_type_face(MutationCheckpoint& cp) noexcept;
 
     // Wave 4: bodies live in evaluator_mutation_boundary.cpp (with Guard).
     void enter_mutation_boundary();
