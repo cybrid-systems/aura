@@ -1034,24 +1034,11 @@ public:
             g_orch_module_stats.bp_threshold_resolve_total.fetch_add(1, std::memory_order_relaxed);
             const auto thr = thr_d.threshold;
             if (thr > 0) {
-                // Scope BP recent: max across handle specs' bp_scope_id
-                // via load_mailbox_bp_recent (same as spawn admit, #2948
-                // AC4). Multi-tenant isolation: hot gauge A does not
-                // force degrade on a scope that only uses B.
-                std::uint64_t scope_bp_recent = 0;
-                bool any_named_scope = false;
-                for (const auto& sp : specs_) {
-                    if (sp.bp_scope_id.empty())
-                        continue;
-                    any_named_scope = true;
-                    const auto v = load_mailbox_bp_recent(sp.bp_scope_id);
-                    if (v > scope_bp_recent)
-                        scope_bp_recent = v;
-                }
-                if (!any_named_scope) {
-                    scope_bp_recent = load_mailbox_bp_recent(/*scope_id=*/{});
-                }
-                if (scope_bp_recent >= thr) {
+                // Issue #4301: degrade is per producer handle, keyed on
+                // the handle's admit bp_scope_id (empty id keeps the
+                // process-bucket load). Two explicit ids inside one scope
+                // no longer cross-fire (scope-wide max removed).
+                {
                     for (std::size_t i = 0; i < handles_.size(); ++i) {
                         auto& h = handles_[i];
                         // Only mailbox-holding live handles (producers /
@@ -1060,6 +1047,10 @@ public:
                         if (!h.ok || !h.mailbox)
                             continue;
                         if (h.fiber && h.fiber->is_done())
+                            continue;
+                        // Issue #4301: this handle only degrades when
+                        // its own admit key is over threshold.
+                        if (load_mailbox_bp_recent(h.bp_scope_id) < thr)
                             continue;
                         // Apply action. Throttle is cooperative only
                         // (helper_stop; no request_cancel) per AC3.

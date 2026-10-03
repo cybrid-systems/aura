@@ -2163,6 +2163,126 @@ static void ac4281_restart_region_key_recheck() {
 
 } // namespace
 
+// Issue #4301: watch_all on_backpressure degrade is per producer handle,
+// keyed on that handle's admit bp_scope_id. Two explicit ids inside one
+// scope must not cross-fire; sibling scopes stay isolated.
+static void ac4301_bp_scope_id_isolation() {
+    RestoreSandbox restore_sandbox;
+    std::println("\n--- #4301 AC1-AC3: watch_all BP degrade is per bp_scope_id ---");
+
+    std::atomic<bool> keep_running{true};
+    auto spin_body = [&keep_running] {
+        while (keep_running.load(std::memory_order_relaxed)) {
+            auto* self = aura::serve::g_current_fiber;
+            if (self && self->is_cancel_requested())
+                return;
+            aura::orch::fiber_sleep_ms(20);
+        }
+    };
+
+    Scheduler sched(1);
+    AgentScope scope(sched);
+
+    AgentSpec spec_a;
+    spec_a.name = "bp-4301-a";
+    spec_a.attach_mailbox = true;
+    spec_a.mailbox_high_water = 4;
+    spec_a.bp_scope_id = "4301:t1";
+    spec_a.keepalive_interval_ms = 0;
+    spec_a.body = spin_body;
+
+    AgentSpec spec_b = spec_a;
+    spec_b.name = "bp-4301-b";
+    spec_b.bp_scope_id = "4301:t2";
+
+    (void)scope.spawn(spec_a);
+    (void)scope.spawn(spec_b);
+    // #4301: index after both spawns — push_back reallocates handles_, so a
+    // stored AgentHandle& across spawn would dangle.
+    CHECK(scope.handles().size() >= 2, "4301 AC1: two producers in scope");
+    CHECK(scope.handles()[0].ok && scope.handles()[0].mailbox, "4301 AC1: t:1 producer admitted");
+    CHECK(scope.handles()[1].ok && scope.handles()[1].mailbox, "4301 AC1: t:2 producer admitted");
+
+    for (int i = 0; i < 3; ++i)
+        aura::orch::note_mailbox_bp_recent_event("4301:t1");
+    CHECK(aura::orch::load_mailbox_bp_recent("4301:t1") >= 1, "4301 AC1: t:1 gauge hot");
+    CHECK(aura::orch::load_mailbox_bp_recent("4301:t2") == 0, "4301 AC1: t:2 gauge cold");
+
+    const auto can0 = g_orch_module_stats.agent_bp_cancel_total.load(std::memory_order_relaxed);
+    aura::orch::AgentFailurePolicy pol;
+    pol.on_stall = aura::orch::AgentFailureAction::ReportOnly;
+    pol.on_backpressure = aura::orch::AgentFailureAction::Cancel;
+    pol.bp_threshold = 1;
+    auto wr = scope.watch_all(/*stall_ms=*/0, pol);
+    const auto can1 = g_orch_module_stats.agent_bp_cancel_total.load(std::memory_order_relaxed);
+
+    CHECK(scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested(),
+          "4301 AC1: t:1 fiber request_cancel");
+    CHECK(scope.handles()[1].fiber && !scope.handles()[1].fiber->is_cancel_requested(),
+          "4301 AC1: t:2 fiber NOT cancelled (no cross-fire)");
+    CHECK(can1 - can0 == 1, "4301 AC1: agent_bp_cancel_total +1");
+    CHECK(wr.bp_cancelled == 1, "4301 AC1: exactly one bp cancel this pass");
+
+    // AC2: ReportOnly stays a no-op even with a hot gauge.
+    AgentScope scope_ro(sched);
+    AgentSpec spec_c = spec_a;
+    spec_c.name = "bp-4301-ro-a";
+    spec_c.bp_scope_id = "4301:ro1";
+    AgentSpec spec_d = spec_c;
+    spec_d.name = "bp-4301-ro-b";
+    spec_d.bp_scope_id = "4301:ro2";
+    (void)scope_ro.spawn(spec_c);
+    (void)scope_ro.spawn(spec_d);
+    for (int i = 0; i < 3; ++i)
+        aura::orch::note_mailbox_bp_recent_event("4301:ro1");
+    aura::orch::AgentFailurePolicy ro;
+    ro.on_stall = aura::orch::AgentFailureAction::ReportOnly;
+    ro.on_backpressure = aura::orch::AgentFailureAction::ReportOnly;
+    ro.bp_threshold = 1;
+    (void)scope_ro.watch_all(0, ro);
+    CHECK(scope_ro.handles()[0].fiber && !scope_ro.handles()[0].fiber->is_cancel_requested(),
+          "4301 AC2: ReportOnly cancels neither (a)");
+    CHECK(scope_ro.handles()[1].fiber && !scope_ro.handles()[1].fiber->is_cancel_requested(),
+          "4301 AC2: ReportOnly cancels neither (b)");
+
+    // AC3: a hot gauge in scope X must not degrade scope Y.
+    AgentScope sx(sched);
+    AgentScope sy(sched);
+    AgentSpec spec_x = spec_a;
+    spec_x.name = "bp-4301-x";
+    spec_x.bp_scope_id = "4301:x1";
+    AgentSpec spec_y = spec_a;
+    spec_y.name = "bp-4301-y";
+    spec_y.bp_scope_id = "4301:y1";
+    (void)sx.spawn(spec_x);
+    (void)sy.spawn(spec_y);
+    for (int i = 0; i < 3; ++i)
+        aura::orch::note_mailbox_bp_recent_event("4301:x1");
+    (void)sy.watch_all(0, pol);
+    CHECK(sy.handles()[0].fiber && !sy.handles()[0].fiber->is_cancel_requested(),
+          "4301 AC3: sibling scope Y stays alive");
+    CHECK(sx.handles()[0].fiber && !sx.handles()[0].fiber->is_cancel_requested(),
+          "4301 AC3: Y's walk does not touch X");
+
+    keep_running.store(false, std::memory_order_relaxed);
+    for (AgentScope* s : {&scope, &scope_ro, &sx, &sy}) {
+        for (auto& h : s->handles_mut()) {
+            if (h.fiber && !h.fiber->is_done()) {
+                h.fiber->request_cancel();
+                if (auto* sc = h.fiber->owner_sched()) {
+                    sc->note_orphan_fiber(h.fiber, 50);
+                    sc->reap_orphans_now();
+                }
+            }
+            if (h.fiber && !h.fiber->is_done())
+                h.fiber->set_state(aura::serve::FiberState::Done);
+        }
+    }
+    for (const char* id : {"4301:t1", "4301:t2", "4301:ro1", "4301:ro2", "4301:x1", "4301:y1"})
+        (void)aura::orch::erase_scope_bp_gauge(id);
+}
+
+
 int run_test_agent_scope() {
     // Issue #3586: the Scheduler(2) ACs below run unarmed by design — take
     // the sandbox=off escape for the whole member and restore the inherited
@@ -2198,6 +2318,7 @@ int run_test_agent_scope() {
     ac3442_scope_message_resolve();
     ac4238_region_key_admit_deny();
     ac4281_restart_region_key_recheck();
+    ac4301_bp_scope_id_isolation();
 
     std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216/#3442: passed={} "
                  "failed={} ===",
