@@ -431,13 +431,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
-            // Issue #4093: stamp the owning principal parallel to the table
-            // (#4057 pair-slot shape) — the JIT hash gate compares this
-            // stamp against the caller principal under the production face
-            // before any ref/set/remove on the process-shared index.
+            // Issue #4093 / #4296: stamp the executing evaluator's principal
+            // (#4057 pair-slot shape). The JIT owner hook is a different
+            // principal whenever g_jit_prim_ctx is unwired or bound to
+            // another Evaluator — the prim runs on `ev`.
             if (g_hash_tenants.size() < g_hash_tables.size())
                 g_hash_tenants.resize(g_hash_tables.size(), 0);
-            g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();
+            g_hash_tenants[hidx] = ev.capability_tenant_id();
             return make_hash(hidx);
         },
         pure_general(255, "(...kvs) -> hash", "Construct a hash from key/value pairs."));
@@ -455,13 +455,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return a.size() >= 3 ? a[2] : make_void();
-            // Issue #4110: same armed-face owner compare the JIT checked
-            // seams run before the probe — armed + foreign stamp reads as
-            // missing (3rd-arg default / void, table untouched); the deny
-            // fires through check_workspace_isolation. Unarmed: today's
-            // probe, no tenant load (face probe precedes the stamp read).
-            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
-                                       aura_jit_owner_sandbox_mode(), "hash-ref"))
+            // Issue #4110 / #4296: same armed-face compare the JIT checked
+            // seams run, but the caller and face are this evaluator's
+            // (not the JIT owner). Armed + foreign stamp reads as missing
+            // (3rd-arg default / void, table untouched); the deny fires
+            // through check_workspace_isolation. Unarmed (face == 0):
+            // today's probe, no tenant load.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-ref"))
                 return a.size() >= 3 ? a[2] : make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -496,10 +497,10 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_bool(false);
-            // Issue #4110: armed + foreign stamp → #f without the probe
-            // (same compare as aura_hash_ref_checked; unarmed: no load).
-            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
-                                       aura_jit_owner_sandbox_mode(), "hash-has-key?"))
+            // Issue #4110 / #4296: armed + foreign stamp → #f without the
+            // probe. Caller/face are the executing evaluator.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-has-key?"))
                 return make_bool(false);
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -537,11 +538,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
-            // Issue #4110: armed + foreign stamp → void WITHOUT storing
-            // (same compare as aura_hash_set_checked; the deny fires
-            // through check_workspace_isolation; unarmed: no load).
-            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
-                                       aura_jit_owner_sandbox_mode(), "hash-set!"))
+            // Issue #4110 / #4296: armed + foreign stamp → void WITHOUT
+            // storing. Caller/face are the executing evaluator; the deny
+            // fires through check_workspace_isolation. Unarmed: no load.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-set!"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -697,17 +698,16 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(1, "(hash) -> list", "Convert a hash to an association list."));
     register_prim(
         add, ev, "hash-remove!",
-        [&string_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap](std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_hash(a[0]))
                 return make_void();
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
-            // Issue #4110: armed + foreign stamp → #f WITHOUT the tombstone
-            // write (same compare as the JIT hash-remove! gate; unarmed:
-            // no tenant load).
-            if (aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),
-                                       aura_jit_owner_sandbox_mode(), "hash-remove!"))
+            // Issue #4110 / #4296: armed + foreign stamp → #f WITHOUT the
+            // tombstone write. Caller/face are the executing evaluator.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-remove!"))
                 return make_bool(false);
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
