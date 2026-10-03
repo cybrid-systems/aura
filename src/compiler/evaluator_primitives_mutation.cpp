@@ -154,6 +154,18 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (a.size() >= 2 && is_bool(a[1]))
             keep_rolledback = as_bool(a[1]);
+        // Issue #4313: log drop is a FlatAST write. Same Guard as
+        // (rollback) / mutate:*. Nested acquire under an outermost
+        // Guard stays depth-only. Quota, schedule deny, and read-only
+        // return before the log moves.
+        if (ev.workspace_read_only_)
+            return make_int(-1); // read-only; log untouched
+        bool ok = true;
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r)
+            return make_int(-1); // AdmissionRejected; log untouched
+        auto guard = std::move(*guard_r);
+        (void)guard;
         const auto before = ev.workspace_flat_->mutation_log_size();
         const auto dropped = ev.workspace_flat_->compact_mutation_log(keep_recent, keep_rolledback);
         const auto after = ev.workspace_flat_->mutation_log_size();
