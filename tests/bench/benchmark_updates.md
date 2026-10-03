@@ -40,3 +40,10 @@ Each `--update` with `--rationale` appends an entry here.
   and `min_delta_ms` 80 (baseline unchanged; catastrophic 3.0 still fails hard).
 - **Cases:** fib_20
 - **Command:** meta edit only (no `--update`)
+
+## 2026-10-03T20:57:28.521798+08:00
+
+- **Rationale:** Soft oneshot std prelude (#4178-#4219, commit 8fb4b0867 2026-09-29) auto-loads std/list+string+hash+math on every oneshot eval (aura -e/file/pipe). Measured fixed cost = 28ms per invocation (per-module list=7.2ms string=7.1ms math=10.3ms hash=3.1ms; sync_soft_export_cells_for_ir=0.06ms), so every eval case moves from the 2026-07-21 baseline's 5-11ms to ~37-43ms while --ir/--typecheck (which skip the prelude) stay ~10ms. In the same window require-heavy orch cases improved ~365ms->60ms (module-load optimizations), so the old baseline is stale in both directions. The prelude is an intentional feature; re-baseline the eval pipeline to the new steady state. Follow-up: make the prelude lazy so programs that do not reference std exports do not pay module evaluation.
+- **Cases:** 55 (passed=55, failed=0)
+- **Total time_s (median suite sum):** 4.455
+- **Command:** `benchmark.py --update --runs 3`
