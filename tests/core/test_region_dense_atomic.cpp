@@ -144,7 +144,18 @@ int run_test_region_dense_atomic() {
             });
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // A fixed 50ms slice loses the overlap on a loaded CI runner
+        // (jobs=4): the four readers can finish the window before either
+        // writer is scheduled, so writes land only after stop and hits
+        // stay 0. Wait until a published cell is observed, with a bound.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (writes.load(std::memory_order_relaxed) > 0 &&
+                reads.load(std::memory_order_relaxed) > 0 &&
+                hits.load(std::memory_order_relaxed) > 0)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         stop.store(true, std::memory_order_release);
         for (auto& th : threads)
             th.join();

@@ -13308,7 +13308,9 @@ def test_gradual():
     else:
         print(f"  {runner} not found")
         return 1
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=_aura_test_env())
+    # 30s dies when this cheap wave overlaps the issue-farm ninja (CI
+    # run 6021: timeout at 30s, rc=1, no assertion failure).
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=_aura_test_env())
     print(r.stdout)
     if r.returncode != 0:
         fail("gradual guarantee failed")
@@ -13589,13 +13591,16 @@ def test_suite_runner(*, s0: bool = False):
         exclude={"run-tests.aura"},
         allow=set(SUITE_S0_FILES) if s0 else None,
     )
+    # 120s per file dies when this cheap wave overlaps the issue-farm
+    # ninja. CI run 6021: suite/multiframe_named_let_2873.aura (quadratic
+    # named-let fill) hit the cap with every other case green.
     rc = run_aura_file_suite(
         "Suite",
         found,
         aura_bin=AURA,
         env=env,
         mode="load",
-        timeout_s=120,
+        timeout_s=240,
         jobs=_suite_jobs(),
     )
     if s0:
