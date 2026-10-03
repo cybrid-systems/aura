@@ -1962,7 +1962,7 @@ static void ac3503_5_source_no_invent() {
     CHECK(rt.find("Issue #3503") != std::string::npos, "3503 AC5: cite");
     CHECK(rt.find("stamp_closure_table_epoch_locked(cid)") != std::string::npos,
           "3503 AC3: remap-retarget still stamps table");
-    const auto remap = rt.find("g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id)");
+    const auto remap = rt.find("g_closure_func_ids[cid] = jit_id");
     CHECK(remap != std::string::npos, "3503 AC3: remap retarget");
     if (remap != std::string::npos) {
         const auto win = rt.substr(remap, 800);
@@ -3333,6 +3333,118 @@ static void ac4307_live_linear_fp_residual_and_covered() {
     ctr.production_defaults_active.store(prod0, std::memory_order_relaxed);
 }
 
+// Issue #4308: remap must not store the AOT stable id in g_closure_func_ids.
+// A host install at a different jit id, with g_jit_fns[S] holding another
+// ScalarFn, has to run the installed body. A peer whose stable id is not
+// in the reemit set is left alone. A name-map miss does not publish S.
+static std::int64_t ac4308_installed_body(std::int64_t*, std::uint32_t) {
+    return 4308;
+}
+static std::int64_t ac4308_decoy_body(std::int64_t*, std::uint32_t) {
+    return 1114308;
+}
+static std::int64_t ac4308_empty_body(std::int64_t*, std::uint32_t) {
+    return 430801;
+}
+static std::int64_t ac4308_peer_body(std::int64_t*, std::uint32_t) {
+    return 2224308;
+}
+static std::int64_t ac4308_old_body(std::int64_t*, std::uint32_t) {
+    return 3334308;
+}
+
+static void ac4308_remap_jit_id_not_stable_id() {
+    std::println("\n--- #4308: remap stores the installed jit id, not the stable id ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto fn = rt.find("extern \"C\" std::uint64_t aura_remap_live_closures_after_reemit");
+    CHECK(fn != std::string::npos, "4308: remap present");
+    if (fn != std::string::npos) {
+        const auto win = rt.substr(fn, 9000);
+        CHECK(win.find("Issue #4308") != std::string::npos, "4308: runtime cites");
+        CHECK(win.find("g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id)") ==
+                  std::string::npos,
+              "4308: stable id is not written into the jit column");
+        CHECK(win.find("aura_aot_bump_func_table_epoch") == std::string::npos,
+              "4308: remap does not bump the table epoch");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4308.cpp").empty(), "4308: no test_issue file");
+    CHECK(read_file("docs/design/4308-remap-jit-id.md").empty(), "4308: no docs/design");
+
+    constexpr std::uint32_t kSid = 490;
+    constexpr std::uint32_t kSidEmpty = 491;
+    constexpr std::uint32_t kSidPeer = 492;
+    constexpr std::uint32_t kSidMiss = 493;
+    constexpr std::int64_t kInstalled = 412640;
+    constexpr std::int64_t kEmptyJit = 412641;
+    constexpr std::int64_t kPeerJit = 412642;
+    constexpr std::int64_t kOldJit = 412643;
+
+    aura_register_fn(static_cast<std::int64_t>(kSid), &ac4308_decoy_body, 0, 0, 0);
+    aura_register_fn_named("ac4308_hit", kInstalled, &ac4308_installed_body, 0, 0, 0);
+    aura_register_fn_named("ac4308_empty", kEmptyJit, &ac4308_empty_body, 0, 0, 0);
+    aura_register_fn_named("ac4308_peer", kPeerJit, &ac4308_peer_body, 0, 0, 0);
+    aura_register_fn(kOldJit, &ac4308_old_body, 0, 0, 0);
+
+    const auto hit = aura_alloc_closure(7);
+    const auto empty = aura_alloc_closure(8);
+    const auto peer = aura_alloc_closure(kPeerJit);
+    const auto miss = aura_alloc_closure(kOldJit);
+    CHECK(hit >= 0 && empty >= 0 && peer >= 0 && miss >= 0, "4308: alloc");
+    aura_closure_set_name(hit, "ac4308_hit");
+    aura_closure_set_name(empty, "ac4308_empty");
+    aura_closure_set_name(peer, "ac4308_peer");
+    aura_closure_set_name(miss, "ac4308_miss");
+    aura_test_set_closure_stable_func_id(hit, kSid);
+    aura_test_set_closure_stable_func_id(empty, kSidEmpty);
+    aura_test_set_closure_stable_func_id(peer, kSidPeer);
+    aura_test_set_closure_stable_func_id(miss, kSidMiss);
+    aura_closure_set_must_deopt(hit, 1);
+    aura_closure_set_must_deopt(empty, 1);
+    aura_closure_set_must_deopt(miss, 1);
+
+    const auto peer_bridge = aura_get_closure_bridge_epoch(peer);
+    const auto table0 = aura_aot_func_table_epoch();
+    const auto c0 = aura_get_current_bridge_epoch();
+    const auto stamped = c0 == 0 ? 43081ull : c0 + 17;
+    aura_set_current_bridge_epoch(stamped);
+
+    const std::uint32_t ids[] = {kSid, kSidEmpty, kSidMiss};
+    const auto n = aura_remap_live_closures_after_reemit(ids, 3, /*new_bridge_epoch=*/stamped);
+    CHECK(n >= 3, "4308: three stable-id hits remapped");
+    CHECK(aura_aot_func_table_epoch() == table0, "4308: table epoch not bumped");
+    // A later native call can refresh the C-bridge stamp. The remap itself
+    // must leave a stable id outside the reemit set untouched.
+    CHECK(aura_get_closure_bridge_epoch(peer) == peer_bridge, "4308: peer bridge epoch unchanged");
+
+    CHECK(aura_closure_call(hit, nullptr, 0) == 4308, "4308: collision runs the installed body");
+    CHECK(aura_closure_call(hit, nullptr, 0) != 1114308,
+          "4308: collision does not run g_jit_fns[S]");
+    CHECK(aura_get_closure_stable_func_id(hit) == kSid, "4308: stable id stays S");
+    CHECK(aura_closure_get_must_deopt(hit) == 0, "4308: captured retarget clears MustDeopt");
+    CHECK(aura_get_closure_bridge_epoch(hit) == stamped, "4308: captured retarget restamps bridge");
+
+    CHECK(aura_closure_call(empty, nullptr, 0) == 430801,
+          "4308: empty g_jit_fns[S] still reaches the name-map body");
+    aura_register_fn(static_cast<std::int64_t>(kSidEmpty), &ac4308_decoy_body, 0, 0, 0);
+    CHECK(aura_closure_call(empty, nullptr, 0) == 430801,
+          "4308: later occupant of S is not the dispatch index");
+
+    CHECK(aura_closure_call(peer, nullptr, 0) == 2224308, "4308: peer outside the set stays");
+    CHECK(aura_get_closure_stable_func_id(peer) == kSidPeer, "4308: peer stable id unchanged");
+    CHECK(aura_closure_get_must_deopt(peer) == 0, "4308: peer MustDeopt unchanged");
+
+    CHECK(aura_closure_call(miss, nullptr, 0) == 3334308,
+          "4308: name-map miss keeps the previous jit body");
+    CHECK(aura_closure_call(miss, nullptr, 0) != 1114308,
+          "4308: name-map miss does not run g_jit_fns[S]");
+
+    aura_set_current_bridge_epoch(c0);
+    aura_free_closure(hit);
+    aura_free_closure(empty);
+    aura_free_closure(peer);
+    aura_free_closure(miss);
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -3780,6 +3892,8 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac4025_source_and_soft_wholesale();
     std::println("\n=== Issue #4307: residual + covered live linear fingerprint ===");
     ac4307_live_linear_fp_residual_and_covered();
+    std::println("\n=== Issue #4308: remap jit id, not stable id ===");
+    ac4308_remap_jit_id_not_stable_id();
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"
