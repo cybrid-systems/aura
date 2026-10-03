@@ -57,6 +57,7 @@
 #include "core/mutation_audit_wal.hh"
 #include "core/capability_model.hh"
 #include "core/wal_append_fail_slo.h"
+#include "core/moving_densify_health.hh"
 
 #include <chrono>
 #include <cstdint>
@@ -1676,7 +1677,18 @@ static void ac23_wal_miss_refuse_next_4142() {
     }
     aura::compiler::typed_audit::apply_production_audit_defaults();
     {
+        // Earlier production evals at epoch 0 emit a mid-fallback-refused
+        // row. #4302 folds that row to inspect-deny. This pin is the bare
+        // mid: no same-mid deny row, and the query itself must not be the
+        // emit (epoch lifted off 0). Never invent trail Success.
+        aura::core::security_event::reset_security_event_ring_for_test();
+        aura::compiler::typed_audit::clear_mid_fallback_refuse_se_tls();
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+        if (aura::core::current_mutation_epoch() == 0)
+            aura::core::bump_mutation_epoch(1);
         const auto [code, name] = next_of(0);
+        if (!(code == 0 && name == "none"))
+            std::println(stderr, "4142 AC5 mid0 got code={} name='{}'", code, name);
         CHECK(code == 0 && name == "none",
               "4142 AC5: mid=0 stays none (never invent trail Success)");
     }
@@ -1703,6 +1715,233 @@ static void ac23_wal_miss_refuse_next_4142() {
     reset_all();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+}
+
+// ── #4302: no-arg evolution join uses this evaluator's completed mid,
+// including sticky 0. A mid-fallback refuse is inspect-deny, not none.
+static bool decision_str_is(CompilerService& cs, const std::string& query, const char* expect) {
+    auto v = cs.eval(query);
+    if (!v || !aura::compiler::types::is_string(*v))
+        return false;
+    const auto& heap = cs.evaluator().string_heap();
+    const auto idx = aura::compiler::types::as_string_idx(*v);
+    return idx < heap.size() && heap[idx] == expect;
+}
+
+static std::optional<std::int64_t> decision_int(CompilerService& cs, const std::string& query) {
+    auto v = cs.eval(query);
+    if (!v || !aura::compiler::types::is_int(*v))
+        return std::nullopt;
+    return aura::compiler::types::as_int(*v);
+}
+
+// Production admit denies on posture (Restricted + WAL off) and on a
+// deny-storm left by earlier members. Those gates are not this bug.
+// production_defaults is the face that emits mid-fallback-refused.
+static void quiet_production_admit_for_4302() {
+    ::setenv("AURA_DENY_STORM_THRESHOLD", "0", 1);
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_mid_fallback_refuse_se_tls();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+}
+
+static void ac4302_completed_mid0_refuse_join() {
+    std::println("\n--- #4302: completed mid 0 refuse joins inspect-deny ---");
+    using aura::compiler::typed_audit::decide_evolution_suggested_next;
+    using aura::compiler::typed_audit::EvolutionSuggestedNext;
+    using aura::compiler::typed_audit::EvolutionSuggestedNextInput;
+    {
+        EvolutionSuggestedNextInput bare{};
+        bare.production_defaults = true;
+        bare.join_mid = 0;
+        CHECK(decide_evolution_suggested_next(bare) == EvolutionSuggestedNext::None,
+              "4302: bare mid 0 stays none");
+        bare.last_se_denied = true;
+        CHECK(decide_evolution_suggested_next(bare) == EvolutionSuggestedNext::InspectDeny,
+              "4302: mid 0 + SE deny is inspect-deny");
+        bare.last_se_denied = false;
+        bare.reason_is_mid_fallback_refused = true;
+        CHECK(decide_evolution_suggested_next(bare) == EvolutionSuggestedNext::InspectDeny,
+              "4302: mid 0 + mid-fallback-refused is inspect-deny");
+        bare.reason_is_mid_fallback_refused = false;
+        bare.wal_miss_refuse_evidence = true;
+        CHECK(decide_evolution_suggested_next(bare) == EvolutionSuggestedNext::None,
+              "4302: mid 0 + wal-miss bit alone stays none");
+        bare.production_defaults = false;
+        bare.last_se_denied = true;
+        CHECK(decide_evolution_suggested_next(bare) == EvolutionSuggestedNext::SoftObserve,
+              "4302: Soft stays soft-observe");
+    }
+
+    // Bare explicit 0: lift epoch off 0 so the query's own resolve does
+    // not write a mid-fallback row before the fold. The pure fold above
+    // is the no-SE contract. The refuse row is the guard case below.
+    reset_all();
+    quiet_production_admit_for_4302();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    if (aura::core::current_mutation_epoch() == 0)
+        aura::core::bump_mutation_epoch(1);
+    {
+        CompilerService cs;
+        auto none = decision_str_is(
+            cs,
+            "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) \"suggested-next\")",
+            "none");
+        if (!none) {
+            auto got = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) "
+                               "\"suggested-next\")");
+            std::string s = "<not-string>";
+            if (got && aura::compiler::types::is_string(*got)) {
+                const auto& heap = cs.evaluator().string_heap();
+                const auto idx = aura::compiler::types::as_string_idx(*got);
+                if (idx < heap.size())
+                    s = heap[idx];
+            }
+            std::println(stderr, "4302 explicit0 got suggested-next='{}'", s);
+        }
+        CHECK(none, "4302: explicit mid 0 with no SE stays none");
+    }
+
+    aura::core::reset_mutation_epoch_for_test();
+    quiet_production_admit_for_4302();
+    reset_all();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::g_last_stamped_audit_mid.store(99, std::memory_order_relaxed);
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        bool ok = true;
+        {
+            auto gr = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+            if (!gr.has_value())
+                std::println(stderr, "4302 try_acquire: {}", gr.error().message);
+            CHECK(gr.has_value(), "4302: outermost guard entered");
+        }
+        CHECK(ev.has_last_completed_audit_mid(), "4302: exit recorded a completed mid");
+        CHECK(ev.last_completed_audit_mid() == 0, "4302: epoch unset completes as mid 0");
+        const auto q = [](const char* key) {
+            return std::string("(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"") +
+                   key + "\")";
+        };
+        auto mid = decision_int(cs, q("last-audit-mid"));
+        CHECK(mid && *mid == 0, "4302: no-arg last-audit-mid is 0, not the previous success");
+        auto denied = decision_int(cs, q("last-se-denied"));
+        CHECK(denied && *denied == 1, "4302: no-arg last-se-denied=1");
+        CHECK(decision_str_is(cs, q("last-se-reason"), "mid-fallback-refused"),
+              "4302: no-arg last-se-reason=mid-fallback-refused");
+        CHECK(decision_str_is(cs, q("suggested-next"), "inspect-deny"),
+              "4302: no-arg suggested-next=inspect-deny");
+        CHECK(decision_str_is(cs,
+                              "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) "
+                              "\"suggested-next\")",
+                              "inspect-deny"),
+              "4302: explicit 0 suggested-next=inspect-deny");
+    }
+
+    // Non-zero session mids are pointer-mixed and do not fit a fixnum, so
+    // the query int is not the round-trip. The dtor slot is the uint64.
+    // The query join itself is pinned with two small slots below.
+    aura::core::bump_mutation_epoch(1);
+    quiet_production_admit_for_4302();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::g_last_stamped_audit_mid.store(0x4302BEEF,
+                                                                std::memory_order_relaxed);
+    std::uint64_t raw_a = 0;
+    std::uint64_t raw_b = 0;
+    bool entered = false;
+    {
+        CompilerService a;
+        bool oka = true;
+        {
+            auto ga = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(a.evaluator(),
+                                                                                    1, &oka);
+            if (!ga.has_value())
+                std::println(stderr, "4302 try_acquire A: {}", ga.error().message);
+            entered = ga.has_value();
+        }
+        raw_a = a.evaluator().last_completed_audit_mid();
+    }
+    {
+        CompilerService b;
+        bool okb = true;
+        {
+            auto gb = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(b.evaluator(),
+                                                                                    1, &okb);
+            if (!gb.has_value())
+                std::println(stderr, "4302 try_acquire B: {}", gb.error().message);
+            entered = entered && gb.has_value();
+        }
+        raw_b = b.evaluator().last_completed_audit_mid();
+    }
+    CHECK(entered, "4302: two evaluators entered");
+    CHECK(raw_a != 0 && raw_b != 0 && raw_a != raw_b, "4302: minted session mids are non-zero");
+    CHECK(raw_a != 0x4302BEEFULL && raw_b != 0x4302BEEFULL,
+          "4302: completed mid is not the process last_stamped");
+
+    // Query-evaluator TLS is the innermost CompilerService (#456).
+    // Each no-arg read runs in its own scope so the primitive sees
+    // that evaluator. Slots are also compared while both are alive.
+    {
+        CompilerService a;
+        CompilerService b;
+        a.evaluator().note_last_completed_audit_mid(430201);
+        b.evaluator().note_last_completed_audit_mid(430202);
+        CHECK(a.evaluator().has_last_completed_audit_mid() &&
+                  b.evaluator().has_last_completed_audit_mid() &&
+                  a.evaluator().last_completed_audit_mid() == 430201 &&
+                  b.evaluator().last_completed_audit_mid() == 430202,
+              "4302: live evaluators keep distinct completed mids");
+    }
+    const char* q =
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"last-audit-mid\")";
+    {
+        CompilerService a;
+        a.evaluator().note_last_completed_audit_mid(430201);
+        aura::compiler::typed_audit::g_last_stamped_audit_mid.store(0x4302BEEF,
+                                                                    std::memory_order_relaxed);
+        auto ma = decision_int(a, q);
+        CHECK(ma && *ma == 430201 && *ma != static_cast<std::int64_t>(0x4302BEEF),
+              "4302: no-arg last-audit-mid is this evaluator's completed mid");
+    }
+    {
+        CompilerService b;
+        b.evaluator().note_last_completed_audit_mid(430202);
+        aura::compiler::typed_audit::g_last_stamped_audit_mid.store(0x4302BEEF,
+                                                                    std::memory_order_relaxed);
+        auto mb = decision_int(b, q);
+        CHECK(mb && *mb == 430202, "4302: the other evaluator's no-arg mid stays 430202");
+    }
+
+    {
+        const auto seq_before =
+            aura::core::security_event::g_security_event_ring().seq.load(std::memory_order_relaxed);
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(
+            decision_str_is(
+                cs,
+                "(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"suggested-next\")",
+                "soft-observe"),
+            "4302: Soft suggested-next stays soft-observe");
+        auto dh = decision_int(
+            cs, "(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"durable-hit\")");
+        CHECK(dh && *dh == 0, "4302: Soft durable-hit stays 0");
+        CHECK(aura::core::security_event::g_security_event_ring().seq.load(
+                  std::memory_order_relaxed) == seq_before,
+              "4302: Soft query emits no SE");
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+    aura::core::reset_mutation_epoch_for_test();
 }
 
 int run_test_audit_replay_join() {
@@ -1732,6 +1971,7 @@ int run_test_audit_replay_join() {
     ac21_replay_mid_last_stamped_4120();
     ac22_grant_node_join_after_wrap_4135();
     ac23_wal_miss_refuse_next_4142();
+    ac4302_completed_mid0_refuse_join();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

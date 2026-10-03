@@ -7236,6 +7236,19 @@ public:
     // and require_effect read).
     void note_boundary_audit_mid_for_test(std::uint64_t mid) noexcept;
     void clear_boundary_audit_mid_for_test() noexcept;
+    // Issue #4302: outermost exit records THIS evaluator's action mid,
+    // including sticky 0. Separate from the live session mid cleared on
+    // exit and from process-global g_last_stamped_audit_mid.
+    void note_last_completed_audit_mid(std::uint64_t mid) noexcept {
+        last_completed_audit_mid_ = mid;
+        last_completed_audit_mid_valid_ = true;
+    }
+    [[nodiscard]] bool has_last_completed_audit_mid() const noexcept {
+        return last_completed_audit_mid_valid_;
+    }
+    [[nodiscard]] std::uint64_t last_completed_audit_mid() const noexcept {
+        return last_completed_audit_mid_;
+    }
     std::uint64_t probe_join_mid_for_test() noexcept; // TEMP 3646DBG4
     bool probe_production_active_for_test() noexcept; // TEMP 3646DBG4
     bool grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
@@ -16409,6 +16422,10 @@ private:
         std::uint64_t mid = 0;
     };
     std::vector<SessionStringCap> session_string_caps_;
+    // Issue #4302: last outermost action mid. Append-only at struct end.
+    // valid=false until a non-inert outermost Guard exits. 0 is legal.
+    std::uint64_t last_completed_audit_mid_ = 0;
+    bool last_completed_audit_mid_valid_ = false;
 };
 
 
