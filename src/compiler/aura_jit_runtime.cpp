@@ -6379,29 +6379,45 @@ extern "C" void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
     aura_unlock_workspace_write();
 }
 
+// Issue #4318: plant a pool slot without touching the intern map.
+// Tests use it to put the same bytes at a second index. aura_alloc_string
+// still returns the first interned index for that text.
+extern "C" void aura_test_set_string_pool_slot(std::size_t idx, const char* s) {
+    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    if (g_string_pool.size() <= idx)
+        g_string_pool.resize(idx + 1);
+    g_string_pool[idx] = s ? s : "";
+}
+
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
-    // Fast path: same raw value
+    // Identical bits return before any pool lock.
     if (stored_key == search_key)
         return 1;
-    // Fixnum comparison (low bit 0, not in string range)
-    if ((stored_key & 1) == 0 && stored_key > -9000000000000000000LL && (search_key & 1) == 0 &&
-        search_key > -9000000000000000000LL)
-        return (stored_key >> 1) == (search_key >> 1) ? 1 : 0;
-    // String comparison: both use g_string_pool encoding (STRING_BIAS_VAL - idx)
-    if (stored_key <= -9000000000000000000LL && search_key <= -9000000000000000000LL) {
-        // Compare content via g_string_pool (JIT runtime's string storage)
-        // Issue #1306: lock pool for concurrent safety.
-        auto si = static_cast<std::size_t>(-stored_key - 9000000000000000000LL);
-        auto qi = static_cast<std::size_t>(-search_key - 9000000000000000000LL);
+    using aura::compiler::types::is_fixnum_hot;
+    using aura::compiler::types::is_string_v2_hot;
+    using aura::compiler::types::string_idx_raw_v2;
+    // Issue #4318: v2 strings decode with string_idx_raw_v2. The pre-shift
+    // `key <= -9e18` threshold treated idx 0 as a fixnum and idx n as 4*n-2.
+    const bool ss = is_string_v2_hot(stored_key);
+    const bool qs = is_string_v2_hot(search_key);
+    if (ss && qs) {
+        const auto si = static_cast<std::size_t>(string_idx_raw_v2(stored_key));
+        const auto qi = static_cast<std::size_t>(string_idx_raw_v2(search_key));
         {
+            // Issue #1306: lock pool for concurrent safety.
             std::lock_guard<std::mutex> lock(g_string_pool_mtx);
             if (si < g_string_pool.size() && qi < g_string_pool.size())
                 return (g_string_pool[si] == g_string_pool[qi]) ? 1 : 0;
         }
-        // Fallback: evaluator heap comparison (converted keys)
+        // Fallback: evaluator heap comparison (converted keys).
         if (g_hash_str_eq_fn)
             return g_hash_str_eq_fn(stored_key, search_key);
+        return 0;
     }
+    // Distinct fixnums (including make_int(1), raw 2, low2 == 2) are not
+    // strings. Do not index the pool.
+    if (is_fixnum_hot(stored_key) && is_fixnum_hot(search_key))
+        return 0;
     return 0;
 }
 
