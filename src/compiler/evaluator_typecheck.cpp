@@ -1541,6 +1541,31 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         }
     }
 
+    // Issue #4294: #4171 vacuous-empty deny, commit-audit consumer only.
+    // Empty frames after txn_dirty / commit_cs_has_work / a live
+    // occurrence table are not greenfield. Hard switch is
+    // require_blame_complete_on_commit — the same #2221 switch (Full
+    // alone stays observe). The unscoped live fill and the proof
+    // publisher stay vacuous so the eval license cannot stick false.
+    if (cr.blame_ok && require_blame_complete_on_commit() && commit_type_checker_opaque_) {
+        auto* ctc_audit = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        const auto& bc_audit = ctc_audit->constraint_system().last_blame_chain();
+        const bool occ_nonvacuous = ctc_audit->constraint_system().occurrence_goals_size() > 0;
+        const bool mutated = txn_dirty() || ctc_audit->commit_cs_has_work() || occ_nonvacuous;
+        if (!commit_audit_blame_ok(bc_audit.is_complete(), bc_audit.frames.empty(), mutated,
+                                   /*blame_hard=*/true)) {
+            cr.blame_ok = false;
+            c.blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
+            g_blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
+            c.blame_commit_incomplete_observe_total.fetch_add(1, std::memory_order_relaxed);
+            g_blame_commit_incomplete_observe_total.fetch_add(1, std::memory_order_relaxed);
+            c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+            g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     // 2) Linear ownership revalidate (dirty/full sweep + boundary consistency).
     // Issue #2559: type-layer inventory site — three-layer linear wire gate.
     {

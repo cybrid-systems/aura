@@ -1615,6 +1615,23 @@ struct CommitReadiness {
     std::int64_t force_reason_code = 0;
 };
 
+// Issue #4294: re-land #4171 vacuous-empty deny on the commit-audit
+// consumer only. mutated = txn_dirty || cs_has_work || occ_nonvacuous.
+// blame_hard (production commit-audit): empty frames after a real
+// mutate are not vacuous — blame_ok = complete || (!mutated && empty).
+// Soft (blame_hard false): today's vacuous empty→ok.
+// Do not call this from aura_typed_audit_fill_from_live_tc or from
+// build_type_linear_commit_proof_from_live. That deny rode the
+// eval-serving license (published would_allow face + #3224/#3130
+// IR/JIT gates) and froze test_shape_soa_storm_batch #3583. The
+// unscoped fill stays `is_complete() || frames.empty()`.
+[[nodiscard]] inline bool commit_audit_blame_ok(bool chain_complete, bool frames_empty,
+                                                bool mutated, bool blame_hard) noexcept {
+    if (!blame_hard)
+        return chain_complete || frames_empty;
+    return chain_complete || (!mutated && frames_empty);
+}
+
 // Issue #2697: single Agent-holdable proof for composite type×linear
 // safety. Lightweight serialisable/hashable struct that
 // composite_txn_commit stamps on success or reject. Additive to the
