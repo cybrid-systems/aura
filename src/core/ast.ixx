@@ -1570,10 +1570,29 @@ public:
         // when tag_ grows before dirty_ push completes.
         // LOCK ORDER: flatast_mutex_ → dirty_column_mtx_.
         const auto upcoming_size = static_cast<std::size_t>(tag_.size()) + 1;
-        ppa_dirty_.reserve(upcoming_size);
-        verify_dirty_.reserve(upcoming_size);
-        verification_dirty_.reserve(upcoming_size);
-        macro_dirty_.reserve(upcoming_size);
+        // reserve(size+1) sets capacity == size. The next add_node then
+        // reallocates, and pmr::vector<uint8_t> copies one byte at a time
+        // (polymorphic_allocator::construct, not memcpy). Five columns ×
+        // every node is O(n²) and adds a few hundred ms to every process,
+        // including bench startup. Grow geometrically so push_back stays
+        // amortized O(1) and the size==tag_.size() invariant is unchanged.
+        auto reserve_geom = [](auto& col, std::size_t need) {
+            if (col.capacity() >= need)
+                return;
+            std::size_t cap = col.capacity() < 8 ? std::size_t{8} : col.capacity();
+            while (cap < need) {
+                if (cap > (static_cast<std::size_t>(-1) / 2)) {
+                    cap = need;
+                    break;
+                }
+                cap *= 2;
+            }
+            col.reserve(cap);
+        };
+        reserve_geom(ppa_dirty_, upcoming_size);
+        reserve_geom(verify_dirty_, upcoming_size);
+        reserve_geom(verification_dirty_, upcoming_size);
+        reserve_geom(macro_dirty_, upcoming_size);
         if (!free_list_.empty()) {
             auto id = free_list_.back();
             free_list_.pop_back();
@@ -1649,7 +1668,7 @@ public:
         // push, dirty_.size() == tag_.size() (append path).
         {
             std::unique_lock<std::shared_mutex> dirty_wlock(dirty_column_mtx_.mutable_get());
-            dirty_.reserve(upcoming_size);
+            reserve_geom(dirty_, upcoming_size);
             dirty_.push_back(0);
         }
         ppa_dirty_.push_back(0);
