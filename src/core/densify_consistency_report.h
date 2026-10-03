@@ -392,10 +392,140 @@ inline DensifyEvalSlot* densify_eval_slot_find(const void* eval_id) noexcept {
     return nullptr;
 }
 
+// Issue #4305: one overflow record when all 64 slots are owned. Seqlock
+// matches #4104. depth keeps a second unslotted arm from clearing the
+// first busy bit. A free or matching slot never enters the seqlock
+// (slots are not released, so a free slot means overflow was not used).
+// Seq starts at 0. has_reject stays 0 until an unslotted EnvFrame/dual
+// reject is published, so the cold steal path does not take the seqlock.
+inline std::atomic<std::uint64_t> g_densify_overflow_seq{0};
+inline std::atomic<const void*> g_densify_overflow_id{nullptr};
+inline std::atomic<std::uint8_t> g_densify_overflow_envframe_ok{1};
+inline std::atomic<std::uint8_t> g_densify_overflow_dual_epoch_ok{1};
+inline std::atomic<std::uint32_t> g_densify_overflow_depth{0};
+inline std::atomic<std::uint8_t> g_densify_overflow_has_reject{0};
+
+inline void densify_overflow_write_begin(std::uint64_t& s) noexcept {
+    s = g_densify_overflow_seq.load(std::memory_order_acquire);
+    for (;;) {
+        if ((s & 1ULL) != 0) {
+            s = g_densify_overflow_seq.load(std::memory_order_acquire);
+            continue;
+        }
+        if (g_densify_overflow_seq.compare_exchange_weak(s, s + 1, std::memory_order_acq_rel,
+                                                         std::memory_order_acquire))
+            break;
+    }
+}
+inline void densify_overflow_write_end(std::uint64_t s) noexcept {
+    g_densify_overflow_seq.store(s + 2, std::memory_order_release);
+}
+
+inline void densify_overflow_arm(const void* eval_id) noexcept {
+    std::uint64_t s = 0;
+    densify_overflow_write_begin(s);
+    const auto depth = g_densify_overflow_depth.load(std::memory_order_relaxed);
+    if (depth == 0) {
+        // New occupant. Drop the previous result so its flags cannot
+        // reject this id before its own publish.
+        g_densify_overflow_id.store(eval_id, std::memory_order_relaxed);
+        g_densify_overflow_envframe_ok.store(1, std::memory_order_relaxed);
+        g_densify_overflow_dual_epoch_ok.store(1, std::memory_order_relaxed);
+        g_densify_overflow_has_reject.store(0, std::memory_order_relaxed);
+    }
+    if (depth != 0xffffffffu)
+        g_densify_overflow_depth.store(depth + 1, std::memory_order_relaxed);
+    densify_overflow_write_end(s);
+}
+
+inline void densify_overflow_clear_if(const void* eval_id) noexcept {
+    if (!eval_id)
+        return;
+    // Never armed: seq stays 0. Do not take the seqlock.
+    if (g_densify_overflow_seq.load(std::memory_order_relaxed) == 0)
+        return;
+    std::uint64_t s = 0;
+    densify_overflow_write_begin(s);
+    const auto depth = g_densify_overflow_depth.load(std::memory_order_relaxed);
+    if (depth > 0)
+        g_densify_overflow_depth.store(depth - 1, std::memory_order_relaxed);
+    // id and result flags stay so EnvFrameOk can see the publish after clear.
+    densify_overflow_write_end(s);
+}
+
+inline void densify_overflow_publish_result(const void* eval_id, bool envframe_ok,
+                                            bool dual_epoch_ok) noexcept {
+    std::uint64_t s = 0;
+    densify_overflow_write_begin(s);
+    g_densify_overflow_envframe_ok.store(envframe_ok ? 1 : 0, std::memory_order_relaxed);
+    g_densify_overflow_dual_epoch_ok.store(dual_epoch_ok ? 1 : 0, std::memory_order_relaxed);
+    g_densify_overflow_id.store(eval_id, std::memory_order_relaxed);
+    g_densify_overflow_has_reject.store((!envframe_ok || !dual_epoch_ok) ? 1 : 0,
+                                        std::memory_order_relaxed);
+    densify_overflow_write_end(s);
+}
+
+[[nodiscard]] inline bool densify_overflow_in_flight(const void* eval_id) noexcept {
+    if (!eval_id)
+        return false;
+    if (g_densify_overflow_seq.load(std::memory_order_relaxed) == 0)
+        return false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const auto s1 = g_densify_overflow_seq.load(std::memory_order_acquire);
+        if ((s1 & 1ULL) != 0)
+            continue;
+        const auto depth = g_densify_overflow_depth.load(std::memory_order_relaxed);
+        const auto s2 = g_densify_overflow_seq.load(std::memory_order_acquire);
+        if (s1 == s2)
+            return depth != 0;
+    }
+    return true;
+}
+
+[[nodiscard]] inline bool densify_overflow_envframe_rejects(const void* eval_id) noexcept {
+    if (!eval_id)
+        return false;
+    // Empty record: one relaxed load, not the seqlock.
+    if (g_densify_overflow_has_reject.load(std::memory_order_relaxed) == 0)
+        return false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const auto s1 = g_densify_overflow_seq.load(std::memory_order_acquire);
+        if ((s1 & 1ULL) != 0)
+            continue;
+        const auto id = g_densify_overflow_id.load(std::memory_order_relaxed);
+        const auto env_ok = g_densify_overflow_envframe_ok.load(std::memory_order_relaxed);
+        const auto dual_ok = g_densify_overflow_dual_epoch_ok.load(std::memory_order_relaxed);
+        const auto s2 = g_densify_overflow_seq.load(std::memory_order_acquire);
+        if (s1 == s2)
+            return id == eval_id && (env_ok == 0 || dual_ok == 0);
+    }
+    return false;
+}
+
+inline void reset_densify_overflow_for_test() noexcept {
+    g_densify_overflow_depth.store(0, std::memory_order_relaxed);
+    g_densify_overflow_envframe_ok.store(1, std::memory_order_relaxed);
+    g_densify_overflow_dual_epoch_ok.store(1, std::memory_order_relaxed);
+    g_densify_overflow_has_reject.store(0, std::memory_order_relaxed);
+    g_densify_overflow_id.store(nullptr, std::memory_order_relaxed);
+    g_densify_overflow_seq.store(0, std::memory_order_release);
+}
+
+inline void reset_densify_eval_slots_for_test() noexcept {
+    for (auto& s : g_densify_eval_slots) {
+        s.in_flight.store(0, std::memory_order_relaxed);
+        s.envframe_ok.store(1, std::memory_order_relaxed);
+        s.dual_epoch_ok.store(1, std::memory_order_relaxed);
+        s.seq.store(0, std::memory_order_relaxed);
+        s.id.store(nullptr, std::memory_order_release);
+    }
+    reset_densify_overflow_for_test();
+}
+
 // Publish (envframe_ok, dual_epoch_ok) for eval_id and bump its seq. The
 // bump site passes the process atomics' current values (just written by
-// this thread within the same densify flow). A full table degrades to
-// process-only (same visibility as today).
+// this thread within the same densify flow). A full table publishes the
+// one #4305 overflow record instead of dropping the result.
 inline void note_last_densify_result_for(const void* eval_id, bool envframe_ok,
                                          bool dual_epoch_ok) noexcept {
     if (!eval_id)
@@ -413,8 +543,10 @@ inline void note_last_densify_result_for(const void* eval_id, bool envframe_ok,
                 slot = &s;
         }
     }
-    if (!slot)
+    if (!slot) {
+        densify_overflow_publish_result(eval_id, envframe_ok, dual_epoch_ok);
         return;
+    }
     slot->envframe_ok.store(envframe_ok ? 1 : 0, std::memory_order_relaxed);
     slot->dual_epoch_ok.store(dual_epoch_ok ? 1 : 0, std::memory_order_relaxed);
     slot->seq.fetch_add(1, std::memory_order_release);
@@ -434,7 +566,8 @@ inline void note_last_densify_result_for(const void* eval_id, bool envframe_ok,
 
 // Issue #3894: densify-in-flight (Phase-5 compact after held-clear).
 // Steal folds this into BoundarySafe (no new StealInvariant bit — #3860
-// Count stays 7). Eval-keyed; missing slot is not in-flight.
+// Count stays 7). Eval-keyed. A missing slot is in-flight only when the
+// #4305 overflow depth is non-zero (table full). A free slot is not.
 inline DensifyEvalSlot* densify_eval_slot_occupy(const void* eval_id) noexcept {
     if (!eval_id)
         return nullptr;
@@ -451,16 +584,36 @@ inline DensifyEvalSlot* densify_eval_slot_occupy(const void* eval_id) noexcept {
     return nullptr;
 }
 inline void arm_densify_in_flight(const void* eval_id) noexcept {
-    if (auto* s = densify_eval_slot_occupy(eval_id))
+    if (auto* s = densify_eval_slot_occupy(eval_id)) {
         s->in_flight.store(1, std::memory_order_release);
+        return;
+    }
+    densify_overflow_arm(eval_id);
 }
 inline void clear_densify_in_flight(const void* eval_id) noexcept {
-    if (auto* s = densify_eval_slot_find(eval_id))
+    if (auto* s = densify_eval_slot_find(eval_id)) {
         s->in_flight.store(0, std::memory_order_release);
+        return;
+    }
+    densify_overflow_clear_if(eval_id);
 }
 [[nodiscard]] inline bool densify_in_flight_for(const void* eval_id) noexcept {
-    auto* s = densify_eval_slot_find(eval_id);
-    return s && s->in_flight.load(std::memory_order_acquire) != 0;
+    if (!eval_id)
+        return false;
+    bool saw_free = false;
+    const std::size_t h = densify_eval_slot_base(eval_id);
+    for (std::size_t i = 0; i < kDensifyEvalSlotCount; ++i) {
+        auto& s = g_densify_eval_slots[(h + i) & (kDensifyEvalSlotCount - 1)];
+        const void* cur = s.id.load(std::memory_order_acquire);
+        if (cur == eval_id)
+            return s.in_flight.load(std::memory_order_acquire) != 0;
+        if (cur == nullptr)
+            saw_free = true;
+    }
+    // Free slot: this id cannot be overflow-only. No overflow seqlock.
+    if (saw_free)
+        return false;
+    return densify_overflow_in_flight(eval_id);
 }
 struct DensifyInFlightGuard {
     const void* eval_id;
@@ -619,6 +772,7 @@ inline void reset_densify_consistency_for_test() noexcept {
     g_last_densify_closure_remount_ok.store(1, std::memory_order_relaxed);
     g_last_densify_envframe_fail_code.store(0, std::memory_order_relaxed);
     g_last_densify_closure_fail_code.store(0, std::memory_order_relaxed);
+    reset_densify_overflow_for_test();
 }
 
 // Issue #3857: Moving entry soft-gate on live #3210 temporary canaries.

@@ -1342,6 +1342,128 @@ static void ac4104_lcp_overflow_rejects_victim() {
     aura::serve::reset_steal_snapshot_soft_for_test();
 }
 
+// Issue #4305: densify slots are never released. The 65th id must stay
+// in-flight and an unslotted envframe reject must fail EnvFrameOk.
+// A slotted owner is not frozen by that overflow record.
+static void ac4305_densify_overflow_fail_closed() {
+    namespace dens = aura::core::densify_consistency;
+    dens::reset_densify_eval_slots_for_test();
+
+    auto* one = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x43050010u));
+    CHECK(dens::g_densify_overflow_seq.load(std::memory_order_relaxed) == 0,
+          "4305: empty overflow seq");
+    {
+        dens::DensifyInFlightGuard guard(one);
+        CHECK(dens::densify_in_flight_for(one), "4305: free-slot arm is in flight");
+        CHECK(dens::g_densify_overflow_seq.load(std::memory_order_relaxed) == 0,
+              "4305: free-slot arm does not take the overflow seqlock");
+    }
+    CHECK(!dens::densify_in_flight_for(one), "4305: free-slot clear drops in flight");
+    CHECK(dens::g_densify_overflow_seq.load(std::memory_order_relaxed) == 0,
+          "4305: free-slot clear does not take the overflow seqlock");
+    dens::reset_densify_eval_slots_for_test();
+
+    std::vector<void*> fillers;
+    fillers.reserve(dens::kDensifyEvalSlotCount);
+    for (std::size_t i = 0; i < dens::kDensifyEvalSlotCount; ++i) {
+        auto* id = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x43051000u + i * 16u));
+        fillers.push_back(id);
+        dens::DensifyInFlightGuard guard(id);
+        CHECK(dens::densify_in_flight_for(id), "4305: filler arm");
+    }
+    CHECK(!dens::densify_in_flight_for(fillers[0]), "4305: filler clear leaves the slot");
+    CHECK(dens::last_densify_envframe_ok_for(fillers[0]),
+          "4305: slotted getter stays allow when the flag is set");
+
+    auto* victim = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4305ABCDu));
+    auto* second = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4305BBBBu));
+    auto* other = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4305EEEEu));
+    {
+        dens::DensifyInFlightGuard first(victim);
+        CHECK(dens::densify_in_flight_for(victim), "4305: 65th is in flight");
+        CHECK(!dens::densify_in_flight_for(fillers[0]), "4305: slotted owner is not frozen");
+        {
+            dens::DensifyInFlightGuard extra(second);
+            CHECK(dens::densify_in_flight_for(victim), "4305: second arm keeps the first busy");
+            CHECK(dens::densify_in_flight_for(second), "4305: second unslotted id is in flight");
+        }
+        CHECK(dens::densify_in_flight_for(victim),
+              "4305: first stays busy after the second clears");
+        // Depth stays above 0, so every unslotted id is still in flight.
+        CHECK(dens::g_densify_overflow_depth.load(std::memory_order_relaxed) == 1,
+              "4305: second clear drops only its depth");
+        CHECK(dens::densify_in_flight_for(second),
+              "4305: unslotted depth stays in flight until it hits 0");
+
+        auto prep = [](Fiber& f, void* id) {
+            f.set_evaluator_id(id);
+            f.set_yield_reason(YieldReason::Explicit);
+            f.publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+        };
+        Fiber victim_f([]() {}, /*stack_size=*/64 * 1024);
+        Fiber filler_f([]() {}, /*stack_size=*/64 * 1024);
+        prep(victim_f, victim);
+        prep(filler_f, fillers[0]);
+        const auto m_boundary =
+            aura::serve::steal_invariant_mask(aura::serve::StealInvariant::BoundarySafe);
+        const auto bits = aura::serve::evaluate_residual_hard_and_bits(
+            &victim_f, victim_f.mutation_safety_snapshot(), false);
+        CHECK((bits & m_boundary) != 0, "4305: armed overflow is BoundarySafe");
+        const auto filler_bits = aura::serve::evaluate_residual_hard_and_bits(
+            &filler_f, filler_f.mutation_safety_snapshot(), false);
+        CHECK((filler_bits & m_boundary) == 0, "4305: slotted filler is boundary-safe");
+    }
+    CHECK(!dens::densify_in_flight_for(victim), "4305: clear drops the 65th");
+    CHECK(!dens::densify_in_flight_for(second), "4305: depth 0 is not in flight");
+    CHECK(dens::g_densify_overflow_depth.load(std::memory_order_relaxed) == 0,
+          "4305: both clears drain the depth");
+
+    dens::note_last_densify_result_for(victim, /*envframe_ok=*/false, /*dual_epoch_ok=*/true);
+    CHECK(dens::last_densify_call_seq_for(victim) == 0, "4305: unslotted publish has no slot seq");
+    CHECK(dens::last_densify_envframe_ok_for(victim),
+          "4305: missing-slot getter stays allow (#3617)");
+    CHECK(dens::densify_overflow_envframe_rejects(victim), "4305: overflow records the reject");
+    CHECK(!dens::densify_overflow_envframe_rejects(other), "4305: a different id stays quiet");
+    CHECK(!dens::densify_overflow_envframe_rejects(fillers[0]),
+          "4305: slotted id is not the overflow reject");
+
+    auto prep = [](Fiber& f, void* id) {
+        f.set_evaluator_id(id);
+        f.set_yield_reason(YieldReason::Explicit);
+        f.publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+    };
+    Fiber victim_f([]() {}, /*stack_size=*/64 * 1024);
+    Fiber other_f([]() {}, /*stack_size=*/64 * 1024);
+    Fiber filler_f([]() {}, /*stack_size=*/64 * 1024);
+    prep(victim_f, victim);
+    prep(other_f, other);
+    prep(filler_f, fillers[0]);
+    const auto m_env = aura::serve::steal_invariant_mask(aura::serve::StealInvariant::EnvFrameOk);
+    const auto vbits = aura::serve::evaluate_residual_hard_and_bits(
+        &victim_f, victim_f.mutation_safety_snapshot(), false);
+    CHECK((vbits & m_env) != 0, "4305: unslotted envframe reject is EnvFrameOk");
+    const auto obits = aura::serve::evaluate_residual_hard_and_bits(
+        &other_f, other_f.mutation_safety_snapshot(), false);
+    CHECK((obits & m_env) == 0, "4305: id with no record stays quiet");
+    const auto fbits = aura::serve::evaluate_residual_hard_and_bits(
+        &filler_f, filler_f.mutation_safety_snapshot(), false);
+    CHECK((fbits & m_env) == 0, "4305: slotted owner is not EnvFrame-frozen");
+
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(hdr.find("Issue #4305") != std::string::npos, "4305: header cite");
+    CHECK(hdr.find("densify_overflow_arm") != std::string::npos, "4305: overflow arm");
+    CHECK(ss.find("Issue #4305") != std::string::npos, "4305: steal cite");
+    CHECK(ss.find("densify_overflow_envframe_rejects") != std::string::npos,
+          "4305: EnvFrame consults the overflow record");
+    CHECK(hdr.find("return !s || s->envframe_ok.load") != std::string::npos,
+          "4305: slotted getter still allows a missing slot");
+    CHECK(read_file("tests/serve/test_issue_4305.cpp").empty(), "4305: no invent");
+    CHECK(read_file("docs/design/4305-densify-overflow.md").empty(), "4305: no docs/design");
+
+    dens::reset_densify_eval_slots_for_test();
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -1391,6 +1513,8 @@ int run_test_steal_complete_gc_defer() {
     ac3988_no_edge_opcode_poll();
     std::println("\n=== Issue #4104: LCP overflow Reject is this evaluator only ===");
     ac4104_lcp_overflow_rejects_victim();
+    std::println("\n=== Issue #4305: densify overflow stays fail-closed past 64 ===");
+    ac4305_densify_overflow_fail_closed();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
