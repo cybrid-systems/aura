@@ -4558,6 +4558,281 @@ static void ac4139_4_source_cite_linter_no_invent() {
           "4139 AC4: no process-global AgentRegistry");
 }
 
+
+// Issue #4299: production live-abandon (force-recycle live arm) must hand
+// the still-live Reclaimed body to the orphan reaper and transfer the
+// agents_active one-shot onto the Fiber before the handle is dropped.
+// Closed loop after #3805 / #3968 / #4097.
+static void ac4299_1_name_table_live_abandon_notes_orphan() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #4299 AC1: name-table live abandon -> cancel + orphan note + transfer ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+
+    const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    Scheduler sched(1);
+    Fiber* raw = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    CHECK(raw != nullptr, "4299 AC1: scheduler spawn ok (owner_sched set)");
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    mb->attach(raw);
+
+    AgentHandle h;
+    h.ok = true;
+    h.name = "agent-4299a";
+    h.fiber = raw;
+    h.mailbox = mb;
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    h.agents_active_held = true;
+    g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0 + 1,
+          "4299 AC1: agents_active +1 (spawn)");
+
+    aura::compiler::AgentNameTable table;
+    CHECK(table.put(std::move(h)) != nullptr, "4299 AC1: pending live-body handle registered");
+    CHECK(sched.orphan_count() == 0, "4299 AC1: no orphan before the abandon");
+
+    auto* found = table.find("agent-4299a");
+    CHECK(found == nullptr, "4299 AC1: first find retires the abandoned husk (#3805/#3968)");
+    CHECK(table.size() == 0, "4299 AC1: name unresolvable");
+    CHECK(!raw->is_done(), "4299 AC1: #2661 body-stack untouched");
+    CHECK(raw->is_cancel_requested(), "4299 AC1: body cancel requested");
+    CHECK(sched.orphan_count() >= 1, "4299 AC1: reaper owns the residual (orphan list)");
+    CHECK(raw->mailbox() == nullptr, "4299 AC1: Fiber::mailbox_ detached");
+    CHECK(mb->attacher_count() == 0, "4299 AC1: mailbox attachers cleared");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0 + 1,
+          "4299 AC1: gauge still held (transferred to Fiber, not dropped)");
+    CHECK(raw->agents_active_oneshot_transferred(), "4299 AC1: one-shot transferred to Fiber");
+
+    // drain_ms=0 -> hard deadline = kJoinDrainResidualHardMsDefault (30s).
+    // Refresh for the test so the reap edge runs now.
+    sched.note_orphan_fiber(raw, /*hard_deadline_ms=*/10);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    CHECK(sched.reap_orphans_now() >= 1, "4299 AC1: hard-reap ran");
+    CHECK(raw->is_reclaimed() && !raw->is_done(), "4299 AC1: #3905 live body kept");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0,
+          "4299 AC1: gauge back to pre-spawn baseline after reap");
+    CHECK(!raw->consume_agents_active_oneshot_transferred(),
+          "4299 AC1: one-shot already consumed (no double decrement)");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0,
+          "4299 AC1: still baseline after a second consume attempt");
+
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+// Issue #4299: same closed loop on the AgentScope find plane.
+static void ac4299_2_scope_live_abandon_notes_orphan() {
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #4299 AC2: scope live abandon -> cancel + orphan note + transfer ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+
+    const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    Fiber* raw = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    CHECK(raw != nullptr, "4299 AC2: scheduler spawn ok (owner_sched set)");
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    mb->attach(raw);
+
+    AgentHandle h;
+    h.ok = true;
+    h.name = "agent-4299b";
+    h.fiber = raw;
+    h.mailbox = mb;
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    h.agents_active_held = true;
+    g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
+    (void)scope.adopt_handle_without_spec_for_test(std::move(h));
+
+    auto* f1 = scope.find("agent-4299b");
+    CHECK(f1 == nullptr, "4299 AC2: first find skips the abandoned husk (#3805)");
+    CHECK(!raw->is_done(), "4299 AC2: #2661 body-stack untouched");
+    CHECK(raw->is_cancel_requested(), "4299 AC2: body cancel requested");
+    CHECK(sched.orphan_count() >= 1, "4299 AC2: reaper owns the residual (orphan list)");
+    CHECK(raw->mailbox() == nullptr, "4299 AC2: Fiber::mailbox_ detached");
+    CHECK(mb->attacher_count() == 0, "4299 AC2: mailbox attachers cleared");
+    const auto live = scope.handles();
+    CHECK(!live.empty(), "4299 AC2: scope keeps the husk (no erase)");
+    if (!live.empty()) {
+        CHECK(live[0].reserved_memory_bytes == 0, "4299 AC2: reservation released");
+        CHECK(live[0].name.empty(), "4299 AC2: name cleared");
+        CHECK(!live[0].mailbox, "4299 AC2: handle mailbox reset");
+    }
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0 + 1,
+          "4299 AC2: gauge still held (transferred to Fiber)");
+
+    sched.note_orphan_fiber(raw, /*hard_deadline_ms=*/10);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    CHECK(sched.reap_orphans_now() >= 1, "4299 AC2: hard-reap ran");
+    CHECK(raw->is_reclaimed() && !raw->is_done(), "4299 AC2: #3905 live body kept");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0,
+          "4299 AC2: gauge back to pre-spawn baseline after reap");
+
+    // Steal so ~AgentScope does not try to join a hard-reaped, never-done body.
+    if (!scope.handles_mut().empty()) {
+        auto taken = std::move(scope.handles_mut()[0]);
+        taken.fiber = nullptr;
+        taken.agents_active_held = false;
+    }
+
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+// Issue #4299: the explicit abandon_reclaimed Timeout arm (second writer)
+// takes the same transfer + orphan-registration path.
+static void ac4299_3_abandon_reclaimed_timeout_transfers() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4299 AC3: abandon_reclaimed Timeout -> transfer + orphan note ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+
+    const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    Scheduler sched(1);
+    Fiber* raw = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    CHECK(raw != nullptr, "4299 AC3: scheduler spawn ok");
+
+    AgentHandle h;
+    h.ok = true;
+    h.name = "agent-4299c";
+    h.fiber = raw;
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    h.quota_recycled_pending = true;
+    h.agents_active_held = true;
+    g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
+    CHECK(sched.orphan_count() == 0, "4299 AC3: no orphan before the abandon");
+
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 0;
+    const auto ar = aura::orch::abandon_reclaimed(h, opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Abandoned, "4299 AC3: typed abandon (Timeout)");
+    CHECK(!h.agents_active_held, "4299 AC3: handle one-shot cleared on transfer");
+    CHECK(raw->agents_active_oneshot_transferred(), "4299 AC3: Fiber holds the one-shot");
+    CHECK(raw->is_cancel_requested(), "4299 AC3: body cancel requested");
+    CHECK(sched.orphan_count() >= 1, "4299 AC3: orphan listed");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0 + 1,
+          "4299 AC3: gauge still held until the Done/reap edge");
+
+    sched.note_orphan_fiber(raw, /*hard_deadline_ms=*/10);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    CHECK(sched.reap_orphans_now() >= 1, "4299 AC3: hard-reap ran");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0,
+          "4299 AC3: gauge back to pre-spawn baseline after reap");
+    CHECK(!raw->consume_agents_active_oneshot_transferred(),
+          "4299 AC3: one-shot already consumed (no double decrement)");
+
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+// Issue #4299 AC3 (acceptance): Soft / Off keeps the pending slot, does not
+// note an orphan, and touches no extra atomic (#3805 AC3 posture). Plus the
+// source-cite / no-invent checks for the fix.
+static void ac4299_4_soft_zero_and_source_cite() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #4299 AC4: Soft zero-cost + source-cite ---");
+    apply_dev_audit_defaults();
+
+    const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    Scheduler sched(1);
+    Fiber* raw = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    CHECK(raw != nullptr, "4299 AC4: scheduler spawn ok");
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    mb->attach(raw);
+
+    AgentHandle h;
+    h.ok = true;
+    h.name = "agent-4299d";
+    h.fiber = raw;
+    h.mailbox = mb;
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+
+    aura::compiler::AgentNameTable table;
+    CHECK(table.put(std::move(h)) != nullptr, "4299 AC4: pending handle registered under Soft");
+    auto* f1 = table.find("agent-4299d");
+    auto* f2 = table.find("agent-4299d");
+    CHECK(f1 != nullptr && f2 != nullptr, "4299 AC4: Soft find keeps the pending slot");
+    CHECK(f2->reserved_memory_bytes == 4096, "4299 AC4: reservation held (no recycle)");
+    CHECK(f2->must_wait_reclaimed && f2->reclaimed_deferred_cleanup,
+          "4299 AC4: pending flags stay");
+    CHECK(sched.orphan_count() == 0, "4299 AC4: no orphan note under Soft");
+    CHECK(!raw->is_cancel_requested(), "4299 AC4: no cancel under Soft");
+    CHECK(!raw->agents_active_oneshot_transferred(), "4299 AC4: no transfer under Soft");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0,
+          "4299 AC4: no extra atomic under Soft");
+
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto fiberh = read_file("src/serve/fiber.h");
+    const auto scpp = read_file("src/serve/scheduler.cpp");
+    const auto efr = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(spawn.find("Issue #4299") != std::string::npos, "4299 AC4: spawn cites #4299");
+    CHECK(spawn.find("transfer_agents_active_oneshot_to_fiber") != std::string::npos,
+          "4299 AC4: transfer helper present");
+    CHECK(spawn.find("query:4299") == std::string::npos, "4299 AC4: no new query key");
+    CHECK(fiberh.find("agents_active_oneshot_transferred_") != std::string::npos,
+          "4299 AC4: trailing Fiber bool");
+    CHECK(scpp.find("consume_agents_active_oneshot") != std::string::npos,
+          "4299 AC4: done/reap consume sites");
+    CHECK(efr.find("aura_orch_release_agents_active_once") != std::string::npos,
+          "4299 AC4: orch strong-def mirror");
+    CHECK(read_file("tests/orch/test_issue_4299.cpp").empty() &&
+              read_file("tests/issues/test_issue_4299.cpp").empty(),
+          "4299 AC4: no test_issue_4299.cpp");
+    CHECK(read_file("docs/design/4299-orphan-reaper.md").empty(),
+          "4299 AC4: no docs/design/4299-*");
+}
+
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -9679,6 +9954,12 @@ int run_test_join_drain_reclaim() {
               "4004 AC5: no docs/design/4004-*");
     }
 
+
+    std::println("\n=== Issue #4299: live-abandon hands still-live body to the orphan reaper ===");
+    ac4299_1_name_table_live_abandon_notes_orphan();
+    ac4299_2_scope_live_abandon_notes_orphan();
+    ac4299_3_abandon_reclaimed_timeout_transfers();
+    ac4299_4_soft_zero_and_source_cite();
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)
         aura::core::audit_wal::g_mutation_audit_wal().disable();

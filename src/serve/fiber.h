@@ -996,6 +996,19 @@ public:
         return static_cast<std::int64_t>(body_reclaim_start_ns_.load(std::memory_order_acquire));
     }
 
+    // Issue #4299: agents_active one-shot transfer (live-abandon → still
+    // live body). Set by transfer_agents_active_oneshot_to_fiber.
+    void set_agents_active_oneshot_transferred() noexcept {
+        agents_active_oneshot_transferred_.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] bool agents_active_oneshot_transferred() const noexcept {
+        return agents_active_oneshot_transferred_.load(std::memory_order_acquire);
+    }
+    // Consume (exchange-clear) — true for exactly one Done/reap edge.
+    [[nodiscard]] bool consume_agents_active_oneshot_transferred() noexcept {
+        return agents_active_oneshot_transferred_.exchange(false, std::memory_order_acq_rel);
+    }
+
     // Process-wide join metrics (#1584 / #1595).
     [[nodiscard]] static std::uint64_t join_total() noexcept;
     [[nodiscard]] static std::uint64_t join_timeout_total() noexcept;
@@ -1476,6 +1489,16 @@ private:
     mutable std::mutex outermost_linear_keep_mtx_;
     std::unordered_set<void*> outermost_linear_keep_;
     bool outermost_linear_keep_armed_ = false;
+
+    // Issue #4299: agents_active one-shot transferred from an abandoned
+    // (still-live) AgentHandle. Set exactly once by the orch live-abandon
+    // writers (transfer_agents_active_oneshot_to_fiber) when the handle —
+    // and its agents_active_held flag — is dropped while !is_done().
+    // Consumed once at the Done/reap edge (on_fiber_done /
+    // reap_orphans_now) so the gauge decrements without the handle.
+    // Trailing field on purpose (#2906 discipline; not an orch stats
+    // field, no OrchModuleStats insertion).
+    std::atomic<bool> agents_active_oneshot_transferred_{false};
 
     // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;

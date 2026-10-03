@@ -33,6 +33,27 @@ extern "C" void aura_set_long_mutation_scheduler_hook(void (*fn)(std::uint64_t f
 // Issue #1641: weak C trampoline (strong def in evaluator_fiber_mutation.cpp).
 extern "C" void aura_evaluator_bump_starvation_mitigated_for_boundary() __attribute__((weak));
 
+// Issue #4299: weak C mirror for the agents_active one-shot release on the
+// abandoned body's Done/reap edge (strong def in
+// evaluator_fiber_mutation.cpp). Reuses OrchModuleStats.agents_active — no
+// new field, no new query key.
+extern "C" void aura_orch_release_agents_active_once() __attribute__((weak));
+
+// Issue #4299: consume a transferred agents_active one-shot exactly once at
+// the fiber Done/reap edge. The live-abandon writer dropped the AgentHandle
+// (and its agents_active_held flag) while the body was still live, so the
+// Fiber carries the one-shot. A body that exits before the hard deadline is
+// consumed here (on_fiber_done); one that never yields is consumed in
+// reap_orphans_now. Exchange-clear makes the pair idempotent (no double drop).
+static void consume_agents_active_oneshot(Fiber* f) noexcept {
+    if (!f)
+        return;
+    if (!f->consume_agents_active_oneshot_transferred())
+        return;
+    if (aura_orch_release_agents_active_once)
+        aura_orch_release_agents_active_once();
+}
+
 static void long_mutation_hook_trampoline(std::uint64_t fiber_id,
                                           std::uint64_t duration_us) noexcept {
     if (g_scheduler != nullptr)
@@ -415,6 +436,9 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
     // Issue #1579: release process fiber quota reserved at spawn.
     // Issue #3049 / #4041: same tenant key as reserve (0 = process-global).
     release_owned_fiber_quota(fiber);
+    // Issue #4299: pair a transferred agents_active +1 when the abandoned
+    // body exits before the hard deadline (the handle is already gone).
+    consume_agents_active_oneshot(fiber);
 
     int evfd = fiber->eventfd();
     if (evfd >= 0) {
@@ -719,6 +743,9 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // Issue #4041: same tenant key as spawn / on_fiber_done.
         // Tenant 0 skips release_tenant and only drops the process counter.
         release_owned_fiber_quota(f);
+        // Issue #4299: pair a transferred agents_active +1 on the hard-reap
+        // edge (body never yielded; on_fiber_done never ran for it).
+        consume_agents_active_oneshot(f);
         if (metrics_on_) {
             metrics_.fibers_completed.fetch_add(1, std::memory_order_relaxed);
         }
