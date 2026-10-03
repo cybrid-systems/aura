@@ -318,7 +318,8 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
         r == "grant-effect-needs-explicit-tenant-admin" || r == "allow-cross-needs-tenant-admin" ||
         r == "sandbox-downgrade-needs-explicit-tenant-admin" ||
         r == "wildcard-write-fence-needs-explicit-tenant-admin" ||
-        r == "tenant-spoof-denied" || // Issue #4017 spawn :tenant-id principal fence
+        r == "tenant-spoof-denied" ||          // Issue #4017 spawn :tenant-id principal fence
+        r == "cross-flat-provenance-zeroed" || // Issue #4293 observe, not a refuse
         r == kAuditMidSsotMissReason)
         return reason ? reason : "";
     // Issue #3735: hygiene deny at join-0 keeps hygiene_limit_reason_string_for

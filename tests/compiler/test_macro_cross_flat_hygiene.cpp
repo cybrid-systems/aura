@@ -23,6 +23,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
+#include "core/security_event.hh"
 #include "core/transparent_string_hash.hh"
 
 #include <cstdint>
@@ -601,6 +602,66 @@ static void ac4249_sandbox_active_homology() {
     CHECK(read_file("tests/compiler/test_issue_4249.cpp").empty(), "4249: no invent");
 }
 
+// Issue #4293: production still zeros non-homologous provenance and
+// keeps MacroIntroduced. The zero is an observe-only MacroHygiene row
+// (cross-flat-provenance-zeroed), not a transplanted table index.
+static void ac4293_zero_surfaces_reason() {
+    std::println("\n--- #4293: production zero + cross-flat-provenance-zeroed ---");
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(0);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    FlatAST target;
+    StringPool target_pool;
+    FlatAST src;
+    StringPool src_pool;
+    auto x = src_pool.intern("x");
+    auto body = src.add_variable(x);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+    src.set_schema_cache(lam, /*tid=*/42);
+    src.set_provenance(lam, /*prov=*/91);
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        nm;
+    auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
+                                   SyntaxMarker::MacroIntroduced);
+    CHECK(cloned != NULL_NODE, "4293: Soft cross-flat clone ok");
+    CHECK(target.is_macro_introduced(cloned), "4293: MacroIntroduced");
+    CHECK(target.provenance(cloned) == 91u, "4293: Soft keeps non-homologous provenance");
+    const auto prev = static_cast<aura::core::sandbox::SandboxMode>(
+        aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire));
+    reset_security_event_ring_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    const auto post = aura_test_cross_flat_expand_consistency(
+        static_cast<void*>(&target), static_cast<void*>(&target_pool), static_cast<void*>(&src),
+        static_cast<void*>(&src_pool), static_cast<std::uint32_t>(cloned));
+    CHECK(post == 0, "4293: homology re-run ok");
+    CHECK(target.schema_cache(cloned) == 0u, "4293: production zeros schema_cache");
+    CHECK(target.provenance(cloned) == 0u, "4293: production zeros provenance");
+    CHECK(target.is_macro_introduced(cloned), "4293: MacroIntroduced stays");
+    bool saw = false;
+    {
+        auto& ring = g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_acquire);
+        const auto scan = head < kSecurityEventRingSize ? head : kSecurityEventRingSize;
+        for (std::uint64_t s = head; s > head - scan; --s) {
+            const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+            if (std::string_view(e.reason) == "cross-flat-provenance-zeroed" && !e.denied)
+                saw = true;
+        }
+    }
+    CHECK(saw, "4293: SE reason cross-flat-provenance-zeroed");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("cross-flat-provenance-zeroed") != std::string::npos, "4293: reason cite");
+    CHECK(me.find("target.set_provenance(cur, 0)") != std::string::npos, "4293: still zeros");
+    CHECK(me.find("schema-4293") == std::string::npos, "4293: no query key");
+    CHECK(read_file("tests/compiler/test_issue_4293.cpp").empty(), "4293: no new test file");
+    CHECK(read_file("docs/design/4293-cross-flat-provenance.md").empty(), "4293: no design doc");
+    aura::core::sandbox::set_mode(prev);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 int run_test_macro_cross_flat_hygiene() {
     std::println("=== Issue #2235 — cross-flat macro clone hygiene gate ===");
     ac_cross_flat_baseline();
@@ -618,6 +679,7 @@ int run_test_macro_cross_flat_hygiene() {
     ac3278_source_cite();
     ac3980_same_pool_densify_zeros();
     ac4249_sandbox_active_homology();
+    ac4293_zero_surfaces_reason();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
