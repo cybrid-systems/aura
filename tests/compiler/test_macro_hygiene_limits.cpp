@@ -2460,6 +2460,136 @@ static void ac4292_inner_owns_checkpoint_when_idle() {
     apply_dev_audit_defaults();
 }
 
+// Issue #4309: production deny still returns the original root or
+// NULL_NODE, stamps the existing reason, and leaves no kMacroExpansion
+// on a caller argument that subst would otherwise walk.
+static void ac4309_deny_leaves_caller_arg() {
+    std::println("\n--- #4309: production deny does not dirty caller arguments ---");
+    constexpr auto kExp = static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    // expected_parent is the pre-expand parent. Pass-limit rollback
+    // rebuilds parent_ from children_ (#1502), so a node that is a child
+    // of both the holder and the original call keeps the later edge.
+    auto caller_clean = [](const FlatAST& flat, aura::ast::NodeId arg,
+                           aura::ast::NodeId expected_parent, std::uint32_t prov,
+                           std::uint32_t schema) {
+        CHECK(!flat.is_macro_introduced(arg), "4309: caller stays User");
+        CHECK(flat.parent_of(arg) == expected_parent, "4309: caller parent is pre-existing");
+        CHECK(flat.provenance(arg) == prov, "4309: caller provenance unchanged");
+        CHECK(flat.schema_cache(arg) == schema, "4309: caller schema unchanged");
+        CHECK((flat.macro_dirty(arg) & kExp) == 0, "4309: caller gains no kMacroExpansion");
+    };
+
+    {
+        reset_all();
+        grant_self_evo_production();
+        CHECK(set_hygiene_pass_cap(1), "4309: pass cap=1");
+        StringPool pool;
+        FlatAST flat;
+        auto y = pool.intern("y");
+        auto d = pool.intern("d");
+        auto e = pool.intern("e");
+        auto star = pool.intern("*");
+        auto yvar = flat.add_variable(y);
+        auto evar = flat.add_variable(e);
+        auto star_v = flat.add_variable(star);
+        auto two = flat.add_literal(2);
+        const std::array<aura::ast::NodeId, 2> e_args{yvar, two};
+        auto e_body = flat.add_call(star_v, e_args);
+        (void)flat.add_macrodef(e, {y}, e_body, false, true);
+        const std::array<aura::ast::NodeId, 1> d_args{yvar};
+        auto d_body = flat.add_call(evar, d_args);
+        (void)flat.add_macrodef(d, {y}, d_body, false, true);
+        auto arg = flat.add_variable(pool.intern("user"));
+        flat.set_provenance(arg, 4309);
+        flat.set_schema_cache(arg, 77);
+        const std::array<aura::ast::NodeId, 1> held{arg};
+        auto hold = flat.add_call(flat.add_variable(pool.intern("hold")),
+                                  std::span<const aura::ast::NodeId>{held});
+        flat.root = flat.add_call(flat.add_variable(d), std::span<const aura::ast::NodeId>{held});
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out = macro_expand_all(flat, pool, flat.root, 8);
+        CHECK(out == flat.root, "4309: pass-limit returns original_root");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-pass-limit",
+              "4309: reason hygiene-pass-limit");
+        caller_clean(flat, arg, flat.root, 4309, 77);
+        reset_all();
+    }
+
+    {
+        reset_all();
+        grant_self_evo_production();
+        aura_test_set_max_gensym_map_size_for_test(1);
+        StringPool pool;
+        FlatAST target;
+        auto arg = target.add_variable(pool.intern("user"));
+        target.set_provenance(arg, 19);
+        target.set_schema_cache(arg, 8);
+        const std::array<aura::ast::NodeId, 1> held{arg};
+        auto hold = target.add_call(target.add_variable(pool.intern("hold")),
+                                    std::span<const aura::ast::NodeId>{held});
+        FlatAST src;
+        auto y = pool.intern("y");
+        auto fv = src.add_variable(pool.intern("f"));
+        auto yv = src.add_variable(y);
+        const std::array<aura::ast::NodeId, 1> body_args{yv};
+        auto call = src.add_call(fv, std::span<const aura::ast::NodeId>{body_args});
+        auto lam = src.add_lambda(
+            std::vector<aura::ast::SymId>{y, pool.intern("a"), pool.intern("b"), pool.intern("c")},
+            call);
+        std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            subst;
+        subst["y"] = arg;
+        NameMap names;
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out = clone_macro_body(target, pool, src, pool, lam, &subst, &names,
+                                    SyntaxMarker::MacroIntroduced);
+        CHECK(out == NULL_NODE, "4309: gensym ceiling returns NULL_NODE");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-gensym-ceiling",
+              "4309: reason hygiene-gensym-ceiling");
+        caller_clean(target, arg, hold, 19, 8);
+        aura_test_set_max_gensym_map_size_for_test(0);
+        reset_all();
+    }
+
+    {
+        reset_all();
+        grant_self_evo_production();
+        CHECK(set_hygiene_depth_cap(1), "4309: depth cap=1");
+        StringPool pool;
+        FlatAST target;
+        auto arg = target.add_variable(pool.intern("user"));
+        target.set_provenance(arg, 21);
+        target.set_schema_cache(arg, 3);
+        const std::array<aura::ast::NodeId, 1> held{arg};
+        auto hold = target.add_call(target.add_variable(pool.intern("hold")),
+                                    std::span<const aura::ast::NodeId>{held});
+        FlatAST src;
+        auto y = pool.intern("y");
+        auto fv = src.add_variable(pool.intern("f"));
+        auto yv = src.add_variable(y);
+        const std::array<aura::ast::NodeId, 1> body_args{yv};
+        auto inner = src.add_call(fv, std::span<const aura::ast::NodeId>{body_args});
+        auto body = src.add_let(pool.intern("v"), src.add_literal(1), inner);
+        std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            subst;
+        subst["y"] = arg;
+        NameMap names;
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out = clone_macro_body(target, pool, src, pool, body, &subst, &names,
+                                    SyntaxMarker::MacroIntroduced);
+        CHECK(out == NULL_NODE, "4309: depth-limit returns NULL_NODE");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-depth-limit",
+              "4309: reason hygiene-depth-limit");
+        caller_clean(target, arg, hold, 21, 3);
+        reset_all();
+    }
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -2533,6 +2663,8 @@ int run_test_macro_hygiene_limits() {
     ac4151_source_wiring();
     std::println("\n=== Issue #4292: inner expand owns an idle ExpandCheckpoint ===");
     ac4292_inner_owns_checkpoint_when_idle();
+    std::println("\n=== Issue #4309: subst must not dirty caller arguments ---");
+    ac4309_deny_leaves_caller_arg();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

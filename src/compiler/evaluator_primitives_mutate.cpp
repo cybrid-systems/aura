@@ -10375,16 +10375,41 @@ void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
 
     // Cascade: marker + dirty bit + provenance on root + descendants.
     // Issue #4043: one join mid for the whole cascade, not a literal 0.
+    // Issue #4309: do not stamp a descendant whose parent_ is a different
+    // live node (shared subst / caller child). Do not walk that subtree.
+    // NULL parent still stamps. Bound matches walk_subtree (1024).
     const auto hygiene_mid = typed_audit::join_audit_and_se_mid(0);
     std::uint64_t stamped_count = 0;
-    flat.walk_subtree(new_root, [&](aura::ast::NodeId cur) {
+    struct WalkItem {
+        aura::ast::NodeId id;
+        aura::ast::NodeId walk_parent;
+    };
+    std::vector<WalkItem> stack;
+    stack.push_back(WalkItem{new_root, aura::ast::NULL_NODE});
+    constexpr std::size_t kMaxNodes = 1024;
+    while (!stack.empty() && stamped_count < kMaxNodes) {
+        const auto item = stack.back();
+        stack.pop_back();
+        const auto cur = item.id;
+        if (cur == aura::ast::NULL_NODE || cur >= flat.size() || flat.is_free_slot(cur))
+            continue;
+        if (cur != new_root) {
+            const auto live_parent = flat.parent_of(cur);
+            if (live_parent != aura::ast::NULL_NODE && live_parent != item.walk_parent &&
+                flat.is_live_node(live_parent))
+                continue;
+        }
         flat.set_marker(cur, aura::ast::SyntaxMarker::MacroIntroduced);
         flat.apply_macro_dirty_bits(
             cur, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
         aura::core::provenance::record_macro_hygiene_provenance(
             static_cast<std::uint32_t>(cur), ev.capability_tenant_id(), hygiene_mid);
         ++stamped_count;
-    });
+        auto kids = flat.get(cur);
+        std::vector<aura::ast::NodeId> child_ids(kids.children.begin(), kids.children.end());
+        for (auto child : child_ids)
+            stack.push_back(WalkItem{child, cur});
+    }
 
     // Mark dirty upward so incremental cache invalidation picks up
     // the new macro subtree on the next typecheck / impact probe.

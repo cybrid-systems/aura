@@ -4769,11 +4769,10 @@ std::size_t Evaluator::refresh_stale_macro_frames(std::uint64_t /*hint_env_id*/,
     constexpr auto kExpansion =
         static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
 
-    // Workspace scan: MacroIntroduced nodes must keep expansion provenance
-    // bit when they still claim the marker (detect drift after concurrent
-    // mutate / compact). Restoring the marker is only done when the node
-    // has kExpansion but lost MacroIntroduced — reverse drift is rarer
-    // (marker lost) and is counted as stale_prevented without rewrite.
+    // Workspace scan: MacroIntroduced nodes must keep the expansion bit
+    // (detect drift after concurrent mutate / compact).
+    // Issue #4309: a User node that merely has kMacroExpansion is not
+    // promoted. Provenance relink below uses this pre-promotion is_macro.
     for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
         if (!ws->is_live_node(id))
             continue;
@@ -4786,11 +4785,6 @@ std::size_t Evaluator::refresh_stale_macro_frames(std::uint64_t /*hint_env_id*/,
             // restamp_macro_introduced_generations). Count the repair
             // so agents still observe the steal/GC race.
             ws->apply_macro_dirty_bits(id, kExpansion);
-            ++stale_prevented;
-            ++repaired;
-        } else if (!is_macro && has_expansion) {
-            // Expansion bit without MacroIntroduced marker — restamp marker.
-            ws->set_marker(id, aura::ast::SyntaxMarker::MacroIntroduced);
             ++stale_prevented;
             ++repaired;
         }

@@ -310,6 +310,37 @@ static void ac4291_refresh_reors_lost_expansion() {
           "4291: no new test file");
 }
 
+// Issue #4309: refresh must not promote a User node that only has the bit.
+static void ac4309_refresh_does_not_promote_user() {
+    std::println("\n--- #4309: refresh does not promote User with kMacroExpansion ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(+ 1 1)\")").has_value(), "4309: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4309: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr && ws->size() > 0, "4309: workspace");
+    if (!ws || ws->size() == 0)
+        return;
+    aura::ast::NodeId id = NULL_NODE;
+    for (aura::ast::NodeId i = 0; i < ws->size(); ++i) {
+        if (ws->is_live_node(i)) {
+            id = i;
+            break;
+        }
+    }
+    CHECK(id != NULL_NODE, "4309: live node");
+    if (id == NULL_NODE)
+        return;
+    constexpr auto kExp = static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    ws->set_marker(id, SyntaxMarker::User);
+    ws->clear_macro_dirty_all();
+    ws->apply_macro_dirty_bits(id, kExp);
+    CHECK(!ws->is_macro_introduced(id), "4309: marker is User");
+    CHECK((ws->macro_dirty(id) & kExp) != 0, "4309: expansion bit is set");
+    (void)cs.evaluator().refresh_stale_macro_frames(0, 0);
+    CHECK(!ws->is_macro_introduced(id), "4309: User with the bit stays User");
+    CHECK((ws->macro_dirty(id) & kExp) != 0, "4309: the bit is left in place");
+}
+
 } // namespace
 
 int main() {
@@ -319,6 +350,7 @@ int main() {
     ac4_file_level_lockstep();
     ac5_query_surface();
     ac4291_refresh_reors_lost_expansion();
+    ac4309_refresh_does_not_promote_user();
     if (g_failed)
         return 1;
     std::println("macro intro restamp subtree (#2096): OK ({} passed)", g_passed);

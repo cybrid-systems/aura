@@ -26,9 +26,11 @@
 #include "core/security_event.hh"
 #include "core/transparent_string_hash.hh"
 
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <print>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -662,6 +664,56 @@ static void ac4293_zero_surfaces_reason() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+// Issue #4309: cross-flat production zeros schema/provenance on nodes
+// this clone allocated and leaves the substituted caller argument alone.
+static void ac4309_cross_flat_keeps_caller_arg() {
+    std::println("\n--- #4309: cross-flat subst does not zero the caller argument ---");
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(1);
+    FlatAST target;
+    StringPool target_pool;
+    auto arg = target.add_variable(target_pool.intern("user"));
+    target.set_provenance(arg, 77);
+    target.set_schema_cache(arg, 55);
+    const std::array<aura::ast::NodeId, 1> held{arg};
+    auto hold = target.add_call(target.add_variable(target_pool.intern("hold")),
+                                std::span<const aura::ast::NodeId>{held});
+    CHECK(target.parent_of(arg) == hold, "4309: caller parent is hold");
+    CHECK(!target.is_macro_introduced(arg), "4309: caller starts User");
+
+    FlatAST src;
+    StringPool src_pool;
+    auto y = src_pool.intern("y");
+    auto fv = src.add_variable(src_pool.intern("f"));
+    auto yv = src.add_variable(y);
+    const std::array<aura::ast::NodeId, 1> body_args{yv};
+    auto body = src.add_call(fv, std::span<const aura::ast::NodeId>{body_args});
+    src.set_schema_cache(body, 42);
+    src.set_provenance(body, 91);
+    std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        subst;
+    subst["y"] = arg;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        nm;
+    auto cloned = clone_macro_body(target, target_pool, src, src_pool, body, &subst, &nm,
+                                   SyntaxMarker::MacroIntroduced);
+    CHECK(cloned != NULL_NODE && cloned != arg, "4309: cross-flat clone allocates");
+    CHECK(target.is_macro_introduced(cloned), "4309: clone stays MacroIntroduced");
+    CHECK(target.schema_cache(cloned) == 0u, "4309: clone schema zeroed");
+    CHECK(target.provenance(cloned) == 0u, "4309: clone provenance zeroed");
+    auto cv = target.get(cloned);
+    CHECK(cv.children.size() >= 2 && cv.child(1) == arg, "4309: subst child is the caller arg");
+    CHECK(!target.is_macro_introduced(arg), "4309: caller stays User");
+    CHECK(target.parent_of(arg) == hold, "4309: caller parent unchanged");
+    CHECK(target.provenance(arg) == 77u, "4309: caller provenance unchanged");
+    CHECK(target.schema_cache(arg) == 55u, "4309: caller schema unchanged");
+    CHECK((target.macro_dirty(arg) &
+           static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion)) == 0,
+          "4309: caller gains no kMacroExpansion");
+    CHECK(src.schema_cache(body) == 42u && src.provenance(body) == 91u, "4309: source untouched");
+}
+
 int run_test_macro_cross_flat_hygiene() {
     std::println("=== Issue #2235 — cross-flat macro clone hygiene gate ===");
     ac_cross_flat_baseline();
@@ -680,6 +732,7 @@ int run_test_macro_cross_flat_hygiene() {
     ac3980_same_pool_densify_zeros();
     ac4249_sandbox_active_homology();
     ac4293_zero_surfaces_reason();
+    ac4309_cross_flat_keeps_caller_arg();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

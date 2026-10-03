@@ -290,7 +290,11 @@ export aura::ast::NodeId clone_macro_body(
                              std::equal_to<>>* subst = nullptr,
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map = nullptr,
-    aura::ast::SyntaxMarker cloned_marker = aura::ast::SyntaxMarker::User);
+    aura::ast::SyntaxMarker cloned_marker = aura::ast::SyntaxMarker::User,
+    // Issue #4309: size recorded before this frame's add_* calls.
+    // static_cast<std::size_t>(-1) captures target.size() at entry.
+    // A node is owned iff id >= owned_floor && id < target.size().
+    std::size_t owned_floor = static_cast<std::size_t>(-1));
 
 export aura::ast::NodeId expand_inner_macros(
     aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root, int depth,
