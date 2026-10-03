@@ -3711,6 +3711,15 @@ extern "C" void aura_orch_bump_force_safepoint_on_orphan_total() {
     aura::orch::bump_force_safepoint_on_orphan_total();
 }
 
+// Issue #4299: live-abandon agents_active one-shot release. The Fiber
+// (serve) consumes the transferred flag at the Done/reap edge
+// (on_fiber_done / reap_orphans_now) and forwards here; the strong def
+// pairs the spawn +1 with the shared saturating decrement. No new field /
+// query key — same OrchModuleStats.agents_active as #4097.
+extern "C" void aura_orch_release_agents_active_once() {
+    aura::orch::release_agents_active_decrement_once();
+}
+
 // Returns 0 if deliverable, 1 if linear/StableNodeRef violation (drop message).
 extern "C" int aura_evaluator_mailbox_linear_check(std::uint64_t from_fiber, std::uint64_t to_fiber,
                                                    const char* payload, std::size_t payload_len) {

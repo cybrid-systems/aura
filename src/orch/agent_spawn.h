@@ -3126,13 +3126,11 @@ inline void join_keepalive_helper(AgentHandle& h,
 // polling C++ residual state. complete_agent_join_cleanup Reclaimed
 // branch still skips release_agent_memory_reservation / mailbox->detach
 // (#2661 preserved). Keys absent on Ok / Timeout / Cancelled (#2885 AC2).
-// Issue #4097: agents_active is spawn − released. Reclaimed / must-wait
-// keeps the +1. Done-path cleanup (body done, reservation released)
-// subtracts once. A retry on an already-released slot is a no-op.
-inline void release_agents_active_once(AgentHandle& h) noexcept {
-    if (!h.agents_active_held)
-        return;
-    h.agents_active_held = false;
+// Issue #4097 / #4299: shared saturating agents_active decrement. Called
+// once per held one-shot — either from release_agents_active_once (the
+// handle still owns it) or at the Fiber Done/reap edge when the one-shot
+// was transferred to a still-live body before the handle was dropped.
+inline void release_agents_active_decrement_once() noexcept {
     auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
     for (;;) {
         const auto next = cur > 0 ? cur - 1 : 0;
@@ -3141,6 +3139,37 @@ inline void release_agents_active_once(AgentHandle& h) noexcept {
             break;
     }
 }
+
+// Issue #4097: agents_active is spawn − released. Reclaimed / must-wait
+// keeps the +1. Done-path cleanup (body done, reservation released)
+// subtracts once. A retry on an already-released slot is a no-op.
+inline void release_agents_active_once(AgentHandle& h) noexcept {
+    if (!h.agents_active_held)
+        return;
+    h.agents_active_held = false;
+    release_agents_active_decrement_once();
+}
+
+// Issue #4299: live-abandon transfer. The two live-abandon writers
+// (maybe_force_recycle_reclaimed_slot live arm / abandon_reclaimed
+// Timeout arm) drop the only AgentHandle while the body is still live;
+// agents_active_held would die with it and agents_active would climb for
+// the process lifetime (release_agents_active_once is only reached from
+// a Done-path cleanup). Move the one-shot onto the Fiber instead: the
+// gauge stays held until on_fiber_done / reap_orphans_now consumes it.
+// The handle flag is cleared so a later ~AgentHandle cannot double-drop.
+inline void transfer_agents_active_oneshot_to_fiber(AgentHandle& h) noexcept {
+    if (!h.agents_active_held || !h.fiber)
+        return;
+    h.fiber->set_agents_active_oneshot_transferred();
+    h.agents_active_held = false;
+}
+
+// Forward decl — cancel_and_drain_fiber is defined below (join_agent
+// area). The live-abandon writers above call it with drain_ms=0
+// (request_cancel + note_orphan_fiber) so the still-live body is handed
+// to the Scheduler orphan reaper instead of leaking off the name-table.
+inline void cancel_and_drain_fiber(serve::Fiber* f, std::uint64_t drain_ms) noexcept;
 
 inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
     if (jr.status == serve::JoinStatus::Reclaimed) {
@@ -3329,6 +3358,16 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
             1, std::memory_order_relaxed);
         h.release_reservation_if_any();
         h.quota_recycled_pending = true;
+    }
+    // Issue #4299: hand the still-live abandoned body to the reaper
+    // (request_cancel + note_orphan_fiber) and transfer the agents_active
+    // one-shot onto the Fiber before the name/handle are dropped. The
+    // #3805 name-table/scope retire that follows owns the residual Fiber
+    // via the Scheduler orphan list, not the handle.
+    if (h.fiber && !h.fiber->is_done()) {
+        if (h.agents_active_held)
+            transfer_agents_active_oneshot_to_fiber(h);
+        cancel_and_drain_fiber(h.fiber, /*drain_ms=*/0);
     }
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
@@ -4017,6 +4056,15 @@ abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
         // reservation+mailbox still held until Ok or Timeout abandon.
         out.outcome = AbandonReclaimedOutcome::Invalid;
         return out;
+    }
+    // Issue #4299: before the typed abandon clears the name and drops the
+    // handle, register the still-live body with the orphan reaper and
+    // transfer the agents_active one-shot to the Fiber (same closed loop
+    // as the force-recycle live arm). #2661 body-stack stays untouched.
+    if (h.fiber && !h.fiber->is_done()) {
+        if (h.agents_active_held)
+            transfer_agents_active_oneshot_to_fiber(h);
+        cancel_and_drain_fiber(h.fiber, /*drain_ms=*/0);
     }
     // Timeout: typed abandon. Mailbox attach only — never body-stack.
     if (h.mailbox && h.fiber) {
