@@ -8,6 +8,7 @@
 //   AC4: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "compiler/value_tags.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -23,8 +24,13 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_string;
+using aura::compiler::types::make_int;
+using aura::compiler::types::make_string_raw_v2;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key);
+extern "C" void aura_test_set_string_pool_slot(std::size_t idx, const char* s);
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -140,6 +146,65 @@ static void ac3703_quote_intern_lock() {
           "3703: eval_flat intern-by-sym unchanged");
 }
 
+// Issue #4318: aura_hash_key_eq decodes v2 string indices, not the
+// pre-shift bias. OpHashRef calls this compare, so a cross-heap
+// duplicate of string 0 is a hit.
+static void ac4318_hash_key_eq_v2() {
+    std::println("\n--- #4318: hash key eq uses v2 string indices ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto eq = rt.find("int64_t aura_hash_key_eq");
+    CHECK(eq != std::string::npos, "4318: eq present");
+    if (eq != std::string::npos) {
+        const auto win = rt.substr(eq, 1400);
+        CHECK(win.find("stored_key == search_key") != std::string::npos, "4318: identical bits");
+        const auto bits = win.find("stored_key == search_key");
+        const auto lock = win.find("g_string_pool_mtx");
+        CHECK(bits != std::string::npos && lock != std::string::npos && bits < lock,
+              "4318: identical bits return before the pool lock");
+        CHECK(win.find("is_string_v2_hot") != std::string::npos, "4318: v2 classifier");
+        CHECK(win.find("string_idx_raw_v2") != std::string::npos, "4318: v2 index");
+        CHECK(win.find("is_fixnum_hot") != std::string::npos, "4318: fixnum classifier");
+        CHECK(win.find("9000000000000000000") == std::string::npos, "4318: no pre-shift bias");
+    }
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto op = jit.find("case OpHashRef:");
+    CHECK(op != std::string::npos, "4318: OpHashRef");
+    if (op != std::string::npos) {
+        CHECK(jit.substr(op, 12000).find("fn_hash_key_eq") != std::string::npos,
+              "4318: hash-ref calls aura_hash_key_eq");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4318.cpp").empty(), "4318: no test_issue file");
+    CHECK(read_file("docs/design/4318-hash-key-eq.md").empty(), "4318: no docs/design");
+
+    // Slots: 0 and 7 share bytes; 1 and 8 share; 2 and 6 share the bytes
+    // the old decoder would alias (idx 1 → slot 2, idx 2 → slot 6).
+    aura_test_set_string_pool_slot(0, "zero");
+    aura_test_set_string_pool_slot(1, "one");
+    aura_test_set_string_pool_slot(2, "SAME");
+    aura_test_set_string_pool_slot(6, "SAME");
+    aura_test_set_string_pool_slot(7, "zero");
+    aura_test_set_string_pool_slot(8, "one");
+
+    const auto s0 = make_string_raw_v2(0);
+    const auto s0b = make_string_raw_v2(7);
+    const auto s1 = make_string_raw_v2(1);
+    const auto s1b = make_string_raw_v2(8);
+    const auto s2 = make_string_raw_v2(2);
+    CHECK(aura_hash_key_eq(s0, s0) == 1, "4318: identical bits of string 0");
+    CHECK(aura_hash_key_eq(s0, s0b) == 1, "4318: cross-heap duplicate of string 0 hits");
+    CHECK(aura_hash_key_eq(s1, s1b) == 1, "4318: idx 1 compares pool[1], not [2]");
+    CHECK(aura_hash_key_eq(s2, make_string_raw_v2(6)) == 1,
+          "4318: idx 2 compares pool[2], not a shifted slot");
+    CHECK(aura_hash_key_eq(s1, s2) == 0, "4318: old alias slots do not force equality");
+
+    const auto i1 = make_int(1).val;
+    const auto i2 = make_int(2).val;
+    CHECK(i1 == 2, "4318: make_int(1) is raw 2");
+    CHECK(aura_hash_key_eq(i1, i2) == 0, "4318: distinct fixnums are not equal");
+    CHECK(aura_hash_key_eq(i1, s0) == 0, "4318: fixnum does not enter the string pool");
+    CHECK(aura_hash_key_eq(i1, i1) == 1, "4318: identical fixnum bits");
+}
+
 } // namespace
 
 int run_test_primcall_str_intern() {
@@ -149,6 +214,7 @@ int run_test_primcall_str_intern() {
     ac3_distinct();
     ac4_source_gate();
     ac3703_quote_intern_lock();
+    ac4318_hash_key_eq_v2();
     std::println("\n=== #2577: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
