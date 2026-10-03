@@ -246,6 +246,13 @@ namespace {
                 if (bump_counters)
                     note_steal_invariant_fail(StealInvariant::EnvFrameOk);
             }
+        } else if (victim_eval_id != nullptr &&
+                   aura::core::densify_consistency::densify_overflow_envframe_rejects(
+                       victim_eval_id)) {
+            // Issue #4305: unslotted densify reject. seq==0 is not a quiet allow.
+            fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::EnvFrameOk);
         }
     }
     // StealInvariant::LifetimeProofOk — Issue #2957 residual arm (f).
