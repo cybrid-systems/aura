@@ -46,6 +46,40 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
+// Issue #4332: child-layer structural mutate must not write the shared
+// parent FlatAST. workspace:switch keeps has_own_flat==false and points
+// workspace_flat_ at the parent; before the wrapper-level trigger_lazy_cow
+// only rebind / replace-subtree cloned, so a child-layer rename-symbol
+// committed onto the parent and the parent's next eval observed the child
+// edit (P0 isolation face).
+static void ac4332_1_child_mutate_cow_isolates_parent() {
+    std::println("\n--- #4332 AC1: child-layer mutate clones before write ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define B (lambda () 7))\")").has_value(),
+          "4332 AC1: set-code define on root");
+    CHECK(cs.eval("(eval-current)").has_value(), "4332 AC1: eval stores root bundle");
+    const auto created = cs.eval("(workspace :create \"ac4332\")");
+    CHECK(created.has_value(), "4332 AC1: workspace:create");
+    std::int64_t wid = -1;
+    if (created && is_int(*created))
+        wid = as_int(*created);
+    CHECK(wid > 0, "4332 AC1: child workspace id");
+    CHECK(cs.eval(std::format("(workspace :switch {})", wid)).has_value(),
+          "4332 AC1: switch to child (shared flat, has_own_flat=false)");
+
+    // Previously-uncovered structural op (not rebind / replace-subtree):
+    // the wrapper-level lazy COW must clone before the body writes.
+    auto mr = cs.typed_mutate("(mutate:rename-symbol \"B\" \"BC\" \"ac4332 child rename\")");
+    CHECK(mr.success, "4332 AC1: child-layer rename-symbol succeeds (COW cloned)");
+    CHECK(!mr.success || mr.error.empty(), "4332 AC1: no mutation error string");
+
+    CHECK(cs.eval("(workspace :switch 0)").has_value(), "4332 AC1: switch back to root");
+    // Parent must NOT observe the child edit: B still evaluates on root.
+    auto b_eval = cs.eval("(B)");
+    CHECK(b_eval.has_value() && is_int(*b_eval) && as_int(*b_eval) == 7,
+          "4332 AC1: parent B untouched (rename stayed in the child layer)");
+}
+
 int run_test_workspace_switch() {
     std::println("=== Issue #2785: workspace:switch consolidated bind ===");
     CHECK(true, "ac2785: issue stamp");
@@ -136,6 +170,8 @@ int run_test_workspace_switch() {
               "AC4: re-switch re-syncs bumped cow_epoch onto flat");
     }
 
+    std::println("\n=== Issue #4332: child-layer mutate COW isolation ===");
+    ac4332_1_child_mutate_cow_isolates_parent();
     std::println("\n=== #2785 workspace:switch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
