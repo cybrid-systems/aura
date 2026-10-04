@@ -4245,6 +4245,7 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_primitive("string->list", {String}, Dyn);
     register_primitive("list->string", {Dyn}, String);
     register_primitive("read-line", {}, String);
+    register_primitive("read-byte", {}, Int);
     register_primitive("eof-object?", {Dyn}, Bool);
 
     // Additional type predicates

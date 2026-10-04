@@ -882,6 +882,28 @@ echo "  ↷  edsl-ir-cache:incremental-mutation-stress: SKIPPED — hangs after 
 # (Note: no env sync back, so :jit's return value is the JIT's last
 # expression value of the re-eval, not the workspace's bound env.)
 
+# Issue #4325: blank line is "" and EOF is void. read-byte returns one
+# byte with no newline required. Program is -e so stdin stays the data.
+_read_stdin_case() {
+    local name="$1" data="$2" expr="$3" expected="$4"
+    local actual
+    actual=$(printf '%s' "$data" | timeout 15 "$AURA" -e "$expr" 2>&1 | tr -d '\n')
+    if [ "$actual" = "$expected" ]; then
+        _record_pass "$name"
+    else
+        _record_fail "$name" "       expected: $expected" "       got:      $actual"
+    fi
+}
+_read_stdin_case "4325-blank-then-eof" $'\n' \
+    '(begin (define a (read-line)) (define b (read-line)) (display (string-length a)) (display (eof-object? a)) (display (eof-object? b)) (display (eq? a b)))' \
+    '0#f#t#f'
+_read_stdin_case "4325-read-byte-no-newline" 'Q' \
+    '(display (read-byte))' \
+    '81'
+_read_stdin_case "4325-read-byte-eof" '' \
+    '(display (eof-object? (read-byte)))' \
+    '#t'
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
