@@ -94,6 +94,13 @@ static void reset_all() {
     reset_capability_effects_for_test();
     reset_security_event_ring_for_test();
     set_mode(SandboxMode::Off);
+    // Issue #3646: drop any sticky typed-audit boundary / composite-batch
+    // join mid left by a previous AC so grants issued after this resolve to
+    // the Mutation epoch. Without it a prior AC's effect check pins the SSOT
+    // mid, and grant_effect_capability(prov=0) binds the fence grant to that
+    // stale mid while seed_tenant_admin stamps the epoch — the two rows then
+    // diverge and provenance_ok denies on the mid join before the epoch fence.
+    ::aura::compiler::typed_audit::clear_boundary_audit_mid();
 }
 
 // #3362: Restricted/Strict grant_effect_capability of Mutate requires
@@ -182,6 +189,12 @@ static void ac2_bridge_bump_no_flip() {
     CHECK(current_mutation_epoch() == me_before, "Mutation unchanged");
     CHECK(current_bridge_epoch() != me_before, "Bridge diverged");
 
+    // Issue #2882 / #3561: under production defaults a Mutate grant is
+    // force-promoted to single_use (+ session_bound), so the pre-bridge check
+    // above already consumed "bridge-iso". Re-issue the grant at the
+    // (unchanged) Mutation epoch to exercise the allow path again — a
+    // Bridge-only bump must not flip a valid Mutate grant to deny.
+    ev.grant_effect_capability(200, "bridge-iso", kEffectMutate, 0);
     CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "post-bridge", 0, 200,
                                               mid),
           "AC2: still allow after Bridge-only bump");
