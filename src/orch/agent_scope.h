@@ -1351,6 +1351,15 @@ private:
         g_orch_module_stats.agent_scope_scheduler_invalidated_total.fetch_add(
             1, std::memory_order_relaxed);
         for (auto& h : handles_) {
+            // Issue #4334 (Chain B): move a still-held agents_active
+            // one-shot onto the live Fiber BEFORE the pointer is nulled.
+            // ~Scheduler destroys the fibers after notifying observers,
+            // and its dtor consume (Chain A fix) reads the Fiber flag —
+            // without this transfer the handle could never hand the
+            // one-shot over and the gauge would stay elevated for the
+            // process lifetime. Idempotent: no-op when not held or the
+            // fiber is already gone.
+            transfer_agents_active_oneshot_to_fiber(h);
             h.fiber = nullptr;
             h.keepalive_helper = nullptr;
             // Issue #2782 follow-up: Scheduler death freed every Fiber —

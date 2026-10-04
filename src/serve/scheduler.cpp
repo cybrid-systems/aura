@@ -220,6 +220,15 @@ Scheduler::~Scheduler() {
             Fiber* f = owned.get();
             if (!f || f->is_done() || f->is_reclaimed())
                 continue;
+            // Issue #4334 (Chain A): consume a transferred agents_active
+            // one-shot before the Fiber storage dies. #4326 moves the
+            // gauge off a live-Reclaimed ~AgentHandle onto the Fiber;
+            // without this dtor consume the flag is never read when the
+            // Scheduler dies before the orphan hard deadline and
+            // agents_active stays elevated for the process lifetime.
+            // Exchange-clear keeps it idempotent against a concurrent or
+            // earlier reap (no double drop).
+            consume_agents_active_oneshot(f);
             release_owned_fiber_quota(f);
         }
         owned_fibers_.clear();
