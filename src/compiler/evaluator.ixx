@@ -7181,6 +7181,14 @@ public:
     bool enable_security_event_wal(std::string_view persist_dir) noexcept;
     void disable_security_event_wal() noexcept;
     [[nodiscard]] bool security_event_wal_enabled() const noexcept;
+    // Issue #4322: single-tenant Restricted CLI (tenant 0, not Strict,
+    // not multi-tenant). kCapSandbox is string-only and a program cannot
+    // grant it to itself. #2385 unset-principal still denies every other
+    // side effect, every foreign ref, and the GUARD_EXEMPT metadata setters.
+    [[nodiscard]] bool kernel_self_single_tenant() const noexcept;
+    [[nodiscard]] bool kernel_self_workspace_mutate(std::string_view op,
+                                                    std::uint64_t ref_tenant) const noexcept;
+
     // Issue #2072 / #2384 / #2706: sole public side-effect entry.
     // Wraps private check_and_record_effect with standard args (required =
     // actual, tenant = capability_tenant_id_). Issue #2384: stamps live
@@ -7872,8 +7880,15 @@ public:
                 // Issue #3235: heap mutators are Guard-gated (language
                 // vector-set! / hash-set! / set-car!). Skip kCapSandbox so
                 // production Restricted CLI can mutate containers.
+                // Issue #4322: the single-tenant Restricted kernel (tenant 0)
+                // editing its own workspace. Strict, multi-tenant, and a
+                // non-zero principal keep the kCapSandbox error. GUARD_EXEMPT
+                // metadata and mutation-log-compact keep the gate.
+                const bool own_workspace_mutate =
+                    meta.requires_mutation_guard && !meta.guard_exempt &&
+                    meta.effect_enforced_in_body && kernel_self_workspace_mutate(name, 0);
                 if (meta.security_level == kPrimSecSandboxed && !heap_mutate &&
-                    !has_capability(security::kCapSandbox)) {
+                    !own_workspace_mutate && !has_capability(security::kCapSandbox)) {
                     bump_capability_denial();
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                         m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);

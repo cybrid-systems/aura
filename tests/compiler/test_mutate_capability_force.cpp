@@ -14,6 +14,7 @@
 
 #include "compiler/observability_metrics.h"
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
@@ -302,6 +303,73 @@ int run_test_mutate_capability_force() {
         auto v = cs.eval("(k 1)");
         if (v && is_int(*v))
             CHECK(as_int(*v) == 6, "k works after mutate under Off");
+    }
+
+    // ── Issue #4322: Restricted single-tenant CLI may mutate its own tree ──
+    {
+        std::println("\n--- #4322: Restricted tenant 0 mutate:rebind / atomic-batch ---");
+        reset_all();
+        const auto src = read_src("src/compiler/evaluator.ixx");
+        CHECK(src.find("Issue #4322") != std::string::npos, "4322: dispatch cites the exemption");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define live \\\"c\\\")\")").has_value(), "4322 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4322 eval-current");
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.effect_sandbox_mode() == 1, "4322 Restricted");
+        CHECK(ev.capability_tenant_id() == 0, "4322 tenant 0");
+        CHECK(!ev.has_capability("sandbox"), "4322 no kCapSandbox grant");
+        auto batch = cs.eval("(mutate:atomic-batch "
+                             "(list (list \"mutate:rebind\" \"live\" \"\\\"d\\\"\")) \"4322\")");
+        CHECK(batch && is_bool(*batch) && as_bool(*batch), "4322 batch returns #t");
+        auto rebind = cs.eval("(mutate:rebind \"live\" \"\\\"e\\\"\" \"4322\")");
+        CHECK(rebind && is_bool(*rebind) && as_bool(*rebind), "4322 rebind returns #t");
+        // #2385 direct probe is unchanged: unset principal + Mutate bits deny.
+        CHECK(!ev.check_workspace_isolation(0, 0, kEffectMutate, "4322-probe"),
+              "4322: check_workspace_isolation still denies unset principal");
+
+        CompilerService cs_other;
+        CHECK(cs_other.eval("(set-code \"(define live \\\"c\\\")\")").has_value(),
+              "4322 other set-code");
+        cs_other.evaluator().set_tenant_principal(7, "bob");
+        cs_other.evaluator().set_effect_sandbox_mode(1);
+        auto other = cs_other.eval("(mutate:rebind \"live\" \"\\\"z\\\"\" \"4322-other\")");
+        CHECK(!other || !is_bool(*other) || !as_bool(*other),
+              "4322: tenant 7 without a Mutate grant denies");
+
+        CompilerService cs_strict;
+        CHECK(cs_strict.eval("(set-code \"(define live \\\"c\\\")\")").has_value(),
+              "4322 strict set-code");
+        cs_strict.evaluator().set_effect_sandbox_mode(2);
+        auto strict = cs_strict.eval("(mutate:rebind \"live\" \"\\\"z\\\"\" \"4322-strict\")");
+        CHECK(!strict || !is_bool(*strict) || !as_bool(*strict),
+              "4322: Strict tenant 0 still denies");
+    }
+
+    // Production :find is a schema-2 hash. The issue repro still does
+    // (car (query :children (car found))) and expects the batch to be #t.
+    {
+        std::println("\n--- #4322: production car of find feeds replace-value ---");
+        reset_all();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define live \\\"c\\\")\")").has_value(), "4322 prod set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4322 prod eval");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        cs.evaluator().set_effect_sandbox_mode(1);
+        auto found = cs.eval("(query :find \"live\")");
+        CHECK(found && is_hash(*found), "4322 prod find is a hash");
+        auto lit = cs.eval("(car (query :children (car (query :find \"live\"))))");
+        CHECK(lit && is_int(*lit), "4322 prod locator is a node id");
+        auto batch = cs.eval("(let ((lit (car (query :children (car (query :find \"live\"))))))"
+                             "  (mutate:atomic-batch"
+                             "    (list (list \"mutate:replace-value\" lit \"d\" \"repro\"))"
+                             "    \"repro\"))");
+        CHECK(batch && is_bool(*batch) && as_bool(*batch), "4322 prod batch #t");
+        auto rebind = cs.eval("(mutate:rebind \"live\" \"\\\"d\\\"\" \"repro\")");
+        CHECK(rebind && is_bool(*rebind) && as_bool(*rebind), "4322 prod rebind #t");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        set_mode(SandboxMode::Off);
     }
 
     std::println("\n#2052 mutate capability force: {} passed, {} failed", g_passed, g_failed);
