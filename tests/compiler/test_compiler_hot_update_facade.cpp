@@ -1388,6 +1388,51 @@ static void ac4073_stale_epoch_try_jit_does_not_invoke() {
           "4073: stale last_seen_epoch_ does not invoke the cached ScalarFn");
 }
 
+// Issue #4338: JIT cache inserts stamp the epoch the IR was SAMPLED
+// under, not the epoch at insert time. A Workspace-rank EDSL mutate
+// skips mutate_mtx_, so the epoch can advance mid-compile; stamping
+// insert-time current would revive a pre-mutate ScalarFn as fresh
+// (last_seen_epoch_ == current ⇒ cache hit). Both inserts must carry
+// jit_sample_epoch, and the #4073 consumption contract stays intact.
+static void ac4338_sampled_epoch_stamp() {
+    std::println("\n--- #4338: jit cache stamps the sampled mutation epoch ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #4338") != std::string::npos, "4338: service.ixx cites");
+    // exec_jit captures before lower_to_ir (the true IR sample point);
+    // try_jit_execute captures at entry under the shared mutate lock.
+    CHECK(
+        ixx.find("const std::uint64_t jit_sample_epoch = aura::core::current_mutation_epoch();") !=
+            std::string::npos,
+        "4338: sampled epoch captured at the sample points");
+    // Both cache inserts stamp the sampled epoch (exec_jit loop +
+    // try_jit_execute); any remaining insert-time current stamps must be
+    // inside the *_for_test probe region (they forge cache entries).
+    // Both cache inserts stamp the sampled epoch: exec_jit's inline form
+    // and try_jit_execute's clang-formatted wrapped form.
+    CHECK(ixx.find("it->second.last_seen_epoch_ = jit_sample_epoch;") != std::string::npos,
+          "4338: exec_jit insert stamps the sampled epoch");
+    CHECK(ixx.find("jit_sample_epoch; // #4338 sampled epoch") != std::string::npos,
+          "4338: try_jit_execute insert stamps the sampled epoch");
+    const auto probe_region = ixx.find("public_jit_cache_insert_dummy_for_test");
+    bool stray_current_stamp = false;
+    for (auto pos = ixx.find("it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();");
+         pos != std::string::npos;
+         pos = ixx.find("it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();",
+                        pos + 1))
+        if (probe_region == std::string::npos || pos < probe_region)
+            stray_current_stamp = true;
+    CHECK(!stray_current_stamp, "4338: no insert-time current stamp outside the *_for_test probes");
+
+    // Consumption contract intact: a stale last_seen_epoch_ is a miss
+    // (#4073 probe exercises the modified compile/insert path).
+    CompilerService cs;
+    CHECK(cs.public_try_jit_stale_epoch_scalar_invokes_for_test() == 0,
+          "4338: stale-epoch probe still refuses invocation");
+    CHECK(!std::filesystem::exists("docs/design/4338-sampled-epoch-stamp.md"),
+          "4338: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_4338.cpp"), "4338: no invent");
+}
+
 // Issue #4146: production facade cone JIT drop — #3749 evicted the root
 // define only, so under owner-scoped multi-eval (C clocks frozen by design,
 // #2841/#2951/#3605) a caller D of mutated F kept executing pre-mutate
@@ -1589,6 +1634,7 @@ int run_test_issue_3112() {
     // Issue #4073: try_jit_execute must not run a ScalarFn whose
     // last_seen_epoch_ is behind current_mutation_epoch.
     ac4073_stale_epoch_try_jit_does_not_invoke();
+    ac4338_sampled_epoch_stamp();
 
     // Issue #4146: production facade cone JIT drop — dependents of a
     // facade-invalidated root lose jit_cache_/native too (owner-scoped
