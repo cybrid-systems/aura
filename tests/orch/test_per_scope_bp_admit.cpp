@@ -840,6 +840,81 @@ int run_test_per_scope_bp_admit() {
               "3730 AC5: watch_all cites keepalive=0 skip");
     }
 
+    // ── Issue #4327: "-" (kBpScopeProcessBucket) routes to the process
+    // counter on note and load, matching the admit rewrite (#3015). A
+    // "-" storm must reject the next "-" spawn at the configured
+    // threshold; named as:/t:/bare: gauges stay isolated. (#3147 AC2 was
+    // the false oracle: admit rewrote "-" to empty, so the note-side
+    // asymmetry was invisible to it.)
+    {
+        std::println("\n--- #4327 AC1: note/load send \"-\" to the process bucket ---");
+        reset_all();
+        set_prod(true);
+        ::unsetenv("AURA_SANDBOX");
+
+        const auto proc0 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        note_mailbox_bp_recent_event("-");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc0 + 1,
+              "4327 AC1: note(\"-\") bumps the process counter");
+        CHECK(aura::orch::lookup_scope_bp_gauge("-") == nullptr,
+              "4327 AC1: no named \"-\" gauge inserted");
+        CHECK(load_mailbox_bp_recent("-") == proc0 + 1,
+              "4327 AC1: load(\"-\") reads the process counter");
+        CHECK(load_mailbox_bp_recent("-") == load_mailbox_bp_recent(""),
+              "4327 AC1: \"-\" and empty are the same bucket on load");
+
+        // Named gauges stay isolated.
+        const auto after_named0 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        note_mailbox_bp_recent_event("as:4327");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  after_named0,
+              "4327 AC1: named note does not touch the process counter");
+        CHECK(load_mailbox_bp_recent("as:4327") == 1, "4327 AC1: named gauge isolated");
+        (void)aura::orch::erase_scope_bp_gauge("as:4327");
+    }
+
+    {
+        std::println("\n--- #4327 AC2: \"-\" storm rejects the next \"-\" spawn ---");
+        reset_all();
+        set_prod(true);
+        ::unsetenv("AURA_SANDBOX");
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        const char* prev_thr = std::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        std::string prev_thr_s = prev_thr ? prev_thr : "";
+        ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "4", 1);
+
+        const auto rej0 =
+            g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
+
+        auto spec_a = make_spec("bp-4327-a");
+        spec_a.bp_scope_id = "-";
+        spec_a.region_key = 1; // #4238: non-zero region key keeps the mailbox-bp deny face
+        auto ha = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_a));
+        CHECK(ha.ok, "4327 AC2: first \"-\" spawn admits (quiet counter)");
+
+        for (int i = 0; i < 8; ++i)
+            note_mailbox_bp_recent_event("-"); // storm routes to the process bucket
+
+        auto spec_b = make_spec("bp-4327-b");
+        spec_b.bp_scope_id = "-";
+        spec_b.region_key = 2;
+        auto hb = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_b));
+        CHECK(!hb.ok, "4327 AC2: next \"-\" spawn rejects at the threshold");
+        CHECK(hb.quota_exceeded, "4327 AC2: reject sets quota_exceeded");
+        CHECK(hb.quota_dimension == "mailbox-bp", "4327 AC2: quota_dimension=mailbox-bp");
+        CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) ==
+                  rej0 + 1,
+              "4327 AC2: process admit-reject counter bumped");
+
+        if (!prev_thr_s.empty())
+            ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", prev_thr_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    }
+
     std::println("\n=== #2591/#2948/#3015/#3147/#3337/#3730: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;

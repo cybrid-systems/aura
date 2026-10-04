@@ -1066,10 +1066,9 @@ int run_test_security_schedule_gate() {
         CHECK(g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed) > fail_before,
               "3777 AC2: spawn_failures bumped");
         // Source-cite: body-path ScheduleGate belt still present (#3251).
-        const auto spawn_src = [&] {
-            std::ifstream in("src/orch/agent_spawn.h");
-            return std::string(std::istreambuf_iterator<char>(in), {});
-        }();
+        // Issue #4332 round: read via the fallback chain — a bare relative
+        // path breaks batch runs from the build directory.
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
         CHECK(spawn_src.find("acq == 2") != std::string::npos,
               "3777 AC3: body-path acq==2 ScheduleGate belt retained");
         CHECK(spawn_src.find("admit_security_schedule") != std::string::npos,

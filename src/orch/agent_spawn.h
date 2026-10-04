@@ -1270,6 +1270,14 @@ inline void fiber_sleep_ms(std::uint32_t ms) noexcept {
 // Hosts can also call erase_scope_bp_gauge on tenant teardown.
 inline void note_mailbox_bp_recent_event(std::string_view scope_id = {},
                                          std::uint64_t from_fiber = 0) noexcept {
+    // Issue #4327: "-" is the explicit process-bucket opt-in (#3015).
+    // The admit preflight rewrites it to empty before load_mailbox_bp_recent,
+    // so note must land on the same process counter — a "-" storm used to
+    // park pressure on a named "-" gauge while mailbox_bp_recent_total
+    // stayed quiet and the next "-" spawn was admitted. Same bucket on
+    // admit, note, and load; named as:/t:/bare: gauges stay isolated.
+    if (scope_id == kBpScopeProcessBucket)
+        scope_id = {};
     const auto now_us = orch_now_us();
     if (scope_id.empty()) {
         g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
@@ -1395,6 +1403,10 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
 // → scope gauge (0 if no events yet). Single relaxed load (or one map
 // lookup); no hist walk. Same source for admit + degrade (AC4).
 [[nodiscard]] inline std::uint64_t load_mailbox_bp_recent(std::string_view scope_id) noexcept {
+    // Issue #4327: "-" is the process bucket on load too (admit rewrites,
+    // note normalizes; load must agree for watch/degrade readers).
+    if (scope_id == kBpScopeProcessBucket)
+        scope_id = {};
     if (scope_id.empty()) {
         return g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
     }
@@ -3404,6 +3416,19 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
         aura::compiler::typed_audit::production_defaults_active()) {
         g_orch_module_stats.reclaimed_dtor_under_account_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+        // Issue #4326: third live-Reclaimed writer (~AgentHandle). #4299
+        // covered abandon_reclaimed / maybe_force_recycle_reclaimed_slot;
+        // a scope-member dtor / drain_for_cleanup that skips both still
+        // drops the handle with agents_active_held set and the body live,
+        // so agents_active would climb for the process lifetime (the
+        // Done-path release lives in complete_agent_join_cleanup, already
+        // returned Reclaimed). Transfer the one-shot onto the Fiber before
+        // the handle dies: on_fiber_done / reap_orphans_now then consumes
+        // it (consume_agents_active_oneshot). Soft/Off unchanged (arm
+        // gate). #2661: no body-stack free.
+        if (agents_active_held) {
+            transfer_agents_active_oneshot_to_fiber(*this);
+        }
         // Issue #3529 / #3564: recycle when reclaim-stuck ≥ timeout.
         // Soft skipped by the production gate (no getenv). #2661
         // body-stack is not freed; #3012 still releases quota below.

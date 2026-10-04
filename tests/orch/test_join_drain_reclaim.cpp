@@ -4833,6 +4833,72 @@ static void ac4299_4_soft_zero_and_source_cite() {
 }
 
 
+// Issue #4326: ~AgentHandle on a live Reclaimed body is the third
+// live-abandon writer. A scope-member dtor / drain_for_cleanup that skips
+// abandon_reclaimed and maybe_force_recycle_reclaimed_slot must still
+// transfer the agents_active one-shot onto the Fiber so the Done/reap edge
+// releases the gauge (otherwise agents_active climbs for the process
+// lifetime). #2661: no body-stack free. Soft/Off unchanged (arm gate).
+static void ac4326_1_dtor_live_reclaimed_transfers_oneshot() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println(
+        "\n--- #4326 AC1: ~AgentHandle live Reclaimed -> oneshot transfer + reap consume ---");
+    apply_production_audit_defaults();
+
+    const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    const auto under0 =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    Scheduler sched(1);
+    Fiber* raw = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    CHECK(raw != nullptr, "4326 AC1: scheduler spawn ok (owner_sched set)");
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    mb->attach(raw);
+
+    {
+        AgentHandle h;
+        h.ok = true;
+        h.name = "agent-4326a";
+        h.fiber = raw;
+        h.mailbox = mb;
+        h.reserved_memory_bytes = 4096;
+        h.must_wait_reclaimed = true;
+        h.reclaimed_deferred_cleanup = true;
+        h.agents_active_held = true;
+        g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
+        CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0 + 1,
+              "4326 AC1: agents_active +1 (spawn)");
+        // Scope-member destruction path: no abandon_reclaimed, no
+        // maybe_force_recycle_reclaimed_slot — ~AgentHandle is the only
+        // writer that runs.
+    }
+    CHECK(raw->agents_active_oneshot_transferred(),
+          "4326 AC1: one-shot transferred to Fiber before the handle died");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0 + 1,
+          "4326 AC1: gauge still held (transferred, not dropped)");
+    CHECK(raw->mailbox() == nullptr, "4326 AC1: Fiber::mailbox_ detached (#3880)");
+    CHECK(!raw->is_done(), "4326 AC1: #2661 body-stack untouched");
+    CHECK(g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed) ==
+              under0 + 1,
+          "4326 AC1: under-account counter bumped for the live dtor arm");
+
+    // Body never yields; drive the reap edge (same consume as Done).
+    sched.note_orphan_fiber(raw, /*hard_deadline_ms=*/10);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    CHECK(sched.reap_orphans_now() >= 1, "4326 AC1: hard-reap ran");
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == active0,
+          "4326 AC1: gauge back to baseline after reap consume");
+    CHECK(!raw->consume_agents_active_oneshot_transferred(),
+          "4326 AC1: one-shot consumed exactly once");
+    apply_dev_audit_defaults();
+}
+
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -9960,6 +10026,8 @@ int run_test_join_drain_reclaim() {
     ac4299_2_scope_live_abandon_notes_orphan();
     ac4299_3_abandon_reclaimed_timeout_transfers();
     ac4299_4_soft_zero_and_source_cite();
+    std::println("\n=== Issue #4326: ~AgentHandle live-Reclaimed oneshot transfer ===");
+    ac4326_1_dtor_live_reclaimed_transfers_oneshot();
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
