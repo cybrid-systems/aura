@@ -3825,6 +3825,16 @@ public:
             }
         }
 
+        // Issue #4338: capture the mutation epoch the IR is sampled
+        // under. A Workspace-rank EDSL mutate skips mutate_mtx_, so the
+        // shared lock below does not exclude it: the epoch can advance
+        // mid-compile. Stamping the cache with the CURRENT epoch at
+        // insert time would publish a pre-mutate ScalarFn as fresh
+        // (last_seen_epoch_ == current ⇒ revived on the next access).
+        // Stamping with the sampled epoch leaves the entry stale under
+        // any concurrent bump — fail-closed, next access recompiles.
+        const std::uint64_t jit_sample_epoch = aura::core::current_mutation_epoch();
+
         // Lower to IR
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
                                                   &evaluator_.primitives(), &type_registry_);
@@ -4206,7 +4216,11 @@ public:
                     // Issue #166: stamp the entry with the current
                     // epoch. On the next access, if the epoch has
                     // changed, the entry is treated as stale.
-                    it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+                    // Issue #4338: "current" is the epoch the IR was
+                    // SAMPLED under, not the epoch at insert time — a
+                    // Workspace-rank mutate that lands mid-compile must
+                    // not see this pre-mutate ScalarFn revived as fresh.
+                    it->second.last_seen_epoch_ = jit_sample_epoch;
                     it->second.local_count = ir_fn.local_count;
                     it->second.arg_count = ir_fn.arg_count;
                     it->second.env_count = env_count;
@@ -16065,6 +16079,10 @@ public:
         lock_order::OrderedSharedLock<std::shared_mutex> mutate_read(mutate_mtx_,
                                                                      lock_order::Level::Mutate);
         sync_lock_order_metrics_();
+        // Issue #4338: epoch the incoming IR was sampled under (closest
+        // capture to the compile loop; a Workspace-rank mutate skips
+        // mutate_mtx_ so the shared lock cannot fence it).
+        const std::uint64_t jit_sample_epoch = aura::core::current_mutation_epoch();
         if (ir_mod.functions.empty())
             return std::nullopt;
 
@@ -16269,7 +16287,8 @@ public:
                         it->second.local_count = ir_fn.local_count;
                         it->second.arg_count = ir_fn.arg_count;
                         it->second.env_count = env_count;
-                        it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+                        it->second.last_seen_epoch_ =
+                            jit_sample_epoch; // #4338 sampled epoch, not insert-time current
                         it->second.has_shape_map = final_shape_map != nullptr;
                         if (final_shape_map != nullptr) {
                             it->second.compiled_shape_version_ =
