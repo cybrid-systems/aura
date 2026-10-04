@@ -409,6 +409,46 @@ static void ac4169_source_cite() {
           "4169: tombstone use-site check still runs on the cached copy");
 }
 
+// Issue #4328: native closure dispatch must deref the bound (post-chase)
+// payload, not a densify-old env cell key. The #4124 bind contract gives the
+// tree-walk apply its write-back; the JIT fast/slow copy loops now route
+// through NativeMovingCanary::rewrite_cell (bound_by_cell chase results).
+static void ac4328_dispatch_bind_rewrite() {
+    std::println("\n--- #4328: dispatch env copy derefs the bound payload ---");
+    const auto jit = [&] {
+        for (const char* p :
+             {"src/compiler/aura_jit_runtime.cpp", "../src/compiler/aura_jit_runtime.cpp",
+              "../../src/compiler/aura_jit_runtime.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    }();
+    CHECK(jit.find("Issue #4328") != std::string::npos,
+          "4328: aura_jit_runtime cites the issue");
+    CHECK(jit.find("std::unordered_map<int64_t, void*> bound_by_cell") != std::string::npos,
+          "4328: canary records raw cell -> bound address map");
+    CHECK(jit.find("bound_by_cell.emplace") != std::string::npos,
+          "4328: note_bound_ records every chased bind");
+    CHECK(jit.find("[[nodiscard]] int64_t rewrite_cell(int64_t raw) const noexcept") !=
+              std::string::npos,
+          "4328: rewrite_cell passthrough helper present");
+    CHECK(jit.find("native_moving_canary.rewrite_cell(arena_env[i])") != std::string::npos &&
+              jit.find("native_moving_canary.rewrite_cell(arena_env[i])") != jit.rfind(
+                  "native_moving_canary.rewrite_cell(arena_env[i])"),
+          "4328: both fast and slow arena copies deref the bound payload");
+    CHECK(jit.find("native_moving_canary.rewrite_cell(env[i])") != std::string::npos,
+          "4328: heap env copy routes through rewrite_cell");
+    CHECK(jit.find("aura_unnote_temporary_moving_live_ptr(bound_inline[i])") !=
+              std::string::npos,
+          "4328: #4124 dtor unnote contract retained (bound addresses, not cells)");
+    CHECK(jit.find("aura_bind_temporary_moving_live_ptr_any_arena(cell)") != std::string::npos,
+          "4328: #4124 guarded-chase bind retained in note_bound_");
+}
+
 } // namespace
 
 // ── #3867: closures 16-shard conversion (TLS-miss lock amplification) ──
@@ -457,6 +497,7 @@ int run_test_apply_closure_envframe_soa() {
     ac3832_tombstone_and_source();
     ac4169_seq_stable_survive();
     ac4169_source_cite();
+    ac4328_dispatch_bind_rewrite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

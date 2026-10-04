@@ -1595,6 +1595,57 @@ static void ac3549_4_source_cite_no_invent() {
     CHECK(read_file("docs/design/3549-stable-func-id-pool.md").empty(), "3549 AC5: no docs/design");
 }
 
+// ── Issue #4330: recycled sid must not remap a live peer closure ──
+// Raw stamp membership is not ownership (#3549 mangle_epoch face): when a
+// named closure's own name no longer binds to its stamped sid (owner map
+// cleared, sid retired and re-preserved by another eval), the reemit remap
+// must refuse — MustDeopt stays set and bridge/table/env/cow/defuse keep
+// the old generation. A closure whose name binding IS the reemit sid still
+// remaps (the #2542/#2550 legitimate face, no regression).
+extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,
+                                                     std::uint32_t sid) noexcept;
+extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name);
+static void ac4330_1_recycled_sid_refuses_peer_remap() {
+    std::println("\n--- #4330 AC1: recycled sid refuses peer remap; live binding still remaps ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort)");
+        return;
+    }
+    aura_set_remap_name_fallback_enabled(0);
+    aura_clear_stable_func_id_map();
+
+    // Stale peer: named closure whose raw stamp is a sid the name map no
+    // longer binds (the #4330 recycled-stamp face).
+    const auto cid_stale = aura_alloc_closure(51);
+    CHECK(cid_stale >= 0, "4330 AC1: alloc stale peer");
+    aura_closure_set_name(cid_stale, "ac4330_stale_f");
+    const std::uint32_t stale_bound = aura_lookup_stable_func_id("ac4330_stale_f");
+    CHECK(stale_bound != 0, "4330 AC1: stale peer name bound");
+    const std::uint32_t k_recycled = stale_bound + 7000u; // beyond any live sid
+    aura_test_set_closure_stable_func_id(cid_stale, k_recycled);
+
+    // Live owner: named closure whose name binding IS the reemit sid.
+    const auto cid_live = aura_alloc_closure(52);
+    CHECK(cid_live >= 0, "4330 AC1: alloc live owner");
+    aura_closure_set_name(cid_live, "ac4330_live_g");
+    const std::uint32_t live_sid = aura_lookup_stable_func_id("ac4330_live_g");
+    CHECK(live_sid != 0 && live_sid != k_recycled, "4330 AC1: live sid assigned");
+
+    // Reemit of the recycled sid (eval B re-preserved S + installed native).
+    const auto remapped =
+        aura_remap_live_closures_after_reemit(&k_recycled, /*n=*/1, /*new_bridge_epoch=*/99);
+    CHECK(remapped == 0, "4330 AC1: stale-binding membership refused (no remap)");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid_stale) == 1,
+          "4330 AC1: MustDeopt stays set on the stale peer (fail-closed)");
+
+    // The same remap face honors a live binding under its own sid.
+    const auto remapped_live =
+        aura_remap_live_closures_after_reemit(&live_sid, /*n=*/1, /*new_bridge_epoch=*/100);
+    CHECK(remapped_live >= 1, "4330 AC1: live binding still remaps (no regression)");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid_live) == 0,
+          "4330 AC1: live owner deopt cleared after legitimate remap");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -1671,6 +1722,8 @@ int run_test_named_closure_stable_id_at_create() {
     ac3549_2_epoch_differentiates_recycle();
     ac3549_3_soft_no_recycle();
     ac3549_4_source_cite_no_invent();
+    std::println("\n=== Issue #4330: recycled sid refuses peer remap ===");
+    ac4330_1_recycled_sid_refuses_peer_remap();
     std::println(
         "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857 + #3025 + #3549: {} passed, "
         "{} failed ===",

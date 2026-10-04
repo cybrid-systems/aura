@@ -3990,6 +3990,24 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         bool via_name_fallback = false;
         bool name_candidate_no_remap = false;
         if (cid_stable_id != 0 && reemit_ids.count(cid_stable_id)) {
+            // Issue #4330: a recycled sid can alias a live peer closure. The
+            // raw stamp alone is not ownership (#3549 mangle_epoch face):
+            // when the closure's own name no longer binds to its stamped sid
+            // (owner map cleared, sid retired and re-preserved by another
+            // eval), a membership match would restamp this closure onto the
+            // new eval's native. Fail-closed: MustDeopt stays set and the
+            // bridge/table/env/cow/defuse stamps keep the old generation —
+            // the call takes the safe fallback instead of the new native.
+            // Unnamed (anon) closures keep the raw-membership contract.
+            if (named && cname != nullptr) {
+                const std::uint32_t bound_now = aura_lookup_stable_func_id(cname);
+                if (bound_now != cid_stable_id) {
+                    g_closure_must_deopt[cid] = 1;
+                    ++must_deopt_set;
+                    aura_bump_live_closure_must_deopt_kept_total(1);
+                    continue;
+                }
+            }
             match_id = cid_stable_id;
         } else if (named) {
             // Name → latest stable id. If that id is in the reemit set,
@@ -4568,6 +4586,16 @@ namespace {
         size_t bound_n = 0;
         void* bound_inline[kInlineBoundCap];
         std::vector<void*> bound_spill;
+        // Issue #4328: raw cell value -> bound (post-chase) address. The
+        // dispatch env copy must deref the BOUND payload, not the raw cell:
+        // a Moving relocate publishes last_object_remap_ without rewriting
+        // every env cell, so a cell can still hold the densify-old key
+        // while the payload lives at the new address. bind's guarded chase
+        // (#4124) resolves old->new under the inventory mutex; the ctor
+        // walk already chased every non-zero cell, so the copy reuses that
+        // result instead of derefing the stale key. Empty under Soft / Off
+        // (bind notes nothing) — raw passthrough, zero extra.
+        std::unordered_map<int64_t, void*> bound_by_cell;
         explicit NativeMovingCanary(size_t cid_)
             : p(this)
             , cid(cid_) {
@@ -4587,10 +4615,24 @@ namespace {
             void* b = aura_bind_temporary_moving_live_ptr_any_arena(cell);
             if (!b)
                 return; // Soft / Off / null cell: bridge notes nothing
+            bound_by_cell.emplace(static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(cell)), b);
             if (bound_n < kInlineBoundCap)
                 bound_inline[bound_n++] = b;
             else
                 bound_spill.push_back(b);
+        }
+        // Issue #4328: rewrite a raw env cell to its bound address before
+        // it lands in the native's locals frame (tree-walk apply writes its
+        // cl_copy back from the bind return; the JIT copy now does the
+        // same). Unmapped cells (zero / Soft / Off / heap-non-arena) pass
+        // through unchanged.
+        [[nodiscard]] int64_t rewrite_cell(int64_t raw) const noexcept {
+            if (raw == 0 || bound_by_cell.empty())
+                return raw;
+            const auto it = bound_by_cell.find(raw);
+            if (it == bound_by_cell.end())
+                return raw;
+            return static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(it->second));
         }
         // Issue #4124: note-only walk — the dtor unnotes the stored bound
         // addresses above (bind may have remapped, so the cells no longer
@@ -5023,12 +5065,14 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                                      : 0;
                     for (int32_t i = 0; i < env_count; ++i) {
                         if (static_cast<size_t>(i) < asz)
-                            locals[i] = arena_env[i];
+                            // Issue #4328: deref the bound (post-chase) payload,
+                            // not a densify-old cell key (Moving relocate).
+                            locals[i] = native_moving_canary.rewrite_cell(arena_env[i]);
                     }
                 } else {
                     auto& env = g_closure_envs[cid_cast];
                     for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
-                        locals[i] = env[i];
+                        locals[i] = native_moving_canary.rewrite_cell(env[i]);
                 }
 
                 for (int32_t i = 0; i < nargs; ++i)
@@ -5139,12 +5183,13 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             slow_cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[slow_cid] : 0;
         for (int32_t i = 0; i < entry.env_count; ++i)
             if (i < nlocals && static_cast<size_t>(i) < asz)
-                locals[i] = arena_env[i];
+                // Issue #4328: bound (post-chase) payload, not a stale key.
+                locals[i] = native_moving_canary.rewrite_cell(arena_env[i]);
     } else {
         auto& env = g_closure_envs[slow_cid];
         for (size_t i = 0; i < env.size(); ++i) {
             if (i < static_cast<size_t>(nlocals))
-                locals[i] = env[i];
+                locals[i] = native_moving_canary.rewrite_cell(env[i]);
         }
     }
 
