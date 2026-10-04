@@ -1541,7 +1541,10 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         CHECK(depth_after.load() == 0, "3480 AC1: depth slot == 0");
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         const auto addp = mut.find("auto add_mutate = ");
-        const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 17000);
+        // #4332 wave: the wrapper-level lazy COW before fn(a) grew the lambda —
+        // the post-fn(a) anchors (force_release, forced unlock/fail-closed
+        // counters) now sit past the old 17000 edge. Grow with the lambda.
+        const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 21000);
         const auto fnp = aw.find("auto result = fn(a);");
         const auto frp = aw.find("force_release_hold_budget_inbody");
         CHECK(fnp != std::string::npos && frp != std::string::npos && frp > fnp,
