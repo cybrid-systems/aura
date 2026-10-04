@@ -1646,6 +1646,75 @@ static void ac4330_1_recycled_sid_refuses_peer_remap() {
           "4330 AC1: live owner deopt cleared after legitimate remap");
 }
 
+// ── Issue #4337: same-name recycled sid refuses remap on epoch mismatch ──
+// #4330's name-binding check cannot see a same-name recycle: after a
+// map clear, pop_retired can hand the same integer sid to a re-preserve
+// of the SAME display name, so bound_now == the raw stamp and the remap
+// would ride the new (foreign) generation's native. The closure's
+// recorded mangle epoch vs the binding's current epoch is the gate.
+extern "C" std::uint64_t aura_lookup_stable_func_id_epoch(const char* name);
+extern "C" void aura_aot_bump_func_table_epoch(void);
+extern "C" void aura_aot_note_cross_eval_epoch_force_bump(void);
+static void ac4337_1_same_name_recycle_epoch_mismatch_refuses_remap() {
+    std::println("\n--- #4337 AC1: same-name recycle refuses on epoch mismatch ---");
+    // Source-cite FIRST — these run even under the light-link stub.
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #4337") != std::string::npos, "4337: bridge cites");
+    CHECK(br.find("aura_lookup_stable_func_id_epoch") != std::string::npos,
+          "4337: epoch reader present");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #4337") != std::string::npos, "4337: runtime cites");
+    CHECK(rt.find("g_closure_binding_epoch") != std::string::npos,
+          "4337: per-closure generation vector present");
+
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort)");
+        return;
+    }
+
+    aura_set_remap_name_fallback_enabled(0);
+    aura_clear_stable_func_id_map();
+
+    // Gen-1: closure named f binds under the current table epoch.
+    const auto cid_a = aura_alloc_closure(53);
+    CHECK(cid_a >= 0, "4337 AC1: alloc gen-1 closure");
+    aura_closure_set_name(cid_a, "ac4337_f");
+    const std::uint32_t sid_a = aura_lookup_stable_func_id("ac4337_f");
+    CHECK(sid_a != 0, "4337 AC1: gen-1 name bound");
+    const std::uint64_t e1 = aura_lookup_stable_func_id_epoch("ac4337_f");
+    CHECK(e1 != 0, "4337 AC1: binding carries a mangle epoch");
+    CHECK(aura_lookup_stable_func_id_epoch("ac4337_missing") == 0,
+          "4337 AC1: missing binding reads 0 (no generation)");
+
+    // Advance the generation and re-preserve the same display name
+    // (the owner-scoped clear + pop_retired recycle face).
+    aura_aot_note_cross_eval_epoch_force_bump();
+    aura_aot_bump_func_table_epoch();
+    aura_clear_stable_func_id_map();
+    const auto cid_b = aura_alloc_closure(54);
+    CHECK(cid_b >= 0, "4337 AC1: alloc gen-2 closure");
+    aura_closure_set_name(cid_b, "ac4337_f");
+    const std::uint32_t sid_b = aura_lookup_stable_func_id("ac4337_f");
+    CHECK(sid_b != 0, "4337 AC1: gen-2 name bound");
+    const std::uint64_t e2 = aura_lookup_stable_func_id_epoch("ac4337_f");
+    CHECK(e2 > e1, "4337 AC1: re-preservation advanced the generation");
+
+    // Same-name recycle: the gen-1 closure's raw stamp is forged to the
+    // gen-2 binding's sid. #4330's membership check (bound_now == stamp)
+    // now passes — the recorded-vs-bound epoch check is the only gate.
+    aura_test_set_closure_stable_func_id(cid_a, sid_b);
+
+    // Remap of the recycled sid: the gen-2 owner remaps under its own
+    // generation; the gen-1 peer refuses (MustDeopt stays set).
+    const auto remapped =
+        aura_remap_live_closures_after_reemit(&sid_b, /*n=*/1, /*new_bridge_epoch=*/101);
+    CHECK(remapped >= 1, "4337 AC1: gen-2 owner remaps (no regression)");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid_a) == 1,
+          "4337 AC1: gen-1 peer refused on epoch mismatch (fail-closed)");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid_b) == 0,
+          "4337 AC1: gen-2 owner deopt cleared after legitimate remap");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -1724,6 +1793,7 @@ int run_test_named_closure_stable_id_at_create() {
     ac3549_4_source_cite_no_invent();
     std::println("\n=== Issue #4330: recycled sid refuses peer remap ===");
     ac4330_1_recycled_sid_refuses_peer_remap();
+    ac4337_1_same_name_recycle_epoch_mismatch_refuses_remap();
     std::println(
         "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857 + #3025 + #3549: {} passed, "
         "{} failed ===",

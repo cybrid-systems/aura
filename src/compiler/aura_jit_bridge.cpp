@@ -1073,6 +1073,20 @@ static std::uint32_t lookup_stable_func_id_for_eval_locked(void* eval_ptr, const
     return it == inner.end() ? 0 : it->second.id;
 }
 
+// Issue #4337: mangle-epoch read for the recycled-sid generation check.
+// Same owner resolution / locking as aura_lookup_stable_func_id; returns
+// 0 when the name has no binding (callers treat 0 as "no generation").
+static std::uint64_t lookup_stable_func_id_epoch_for_eval_locked(void* eval_ptr, const char* name) {
+    if (!name || !*name)
+        return 0;
+    auto outer_it = g_eval_to_stable_func_id.find(eval_ptr);
+    if (outer_it == g_eval_to_stable_func_id.end())
+        return 0;
+    const auto& inner = outer_it->second;
+    auto it = inner.find(name);
+    return it == inner.end() ? 0 : it->second.mangle_epoch;
+}
+
 // Total entries across all eval owners (for query surface; AC5).
 static std::uint64_t stable_func_id_map_size_locked() {
     std::uint64_t total = 0;
@@ -1293,6 +1307,17 @@ extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name) {
         eval_owner = aura_aot_get_register_owner_eval();
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
     return lookup_stable_func_id_for_eval_locked(eval_owner, name);
+}
+
+// Issue #4337: current reemit/register owner's binding epoch for name.
+extern "C" std::uint64_t aura_lookup_stable_func_id_epoch(const char* name) {
+    if (!name || !*name)
+        return 0;
+    void* eval_owner = aura_aot_get_reemit_owner_eval();
+    if (!eval_owner)
+        eval_owner = aura_aot_get_register_owner_eval();
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    return lookup_stable_func_id_epoch_for_eval_locked(eval_owner, name);
 }
 
 extern "C" std::uint32_t aura_lookup_stable_func_id_for_eval(void* eval_ptr, const char* name) {

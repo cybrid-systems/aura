@@ -986,6 +986,12 @@ static std::vector<std::uint64_t> g_closure_table_epochs;
 // means legacy / never stamped; remap falls back to name match (off by
 // default, gated by aura_set_remap_name_fallback_enabled).
 static std::vector<std::uint32_t> g_closure_stable_func_ids;
+// Issue #4337: per-closure mangle epoch recorded at every named sid
+// stamp (set_name / remap restamp / name-fallback remount). The remap
+// generation check compares this against the CURRENT name binding's
+// epoch — a recycled sid under the same display name from another eval
+// carries a different epoch and must not remap onto the new native.
+static std::vector<std::uint64_t> g_closure_binding_epoch;
 // Issue #2128: MustDeoptBeforeNextCall — set when reemit matched a live
 // closure but remap could not retarget native. Cleared on remount success,
 // remap, alloc reuse, or aura_closure_call force-deopt (exclusive + #2472).
@@ -3817,6 +3823,9 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
         if (cid >= g_closure_stable_func_ids.size())
             g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
         g_closure_stable_func_ids[cid] = sid; // never leave 0 for named
+        if (cid >= g_closure_binding_epoch.size())
+            g_closure_binding_epoch.resize(g_closure_func_ids.size(), 0);
+        g_closure_binding_epoch[cid] = aura_lookup_stable_func_id_epoch(name);
     }
     aura_unlock_workspace_write();
 }
@@ -3979,6 +3988,9 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                 looked_up = aura_get_or_preserve_stable_func_id(cname, nullptr);
             if (looked_up != 0) {
                 g_closure_stable_func_ids[cid] = looked_up;
+                if (cid >= g_closure_binding_epoch.size())
+                    g_closure_binding_epoch.resize(g_closure_func_ids.size(), 0);
+                g_closure_binding_epoch[cid] = aura_lookup_stable_func_id_epoch(cname);
                 cid_stable_id = looked_up;
                 via_backfill = true;
                 aura_bump_live_closure_stable_id_backfill_total(1);
@@ -4006,6 +4018,27 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                     ++must_deopt_set;
                     aura_bump_live_closure_must_deopt_kept_total(1);
                     continue;
+                }
+                // Issue #4337: the #4330 name-binding check cannot see a
+                // same-name recycle — after an owner-scoped clear,
+                // pop_retired can hand the same integer to another eval
+                // that preserves the same display name, so bound_now ==
+                // the raw stamp. Compare generations instead: the
+                // closure's recorded mangle epoch vs the binding the
+                // current owner holds. A mismatch means the sid was
+                // retired and re-preserved cross-eval — fail-closed with
+                // the same shape as #4330 (MustDeopt stays set, no
+                // restamp). Recorded 0 (legacy stamps / test-forged sids)
+                // skips the generation check; the #4330 arm still applies.
+                if (cid < g_closure_binding_epoch.size()) {
+                    const std::uint64_t bound_epoch = aura_lookup_stable_func_id_epoch(cname);
+                    if (g_closure_binding_epoch[cid] != 0 && bound_epoch != 0 &&
+                        bound_epoch != g_closure_binding_epoch[cid]) {
+                        g_closure_must_deopt[cid] = 1;
+                        ++must_deopt_set;
+                        aura_bump_live_closure_must_deopt_kept_total(1);
+                        continue;
+                    }
                 }
             }
             match_id = cid_stable_id;
@@ -4075,6 +4108,10 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // does not publish match_id. Stable-id membership still restamps
         // below (#2542). This path does not bump g_aot_table_epoch.
         g_closure_stable_func_ids[cid] = match_id;
+        if (cid >= g_closure_binding_epoch.size())
+            g_closure_binding_epoch.resize(g_closure_func_ids.size(), 0);
+        g_closure_binding_epoch[cid] =
+            (named && cname != nullptr) ? aura_lookup_stable_func_id_epoch(cname) : 0;
         const std::int64_t jit_id = (named && cname != nullptr) ? jit_id_for_registered_name(cname)
                                                                 : static_cast<std::int64_t>(-1);
         if (jit_id >= 0)
