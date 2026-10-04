@@ -24,9 +24,11 @@ ACs:
        + #4164 block doc stating Soft keeps the legacy paint.
   AC2  ast.ixx make_safe_ref_layout: threads the production flag into
        make_ref_layout and propagates the refused NULL_NODE layout.
-  AC3  evaluator_security.cpp: the three production stamp sites thread
-       production_defaults_active() citing #4164 (layout_missing remake,
-       make_stamped_ref, make_stamped_safe_ref).
+  AC3  evaluator_security.cpp: production refuses a wrap/cow-mismatched
+       capture before any occupancy remake (#4314); the layout_missing
+       remake is Soft-only and keeps the legacy paint. The two production
+       layout-threading stamp sites (make_stamped_ref, make_stamped_safe_ref)
+       thread production_defaults_active() citing #4164.
   AC4  test home + registry: test_query_result_full_provenance.cpp hosts
        the ac4164_* runtime ACs (freed id → NULL layout, Soft paint kept),
        test_stable_ref_export_validate.cpp hosts the export-face zone;
@@ -111,9 +113,17 @@ def main() -> int:
     must("ref.id == NULL_NODE" in safe, "AC2: propagates the refused NULL_NODE layout")
 
     # ── AC3: security TU production threading ──
+    # Issue #4314: a packed v2 ref captured at epoch 0 is the first cycle,
+    # not a missing layout. Production refuses a wrap/cow-mismatched capture
+    # before any occupancy remake, so the layout_missing remake is Soft-only
+    # and keeps the legacy paint (production flag false).
+    must(
+        "if (hard && (ref.wrap_epoch != we || ref.cow_epoch_at_capture != ce))" in sec,
+        "AC3: production mismatched capture returns early (no occupancy remake)",
+    )
     remake = _between(sec, "if (layout_missing) {", "record_query_stable_ref_unstamped_prevented")
-    must("Issue #4164" in remake, "AC3: stamp_query_stable_ref_export remake cites #4164")
-    must("production_defaults_active()" in remake, "AC3: remake threads the production face")
+    must("make_ref_layout(id, false)" in remake, "AC3: Soft-only remake keeps the legacy layout paint")
+    must("production_defaults_active()" not in remake, "AC3: Soft-only remake does not thread the production face")
     stamped = _between(sec, "StableNodeRef Evaluator::make_stamped_ref(", "Evaluator::make_stamped_safe_ref")
     must("Issue #4164" in stamped, "AC3: make_stamped_ref cites #4164")
     must("production_defaults_active()" in stamped, "AC3: make_stamped_ref threads the production face")
@@ -122,8 +132,11 @@ def main() -> int:
     must("Issue #4164" in safe_ref, "AC3: make_stamped_safe_ref cites #4164")
     must("production_defaults_active()" in safe_ref, "AC3: make_stamped_safe_ref threads the production face")
     must("ref.id == ast::NULL_NODE" in safe_ref, "AC3: make_stamped_safe_ref returns the refused layout early")
-    must(count(sec, "production_defaults_active());") == 3, "AC3: exactly three production threading sites")
-    must(count(sec, "Issue #4164") >= 4, "AC3: security TU carries the #4164 cites")
+    must(
+        count(sec, "typed_audit::production_defaults_active());") == 2,
+        "AC3: exactly two production layout-threading sites (make_stamped_ref/-safe_ref)",
+    )
+    must(count(sec, "Issue #4164") >= 3, "AC3: security TU carries the #4164 cites")
 
     # ── AC4: test home + registry ──
     must("test_ac4164_1_prod_stamped_ref_refuses_free_slot" in qrp, "AC4: freed-id stamp refusal AC present")
