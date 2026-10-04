@@ -427,8 +427,7 @@ static void ac4328_dispatch_bind_rewrite() {
         }
         return std::string{};
     }();
-    CHECK(jit.find("Issue #4328") != std::string::npos,
-          "4328: aura_jit_runtime cites the issue");
+    CHECK(jit.find("Issue #4328") != std::string::npos, "4328: aura_jit_runtime cites the issue");
     CHECK(jit.find("std::unordered_map<int64_t, void*> bound_by_cell") != std::string::npos,
           "4328: canary records raw cell -> bound address map");
     CHECK(jit.find("bound_by_cell.emplace") != std::string::npos,
@@ -437,13 +436,12 @@ static void ac4328_dispatch_bind_rewrite() {
               std::string::npos,
           "4328: rewrite_cell passthrough helper present");
     CHECK(jit.find("native_moving_canary.rewrite_cell(arena_env[i])") != std::string::npos &&
-              jit.find("native_moving_canary.rewrite_cell(arena_env[i])") != jit.rfind(
-                  "native_moving_canary.rewrite_cell(arena_env[i])"),
+              jit.find("native_moving_canary.rewrite_cell(arena_env[i])") !=
+                  jit.rfind("native_moving_canary.rewrite_cell(arena_env[i])"),
           "4328: both fast and slow arena copies deref the bound payload");
     CHECK(jit.find("native_moving_canary.rewrite_cell(env[i])") != std::string::npos,
           "4328: heap env copy routes through rewrite_cell");
-    CHECK(jit.find("aura_unnote_temporary_moving_live_ptr(bound_inline[i])") !=
-              std::string::npos,
+    CHECK(jit.find("aura_unnote_temporary_moving_live_ptr(bound_inline[i])") != std::string::npos,
           "4328: #4124 dtor unnote contract retained (bound addresses, not cells)");
     CHECK(jit.find("aura_bind_temporary_moving_live_ptr_any_arena(cell)") != std::string::npos,
           "4328: #4124 guarded-chase bind retained in note_bound_");

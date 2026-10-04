@@ -2025,7 +2025,7 @@ static void ac4331_1_dropped_top_body_slot_drain() {
   (let ((inner (lambda () 42)))
     (+ (B) (inner)))))
 )")
-                  .has_value(),
+              .has_value(),
           "4331 AC1: set-code nested caller");
     CHECK(cs.eval("(eval-current)").has_value(), "4331 AC1: eval stores bundles");
 

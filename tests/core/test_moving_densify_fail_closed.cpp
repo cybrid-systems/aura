@@ -7330,8 +7330,7 @@ static void ac4329_1_collision_fresh_restore_payload_remap() {
         void* e3 = p3;
         // Fail the 3rd pending: by then P0 committed at p3.old and P1 at
         // p2.old (LIFO reuse) — the loser's old slot IS owned by a winner.
-        aura::ast::g_relocate_alloc_fail_inject_index_for_test.store(2,
-                                                                     std::memory_order_relaxed);
+        aura::ast::g_relocate_alloc_fail_inject_index_for_test.store(2, std::memory_order_relaxed);
         const auto r = arena.live_compact(LiveCompactMode::Moving);
         CHECK(r.untracked_kept_count >= 1, "4329 AC1: window red (fail-closed)");
         CHECK(r.moving_incomplete_remap, "4329 AC1: moving_incomplete_remap set");
@@ -7358,7 +7357,8 @@ static void ac4329_1_collision_fresh_restore_payload_remap() {
 }
 
 static void ac4329_2_collision_no_slot_mirror_destroy() {
-    std::println("\n--- #4329 AC2: collision with no fresh slot destroys on the mirror (no alias) ---");
+    std::println(
+        "\n--- #4329 AC2: collision with no fresh slot destroys on the mirror (no alias) ---");
     MovingFlagGuard on(1);
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     aura::ast::reset_relocate_alloc_fail_inject_for_test();
@@ -7370,8 +7370,7 @@ static void ac4329_2_collision_no_slot_mirror_destroy() {
         auto* p2 = arena.create<Payload4329>();
         auto* p3 = arena.create<Payload4329>();
         CHECK(p0 && p1 && p2 && p3, "4329 AC2: create ok");
-        aura::ast::g_relocate_alloc_fail_inject_index_for_test.store(2,
-                                                                     std::memory_order_relaxed);
+        aura::ast::g_relocate_alloc_fail_inject_index_for_test.store(2, std::memory_order_relaxed);
         aura::ast::g_relocate_collision_fresh_fail_inject_remaining.store(
             1, std::memory_order_relaxed);
         const auto r = arena.live_compact(LiveCompactMode::Moving);
