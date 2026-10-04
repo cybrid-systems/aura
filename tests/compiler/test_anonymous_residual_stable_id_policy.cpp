@@ -3359,7 +3359,9 @@ static void ac4308_remap_jit_id_not_stable_id() {
     const auto fn = rt.find("extern \"C\" std::uint64_t aura_remap_live_closures_after_reemit");
     CHECK(fn != std::string::npos, "4308: remap present");
     if (fn != std::string::npos) {
-        const auto win = rt.substr(fn, 9000);
+        // #4330 wave: the stale-binding guard grew the membership branch —
+        // the #4308 cite sits past the old 9000 edge now. Grow with the fn.
+        const auto win = rt.substr(fn, 10000);
         CHECK(win.find("Issue #4308") != std::string::npos, "4308: runtime cites");
         CHECK(win.find("g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id)") ==
                   std::string::npos,
@@ -3370,20 +3372,15 @@ static void ac4308_remap_jit_id_not_stable_id() {
     CHECK(read_file("tests/compiler/test_issue_4308.cpp").empty(), "4308: no test_issue file");
     CHECK(read_file("docs/design/4308-remap-jit-id.md").empty(), "4308: no docs/design");
 
-    constexpr std::uint32_t kSid = 490;
-    constexpr std::uint32_t kSidEmpty = 491;
-    constexpr std::uint32_t kSidPeer = 492;
-    constexpr std::uint32_t kSidMiss = 493;
+    // Issue #4330 contract: the raw stamp must equal the name binding for
+    // the remap to fire (stale bindings refuse). set_name binds via
+    // get_or_preserve (#2550) — the auto-bound sid IS the stamp; a
+    // synthetic overwrite (name binds X, stamp Y) now refuses by design.
+    // Closures first, then the jit registrations against the bound sids.
     constexpr std::int64_t kInstalled = 412640;
     constexpr std::int64_t kEmptyJit = 412641;
     constexpr std::int64_t kPeerJit = 412642;
     constexpr std::int64_t kOldJit = 412643;
-
-    aura_register_fn(static_cast<std::int64_t>(kSid), &ac4308_decoy_body, 0, 0, 0);
-    aura_register_fn_named("ac4308_hit", kInstalled, &ac4308_installed_body, 0, 0, 0);
-    aura_register_fn_named("ac4308_empty", kEmptyJit, &ac4308_empty_body, 0, 0, 0);
-    aura_register_fn_named("ac4308_peer", kPeerJit, &ac4308_peer_body, 0, 0, 0);
-    aura_register_fn(kOldJit, &ac4308_old_body, 0, 0, 0);
 
     const auto hit = aura_alloc_closure(7);
     const auto empty = aura_alloc_closure(8);
@@ -3394,10 +3391,21 @@ static void ac4308_remap_jit_id_not_stable_id() {
     aura_closure_set_name(empty, "ac4308_empty");
     aura_closure_set_name(peer, "ac4308_peer");
     aura_closure_set_name(miss, "ac4308_miss");
-    aura_test_set_closure_stable_func_id(hit, kSid);
-    aura_test_set_closure_stable_func_id(empty, kSidEmpty);
-    aura_test_set_closure_stable_func_id(peer, kSidPeer);
-    aura_test_set_closure_stable_func_id(miss, kSidMiss);
+    const std::uint32_t kSid = aura_get_closure_stable_func_id(hit);
+    const std::uint32_t kSidEmpty = aura_get_closure_stable_func_id(empty);
+    const std::uint32_t kSidPeer = aura_get_closure_stable_func_id(peer);
+    const std::uint32_t kSidMiss = aura_get_closure_stable_func_id(miss);
+    CHECK(kSid != 0 && kSidEmpty != 0 && kSidPeer != 0 && kSidMiss != 0,
+          "4308: set_name bound all four names to nonzero sids");
+    CHECK(kSid != kSidEmpty && kSid != kSidPeer && kSid != kSidMiss,
+          "4308: distinct auto-bound sids");
+
+    aura_register_fn(static_cast<std::int64_t>(kSid), &ac4308_decoy_body, 0, 0, 0);
+    aura_register_fn_named("ac4308_hit", kInstalled, &ac4308_installed_body, 0, 0, 0);
+    aura_register_fn_named("ac4308_empty", kEmptyJit, &ac4308_empty_body, 0, 0, 0);
+    aura_register_fn_named("ac4308_peer", kPeerJit, &ac4308_peer_body, 0, 0, 0);
+    aura_register_fn(kOldJit, &ac4308_old_body, 0, 0, 0);
+
     aura_closure_set_must_deopt(hit, 1);
     aura_closure_set_must_deopt(empty, 1);
     aura_closure_set_must_deopt(miss, 1);

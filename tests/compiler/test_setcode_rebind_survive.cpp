@@ -1226,7 +1226,10 @@ static void ac21_3973_native_canary_notes_env_cells() {
     CHECK(rt.find("Issue #3973") != std::string::npos, "3973: jit runtime cites");
     const auto begin = rt.find("struct NativeMovingCanary");
     CHECK(begin != std::string::npos, "3973: canary struct located");
-    const auto strct = rt.substr(begin, 3400);
+    // #4328 wave: the canary grew (bound_by_cell map + rewrite_cell helper
+    // for the #4328 dispatch deref) — the env-walk anchors now sit at
+    // +3385..+3815, past the old 3400 edge. Grow with the struct.
+    const auto strct = rt.substr(begin, 4600);
     // AC1: the ctor notes this invoke's env cell values (both storages),
     // not the token alone.
     CHECK(strct.find("g_closure_is_arena") != std::string::npos,
