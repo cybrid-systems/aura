@@ -230,6 +230,47 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         add, ev, "car",
         [&ev, &pairs, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
+            // Issue #4322: production (query :find) / (query :children) is a
+            // schema-2 hash (#3449 / #3827). The historical locator is
+            // (car (query :children (car found))), which is the first match
+            // NodeId on the Soft bare list. Same car on the hash returns
+            // that NodeId. A hash that is not a QueryResult stays "not a pair".
+            if (!a.empty() && is_hash(a[0])) {
+                std::lock_guard hlock(ev.hash_tables_mutex());
+                std::lock_guard slock(ev.alloc_storage_lock_);
+                const auto hidx = as_hash_idx(a[0]);
+                if (hidx < g_hash_tables.size() && g_hash_tables[hidx] &&
+                    !aura_hash_gate_checked(hidx, ev.capability_tenant_id(),
+                                            ev.effect_sandbox_mode(), "car")) {
+                    auto* ht = g_hash_tables[hidx];
+                    auto meta = ht->metadata();
+                    auto keys = ht->keys();
+                    auto vals = ht->values();
+                    auto lookup = [&](std::string_view want) -> EvalValue {
+                        for (std::size_t i = 0; i < ht->capacity; ++i) {
+                            if (meta[i] == 0xFF)
+                                continue;
+                            auto k = EvalValue{keys[i]};
+                            if (!is_string(k))
+                                continue;
+                            auto ki = as_string_idx(k);
+                            if (ki < string_heap.size() && string_heap[ki] == want)
+                                return EvalValue{vals[i]};
+                        }
+                        return make_void();
+                    };
+                    auto tag = lookup("query-result-tag");
+                    auto matches = lookup("matches");
+                    if (is_int(tag) && as_int(tag) == 1 && is_pair(matches)) {
+                        auto mid = as_pair_idx(matches);
+                        if (mid < pairs.size() && is_pair(pairs[mid].car)) {
+                            auto inner = as_pair_idx(pairs[mid].car);
+                            if (inner < pairs.size() && is_int(pairs[inner].car))
+                                return pairs[inner].car;
+                        }
+                    }
+                }
+            }
             if (a.empty() || !is_pair(a[0])) {
                 return make_primitive_error(string_heap, error_values, "car: not a pair",
                                             primitive_error_counter);

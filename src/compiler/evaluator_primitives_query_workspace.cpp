@@ -628,7 +628,11 @@ void register_workspace_query_primitives(
             // both sides). Agent must pass packed v2 StableNodeRef or
             // QueryResult match under production. Soft/Off keeps the
             // historical "stamp current gen + auto-refresh" path.
-            if (aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #4322: the single-tenant Restricted CLI's
+            // (car (query :find)) is still that historical NodeId. Strict,
+            // multi-tenant, and a non-zero principal keep the reject.
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                !ev.kernel_self_single_tenant()) {
                 *ok = false;
                 ev.bump_raw_nodeid_usage_in_primitives_count();
                 return mev("stale-ref",

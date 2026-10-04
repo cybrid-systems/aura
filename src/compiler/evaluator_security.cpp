@@ -600,7 +600,11 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     const auto tenant = tenant_id != 0 ? tenant_id : capability_tenant_id_;
     const bool wildcard = has_capability(kCapWildcard);
     // When evaluator sandbox is off and effect mode is Off, still record.
-    const bool sb_active = sandbox_mode_ || is_strict() || is_sandbox_active();
+    // Issue #4322: kernel self-workspace mutate records the allow without
+    // a Mutate grant. Isolation already ran (or was the #4322 skip).
+    const bool kernel_self = required_effect_bits == aura::compiler::security::kEffectMutate &&
+                             kernel_self_workspace_mutate(op, /*ref_tenant=*/0);
+    const bool sb_active = !kernel_self && (sandbox_mode_ || is_strict() || is_sandbox_active());
 
     // Issue #2388: CapabilityRegistry::record_audit dual-writes SecurityEvent
     // + WAL (single path). fiber-grant-mismatch reason is stamped there via
@@ -801,6 +805,41 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // check_side_effect_node_id_mandate_2942.py AC7 flags residual 3-arg
 // production sites. 2-arg (EXEMPT_2ARG_OPS / no-target) and Off/Soft
 // `target_node==0` are unchanged.
+bool Evaluator::kernel_self_single_tenant() const noexcept {
+    // Issue #4322. A local single-tenant program (AURA_SANDBOX unset,
+    // tenant 0) has no way to obtain kCapSandbox. Strict, multi-tenant,
+    // and a non-zero principal stay on the normal production gates.
+    if (capability_tenant_id_ != 0)
+        return false;
+    if (effect_sandbox_mode() != 1)
+        return false;
+    if (::aura::core::sandbox::is_strict())
+        return false;
+    if (::aura::core::capability::g_capability_registry().sandbox_mode ==
+        ::aura::core::capability::EffectSandboxMode::Strict)
+        return false;
+    if (::aura::core::provenance::hard_capture_tenant_active() ||
+        ::aura::core::provenance::multi_tenant_env_active())
+        return false;
+    return true;
+}
+
+bool Evaluator::kernel_self_workspace_mutate(std::string_view op,
+                                             std::uint64_t ref_tenant) const noexcept {
+    // Workspace mutate:* of the kernel's own tree is the same posture as
+    // the #3235 container exemption. A foreign ref and the GUARD_EXEMPT
+    // metadata setters stay on the #2385 unset-principal path.
+    if (!kernel_self_single_tenant() || ref_tenant != 0)
+        return false;
+    if (!op.starts_with("mutate:"))
+        return false;
+    if (op == "mutate:check-stable-ref" || op == "mutate:set-stale-ref-policy" ||
+        op == "mutate:set-pattern-index-policy" || op == "mutate:request-gc-safepoint" ||
+        op == "mutate:save-hygiene-checkpoint" || op == "mutate:set-agent-fingerprint")
+        return false;
+    return true;
+}
+
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
     // Issue #3526: 3-arg default ref_tenant=0 with a concrete NodeId
@@ -831,7 +870,11 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
         ::aura::core::security_event_wal::wal_overflow_ring_full())
         return false;
-    if (req_bits != 0) {
+    // Issue #4322: Mutate-only. TenantAdmin on mutate:set-agent-fingerprint
+    // stays on the normal gate (the op is also excluded above).
+    const bool kernel_self = req_bits == aura::compiler::security::kEffectMutate &&
+                             kernel_self_workspace_mutate(op, ref_tenant);
+    if (req_bits != 0 && !kernel_self) {
         // Issue #3415: foreign stamped tenant is the isolation target
         // (align with resolve_stamped). Same-tenant / unset keep caller so
         // Soft + cur==target fall-through is unchanged.

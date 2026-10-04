@@ -15322,8 +15322,17 @@ public:
     void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
-        OrderedUniqueLock<std::shared_mutex> mutate_guard =
-            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        // Issue #4322: skip when Workspace (or anything above Mutate) is
+        // already held. MutationBoundaryGuard takes Workspace without
+        // mutate_mtx_; acquire_if_needed would invert #1388 and the
+        // production canary aborts mutate:rebind. Same skip as
+        // mark_define_dirty. Nested Mutate (already held, nothing higher)
+        // still goes through acquire_if_needed and stays a no-op.
+        OrderedUniqueLock<std::shared_mutex> mutate_guard;
+        if (!lock_order::any_higher_held(Level::Mutate)) {
+            mutate_guard =
+                OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        }
         sync_lock_order_metrics_();
         metrics_.unified_invalidation_protocol_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #1496: release fence before publishing new epochs so
@@ -15463,12 +15472,22 @@ public:
     // aura_aot_bump_func_table_epoch (preserves #2951 / #2841
     // owner-scoped; facade already noted hard_owner_scoped). Soft
     // never reaches this (hard_invalidate_via_facade returns false).
-    // Caller already holds mutate_mtx_ (acquire_if_needed is a no-op).
+    // Caller holds mutate_mtx_ when nothing above Mutate is held
+    // (acquire_if_needed is then a no-op). Under MutationBoundaryGuard,
+    // Workspace is already held and this stamp skips the Mutate lock
+    // (#4322) so the production canary does not abort.
     void stamp_eval_core_joint_after_production_facade_(const std::string& name) {
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
-        OrderedUniqueLock<std::shared_mutex> mutate_guard =
-            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        // Issue #4322: mark_define_dirty calls this while the Guard holds
+        // Workspace and has deliberately not taken Mutate. acquire_if_needed
+        // would invert #1388 (Mutate while Workspace held) and the production
+        // lock-order canary aborts the Restricted CLI's mutate:rebind.
+        OrderedUniqueLock<std::shared_mutex> mutate_guard;
+        if (!lock_order::any_higher_held(Level::Mutate)) {
+            mutate_guard =
+                OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        }
         sync_lock_order_metrics_();
         metrics_.unified_invalidation_protocol_total.fetch_add(1, std::memory_order_relaxed);
         aura::util::thread_fence(std::memory_order_release);

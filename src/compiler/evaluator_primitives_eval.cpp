@@ -283,8 +283,24 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // size stays bounded. The correctness win (macros
                 // survive set-code) is worth the small arena growth.
                 auto alloc = ev.arena_->allocator();
-                auto* pool_ptr = ev.arena_->create<aura::ast::StringPool>(alloc);
-                auto* flat_ptr = ev.arena_->create<aura::ast::FlatAST>(alloc);
+                // Issue #4322: production required refuses both-null create
+                // (#3420), so the Restricted CLI never installed a workspace
+                // and the later mutate saw a session-less mid. Cover the
+                // long-lived workspace members, same as CompilerService::set_code.
+                // Soft: the slot register stays behind required-active.
+                auto* saved_pool = ev.workspace_pool_;
+                auto* saved_flat = ev.workspace_flat_;
+                auto* pool_ptr = ev.arena_->create_with_cover<aura::ast::StringPool>(
+                    reinterpret_cast<void**>(&ev.workspace_pool_), nullptr, alloc);
+                auto* flat_ptr = ev.arena_->create_with_cover<aura::ast::FlatAST>(
+                    reinterpret_cast<void**>(&ev.workspace_flat_), nullptr, alloc);
+                if (!pool_ptr || !flat_ptr) {
+                    ev.workspace_pool_ = saved_pool;
+                    ev.workspace_flat_ = saved_flat;
+                    ok = false;
+                    return mev("general-object-pin-required",
+                               "set-code: GeneralObjectPin required under production (#2891)");
+                }
                 // Issue #2891: GeneralObjectPin adopt on set-code create (agent
                 // self-modify path). The fresh pool/flat becomes the workspace
                 // (workspace_flat_ / workspace_pool_ below) — a densify-tracked
@@ -295,6 +311,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
                         set_pool_pin, set_flat_pin, static_cast<void*>(pool_ptr),
                         static_cast<void*>(flat_ptr))) {
+                    ev.workspace_pool_ = saved_pool;
+                    ev.workspace_flat_ = saved_flat;
                     ok = false;
                     return mev("general-object-pin-required",
                                "set-code: GeneralObjectPin required under production (#2891)");
@@ -320,6 +338,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     ev.last_set_code_error_kind_ = "parse";
                     ev.last_set_code_error_msg_ = err;
                     ev.coverage_counters_[5]--;
+                    ev.workspace_pool_ = saved_pool;
+                    ev.workspace_flat_ = saved_flat;
                     ok = false;
                     return mev("parse", err);
                 }
@@ -417,23 +437,36 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 if (!set_code_src.empty() &&
                     (wf->is_free_slot(wf->root) || wf->get(wf->root).children.empty())) {
                     const auto& src = set_code_src;
-                    auto* pool_ptr2 =
-                        ev.arena_->create<aura::ast::StringPool>(ev.arena_->allocator());
-                    auto* flat_ptr2 = ev.arena_->create<aura::ast::FlatAST>(ev.arena_->allocator());
-                    auto pr2 = aura::parser::parse_to_flat(src, *flat_ptr2, *pool_ptr2);
-                    if (pr2.success && pr2.root != aura::ast::NULL_NODE) {
-                        flat_ptr2->root = pr2.root;
-                        if (flat_ptr2->is_free_slot(pr2.root))
-                            flat_ptr2->revive_all_slots_after_null_root_recycle();
-                        ev.workspace_flat_ = flat_ptr2;
-                        ev.workspace_pool_ = pool_ptr2;
-                        ev.note_workspace_source_text(src);
-                        ev.invalidate_tag_arity_index();
-                        ev.update_shared_tree_root();
-                        if (ev.mark_all_defines_dirty_fn_)
-                            ev.mark_all_defines_dirty_fn_();
-                        if (ev.pre_cache_workspace_defines_fn_)
-                            ev.pre_cache_workspace_defines_fn_();
+                    auto* keep_pool = ev.workspace_pool_;
+                    auto* keep_flat = ev.workspace_flat_;
+                    auto* pool_ptr2 = ev.arena_->create_with_cover<aura::ast::StringPool>(
+                        reinterpret_cast<void**>(&ev.workspace_pool_), nullptr,
+                        ev.arena_->allocator());
+                    auto* flat_ptr2 = ev.arena_->create_with_cover<aura::ast::FlatAST>(
+                        reinterpret_cast<void**>(&ev.workspace_flat_), nullptr,
+                        ev.arena_->allocator());
+                    if (pool_ptr2 && flat_ptr2) {
+                        auto pr2 = aura::parser::parse_to_flat(src, *flat_ptr2, *pool_ptr2);
+                        if (pr2.success && pr2.root != aura::ast::NULL_NODE) {
+                            flat_ptr2->root = pr2.root;
+                            if (flat_ptr2->is_free_slot(pr2.root))
+                                flat_ptr2->revive_all_slots_after_null_root_recycle();
+                            ev.workspace_flat_ = flat_ptr2;
+                            ev.workspace_pool_ = pool_ptr2;
+                            ev.note_workspace_source_text(src);
+                            ev.invalidate_tag_arity_index();
+                            ev.update_shared_tree_root();
+                            if (ev.mark_all_defines_dirty_fn_)
+                                ev.mark_all_defines_dirty_fn_();
+                            if (ev.pre_cache_workspace_defines_fn_)
+                                ev.pre_cache_workspace_defines_fn_();
+                        } else {
+                            ev.workspace_pool_ = keep_pool;
+                            ev.workspace_flat_ = keep_flat;
+                        }
+                    } else {
+                        ev.workspace_pool_ = keep_pool;
+                        ev.workspace_flat_ = keep_flat;
                     }
                 } else if (wf->is_free_slot(wf->root)) {
                     wf->revive_all_slots_after_null_root_recycle();
