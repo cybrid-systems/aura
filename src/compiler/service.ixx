@@ -13714,7 +13714,13 @@ private:
             metrics_.dep_graph_node_mirror_edges_total.fetch_add(1, std::memory_order_relaxed);
         std::uint16_t body_fi = 0;
         auto cit = ir_cache_v2_.find(caller);
-        if (cit != ir_cache_v2_.end() && cit->second.irs.size() >= 2)
+        // Issue #4331: same slot rule as hybrid_node_cascade_ apply_body_only
+        // — legacy __top__ marker at slot 0 puts the body at irs[1]; #4311
+        // dropped-marker bundles ([body, nested...]) keep the body at
+        // irs[0]. The size guess recorded block edges on the nested slot,
+        // so the drain dirtied the wrong function and served a stale body.
+        if (cit != ir_cache_v2_.end() && cit->second.irs.size() >= 2 &&
+            cit->second.irs[0].name == "__top__")
             body_fi = 1;
         mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, body_fi, /*block_idx=*/0);
     }

@@ -2004,6 +2004,44 @@ static void ac3657_5_linter_no_invent() {
     CHECK(read_file("docs/design/3657-unslotted-parity.md").empty(), "3657 AC5: no docs/design");
 }
 
+// Issue #4331: dropped-__top__ bundles (#4311 production cache_define
+// shape: irs == [body, nested], irs[0].name != "__top__") — the drain's
+// size-based body-slot guess dirtied the nested slot, so the relower
+// restamped the wrong slot and lookup served the pre-mutate body. The
+// marker-based slot rule must drain the real body slot.
+static void ac4331_1_dropped_top_body_slot_drain() {
+    std::println("\n--- #4331 AC1: dropped-__top__ bundle drains the real body slot ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    CompilerService cs;
+    // B: mutated callee. A: caller with a nested lambda — under the #4311
+    // production shape its bundle is [body, nested] with no __top__ marker.
+    CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda ()
+  (let ((inner (lambda () 42)))
+    (+ (B) (inner)))))
+)")
+                  .has_value(),
+          "4331 AC1: set-code nested caller");
+    CHECK(cs.eval("(eval-current)").has_value(), "4331 AC1: eval stores bundles");
+
+    // String dependency only — no block edge → apply_body_only path.
+    cs.public_record_dependency("A", "B");
+    const auto hy0 = cs.public_dep_graph_hybrid_cascade_hits();
+    cs.public_mark_define_dirty("B");
+    CHECK(cs.public_dep_graph_hybrid_cascade_hits() > hy0, "4331 AC1: hybrid cascade ran");
+    // Marker-based slot rule: the BODY slot (0) is dirty; the nested
+    // lambda slot (1) is not full-dirtied by the body-only arm.
+    CHECK(cs.public_is_block_dirty("A", 0, 0), "4331 AC1: body slot 0 dirty");
+    CHECK(!cs.public_is_block_dirty("A", 1, 0), "4331 AC1: nested slot 1 not body-dirtied");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -2073,6 +2111,8 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3657_3_soft_unslotted_continue();
     ac3657_4_slotted_3165_still_consistent();
     ac3657_5_linter_no_invent();
+    std::println("\n=== Issue #4331: dropped-__top__ body-slot drain ===");
+    ac4331_1_dropped_top_body_slot_drain();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
