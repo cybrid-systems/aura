@@ -734,6 +734,103 @@ static void ac12_soft_no_autoscan_3674() {
 }
 
 // ── AC13 (#3734): emit_mutation_audit WAL miss → overflow join ──
+// ── AC14 (#4333 review medium drill): mid-session epoch bump does not detach
+// grants from the enter-mid exit sweep. Inside one outermost boundary every
+// grant joins the boundary TypedMid (join_audit_and_se_mid wins inside a
+// Guard), so a mid-session bump_mutation_epoch (the set-code bump face)
+// neither detaches nor immediately fences in-window grants, and the exit
+// sweep takes them all. Proves the enter-mid key coverage the #4333 review
+// flagged as unverified.
+static void ac14_epoch_advance_mid_session_revoke_lifecycle() {
+    std::println("\n--- #4333-review drill: mid-session epoch bump x revoke lifecycle ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    // Boundary enter: session mid minted (500) — same library shim as ac9.
+    ev.note_boundary_audit_mid_for_test(500);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(500);
+    CHECK(last_type_linear_commit_proof_stamp_v_read() == 500, "drill pre: TypedMid = 500");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    // TenantAdmin seed at the boundary mid (grant path fence; registry-level).
+    {
+        aura::core::capability::EffectProvenance admin_prov{};
+        admin_prov.mutation_id = 500;
+        admin_prov.epoch = 500;
+        aura::core::capability::g_capability_registry().grant_session(
+            7, "tenant-admin", aura::core::capability::Effect::TenantAdmin, admin_prov);
+    }
+    // Grant #1 INSIDE the boundary (binds 500 via join_audit_and_se_mid).
+    const bool g1 = ev.grant_effect_capability(7, "mutate", aura::compiler::security::kEffectMutate,
+                                               /*provenance_mutation_id=*/0);
+    CHECK(g1, "drill AC1: grant #1 lands inside the boundary");
+    // MID-SESSION EPOCH BUMP (the set-code bump face).
+    const auto pre_bump = aura::core::current_mutation_epoch();
+    aura::core::bump_mutation_epoch();
+    const auto post_bump = aura::core::current_mutation_epoch();
+    CHECK(post_bump == pre_bump + 1, "drill AC2: Mutation epoch advanced mid-session");
+    // Grant #2 AFTER the bump — the boundary TypedMid is sticky: still 500.
+    const bool g2 =
+        ev.grant_effect_capability(7, "mutate-2", aura::compiler::security::kEffectMutate,
+                                   /*provenance_mutation_id=*/0);
+    CHECK(g2, "drill AC2: grant #2 lands post-bump");
+    // THE KEY ASSERTIONS: all live rows bind the boundary mid (no detach),
+    // and the retain-window fence did not trip (in-window use still OK).
+    // NOTE: the TenantAdmin seed is ALSO a session grant (session_bound,
+    // bound 500) — the live set is admin + grant#1 + grant#2 = 3 rows.
+    std::uint64_t bound_a = 0, bound_b = 0;
+    int live_rows = 0;
+    {
+        auto& reg = aura::core::capability::g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        auto it = reg.by_tenant.find(7);
+        if (it != reg.by_tenant.end())
+            for (const auto& g : it->second)
+                if (!g.revoked && g.session_bound) {
+                    ++live_rows;
+                    if (bound_a == 0)
+                        bound_a = g.bound_mutation_id;
+                    else if (bound_b == 0)
+                        bound_b = g.bound_mutation_id;
+                }
+    }
+    CHECK(live_rows == 3, "drill AC3: admin seed + both session grants live pre-exit");
+    CHECK(bound_a == 500 && bound_b == 500,
+          "drill AC3: BOTH grants bind the boundary TypedMid 500 (bump does not detach)");
+    // In-window use post-bump still allowed (retain window not exhausted).
+    {
+        aura::core::capability::EffectProvenance call{};
+        call.mutation_id = 500;
+        call.epoch = 500;
+        const bool ok = aura::core::capability::check_and_record_effect(
+            aura::core::capability::Effect::Mutate, aura::core::capability::Effect::Mutate, call, 7,
+            "test-drill-ac14", false, true);
+        CHECK(ok, "drill AC4: in-window grant use still allowed after the bump");
+    }
+    // Exit face: revoke_session_grants_for_mid(500) sweeps the boundary-mid rows.
+    std::size_t swept = 0;
+    {
+        auto& reg = aura::core::capability::g_capability_registry();
+        swept = reg.revoke_session_grants_for_mid(500, "drill-exit", 0);
+    }
+    CHECK(swept >= 1, "drill AC5: exit sweep revoked the boundary-mid grants");
+    // No live session rows left for tenant 7 (lifecycle closed).
+    int left = 0;
+    {
+        auto& reg = aura::core::capability::g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        auto it = reg.by_tenant.find(7);
+        if (it != reg.by_tenant.end())
+            for (const auto& g : it->second)
+                if (!g.revoked && g.session_bound)
+                    ++left;
+    }
+    CHECK(left == 0, "drill AC6: no live session rows after exit (lifecycle closed)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
 static void ac13_emit_wal_miss_overflow_join_3734() {
     std::println("\n--- #3734 AC1: emit_mutation_audit WAL miss stamps overflow mid ---");
     reset_all();
@@ -1999,6 +2096,8 @@ int run_test_audit_replay_join() {
     ac11_wal_fold_autoscan_3674();
     ac12_soft_no_autoscan_3674();
     ac13_emit_wal_miss_overflow_join_3734();
+    std::println("\n=== #4333-review drill: mid-session epoch bump x revoke lifecycle ===");
+    ac14_epoch_advance_mid_session_revoke_lifecycle();
     ac14_effect_gate_fail_closed_unchanged_3734();
     ac15_soft_emit_no_overflow_3734();
     ac16_mid0_refuse_fold_3738();

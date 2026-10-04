@@ -46,8 +46,23 @@ static std::string read_file(const char* path) {
 }
 
 // Helper: run the script via Python subprocess and capture exit code.
+// #4332-round fix: a bare relative path breaks batch runs from the build
+// directory (python exits 2 → std::system rc=512) — probe the fallback
+// chain (repo root, ../, ../../) like the read_file helper first.
 static int run_script(const std::vector<std::string>& args) {
-    std::string cmd = "python3 scripts/coverage/checks/check_side_effect_security.py";
+    std::string script;
+    for (const auto& p : {"scripts/coverage/checks/check_side_effect_security.py",
+                          "../scripts/coverage/checks/check_side_effect_security.py",
+                          "../../scripts/coverage/checks/check_side_effect_security.py"}) {
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec)) {
+            script = p;
+            break;
+        }
+    }
+    if (script.empty())
+        script = "scripts/coverage/checks/check_side_effect_security.py";
+    std::string cmd = "python3 " + script;
     for (const auto& a : args)
         cmd += " " + a;
     cmd += " 2>&1 > /tmp/check_side_effect_security.out";
