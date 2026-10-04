@@ -2938,6 +2938,44 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     return make_int(static_cast<std::int64_t>(mid));
 }
 
+bool Evaluator::publish_define_scalar_cell(ast::NodeId node, types::EvalValue published) {
+    // Issue #4323. replace-value rewrites the FlatAST literal and used to
+    // leave the top-level cell at the old scalar until a later eval-current.
+    // Only the Define whose value child is this node has that cell. A nested
+    // literal (inside a lambda) has no scalar binding to publish.
+    if (!workspace_flat_ || !workspace_pool_)
+        return true;
+    auto& flat = *workspace_flat_;
+    if (node >= flat.size() || flat.is_free_slot(node))
+        return false;
+    const auto parent = flat.parent_of(node);
+    if (parent == ast::NULL_NODE || parent >= flat.size() || flat.is_free_slot(parent))
+        return true;
+    const auto pv = flat.get(parent);
+    if (pv.tag != ast::NodeTag::Define || pv.children.empty() || pv.child(0) != node)
+        return true;
+    if (pv.sym_id == ast::INVALID_SYM)
+        return false;
+    const auto name = workspace_pool_->resolve(pv.sym_id);
+    if (name.empty())
+        return false;
+    auto& tenv = top_env();
+    auto existing = tenv.lookup_binding(name);
+    if ((!existing || !types::is_cell(*existing)) && tenv.pool() == workspace_pool_) {
+        if (auto by_sym = tenv.lookup_by_symid(pv.sym_id); by_sym && types::is_cell(*by_sym))
+            existing = by_sym;
+    }
+    if (!existing)
+        return true;
+    if (!types::is_cell(*existing))
+        return false;
+    const auto ci = types::as_cell_id(*existing);
+    if (ci >= cells().size())
+        return false;
+    cells()[ci] = published;
+    return true;
+}
+
 EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a) {
     EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
@@ -3006,6 +3044,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
             flat.set_int(node, new_val);
             flat.mark_dirty_upward_fast(node, aura::ast::FlatAST::kGeneralDirty);
             restamp_if_allowed_rv();
+            // Issue #4323: publish the new int into the Define's cell.
+            if (!publish_define_scalar_cell(node, a[1]))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :replace-value: define binding refresh failed (#4323)"});
             return make_int(static_cast<std::int64_t>(mid));
         }
         case aura::ast::NodeTag::LiteralFloat: {
@@ -3048,6 +3091,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
             flat.set_sym(node, new_sym);
             flat.mark_dirty_upward_fast(node, aura::ast::FlatAST::kGeneralDirty);
             restamp_if_allowed_rv();
+            // Issue #4323: LiteralString only. A Variable rename is not a
+            // scalar define value, so it does not touch top_env.
+            if (nv.tag == aura::ast::NodeTag::LiteralString &&
+                !publish_define_scalar_cell(node, a[1]))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :replace-value: define binding refresh failed (#4323)"});
             return make_int(static_cast<std::int64_t>(mid));
         }
         default:
