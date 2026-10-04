@@ -676,7 +676,8 @@ void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata);
 // calls get_or_preserve so stable_func_id != 0 before callable (#2550).
 // out_preserved may be null; when non-null set to 1 if reused, 0 if assigned.
 std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
-std::uint32_t aura_lookup_stable_func_id(const char* name); // 0 if missing
+std::uint32_t aura_lookup_stable_func_id(const char* name);       // 0 if missing
+std::uint64_t aura_lookup_stable_func_id_epoch(const char* name); // 0 = no binding (#4337)
 std::uint64_t aura_stable_func_id_map_size(void);
 void aura_clear_stable_func_id_map(void);
 // Issue #2670: multi-eval namespace by (eval_owner, name). Explicit eval_ptr
