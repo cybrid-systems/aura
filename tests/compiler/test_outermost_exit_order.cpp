@@ -51,6 +51,23 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// make_merr → pair (kind-string . (msg-string . ...)). Extract kind.
+static std::string merr_kind(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    if (!aura::compiler::types::is_pair(v))
+        return {};
+    auto idx = aura::compiler::types::as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size())
+        return {};
+    if (!aura::compiler::types::is_string(pairs[idx].car))
+        return {};
+    auto sidx = aura::compiler::types::as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") \"{}\")", key));
@@ -200,8 +217,58 @@ static void ac5_query_schema_and_docs() {
 
 } // namespace
 
+// ── Issue #4335: cow-refused mutate must not exit the boundary as Success ──
+// The structural wrapper acquired the boundary and minted the session mid
+// before the body ran; when trigger_lazy_cow refuses (read-only layer) the
+// caller observes a deny, so the Guard must take the FAILED exit — not a
+// committed success row for a mutate that never happened.
+static void ac4335_cow_refused_deny_exit() {
+    std::println("\n--- #4335: cow-refused exits the boundary as deny ---");
+    // Source-cite: wrapper belt marks the Guard failed; the two body-side
+    // sites clear the shared outermost flag (wrapper_guard is not in scope
+    // inside the body lambdas).
+    const auto mut_src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut_src.find("Issue #4335") != std::string::npos,
+          "4335: wrapper cow-refused site cites the issue");
+    std::size_t cites = 0;
+    for (auto pos = mut_src.find("Issue #4335"); pos != std::string::npos;
+         pos = mut_src.find("Issue #4335", pos + 1))
+        ++cites;
+    CHECK(cites >= 3, "4335: all three cow-refused sites cite the issue");
+    CHECK(mut_src.find("wrapper_guard->mark_failed();") != std::string::npos,
+          "4335: wrapper belt marks the Guard failed");
+    CHECK(mut_src.find("ev.mark_outermost_mutation_failed();") != std::string::npos,
+          "4335: body sites clear the shared outermost flag");
+
+    // Behavior: fresh child layer shares the parent flat (has_own_flat ==
+    // false). Mark the node read-only UNDER the quick flag — workspace:lock
+    // would sync workspace_read_only_ and the early read-only arm returns
+    // before the COW trigger; direct set_read_only leaves the quick flag
+    // false so the wrapped mutate reaches trigger_lazy_cow and is refused.
+    CompilerService cs;
+    (void)cs.eval("(set-code \"(define a 1)\")");
+    (void)cs.eval("(eval-current)");
+    const auto wv = cs.eval("(workspace :create)");
+    CHECK(wv.has_value() && is_int(*wv), "4335: child workspace created");
+    const auto wid = static_cast<std::uint32_t>(as_int(*wv));
+    CHECK(cs.eval(std::format("(workspace :switch {})", wid)).has_value(),
+          "4335: switched to fresh child layer");
+    auto* wt = static_cast<aura::compiler::WorkspaceTree*>(cs.evaluator().workspace_tree());
+    CHECK(wt != nullptr, "4335: workspace tree live");
+    wt->set_read_only(wt->active_idx(), true);
+
+    const auto r = cs.eval("(mutate:replace-value (define b 2) (define b 2))");
+    // Mutate denies surface as error-tagged pair values (kind . msg), not
+    // as unexpected — assert the cow-refused kind on the returned value.
+    CHECK(r.has_value() && aura::compiler::types::is_pair(*r) && merr_kind(cs, *r) == "cow-refused",
+          "4335: mutate denied (cow-refused), not committed success");
+    // The refused body never ran and the boundary aborted cleanly.
+    CHECK(cs.eval("(eval-current)").has_value(), "4335: eval-current intact after deny");
+}
+
 int run_test_outermost_exit_order() {
     ac1_no_residual_gc_defer();
+    ac4335_cow_refused_deny_exit();
     ac2_depth_held_until_unlock_source();
     ac3_reemit_after_probes_source_and_metrics();
     ac4_nested_no_double_complete();

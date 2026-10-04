@@ -1191,6 +1191,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // LOCAL clone. Fail-closed on read-only layer.
                 if (!guard_exempt && ev.workspace_tree_) {
                     if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
+                        // Issue #4335: the wrapper already acquired the
+                        // boundary and minted the session mid, but the
+                        // clone never ran and the body is skipped. Leaving
+                        // the success flag set lets ~MutationBoundaryGuard
+                        // take the success exit and stamp a committed audit
+                        // row for a mutate the caller observed as denied.
+                        // Same fail-closed shape as the naked-mutate belt:
+                        // mark the boundary failed so the dtor takes
+                        // exit_mutation_boundary(false) and
+                        // record_boundary_deny_after_restore joins a
+                        // cow-refused deny on the same mid.
+                        if (wrapper_guard)
+                            wrapper_guard->mark_failed();
+                        ev.mark_outermost_mutation_failed();
                         return mev("cow-refused",
                                    std::string(op) + ": COW refused (read-only layer)");
                     }
@@ -3509,6 +3523,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (ev.workspace_tree_) {
             if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
                 ok = false;
+                // Issue #4335: cow-refused must not exit the boundary as
+                // Success — clear the shared outermost flag so ~Guard
+                // takes exit_mutation_boundary(false) and the deny joins
+                // the same mid (belt for body-side returns: wrapper_guard
+                // is not in scope inside the body lambda).
+                ev.mark_outermost_mutation_failed();
                 return mev("cow-refused", "COW refused: budget exceeded or read-only");
             }
             // Re-read ev.workspace_flat_/pool_ in case COW created a new local flat.
@@ -5338,6 +5358,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (ev.workspace_tree_) {
                 if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
                     ok = false;
+                    // Issue #4335: cow-refused must not exit the boundary
+                    // as Success — clear the shared outermost flag so
+                    // ~Guard takes exit_mutation_boundary(false) and the
+                    // deny joins the same mid.
+                    ev.mark_outermost_mutation_failed();
                     return mev("cow-refused", "COW refused: budget exceeded or read-only");
                 }
                 void* new_flat = nullptr;
