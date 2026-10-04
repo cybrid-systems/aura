@@ -15322,12 +15322,7 @@ public:
     void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
-        // Issue #4322: skip when Workspace (or anything above Mutate) is
-        // already held. MutationBoundaryGuard takes Workspace without
-        // mutate_mtx_; acquire_if_needed would invert #1388 and the
-        // production canary aborts mutate:rebind. Same skip as
-        // mark_define_dirty. Nested Mutate (already held, nothing higher)
-        // still goes through acquire_if_needed and stays a no-op.
+        // #4322: skip Mutate when Workspace is already held.
         OrderedUniqueLock<std::shared_mutex> mutate_guard;
         if (!lock_order::any_higher_held(Level::Mutate)) {
             mutate_guard =
@@ -15479,10 +15474,7 @@ public:
     void stamp_eval_core_joint_after_production_facade_(const std::string& name) {
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
-        // Issue #4322: mark_define_dirty calls this while the Guard holds
-        // Workspace and has deliberately not taken Mutate. acquire_if_needed
-        // would invert #1388 (Mutate while Workspace held) and the production
-        // lock-order canary aborts the Restricted CLI's mutate:rebind.
+        // #4322: Workspace held; skip Mutate.
         OrderedUniqueLock<std::shared_mutex> mutate_guard;
         if (!lock_order::any_higher_held(Level::Mutate)) {
             mutate_guard =

@@ -870,18 +870,16 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
         ::aura::core::security_event_wal::wal_overflow_ring_full())
         return false;
-    // Issue #4322: Mutate-only. TenantAdmin on mutate:set-agent-fingerprint
-    // stays on the normal gate (the op is also excluded above).
-    const bool kernel_self = req_bits == aura::compiler::security::kEffectMutate &&
-                             kernel_self_workspace_mutate(op, ref_tenant);
-    if (req_bits != 0 && !kernel_self) {
+    if (req_bits != 0) {
         // Issue #3415: foreign stamped tenant is the isolation target
         // (align with resolve_stamped). Same-tenant / unset keep caller so
         // Soft + cur==target fall-through is unchanged.
         const auto iso_target = (ref_tenant != 0 && ref_tenant != capability_tenant_id_)
                                     ? ref_tenant
                                     : capability_tenant_id_;
-        if (!check_workspace_isolation(/*target=*/iso_target,
+        if ((req_bits != aura::compiler::security::kEffectMutate ||
+             !kernel_self_workspace_mutate(op, ref_tenant)) &&
+            !check_workspace_isolation(/*target=*/iso_target,
                                        /*ref_tenant=*/ref_tenant, req_bits, op))
             return false; // IsolationDeny emitted (single-count, #2388)
     }
