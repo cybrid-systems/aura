@@ -5,6 +5,9 @@ module;
 
 #include "runtime_shared.h"
 
+#include <termios.h>
+#include <unistd.h>
+
 module aura.compiler.evaluator;
 
 import std;
@@ -51,6 +54,30 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+
+namespace {
+
+    // Issue #4325: one byte, including from a terminal, without waiting for
+    // newline. Pipes and files stay a plain istream read. A tty drops ICANON
+    // for this read only, then restores the previous attributes.
+    int read_stdin_byte() {
+        if (!isatty(STDIN_FILENO))
+            return std::cin.get();
+        termios saved{};
+        if (tcgetattr(STDIN_FILENO, &saved) != 0)
+            return std::cin.get();
+        termios one = saved;
+        one.c_lflag &= ~static_cast<tcflag_t>(ICANON);
+        one.c_cc[VMIN] = 1;
+        one.c_cc[VTIME] = 0;
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &one) != 0)
+            return std::cin.get();
+        const int c = std::cin.get();
+        tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+        return c;
+    }
+
+} // namespace
 
 void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
 
@@ -112,14 +139,31 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sid);
     });
 
+    // Issue #4325: a blank line is "". EOF (or a failed stream) is void,
+    // which eof-object? already treats as the eof value. A partial line
+    // with no trailing newline is still that line; the next read is eof.
     add("read-line", [&ev](const auto&) {
-        std::string line;
-        std::getline(std::cin, line);
-        if (line.empty())
+        if (!std::cin.good())
             return make_void();
+        std::string line;
+        if (!std::getline(std::cin, line)) {
+            if (line.empty())
+                return make_void();
+        }
         auto id = ev.string_heap_.size();
         ev.string_heap_.push_back(std::move(line));
         return make_string(id);
+    });
+
+    // Issue #4325: one byte from stdin. Does not require a newline.
+    // EOF is void, distinct from byte 0 and from read-line's "".
+    add("read-byte", [](const auto&) {
+        if (!std::cin.good())
+            return make_void();
+        const int c = read_stdin_byte();
+        if (c == std::char_traits<char>::eof())
+            return make_void();
+        return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(c)));
     });
 
     // Issue #4055: native encoding prims. The EDSL folds in
@@ -270,7 +314,8 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     add("eof-object?", [](const auto& a) {
         if (a.empty())
             return make_bool(false);
-        // EOF is represented as void (the same as when read-line returns empty)
+        // EOF is void. A blank line is "" (Issue #4325), so eof-object?
+        // is false for that string.
         return make_bool(is_void(a[0]));
     });
 }
