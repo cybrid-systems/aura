@@ -1878,8 +1878,15 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
         if (cit == ir_cache_v2_.end())
             return;
         auto& centry = cit->second;
-        // Convention: body at irs[1] when multi-fn; else irs[0].
-        const std::size_t body_idx = centry.irs.size() >= 2 ? 1 : 0;
+        // Convention: legacy bundles mark the module entry __top__ at slot 0
+        // and keep the body at irs[1]; the #4311 production cache_define
+        // dropped the marker, so those bundles are [body, nested...] and the
+        // body lives at irs[0]. Resolve by marker, never by size — the size
+        // guess dirtied the nested slot on #4311 bundles, the relower then
+        // restamped the wrong slot, and lookup served a stale body
+        // (issue #4331).
+        const bool top_marker = !centry.irs.empty() && centry.irs[0].name == "__top__";
+        const std::size_t body_idx = (top_marker && centry.irs.size() >= 2) ? 1 : 0;
         if (body_idx >= centry.block_dirty_per_func_.size()) {
             if (centry.block_dirty_per_func_.size() < centry.irs.size())
                 centry.block_dirty_per_func_.resize(centry.irs.size());
@@ -1895,10 +1902,9 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
                     b = 1;
             }
             // Nested lambdas: only free-var targeted (do not full-dirty).
-            if (centry.irs.size() > 2) {
-                for (std::size_t fi = 2; fi < centry.irs.size(); ++fi)
-                    (void)mark_nested_lambda_blocks_targeted(centry, fi, root_name);
-            }
+            // Start after the body slot (issue #4331 slot rule above).
+            for (std::size_t fi = body_idx + 1; fi < centry.irs.size(); ++fi)
+                (void)mark_nested_lambda_blocks_targeted(centry, fi, root_name);
             finish_cascade_soa_dirty_sync_(centry);
         }
     };
