@@ -1178,6 +1178,29 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (auto* cur = aura::serve::g_current_fiber)
                         cur->inject_synthetic_mutation_boundary_yield();
                 }
+                // Issue #4332: child-layer structural mutates must never write
+                // the shared parent FlatAST. workspace:switch keeps
+                // has_own_flat==false and points workspace_flat_ at the parent;
+                // without a wrapper-level clone every mutate:* except rebind /
+                // replace-subtree silently committed the child edit onto the
+                // parent tree (P0 isolation face: parent's next query/eval
+                // observed the child edit). Clone before any body write —
+                // idempotent once has_own_flat is set (root / no-tree no-op;
+                // rebind / replace-subtree's own trigger is a no-op after
+                // this) — and re-read the active flat so fn(a) writes the
+                // LOCAL clone. Fail-closed on read-only layer.
+                if (!guard_exempt && ev.workspace_tree_) {
+                    if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
+                        return mev("cow-refused",
+                                   std::string(op) + ": COW refused (read-only layer)");
+                    }
+                    void* cow_flat = nullptr;
+                    void* cow_pool = nullptr;
+                    if (ev.refresh_active_flat_pool(ev.workspace_tree_, &cow_flat, &cow_pool)) {
+                        ev.workspace_flat_ = static_cast<aura::ast::FlatAST*>(cow_flat);
+                        ev.workspace_pool_ = static_cast<aura::ast::StringPool*>(cow_pool);
+                    }
+                }
                 auto result = fn(a);
                 // Issue #3480: poll existing inbody on the structural
                 // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
