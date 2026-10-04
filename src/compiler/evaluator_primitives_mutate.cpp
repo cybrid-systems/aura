@@ -1124,8 +1124,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // sandbox is on but effect mode is Off — require_effect's effect
                 // check always-allows under Off, so the string gate is the backstop
                 // that keeps legacy sandbox-mode enforcement active).
-                // Issue #4322: the local single-tenant CLI does not hold
-                // kCapMutate either. Foreign / Strict / multi-tenant keep it.
+                // #4322 skips this backstop for the kernel's own workspace.
                 if (!ev.kernel_self_workspace_mutate(op, ref_tenant) && ev.sandbox_mode() &&
                     !ev.has_capability(kCapMutate) && !ev.has_capability(kCapWildcard)) {
                     ev.bump_capability_denial();
