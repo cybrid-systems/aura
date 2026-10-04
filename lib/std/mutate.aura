@@ -17,11 +17,15 @@
 ;   (mutate:safe-yield)           → hash (ast:yield-at-boundary / #1504)
 ;   (mutate:quota-ok?)            → soft resource:quota-check (fibers/memory)
 ;   (mutate:safety-snapshot)      → alist of boundary/yield/fiber/quota signals
-;   (mutate:atomic-batch-safe ops [summary])
+;   (mutate:atomic-batch-safe ops [summary] [keyword value]...)
 ;                                 → refuse if not boundary-safe; else yield + batch
+;                                 → forwards :snapshot? :sync-query-index?
+;                                   :allow-macro? :tenant-target (#4324)
 ;
-; 全部 helper 失败时返回安全默认值（不抛错），适合 AI Agent 在
+; 观察 helper 失败时返回安全默认值（不抛错），适合 AI Agent 在
 ; 长 eval loop 里调用而不会因为无 workspace 而 crash。
+; mutate:atomic-batch-safe 对未知关键字和 summary 后的非关键字报错，
+; 不把它们吞成 #f（#4324）。
 
 (export mutate:summary mutate:by-operator mutate:last-info
         mutate:operator-count mutate:rolled-back?
@@ -236,24 +240,94 @@
             (cons ":quota-violations" 0)
             (cons ":quota-ok?" #t)))))
 
-; (mutate:atomic-batch-safe ops [summary])
+; Issue #4324: walk keyword/value pairs after the optional summary.
+; Returns (snap sync allow have-tenant tenant). have-tenant is 0 or 1.
+; Bool keywords match the engine: a following boolean or integer is the
+; value; a bare keyword means #t. :tenant-target is forwarded only when
+; the caller passed it (the engine's have_tenant_target flag changes the
+; isolation check). Unknown keywords and a non-keyword after the summary
+; are errors — callers see them, the batch try/catch does not.
+(define (mutate:scan-batch-kws args snap sync allow have-tenant tenant)
+  (if (null? args)
+    (list snap sync allow have-tenant tenant)
+    (let ((k (car args))
+          (more (cdr args)))
+      (if (not (keyword? k))
+        (error "mutate:atomic-batch-safe: non-keyword after summary")
+        (let ((name (keyword->string k)))
+          (cond
+            ((string=? name "tenant-target")
+             (if (or (null? more) (not (integer? (car more))))
+               (error "mutate:atomic-batch-safe: :tenant-target requires an integer tenant id")
+               (mutate:scan-batch-kws (cdr more) snap sync allow 1 (car more))))
+            ((or (string=? name "snapshot?")
+                 (string=? name "sync-query-index?")
+                 (string=? name "allow-macro?"))
+             (if (or (null? more) (keyword? (car more)))
+               (mutate:scan-batch-kws more
+                 (if (string=? name "snapshot?") #t snap)
+                 (if (string=? name "sync-query-index?") #t sync)
+                 (if (string=? name "allow-macro?") #t allow)
+                 have-tenant tenant)
+               (if (or (boolean? (car more)) (integer? (car more)))
+                 (let ((b (if (boolean? (car more))
+                            (car more)
+                            (not (= (car more) 0)))))
+                   (mutate:scan-batch-kws (cdr more)
+                     (if (string=? name "snapshot?") b snap)
+                     (if (string=? name "sync-query-index?") b sync)
+                     (if (string=? name "allow-macro?") b allow)
+                     have-tenant tenant))
+                 (error "mutate:atomic-batch-safe: boolean keyword requires a boolean"))))
+            (else
+              (error (string-append "unknown mutate:atomic-batch keyword: :" name)))))))))
+
+; (mutate:atomic-batch-safe ops [summary] [keyword value]...)
 ; Guarded wrapper around engine (mutate:atomic-batch):
-;   1) refuse when boundary not safe (depth>0 / held) → #f
-;   2) soft yield at boundary before long batch (#1504)
-;   3) run atomic-batch; return its result (#t / #f)
+;   1) parse keywords; unknown keyword / stray non-keyword → error (#4324)
+;   2) refuse when boundary not safe (depth>0 / held) → #f
+;   3) soft yield at boundary before long batch (#1504)
+;   4) forward :snapshot? :sync-query-index? :allow-macro?
+;      and :tenant-target when the caller supplied it
+;   5) run atomic-batch; return its result (#t / #f)
 ;
 ; Agents / orchestrator SHOULD prefer this over raw atomic-batch
 ; for multi-fiber closed loops.
-(define (mutate:atomic-batch-safe ops . summary-args)
-  (let ((summary (if (pair? summary-args) (car summary-args) "atomic-batch-safe")))
-    (if (not (mutate:boundary-safe?))
-      #f
-      (begin
-        ; Cooperative yield so concurrent fibers can steal / make progress
-        ; before we enter MutationBoundaryGuard for the batch.
-        (mutate:safe-yield)
-        (try
-          (if (null? ops)
-            #f
-            (mutate:atomic-batch ops summary))
-          (catch (e) #f))))))
+(define (mutate:atomic-batch-safe ops . rest)
+  (let* ((summary (if (or (null? rest) (keyword? (car rest)))
+                    "atomic-batch-safe"
+                    (car rest)))
+         (kws (if (or (null? rest) (keyword? (car rest)))
+                rest
+                (cdr rest)))
+         (parsed (mutate:scan-batch-kws kws #f #t #f 0 0)))
+    (if (error? parsed)
+      parsed
+      (let* ((snap (car parsed))
+             (r1 (cdr parsed))
+             (sync (car r1))
+             (r2 (cdr r1))
+             (allow (car r2))
+             (r3 (cdr r2))
+             (have-tenant (car r3))
+             (tenant (car (cdr r3))))
+        (if (not (mutate:boundary-safe?))
+          #f
+          (begin
+            ; Cooperative yield so concurrent fibers can steal / make progress
+            ; before we enter MutationBoundaryGuard for the batch.
+            (mutate:safe-yield)
+            (try
+              (if (null? ops)
+                #f
+                (if (= have-tenant 1)
+                  (mutate:atomic-batch ops summary
+                    :snapshot? snap
+                    :sync-query-index? sync
+                    :allow-macro? allow
+                    :tenant-target tenant)
+                  (mutate:atomic-batch ops summary
+                    :snapshot? snap
+                    :sync-query-index? sync
+                    :allow-macro? allow)))
+              (catch (e) #f))))))))

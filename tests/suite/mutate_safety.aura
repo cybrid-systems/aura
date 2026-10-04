@@ -76,3 +76,122 @@
 (test-suite "orch:conduct-yields"
   (orch:define-role "inc1553" (cons (lambda (x) (+ x 1)) "direct"))
   (check (= (orch:conduct (list "inc1553" "inc1553") 0) 2)))
+
+; Issue #4324 — load-time oracle. test-suite bodies are quoted data, and
+; data_to_flat does not rebuild keyword literals, so the keyword checks
+; live here. A dropped keyword after the summary fails this load (exit).
+(define ok4324 #t)
+
+(define (fail4324 msg)
+  (display "FAIL-4324 ")
+  (display msg)
+  (newline)
+  (set! ok4324 #f))
+
+(define (metric4324 qname key)
+  (let ((h (engine:metrics qname)))
+    (if (hash? h) (hash-ref h key -1) -1)))
+
+; try/catch: primitive arg eval propagates error values, so error?
+; never observes them. A caught string means the keyword was rejected.
+(define unk4324 (try
+                  (mutate:atomic-batch-safe (list) "4324" :not-a-real-option #t)
+                  (catch (e) e)))
+(if (and (string? unk4324)
+         (not (= (string-index unk4324 "unknown mutate:atomic-batch keyword" 0) -1)))
+  #t
+  (fail4324 "unknown keyword dropped"))
+
+(define stray4324 (try
+                    (mutate:atomic-batch-safe (list) "4324" "stray")
+                    (catch (e) e)))
+(if (and (string? stray4324)
+         (not (= (string-index stray4324 "non-keyword after summary" 0) -1)))
+  #t
+  (fail4324 "stray non-keyword dropped"))
+
+(define ten4324 (try
+                  (mutate:atomic-batch-safe (list) "4324" :tenant-target)
+                  (catch (e) e)))
+(if (string? ten4324)
+  #t
+  (fail4324 "tenant-target missing value"))
+
+; Known keywords are accepted. Empty ops still returns #f, not an error.
+(if (eq? (try (mutate:atomic-batch-safe (list) "4324" :allow-macro? #f)
+              (catch (e) e))
+        #f)
+  #t
+  (fail4324 "allow-macro #f rejected"))
+(if (eq? (try (mutate:atomic-batch-safe (list) "4324" :allow-macro? #t)
+              (catch (e) e))
+        #f)
+  #t
+  (fail4324 "allow-macro #t rejected"))
+(if (eq? (try (mutate:atomic-batch-safe (list) "4324" :snapshot? #f)
+              (catch (e) e))
+        #f)
+  #t
+  (fail4324 "snapshot #f rejected"))
+(if (eq? (try (mutate:atomic-batch-safe (list) "4324" :tenant-target 0)
+              (catch (e) e))
+        #f)
+  #t
+  (fail4324 "tenant-target rejected"))
+
+(set-code "(define (ms4324 x) x)")
+(eval-current)
+(define c0 (metric4324 "query:atomic-batch-stats-hash" "atomic_batch_index_sync_calls"))
+(define s0 (metric4324 "query:atomic-batch-snapshot-stats-hash" "snapshot-captures"))
+(if (< c0 0) (fail4324 "sync counter missing") #t)
+(if (< s0 0) (fail4324 "snapshot counter missing") #t)
+
+(define ops-off (list (list "mutate:rebind" "ms4324" "(lambda (x) (+ x 1))" "4324")))
+(if (eq? (try (mutate:atomic-batch ops-off "4324-raw" :sync-query-index? #f)
+              (catch (e) e))
+        #t)
+  #t
+  (fail4324 "raw sync-off"))
+(define c-raw (metric4324 "query:atomic-batch-stats-hash" "atomic_batch_index_sync_calls"))
+(if (= c-raw c0) #t (fail4324 "raw sync-off bumped"))
+
+(if (eq? (try (mutate:atomic-batch-safe ops-off "4324-safe" :sync-query-index? #f)
+              (catch (e) e))
+        #t)
+  #t
+  (fail4324 "safe sync-off"))
+(define c-safe (metric4324 "query:atomic-batch-stats-hash" "atomic_batch_index_sync_calls"))
+; :sync-query-index? #f on the safe wrapper matches the raw primitive.
+(if (= c-safe c-raw) #t (fail4324 "safe sync-off != raw"))
+(if (= (metric4324 "query:atomic-batch-snapshot-stats-hash" "snapshot-captures") s0)
+  #t
+  (fail4324 "snapshot bumped without :snapshot?"))
+
+(if (eq? (try (mutate:atomic-batch-safe
+                (list (list "mutate:rebind" "ms4324" "(lambda (x) (+ x 2))" "4324"))
+                "4324-on")
+              (catch (e) e))
+        #t)
+  #t
+  (fail4324 "safe default"))
+(define c-on (metric4324 "query:atomic-batch-stats-hash" "atomic_batch_index_sync_calls"))
+(if (> c-on c-safe) #t (fail4324 "default sync did not bump"))
+
+(define s1 (metric4324 "query:atomic-batch-snapshot-stats-hash" "snapshot-captures"))
+(if (eq? (try (mutate:atomic-batch-safe
+                (list (list "mutate:rebind" "ms4324" "(lambda (x) (+ x 3))" "4324"))
+                "4324-snap" :snapshot? #t :sync-query-index? #f :allow-macro? #f)
+              (catch (e) e))
+        #t)
+  #t
+  (fail4324 "snapshot batch"))
+(define s2 (metric4324 "query:atomic-batch-snapshot-stats-hash" "snapshot-captures"))
+(define c-snap (metric4324 "query:atomic-batch-stats-hash" "atomic_batch_index_sync_calls"))
+(if (> s2 s1) #t (fail4324 "snapshot? #t did not capture"))
+(if (= c-snap c-on) #t (fail4324 "snapshot batch synced index"))
+(eval-current)
+(if (= (ms4324 4) 7) #t (fail4324 "rebind did not apply"))
+
+(if ok4324
+  (begin (display "OK-4324 atomic-batch-safe-keywords") (newline))
+  (begin (display "FAIL-4324") (newline) (unbound-4324-force-fail)))
