@@ -4110,6 +4110,82 @@ static void ac4097_agents_active_held_across_reclaimed_retry() {
         ::unsetenv("AURA_SANDBOX");
 }
 
+// Issue #4334: an abandoned handle (no join, no Done-path) whose Scheduler
+// dies must not leak the live gauge — handle cleanup transfers the one-shot
+// to the live Fiber BEFORE the pointer is nulled (#4326 transfer requires a
+// live fiber), and ~Scheduler consumes it exactly once before the owned
+// fiber storage dies (exchange-clear, no double drop).
+static void ac4334_teardown_consumes_transferred_agents_active() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #4334: teardown consumes transferred agents_active one-shot ---");
+
+    const auto sched_src = read_file("src/serve/scheduler.cpp");
+    CHECK(sched_src.find("Issue #4334") != std::string::npos, "4334: ~Scheduler cites the issue");
+    CHECK(sched_src.find("consume_agents_active_oneshot") != std::string::npos,
+          "4334: dtor consumes the one-shot before owned fibers die");
+    const auto scope_src = read_file("src/orch/agent_scope.h");
+    CHECK(scope_src.find("Issue #4334") != std::string::npos, "4334: agent_scope cites the issue");
+    CHECK(scope_src.find("transfer_agents_active_oneshot_to_fiber") != std::string::npos,
+          "4334: cleanup transfers the one-shot to the live fiber first");
+
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    std::filesystem::create_directories("build/test-wal-4334");
+    const bool wal_on = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-4334"), nullptr, 0);
+
+    const auto before = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    {
+        Scheduler sched(1);
+        aura::orch::AgentSpec spec;
+        spec.name = "4334-transferred";
+        spec.attach_mailbox = true;
+        spec.body = [] {
+            for (;;) {
+            }
+        };
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "4334: spawn ok");
+        CHECK(h.agents_active_held, "4334: spawn holds the live gauge");
+        CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 1,
+              "4334: gauge +1 after spawn");
+        JoinPolicy policy;
+        policy.primary_ms = 20;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "4334: stuck join Reclaimed");
+        CHECK(h.agents_active_held, "4334: Reclaimed join keeps the one-shot held");
+        // Issue #4326 live-abandon transfer face: the handle's one-shot
+        // moves onto the live Fiber and the handle flag clears. This is
+        // the exact state the issue describes at Scheduler teardown.
+        transfer_agents_active_oneshot_to_fiber(h);
+        CHECK(!h.agents_active_held, "4334: one-shot moved onto the fiber");
+        CHECK(h.fiber != nullptr && h.fiber->agents_active_oneshot_transferred(),
+              "4334: fiber carries the transferred one-shot");
+        CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before + 1,
+              "4334: transferring keeps the gauge held (fiber face)");
+        // Abandon: no Done-path, no finish_reclaimed_cleanup_on_dtor.
+        (void)h;
+    } // ~Scheduler: observers null handles, then Chain A consumes the
+      // transferred one-shot exactly once before the Fiber storage dies.
+    CHECK(g_orch_module_stats.agents_active.load(std::memory_order_relaxed) == before,
+          "4334: teardown consumes the transferred one-shot — no leak, no double drop");
+
+    apply_dev_audit_defaults();
+    if (!wal_on)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
 // Issue #3953: repeated join_agent on a stuck Reclaimed name must not
 // re-burn drain×8; 2nd+ join uses the 50ms ensure budget.
 static void ac3953_1_repeat_join_short_budget() {
@@ -9872,6 +9948,9 @@ int run_test_join_drain_reclaim() {
 
     std::println("\n=== Issue #4097: agents_active stays on Reclaimed retry ===");
     ac4097_agents_active_held_across_reclaimed_retry();
+
+    std::println("\n=== Issue #4334: teardown consumes transferred agents_active one-shot ===");
+    ac4334_teardown_consumes_transferred_agents_active();
 
     std::println("\n=== Issue #3953: reclaim wait yields on fiber; repeat join short ===");
     ac3953_1_repeat_join_short_budget();
