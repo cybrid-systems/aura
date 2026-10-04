@@ -546,7 +546,9 @@ static void ac3219_eval_core_joint_after_production_facade() {
     {
         const auto hpos = ixx.find("void stamp_eval_core_joint_after_production_facade_");
         CHECK(hpos != std::string::npos, "ac3219 AC3: helper definition");
-        const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 2500);
+        // #3219 window: the helper body grows as stamp sites are added;
+        // 2500 clipped expire_stale_live_closures_ at 2547 (CI red). Widen.
+        const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 4000);
         CHECK(hwin.find("aura_aot_bump_func_table_epoch") == std::string::npos,
               "ac3219 AC3: helper does not re-bump AOT table epoch (owner-scoped)");
         CHECK(hwin.find("expire_stale_live_closures_") != std::string::npos,
