@@ -7257,14 +7257,24 @@ static void ac4243_4_source_and_linter() {
     CHECK(ixx.find("Issue #4243") != std::string::npos, "4243 AC4: arena.ixx cites #4243");
     CHECK(ixx.find("g_relocate_collision_restore_total.fetch_add") != std::string::npos,
           "4243 AC4: defensive collision-restore counter bumped");
-    CHECK(ixx.find("kept.push_back(DtorEntry{fresh ? fresh : p.old, p.dtor, p.size, p.align})") !=
+    // Issue #4329 reworked the arm: the loser is memcpy'd from the entry
+    // mirror to a fresh tracked slot and the chase is published (a bare
+    // DtorEntry{fresh ? fresh : p.old} left uninitialized bytes + a stale
+    // key). The #4329 ACs below pin the new shape.
+    CHECK(ixx.find("kept.push_back(DtorEntry{fresh, p.dtor, p.size, p.align})") !=
               std::string::npos,
-          "4243 AC4: collision loser restored to a tracked address");
+          "4243 AC4: collision loser restored to a tracked address (#4329 shape)");
+    CHECK(ixx.find("std::memcpy(fresh, p.bytes.data(), p.size)") != std::string::npos,
+          "4243 AC4: collision restore carries the payload mirror (#4329)");
+    CHECK(ixx.find("last_object_remap_[p.old] = fresh") != std::string::npos,
+          "4243 AC4: collision restore publishes the chase (#4329)");
     CHECK(ixx.find("drop this identity from dtors_") == std::string::npos,
           "4243 AC4: identity-drop arm removed (identity never dropped)");
     CHECK(ixx.find("kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align})") !=
               std::string::npos,
           "4243 AC4: #3435 restore-to-old anchor preserved");
+    CHECK(ixx.find("g_relocate_alloc_fail_inject_index_for_test") != std::string::npos,
+          "4243 AC4: index-targeted inject seam present (#4329 collision reach)");
     CHECK(build.find("check_relocate_identity_4243") != std::string::npos,
           "4243 AC4: build.py wires linter");
     CHECK(test.find("ac4243_1_alloc_fail_never_drops_identity") != std::string::npos,
@@ -7282,6 +7292,98 @@ static void ac4243_4_source_and_linter() {
                   std::string("4243 AC4: no docs/design/") + name + " per #1655");
         }
     }
+}
+
+// Issue #4329: collision-arm restore must carry the payload mirror and
+// publish the chase. A bare DtorEntry{fresh} left the identity on
+// uninitialized bytes (no memcpy) and a missing last_object_remap_[p.old]
+// left external pointers naming the winner; a no-slot alias DtorEntry on
+// p.old double-fired the winner. The index-targeted inject reaches the
+// arm deterministically (first-failure inject can never collide).
+static std::atomic<std::int32_t> g_4329_dtor_count{0};
+struct Payload4329 {
+    std::int64_t magic = 0;
+    std::int64_t pad = 0;
+    ~Payload4329() { g_4329_dtor_count.fetch_add(1, std::memory_order_relaxed); }
+};
+
+static void ac4329_1_collision_fresh_restore_payload_remap() {
+    std::println("\n--- #4329 AC1: collision fresh restore carries payload + publishes chase ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    g_4329_dtor_count.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Payload4329>();
+        auto* p1 = arena.create<Payload4329>();
+        auto* p2 = arena.create<Payload4329>();
+        auto* p3 = arena.create<Payload4329>();
+        CHECK(p0 && p1 && p2 && p3, "4329 AC1: create ok");
+        p0->magic = 0x43290001;
+        p1->magic = 0x43290002;
+        p2->magic = 0x43290003;
+        p3->magic = 0x43290004;
+        void* e0 = p0;
+        void* e1 = p1;
+        void* e2 = p2;
+        void* e3 = p3;
+        // Fail the 3rd pending: by then P0 committed at p3.old and P1 at
+        // p2.old (LIFO reuse) — the loser's old slot IS owned by a winner.
+        aura::ast::g_relocate_alloc_fail_inject_index_for_test.store(2,
+                                                                     std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.untracked_kept_count >= 1, "4329 AC1: window red (fail-closed)");
+        CHECK(r.moving_incomplete_remap, "4329 AC1: moving_incomplete_remap set");
+        CHECK(r.pin_contract_held == false, "4329 AC1: pin_contract_held false");
+        const void* loser_home = arena.resolve_object_remap(e2);
+        CHECK(loser_home != nullptr, "4329 AC1: loser resolves after collision restore");
+        CHECK(loser_home != e2, "4329 AC1: loser moved to a fresh slot (not aliased at old)");
+        if (loser_home) {
+            CHECK(static_cast<const Payload4329*>(loser_home)->magic == 0x43290003,
+                  "4329 AC1: restored address holds the payload magic (memcpy, not bare entry)");
+        }
+        const std::pair<void*, std::int64_t> homes[4] = {
+            {e0, 0x43290001}, {e1, 0x43290002}, {e2, 0x43290003}, {e3, 0x43290004}};
+        for (const auto& [old, magic] : homes) {
+            void* home = arena.resolve_object_remap(old);
+            if (!home)
+                home = old;
+            CHECK(static_cast<const Payload4329*>(home)->magic == magic,
+                  "4329 AC1: payload intact at every resolved home");
+        }
+    } // ~ASTArena runs the dtor entries
+    CHECK(g_4329_dtor_count.load(std::memory_order_relaxed) == 4,
+          "4329 AC1: exactly one dtor per identity (no alias double-fire, no skip)");
+}
+
+static void ac4329_2_collision_no_slot_mirror_destroy() {
+    std::println("\n--- #4329 AC2: collision with no fresh slot destroys on the mirror (no alias) ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    g_4329_dtor_count.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Payload4329>();
+        auto* p1 = arena.create<Payload4329>();
+        auto* p2 = arena.create<Payload4329>();
+        auto* p3 = arena.create<Payload4329>();
+        CHECK(p0 && p1 && p2 && p3, "4329 AC2: create ok");
+        aura::ast::g_relocate_alloc_fail_inject_index_for_test.store(2,
+                                                                     std::memory_order_relaxed);
+        aura::ast::g_relocate_collision_fresh_fail_inject_remaining.store(
+            1, std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.untracked_kept_count >= 1, "4329 AC2: window red (fail-closed)");
+        CHECK(r.moving_incomplete_remap, "4329 AC2: moving_incomplete_remap set");
+        // No-slot sub-arm consumed the loser on the byte-exact mirror
+        // exactly once and pushed no alias DtorEntry.
+        CHECK(g_4329_dtor_count.load(std::memory_order_relaxed) == 1,
+              "4329 AC2: loser destroyed once on the mirror inside the window");
+    }
+    CHECK(g_4329_dtor_count.load(std::memory_order_relaxed) == 4,
+          "4329 AC2: the remaining 3 identities dtor exactly once each (no alias)");
 }
 
 // Issue #4304: Phase-5 DensifyInFlightGuard spans compact through
@@ -8240,6 +8342,9 @@ int run_test_moving_densify_fail_closed() {
     ac4243_2_no_pin_window_green();
     ac4243_3_invalidate_skip_set_is_rewritten();
     ac4243_4_source_and_linter();
+    std::println("\n=== Issue #4329: collision-arm restore carries payload + chase ===");
+    ac4329_1_collision_fresh_restore_payload_remap();
+    ac4329_2_collision_no_slot_mirror_destroy();
 
     std::println("\n=== Issue #4304: Phase-5 in-flight spans publish; FFI reads it ===");
     ac4304_phase5_inflight_spans_publish();

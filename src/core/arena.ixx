@@ -622,8 +622,25 @@ export inline std::atomic<std::uint64_t> g_moving_incomplete_remap_densify_hard_
 // Production / uninjected: one relaxed load per pending, no behavior
 // change (AC4). Not a metrics counter — test seam only.
 export inline std::atomic<std::uint32_t> g_relocate_alloc_fail_inject_remaining{0};
+// Issue #4329: index-targeted alloc-fail injection — fail the K-th pending
+// (stable-sorted order) instead of the first N. Needed because with the
+// first-failure-only hook above the collision arm's precondition (loser.old
+// already handed to an earlier winner) is structurally unreachable: LIFO
+// freelist reuse always leaves the first pending's old slot unpopped, so
+// its collision check sees empty kept/remap and takes the restore-at-old
+// arm. Failing a middle pending whose old slot an earlier winner committed
+// reaches the collision arm deterministically. -1 = disabled. Production:
+// one relaxed load per pending, zero behavior change. Test seam only.
+export inline std::atomic<std::int32_t> g_relocate_alloc_fail_inject_index_for_test{-1};
+// Issue #4329: test-only fresh-slot failure INSIDE the collision arm —
+// exercises the no-slot fail-closed sub-arm (mirror destroy, no alias
+// DtorEntry). Production / uninjected: zero behavior change.
+export inline std::atomic<std::uint32_t> g_relocate_collision_fresh_fail_inject_remaining{0};
 export inline void reset_relocate_alloc_fail_inject_for_test() noexcept {
     g_relocate_alloc_fail_inject_remaining.store(0, std::memory_order_relaxed);
+    // Issue #4329: reset the two additional test seams below.
+    g_relocate_alloc_fail_inject_index_for_test.store(-1, std::memory_order_relaxed);
+    g_relocate_collision_fresh_fail_inject_remaining.store(0, std::memory_order_relaxed);
 }
 // Issue #4243: defensive observability for the same-window collision arm of
 // relocate_tracked_objects_for_moving_. Under the recycle-after-success
@@ -3571,14 +3588,28 @@ private:
             [](const Pending& a, const Pending& b) noexcept { return a.size < b.size; });
 
         std::size_t moved = 0;
+        std::size_t pending_index = 0; // Issue #4329: index-targeted inject
         for (auto& p : pending) {
+            // Issue #4329: capture and advance the stable-sorted index once
+            // (the !neu path continues early — keep a single increment).
+            const std::size_t this_index = pending_index++;
             // Issue #3435: test-only alloc-fail injection (AC5). When armed,
             // treat the post-recycle allocation as failed (skip try_allocate
             // + pmr fallback) so the restore-to-old fail-closed path runs.
-            // Production: one relaxed load per pending, zero behavior change.
+            // Issue #4329: index-targeted variant — fail exactly the K-th
+            // pending (see g_relocate_alloc_fail_inject_index_for_test).
+            // Production: one or two relaxed loads per pending, zero
+            // behavior change.
             void* neu = nullptr;
-            if (g_relocate_alloc_fail_inject_remaining.load(std::memory_order_relaxed) != 0) {
-                g_relocate_alloc_fail_inject_remaining.fetch_sub(1, std::memory_order_relaxed);
+            const auto fail_idx =
+                g_relocate_alloc_fail_inject_index_for_test.load(std::memory_order_relaxed);
+            const bool injected_fail =
+                (fail_idx >= 0 && static_cast<std::size_t>(fail_idx) == this_index) ||
+                (fail_idx < 0 &&
+                 g_relocate_alloc_fail_inject_remaining.load(std::memory_order_relaxed) != 0);
+            if (injected_fail) {
+                if (fail_idx < 0)
+                    g_relocate_alloc_fail_inject_remaining.fetch_sub(1, std::memory_order_relaxed);
             } else {
                 // Prefer freelist; skip allocate_raw_impl (auto-compact re-entry).
                 neu = small_pool_.try_allocate(p.size);
@@ -3628,20 +3659,51 @@ private:
                 if (!collided) {
                     kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align});
                 } else {
-                    // Issue #4243: collision arm — never drop the identity.
-                    // Last resort (no fresh slot either) still restores at
-                    // old: never skip a recycled object's dtor.
-                    void* fresh = small_pool_.try_allocate(p.size);
-                    if (!fresh) {
-                        try {
-                            fresh = resource_.allocate(p.size, p.align);
-                            stats_.used += p.size;
-                        } catch (...) {
-                            fresh = nullptr;
+                    // Issue #4329: the loser's payload exists ONLY in the
+                    // entry mirror (p.bytes) — its old slot was recycled and
+                    // is now owned by the winner. A bare DtorEntry{fresh}
+                    // without a memcpy left the identity on uninitialized
+                    // bytes, and a missing last_object_remap_[p.old] left
+                    // external pointers naming the winner.
+                    void* fresh = nullptr;
+                    if (g_relocate_collision_fresh_fail_inject_remaining.load(
+                            std::memory_order_relaxed) != 0) {
+                        g_relocate_collision_fresh_fail_inject_remaining.fetch_sub(
+                            1, std::memory_order_relaxed);
+                    } else {
+                        fresh = small_pool_.try_allocate(p.size);
+                        if (!fresh) {
+                            try {
+                                fresh = resource_.allocate(p.size, p.align);
+                                stats_.used += p.size;
+                            } catch (...) {
+                                fresh = nullptr;
+                            }
                         }
                     }
                     g_relocate_collision_restore_total.fetch_add(1, std::memory_order_relaxed);
-                    kept.push_back(DtorEntry{fresh ? fresh : p.old, p.dtor, p.size, p.align});
+                    if (fresh) {
+                        // Issue #4329: restore the payload from the entry
+                        // mirror, publish the chase (p.old is the winner's
+                        // committed slot — pointers that name the loser
+                        // resolve to fresh, pointers that name the winner
+                        // keep resolving to p.old), then track the identity
+                        // at fresh. The window stays red via
+                        // untracked_kept_count — a partial relocate is never
+                        // a green publish.
+                        std::memcpy(fresh, p.bytes.data(), p.size);
+                        last_object_remap_[p.old] = fresh;
+                        kept.push_back(DtorEntry{fresh, p.dtor, p.size, p.align});
+                    } else {
+                        // Issue #4329: no slot anywhere — fail closed on the
+                        // mirror instead of pushing an alias DtorEntry on
+                        // p.old (two entries sharing the winner's address:
+                        // double dtor / dtor on foreign bytes). The
+                        // byte-exact mirror is a valid object image; destroy
+                        // it now and consume the identity (dtor fires once,
+                        // not zero, not twice). Window stays red.
+                        p.dtor(p.bytes.data());
+                    }
                 }
                 if (out_untracked_kept_count)
                     ++*out_untracked_kept_count;
