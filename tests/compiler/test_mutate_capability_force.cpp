@@ -38,11 +38,13 @@ using aura::compiler::security::kCapWildcard;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
@@ -370,6 +372,38 @@ int run_test_mutate_capability_force() {
         CHECK(rebind && is_bool(*rebind) && as_bool(*rebind), "4322 prod rebind #t");
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         set_mode(SandboxMode::Off);
+    }
+
+    // Issue #4323: replace-value of a Define's LiteralString / LiteralInt
+    // publishes the top_env cell. Reading the variable matches the node
+    // without a later eval-current.
+    {
+        std::println("\n--- #4323: replace-value publishes the define cell ---");
+        reset_all();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        set_mode(SandboxMode::Off);
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define live \\\"c\\\") (define n 1)\")").has_value(),
+              "4323 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4323 eval");
+        auto batch = cs.eval("(let ((lit (car (query :children (car (query :find \"live\"))))))"
+                             "  (mutate:atomic-batch"
+                             "    (list (list \"mutate:replace-value\" lit \"d\" \"4323\"))"
+                             "    \"4323\" :sync-query-index? #f))");
+        CHECK(batch && is_bool(*batch) && as_bool(*batch), "4323 string batch #t");
+        auto live = cs.eval("live");
+        CHECK(live && is_string(*live), "4323 live is a string");
+        if (live && is_string(*live)) {
+            auto si = as_string_idx(*live);
+            CHECK(si < cs.evaluator().string_heap().size() &&
+                      cs.evaluator().string_heap()[si] == "d",
+                  "4323 live cell is d");
+        }
+        auto ibatch = cs.eval("(let ((lit (car (query :children (car (query :find \"n\"))))))"
+                              "  (mutate:replace-value lit 7 \"4323\"))");
+        CHECK(ibatch && is_int(*ibatch), "4323 int replace returns a mutation id");
+        auto n = cs.eval("n");
+        CHECK(n && is_int(*n) && as_int(*n) == 7, "4323 n cell is 7");
     }
 
     std::println("\n#2052 mutate capability force: {} passed, {} failed", g_passed, g_failed);

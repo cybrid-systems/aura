@@ -16277,6 +16277,10 @@ public:
     // ops can fall back to the standalone primitive (and accept
     // that those ops aren't transactional with the batch).
     EvalResult eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a);
+    // Issue #4323: Define value LiteralString/LiteralInt must publish into
+    // the existing top_env cell. False means a live cell could not be
+    // written; the caller fails the mutate instead of leaving the old value.
+    [[nodiscard]] bool publish_define_scalar_cell(ast::NodeId node, types::EvalValue published);
     EvalResult eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a);
     EvalResult eval_flat_apply_mutate_tweak_literal(std::span<const types::EvalValue> a);
     // Issue #396 Phase 2: lockless variants for the two

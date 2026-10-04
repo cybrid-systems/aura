@@ -1819,6 +1819,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         aura::compiler::hardware::on_structural_mutation(
                             node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
                     restamp_if_allowed();
+                    // Issue #4323: same cell publish as the lockless helper.
+                    if (!ev.publish_define_scalar_cell(node, a[1])) {
+                        ok = false;
+                        return ev.make_merr("bind-refresh",
+                                            "replace-value: define binding refresh failed (#4323)");
+                    }
                     return make_int(static_cast<std::int64_t>(mid));
                 }
                 case aura::ast::NodeTag::LiteralFloat: {
@@ -1874,6 +1880,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         aura::compiler::hardware::on_structural_mutation(
                             node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
                     restamp_if_allowed();
+                    // Issue #4323: LiteralString only (Variable rename is not
+                    // the define's scalar cell).
+                    if (nv.tag == aura::ast::NodeTag::LiteralString &&
+                        !ev.publish_define_scalar_cell(node, a[1])) {
+                        ok = false;
+                        return ev.make_merr("bind-refresh",
+                                            "replace-value: define binding refresh failed (#4323)");
+                    }
                     return make_int(static_cast<std::int64_t>(mid));
                 }
                 default:
