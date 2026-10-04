@@ -1570,7 +1570,8 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         const auto add = mut.find("auto add_mutate = ");
         CHECK(add != std::string::npos, "3480 AC2: add_mutate present");
-        const auto awin = mut.substr(add, 17000);
+        #3480 AC2 window grown for #4332 lazy-COW (#4332 pushed it past 17000)
+        const auto awin = mut.substr(add, 21000);
         CHECK(awin.find("aura_fiber_request_hold_budget_cancel") == std::string::npos,
               "3480 AC2: wrapper does not unlock from thief thread");
         CHECK(awin.find("force_release_hold_budget_inbody") != std::string::npos,
