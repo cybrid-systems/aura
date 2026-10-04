@@ -1342,6 +1342,81 @@ static void ac4104_lcp_overflow_rejects_victim() {
     aura::serve::reset_steal_snapshot_soft_for_test();
 }
 
+// Issue #4336: the Lifetime overflow arm must not require a densify slot
+// (seq>0). After the densify slot table is full (#4305: slots never
+// released), a victim whose last Moving proof is an overflow Reject with
+// would_allow==0 has seq==0 — the old conjunct quietly-allowed it.
+// Fail-closed: RejectHard on the LifetimeProofOk arm with no densify note.
+static void ac4336_overflow_reject_ignores_densify_slot() {
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    namespace dens = aura::core::densify_consistency;
+    lcp::reset_lcp_eval_slots_for_test();
+    dens::reset_densify_eval_slots_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+
+    std::vector<void*> fillers;
+    fillers.reserve(lcp::kLcpEvalSlotCount);
+    lcp::LifetimeConsistencyProof allow{};
+    allow.would_allow_commit = true;
+    for (std::size_t i = 0; i < lcp::kLcpEvalSlotCount; ++i) {
+        auto* id = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x43361000u + i * 16u));
+        fillers.push_back(id);
+        lcp::stamp_lifetime_consistency_proof_for(id, allow);
+    }
+
+    auto* victim = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4336ABCDu));
+    lcp::LifetimeConsistencyProof reject{};
+    reject.would_allow_commit = false;
+    lcp::stamp_lifetime_consistency_proof_for(victim, reject);
+    CHECK(!lcp::last_lifetime_consistency_proof_present_for(victim),
+          "4336: victim has no slot when the table is full");
+    CHECK(lcp::lifetime_consistency_overflow_rejects(victim),
+          "4336: overflow records the victim Reject");
+    // #4336 core precondition: NO densify note for the victim — the densify
+    // slot table never released, so the victim's densify seq reads 0.
+    CHECK(dens::last_densify_call_seq_for(victim) == 0,
+          "4336: victim densify seq is 0 (unslotted)");
+
+    auto prep = [](Fiber& f, void* id) {
+        f.set_evaluator_id(id);
+        f.set_yield_reason(YieldReason::Explicit);
+        f.publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+    };
+    Fiber victim_f([]() {}, /*stack_size=*/64 * 1024);
+    prep(victim_f, victim);
+
+    const auto m_lifetime =
+        aura::serve::steal_invariant_mask(aura::serve::StealInvariant::LifetimeProofOk);
+    const auto d = aura::serve::steal_safety_transaction(&victim_f);
+    CHECK(d == aura::serve::StealSafetyDecision::RejectHard,
+          "4336: unslotted overflow victim RejectHard (seq==0 no longer quiet-allows)");
+    CHECK((aura::serve::g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed) &
+           m_lifetime) != 0,
+          "4336: RejectHard is LifetimeProofOk");
+
+    // Source-cite: the overflow arm carries no densify seq conjunct; the
+    // slotted arm keeps its own.
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("Issue #4336") != std::string::npos, "4336: steal cite");
+    const auto ov = ss.find("const bool overflow_reject =");
+    CHECK(ov != std::string::npos, "4336: overflow arm present");
+    const auto ov_win = ov != std::string::npos ? ss.substr(ov, 400) : std::string{};
+    CHECK(ov_win.find("last_densify_call_seq_for") == std::string::npos,
+          "4336: overflow arm has no densify seq conjunct");
+    const auto sl = ss.find("const bool slotted_reject =");
+    const auto sl_win = sl != std::string::npos ? ss.substr(sl, 400) : std::string{};
+    CHECK(sl_win.find("last_densify_call_seq_for") != std::string::npos,
+          "4336: slotted arm keeps its densify seq conjunct");
+
+    lcp::reset_lcp_eval_slots_for_test();
+    dens::reset_densify_eval_slots_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::serve::reset_steal_snapshot_soft_for_test();
+}
+
 // Issue #4305: densify slots are never released. The 65th id must stay
 // in-flight and an unslotted envframe reject must fail EnvFrameOk.
 // A slotted owner is not frozen by that overflow record.
@@ -1513,6 +1588,9 @@ int run_test_steal_complete_gc_defer() {
     ac3988_no_edge_opcode_poll();
     std::println("\n=== Issue #4104: LCP overflow Reject is this evaluator only ===");
     ac4104_lcp_overflow_rejects_victim();
+
+    std::println("\n=== Issue #4336: Lifetime overflow arm ignores the densify slot ===");
+    ac4336_overflow_reject_ignores_densify_slot();
     std::println("\n=== Issue #4305: densify overflow stays fail-closed past 64 ===");
     ac4305_densify_overflow_fail_closed();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

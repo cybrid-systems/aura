@@ -280,8 +280,15 @@ namespace {
         const bool overflow_reject =
             victim_eval_id != nullptr &&
             !lcp::last_lifetime_consistency_proof_present_for(victim_eval_id) &&
-            aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0 &&
             lcp::lifetime_consistency_overflow_rejects(victim_eval_id);
+        // Issue #4336: the overflow arm no longer requires a densify slot
+        // (seq>0). After 64 evaluators each ran a Moving window the
+        // densify slot table is full too (#4305: slots never released),
+        // so a victim with a stamped !would_allow overflow proof has
+        // seq==0 — the old conjunct quietly-allowed a fiber whose last
+        // Moving proof is a reject. lifetime_consistency_overflow_rejects
+        // already encodes "victim IS the overflow record AND would_allow
+        // == 0"; the slotted arm above keeps its own seq>0 conjunct.
         if (slotted_reject || overflow_reject) {
             fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
             if (bump_counters)
