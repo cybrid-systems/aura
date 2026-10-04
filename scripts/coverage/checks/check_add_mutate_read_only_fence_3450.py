@@ -49,7 +49,9 @@ def main() -> int:
     lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt")
     # #3975-#3988 wave (#3999) grew the add_mutate lambda — ordering pins
     # (workspace_read_only_ → try_acquire → fn(a)) sit past the old edge.
-    win = mut[lam : lam + 18000] if lam >= 0 else ""
+    # #4335 wave grew it further (cow-refused fail-close blocks); fn(a) sits
+    # at delta 18197 — 21000 keeps the full ordering pin inside the window.
+    win = mut[lam : lam + 21000] if lam >= 0 else ""
     must("kAddMutateReadOnlyFenceIssue", "AC1 stamp", disp)
     must("Issue #3450", "AC1 wrapper cite", win)
     must("workspace_read_only_", "AC1 RO load", win)
