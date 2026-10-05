@@ -10,6 +10,8 @@ module;
 #include "core/provenance_tracker.hh" // Issue #2960: query_stable_ref_stamped counters
 #include "serve/fiber.h"              // Issue #1630: aura_fiber_current_id for query:stable-ref
 #include "typed_mutation_audit.h"     // Issue #1892: hygiene skip audit trail
+#include <array>
+#include "reflect/node_tag_names.hh" // Issue #4345: shared NodeTag names
 
 module aura.compiler.evaluator;
 
@@ -1671,6 +1673,68 @@ void register_workspace_query_primitives(
                 auto p4 = ws.pairs.size();
                 ws.pairs.push_back({rec, result});
                 result = make_pair(p4);
+            }
+            // Issue #4088: Production auto-upgrade inside
+            // end_query_epoch_maybe_result; Soft keeps the bare list.
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
+
+    // Issue #4345: (query:code) — return the workspace's authoritative
+    // source text (the live reader after any mutate). Editor agents view
+    // the loaded buffer without a side channel; empty source is a
+    // no-workspace error, not a silent empty string.
+    add("query:code", [ws, mev, &ev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (!a.empty())
+            return mev("bad-arg", "usage: (query:code)");
+        auto text = ev.authoritative_workspace_source();
+        if (text.empty())
+            return mev("no-workspace", "no workspace source loaded");
+        ws.string_heap.push_back(std::move(text));
+        return make_string(static_cast<std::uint64_t>(ws.string_heap.size() - 1));
+    });
+
+    // Issue #4345: (query:node-types) — census of NodeTag kinds in the
+    // workspace flat AST as ((tag-name . count) ...) in tag order. The
+    // std/query discovery pattern recommended this name but no prim
+    // bound it; tag names come from the shared Wave B1 table (empty
+    // slots skipped).
+    add("query:node-types",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (!a.empty())
+                return mev("bad-arg", "usage: (query:node-types)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            std::array<std::int64_t, aura::ast::kNodeTagNameCount> census{};
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+                if (flat.is_free_slot(id))
+                    continue;
+                auto v = flat.get(id);
+                const auto tag = static_cast<int>(v.tag);
+                if (tag > 0 && tag < static_cast<int>(aura::ast::kNodeTagNameCount))
+                    ++census[static_cast<std::size_t>(tag)];
+            }
+            EvalValue result = make_void();
+            for (int tag = 1; tag < static_cast<int>(aura::ast::kNodeTagNameCount); ++tag) {
+                const auto count = census[static_cast<std::size_t>(tag)];
+                if (count == 0)
+                    continue;
+                const auto& name = aura::ast::kNodeTagNames[static_cast<std::size_t>(tag)];
+                if (name.empty())
+                    continue;
+                ws.string_heap.push_back(std::string(name));
+                const auto namev =
+                    make_string(static_cast<std::uint64_t>(ws.string_heap.size() - 1));
+                const auto p1 = ws.pairs.size();
+                ws.pairs.push_back({namev, make_int(count)});
+                const auto rec = make_pair(p1);
+                const auto p2 = ws.pairs.size();
+                ws.pairs.push_back({rec, result});
+                result = make_pair(p2);
             }
             // Issue #4088: Production auto-upgrade inside
             // end_query_epoch_maybe_result; Soft keeps the bare list.
