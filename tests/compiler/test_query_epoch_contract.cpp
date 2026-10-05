@@ -31,10 +31,12 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
 using aura::core::bump_mutation_epoch;
 using aura::core::capture_query_epoch;
 using aura::core::current_mutation_epoch;
@@ -556,6 +558,49 @@ int run_test_query_epoch_contract() {
     reset_query_epoch_metrics_for_test();
     aura::core::reset_query_result_metrics_for_test();
     set_query_epoch_strict(false);
+    // ── Issue #4344: (define-lookup name) — Soft goto-def API ──
+    {
+        std::println("\n--- #4344: define-lookup jump records ---");
+        using aura::compiler::types::is_pair;
+        CompilerService cs4344;
+        CHECK(cs4344.eval("(set-code \"(define f4344 (lambda (x) (+ x 1)))\")").has_value(),
+              "4344: set-code");
+        auto lk = cs4344.eval("(define-lookup \"f4344\")");
+        CHECK(lk.has_value() && is_pair(*lk), "4344: match list returned");
+        auto idl = cs4344.eval("(car (car (define-lookup \"f4344\")))");
+        CHECK(idl.has_value() && is_int(*idl), "4344: record id is an int");
+        // Issue #4088: query:defines auto-upgrades to the schema-2 hash
+        // under production audit, so cross-check against the posture-
+        // independent C++ locator instead of its bare-list shape.
+        auto& ev4344 = cs4344.evaluator();
+        auto* ws4344 = ev4344.workspace_flat();
+        CHECK(ws4344 != nullptr, "4344: workspace flat");
+        const auto expected4344 = ws4344->find_define_by_name(*ev4344.workspace_pool(), "f4344");
+        CHECK(expected4344.has_value(), "4344: find_define_by_name resolves f4344");
+        CHECK(idl.has_value() && expected4344.has_value() &&
+                  as_int(*idl) == static_cast<std::int64_t>(*expected4344),
+              "4344: record id matches find_define_by_name node id");
+        auto ln = cs4344.eval("(car (cdr (car (define-lookup \"f4344\"))))");
+        auto cl = cs4344.eval("(car (cdr (cdr (car (define-lookup \"f4344\")))))");
+        CHECK(ln.has_value() && is_int(*ln), "4344: record line is an int");
+        CHECK(cl.has_value() && is_int(*cl), "4344: record col is an int");
+        auto miss = cs4344.eval("(define-lookup \"no4344\")");
+        CHECK(!(miss && is_pair(*miss)), "4344: miss is empty (not a pair)");
+        auto bad = cs4344.eval("(define-lookup)");
+        // Issue #4344: the prim rejects arity via mev, and make_merr builds
+        // a loud (kind message) pair (#1397 shape) that Soft surfaces as a
+        // plain value (errors-as-values) — not a types error value and not
+        // absent. Pin pair + kind so a silent success cannot slip by.
+        CHECK(bad.has_value() && is_pair(*bad), "4344: bad-arg is a loud merr pair");
+        auto kind4344 = cs4344.eval("(car (define-lookup))");
+        const auto no_idx = ev4344.string_heap().size();
+        const auto kidx = kind4344 && is_string(*kind4344) ? as_string_idx(*kind4344) : no_idx;
+        CHECK(kidx < no_idx && ev4344.string_heap()[kidx] == "bad-arg",
+              "4344: bad-arg kind is bad-arg");
+        const auto qsrc = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(qsrc.find("Issue #4344") != std::string::npos, "4344: source cites the issue");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
