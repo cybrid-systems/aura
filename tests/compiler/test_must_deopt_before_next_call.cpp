@@ -327,9 +327,10 @@ int run_test_must_deopt_before_next_call() {
     // ── Issue #3572: unnamed deopt_pending consult — shared-workspace MVP contract ──
     // Global table bump: unnamed consults process deopt_pending_count
     // (IR + JIT cache are shared — a per-owner filter would
-    // UNDER-invalidate). Issue #3977: production owner-scoped last bump
-    // is NOT that gate — peer pure-anon stays native; same-define unnamed
-    // leaves via MustDeopt / slot stale / overflow.
+    // UNDER-invalidate). Issue #3977 first excluded the owner-scoped
+    // face; Issue #4340 restored the count as THE unnamed gate there —
+    // the skip left the mutated define's unnamed closure native through
+    // the whole storm (no name bit, no MustDeopt, remount tick skips).
     {
         std::println("\n--- #3572 AC1: unnamed count is the global-bump fail-closed backstop ---");
         const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
@@ -346,14 +347,16 @@ int run_test_must_deopt_before_next_call() {
               "3572 AC1: unnamed arm consults the #3412 table count");
     }
     {
-        std::println("\n--- #3977 AC2/AC4: owner-scoped unnamed skip; Soft one load ---");
+        std::println("\n--- #3977 AC2/AC4 → #4340: unnamed count gates any storm ---");
         const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
         const auto fn = rt.find("closure_call_deopt_pending_leave_native_");
         CHECK(fn != std::string::npos, "3977 AC2: helper present");
         const auto win = (fn != std::string::npos) ? rt.substr(fn, 1800) : std::string{};
-        CHECK(win.find("Issue #3977") != std::string::npos, "3977 AC2: cites #3977");
-        CHECK(win.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
-              "3977 AC2: owner-scoped last bump skips unnamed count");
+        CHECK(win.find("Issue #3977") != std::string::npos, "3977 AC2: cites #3977 lineage");
+        CHECK(win.find("Issue #4340") != std::string::npos,
+              "4340 AC1: unnamed arm cites the owner-scoped storm fix");
+        CHECK(win.find("aura_aot_last_table_bump_owner_scoped") == std::string::npos,
+              "4340 AC1: the #3977 owner-scoped unnamed skip is gone");
         CHECK(win.find("pending == 0") != std::string::npos,
               "3977 AC4: Soft/idle unnamed is one load");
         CHECK(rt.find("schema-3977") == std::string::npos, "3977: no new query key");

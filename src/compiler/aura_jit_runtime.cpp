@@ -4608,14 +4608,27 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
 [[nodiscard]] static bool closure_call_deopt_pending_leave_native_(size_t cid) noexcept {
     if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
         return aura_jit_is_deopt_pending(g_closure_names[cid].c_str()) != 0;
+    // Issue #3441: unnamed arm consults the shared #3412 table count.
+    // Issue #3572: process-global count is the fail-closed backstop —
+    // workspace IR + JIT fn cache are shared, so a per-owner filter would
+    // UNDER-invalidate. Soft / idle: count is 0 — one load.
     const auto pending = aura_jit_deopt_pending_count();
     if (pending == 0)
-        return false; // Soft / idle: one load
-    // Issue #3977: owner-scoped last bump — count is not the unnamed gate.
-    if (aura::compiler::typed_audit::production_defaults_active() &&
-        aura_aot_last_table_bump_owner_scoped() != 0)
         return false;
-    return true; // global bump: count is the unnamed fail-closed backstop
+    // Issue #3977 skipped the unnamed count under a production
+    // owner-scoped last bump (#3300/#3750 name/slot bits + MustDeopt +
+    // #3323 overflow were assumed to carry that face).
+    // Issue #4340: for an UNNAMED closure that assumption is empty —
+    // #4148 needs a name match (none), the empty-name drop walk never
+    // runs (MustDeopt never armed, the g_jit_fns pointer stays warm),
+    // the remount tick budget-skips before enqueue, and #3060 force-leave
+    // needs a non-empty background queue the skip keeps empty. The
+    // pending count is the only live signal, so it IS the gate:
+    // fail-closed leave-native while any storm is active (owner-scoped
+    // included). Transient — quiet BoundaryExit remount may heal after
+    // the storm drains. The #3977 NAMED peer-count skip (the per-name
+    // table above) is untouched.
+    return true;
 }
 
 // Issue #3951: owner-thread hold-budget fail-closed (strong in
