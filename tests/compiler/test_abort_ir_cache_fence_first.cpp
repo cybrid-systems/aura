@@ -342,7 +342,8 @@ static void ac3258_2_store_acks_clean_hit() {
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(std::move(top));
     irs.push_back(std::move(body));
-    cs.store_define_v2("g3258", "(define g3258 (lambda (x) x))", std::move(irs), {}, {});
+    cs.store_define_v2("g3258", "(define g3258 (lambda (x) x))", std::move(irs), {}, {},
+                       aura::core::current_mutation_epoch());
     const auto* stored = cs.get_define_v2("g3258");
     CHECK(stored && !stored->dirty, "3258 AC2: store clears dirty");
     CHECK(stored &&
@@ -718,7 +719,8 @@ static void ac3821_3_force_dirty_clears_in_progress() {
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(std::move(top));
     irs.push_back(std::move(body));
-    cs.store_define_v2("f3821", "(define f3821 (lambda (x) (+ x 1)))", std::move(irs), {}, {});
+    cs.store_define_v2("f3821", "(define f3821 (lambda (x) (+ x 1)))", std::move(irs), {}, {},
+                       aura::core::current_mutation_epoch());
     const auto* after = cs.get_define_v2("f3821");
     CHECK(after && !after->abort_map_invalid, "3821 AC3: clean after one store");
     CHECK(cs.lookup_define_v2("f3821", after->source_hash) == 0,
