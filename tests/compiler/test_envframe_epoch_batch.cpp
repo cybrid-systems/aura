@@ -11,7 +11,7 @@
 //   Issue #2017 — compact-env-frames epoch notify + targeted cache invalidate
 //   Issue #3267 — publish_live_env_linear_to_bridge env_frames_ lock
 //                 + combined live bridge-state C ABI
-//
+//   Issue #4343 — O(1) SymId index on Env (top-level define lookup)
 // Pattern: CHECK() + run_* AC blocks (test_env_lookup_batch precedent).
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
 
@@ -1290,6 +1290,82 @@ static void run_4099_behind_frame_not_washed() {
     CHECK(read_file("tests/issues/test_issue_4099.cpp").empty(), "4099: no test_issue file");
 }
 
+static void run_4343_symid_index_lookup() {
+    std::println("\n--- #4343: O(1) SymId index on Env (define-heavy top-level lookup) ---");
+    using aura::compiler::Env;
+    using aura::compiler::types::make_int;
+    aura::ast::StringPool pool;
+
+    // AC1: define-heavy top-level binds resolve through the O(1) index.
+    Env root;
+    root.set_pool(&pool);
+    for (int i = 0; i < 800; ++i)
+        root.bind_symid(pool.intern("fn" + std::to_string(i)), make_int(i));
+    bool bulk_ok = true;
+    for (int i = 0; i < 800; i += 97) {
+        auto v = root.lookup_by_symid(pool.intern("fn" + std::to_string(i)));
+        if (!v.has_value() || !is_int(*v) || as_int(*v) != i)
+            bulk_ok = false;
+    }
+    CHECK(bulk_ok, "4343: bulk binds resolve through the index (stride 97)");
+    auto name_face = root.lookup("fn5");
+    CHECK(name_face.has_value() && is_int(*name_face) && as_int(*name_face) == 5,
+          "4343: name-face lookup shares the index fast path");
+
+    // AC2: re-bind shadows — newest binding wins (last-wins = reverse scan).
+    const auto dup = pool.intern("dup");
+    root.bind_symid(dup, make_int(1));
+    root.bind_symid(dup, make_int(2));
+    auto shadow = root.lookup_by_symid(dup);
+    CHECK(shadow.has_value() && is_int(*shadow) && as_int(*shadow) == 2,
+          "4343: re-bind keeps the newest binding (last-wins)");
+
+    // AC3: unbind shifts indices — removed stays out, survivors resolve.
+    const auto gone = pool.intern("fn400");
+    CHECK(root.unbind_local_symid(gone), "4343: unbind reports removal");
+    CHECK(!root.lookup_by_symid(gone).has_value(), "4343: unbound symid no longer resolves");
+    auto keep = root.lookup_by_symid(pool.intern("fn399"));
+    CHECK(keep.has_value() && is_int(*keep) && as_int(*keep) == 399,
+          "4343: neighbor survives the post-erase rebuild");
+
+    // AC4: set_pool rekey remaps SymIds — index rebuilt, value preserved.
+    aura::ast::StringPool pool2;
+    const auto rekeyed = pool2.intern("rekey");
+    root.bind_symid(pool.intern("rekey"), make_int(42));
+    root.set_pool(&pool2);
+    auto rv = root.lookup_by_symid(rekeyed);
+    CHECK(rv.has_value() && is_int(*rv) && as_int(*rv) == 42,
+          "4343: set_pool rekey keeps the binding resolvable");
+
+    // AC5: materialize wholesale copy rebuilds the index (capture path).
+    // Real capture frames are dual-path consistent (#418/#2116 hard gate
+    // empties desynced frames silently) — build via the production
+    // capture path: Env with pool (both paths populated) →
+    // alloc_env_frame_from_env, not raw frame binds without a pool.
+    Evaluator ev;
+    Env capture;
+    capture.set_pool(&pool);
+    for (int i = 0; i < 4; ++i)
+        capture.bind_symid(pool.intern("cap" + std::to_string(i)), make_int(100 + i));
+    capture.bind_symid(pool.intern("cap1"), make_int(999));
+    const auto f = ev.alloc_env_frame_from_env(capture, NULL_ENV_ID);
+    Closure cl;
+    cl.env_id = f;
+    // Issue #2930/#1365: unstamped epoch (0) is fail-closed stale in
+    // production — construction sites must stamp before materialize.
+    ev.stamp_closure_bridge_epoch(cl);
+    auto ne = ev.materialize_call_env(cl);
+    auto c0 = ne.lookup_by_symid(pool.intern("cap0"));
+    CHECK(c0.has_value() && is_int(*c0) && as_int(*c0) == 100,
+          "4343: materialize copy resolves through the rebuilt index");
+    auto c1 = ne.lookup_by_symid(pool.intern("cap1"));
+    CHECK(c1.has_value() && is_int(*c1) && as_int(*c1) == 999,
+          "4343: materialize preserves last-wins shadowing");
+
+    const auto env_src = read_file("src/compiler/evaluator_env.cpp");
+    CHECK(env_src.find("Issue #4343") != std::string::npos, "4343: source cites the issue");
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1317,10 +1393,13 @@ int main() {
     aura_envframe_epoch_batch::run_4072_invalid_and_stale_capture();
     std::println("\n=== Issue #4099: behind frame lookup does not wash version_ ===");
     aura_envframe_epoch_batch::run_4099_behind_frame_not_washed();
+    std::println("\n=== Issue #4343: O(1) SymId index on Env ===");
+    aura_envframe_epoch_batch::run_4343_symid_index_lookup();
     if (::aura::test::g_failed)
         return 1;
     std::println(
-        "envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267): OK ({} "
+        "envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343): OK "
+        "({} "
         "passed)",
         ::aura::test::g_passed);
     return 0;

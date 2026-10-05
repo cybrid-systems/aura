@@ -815,6 +815,14 @@ public:
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>>& bindings_symid_mut() {
         return bindings_symid_;
     }
+    // Issue #4343: rebuild the SymId → last-index map after wholesale
+    // replacement of bindings_symid_ (materialize_call_env / bulk load).
+    // Forward walk, last-wins — preserves shadowing semantics.
+    void rebuild_symid_index() {
+        symid_index_.clear();
+        for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
+            symid_index_[bindings_symid_[i].first] = i;
+    }
     // Issue #1539: mutable linear ownership SoA (materialize_call_env copy).
     std::vector<std::uint8_t>& bindings_linear_ownership_state_mut() {
         return bindings_linear_ownership_state_;
@@ -854,6 +862,12 @@ private:
     // bindings_symid_ (integer compare). bind_symid writes to
     // both (and resolves SymId→string via pool_ to mirror).
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
+    // Issue #4343: SymId → last local index into bindings_symid_ (O(1)
+    // global lookup; reverse-scan semantics preserved — bind appends are
+    // last-wins so the map tracks the newest index for shadowing).
+    // Maintained by bind_symid* / bind_with_linear_state; rebuilt on
+    // set_pool rekey + unbind shift.
+    std::unordered_map<aura::ast::SymId, std::size_t> symid_index_;
     // Issue #1539: parallel linear ownership SoA (same length as
     // bindings_symid_). Copied into EnvFrame by alloc_env_frame_from_env.
     std::vector<std::uint8_t> bindings_linear_ownership_state_;
