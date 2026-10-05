@@ -272,6 +272,12 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     };
     if (pool_ && !bindings_symid_.empty()) {
         const auto s = ensure_interned();
+        // Issue #4343: O(1) index hit before the linear walk.
+        if (auto it = symid_index_.find(s); it != symid_index_.end()) {
+            const auto idx = it->second;
+            if (idx < bindings_symid_.size() && bindings_symid_[idx].first == s)
+                return bindings_symid_[idx].second;
+        }
         for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
             if (it->first == s)
                 return it->second;
@@ -483,6 +489,10 @@ void Env::set_pool(const aura::ast::StringPool* p) {
                 rekeyed.emplace_back(mut->intern(b.first), b.second);
             }
             bindings_symid_ = std::move(rekeyed);
+            // Issue #4343: SymIds remapped — rebuild the O(1) index.
+            symid_index_.clear();
+            for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
+                symid_index_[bindings_symid_[i].first] = i;
             bindings_linear_ownership_state_.assign(bindings_symid_.size(), linear_rt::Untracked);
         } else if (pool_ && !bindings_symid_.empty()) {
             // SymId-only capture frame: resolve names via the previous pool.
@@ -503,6 +513,10 @@ void Env::set_pool(const aura::ast::StringPool* p) {
             }
             bindings_symid_ = std::move(rekeyed);
             bindings_linear_ownership_state_ = std::move(rekeyed_lin);
+            // Issue #4343: SymIds remapped — rebuild the O(1) index.
+            symid_index_.clear();
+            for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
+                symid_index_[bindings_symid_[i].first] = i;
         }
     }
     pool_ = p;
@@ -518,6 +532,8 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 // Concurrent lookup_by_symid during this write is unsupported.
 void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state) {
     bindings_symid_.emplace_back(s, std::move(v));
+    // Issue #4343: O(1) SymId lookup index (last-wins for shadowing).
+    symid_index_[s] = bindings_symid_.size() - 1;
     bindings_linear_ownership_state_.push_back(state);
     // Mirror into string-keyed bindings_ so Env::lookup(name) finds
     // lambda params bound via apply_closure / Path B. Only when pool_
@@ -552,6 +568,8 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
         // pool mutation externally (single-fiber eval / workspace lock).
         auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
         bindings_symid_.emplace_back(s, bindings_.back().second);
+        // Issue #4343: O(1) SymId lookup index.
+        symid_index_[s] = bindings_symid_.size() - 1;
         bindings_linear_ownership_state_.push_back(state);
     }
 }
@@ -584,6 +602,10 @@ bool Env::unbind_local_symid(aura::ast::SymId s) {
             if (i - 1 < bindings_linear_ownership_state_.size())
                 bindings_linear_ownership_state_.erase(bindings_linear_ownership_state_.begin() +
                                                        static_cast<std::ptrdiff_t>(i - 1));
+            // Issue #4343: indices shifted — rebuild the O(1) index.
+            symid_index_.clear();
+            for (std::size_t k = 0; k < bindings_symid_.size(); ++k)
+                symid_index_[bindings_symid_[k].first] = k;
             removed = true;
             break;
         }
@@ -640,6 +662,15 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
+    // Issue #4343: O(1) index hit before the linear walk. The map keeps
+    // the newest index per SymId (bind appends are last-wins), matching
+    // the reverse-scan semantics exactly; the walk stays as a
+    // stale-index fallback.
+    if (auto it = symid_index_.find(s); it != symid_index_.end()) {
+        const auto idx = it->second;
+        if (idx < bindings_symid_.size() && bindings_symid_[idx].first == s)
+            return bindings_symid_[idx].second;
+    }
     for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
         if (it->first == s) {
             // P0 step 2: return raw binding (sentinel as-is). No cells_
@@ -1425,6 +1456,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // SymId PRIMARY for new code; string bindings for set!/lookup and
     // defines that never had a pool at bind time.
     ne.bindings_symid_mut() = fr.bindings_symid_;
+    // Issue #4343: wholesale replace — rebuild the O(1) SymId index.
+    ne.rebuild_symid_index();
     if (!fr.bindings_.empty())
         ne.replace_string_bindings(fr.bindings_);
     // Issue #1539: copy linear ownership SoA into materialized Env.
