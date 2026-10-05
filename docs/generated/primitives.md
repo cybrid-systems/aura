@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**434** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**436** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -12,17 +12,18 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 - **mutation-safety**: 54 primitives (12%)
 - **core**: 348 primitives (80%)
-- **internal-observable**: 31 primitives (7%)
+- **internal-observable**: 33 primitives (8%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
-## Query: (31)
+## Query: (33)
 
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:code` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
@@ -38,6 +39,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:node-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:node-types` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -993,12 +995,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (31)
+### Internal observable (stats/counters) (33)
 
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:code` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:dirty-impact` — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
@@ -1014,6 +1017,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:node-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-provenance` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:node-types` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`

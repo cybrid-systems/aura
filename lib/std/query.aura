@@ -33,6 +33,14 @@
         query:calls-by-marker
         query:node-marker query:ref-counts)
 
+; Issue #4345: (query:ref-counts node-id) — the engine registers this
+; behind the stats_impl face, which has no bare-name Soft binding; the
+; only call surface is (engine:metrics "query:ref-counts" args...).
+; Bind the bare Soft name the docs and Aura Pad expect by delegating
+; to that face.
+(define (query:ref-counts node-id)
+  (engine:metrics "query:ref-counts" node-id))
+
 ; ── (query:list-categories) — list the query: sub-namespaces
 ;     Used for discovery by AI Agents / docs.
 (define (query:list-categories)

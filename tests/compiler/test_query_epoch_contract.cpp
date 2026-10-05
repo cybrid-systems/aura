@@ -601,6 +601,43 @@ int run_test_query_epoch_contract() {
         CHECK(qsrc.find("Issue #4344") != std::string::npos, "4344: source cites the issue");
     }
 
+    // ── Issue #4345: query:code / query:node-types / ref-counts re-export ──
+    {
+        std::println("\n--- #4345: query:code + node-types + ref-counts binding ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::is_string;
+        // Issue #4106: under production defaults a bare-int operand goes
+        // through the shared resolve gate (occupancy ≠ identity) and the
+        // call degrades to a hard merr. Pin the Soft dev posture so the
+        // historical bare-int walk is the asserted contract.
+        apply_dev_audit_defaults();
+        CompilerService cs4345;
+        const char* src4345 = "(define g4345 (lambda (x) (* x 2)))";
+        CHECK(cs4345.eval(std::format("(set-code \"{}\")", src4345)).has_value(), "4345: set-code");
+        auto code = cs4345.eval("(query:code)");
+        CHECK(code.has_value() && is_string(*code), "4345: query:code returns source text");
+        auto& ev4345 = cs4345.evaluator();
+        bool code_ok = false;
+        if (code && is_string(*code)) {
+            const auto idx = as_string_idx(*code);
+            code_ok = idx < ev4345.string_heap().size() &&
+                      ev4345.string_heap()[idx].find("g4345") != std::string::npos;
+        }
+        CHECK(code_ok, "4345: query:code carries the loaded source");
+        auto nt = cs4345.eval("(query:node-types)");
+        CHECK(nt.has_value() && is_pair(*nt), "4345: node-types census returned");
+        CHECK(cs4345.eval("(require \"std/query\" all:)").has_value(), "4345: require std/query");
+        auto rc = cs4345.eval("(query:ref-counts (car (car (define-lookup \"g4345\"))))");
+        CHECK(rc.has_value() && is_int(*rc),
+              "4345: query:ref-counts wrapper returns the count int");
+        const auto qaura = read_file("lib/std/query.aura");
+        CHECK(qaura.find("Issue #4345") != std::string::npos,
+              "4345: std/query ref-counts wrapper cites the issue");
+        const auto qsrc = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(qsrc.find("Issue #4345") != std::string::npos, "4345: source cites the issue");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
