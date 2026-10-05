@@ -992,6 +992,14 @@ static std::vector<std::uint32_t> g_closure_stable_func_ids;
 // epoch — a recycled sid under the same display name from another eval
 // carries a different epoch and must not remap onto the new native.
 static std::vector<std::uint64_t> g_closure_binding_epoch;
+// Issue #4339: per-closure recycle-generation serial recorded at the same
+// named sid stamps as g_closure_binding_epoch. The bridge bumps a per-sid
+// serial on every re-preservation from the retired pool; the remap check
+// compares this against the CURRENT binding's serial so a recycled sid
+// cannot wash the generation check under the owner-scoped frozen table
+// (equal nonzero epochs). Unlike the epoch check, 0 is a meaningful value
+// (fresh-sid binding) — plain equality, no legacy skip.
+static std::vector<std::uint64_t> g_closure_binding_recycle_serial;
 // Issue #2128: MustDeoptBeforeNextCall — set when reemit matched a live
 // closure but remap could not retarget native. Cleared on remount success,
 // remap, alloc reuse, or aura_closure_call force-deopt (exclusive + #2472).
@@ -3826,6 +3834,10 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
         if (cid >= g_closure_binding_epoch.size())
             g_closure_binding_epoch.resize(g_closure_func_ids.size(), 0);
         g_closure_binding_epoch[cid] = aura_lookup_stable_func_id_epoch(name);
+        if (cid >= g_closure_binding_recycle_serial.size())
+            g_closure_binding_recycle_serial.resize(g_closure_func_ids.size(), 0);
+        g_closure_binding_recycle_serial[cid] =
+            aura_lookup_stable_func_id_recycle_serial(name); // #4339
     }
     aura_unlock_workspace_write();
 }
@@ -3991,6 +4003,10 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                 if (cid >= g_closure_binding_epoch.size())
                     g_closure_binding_epoch.resize(g_closure_func_ids.size(), 0);
                 g_closure_binding_epoch[cid] = aura_lookup_stable_func_id_epoch(cname);
+                if (cid >= g_closure_binding_recycle_serial.size())
+                    g_closure_binding_recycle_serial.resize(g_closure_func_ids.size(), 0);
+                g_closure_binding_recycle_serial[cid] =
+                    aura_lookup_stable_func_id_recycle_serial(cname); // #4339
                 cid_stable_id = looked_up;
                 via_backfill = true;
                 aura_bump_live_closure_stable_id_backfill_total(1);
@@ -4034,6 +4050,25 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                     const std::uint64_t bound_epoch = aura_lookup_stable_func_id_epoch(cname);
                     if (g_closure_binding_epoch[cid] != 0 && bound_epoch != 0 &&
                         bound_epoch != g_closure_binding_epoch[cid]) {
+                        g_closure_must_deopt[cid] = 1;
+                        ++must_deopt_set;
+                        aura_bump_live_closure_must_deopt_kept_total(1);
+                        continue;
+                    }
+                    // Issue #4339: the #4337 epoch inequality cannot see a
+                    // same-epoch recycle — under the owner-scoped freeze
+                    // (#2841/#3605) the retired sid is re-preserved with an
+                    // EQUAL nonzero mangle epoch, so the epoch check above
+                    // washes. The per-sid recycle serial still moves on every
+                    // pool re-preservation; a mismatch takes the same
+                    // fail-closed miss shape. Both 0 values are meaningful
+                    // (fresh-sid binding) — plain equality, no legacy skip.
+                    const std::uint64_t bound_serial =
+                        aura_lookup_stable_func_id_recycle_serial(cname);
+                    const std::uint64_t cid_serial = cid < g_closure_binding_recycle_serial.size()
+                                                         ? g_closure_binding_recycle_serial[cid]
+                                                         : std::uint64_t{0};
+                    if (bound_serial != cid_serial) {
                         g_closure_must_deopt[cid] = 1;
                         ++must_deopt_set;
                         aura_bump_live_closure_must_deopt_kept_total(1);
@@ -4112,6 +4147,11 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             g_closure_binding_epoch.resize(g_closure_func_ids.size(), 0);
         g_closure_binding_epoch[cid] =
             (named && cname != nullptr) ? aura_lookup_stable_func_id_epoch(cname) : 0;
+        if (cid >= g_closure_binding_recycle_serial.size())
+            g_closure_binding_recycle_serial.resize(g_closure_func_ids.size(), 0);
+        g_closure_binding_recycle_serial[cid] =
+            (named && cname != nullptr) ? aura_lookup_stable_func_id_recycle_serial(cname)
+                                        : std::uint64_t{0}; // #4339
         const std::int64_t jit_id = (named && cname != nullptr) ? jit_id_for_registered_name(cname)
                                                                 : static_cast<std::int64_t>(-1);
         if (jit_id >= 0)

@@ -678,6 +678,11 @@ void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata);
 std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
 std::uint32_t aura_lookup_stable_func_id(const char* name);       // 0 if missing
 std::uint64_t aura_lookup_stable_func_id_epoch(const char* name); // 0 = no binding (#4337)
+// Issue #4339: per-sid recycle generation serial for the current owner.
+// Bumped on every re-preservation from the retired pool; 0 = fresh sid or no
+// binding. Lets the remap tell a recycled same-epoch binding apart from the
+// pre-clear generation under the owner-scoped table freeze.
+std::uint64_t aura_lookup_stable_func_id_recycle_serial(const char* name);
 std::uint64_t aura_stable_func_id_map_size(void);
 void aura_clear_stable_func_id_map(void);
 // Issue #2670: multi-eval namespace by (eval_owner, name). Explicit eval_ptr

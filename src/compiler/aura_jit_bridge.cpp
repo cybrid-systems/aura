@@ -991,6 +991,16 @@ struct StableFuncIdPool {
 };
 static std::unordered_map<void*, StableFuncIdPool> g_eval_to_id_pool;
 static std::atomic<std::uint64_t> g_stable_func_id_pool_recycle_total{0};
+// Issue #4339: per-sid recycle generation serial. Owner-scoped clears retire
+// ids WITHOUT advancing g_aot_table_epoch (#2841/#3605 freeze), so a recycled
+// sid re-preserved under the same display name stamps an EQUAL nonzero
+// mangle epoch — the #4337 epoch-inequality check washes. This per-sid serial
+// bumps on every re-preserve from the retired pool, giving the remap a
+// generation signal that moves even under the frozen process table. Guarded
+// by g_stable_func_id_mtx (same critical sections as the pool itself);
+// entries are monotonic for the process lifetime (clears must not reset the
+// signal a pre-clear closure compares against).
+static std::unordered_map<std::uint32_t, std::uint64_t> g_stable_func_id_recycle_serial;
 
 static std::uint32_t pop_retired_stable_func_id_locked(void* eval_ptr) noexcept {
     auto try_pop = [](StableFuncIdPool& p) noexcept -> std::uint32_t {
@@ -1045,6 +1055,11 @@ static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, con
         id = pop_retired_stable_func_id_locked(eval_ptr);
     if (id != 0) {
         g_stable_func_id_pool_recycle_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #4339: bump the per-sid recycle serial so the remap
+        // generation check can tell this re-preservation apart from the
+        // pre-clear binding even when the owner-scoped freeze kept the
+        // table epoch (and therefore the stamped mangle epoch) still.
+        ++g_stable_func_id_recycle_serial[id];
         // Issue #2606 soak (CI 0927): a recycled binding must not inherit the
         // retired registration's slot state — see the helper definition.
         reset_recycled_aot_func_slot(id);
@@ -1085,6 +1100,25 @@ static std::uint64_t lookup_stable_func_id_epoch_for_eval_locked(void* eval_ptr,
     const auto& inner = outer_it->second;
     auto it = inner.find(name);
     return it == inner.end() ? 0 : it->second.mangle_epoch;
+}
+
+// Issue #4339: current owner's per-sid recycle serial for name. 0 = fresh
+// sid (never re-preserved from the retired pool) or no binding. Lives on the
+// sid, not the binding, so the value survives the map entries that retire
+// and re-preserve the same integer across evals.
+static std::uint64_t lookup_stable_func_id_recycle_serial_for_eval_locked(void* eval_ptr,
+                                                                          const char* name) {
+    if (!name || !*name)
+        return 0;
+    auto outer_it = g_eval_to_stable_func_id.find(eval_ptr);
+    if (outer_it == g_eval_to_stable_func_id.end())
+        return 0;
+    const auto& inner = outer_it->second;
+    auto it = inner.find(name);
+    if (it == inner.end())
+        return 0;
+    const auto sit = g_stable_func_id_recycle_serial.find(it->second.id);
+    return sit == g_stable_func_id_recycle_serial.end() ? 0 : sit->second;
 }
 
 // Total entries across all eval owners (for query surface; AC5).
@@ -1318,6 +1352,19 @@ extern "C" std::uint64_t aura_lookup_stable_func_id_epoch(const char* name) {
         eval_owner = aura_aot_get_register_owner_eval();
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
     return lookup_stable_func_id_epoch_for_eval_locked(eval_owner, name);
+}
+
+// Issue #4339: current reemit/register owner's per-sid recycle serial for
+// name. Bumped on every re-preservation from the retired pool; 0 = fresh sid
+// or no binding. Same owner resolution / locking as the epoch accessor.
+extern "C" std::uint64_t aura_lookup_stable_func_id_recycle_serial(const char* name) {
+    if (!name || !*name)
+        return 0;
+    void* eval_owner = aura_aot_get_reemit_owner_eval();
+    if (!eval_owner)
+        eval_owner = aura_aot_get_register_owner_eval();
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    return lookup_stable_func_id_recycle_serial_for_eval_locked(eval_owner, name);
 }
 
 extern "C" std::uint32_t aura_lookup_stable_func_id_for_eval(void* eval_ptr, const char* name) {

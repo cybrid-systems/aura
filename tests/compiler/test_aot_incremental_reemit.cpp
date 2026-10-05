@@ -2395,6 +2395,90 @@ static void ac4065_reemit_last_mid() {
     aura_hot_update_set_reemit_boundary_policy(0);
 }
 
+// Issue #4339: owner-scoped frozen table epoch washes the recycled-sid
+// generation check. A retired sid re-preserved under the same display name
+// stamps an EQUAL nonzero mangle epoch (#4337 inequality never fires), so
+// the per-sid recycle serial bumped on every pool re-preservation is the
+// generation signal that still moves: the pre-recycle closure takes the
+// fail-closed miss (MustDeopt stays, no restamp) while a post-recycle
+// binding remaps normally.
+static void ac4339_recycled_epoch_wash_miss() {
+    std::println("\n--- #4339: recycled-sid equal-epoch wash fails closed ---");
+    allow_reemit_outside_boundary();
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+    aura_set_remap_name_fallback_enabled(0);
+
+    // Production posture arms the #3549 retire-into-pool face of the
+    // per-eval clear (the owner-scoped wash precondition). Save/restore the
+    // counter like ProdDensifyWindowGuard4045.
+    const auto prev_prod = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                               .production_defaults_active.load(std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+
+    // AC1: fresh bind. Preserve → sid S (recycle serial 0), closure stamps
+    // epoch E via set_name.
+    const auto sid = aura_get_or_preserve_stable_func_id("wash_4339", nullptr);
+    CHECK(sid != 0, "#4339 AC1: stable id assigned");
+    CHECK(aura_lookup_stable_func_id_recycle_serial("wash_4339") == 0,
+          "#4339 AC1: fresh sid recycle serial 0");
+    const auto cid = aura_alloc_closure(0);
+    CHECK(cid >= 0, "#4339 AC1: alloc");
+    aura_closure_set_name(cid, "wash_4339");
+    const auto epoch_before = aura_lookup_stable_func_id_epoch("wash_4339");
+
+    // AC2: owner-scoped face — retire the sid WITHOUT a table epoch bump,
+    // then re-preserve the same display name. pop steals the same integer
+    // from the retired pool and the frozen table stamps an EQUAL epoch.
+    aura_clear_stable_func_id_map_for_eval(nullptr);
+    const auto sid_recycled = aura_get_or_preserve_stable_func_id("wash_4339", nullptr);
+    CHECK(sid_recycled == sid, "#4339 AC2: retired sid re-preserved (same integer)");
+    CHECK(aura_lookup_stable_func_id_epoch("wash_4339") == epoch_before,
+          "#4339 AC2: owner-scoped face keeps the table epoch still (wash precondition)");
+    CHECK(aura_lookup_stable_func_id_recycle_serial("wash_4339") == 1,
+          "#4339 AC2: recycle serial bumped on the re-preservation");
+
+    // AC3: reemit walks the pre-recycle closure — #4330 membership passes
+    // (the name still binds to the same sid integer), #4337 passes (equal
+    // frozen epochs), and the #4339 serial check takes the fail-closed miss.
+    ReemitFixture rf;
+    rf.candidates = {{"wash_4339", sid, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto mk0 = metrics.live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "#4339 AC3: reemit success");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) != 0,
+          "#4339 AC3: MustDeopt stays set on the recycled generation (no wash)");
+
+    // AC4: positive control — a closure bound AFTER the re-preservation
+    // carries the current serial and still remaps (hit clears MustDeopt);
+    // the pre-recycle closure stays fail-closed on the re-walk.
+    const auto cid2 = aura_alloc_closure(0);
+    CHECK(cid2 >= 0, "#4339 AC4: alloc post-recycle");
+    aura_closure_set_name(cid2, "wash_4339");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid2) == 0,
+          "#4339 AC4: post-recycle binding starts clean");
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "#4339 AC4: second reemit success");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid2) == 0,
+          "#4339 AC4: post-recycle binding remaps (serial match)");
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) != 0,
+          "#4339 AC4: pre-recycle closure still fail-closed on the re-walk");
+    CHECK(metrics.live_closure_must_deopt_kept_total.load(std::memory_order_relaxed) >= mk0 + 1,
+          "#4339 AC3/4: kept counter bumped on the serial misses");
+
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        prev_prod, std::memory_order_relaxed);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+}
+
 } // namespace
 
 int main() {
@@ -2433,6 +2517,7 @@ int main() {
     ac_capture_remount_miss();
     ac_capture_remount_query();
     ac_capture_remount_source_cite();
+    ac4339_recycled_epoch_wash_miss();
     {
         CompilerService cs;
         ac2272_env_gen_remount(cs);
