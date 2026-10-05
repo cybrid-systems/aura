@@ -459,6 +459,13 @@ NodeId parse_list(ParserState& s) {
             }
             if (s.lex.peek().kind == TokenKind::RParen)
                 s.lex.consume();
+            else if (s.lex.eof()) {
+                // Issue #4342: unclosed export list at EOF must fail the
+                // form (same silent-truncation face as parse_list).
+                if (s.deferred_error.empty())
+                    s.deferred_error = "unclosed export list: missing ')' before end of file";
+                return aura::ast::NULL_NODE;
+            }
             auto id = s.flat.add_export(syms);
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
@@ -482,6 +489,10 @@ NodeId parse_list(ParserState& s) {
                 return NULL_NODE;
             }
             if (s.lex.peek().kind != TokenKind::RParen) {
+                // Issue #4342: unclosed dotted list at EOF fails the form
+                // (same silent-truncation face as the parse_list tail).
+                if (s.lex.eof() && s.deferred_error.empty())
+                    s.deferred_error = "unclosed list: missing ')' before end of file";
                 skip_rparen(s);
                 return NULL_NODE;
             }
@@ -500,6 +511,16 @@ NodeId parse_list(ParserState& s) {
             args.push_back(a);
         else
             break;
+    }
+    // Issue #4342: unclosed list — EOF before ')' must fail the form.
+    // Returning a call node here silently truncated load / set-code
+    // (later defines unbound; the parsed prefix re-ran). Same deferred-
+    // error face as #4129 char literals: the top-level loop surfaces it
+    // via flush → root cleared + success=false → load fails loudly.
+    if (s.lex.eof()) {
+        if (s.deferred_error.empty())
+            s.deferred_error = "unclosed list: missing ')' before end of file";
+        return aura::ast::NULL_NODE;
     }
     s.lex.consume(); // ')'
     auto id = s.flat.add_call(func, args);
