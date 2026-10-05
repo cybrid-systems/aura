@@ -324,6 +324,8 @@ static void ac9_4059_soft_off_unchanged() {
 
 } // namespace
 
+static void ac4342_unclosed_list_fail_closed();
+
 int run_test_load_cap_io_read() {
     std::println("=== Issue #2485: load kCapIoRead capability gate ===");
     ac1_denied_without_cap();
@@ -335,8 +337,47 @@ int run_test_load_cap_io_read() {
     ac6_4059_host_path_escape_deny();
     ac7_4059_no_mutate_effect_deny();
     ac9_4059_soft_off_unchanged();
+    ac4342_unclosed_list_fail_closed();
     std::println("\n=== #2485 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
+}
+
+// ── Issue #4342: load of an unbalanced-')' file fails closed ──
+// Soft load used to silently truncate the file at the unbalanced paren:
+// no parse error, earlier top-level forms re-ran, later defines looked
+// unbound. The parser now fails the unclosed list (deferred-error face,
+// #4129 machinery) so load returns a parse error BEFORE the workspace
+// swap — no partial bind, no prefix re-run.
+static void ac4342_unclosed_list_fail_closed() {
+    std::println("\n--- #4342: load of unbalanced-')' file fails closed ---");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    // Good load first: a known define the broken file must NOT clobber.
+    write_temp_aura("/tmp/aura_load_cap_2485.aura");
+    auto good = cs.eval("(load \"/tmp/aura_load_cap_2485.aura\")");
+    CHECK(good.has_value() && !(good && is_error(*good)), "4342: good load bound");
+    {
+        std::ofstream out("/tmp/aura_load_unclosed_4342.aura");
+        out << "(define load-4342-early 1)\n(+ 2 3\n";
+    }
+    auto r = cs.eval("(load \"/tmp/aura_load_unclosed_4342.aura\")");
+    CHECK(r.has_value(), "4342: eval returns a value");
+    CHECK(r && is_error(*r), "4342: unclosed list fails closed (parse error)");
+    // Fail closed = no partial swap: the good workspace stays bound and
+    // the broken file's prefix did not bind.
+    auto keep = cs.eval("load-cap-ok-2485");
+    CHECK(keep.has_value() && !(keep && is_error(*keep)),
+          "4342: good workspace intact (no partial swap)");
+    auto early = cs.eval("load-4342-early");
+    CHECK(early.has_value() && is_error(*early), "4342: broken prefix did not bind");
+    // Extra ')' at top level stays a hard parse error through load
+    // (#4272 parity — both imbalance directions fail closed).
+    {
+        std::ofstream out("/tmp/aura_load_extra_close_4342.aura");
+        out << "(define load-4342-x 1)\n)\n";
+    }
+    auto r2 = cs.eval("(load \"/tmp/aura_load_extra_close_4342.aura\")");
+    CHECK(r2.has_value() && r2 && is_error(*r2), "4342: extra ')' fails closed (#4272 parity)");
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
