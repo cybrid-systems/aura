@@ -1071,8 +1071,10 @@ namespace {
         if (leave != std::string::npos) {
             const auto lwin = rt.substr(leave, 1800);
             CHECK(lwin.find("Issue #3977") != std::string::npos, "4100: #3977 cite stays");
-            CHECK(lwin.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
-                  "4100: owner-scoped unnamed leave-native unchanged");
+            CHECK(lwin.find("Issue #4340") != std::string::npos,
+                  "4340: unnamed arm cites the owner-scoped storm fix");
+            CHECK(lwin.find("aura_aot_last_table_bump_owner_scoped") == std::string::npos,
+                  "4340: the #3977 owner-scoped unnamed skip is gone");
         }
         const auto ifn = dirty.find("void CompilerService::invalidate_function");
         CHECK(ifn != std::string::npos, "4100: invalidate_function");
