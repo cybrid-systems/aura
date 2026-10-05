@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**433** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**434** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 54 primitives (12%)
-- **core**: 347 primitives (80%)
+- **core**: 348 primitives (80%)
 - **internal-observable**: 31 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -136,7 +136,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (239)
+## Core builtins (240)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -191,6 +191,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `current-time-ms` *[core]* — `src/compiler/evaluator_primitives_misc.cpp`
 - `declare-type` *[core]* — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `define-lookup` *[core]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `define-strategy` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` *[core]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
@@ -641,7 +642,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (347)
+### Core builtins (must remain primitive) (348)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -713,6 +714,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `current-time-ms` — `src/compiler/evaluator_primitives_misc.cpp`
 - `declare-type` — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
+- `define-lookup` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `define-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` — `src/compiler/evaluator_primitives_diagnostic.cpp`

@@ -1628,6 +1628,55 @@ void register_workspace_query_primitives(
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
 
+    // Issue #4344: (define-lookup name) — Soft goto-def API for editor
+    // agents. Resolves workspace Define nodes by name and returns one
+    // (id line col) record per match (redefinitions / shadowing yield
+    // multiple entries); empty (void-terminated) list when the name has
+    // no define. NodeView carries the parse line/col, so callers jump
+    // without re-tokenizing. Same epoch contract as query:defines
+    // (#2192/#4088: finish via end_query_epoch_maybe_result).
+    add("define-lookup",
+        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.size() != 1 || !is_string(a[0]))
+                return mev("bad-arg", "usage: (define-lookup name)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "name string index out of range");
+            const auto sym = ws.canonical_pool()->intern(ws.string_heap[idx]);
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+                if (flat.is_free_slot(id))
+                    continue;
+                auto v = flat.get(id);
+                if (v.tag != aura::ast::NodeTag::Define || v.sym_id != sym)
+                    continue;
+                // Record = (id line col); prepend-built in the ws.pairs
+                // arena, same list shape as the query:defines results.
+                EvalValue rec = make_void();
+                auto p1 = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.col)), rec});
+                rec = make_pair(p1);
+                auto p2 = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.line)), rec});
+                rec = make_pair(p2);
+                auto p3 = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), rec});
+                rec = make_pair(p3);
+                auto p4 = ws.pairs.size();
+                ws.pairs.push_back({rec, result});
+                result = make_pair(p4);
+            }
+            // Issue #4088: Production auto-upgrade inside
+            // end_query_epoch_maybe_result; Soft keeps the bare list.
+            return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
+        });
+
     // ═══════════════════════════════════════════════════════════════
     // P1: Query/Transform EDSL 扩展
     // ═══════════════════════════════════════════════════════════════
