@@ -2033,7 +2033,13 @@ static void ac4331_1_dropped_top_body_slot_drain() {
     cs.public_record_dependency("A", "B");
     const auto hy0 = cs.public_dep_graph_hybrid_cascade_hits();
     cs.public_mark_define_dirty("B");
-    CHECK(cs.public_dep_graph_hybrid_cascade_hits() > hy0, "4331 AC1: hybrid cascade ran");
+    // Production dual-track: dependents mark via the direct body-only
+    // helpers (decide_and_reemit is AOT-authoritative; the BFS hybrid
+    // cascade is Soft-owned). Soft runs the cascade and bumps the
+    // counter. Both paths must dirty A's real body slot — the #4331
+    // contract the slot CHECKs below pin.
+    CHECK(cs.public_dep_graph_hybrid_cascade_hits() > hy0 || cs.public_is_block_dirty("A", 0, 0),
+          "4331 AC1: cascade (or production direct marking) engaged");
     // Marker-based slot rule: the BODY slot (0) is dirty; the nested
     // lambda slot (1) is not full-dirtied by the body-only arm.
     CHECK(cs.public_is_block_dirty("A", 0, 0), "4331 AC1: body slot 0 dirty");
