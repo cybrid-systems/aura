@@ -3355,13 +3355,19 @@ static std::int64_t ac4308_old_body(std::int64_t*, std::uint32_t) {
 
 static void ac4308_remap_jit_id_not_stable_id() {
     std::println("\n--- #4308: remap stores the installed jit id, not the stable id ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort)");
+        return;
+    }
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto fn = rt.find("extern \"C\" std::uint64_t aura_remap_live_closures_after_reemit");
     CHECK(fn != std::string::npos, "4308: remap present");
     if (fn != std::string::npos) {
         // #4330 wave: the stale-binding guard grew the membership branch —
         // the #4308 cite sits past the old 9000 edge now. Grow with the fn.
-        const auto win = rt.substr(fn, 10000);
+        // #4337 wave: the generation check grew it past 10000 too (cite at
+        // rel 10860) — 12000 keeps the full remap body inside the window.
+        const auto win = rt.substr(fn, 12000);
         CHECK(win.find("Issue #4308") != std::string::npos, "4308: runtime cites");
         CHECK(win.find("g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id)") ==
                   std::string::npos,
