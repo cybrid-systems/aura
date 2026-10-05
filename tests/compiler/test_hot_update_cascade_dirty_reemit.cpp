@@ -1247,7 +1247,8 @@ static void ac3751_production_facade_feeds_dirty_ring() {
         CHECK(aura_production_dirty_ring_pushed_total() > pushed0,
               "3751 AC1: mark_define_dirty pushed the ring");
         std::vector<aura::ir::IRFunction> empty_irs;
-        cs.store_define_v2("f3751", "(define (f3751 x) x)", std::move(empty_irs), {}, {});
+        cs.store_define_v2("f3751", "(define (f3751 x) x)", std::move(empty_irs), {}, {},
+                           aura::core::current_mutation_epoch());
         CHECK(aura_production_dirty_ring_pushed_total() > pushed0 + 1,
               "3751 AC1: store_define_v2 pushed the ring");
         CHECK(reg.snapshot().reemit_success_total > succ0 || aura_reemit_success_count() > 0,
@@ -1263,7 +1264,8 @@ static void ac3751_production_facade_feeds_dirty_ring() {
         CHECK(reemit_owner_missing_reject_total_v_read() == rej0,
               "3751 AC2: multi-eval facade does not bump owner-missing reject");
         std::vector<aura::ir::IRFunction> empty_irs;
-        a.store_define_v2("f3751_me", "(define (f3751_me x) x)", std::move(empty_irs), {}, {});
+        a.store_define_v2("f3751_me", "(define (f3751_me x) x)", std::move(empty_irs), {}, {},
+                          aura::core::current_mutation_epoch());
         CHECK(reemit_owner_missing_reject_total_v_read() == rej0,
               "3751 AC2: store closer does not bump owner-missing reject");
     }

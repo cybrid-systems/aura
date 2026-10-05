@@ -5749,7 +5749,10 @@ public:
     void store_define_v2(const std::string& name, std::string source,
                          std::vector<aura::ir::IRFunction> irs,
                          std::vector<aura::ir::ClosureBridgeData> bridges,
-                         std::vector<std::string> strings) {
+                         std::vector<std::string> strings, std::uint64_t sampled_mut_epoch) {
+        // Issue #4341: sampled_mut_epoch is the mutation epoch the stored
+        // IR was sampled under — captured before the lower (#4338
+        // semantics), NOT read live at this store.
         auto hash = fnv1a_64(source);
         auto& entry = ir_cache_v2_[name];
         // Issue #4091: keep the FnKey → name side index in sync.
@@ -5775,7 +5778,7 @@ public:
         if (aura::compiler::dirty::residual_castop_persist_active())
             aura::compiler::dirty::bump_residual_castop_persist_content_epoch();
         // Issue #2033 / #2111 / #2183: unified restamp after successful store.
-        restamp_cache_entry_live_(entry);
+        restamp_cache_entry_live_(entry, sampled_mut_epoch);
         ack_peer_ir_stale_on_restamp_(entry, name);
         // Issue #3136: success-path bitmap coherence — stamp residual force
         // region for the just-restamped define so residual_force_mask()
@@ -6111,8 +6114,17 @@ public:
     // calls this so CacheEntryVersionStamp matches live mutation/bridge/
     // defuse/soa. Issue #3481: AOT reemit / instr peel must NOT call this
     // while dirty || abort_map_invalid || !content_stored_this_epoch.
-    void restamp_cache_entry_live_(IRCacheEntry& entry) {
-        const auto mut = aura::core::current_mutation_epoch();
+    // Issue #4341: the mutation stamp is the epoch the stored IR was
+    // SAMPLED under (#4338 semantics), not the epoch observed at store —
+    // a Workspace-rank EDSL mutate that lands between sample and store
+    // must leave the stamp behind the live epoch, so the next
+    // lookup_define_v2 / should_relower reads needs-relower (fail-closed)
+    // instead of reviving pre-mutate IR as a clean hit. Bridge / defuse /
+    // soa keep their live reads (own invalidation axes). Cascade-reemit
+    // restamps re-assert the entry's already-stamped mutation_count
+    // (re-assert, never advance) so a concurrent bump survives them too.
+    void restamp_cache_entry_live_(IRCacheEntry& entry, std::uint64_t sampled_mut) {
+        const auto mut = sampled_mut;
         const auto bridge = bridge_epoch();
         const auto defuse = evaluator_.defuse_version();
         const auto soa = entry.live_soa_generation();
@@ -6136,12 +6148,14 @@ public:
     // Issue #3481: split ack from content restamp. Returns true iff
     // mutation/bridge/defuse/soa were restamped to live.
     bool maybe_restamp_cache_entry_content_live_(IRCacheEntry& entry, const std::string& name,
-                                                 bool content_stored_this_epoch) {
+                                                 bool content_stored_this_epoch,
+                                                 std::uint64_t sampled_mut) {
         // Issue #3481: ack always; content restamp only when irs is stored.
+        // Issue #4341: sampled mutation epoch threaded through.
         ack_cache_entry_fences_live_(entry, name);
         if (entry.dirty || entry.abort_map_invalid || !content_stored_this_epoch)
             return false;
-        restamp_cache_entry_live_(entry);
+        restamp_cache_entry_live_(entry, sampled_mut);
         return true;
     }
 
@@ -7172,6 +7186,12 @@ public:
     bool relower_define_blocks(const std::string& name, std::string_view source,
                                aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                aura::ast::NodeId expanded_root) {
+        // Issue #4341: sample BEFORE any per-fn / full re-lower in this
+        // call — both the per-fn partial restamp and the full-fallback
+        // store_define_v2 stamp the IR with this sampled epoch (#4338
+        // semantics), so a Workspace-rank mutate landing mid-relower
+        // leaves the stamp behind the live epoch (needs-relower next).
+        const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end()) {
             // No entry → caller needs to do a full first-time lower.
@@ -7479,7 +7499,8 @@ public:
                             // Residual desync after peel → fall through to full.
                         } else {
                             // Issue #2183 AC1: restamp after successful per-fn partial.
-                            restamp_cache_entry_live_(it->second);
+                            // Issue #4341: sampled epoch, not store-time live.
+                            restamp_cache_entry_live_(it->second, ir_sample_epoch);
                             ack_peer_ir_stale_on_restamp_(it->second, name);
                             // Issue #3136: success-path bitmap coherence (see 4968).
                             if (aura_production_defaults_active_probe() != 0) {
@@ -7654,7 +7675,7 @@ public:
         // clears all dirty bits via store_define_v2's
         // bookkeeping, and takes ownership of the bundle).
         store_define_v2(name, std::string(source), std::move(bundle), std::move(bridge_bundle),
-                        ir_mod.string_pool);
+                        ir_mod.string_pool, ir_sample_epoch);
         // Mirror to v1 caches (legacy path). Read from v2
         // so we don't keep two separate copies of the IR
         // — v1 is a thin view onto the same data.
@@ -8172,6 +8193,9 @@ public:
             // Pass bind_in_env=false: don't pollute the workspace's env
             // by calling eval_flat. The define is bound later by
             // eval-current which uses its own env.
+            // Issue #4341: sample before cache_define lowers this define —
+            // the mirror store_define_v2 stamps the sampled epoch.
+            const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();
             (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name,
                                /*bind_in_env=*/false);
             // Issue #63723 / #2579: do NOT bind_value_define_via_ir here.
@@ -8189,7 +8213,7 @@ public:
                 if (auto st = ir_cache_strings_.find(name); st != ir_cache_strings_.end())
                     strings_bundle = st->second;
                 store_define_v2(name, canonical, std::move(cit->second), std::move(bridge_bundle),
-                                std::move(strings_bundle));
+                                std::move(strings_bundle), ir_sample_epoch);
                 auto vit = ir_cache_v2_.find(name);
                 if (vit != ir_cache_v2_.end()) {
                     ir_cache_[name] = vit->second.irs;
@@ -9339,11 +9363,13 @@ public:
     }
 
     // Issue #2183 test: force restamp to live counters (monotonic check).
+    // Issue #4341: passes the epoch explicitly — sample-at-call == live
+    // for this synchronous helper.
     bool restamp_cache_entry_for_test(const std::string& name) {
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return false;
-        restamp_cache_entry_live_(it->second);
+        restamp_cache_entry_live_(it->second, aura::core::current_mutation_epoch());
         ack_peer_ir_stale_on_restamp_(it->second, name);
         // Issue #3136: success-path bitmap coherence (see store_ir_cache_v2).
         if (aura_production_defaults_active_probe() != 0) {

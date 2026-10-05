@@ -1329,8 +1329,10 @@ static void ac3977_unnamed_owner_scoped_skips_process_count() {
     const auto jit = read_file("src/compiler/aura_jit.cpp");
     const auto hur = read_file("src/compiler/hot_update_registry.cpp");
     CHECK(rt.find("Issue #3977") != std::string::npos, "3977: runtime cites #3977");
-    CHECK(rt.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
-          "3977 AC2: unnamed helper skips count on owner-scoped last bump");
+    CHECK(rt.find("Issue #4340") != std::string::npos,
+          "4340: unnamed arm cites the owner-scoped storm fix");
+    CHECK(rt.find("aura_aot_last_table_bump_owner_scoped") == std::string::npos,
+          "4340: the #3977 owner-scoped unnamed skip is gone");
     CHECK(jit.find("Issue #3977") != std::string::npos, "3977: AuraJIT cites #3977");
     CHECK(jit.find("aura_aot_peer_jit_name_is_soft_stale(name)") != std::string::npos,
           "3977: batch_deopt_for skips when name table already holds F");
@@ -1431,6 +1433,51 @@ static void ac4338_sampled_epoch_stamp() {
     CHECK(!std::filesystem::exists("docs/design/4338-sampled-epoch-stamp.md"),
           "4338: no docs/design");
     CHECK(!std::filesystem::exists("tests/issues/test_issue_4338.cpp"), "4338: no invent");
+}
+
+// Issue #4341: store_define_v2 / per-fn partial / cascade restamps stamp
+// the mutation epoch the IR was SAMPLED under (#4338 semantics), not the
+// epoch observed at store — a Workspace-rank EDSL mutate landing between
+// sample and store must leave the stamp behind live (needs-relower),
+// never revive pre-mutate IR as a clean hit.
+static void ac4341_sampled_epoch_restamp() {
+    std::println("\n--- #4341: cache restamps stamp the sampled mutation epoch ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(ixx.find("Issue #4341") != std::string::npos, "4341: service.ixx cites");
+    CHECK(dirty.find("Issue #4341") != std::string::npos, "4341: service_dirty.cpp cites");
+    // restamp takes the sampled epoch; the live current_mutation_epoch()
+    // read inside restamp_cache_entry_live_ is gone.
+    CHECK(ixx.find(
+              "void restamp_cache_entry_live_(IRCacheEntry& entry, std::uint64_t sampled_mut)") !=
+              std::string::npos,
+          "4341: restamp takes the sampled epoch");
+    CHECK(ixx.find("const auto mut = aura::core::current_mutation_epoch();") == std::string::npos,
+          "4341: no live mutation read inside the restamp");
+    // store_define_v2 carries the sampled epoch to the unified restamp.
+    CHECK(ixx.find("restamp_cache_entry_live_(entry, sampled_mut_epoch);") != std::string::npos,
+          "4341: store_define_v2 stamps the sampled epoch");
+    // relower_define_blocks samples BEFORE any per-fn / full re-lower and
+    // feeds both the partial restamp and the full-fallback store.
+    CHECK(ixx.find("const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();") !=
+              std::string::npos,
+          "4341: relower samples before the lower");
+    CHECK(ixx.find("restamp_cache_entry_live_(it->second, ir_sample_epoch);") != std::string::npos,
+          "4341: per-fn partial restamps the sampled epoch");
+    CHECK(ixx.find("ir_mod.string_pool, ir_sample_epoch);") != std::string::npos,
+          "4341: full-fallback store stamps the sampled epoch");
+    // Cascade-reemit restamps re-assert the already-stamped sampled
+    // mutation_count — never advance to live.
+    size_t cascade_reassert = 0;
+    for (auto pos = dirty.find("it->second.version_stamp_.mutation_count);");
+         pos != std::string::npos;
+         pos = dirty.find("it->second.version_stamp_.mutation_count);", pos + 1))
+        ++cascade_reassert;
+    CHECK(cascade_reassert >= 2,
+          "4341: cascade root + dependent restamps re-assert the sampled stamp");
+    CHECK(!std::filesystem::exists("docs/design/4341-sampled-epoch-restamp.md"),
+          "4341: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_4341.cpp"), "4341: no invent");
 }
 
 // Issue #4146: production facade cone JIT drop — #3749 evicted the root
@@ -1635,6 +1682,7 @@ int run_test_issue_3112() {
     // last_seen_epoch_ is behind current_mutation_epoch.
     ac4073_stale_epoch_try_jit_does_not_invoke();
     ac4338_sampled_epoch_stamp();
+    ac4341_sampled_epoch_restamp();
 
     // Issue #4146: production facade cone JIT drop — dependents of a
     // facade-invalidated root lose jit_cache_/native too (owner-scoped

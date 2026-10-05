@@ -222,7 +222,11 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                     abort_force_generation_.load(std::memory_order_acquire);
                 if (!it->second.dirty && !it->second.abort_map_invalid &&
                     it->second.content_stored_this_epoch) {
-                    restamp_cache_entry_live_(it->second);
+                    // Issue #4341: re-assert the already-stamped sampled
+                    // mutation_count — never advance to live (a concurrent
+                    // Workspace-rank bump between store and this restamp
+                    // must keep the entry needs-relower).
+                    restamp_cache_entry_live_(it->second, it->second.version_stamp_.mutation_count);
                     metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                     // Issue #3136: success-path bitmap coherence — root restamp
                     // (cascade-reemit path). Issue #3383: must use the SAME
@@ -250,7 +254,10 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                         abort_force_generation_.load(std::memory_order_acquire);
                     if (!it->second.dirty && !it->second.abort_map_invalid &&
                         it->second.content_stored_this_epoch) {
-                        restamp_cache_entry_live_(it->second);
+                        // Issue #4341: re-assert the stored sampled
+                        // mutation_count (see root restamp above).
+                        restamp_cache_entry_live_(it->second,
+                                                  it->second.version_stamp_.mutation_count);
                         metrics_.cache_stamp_aot_restamp_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
                         // Issue #3136: success-path bitmap coherence — dependent
@@ -1673,6 +1680,9 @@ void CompilerService::invalidate_function(const std::string& name) {
         // which is set to evaluator_.compiler_metrics()). Without this
         // match, the lookup would miss and the gate would silently no-op.
         aura::compiler::set_current_escape_key(evaluator_.compiler_metrics(), _esc_gen);
+        // Issue #4341: sample BEFORE the lower — the store_define_v2 below
+        // stamps the IR with this sampled epoch (#4338 semantics).
+        const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
             cache_strings_ptr, &dep_name, &type_registry_, value_cells_for_lowering());
@@ -1738,7 +1748,7 @@ void CompilerService::invalidate_function(const std::string& name) {
             }
         }
         store_define_v2(dep_name, src_it->second, std::move(bundle), std::move(bridge_bundle),
-                        ir_mod.string_pool);
+                        ir_mod.string_pool, ir_sample_epoch);
         if (auto vit = ir_cache_v2_.find(dep_name); vit != ir_cache_v2_.end()) {
             ir_cache_[dep_name] = vit->second.irs;
             ir_cache_bridge_[dep_name] = vit->second.bridges;
