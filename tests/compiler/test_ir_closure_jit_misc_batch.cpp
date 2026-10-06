@@ -43,6 +43,7 @@ extern int run_test_closure_call_must_deopt_toctou();
 extern int run_test_comprehensive_live_closure_expire();
 extern int run_test_dce_elided_deopt_meta();
 extern int run_test_emit_object_deprecated();
+extern int run_test_env_lookup_soa_shadow_reverse();
 extern int run_test_force_jit_repromote();
 extern int run_test_ir_const_string_intern();
 extern int run_test_ir_optimize_type_info_chain();
@@ -67,7 +68,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_ir_closure_jit_misc_batch (25 members) ===");
+    std::println("=== test_ir_closure_jit_misc_batch (26 members) ===");
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     const struct {
         const char* name;
@@ -90,6 +91,7 @@ int main() {
         {"test_comprehensive_live_closure_expire", run_test_comprehensive_live_closure_expire},
         {"test_dce_elided_deopt_meta", run_test_dce_elided_deopt_meta},
         {"test_emit_object_deprecated", run_test_emit_object_deprecated},
+        {"test_env_lookup_soa_shadow_reverse", run_test_env_lookup_soa_shadow_reverse},
         {"test_force_jit_repromote", run_test_force_jit_repromote},
         {"test_ir_const_string_intern", run_test_ir_const_string_intern},
         {"test_ir_optimize_type_info_chain", run_test_ir_optimize_type_info_chain},

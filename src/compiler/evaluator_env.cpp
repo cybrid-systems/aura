@@ -348,8 +348,16 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         while (cur != NULL_ENV_ID && hops < MAX_ENV_DEPTH) {
             ++hops;
             const EnvFrame& pfr = owner_->env_frame(cur);
-            // Walk the frame's bindings (string-keyed)
-            for (auto& b : pfr.bindings_) {
+            // Walk the frame's bindings (string-keyed). REVERSE match:
+            // a TCO call frame accumulates copied ancestor bindings (via
+            // materialize of a cap frame that snapshotted outer scopes)
+            // followed by fresh local binds, so one frame can hold the
+            // same name twice — e.g. #4353: copied global `gv` cell first,
+            // let-shadowing `gv` cell last. Forward scan returns the STALE
+            // copy; last-match matches Env::lookup's local reverse-scan
+            // and the symid scan below (rbegin) — shadowing semantics.
+            for (auto it = pfr.bindings_.rbegin(); it != pfr.bindings_.rend(); ++it) {
+                auto& b = *it;
                 if (b.first == n) {
                     if (is_cell(b.second)) {
                         auto ci = as_cell_id(b.second);
