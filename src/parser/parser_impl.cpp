@@ -232,29 +232,13 @@ NodeId parse_expr(ParserState& s) {
             return parse_float(s, s.lex.consume());
         case TokenKind::String: {
             auto tok = s.lex.consume();
-            auto text = std::string(tok.text);
-            // Process \" → " and \\ → \ in string literals
-            std::string unescaped;
-            bool has_esc = false;
-            for (std::size_t i = 0; i < text.size(); ++i) {
-                if (text[i] == '\\' && i + 1 < text.size()) {
-                    auto n = text[i + 1];
-                    if (n == '"') {
-                        unescaped += '"';
-                        i++;
-                        has_esc = true;
-                    } else if (n == '\\') {
-                        unescaped += '\\';
-                        i++;
-                        has_esc = true;
-                    } else {
-                        unescaped += text[i];
-                    }
-                } else {
-                    unescaped += text[i];
-                }
-            }
-            auto id = s.flat.add_literalstring(s.pool.intern(has_esc ? unescaped : text));
+            // Issue #4348: Lexer::read_string already unescapes the escape
+            // sequences into the token text. A second unescape pass here
+            // handled only double-backslash and backslash-quote, which
+            // double-unescaped sequences: "a\\\\b" (4) came out a\\b (3),
+            // "x\\\\\"y" (4) came out x\"y (3). Use the lexer value
+            // directly — one unescape per nesting level.
+            auto id = s.flat.add_literalstring(s.pool.intern(std::string(tok.text)));
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
         }
