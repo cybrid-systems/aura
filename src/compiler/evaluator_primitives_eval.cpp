@@ -38,6 +38,30 @@ namespace {
 }
 } // namespace
 
+namespace aura::compiler {
+namespace {
+    struct RetainedEvalProgram {
+        std::unique_ptr<aura::ast::FlatAST> flat;
+        std::unique_ptr<aura::ast::StringPool> pool;
+    };
+    std::mutex g_retained_eval_mu;
+    std::unordered_map<const Evaluator*, std::vector<RetainedEvalProgram>> g_retained_eval;
+} // namespace
+
+void Evaluator::retain_eval_program(std::unique_ptr<aura::ast::FlatAST> flat,
+                                    std::unique_ptr<aura::ast::StringPool> pool) {
+    if (!flat || !pool)
+        return;
+    std::lock_guard<std::mutex> lock(g_retained_eval_mu);
+    g_retained_eval[this].push_back(RetainedEvalProgram{std::move(flat), std::move(pool)});
+}
+
+void Evaluator::release_retained_eval_programs() noexcept {
+    std::lock_guard<std::mutex> lock(g_retained_eval_mu);
+    g_retained_eval.erase(this);
+}
+} // namespace aura::compiler
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -541,13 +565,19 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (sidx >= ev.string_heap_.size())
             return make_void();
         auto code = ev.string_heap_[sidx];
-        aura::ast::StringPool pool;
-        aura::ast::FlatAST flat;
-        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        // Issue #4359: a stack flat dies when eval returns, and the
+        // closure still holds that pointer. Callers then hang or abort.
+        // Keep the program for the Evaluator lifetime.
+        auto pool = std::make_unique<aura::ast::StringPool>();
+        auto flat = std::make_unique<aura::ast::FlatAST>();
+        auto pr = aura::parser::parse_to_flat(code, *flat, *pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return make_void();
-        flat.root = pr.root;
-        auto result = ev.eval_flat(flat, pool, pr.root, ev.top_);
+        flat->root = pr.root;
+        auto* flat_p = flat.get();
+        auto* pool_p = pool.get();
+        ev.retain_eval_program(std::move(flat), std::move(pool));
+        auto result = ev.eval_flat(*flat_p, *pool_p, pr.root, ev.top_);
         if (result)
             return *result;
         return make_void();

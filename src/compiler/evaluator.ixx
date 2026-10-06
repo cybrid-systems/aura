@@ -16538,6 +16538,12 @@ private:
     // valid=false until a non-inert outermost Guard exits. 0 is legal.
     std::uint64_t last_completed_audit_mid_ = 0;
     bool last_completed_audit_mid_valid_ = false;
+    // Issue #4359: (eval "...") closures point at the parsed flat and
+    // pool. Those objects must outlive the primitive. Storage is a side
+    // table; release runs from ~Evaluator. Append-only at struct end.
+    void retain_eval_program(std::unique_ptr<aura::ast::FlatAST> flat,
+                             std::unique_ptr<aura::ast::StringPool> pool);
+    void release_retained_eval_programs() noexcept;
 };
 
 
