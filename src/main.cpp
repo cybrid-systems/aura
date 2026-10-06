@@ -3230,12 +3230,47 @@ int main(int argc, char* argv[]) {
         if (!is_void(*r))
             std::println("{}", fmt_val(*r, cs));
     } else {
-        // Hard error in the single pass — fall back to the historical
-        // per-expression walk. It re-reads the workspace per call, so
-        // set-code-then-use programs resolve (issue_166_*, dws:default-
-        // after-setcode), and diagnostics keep their source carets
-        // (diag:parse-error-*).
-        for (auto& e : exprs) {
+        // The single pass already ran every form before the failing one
+        // (display, set!, set-code). Re-walking those forms repeats side
+        // effects and, after set-code, rebuilds closures so later calls
+        // throw invalid closure (Issue #4355).
+        //
+        // A runtime diagnostic carries the file line/col of the form that
+        // failed. Print it once against the whole program, then evaluate
+        // only forms that start after that spot. A parse failure happens
+        // before any form runs, so the historical per-expression walk
+        // still covers it (and keeps source carets on diag:parse-error-*).
+        const auto& diag = r.error();
+        const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
+                                diag.kind == aura::diag::ErrorKind::UnexpectedToken ||
+                                diag.kind == aura::diag::ErrorKind::UnterminatedSExpr;
+        std::size_t resume_at = 0;
+        if (!parse_fail && diag.location.valid()) {
+            std::size_t err_off = 0;
+            std::uint32_t line = 1;
+            for (std::size_t k = 0; k < all_input.size() && line < diag.location.line; ++k) {
+                if (all_input[k] == '\n')
+                    ++line;
+                err_off = k + 1;
+            }
+            if (diag.location.column > 0)
+                err_off += static_cast<std::size_t>(diag.location.column - 1);
+            std::size_t search = 0;
+            for (std::size_t i = 0; i < exprs.size(); ++i) {
+                auto pos = all_input.find(exprs[i], search);
+                if (pos == std::string::npos)
+                    break;
+                if (pos <= err_off)
+                    resume_at = i + 1;
+                else
+                    break;
+                search = pos + exprs[i].size();
+            }
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+            err = true;
+        }
+        for (std::size_t i = resume_at; i < exprs.size(); ++i) {
+            auto& e = exprs[i];
             auto s = e.find_first_not_of(" \t\r\n");
             if (s == std::string::npos)
                 continue;
@@ -3244,7 +3279,7 @@ int main(int argc, char* argv[]) {
             if (!r2) {
                 std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
                 err = true;
-            } else if (&e == &exprs.back() && !is_void(*r2))
+            } else if (i + 1 == exprs.size() && !is_void(*r2))
                 std::println("{}", fmt_val(*r2, cs));
         }
     }
