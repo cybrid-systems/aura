@@ -2491,6 +2491,11 @@ public:
         return uncovered_bidirectional_tag_count_;
     }
 
+    // Issue #4363: a partial re-infer of one Define does not walk a later
+    // sibling value define, so `pet` looks unbound and the hard gate never
+    // sees String. Bind live top-level literal defines before the cone.
+    void seed_workspace_value_defines(aura::ast::FlatAST& flat, aura::ast::StringPool& pool);
+
 private:
     std::function<void()> on_narrowing_refresh_;
     std::function<void()> on_selective_recheck_;
