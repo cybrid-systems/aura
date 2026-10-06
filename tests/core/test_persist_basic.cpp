@@ -11,6 +11,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.mutation;
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
@@ -41,6 +42,27 @@ std::vector<char> read_file_bytes(const char* path) {
                              std::istreambuf_iterator<char>());
 }
 
+void append_u32(std::vector<char>& buf, std::uint32_t v) {
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&v), reinterpret_cast<const char*>(&v) + 4);
+}
+
+void append_u64(std::vector<char>& buf, std::uint64_t v) {
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&v), reinterpret_cast<const char*>(&v) + 8);
+}
+
+std::uint32_t crc32_bytes(const std::vector<char>& buf) {
+    std::uint32_t crc = 0;
+    crc = ~crc;
+    for (unsigned char b : buf) {
+        crc ^= b;
+        for (int i = 0; i < 8; ++i) {
+            std::uint32_t mask = -(crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return ~crc;
+}
+
 } // namespace
 
 int main() {
@@ -50,7 +72,7 @@ int main() {
     {
         CompilerService cs;
         auto v = cs.eval("(workspace-persist-format-version)");
-        CHECK(v && is_int(*v) && as_int(*v) == 1, "format version == 1");
+        CHECK(v && is_int(*v) && as_int(*v) == 2, "format version == 2");
     }
 
     // ── AC2: serialize empty / with code ──
@@ -150,7 +172,7 @@ int main() {
     {
         CompilerService cs;
         CHECK(cs.eval("(require \"std/persist\" all:)").has_value(), "require persist");
-        CHECK(eval_bool(cs, "(= (persist:format-version) 1)"), "persist:format-version");
+        CHECK(eval_bool(cs, "(= (persist:format-version) 2)"), "persist:format-version");
         CHECK(cs.eval("(set-code \"(define z 99)\")").has_value(), "set-code z");
         const char* p = "/tmp/aura_persist_std_1381.bin";
         CHECK(eval_bool(cs, std::format("(persist:save \"{}\")", p).c_str()), "persist:save");
@@ -172,6 +194,89 @@ int main() {
     }
 
     std::remove(kPath);
+
+    // Issue #4365: v1 records omit the provenance tail. A v1 blob still
+    // loads, and author / parent-mutation / composite come back as 0.
+    // v2 round-trips the three fields. parent_mutation_id is not parent_id.
+    {
+        using aura::ast::MutationRecord;
+        MutationRecord rec{};
+        rec.mutation_id = 7;
+        rec.target_node = 5;
+        rec.operator_name = "rebind";
+        rec.summary = "closer";
+        rec.author_fingerprint = 42;
+        rec.parent_mutation_id = 9;
+        rec.composite_transaction_id = 1;
+
+        std::vector<char> old_wire;
+        std::vector<char> new_wire;
+        aura::ast::mutation::wire_write_mutation_record(old_wire, rec, 1);
+        aura::ast::mutation::wire_write_mutation_record(
+            new_wire, rec, aura::ast::mutation::kMutationRecordProvenanceWireVersion);
+        CHECK(new_wire.size() == old_wire.size() + 24, "v2 tail is three u64s");
+
+        std::size_t pos = 0;
+        auto back_old = aura::ast::mutation::wire_read_mutation_record(old_wire, pos, 1);
+        CHECK(pos == old_wire.size(), "v1 read consumes the record");
+        CHECK(back_old.operator_name == "rebind" && back_old.summary == "closer",
+              "v1 keeps op and summary");
+        CHECK(back_old.author_fingerprint == 0 && back_old.parent_mutation_id == 0 &&
+                  back_old.composite_transaction_id == 0,
+              "v1 leaves provenance at 0");
+
+        pos = 0;
+        auto back_new = aura::ast::mutation::wire_read_mutation_record(
+            new_wire, pos, aura::ast::mutation::kMutationRecordProvenanceWireVersion);
+        CHECK(pos == new_wire.size(), "v2 read consumes the tail");
+        CHECK(back_new.author_fingerprint == 42 && back_new.parent_mutation_id == 9 &&
+                  back_new.composite_transaction_id == 1,
+              "v2 round-trips provenance");
+
+        const char* v1_path = "/tmp/aura_persist_v1_4365.bin";
+        std::vector<char> blob;
+        const char magic[8] = {'A', 'U', 'R', 'A', 'S', 'O', 'U', 'L'};
+        blob.insert(blob.end(), magic, magic + 8);
+        blob.push_back(static_cast<char>(0x01));
+        append_u32(blob, 1);
+        append_u64(blob, 0);
+        const std::string source = "(define (hello x) 1)";
+        append_u32(blob, 1);
+        append_u32(blob, static_cast<std::uint32_t>(source.size()));
+        blob.insert(blob.end(), source.begin(), source.end());
+        std::vector<char> mut;
+        append_u32(mut, 1);
+        mut.insert(mut.end(), old_wire.begin(), old_wire.end());
+        append_u32(blob, 3);
+        append_u32(blob, static_cast<std::uint32_t>(mut.size()));
+        blob.insert(blob.end(), mut.begin(), mut.end());
+        append_u32(blob, 0xFFFFFFFFu);
+        append_u32(blob, crc32_bytes(blob));
+        {
+            std::ofstream o(v1_path, std::ios::binary | std::ios::trunc);
+            o.write(blob.data(), static_cast<std::streamsize>(blob.size()));
+        }
+        CompilerService cs;
+        CHECK(href(cs, std::format("workspace-persist-info \"{}\"", v1_path).c_str(),
+                   "format-version") == 1,
+              "v1 info format-version");
+        CHECK(href(cs, std::format("workspace-persist-info \"{}\"", v1_path).c_str(), "crc-ok") ==
+                  1,
+              "v1 info crc-ok");
+        CHECK(eval_bool(cs, std::format("(deserialize-workspace \"{}\")", v1_path).c_str()),
+              "v1 blob deserializes");
+        CHECK(eval_bool(cs, "(not (= (string-index (query:code) \"hello\") -1))"),
+              "v1 source restored");
+        CHECK(eval_bool(cs, "(let ((row (car (query:mutations-since 0)))) "
+                            "(and (not (= (string-index row \"op=rebind\") -1)) "
+                            "(not (= (string-index row \"sum=closer\") -1)) "
+                            "(not (= (string-index row \"author=0\") -1)) "
+                            "(= (string-index row \"author=42\") -1) "
+                            "(not (= (string-index row \"composite=0\") -1)) "
+                            "(= (string-index row \"composite=1\") -1)))"),
+              "v1 mutation log keeps provenance at 0");
+        std::remove(v1_path);
+    }
 
     if (::aura::test::g_failed)
         return 1;

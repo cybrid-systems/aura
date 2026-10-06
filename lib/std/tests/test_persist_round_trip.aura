@@ -15,10 +15,10 @@
          (fmt (persist:format-version)))
     (and ok-save
          ok-load
-         (= fv 1)
+         (= fv 2)
          (= magic 1)
          (= crc 1)
          (> srcb 0)
-         (= fmt 1))))
+         (= fmt 2))))
 
 (test-persist-round-trip)

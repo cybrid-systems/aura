@@ -427,6 +427,13 @@ namespace mutation {
     }
 
     // ── Wire format (pure serialization) ───────────────────────────
+    // Issue #4365: version 1 stops at invariant_status. Version 2 appends
+    // author_fingerprint, parent_mutation_id, and composite_transaction_id.
+    // parent_mutation_id is the audit-chain id, not parent_id (a NodeId
+    // already written above). Older containers pass version 1 and the
+    // three fields stay 0.
+    export constexpr std::uint32_t kMutationRecordProvenanceWireVersion = 2;
+
     namespace detail {
 
         inline void wire_write_string(std::vector<char>& buf, std::string_view s) {
@@ -447,7 +454,8 @@ namespace mutation {
 
     } // namespace detail
 
-    export void wire_write_mutation_record(std::vector<char>& buf, const MutationRecord& r) {
+    export void wire_write_mutation_record(std::vector<char>& buf, const MutationRecord& r,
+                                           std::uint32_t wire_version = 1) {
         buf.insert(buf.end(), reinterpret_cast<const char*>(&r.mutation_id),
                    reinterpret_cast<const char*>(&r.mutation_id) + 8);
         buf.insert(buf.end(), reinterpret_cast<const char*>(&r.timestamp_ms),
@@ -475,10 +483,19 @@ namespace mutation {
         buf.push_back(r.has_subtree_rollback ? '\1' : '\0');
         auto inv = static_cast<std::uint8_t>(r.invariant_status);
         buf.push_back(static_cast<char>(inv));
+        // Issue #4365: provenance tail. FlatAST SoA v2 keeps wire_version 1.
+        if (wire_version >= kMutationRecordProvenanceWireVersion) {
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&r.author_fingerprint),
+                       reinterpret_cast<const char*>(&r.author_fingerprint) + 8);
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&r.parent_mutation_id),
+                       reinterpret_cast<const char*>(&r.parent_mutation_id) + 8);
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&r.composite_transaction_id),
+                       reinterpret_cast<const char*>(&r.composite_transaction_id) + 8);
+        }
     }
 
-    export MutationRecord wire_read_mutation_record(const std::vector<char>& buf,
-                                                    std::size_t& pos) {
+    export MutationRecord wire_read_mutation_record(const std::vector<char>& buf, std::size_t& pos,
+                                                    std::uint32_t wire_version = 1) {
         MutationRecord r;
         std::memcpy(&r.mutation_id, &buf[pos], 8);
         pos += 8;
@@ -505,6 +522,15 @@ namespace mutation {
         r.old_subtree_source = detail::wire_read_string(buf, pos);
         r.has_subtree_rollback = buf[pos++] != 0;
         r.invariant_status = static_cast<InvariantStatus>(static_cast<std::uint8_t>(buf[pos++]));
+        // Issue #4365: missing tail on a short buffer leaves the defaults (0).
+        if (wire_version >= kMutationRecordProvenanceWireVersion && pos + 24 <= buf.size()) {
+            std::memcpy(&r.author_fingerprint, &buf[pos], 8);
+            pos += 8;
+            std::memcpy(&r.parent_mutation_id, &buf[pos], 8);
+            pos += 8;
+            std::memcpy(&r.composite_transaction_id, &buf[pos], 8);
+            pos += 8;
+        }
         return r;
     }
 
