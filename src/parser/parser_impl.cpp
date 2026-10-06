@@ -670,7 +670,7 @@ NodeId parse_lambda(ParserState& s) {
 }
 
 NodeId parse_define(ParserState& s) {
-    s.lex.consume(); // 'define'
+    auto tok = s.lex.consume(); // 'define'
     auto n = s.lex.peek();
     if (n.kind == TokenKind::LParen) {
         // Shorthand: (define (fn params...) body...)
@@ -737,7 +737,13 @@ NodeId parse_define(ParserState& s) {
             return NULL_NODE;
         NodeId body = (body_exprs.size() == 1) ? body_exprs[0] : s.flat.add_begin(body_exprs);
         auto lambda = s.flat.add_lambda(params, annots, body, dotted);
-        return s.flat.add_define(s.pool.intern(std::string(fn.text)), lambda);
+        // Issue #4347: Define nodes must carry their parse location —
+        // (define-lookup name) reports (id line col) for editor goto-def,
+        // and a Define without set_loc reads 0:0. Same head-token position
+        // convention as parse_list (1-based).
+        auto did = s.flat.add_define(s.pool.intern(std::string(fn.text)), lambda);
+        s.flat.set_loc(did, tok.line, tok.column);
+        return did;
     }
     // Normal: (define name value)
     if (n.kind != TokenKind::Identifier) {
@@ -749,7 +755,10 @@ NodeId parse_define(ParserState& s) {
     if (v == NULL_NODE)
         return NULL_NODE;
     s.lex.consume(); // ')'
-    return s.flat.add_define(s.pool.intern(std::string(n.text)), v);
+    // Issue #4347: same parse-location face for (define name value).
+    auto did = s.flat.add_define(s.pool.intern(std::string(n.text)), v);
+    s.flat.set_loc(did, tok.line, tok.column);
+    return did;
 }
 
 NodeId parse_define_type(ParserState& s) {

@@ -584,6 +584,24 @@ int run_test_query_epoch_contract() {
         auto cl = cs4344.eval("(car (cdr (cdr (car (define-lookup \"f4344\")))))");
         CHECK(ln.has_value() && is_int(*ln), "4344: record line is an int");
         CHECK(cl.has_value() && is_int(*cl), "4344: record col is an int");
+        // Issue #4347: Define nodes carry their parse location — the record
+        // reports the define head token's 1-based line/col (same convention
+        // as parse_list call nodes), never 0 0, so editor goto-def can jump
+        // without re-tokenizing. Multi-line buffer pins both faces.
+        CHECK(cs4344.eval("(set-code \"(define a4347 1)\\n\\n  (define b4347 2)\")").has_value(),
+              "4347: multi-line set-code");
+        auto la = cs4344.eval("(car (cdr (car (define-lookup \"a4347\"))))");
+        auto ca = cs4344.eval("(car (cdr (cdr (car (define-lookup \"a4347\")))))");
+        CHECK(la.has_value() && is_int(*la) && as_int(*la) == 1,
+              "4347: a4347 line = 1 (define head, 1-based)");
+        CHECK(ca.has_value() && is_int(*ca) && as_int(*ca) == 2,
+              "4347: a4347 col = 2 (define head after paren)");
+        auto lb = cs4344.eval("(car (cdr (car (define-lookup \"b4347\"))))");
+        auto cb = cs4344.eval("(car (cdr (cdr (car (define-lookup \"b4347\")))))");
+        CHECK(lb.has_value() && is_int(*lb) && as_int(*lb) == 3,
+              "4347: b4347 line = 3 (indented define on 3rd source line)");
+        CHECK(cb.has_value() && is_int(*cb) && as_int(*cb) == 4,
+              "4347: b4347 col = 4 (define head after 2-space indent + paren)");
         auto miss = cs4344.eval("(define-lookup \"no4344\")");
         CHECK(!(miss && is_pair(*miss)), "4344: miss is empty (not a pair)");
         auto bad = cs4344.eval("(define-lookup)");
