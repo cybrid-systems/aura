@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 
+#include <poll.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -163,6 +164,25 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         auto id = ev.string_heap_.size();
         ev.string_heap_.push_back(std::move(line));
         return make_string(id);
+    });
+
+    // Issue #4358: non-blocking stdin poll. #t when a later read-line or
+    // read-byte would not block (byte already buffered, or the fd is
+    // readable, including hangup/EOF). Does not consume the byte.
+    // Timeout 0, so the CLI body lock stays held.
+    add("char-ready?", [](const auto&) {
+        if (auto* buf = std::cin.rdbuf()) {
+            const auto avail = buf->in_avail();
+            if (avail > 0)
+                return make_bool(true);
+        }
+        struct pollfd pfd{};
+        pfd.fd = STDIN_FILENO;
+        pfd.events = POLLIN;
+        const int pr = ::poll(&pfd, 1, 0);
+        if (pr > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR)) != 0)
+            return make_bool(true);
+        return make_bool(false);
     });
 
     // Issue #4325: one byte from stdin. Does not require a newline.
