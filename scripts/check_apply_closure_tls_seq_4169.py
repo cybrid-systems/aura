@@ -163,7 +163,7 @@ def main() -> int:
         "AC5 driver isolate-table dispatch",
         driver,
     )
-    must("(25 members)", "AC5 driver member count bumped", driver)
+    must("(26 members)", "AC5 driver member count bumped", driver)
     must("check_apply_closure_tls_seq_4169", "AC5 build.py wiring", build)
     must("check_apply_closure_tls_seq_4169.py", "AC5 allowlist entry", allow)
     # The #3832 regression-guard ordering row: TLS lookup precedes the shard
