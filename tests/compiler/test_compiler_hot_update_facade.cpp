@@ -780,11 +780,7 @@ static void ac3345_production_hybrid_depth1_fanout() {
     {
         apply_production_audit_defaults();
         CompilerService cs;
-        CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (B)))
-")")
+        CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (B)))\")")
                   .has_value(),
               "3345 AC2: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3345 AC2: eval");
@@ -890,13 +886,8 @@ static void ac3474_production_called_by_cone() {
     {
         apply_production_audit_defaults();
         CompilerService cs;
-        CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-(define h (lambda () (g)))
-(define k (lambda () (h)))
-")")
+        CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\n(define h "
+                      "(lambda () (g)))\n(define k (lambda () (h)))\")")
                   .has_value(),
               "3474 AC1: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3474 AC1: eval");
@@ -936,11 +927,7 @@ static void ac3474_production_called_by_cone() {
     {
         apply_production_audit_defaults();
         CompilerService cs;
-        CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-")")
+        CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\")")
                   .has_value(),
               "3474 AC5: direct-only set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3474 AC5: direct-only eval");

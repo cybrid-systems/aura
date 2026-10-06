@@ -118,13 +118,9 @@ static void ac3257_3_soft_zero_extra() {
 static void ac3257_4_concurrent_rearm_soak() {
     std::println("\n--- #3257 AC4: concurrent stale-reject during relower ---");
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (B)))
-")")
-              .has_value(),
-          "3257 AC4: set-code");
+    CHECK(
+        cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (B)))\")").has_value(),
+        "3257 AC4: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3257 AC4: eval");
     cs.public_record_dependency("A", "B");
     auto& m = cs.metrics();
@@ -599,14 +595,9 @@ static void ac3283_2_gen_recheck_fail_closed() {
 static void ac3283_3_concurrent_rearm_soak() {
     std::println("\n--- #3283 AC3: concurrent re-arm during relower → no silent stale ---");
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (B)))
-")
-)")
-              .has_value(),
-          "3283 AC3: set-code");
+    CHECK(
+        cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (B)))\")").has_value(),
+        "3283 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3283 AC3: eval");
     cs.public_record_dependency("A", "B");
     auto& m = cs.metrics();
@@ -691,13 +682,8 @@ static void ac3348_2_soft_quiet() {
 static void ac3348_3_concurrent_nonstale_soak() {
     std::println("\n--- #3348 AC3: concurrent non-stale record during peel ---");
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (B)))
-(define C (lambda () (B)))
-")
-)")
+    CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (B)))\n(define C "
+                  "(lambda () (B)))\")")
               .has_value(),
           "3348 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3348 AC3: eval");
@@ -845,13 +831,9 @@ static void ac3611_3_soft_clean_zero_extra() {
 static void ac3611_4_peer_soak_lookup_stays_hot() {
     std::println("\n--- #3611 AC4: peer (g, f) armed mid-peel of f — g never stale ---");
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define F (lambda () 1))
-(define G (lambda () (F)))
-")")
-              .has_value(),
-          "3611 AC4: set-code");
+    CHECK(
+        cs.eval("(set-code \"(define F (lambda () 1))\n(define G (lambda () (F)))\")").has_value(),
+        "3611 AC4: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3611 AC4: eval");
     cs.public_record_dependency("G", "F");
     auto& m = cs.metrics();
@@ -877,13 +859,9 @@ static void ac3611_4_peer_soak_lookup_stays_hot() {
     CHECK(cs.public_graphs_consistent(), "3611 AC4: graphs consistent after soak");
     // Miss-compile distinguisher: mutate F's body, quiesce, and the peer
     // caller G must observe the NEW F encoding (never a stale partial peel).
-    CHECK(cs.eval(R"(
-(set-code "
-(define F (lambda () 2))
-(define G (lambda () (F)))
-")")
-              .has_value(),
-          "3611 AC4: re-set-code F=2");
+    CHECK(
+        cs.eval("(set-code \"(define F (lambda () 2))\n(define G (lambda () (F)))\")").has_value(),
+        "3611 AC4: re-set-code F=2");
     CHECK(cs.eval("(eval-current)").has_value(), "3611 AC4: eval after mutate");
     (void)cs.public_relower_dirty_defines_from_workspace();
     auto r = cs.eval("(G)");

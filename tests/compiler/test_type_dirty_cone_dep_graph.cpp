@@ -91,11 +91,7 @@ static void ac3658_1_replace_subtree_mirrors_cone() {
     aura::compiler::typed_audit::apply_production_audit_defaults();
     reset_type_cone_metrics();
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (+ (B) 1)))
-")")
+    CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (+ (B) 1)))\")")
               .has_value(),
           "3658 AC1: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3658 AC1: eval");
@@ -250,12 +246,8 @@ int run_test_type_dirty_cone_dep_graph() {
         std::println("\n--- AC1: mutate callee B, overlapping type/IR cone ---");
         reset_type_cone_metrics();
         CompilerService cs;
-        CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (+ (B) 1)))
-(define C (lambda () 99))
-")")
+        CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n"
+                      "(define A (lambda () (+ (B) 1)))\n(define C (lambda () 99))\")")
                   .has_value(),
               "set-code A/B/C");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
