@@ -264,6 +264,9 @@ void* Evaluator::ensure_type_registry() {
 }
 
 Evaluator::~Evaluator() {
+    // Issue #4359: drop eval programs after callers are done with them.
+    // Closure does not touch flat/pool in its destructor.
+    release_retained_eval_programs();
     // Drop live EnvFrameRef slots without drop() scans — those walk
     // closures_/env_frames_ that are about to be destroyed.
     {

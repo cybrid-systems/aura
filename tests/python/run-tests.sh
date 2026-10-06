@@ -1155,6 +1155,34 @@ _file_4358() {
 }
 _file_4358
 
+# Issue #4359: a closure returned by eval stays callable. A hang or
+# abort fails the timeout. () is the old wrong value for an eval'd call.
+_file_4359() {
+    local out err dir
+    dir=$(mktemp -d /tmp/aura-4359.XXXXXX)
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 5 "$AURA" -e '
+(define f (eval "(lambda (x) (* x 2))"))
+(define id (eval "(lambda (x) x)"))
+(eval "(define dbl (lambda (x) (* x 2)))")
+(display (f 4)) (newline)
+(display (id 4)) (newline)
+(display (dbl 4)) (newline)
+(display (eval "(dbl 4)")) (newline)
+(display (eval "(+ 1 2)")) (newline)
+(define g (lambda (x) (* x 2)))
+(define h (eval "g"))
+(display (h 4)) (newline)
+' 2>"$dir/err")
+    err=$(cat "$dir/err" 2>/dev/null || true)
+    if [ "$out" = $'8\n4\n8\n8\n3\n8' ] && [ -z "$err" ]; then
+        _record_pass "4359-eval-closure-callable"
+    else
+        _record_fail "4359-eval-closure-callable" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4359
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
