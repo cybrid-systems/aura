@@ -198,6 +198,12 @@ public:
     // Issue #272: invoke a runtime closure by id (full IR path).
     EvalResult call_closure(std::uint64_t closure_id, std::span<const EvalValue> args);
 
+    // Issue #4357: each interpreter starts at kClosureIdHighBit. Persistent
+    // define bindings share one owner map, so the service hands out a
+    // disjoint id range before execute().
+    void set_next_closure_id(std::uint64_t id) noexcept { next_closure_id_ = id; }
+    [[nodiscard]] std::uint64_t next_closure_id() const noexcept { return next_closure_id_; }
+
     // ── Runtime reflection API ─────────────────────────────────
     // Inspect a single closure by id
     std::optional<ClosureSnapshot> inspect_closure(std::uint64_t closure_id) const;
@@ -298,6 +304,11 @@ private:
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = aura::compiler::types::kClosureIdHighBit; // #907
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
+    // Issue #4357: a cached-define reference lowers to MakeClosure on every
+    // evaluation. A 3000-step loop therefore kept 3000 empty-env closures,
+    // and the next rebind paid to destroy them. Same function, no captures:
+    // one id is enough.
+    std::unordered_map<std::uint32_t, std::uint64_t> empty_env_closure_by_func_;
 
     // Per-instance mutable cell heap (for letrec)
     // Issue #892: dense vector indexed by sequential id (id 0 unused).

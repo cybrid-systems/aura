@@ -25,6 +25,7 @@ module;
 #include "core/workspace_epoch.hh"         // Issue #2237: current_mutation_epoch
 #include "serve/fiber.h"                   // Issue #2237: aura_fiber_current_id
 #include "compiler/mutation_hold_budget.h" // Issue #3480: inbody poll + force-release counters
+#include "compiler/mutate_type_gate.hh"    // Issue #4357: light rebind stays off under hard gate
 
 module aura.compiler.evaluator;
 
@@ -1279,6 +1280,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire))
                         return mev("persist-reject",
                                    std::string(op) + " aborted; topology restored");
+                }
+                // Issue #4357: the rebind body guard is nested, so it does
+                // not drain. The outermost dtor above just did. A one-line
+                // Soft rebind leaves the light arm set so that drain skips
+                // the heavy invalidate. Install the new IR closure after
+                // the drain, then drop the arm. Failure paths disarm inside
+                // the body, so this stays quiet and does not specialise a
+                // rolled-back define.
+                if (ev.rebind_light_path()) {
+                    const std::string focus = ev.rebind_light_focus();
+                    ev.disarm_rebind_light_path();
+                    if (!focus.empty())
+                        ev.bind_workspace_lambda_via_ir(focus);
                 }
                 return result;
             });
@@ -3458,6 +3472,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // auto_compact which wholesale-dirties ir_cache_v2_ and erases
         // dep_graph-precise cascade marks.
         bool ok = true;
+        // Failure returns disarm before the outermost drain. Success sets
+        // keep so the outermost drain (after this body returns) still sees
+        // the arm; the add_mutate wrapper installs the IR closure after
+        // that drain and then disarms.
+        struct RebindLightDisarm {
+            Evaluator& ev;
+            bool keep = false;
+            ~RebindLightDisarm() {
+                if (!keep)
+                    ev.disarm_rebind_light_path();
+            }
+        } rebind_light_disarm{ev};
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent
         // unlimited legacy Guard ctor.
@@ -3739,6 +3765,33 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             new_value = root_v.child(0);
         }
 
+        // Issue #4357: a one-line lambda rebind (no dependants beyond the
+        // direct caller) must finish inside one current-time-ms tick.
+        // Production, the hard type gate, and an arity change keep the
+        // full cascade so the existing arity rejection still runs.
+        if (!aura::compiler::typed_audit::production_defaults_active() &&
+            !aura::compiler::mutate_type_gate::is_hard() &&
+            aura::compiler::typed_audit::get_strategy() !=
+                aura::compiler::typed_audit::AuditStrategy::Full &&
+            new_value != aura::ast::NULL_NODE && new_value < flat.size() &&
+            flat.get(new_value).tag == aura::ast::NodeTag::Lambda) {
+            bool same_arity = false;
+            if (old_define < flat.size()) {
+                auto old_def_v = flat.get(old_define);
+                if (!old_def_v.children.empty() && old_def_v.child(0) < flat.size()) {
+                    auto old_body = flat.get(old_def_v.child(0));
+                    auto new_body = flat.get(new_value);
+                    same_arity = old_body.tag == aura::ast::NodeTag::Lambda &&
+                                 old_body.params.size() == new_body.params.size();
+                }
+            }
+            std::size_t nnodes = 0;
+            if (same_arity)
+                flat.walk_subtree(new_value, [&](aura::ast::NodeId) { ++nnodes; });
+            if (same_arity && nnodes > 0 && nnodes <= 48)
+                ev.arm_rebind_light_path();
+        }
+
         // Issue #2792: hygiene on new body — walk the parsed new_value subtree
         // for MacroIntroduced. The pre-parse check only probes old_define
         // (destination); a macro-introduced body can still be rebound onto a
@@ -3868,7 +3921,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // re-lower cost on rebind storms (mark_define_dirty
         // already makes the IR cache dirty, so the next
         // (eval-current) will lazily re-lower once).
-        if (ev.repopulate_workspace_dep_graph_fn_)
+        // Issue #4357: eval-current already recorded called_by. A same-name
+        // one-line body adds no user callee, so rebuilding the graph is
+        // pure overhead on the timed rebind.
+        if (ev.repopulate_workspace_dep_graph_fn_ && !ev.rebind_light_path())
             ev.repopulate_workspace_dep_graph_fn_();
 
         // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
@@ -4024,6 +4080,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (ev.workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
             // #3918 follow-up: eval the whole Define node (eval_current's
             // root-eval semantics) — parity with the batch :rebind path.
+            // Drop the cached closure from the previous specialise. A clean
+            // Define would hand eval_flat that high-bit id back, and the
+            // outermost drain then erases its owner.
+            flat.mark_subtree_dirty(old_define);
             flat.force_align_subtree_gen(old_define);
             auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, old_define, ev.top_env());
             if (refreshed) {
@@ -4051,6 +4111,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // fail (#3423) would otherwise flip ok and the dtor would
         // restore the old body while the primitive still returns #t.
         ok = true;
+        // The body's guard is nested: its destructor does not drain.
+        // Leave the arm set so the outermost drain (after return) takes
+        // the light invalidate, then the wrapper binds the new closure.
+        if (ev.rebind_light_path()) {
+            rebind_light_disarm.keep = true;
+            ev.note_rebind_light_focus(name);
+        }
         return make_bool(true);
     });
 
@@ -10034,8 +10101,9 @@ void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
 }
 
 void Evaluator::drain_cascade_bfs_invalidate() noexcept {
-    if (pending_cascade_bfs_invalidate_.empty())
+    if (pending_cascade_bfs_invalidate_.empty()) {
         return;
+    }
     // Snapshot + clear first so re-entrant cascade during invalidate
     // cannot re-process the same batch (and cannot UAF the vector).
     std::vector<std::string> batch;
@@ -10125,6 +10193,15 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
 void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept {
     if (!workspace_flat_ || !workspace_pool_)
         return;
+    // Issue #4357: nested eval_flat and the outer rebind guard both exit
+    // through here. The second copy repeats mark + relower. One arm, one
+    // cascade. set-body does not arm the flag.
+    if (rebind_light_path_) {
+        if (rebind_light_cascaded_) {
+            return;
+        }
+        note_rebind_light_cascaded();
+    }
     const auto t0 = std::chrono::steady_clock::now();
     auto& flat = *workspace_flat_;
     auto& pool = *workspace_pool_;
@@ -10325,7 +10402,15 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     // defines_n == 0 is a true no-op (nothing affected) — not a skip.
     if (defines_n > 0) {
         if (relower_dirty_defines_fn_) {
-            relower_dirty_defines_fn_();
+            // Issue #4357: the light rebind lowers the define and its direct
+            // caller once after the guard, into the IR interpreter. The eager
+            // relower here would do that work a second time. The callback
+            // stays wired (#2813); this only skips the duplicate call.
+            if (!rebind_light_path_) {
+                relower_dirty_defines_fn_();
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->cascade_relower_ran_total.fetch_add(1, std::memory_order_relaxed);
+            }
             // Soft-path contract (edsl-ir-cache:cascade-after-mutate / #2038):
             // eager re-lower clears entry.dirty on cascade dependents whose
             // own AST was unchanged. Re-run mark_define_dirty on each
@@ -10339,8 +10424,6 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
                         mark_define_dirty_fn_(name);
                 }
             }
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->cascade_relower_ran_total.fetch_add(1, std::memory_order_relaxed);
         } else {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->cascade_relower_skipped_total.fetch_add(1, std::memory_order_relaxed);
