@@ -1563,12 +1563,37 @@ void register_workspace_query_primitives(
             auto& flat = *ws.workspace_flat;
             const auto qe = begin_query_epoch(&flat); // Issue #2192 / #4088
             EvalValue result = make_void();
+            // Issue #4364: rebind and set-body unlink the replaced body but
+            // leave its Call slots live (node_gen_ != 0). A size() scan still
+            // counts those sites, so the list only grows until set-code
+            // rebuilds the tree. Keep calls reachable from the current root.
+            std::vector<unsigned char> on_root;
+            if (flat.root != aura::ast::NULL_NODE && flat.root < flat.size() &&
+                !flat.is_free_slot(flat.root)) {
+                on_root.assign(static_cast<std::size_t>(flat.size()), 0);
+                std::vector<aura::ast::NodeId> pending;
+                pending.push_back(flat.root);
+                while (!pending.empty()) {
+                    const auto cur = pending.back();
+                    pending.pop_back();
+                    if (cur == aura::ast::NULL_NODE || cur >= flat.size() || on_root[cur] ||
+                        flat.is_free_slot(cur))
+                        continue;
+                    on_root[cur] = 1;
+                    auto reached = flat.get(cur);
+                    for (auto child : reached.children)
+                        pending.push_back(child);
+                }
+            }
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                 // Issue #4162: skip free/ghost orphan slots (#1299/#1300
                 // pattern) — free_orphan_nodes_from leaves tag_ in place,
                 // so a tombstone Call must not match and get stamped into
                 // the production schema-2 QueryResult.
                 if (flat.is_free_slot(id))
+                    continue;
+                // Issue #4364: detached body of a replaced define.
+                if (!on_root.empty() && !on_root[static_cast<std::size_t>(id)])
                     continue;
                 auto v = flat.get(id);
                 if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
