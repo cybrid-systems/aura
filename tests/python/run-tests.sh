@@ -1183,6 +1183,48 @@ _file_4359() {
 }
 _file_4359
 
+# Issue #4360: mutate:rebind of a missing name links the define into the
+# workspace root. query:code includes it, and eval-current makes it callable.
+_file_4360() {
+    local out err dir
+    dir=$(mktemp -d /tmp/aura-4360.XXXXXX)
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$AURA" -e '
+(set-code "(define (f x) (+ x 1))")
+(eval-current)
+(display (mutate:rebind "helper" "(lambda (x) (* x 9))" "ai adds helper"))
+(newline)
+(display (query:code))
+(newline)
+(eval-current)
+(display (f 2))
+(newline)
+(display (helper 2))
+(newline)
+(display (mutate :rebind "helper2" "(lambda (x) (* x 7))" "ai adds helper2"))
+(newline)
+(display (query:code))
+(newline)
+(eval-current)
+(display (helper2 2))
+(newline)
+' 2>"$dir/err")
+    err=$(cat "$dir/err" 2>/dev/null || true)
+    if printf '%s\n' "$out" | grep -q 'helper' \
+        && printf '%s\n' "$out" | grep -q 'helper2' \
+        && printf '%s\n' "$out" | grep -qx '3' \
+        && printf '%s\n' "$out" | grep -qx '18' \
+        && printf '%s\n' "$out" | grep -qx '14' \
+        && printf '%s\n' "$out" | grep -qx '#t' \
+        && ! printf '%s\n' "$out" | grep -q 'unbound' \
+        && [ -z "$err" ]; then
+        _record_pass "4360-rebind-add-linked"
+    else
+        _record_fail "4360-rebind-add-linked" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4360
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
