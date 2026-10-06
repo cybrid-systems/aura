@@ -750,6 +750,7 @@
   (check (string=? (url-encode "") ""))
   (check (string? (url-encode "~.-_")))  ;; unreserved
 
+)
 (test-suite "net:url-decode-full"
   (require "std/net" all:)
   (check (string=? (url-decode "%41%42%43") "ABC"))
@@ -757,6 +758,7 @@
   (check (string=? (url-decode "%7E") "~"))
   (check (string? (url-decode "%%")))  ;; malformed shouldn't crash
 
+)
 (test-suite "net:url-join-various"
   (require "std/net" all:)
   (check (string=? (url-join "http://example.com" "path/to") "http://example.com/path/to"))
