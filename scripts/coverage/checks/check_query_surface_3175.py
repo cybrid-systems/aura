@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Issue #3175: prune diagnostic / low-frequency query: primitives.
 
-Public query: add() stays under 32. Hygiene/pin-count/skeleton/templates/
+Public query: add() stays under 34. Hygiene/pin-count/skeleton/templates/
 occurrence-stale/schema-of-marker/primitives-meta/build-index
 stay as sink_query_prim bodies (C++ + existing engine:metrics) but are
 not registered. Agents use calls/defines/dirty/provenance/by-marker
 plus query:result-fresh? / query:result-matches (#3766 occupancy poll).
 
-  AC1 Distinct public query: add() count < 32; core keep list present;
+  AC1 Distinct public query: add() count < 34; core keep list present;
       same-name re-registration (dispatch override) is not surface
       growth (#4088 re-registers query:dirty-subtree from the workspace
       registration so production dispatches the resolve_query_node_arg
@@ -109,9 +109,11 @@ def main() -> int:
     # #4088: count DISTINCT names — the ceiling guards the public query
     # surface, and a same-name re-registration overrides the dispatch
     # table entry (Primitives::add) without growing that surface.
+    # #4345: raised 32 -> 34 — query:code + query:node-types joined the
+    # public surface (editor goto-def/view API, landed c69e64453).
     public = sorted({n for n in ADD_RE.findall(src) if n.startswith("query:")})
-    if len(public) >= 32:
-        fails.append(f"AC1: distinct public query: add() count {len(public)} >= 32: {public}")
+    if len(public) >= 34:
+        fails.append(f"AC1: distinct public query: add() count {len(public)} >= 34: {public}")
     for k in KEEP:
         if k not in public:
             fails.append(f"AC1: missing public {k}")
