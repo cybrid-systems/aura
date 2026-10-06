@@ -2087,6 +2087,22 @@ void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint6
                 mutated_syms.push_back(v.sym_id);
         }
     }
+    // Issue #4357: restamp_live_capture_frames_to_current passes
+    // log_from == size_t(-1), so this list is empty and every predating
+    // frame rides. An empty list cannot strand anyone; interning every
+    // string binding of every frame (prelude included) is pure overhead
+    // and a one-line rebind was paying it on every epoch bump.
+    if (mutated_syms.empty()) {
+        std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ride;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            ride[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
+        for (auto& fr : env_frames_) {
+            if (fr.version_ == INVALID_VERSION || fr.version_ >= cur_defuse)
+                continue;
+            fr.version_ = cur_defuse;
+        }
+        return;
+    }
     const auto sym_mutated = [&mutated_syms](aura::ast::SymId s) {
         for (auto m : mutated_syms)
             if (m == s)

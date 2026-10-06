@@ -439,6 +439,36 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         }
     }
 
+    // Issue #4357: a one-line Soft rebind calls this several times (body,
+    // nested cascade, outer cascade, drain restamp). One epoch bump rides
+    // every frame; later calls only stamp IR dirty bits on this name and
+    // its direct callers. Production returns above and is unchanged.
+    if (evaluator_.rebind_light_path()) {
+        if (!evaluator_.rebind_light_stamped()) {
+            atomic_bump_epochs_and_stamp_bridge(name);
+            evaluator_.note_rebind_light_stamped();
+        }
+        auto stamp_body = [&](const std::string& n) {
+            if (n.empty())
+                return;
+            if (auto vit = ir_cache_v2_.find(n); vit != ir_cache_v2_.end()) {
+                (void)vit->second.mark_body_only_dirty();
+                vit->second.dirty = true;
+                finish_cascade_soa_dirty_sync_(vit->second);
+            }
+        };
+        stamp_body(name);
+        std::vector<std::string> direct;
+        {
+            std::shared_lock dep_read(dep_graph_mtx_);
+            if (auto it = dep_graph_.find(name); it != dep_graph_.end())
+                direct = it->second.called_by;
+        }
+        for (const auto& dep : direct)
+            stamp_body(dep);
+        return;
+    }
+
     // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit around soft dirty.
     gc_coord::Scope gc_coord_scope(gc_coord::Path::SoftDirty);
 
@@ -900,6 +930,26 @@ void CompilerService::invalidate_function(const std::string& name) {
     OrderedUniqueLock<std::shared_mutex> mutate_lock =
         OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
     sync_lock_order_metrics_();
+
+    // Issue #4357: drain of a one-line Soft rebind still counts as
+    // invalidate_function (callers are re-stamped by the drain). Skip the
+    // impact parse and the second partial re-lower; the interpreter bind
+    // after the guard installs the new body. set-body does not arm this.
+    if (evaluator_.rebind_light_path()) {
+        metrics_.invalidate_function_calls.fetch_add(1, std::memory_order_relaxed);
+        if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
+            (void)vit->second.mark_body_only_dirty();
+            vit->second.dirty = true;
+            finish_cascade_soa_dirty_sync_(vit->second);
+        }
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_cache_.erase(name);
+            jit_.invalidate(name.c_str());
+        }
+        clear_ir_define_env_binding(name);
+        return;
+    }
 
     // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit (hard path).
     gc_coord::Scope gc_coord_scope(gc_coord::Path::Invalidate);

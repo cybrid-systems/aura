@@ -1326,6 +1326,9 @@ public:
         // requiring a set-code pre-cache.
         evaluator_.set_relower_dirty_defines_fn(
             [this]() { (void)this->relower_dirty_defines_from_workspace(); });
+        // Issue #4357: hot workspace lambdas leave the tree walker.
+        evaluator_.set_bind_workspace_lambda_via_ir_fn(
+            [this](const std::string& name) { this->specialize_workspace_lambdas_via_ir(name); });
         // Phase 3 debugging: expose is_define_dirty + get_dependents.
         evaluator_.set_is_define_dirty_fn([this](const std::string& name) -> bool {
             const auto* entry = this->get_define_v2(name);
@@ -10196,6 +10199,132 @@ public:
         return true;
     }
 
+    // Issue #4357: lower one cached define and bind the IR-interpreter closure.
+    // Copies non-entry functions into ir_cache_ first so a later caller lower
+    // inlines the new body (the let-loop stays inside one interpreter).
+    bool specialize_one_lambda_via_ir(const std::string& name) {
+        auto src_it = function_sources_.find(name);
+        if (src_it == function_sources_.end() || src_it->second.empty())
+            return false;
+        const std::string source = src_it->second;
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(source, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return false;
+        flat.root = pr.root;
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+        auto ir_mod = lower_to_ir_with_cache_tracked(
+            flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
+            cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
+        if (ir_mod.functions.empty())
+            return false;
+        std::vector<aura::ir::IRFunction> bundle;
+        bundle.reserve(ir_mod.functions.size());
+        std::size_t own_pos = 0;
+        for (const auto& func : ir_mod.functions) {
+            if (func.id == ir_mod.entry_function_id)
+                continue;
+            auto copy = func;
+            // Same stable name cache_define uses, so a caller lower copies
+            // this body instead of emitting a zero for an unknown variable.
+            if (copy.name.empty() || copy.name == "__lambda__")
+                copy.name = name + "#" + std::to_string(own_pos++);
+            bundle.push_back(std::move(copy));
+        }
+        if (!bundle.empty()) {
+            ir_cache_[name] = bundle;
+            ir_cache_strings_[name] = ir_mod.string_pool;
+            if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
+                // The interpreter just took this body. A dirty v2 row would
+                // report 'full' for a let-loop even though the bind is clean.
+                vit->second.irs = std::move(bundle);
+                vit->second.init_block_dirty_from_irs();
+                vit->second.clear_all_block_dirty();
+                vit->second.dirty = false;
+            }
+        }
+        function_sources_[name] = source;
+        return bind_function_define_via_ir(ir_mod, name);
+    }
+
+    // Issue #4357: focus empty = every workspace lambda (at most 8; a larger
+    // workspace stays on the tree walker). A name = that define, then its
+    // direct callers, callee first so the caller lower copies the new body.
+    // Two passes when focusing the whole workspace so cross-calls see a
+    // filled cache. Production keeps its own hot-update path.
+    void specialize_workspace_lambdas_via_ir(const std::string& focus) {
+        if (aura::compiler::typed_audit::production_defaults_active())
+            return;
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool)
+            return;
+        std::vector<std::string> names;
+        if (focus.empty()) {
+            for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                if (ws_flat->is_free_slot(id))
+                    continue;
+                auto v = ws_flat->get(id);
+                if (v.tag != aura::ast::NodeTag::Define || v.children.empty() ||
+                    v.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                if (ws_flat->get(v.child(0)).tag != aura::ast::NodeTag::Lambda)
+                    continue;
+                auto n = std::string(ws_pool->resolve(v.sym_id));
+                if (n.empty() || n[0] == '_')
+                    continue;
+                names.push_back(std::move(n));
+            }
+            if (names.empty() || names.size() > 8)
+                return;
+        } else {
+            names.push_back(focus);
+            std::vector<std::string> callers;
+            {
+                std::shared_lock dep_read(dep_graph_mtx_);
+                if (auto it = dep_graph_.find(focus); it != dep_graph_.end())
+                    callers = it->second.called_by;
+            }
+            for (const auto& c : callers) {
+                if (c.empty() || c == focus)
+                    continue;
+                if (names.size() >= 5)
+                    break;
+                names.push_back(c);
+            }
+        }
+        // Value-cell rows point at the tree-walker closure from eval_flat.
+        // Leaving them in front of ir_cache_ makes the caller TopCellLoad
+        // that closure instead of copying the specialised body.
+        for (const auto& n : names)
+            ir_value_cell_bindings_.erase(n);
+        auto retw = [&](const std::string& name) {
+            for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                if (ws_flat->is_free_slot(id))
+                    continue;
+                auto v = ws_flat->get(id);
+                if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                if (ws_pool->resolve(v.sym_id) != name)
+                    continue;
+                (void)evaluator_.eval_flat(*ws_flat, *ws_pool, id, evaluator_.top_env());
+                return;
+            }
+        };
+        const int passes = focus.empty() ? 2 : 1;
+        for (int pass = 0; pass < passes; ++pass) {
+            for (std::size_t i = 0; i < names.size(); ++i) {
+                const bool ok = specialize_one_lambda_via_ir(names[i]);
+                if (!ok && pass + 1 == passes && !focus.empty() && i > 0)
+                    retw(names[i]);
+            }
+        }
+    }
+
     // Issue #272 Cycle 2: bind env from an already-cached define (no cache update).
     // Used by compile_module disk-cache hits where ir_cache_ is pre-populated.
     bool bind_define_env_only(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
@@ -10217,8 +10346,15 @@ public:
             ir_mod, evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_);
         binding->interpreter =
             std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
+        // Issue #4357: disjoint closure ids. Two defines used to both mint
+        // kClosureIdHighBit, and the owner map kept only the later name, so
+        // a call of the first re-entered the second (hang or a 0 result).
+        if (next_ir_define_closure_id_ < types::kClosureIdHighBit)
+            next_ir_define_closure_id_ = types::kClosureIdHighBit;
+        binding->interpreter->set_next_closure_id(next_ir_define_closure_id_);
 
         auto result = binding->interpreter->execute();
+        next_ir_define_closure_id_ = binding->interpreter->next_closure_id();
         if (!result || !types::is_closure(*result))
             return false;
 
@@ -13501,6 +13637,9 @@ private:
     std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash, std::equal_to<>>
         ir_value_cell_bindings_;
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
+    // Issue #4357: next id for bind_function_define_via_ir. Starts at the
+    // high-bit base; each persistent interpreter consumes a disjoint span.
+    std::uint64_t next_ir_define_closure_id_ = types::kClosureIdHighBit;
 
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
@@ -14344,6 +14483,13 @@ public:
         if (it == ir_cache_v2_.end())
             return std::nullopt;
         return it->second.dirty_block_count();
+    }
+
+    // Issue #4357: true when bind_function_define_via_ir owns this name.
+    // compile:relower-strategy reports incremental for a clean entry only
+    // when this is set. Ordinary clean cache rows stay 'none' (#293).
+    [[nodiscard]] bool ir_define_env_bound(const std::string& name) const noexcept {
+        return ir_define_env_bindings_.find(name) != ir_define_env_bindings_.end();
     }
 
     // Issue #429: SoA dirty stats aggregate. The hook

@@ -1658,6 +1658,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     return locals[ops[0]];
 
                 case IROpcode::MakeClosure: {
+                    // Issue #4357: reuse an empty-env closure of this function.
+                    // Capturing MakeClosure (ops[2] > 0) still allocates.
+                    if (ops[2] == 0) {
+                        auto reused = empty_env_closure_by_func_.find(ops[1]);
+                        if (reused != empty_env_closure_by_func_.end()) {
+                            locals[ops[0]] = make_closure(reused->second);
+                            break;
+                        }
+                    }
                     auto id = next_closure_id_++;
                     IRClosure ircl;
                     ircl.func_id = ops[1];
@@ -1718,6 +1727,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 1, std::memory_order_relaxed);
                     }
                     runtime_closures_[id] = std::move(ircl);
+                    if (ops[2] == 0)
+                        empty_env_closure_by_func_[ops[1]] = id;
                     locals[ops[0]] = make_closure(id);
                     break;
                 }

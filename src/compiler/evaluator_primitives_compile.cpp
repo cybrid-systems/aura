@@ -3114,8 +3114,13 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
                     m->partial_relower_threshold_used.store(thr, std::memory_order_relaxed);
                 const char* tag = nullptr;
-                if (dirty == 0)
-                    tag = "none";
+                if (dirty == 0) {
+                    // Issue #4357: 'none' stays "clean, not specialised".
+                    // A clean entry the IR interpreter owns was specialised
+                    // (hot workspace define). A clean value define, or a
+                    // file-mode function that never bound, stays 'none'.
+                    tag = svc.ir_define_env_bound(fname) ? "incremental" : "none";
+                }
                 // Issue #2190: StormLevel Global forces "full" even for
                 // small dirty (Shape-only / None still use threshold).
                 else if (aura::compiler::should_partial_relower_storm_aware(dirty))

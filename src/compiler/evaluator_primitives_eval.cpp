@@ -921,6 +921,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // TW results with IR closures).
         if (result && ev.sync_workspace_value_cells_fn_)
             ev.sync_workspace_value_cells_fn_();
+        // Issue #4357: workspace Lambda defines run on the IR interpreter
+        // after the tree-walker bind. Value defines are not overwritten.
+        // File-mode eval never reaches this, so that comparison stays on
+        // the tree walker.
+        if (result)
+            ev.bind_workspace_lambda_via_ir("");
 
         // Cache + clear dirty only if workspace still same generation.
         if (ev.workspace_flat_ == flat && ev.workspace_flat_generation() == pin_gen) {

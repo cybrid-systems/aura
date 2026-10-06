@@ -1055,6 +1055,79 @@ for i in range(3000):
 }
 _file_4356
 
+# Issue #4357: a hot workspace define specialises (relower-strategy
+# incremental, faster than the same file-mode loop) and a one-line
+# rebind with one caller finishes inside one current-time-ms tick.
+# The loop feeds the accumulator, matching the filed repro:
+# (+ x 1) over 3000 steps is 3000, and (+ x 9) over 10 steps is 90.
+# The post-rebind 3000-step loop must use the new body and stay faster.
+_file_4357() {
+    local dir aura_abs out err
+    dir=$(mktemp -d /tmp/aura-4357.XXXXXX)
+    aura_abs="$AURA"
+    if [ "${aura_abs#/}" = "$aura_abs" ]; then
+        aura_abs="$PWD/$aura_abs"
+    fi
+    cat >"$dir/relower.aura" <<'EOF'
+(define (pr k v) (display k) (display "=") (display v) (newline))
+(define (file-call x) (+ x 1))
+(define (file-calls n)
+  (let lp ((i 0) (s 0))
+    (if (>= i n) s (lp (+ i 1) (file-call s)))))
+(define t0 (current-time-ms))
+(define file-sum (file-calls 3000))
+(define t1 (current-time-ms))
+(set-code "(define (ws-call x) (+ x 1)) (define (ws-calls n) (let lp ((i 0) (s 0)) (if (>= i n) s (lp (+ i 1) (ws-call s)))))")
+(eval-current)
+(define c0 (current-time-ms))
+(define cold (ws-calls 3000))
+(define c1 (current-time-ms))
+(define hot (ws-calls 3000))
+(define c2 (current-time-ms))
+(define r0 (current-time-ms))
+(mutate:rebind "ws-call" "(lambda (x) (+ x 9))")
+(define r1 (current-time-ms))
+(define a0 (current-time-ms))
+(define after (ws-calls 3000))
+(define a1 (current-time-ms))
+(pr "file" (- t1 t0))
+(pr "cold" (- c1 c0))
+(pr "hot" (- c2 c1))
+(pr "rebind" (- r1 r0))
+(pr "after" (- a1 a0))
+(pr "sum" cold)
+(pr "file-sum" file-sum)
+(pr "after-sum" after)
+(pr "v" (ws-calls 10))
+(pr "strat" (compile:relower-strategy "ws-call"))
+(pr "strat-calls" (compile:relower-strategy "ws-calls"))
+EOF
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$aura_abs" "$dir/relower.aura" 2>"$dir/err")
+    err=$(cat "$dir/err")
+    local file_ms cold_ms hot_ms rebind_ms after_ms
+    file_ms=$(printf '%s\n' "$out" | sed -n 's/^file=//p' | head -1)
+    cold_ms=$(printf '%s\n' "$out" | sed -n 's/^cold=//p' | head -1)
+    hot_ms=$(printf '%s\n' "$out" | sed -n 's/^hot=//p' | head -1)
+    rebind_ms=$(printf '%s\n' "$out" | sed -n 's/^rebind=//p' | head -1)
+    after_ms=$(printf '%s\n' "$out" | sed -n 's/^after=//p' | head -1)
+    if printf '%s\n' "$out" | grep -q 'v=90' \
+        && printf '%s\n' "$out" | grep -q 'sum=3000' \
+        && printf '%s\n' "$out" | grep -q 'file-sum=3000' \
+        && printf '%s\n' "$out" | grep -q 'after-sum=27000' \
+        && printf '%s\n' "$out" | grep -q 'strat=incremental' \
+        && printf '%s\n' "$out" | grep -q 'strat-calls=incremental' \
+        && [ -n "$rebind_ms" ] && [ "$rebind_ms" -le 1 ] \
+        && [ -n "$hot_ms" ] && [ -n "$file_ms" ] && [ "$hot_ms" -lt "$file_ms" ] \
+        && [ -n "$cold_ms" ] && [ "$cold_ms" -lt "$file_ms" ] \
+        && [ -n "$after_ms" ] && [ "$after_ms" -lt "$file_ms" ]; then
+        _record_pass "4357-workspace-relower-faster-than-file"
+    else
+        _record_fail "4357-workspace-relower-faster-than-file" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4357
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

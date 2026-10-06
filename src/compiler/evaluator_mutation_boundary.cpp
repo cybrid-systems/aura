@@ -70,6 +70,7 @@ module;
                                              // aura_reemit_aot_for_dirty
                                              // Issue #3026 observe_residual_force_stale
 #include "typed_mutation_audit.h"            // Issue #1589 / #1614 / #1894 / #2145 / #2964
+#include "compiler/mutate_type_gate.hh"      // Issue #4357: light rebind refuses hard gate
 #include "compiler/dce_elided_deopt_meta.h"  // Issue #3547: invalidate_elided_cast_deopt_meta
 #include "linear_occurrence_mutate_stats.h"  // Issue #2964: record_revalidate_hit on force
 #include "core/sandbox.hh"                   // Issue #2145 Strict hard-gate
@@ -962,6 +963,16 @@ extern "C" void aura_clear_occurrence_persist_buffer(void* ev_ptr) noexcept {
 }
 
 namespace aura::compiler {
+
+// Issue #4357: a one-line Soft rebind already ran finish_mutate_hard_gate
+// in the body. Nested guards are composite, so the success exit would
+// otherwise always pay composite_txn_commit under Sampled. Full strategy,
+// production defaults, and the hard type gate keep the heavy exit.
+static bool rebind_light_skip_heavy_exit(const Evaluator& ev) noexcept {
+    return ev.rebind_light_path() && !typed_audit::production_defaults_active() &&
+           typed_audit::get_strategy() != typed_audit::AuditStrategy::Full &&
+           !mutate_type_gate::is_hard();
+}
 
 // Issue #3687: persist-reject must restore AST dual-topology in the same
 // function as CoercionMap undo (before return / any observer). Soft/Off:
@@ -2085,6 +2096,18 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // outermost TypeLinearCommitProof. Soft/Off: helper no-ops.
                 invalidate_defuse_index_for_nested();
                 // Skip Full/composite invariant walk + partial recovery.
+            } else if (rebind_light_skip_heavy_exit(*this)) {
+                // Issue #4357: record the boundary and skip the suite.
+                // The body's finish_mutate_hard_gate already ran. A nested
+                // guard is composite and would always enter
+                // composite_txn_commit even when the strategy is Sampled.
+                clear_txn_dirty();
+                typed_audit::note_invariant_enforcement_skipped(mid);
+                typed_audit::record_boundary_outcome(
+                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                    static_cast<std::uint32_t>(audit_target),
+                    static_cast<std::uint32_t>(nodes_changed), fid);
+                invalidate_defuse_index_for_nested();
             } else {
                 const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
                                          (audit_op.find("move") != std::string_view::npos) ||
@@ -2629,7 +2652,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // on fail; Strict → structural force-rollback. RenderFastExit and
         // flag-off → zero validate cost (skip counter only).
         // (Also covered as provenance leg of #1614 invariant audit when sampled.)
-        if (render_fast_exit_this_boundary_ || !get_guard_reflect_validate_enabled()) {
+        if (render_fast_exit_this_boundary_ || !get_guard_reflect_validate_enabled() ||
+            rebind_light_skip_heavy_exit(*this)) {
             bump_guard_reflect_validate_skipped(); // #2765 AC4 quiet / opt-out
         } else {
             bump_guard_reflect_validate(); // #2765 Agent counter
@@ -5472,7 +5496,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // checked the return) before exit_mutation_boundary. Skip
             // the duplicate; still bump the happy-path observability
             // counter (not a deny signal).
-            if (!linear_pre_exit_enforced) {
+            // Issue #4357: the rebind body already ran ownership validation.
+            // The full closure + env-frame walk is the rest of the millisecond
+            // on a one-line Soft rebind. Full / production / hard still walk.
+            if (!linear_pre_exit_enforced && !rebind_light_skip_heavy_exit(*ev_)) {
                 (void)ev_->enforce_linear_boundary_consistency(
                     Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
             }
@@ -5484,7 +5511,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 boundary_gc_coord->enter_cascade();
             // Issue #2120 / #2116: dual-path consistency probe at boundary exit
             // (no half-consistent EnvFrame left live after probes).
-            {
+            // Issue #4357: same light-path skip as the enforce above. The
+            // walk locks every env-frame shard, including the Soft prelude.
+            if (!rebind_light_skip_heavy_exit(*ev_)) {
                 std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
                 for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
                     rlock[ef_i] = std::shared_lock<std::shared_mutex>(
@@ -5627,8 +5656,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                 m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
         } else {
-            ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
-                                                   dirty_upward_at_enter_);
+            // Issue #4357: a one-line Soft rebind does not reemit. The
+            // recovery walk is the phase-4 cost on that path.
+            if (!rebind_light_skip_heavy_exit(*ev_))
+                ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
+                                                       dirty_upward_at_enter_);
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                 m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
         }
@@ -5891,6 +5923,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (!(typed_audit::production_defaults_active() &&
                   aura::ast::moving_incomplete_remap_sticky_densify_off()))
                 release_workspace_then_drain_after_densify_();
+        } else if (rebind_light_skip_heavy_exit(*ev_)) {
+            // Issue #4357: Moving is on, but a one-line Soft rebind does not
+            // need an arena compact to publish the new body. Drain now so
+            // the light invalidate still runs before the wrapper specialises.
+            // The compact block below is skipped (same release lambda).
+            release_workspace_then_drain_after_densify_();
         }
         // Issue #2347: clear TLS Guard-window reject count so multi-round
         // mutates do not accumulate a stale threshold across outermost
@@ -6015,6 +6053,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // observability only (no longer drives the success axis).
         std::uint32_t panic_depth_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
+            if (rebind_light_skip_heavy_exit(*ev_))
+                goto rebind_light_skip_densify_4357;
             // Issue #3238: densify while a mutation is still live (this
             // fiber depth or process-held count) must drop linear_fast_path
             // and dirty-root revalidate before compact relocates. Soft
@@ -6190,6 +6230,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                      "suppressing success metrics\n");
             }
         }
+    rebind_light_skip_densify_4357:;
         // Issue #2266 AC2: do NOT publish success metrics if pin contract failed.
         // (Gated on pin_contract_held — false suppresses outermost_exit_phase5_unlock
         // + outermost_exit_order_complete so Agents see the contract miss, not a

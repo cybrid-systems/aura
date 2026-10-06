@@ -246,6 +246,22 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         // forensically the alarm counter is a cumulative count of mutates
         // under misconfiguration (more useful than a one-shot boolean).
         mutate_type_gate::check_soft_in_production_or_abort();
+        // Issue #4357: a one-line Soft lambda rebind already passed the
+        // arity hard gate. ensure_typechecker rebuilds the TypeChecker
+        // whenever set_child bumps the flat generation, which was the
+        // whole sub-millisecond budget. Skip that rebuild and the
+        // selective solver. Hard / production keep the full infer.
+        // typecheck-incremental still sees the live workspace.
+        {
+            const bool hard_gate = mutate_type_gate::is_hard();
+            if (rebind_light_path_ && !hard_gate &&
+                !aura::compiler::typed_audit::production_defaults_active()) {
+                note_type_dirty_txn_this_boundary();
+                note_infer_solve_solved(true);
+                copy_infer_type_export_authority(true);
+                return true;
+            }
+        }
         if (!workspace_flat_ || !workspace_pool_)
             return true;
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());

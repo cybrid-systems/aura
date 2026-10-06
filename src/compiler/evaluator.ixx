@@ -3086,6 +3086,50 @@ public:
     [[nodiscard]] bool relower_dirty_defines_wired() const noexcept {
         return static_cast<bool>(relower_dirty_defines_fn_);
     }
+    // Issue #4357: after eval-current (and after a one-line rebind drains),
+    // install IR-interpreter closures for workspace Lambda defines. Value
+    // defines stay on the tree walker. Empty name = every workspace lambda
+    // (capped inside the service). A name = that define, then its direct
+    // callers, so a copied callee body is refreshed.
+    std::function<void(const std::string&)> bind_workspace_lambda_via_ir_fn_ = nullptr;
+    void set_bind_workspace_lambda_via_ir_fn(std::function<void(const std::string&)> fn) {
+        bind_workspace_lambda_via_ir_fn_ = std::move(fn);
+    }
+    void bind_workspace_lambda_via_ir(const std::string& name) {
+        if (bind_workspace_lambda_via_ir_fn_)
+            bind_workspace_lambda_via_ir_fn_(name);
+    }
+    // Issue #4357: one-line Soft rebind. Nested eval_flat and the outer
+    // guard both cascade; each mark_define_dirty restamps every env frame.
+    // While armed, those repeats are one epoch bump plus IR dirty bits.
+    // The body's guard is nested. The outermost drain runs after the body
+    // returns, so the focus name stays set until that drain finishes and
+    // the wrapper installs the new IR closure.
+    bool rebind_light_path_ = false;
+    bool rebind_light_cascaded_ = false;
+    bool rebind_light_stamped_ = false;
+    std::string rebind_light_focus_;
+    void arm_rebind_light_path() noexcept {
+        rebind_light_path_ = true;
+        rebind_light_cascaded_ = false;
+        rebind_light_stamped_ = false;
+        rebind_light_focus_.clear();
+    }
+    void disarm_rebind_light_path() noexcept {
+        rebind_light_path_ = false;
+        rebind_light_cascaded_ = false;
+        rebind_light_stamped_ = false;
+        rebind_light_focus_.clear();
+    }
+    void note_rebind_light_focus(std::string name) { rebind_light_focus_ = std::move(name); }
+    [[nodiscard]] const std::string& rebind_light_focus() const noexcept {
+        return rebind_light_focus_;
+    }
+    [[nodiscard]] bool rebind_light_path() const noexcept { return rebind_light_path_; }
+    [[nodiscard]] bool rebind_light_cascaded() const noexcept { return rebind_light_cascaded_; }
+    [[nodiscard]] bool rebind_light_stamped() const noexcept { return rebind_light_stamped_; }
+    void note_rebind_light_cascaded() noexcept { rebind_light_cascaded_ = true; }
+    void note_rebind_light_stamped() noexcept { rebind_light_stamped_ = true; }
     // Phase 3: read cache entry from outside the module.
     using IsDefineDirtyFn = bool(const std::string&);
     std::function<IsDefineDirtyFn> is_define_dirty_fn_ = nullptr;
