@@ -3512,6 +3512,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev.disarm_rebind_light_path();
             }
         } rebind_light_disarm{ev};
+        // Issue #4363: Guard dtor restores the flat, then this rebinds top_env.
+        struct RebindAfterRejected {
+            Evaluator& ev;
+            bool failed = false;
+            ~RebindAfterRejected() {
+                if (failed)
+                    ev.rebind_workspace_defines_after_rollback();
+            }
+        } rebind_after_rejected{ev};
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent
         // unlimited legacy Guard ctor.
@@ -3655,14 +3664,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return *err;
             }
         }
-        // Issue #165 follow-up: when no matching Define exists, mutate:rebind
-        // adds a brand-new top-level Define. This makes the primitive usable
-        // for incrementally introducing a new top-level binding (a common
-        // hygiene-stress scenario: introduce an outer binding of the same
-        // name as a macro-introduced local and verify the macro's gensym
-        // still protects the macro-internal one). The new node gets the
-        // `add_mutation("add", …)` log entry so mutation_log_ stays
-        // consistent with the rest of the rebind path.
+        // Issue #165 follow-up: no matching Define adds a top-level Define
+        // and logs add_mutation("add", …) with the rest of rebind.
         if (old_define == aura::ast::NULL_NODE) {
             // Parse the new code first so we know what to bind.
             // Issue #2791: snapshot size; free orphan nodes on parse failure
@@ -3884,6 +3887,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // set_child also logs structural-set-child (redundant with rebind
         // rollback data but keeps children_ mutation audit complete).
         flat.set_child(old_define, 0, new_value);
+        // Cleared on the success return. A later ok=false rolls the body
+        // back in the Guard dtor; top_env is rebound after that.
+        rebind_after_rejected.failed = true;
         // Issue #2730: set_child bumps generation_; re-align new body so
         // post-cascade env refresh can eval_flat the new NodeIds.
         flat.force_align_subtree_gen(new_value);
@@ -4151,6 +4157,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             rebind_light_disarm.keep = true;
             ev.note_rebind_light_focus(name);
         }
+        rebind_after_rejected.failed = false;
         return make_bool(true);
     });
 

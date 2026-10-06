@@ -19,6 +19,7 @@ module;
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/typed_mutation_audit.h" // Issue #2277: typed_audit namespace + g_typed_mutation_audit_counters (C++20 modules do NOT transit .ixx purview includes to .cpp impl units, so include directly here).
+#include "compiler/mutate_type_gate.hh"    // Issue #4363: GMF so is_hard() shares the process gate
 
 module aura.compiler.type_checker;
 import std;
@@ -3816,6 +3817,45 @@ void InferenceEngine::bind_declared_sigs() {
     }
 }
 
+void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& pool) {
+    // Issue #4363: only direct children of the root (a Begin of defines).
+    // Lambda bodies stay on the sequential walk. Literals need no synth,
+    // so this does not report a diagnostic of its own.
+    const auto root = flat.root;
+    if (root == NULL_NODE || !flat.is_live_node(root))
+        return;
+    auto bind_define = [&](NodeId id) {
+        if (!flat.is_live_node(id))
+            return;
+        auto v = flat.get(id);
+        if (v.tag != NodeTag::Define || v.sym_id == INVALID_SYM || v.children.empty())
+            return;
+        const auto val_id = v.child(0);
+        if (!flat.is_live_node(val_id))
+            return;
+        auto vv = flat.get(val_id);
+        TypeId ty{};
+        if (vv.tag == NodeTag::LiteralString)
+            ty = reg_.string_type();
+        else if (vv.tag == NodeTag::LiteralInt)
+            ty = (vv.marker == SyntaxMarker::BoolLiteral) ? reg_.bool_type() : reg_.int_type();
+        else if (vv.tag == NodeTag::LiteralFloat)
+            ty = reg_.lookup_type("Float");
+        if (!ty.valid())
+            return;
+        auto name = std::string(pool.resolve(v.sym_id));
+        if (name.empty() || env_.is_bound(name))
+            return;
+        env_.bind(std::move(name), ty);
+    };
+    bind_define(root);
+    auto rv = flat.get(root);
+    if (rv.tag == NodeTag::Begin || rv.tag == NodeTag::Let || rv.tag == NodeTag::LetRec) {
+        for (auto c : rv.children)
+            bind_define(c);
+    }
+}
+
 
 bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if (from == to)
@@ -5017,6 +5057,13 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     if (!preserve_cs)
         cs_.clear();
     cs_.set_delta_record_mode(incremental_delta_record_);
+    // Issue #4363: the hard gate discards the selective report and
+    // rechecks with a full infer. Begin walks defines in source order,
+    // so a later value define (`pet` : String) is still unbound while
+    // an earlier lambda is synthesized, and the gate then drops that
+    // UnboundVariable because the name is a top-level define. Seed the
+    // literal before synthesis so the arith peel sees String.
+    seed_workspace_value_defines(flat, pool);
     // Issue #4107: capture the diagnostic count before synthesis so a
     // production TypeError reported by the lub ground join / arith peel
     // can demote this export (see the authoritative store below).
@@ -6150,7 +6197,8 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     // runtime-coerce Int; a Dynamic operand keeps the gradual escape in
     // both faces.
     if (!reg_.is_var(t0) && !reg_.is_var(t1)) {
-        if ((aura::compiler::typed_audit::production_hard_face_active() ||
+        if ((aura::compiler::mutate_type_gate::is_hard() ||
+             aura::compiler::typed_audit::production_hard_face_active() ||
              aura::compiler::typed_audit::production_defaults_active()) &&
             tag0 != TypeTag::DYNAMIC && tag1 != TypeTag::DYNAMIC) {
             diag_.report(Diagnostic(ErrorKind::TypeError,
@@ -6166,7 +6214,30 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
         return reg_.int_type();
     }
 
-    // At least one is a type variable: create a fresh result var and constrain
+    // At least one is a type variable: create a fresh result var and constrain.
+    // Issue #4363: a value define's ground type (String `pet`) arrives as
+    // one concrete operand next to the lambda param's type variable.
+    // The hard gate rejects a non-numeric operand. Soft still unifies.
+    {
+        const bool hard_arith = aura::compiler::mutate_type_gate::is_hard() ||
+                                aura::compiler::typed_audit::production_hard_face_active() ||
+                                aura::compiler::typed_audit::production_defaults_active();
+        auto ground_non_numeric = [&](TypeId t, TypeTag tag) {
+            return !reg_.is_var(t) && tag != TypeTag::INT && tag != TypeTag::FLOAT &&
+                   tag != TypeTag::DYNAMIC;
+        };
+        if (hard_arith && (ground_non_numeric(t0, tag0) || ground_non_numeric(t1, tag1))) {
+            const bool first = ground_non_numeric(t0, tag0);
+            const int which = first ? 0 : 1;
+            const TypeId got = first ? t0 : t1;
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                                    "argument " + std::to_string(which) + ": expected Int, got " +
+                                        reg_.format_type(got),
+                                    cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"}));
+            return reg_.void_type();
+        }
+    }
     auto result = cs_.fresh_var();
     cs_.consistent_unify(t0, result);
     cs_.consistent_unify(t1, result);
@@ -10050,6 +10121,37 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
+
+    // Issue #4363: a rejected rebind frees or unlinks the new body, but the
+    // slot keeps its tag, type id, and source column. Drop anything that is
+    // not reachable from the live root so the report describes the restored
+    // program. A linked body (the in-flight check) stays in the cone.
+    if (!affected.empty() && flat.root != NULL_NODE && flat.is_live_node(flat.root)) {
+        auto reachable = [&](NodeId id) -> bool {
+            if (!flat.is_live_node(id))
+                return false;
+            NodeId cur = id;
+            for (std::size_t n = 0; n <= flat.size(); ++n) {
+                if (cur == flat.root)
+                    return true;
+                if (!flat.is_live_node(cur))
+                    return false;
+                const NodeId parent = flat.parent_of(cur);
+                if (parent == cur || parent == NULL_NODE)
+                    return false;
+                cur = parent;
+            }
+            return false;
+        };
+        std::vector<NodeId> live;
+        live.reserve(affected.size());
+        for (auto id : affected) {
+            if (reachable(id))
+                live.push_back(id);
+        }
+        affected.swap(live);
+    }
+    engine.seed_workspace_value_defines(flat, const_cast<StringPool&>(pool));
 
     std::size_t re_inferred = 0;
     std::uint32_t max_narrow_evidence = 0;

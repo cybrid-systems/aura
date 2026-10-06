@@ -1318,6 +1318,48 @@ _file_4362() {
 }
 _file_4362
 
+# Issue #4363: a global value define is visible to incremental typecheck,
+# and a rejected rebind does not leave its diagnostics behind.
+_file_4363() {
+    local dir src
+    dir=$(mktemp -d /tmp/aura-4363.XXXXXX)
+    src='
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(define pet \"cat\")")
+  (eval-current)
+  (display "RB1 ") (write (mutate:rebind "hello" "(lambda (x) (+ x pet))" "w")) (newline)
+  (display "TC1 ") (write (typecheck-incremental)) (newline)
+  (display "CALL1 ") (write (try (hello 3) (catch (e) (list (quote raised) e)))) (newline)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))")
+  (eval-current)
+  (display "RB2 ") (write (mutate:rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
+  (display "CODE2 ") (write (query:code)) (newline)
+  (display "TC2 ") (write (typecheck-incremental)) (newline))
+(main)
+'
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 25 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    if printf '%s\n' "$hard" | grep -q 'expected Int, got String' \
+        && printf '%s\n' "$hard" | grep -q 'arity mismatch' \
+        && printf '%s\n' "$hard" | grep -q '(hello y)' \
+        && ! printf '%s\n' "$hard" | grep -q 'unbound variable' \
+        && ! printf '%s\n' "$hard" | grep -q '(hello y y)' \
+        && printf '%s\n' "$hard" | grep -q 'CALL1 4' \
+        && printf '%s\n' "$soft" | grep -q 'RB1 #t' \
+        && printf '%s\n' "$soft" | grep -q 'CALL1 3' \
+        && ! printf '%s\n' "$soft" | grep -q 'unbound variable' \
+        && [ -z "$errh" ]; then
+        _record_pass "4363-value-define-type"
+    else
+        _record_fail "4363-value-define-type" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4363
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
