@@ -1360,6 +1360,77 @@ _file_4363() {
 }
 _file_4363
 
+# Issue #4364: query:calls drops call sites of a replaced body.
+_file_4364() {
+    local dir src
+    dir=$(mktemp -d /tmp/aura-4364.XXXXXX)
+    src='
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)\n(bye 4)")
+  (display "C0 ") (display (length (query:calls "hello"))) (newline)
+  (display "R1 ") (display (mutate:rebind "bye" "(lambda (y) (- (hello y)))")) (newline)
+  (display "C1 ") (display (length (query:calls "hello"))) (newline)
+  (display "R2 ") (display (mutate:rebind "bye" "(lambda (y) y)")) (newline)
+  (display "C2 ") (display (length (query:calls "hello"))) (newline)
+  (display "R3 ") (display (mutate:rebind "bye" "(lambda (y) (hello (hello y)))")) (newline)
+  (display "C3 ") (display (length (query:calls "hello"))) (newline)
+  (display "CODE ") (display (query:code)) (newline)
+  (eval-current)
+  (display "C4 ") (display (length (query:calls "hello"))) (newline)
+  (set-code (query:code))
+  (display "C5 ") (display (length (query:calls "hello"))) (newline)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)\n(bye 4)")
+  (eval-current)
+  (display "S0 ") (display (length (query:calls "hello"))) (newline)
+  (display "SB ") (display (mutate:set-body "bye" "(lambda (y) y)")) (newline)
+  (display "S1 ") (display (length (query:calls "hello"))) (newline)
+  (display "BA ") (display (mutate:atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y))" "b")) "b")) (newline)
+  (display "S2 ") (display (length (query:calls "hello"))) (newline)
+  (display "TA ") (display (typed-mutate-atomic (list "(mutate:rebind \"bye\" \"(lambda (y) (hello (hello y)))\" \"t\")"))) (newline)
+  (display "S3 ") (display (length (query:calls "hello"))) (newline))
+(main)
+'
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 25 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    if printf '%s\n' "$hard" | grep -qx 'C0 2' \
+        && printf '%s\n' "$hard" | grep -qx 'C1 2' \
+        && printf '%s\n' "$hard" | grep -qx 'C2 1' \
+        && printf '%s\n' "$hard" | grep -qx 'C3 3' \
+        && printf '%s\n' "$hard" | grep -qx 'C4 3' \
+        && printf '%s\n' "$hard" | grep -qx 'C5 3' \
+        && printf '%s\n' "$hard" | grep -qx 'R1 #t' \
+        && printf '%s\n' "$hard" | grep -qx 'R2 #t' \
+        && printf '%s\n' "$hard" | grep -qx 'R3 #t' \
+        && printf '%s\n' "$hard" | grep -q '(hello (hello y))' \
+        && printf '%s\n' "$soft" | grep -qx 'C0 2' \
+        && printf '%s\n' "$soft" | grep -qx 'C1 2' \
+        && printf '%s\n' "$soft" | grep -qx 'C2 1' \
+        && printf '%s\n' "$soft" | grep -qx 'C3 3' \
+        && printf '%s\n' "$soft" | grep -qx 'C4 3' \
+        && printf '%s\n' "$soft" | grep -qx 'C5 3' \
+        && printf '%s\n' "$soft" | grep -qx 'R1 #t' \
+        && printf '%s\n' "$hard" | grep -qx 'S0 2' \
+        && printf '%s\n' "$hard" | grep -qx 'SB #t' \
+        && printf '%s\n' "$hard" | grep -qx 'S1 1' \
+        && printf '%s\n' "$hard" | grep -qx 'BA #t' \
+        && printf '%s\n' "$hard" | grep -qx 'S2 2' \
+        && printf '%s\n' "$hard" | grep -qx 'TA #t' \
+        && printf '%s\n' "$hard" | grep -qx 'S3 3' \
+        && printf '%s\n' "$soft" | grep -qx 'S1 1' \
+        && printf '%s\n' "$soft" | grep -qx 'S2 2' \
+        && printf '%s\n' "$soft" | grep -qx 'S3 3' \
+        && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4364-calls-drop-replaced"
+    else
+        _record_fail "4364-calls-drop-replaced" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4364
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
