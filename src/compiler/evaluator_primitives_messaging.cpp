@@ -161,9 +161,35 @@ namespace {
         }
     }
 
+    // Issue #4356: CLI main does not run inside complete_fiber, so it never
+    // took s_cli_thread_fiber_body_mtx. read-line then pushed string_heap_
+    // while a thread fiber mutated the same Evaluator. Acquire publishes
+    // this unique_lock in the TLS slot the join / denseness wait hooks
+    // already unlock. A thread that already holds the lock (the fiber
+    // body, or an outer guard) gets nullptr and must not lock again.
+    void* cli_main_body_lock_acquire_impl() {
+        if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock())
+            return nullptr;
+        auto* lk = new std::unique_lock<std::mutex>(s_cli_thread_fiber_body_mtx);
+        s_tls_cli_body_lock = lk;
+        return lk;
+    }
+
+    void cli_main_body_lock_release_impl(void* p) {
+        if (!p)
+            return;
+        auto* lk = static_cast<std::unique_lock<std::mutex>*>(p);
+        // #4054: clear TLS only when it still names this lock.
+        if (s_tls_cli_body_lock == lk)
+            s_tls_cli_body_lock = nullptr;
+        delete lk;
+    }
+
     void wire_denseness_body_lock_hooks() {
         aura::messaging::g_denseness_body_unlock_for_wait = &denseness_body_unlock_hook;
         aura::messaging::g_denseness_body_relock_after_wait = &denseness_body_relock_hook;
+        aura::messaging::g_cli_main_body_lock_acquire = &cli_main_body_lock_acquire_impl;
+        aura::messaging::g_cli_main_body_lock_release = &cli_main_body_lock_release_impl;
     }
 
 } // namespace

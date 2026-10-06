@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "messaging_bridge.h"
 
 #include <termios.h>
 #include <unistd.h>
@@ -142,14 +143,23 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #4325: a blank line is "". EOF (or a failed stream) is void,
     // which eof-object? already treats as the eof value. A partial line
     // with no trailing newline is still that line; the next read is eof.
+    // Issue #4356: the blocking read runs without the CLI body mutex so a
+    // thread fiber can allocate. The string_heap_ push happens only after
+    // the lock is back, on this thread's private line buffer.
     add("read-line", [&ev](const auto&) {
         if (!std::cin.good())
             return make_void();
         std::string line;
-        if (!std::getline(std::cin, line)) {
-            if (line.empty())
-                return make_void();
+        bool eof = false;
+        {
+            aura::messaging::DensenessBodyLockWaitGuard unblock_body;
+            if (!std::getline(std::cin, line)) {
+                if (line.empty())
+                    eof = true;
+            }
         }
+        if (eof)
+            return make_void();
         auto id = ev.string_heap_.size();
         ev.string_heap_.push_back(std::move(line));
         return make_string(id);
@@ -157,10 +167,15 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #4325: one byte from stdin. Does not require a newline.
     // EOF is void, distinct from byte 0 and from read-line's "".
+    // Issue #4356: same body-mutex drop as read-line across the read.
     add("read-byte", [](const auto&) {
         if (!std::cin.good())
             return make_void();
-        const int c = read_stdin_byte();
+        int c = std::char_traits<char>::eof();
+        {
+            aura::messaging::DensenessBodyLockWaitGuard unblock_body;
+            c = read_stdin_byte();
+        }
         if (c == std::char_traits<char>::eof())
             return make_void();
         return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(c)));
