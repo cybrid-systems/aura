@@ -16544,6 +16544,11 @@ private:
     void retain_eval_program(std::unique_ptr<aura::ast::FlatAST> flat,
                              std::unique_ptr<aura::ast::StringPool> pool);
     void release_retained_eval_programs() noexcept;
+    // Issue #4361: a failed atomic-batch / ws:try-mutation restores the
+    // flat and leaves top_env closures on the mutation-era nodes. Re-eval
+    // the restored root into top_ so calls work with no extra eval-current.
+    // Append-only at struct end.
+    void rebind_workspace_defines_after_rollback() noexcept;
 };
 
 

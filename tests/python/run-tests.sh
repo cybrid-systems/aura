@@ -1225,6 +1225,54 @@ _file_4360() {
 }
 _file_4360
 
+# Issue #4361: a rolled-back batch or ws:try-mutation leaves defines callable.
+_file_4361() {
+    local out err dir
+    dir=$(mktemp -d /tmp/aura-4361.XXXXXX)
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 20 "$AURA" -e '
+(set-code "(define f (lambda (x) (+ x 1))) (define pipe (lambda (x) (f x))) (define g (lambda (x) (+ x 3)))")
+(eval-current)
+(display (pipe 1))
+(newline)
+(display (g 1))
+(newline)
+(mutate:atomic-batch (list (list "mutate:rebind" "f" "(lambda (x) (+ x 100))" "s1") (list "mutate:rebind" "missing" "(lambda (x) x)" "s2")) "b")
+(display (query:code))
+(newline)
+(display (f 1))
+(newline)
+(display (pipe 1))
+(newline)
+(display (g 1))
+(newline)
+(display (ws:try-mutation "(begin (mutate:rebind \"f\" \"(lambda (x) 0)\" \"t\") (car 5))"))
+(newline)
+(display (f 1))
+(newline)
+(display (pipe 1))
+(newline)
+(display (g 1))
+(newline)
+' 2>"$dir/err")
+    err=$(cat "$dir/err" 2>/dev/null || true)
+    local twos fours
+    twos=$(printf '%s\n' "$out" | grep -cx '2' || true)
+    fours=$(printf '%s\n' "$out" | grep -cx '4' || true)
+    if [ "$twos" -ge 5 ] && [ "$fours" -ge 3 ] \
+        && printf '%s\n' "$out" | grep -q '(+ x 1)' \
+        && ! printf '%s\n' "$out" | grep -q '(+ x 100)' \
+        && ! printf '%s\n' "$out" | grep -q 'ast:restore' \
+        && ! printf '%s\n' "$out" | grep -q 'stale' \
+        && ! printf '%s\n' "$out" | grep -q 'invalid closure' \
+        && [ -z "$err" ]; then
+        _record_pass "4361-rollback-defines-callable"
+    else
+        _record_fail "4361-rollback-defines-callable" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4361
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

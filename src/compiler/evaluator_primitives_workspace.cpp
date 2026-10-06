@@ -1147,6 +1147,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (auto restore_fn = ev.primitives_.lookup("ast:restore")) {
                 (*restore_fn)({make_int(snap_id)});
             }
+            // Issue #4361: ast:restore put the flat back. Rebind defines
+            // so a call does not report a stale node or a dead closure.
+            ev.rebind_workspace_defines_after_rollback();
             return make_bool(false);
         }
         // Success: return (result . snap-id)
