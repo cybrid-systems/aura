@@ -6941,6 +6941,28 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         // first for mutual recursion + private free-var
                         // capture snapshots (std/orchestrator orch-yield-safe),
                         // (2) non-Lambda values (define g (f)) see callables.
+                        //
+                        // Issue #4354: that lambda-first pass overwrites a
+                        // reused cell before an earlier bare alias is
+                        // evaluated. `(define *f-base* f)` then
+                        // `(define (f x) …)` in a loaded file (one begin of
+                        // defines) made *f-base* call the new f. Snapshot
+                        // each lambda cell before the overwrite. A bare
+                        // variable alias with no earlier lambda of that name
+                        // in this group keeps the snapshot — the value the
+                        // name had when the alias form was reached.
+                        std::vector<EvalValue> pre_lambda_cell(letrec_defs.size());
+                        std::vector<char> lambda_def(letrec_defs.size(), 0);
+                        for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
+                            auto rhs = letrec_defs[i].second;
+                            if (rhs == aura::ast::NULL_NODE)
+                                continue;
+                            if (f->get(rhs).tag != aura::ast::NodeTag::Lambda)
+                                continue;
+                            lambda_def[i] = 1;
+                            if (cell_ids[i] < cells_.size())
+                                pre_lambda_cell[i] = cells_[cell_ids[i]];
+                        }
                         // Pure sequential multi-define broke module private
                         // free-vars when a non-Lambda (*agents*) forced that
                         // path — export filtering then stripped parent env.
@@ -6982,6 +7004,28 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 continue;
                             if (f->get(d.second).tag == aura::ast::NodeTag::Lambda)
                                 continue;
+                            // Issue #4354: bare alias written before the
+                            // lambda redefinition captures the pre-group value.
+                            if (p && f->get(d.second).tag == aura::ast::NodeTag::Variable) {
+                                auto vname = std::string(p->resolve(f->get(d.second).sym_id));
+                                bool earlier_lambda = false;
+                                bool later_lambda = false;
+                                EvalValue snap = make_void();
+                                for (std::size_t j = 0; j < letrec_defs.size(); ++j) {
+                                    if (!lambda_def[j] || letrec_defs[j].first != vname)
+                                        continue;
+                                    if (j < i) {
+                                        earlier_lambda = true;
+                                    } else if (j > i) {
+                                        later_lambda = true;
+                                        snap = pre_lambda_cell[j];
+                                    }
+                                }
+                                if (later_lambda && !earlier_lambda) {
+                                    cells_[cell_ids[i]] = snap;
+                                    continue;
+                                }
+                            }
                             auto val = eval_flat(*f, *p, d.second, eval_env);
                             if (!val) {
                                 rollback_still_void_defs();

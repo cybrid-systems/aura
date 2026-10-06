@@ -904,6 +904,45 @@ _read_stdin_case "4325-read-byte-eof" '' \
     '(display (eof-object? (read-byte)))' \
     '#t'
 
+# Issue #4354: a loaded file of defines is one letrec begin. An alias
+# written before a redefinition must keep the procedure from the earlier
+# load, not the new body (that loop used to hang).
+_load_alias_4354() {
+    local dir aura_abs lib_path actual expected
+    dir=$(mktemp -d /tmp/aura-4354.XXXXXX)
+    aura_abs="$AURA"
+    lib_path="$PWD/lib"
+    if [ "${aura_abs#/}" = "$aura_abs" ]; then
+        aura_abs="$PWD/$aura_abs"
+    fi
+    cat >"$dir/lib.aura" <<'EOF'
+(define (f x) (string-append "base:" x))
+EOF
+    cat >"$dir/wrap.aura" <<'EOF'
+(define *f-base* f)
+(define (f x) (if (string=? x "w") "wrapped" (*f-base* x)))
+EOF
+    cat >"$dir/main.aura" <<'EOF'
+(load "lib.aura")
+(load "wrap.aura")
+(display (eq? *f-base* f)) (newline)
+(display (f "w")) (newline)
+(display (f "z")) (newline)
+EOF
+    # cd away from the repo so ./lib is not the module root; point AURA_PATH
+    # at it. load forces the full std prelude (std/list).
+    actual=$(cd "$dir" && AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 \
+        AURA_PATH="$lib_path" timeout 8 "$aura_abs" main.aura 2>&1 | tr -d '\r')
+    rm -rf "$dir"
+    expected=$'#f\nwrapped\nbase:z\n'
+    if [ "$actual" = "$expected" ]; then
+        _record_pass "4354-load-alias-keeps-base"
+    else
+        _record_fail "4354-load-alias-keeps-base" "       expected:" "$expected" "       got:" "$actual"
+    fi
+}
+_load_alias_4354
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
