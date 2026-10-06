@@ -1901,10 +1901,7 @@ void Evaluator::flush_mutation_boundary() {
         // Issue #1274: outermost flush feeds macro dirty → IR cache
         // invalidation + epoch bump so typecheck/lower never hit stale IR.
         if (mark_all_defines_dirty_fn_) {
-            // Issue #4357: mark_all clears every IR closure owner. That is
-            // the set-code bulk invalidate. A one-line Soft rebind already
-            // stamped this define and its direct caller; wiping siblings
-            // drops specialised defines the rebind did not touch.
+            // Issue #4357: one-line Soft rebind already stamped this define.
             if (!rebind_light_path_)
                 mark_all_defines_dirty_fn_();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
