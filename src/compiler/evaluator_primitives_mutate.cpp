@@ -820,6 +820,34 @@ namespace {
         return false;
     }
 
+    // Issue #4360: an added Define is invisible until it is a child of
+    // flat.root. query:code unparses that root and eval-current evals it.
+    // A Begin root is appended. Any other root (one set-code Define) is
+    // wrapped so the new node is not stored as that Define's value.
+    bool link_added_define_onto_root(aura::ast::FlatAST& flat, aura::ast::NodeId define_id) {
+        auto ws_root = flat.root;
+        if (ws_root == aura::ast::NULL_NODE || !flat.is_live_node(ws_root))
+            return false;
+        if (flat.get(ws_root).tag == aura::ast::NodeTag::Begin) {
+            auto nchild = static_cast<std::uint32_t>(flat.get(ws_root).children.size());
+            flat.insert_child(ws_root, nchild, define_id);
+        } else {
+            aura::ast::NodeId kids[2] = {ws_root, define_id};
+            flat.root = flat.add_begin(kids, 2);
+        }
+        if (flat.root == aura::ast::NULL_NODE || !flat.is_live_node(flat.root))
+            return false;
+        auto rv = flat.get(flat.root);
+        for (std::uint32_t i = 0; i < rv.children.size(); ++i) {
+            if (rv.child(i) == define_id) {
+                flat.mark_dirty_upward(define_id);
+                flat.mark_dirty_upward(flat.root);
+                return true;
+            }
+        }
+        return false;
+    }
+
 } // namespace
 
 void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
@@ -3702,40 +3730,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::string summary =
                 (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "add " + name;
             auto new_define = flat.add_define(sym, new_value);
-            // Issue #4360: query:code unparses flat.root and eval-current
-            // evals that root. An unlinked Define returned #t and stayed
-            // invisible. Append onto a Begin root. A single set-code Define
-            // is wrapped in a Begin so the new node is not a value child.
-            {
-                auto ws_root = flat.root;
-                if (ws_root == aura::ast::NULL_NODE || !flat.is_live_node(ws_root)) {
-                    ok = false;
-                    return mev("stale-ref", "rebind add: workspace has no root");
-                }
-                if (flat.get(ws_root).tag == aura::ast::NodeTag::Begin) {
-                    auto nchild = static_cast<std::uint32_t>(flat.get(ws_root).children.size());
-                    flat.insert_child(ws_root, nchild, new_define);
-                } else {
-                    aura::ast::NodeId kids[2] = {ws_root, new_define};
-                    auto begin = flat.add_begin(kids, 2);
-                    flat.root = begin;
-                }
-                bool linked = false;
-                if (flat.root != aura::ast::NULL_NODE && flat.is_live_node(flat.root)) {
-                    auto rv = flat.get(flat.root);
-                    for (std::uint32_t i = 0; i < rv.children.size(); ++i) {
-                        if (rv.child(i) == new_define) {
-                            linked = true;
-                            break;
-                        }
-                    }
-                }
-                if (!linked) {
-                    ok = false;
-                    return mev("stale-ref", "rebind add: new define is not on the workspace root");
-                }
-                flat.mark_dirty_upward(new_define);
-                flat.mark_dirty_upward(flat.root);
+            // Issue #4360: link onto flat.root (see link_added_define_onto_root).
+            if (!link_added_define_onto_root(flat, new_define)) {
+                ok = false;
+                return mev("stale-ref", "rebind add: define not on root");
             }
             flat.add_mutation(new_define, "add", name, summary, summary);
             // Mark all defines dirty so cached IR for siblings gets invalidated.
