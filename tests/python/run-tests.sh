@@ -1273,6 +1273,51 @@ _file_4361() {
 }
 _file_4361
 
+# Issue #4362: batch-rebind is gated like mutate:rebind.
+_file_4362() {
+    local dir src
+    dir=$(mktemp -d /tmp/aura-4362.XXXXXX)
+    src='
+(set-code "(define (hello x) (+ x 1)) (define (bye y) (hello y)) (define (greet n) (string-append \"hi \" n))")
+(eval-current)
+(display (mutate:atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y y))" "batch")) "batch"))
+(newline)
+(display (mutate:atomic-batch (list (list "mutate:rebind" "greet" "(lambda (n) (string-append n 1))" "batch")) "batch"))
+(newline)
+(display (query:code))
+(newline)
+(display (mutate:atomic-batch (list (list "mutate:rebind" "hello" "(lambda (x) (+ x 2))" "ok")) "ok"))
+(newline)
+(display (hello 3))
+(newline)
+'
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 25 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=soft timeout 25 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    if printf '%s\n' "$hard" | grep -q 'arity mismatch' \
+        && printf '%s\n' "$hard" | grep -q 'type error' \
+        && printf '%s\n' "$hard" | grep -q '(hello y)' \
+        && printf '%s\n' "$hard" | grep -q 'hi ' \
+        && ! printf '%s\n' "$hard" | grep -q '(hello y y)' \
+        && ! printf '%s\n' "$hard" | grep -q '(string-append n 1)' \
+        && printf '%s\n' "$hard" | grep -qx '#t' \
+        && printf '%s\n' "$hard" | grep -qx '5' \
+        && printf '%s\n' "$soft" | grep -q 'arity mismatch' \
+        && printf '%s\n' "$soft" | grep -qx '#t' \
+        && printf '%s\n' "$soft" | grep -q '(string-append n 1)' \
+        && ! printf '%s\n' "$soft" | grep -q '(hello y y)' \
+        && printf '%s\n' "$soft" | grep -qx '5' \
+        && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4362-batch-rebind-gate"
+    else
+        _record_fail "4362-batch-rebind-gate" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4362
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

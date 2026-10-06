@@ -6251,6 +6251,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
         }
+        // Issue #4362: blame from a rejected batch-rebind. Empty for
+        // every other failure, so those batch-failed strings stay put.
+        std::string batch_gate_blame;
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
@@ -6375,6 +6378,37 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ++op_count;
                 continue;
             }
+            // Issue #4362: batch-rebind uses the same post-mutate gate as
+            // mutate:rebind. Arity mismatch rejects in both modes. A type
+            // error rejects only when the type gate is hard; Soft stays
+            // success. This path does not arm the light rebind, so the
+            // gate is not skipped. Blame rides the batch-failed value.
+            if (op_name == "mutate:rebind") {
+                std::string threw;
+                bool tc_ok = true;
+                if (!guard->run_or_rollback([&] { tc_ok = ev.run_post_mutate_typecheck_no_lock(); },
+                                            &threw)) {
+                    batch_gate_blame = "post-mutate typecheck threw: " + threw;
+                    mark_sub_op_failed();
+                    break;
+                }
+                if (!tc_ok || !ev.last_mutate_error_.empty()) {
+                    batch_gate_blame = ev.last_mutate_error_.empty()
+                                           ? std::string("typecheck after mutate failed")
+                                           : ev.last_mutate_error_;
+                    mark_sub_op_failed();
+                    break;
+                }
+                const std::uint64_t nchg =
+                    ev.workspace_flat_ && ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0;
+                if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
+                    batch_gate_blame = ev.last_mutate_error_.empty()
+                                           ? std::string("mutation rejected")
+                                           : ev.last_mutate_error_;
+                    mark_sub_op_failed();
+                    break;
+                }
+            }
             ev.pin_dirty_nodes_for_atomic_batch();
             ++op_count;
         }
@@ -6402,9 +6436,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // an `ev.make_merr` pair instead. The legacy
             // `batch-unsupported-op` path above already uses
             // make_merr — this matches the convention.
-            return ev.make_merr(
-                "batch-failed",
-                "mutate:atomic-batch sub-op failed; batch rolled back to pre-batch state");
+            std::string fail_msg =
+                "mutate:atomic-batch sub-op failed; batch rolled back to pre-batch state";
+            if (!batch_gate_blame.empty())
+                fail_msg += ": " + batch_gate_blame;
+            return ev.make_merr("batch-failed", fail_msg);
         }
         // Issue #250: commit the batch. This performs the single
         // generation bump (consolidated from the per-op bumps
