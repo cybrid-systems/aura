@@ -1128,6 +1128,33 @@ EOF
 }
 _file_4357
 
+# Issue #4358: char-ready? polls stdin without blocking or consuming.
+_file_4358() {
+    local out err dir holder
+    dir=$(mktemp -d /tmp/aura-4358.XXXXXX)
+    out=$(printf 'hi\n' | AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 5 "$AURA" -e '(display (char-ready?)) (display (read-line))' 2>"$dir/ready.err")
+    err=$(cat "$dir/ready.err" 2>/dev/null || true)
+    if [ "$out" != "#thi" ] || [ -n "$err" ]; then
+        _record_fail "4358-char-ready-poll" "       stdout:" "$out" "       stderr:" "$err"
+        rm -rf "$dir"
+        return
+    fi
+    mkfifo "$dir/in"
+    sleep 30 >"$dir/in" &
+    holder=$!
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 5 "$AURA" -e '(display (char-ready?))' <"$dir/in" 2>"$dir/idle.err")
+    err=$(cat "$dir/idle.err" 2>/dev/null || true)
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    if [ "$out" = "#f" ] && [ -z "$err" ]; then
+        _record_pass "4358-char-ready-poll"
+    else
+        _record_fail "4358-char-ready-poll" "       idle stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4358
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
