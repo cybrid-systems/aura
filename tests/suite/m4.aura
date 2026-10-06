@@ -36,6 +36,7 @@
              (borrow x))
            (catch (e) #t))))
 
+)
 (test-suite "m4:drop-moved"
   (check (try
            (let ((x (Linear 42)))
