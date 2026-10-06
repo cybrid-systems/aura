@@ -1431,6 +1431,65 @@ _file_4364() {
 }
 _file_4364
 
+# Issue #4365: serialize-workspace keeps author and composite on the mutation log.
+_file_4365() {
+    local dir book src
+    dir=$(mktemp -d /tmp/aura-4365.XXXXXX)
+    book="$dir/book.aw"
+    src=$(cat <<EOF
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)")
+  (eval-current)
+  (define s0 (ast:snapshot "t0"))
+  (show "FP" (mutate:set-agent-fingerprint 42))
+  (show "K1" (typed-mutate-atomic (list "(mutate:rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")")))
+  (define s1 (ast:snapshot "t1"))
+  (show "FP2" (mutate:set-agent-fingerprint 3))
+  (show "K2" (typed-mutate-atomic (list "(mutate:rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"flip\\")")))
+  (mutate:set-agent-fingerprint 1)
+  (show "LOG" (query:mutations-since 0))
+  (show "SER" (serialize-workspace "$book"))
+  (set-code "(define (zzz) 0)")
+  (eval-current)
+  (show "DES" (deserialize-workspace "$book"))
+  (show "CODE_BACK" (query:code))
+  (show "LOG_BACK" (query:mutations-since 0))
+  (show "RESTORE1" (ast:restore s1))
+  (eval-current)
+  (show "LOG_S1" (query:mutations-since 0)))
+(main)
+EOF
+)
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 30 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 30 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    _ok4365() {
+        printf '%s\n' "$1" | grep -q 'author=42' \
+            && printf '%s\n' "$1" | grep -q 'author=3' \
+            && printf '%s\n' "$1" | grep -q 'composite=1' \
+            && printf '%s\n' "$1" | grep -q 'composite=3' \
+            && printf '%s\n' "$1" | grep -q '(\* x 2)' \
+            && printf '%s\n' "$1" | grep -q '(- (hello y))' \
+            && printf '%s\n' "$1" | grep -qx 'SER #t' \
+            && printf '%s\n' "$1" | grep -qx 'DES #t' \
+            && printf '%s\n' "$1" | grep -qx 'K1 #t' \
+            && printf '%s\n' "$1" | grep -qx 'K2 #t' \
+            && printf '%s\n' "$1" | grep -qx 'RESTORE1 #t' \
+            && ! printf '%s\n' "$1" | grep -q 'author=0' \
+            && ! printf '%s\n' "$1" | grep -q 'composite=0'
+    }
+    if _ok4365 "$hard" && _ok4365 "$soft" && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4365-persist-author-composite"
+    else
+        _record_fail "4365-persist-author-composite" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4365
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

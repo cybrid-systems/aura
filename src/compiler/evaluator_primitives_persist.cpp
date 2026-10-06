@@ -38,7 +38,11 @@ using types::make_void;
 // Magic "AURASOUL" + 0x01 marker (issue AC).
 static constexpr char kMagic[8] = {'A', 'U', 'R', 'A', 'S', 'O', 'U', 'L'};
 static constexpr std::uint8_t kMagicMark = 0x01;
-static constexpr std::uint32_t kFormatVersion = 1;
+// Issue #4365: v2 appends author_fingerprint, parent_mutation_id, and
+// composite_transaction_id on each mutation record. v1 blobs still load;
+// those three fields stay 0.
+static constexpr std::uint32_t kFormatVersion = 2;
+static constexpr std::uint32_t kFormatVersionMin = 1;
 
 static constexpr std::uint32_t kSecSource = 1;
 static constexpr std::uint32_t kSecMeta = 2;
@@ -126,7 +130,8 @@ static bool load_blob(const std::string& path, PersistBlob& blob, std::string* e
             *err = "truncated header";
         return false;
     }
-    if (blob.format_version != kFormatVersion) {
+    // Issue #4365: accept v1 (no provenance tail) through the current writer.
+    if (blob.format_version < kFormatVersionMin || blob.format_version > kFormatVersion) {
         if (err)
             *err = "unsupported format version " + std::to_string(blob.format_version);
         return false;
@@ -214,7 +219,8 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto& log = ev.workspace_flat_->all_mutations();
             append_u32(mut_blob, static_cast<std::uint32_t>(log.size()));
             for (const auto& rec : log)
-                aura::ast::mutation::wire_write_mutation_record(mut_blob, rec);
+                aura::ast::mutation::wire_write_mutation_record(
+                    mut_blob, rec, aura::ast::mutation::kMutationRecordProvenanceWireVersion);
         } else {
             append_u32(mut_blob, 0);
         }
@@ -317,7 +323,12 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (pos + 8 > blob.raw.size())
                     break;
                 try {
-                    auto rec = aura::ast::mutation::wire_read_mutation_record(blob.raw, pos);
+                    const auto wire_ver =
+                        blob.format_version >= 2
+                            ? aura::ast::mutation::kMutationRecordProvenanceWireVersion
+                            : 1u;
+                    auto rec =
+                        aura::ast::mutation::wire_read_mutation_record(blob.raw, pos, wire_ver);
                     log.push_back(std::move(rec));
                 } catch (...) {
                     // [SILENCE-PRIM-#615] truncated/corrupt mutation wire
