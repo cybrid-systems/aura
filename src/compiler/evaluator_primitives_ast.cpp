@@ -1265,6 +1265,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->generation()));
     });
+    // Issue #4349: bind the bare Soft name too — the stats-face-only
+    // registration left (ast:generation) unbound for editor clients
+    // (same shape as the #4345 bare query bindings). Args ignored,
+    // same as the stats impl above.
+    add("ast:generation", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->generation()));
+    });
 
     // Issue #261: NodeId lifecycle primitives for long-running
     // AI query→mutate→eval loops.

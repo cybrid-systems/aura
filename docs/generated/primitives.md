@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**436** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**437** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,7 +10,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 54 primitives (12%)
+- **mutation-safety**: 55 primitives (13%)
 - **core**: 348 primitives (80%)
 - **internal-observable**: 33 primitives (8%)
 - **convenience**: 1 primitives (0%)
@@ -58,10 +58,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 
-## Ast: (16)
+## Ast: (17)
 
 - `ast:compact-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-deserialize` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -587,11 +588,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (54)
+### Mutation safety (must remain primitive) (55)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`

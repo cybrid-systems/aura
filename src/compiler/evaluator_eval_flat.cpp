@@ -4872,8 +4872,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 if (f->is_live_node(current_id))
                     f->restamp_node_generation(current_id);
                 if (!f->is_valid(current_id)) {
+                    // Issue #4349: ast:restore over a post-mutate snapshot
+                    // leaves env closures holding node ids that are dead in
+                    // the restored flat. That is a documented, recoverable
+                    // workspace face — not an internal error. Tell the caller
+                    // how to re-bind.
                     return std::unexpected(
-                        Diagnostic{ErrorKind::InternalError, "stale node id (gen mismatch)"});
+                        Diagnostic{ErrorKind::StaleWorkspace,
+                                   "stale node id (gen mismatch): the workspace "
+                                   "changed under compiled definitions (ast:restore) "
+                                   "— run (eval-current) to re-bind, then retry"});
                 }
             }
             if (current_id >= f->size())
