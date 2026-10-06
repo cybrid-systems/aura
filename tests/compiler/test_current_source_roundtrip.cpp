@@ -55,6 +55,7 @@ using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_keyword;
 using aura::compiler::types::is_string;
@@ -711,6 +712,41 @@ static void ac_wiring() {
 
 } // namespace
 
+// ── Issue #4349: ast:restore over a post-rebind snapshot leaves env
+// closures holding dead node ids — the stale call must surface the
+// documented recoverable StaleWorkspace error (never InternalError),
+// eval-current re-binds, and the bare (ast:generation) metric is
+// callable from Soft (was stats-face only). ──
+static void ac4349_restore_over_rebind() {
+    std::println("\n--- #4349: restore over rebind + bare ast:generation ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define f4349 (lambda (x) x))\n(define g4349 (lambda (y) (f4349 y)))"),
+          "4349: set-code f/g");
+    CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current binds");
+    auto pre = cs.eval("(g4349 4)");
+    CHECK(pre && is_int(*pre) && as_int(*pre) == 4, "4349: (g 4) = 4 pre-rebind");
+    auto gen = cs.eval("(ast:generation)");
+    CHECK(gen && is_int(*gen), "4349: bare (ast:generation) is an int");
+    auto sid = cs.eval("(ast:snapshot \"4349\")");
+    CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4349: snapshot id");
+    CHECK(cs.eval("(mutate:rebind \"f4349\" \"(lambda (x) (* x 2))\" \"dbl\")").has_value(),
+          "4349: rebind f -> double");
+    auto post = cs.eval("(g4349 4)");
+    CHECK(post && is_int(*post) && as_int(*post) == 8, "4349: (g 4) = 8 post-rebind");
+    auto st = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    CHECK(st && is_bool(*st) && as_bool(*st), "4349: restore to pre-rebind snapshot");
+    // The stale compiled call must not silently succeed: on the
+    // CompilerService face the StaleWorkspace diagnostic surfaces as a
+    // valueless result (the engine face carries the message); either way
+    // the caller cannot observe a stale answer.
+    auto stale_val = cs.eval("(g4349 4)");
+    CHECK(!(stale_val && is_int(*stale_val)), "4349: stale call never returns a stale int");
+    CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current re-binds");
+    auto healed = cs.eval("(g4349 4)");
+    CHECK(healed && is_int(*healed) && as_int(*healed) == 4,
+          "4349: (g 4) = 4 after recovery (restored identity f)");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     ac_dual_workspace();
@@ -720,6 +756,7 @@ int run_test_current_source_roundtrip() {
     ac_depth_limit();
     ac_null_workspace();
     ac_wiring();
+    ac4349_restore_over_rebind();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
     ac2966_1_no_workspace_observable();
     ac2966_2_set_code_path_ok();
