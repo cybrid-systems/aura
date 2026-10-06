@@ -8112,7 +8112,8 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
         // the restored bodies.
         (void)result;
     } catch (...) {
-        // noexcept: a throw here would terminate the failed batch's dtor.
+        // [SILENCE-PRIM-#615] noexcept: a throw here would terminate the
+        // failed batch's destructor. Leave the cells unchanged.
     }
 }
 
