@@ -325,6 +325,7 @@ static void ac9_4059_soft_off_unchanged() {
 } // namespace
 
 static void ac4342_unclosed_list_fail_closed();
+static void ac4348_string_single_unescape();
 
 int run_test_load_cap_io_read() {
     std::println("=== Issue #2485: load kCapIoRead capability gate ===");
@@ -338,6 +339,7 @@ int run_test_load_cap_io_read() {
     ac7_4059_no_mutate_effect_deny();
     ac9_4059_soft_off_unchanged();
     ac4342_unclosed_list_fail_closed();
+    ac4348_string_single_unescape();
     std::println("\n=== #2485 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -378,6 +380,28 @@ static void ac4342_unclosed_list_fail_closed() {
     }
     auto r2 = cs.eval("(load \"/tmp/aura_load_extra_close_4342.aura\")");
     CHECK(r2.has_value() && r2 && is_error(*r2), "4342: extra ')' fails closed (#4272 parity)");
+}
+
+// ── Issue #4348: string literals unescape exactly once ──
+// Lexer::read_string already unescapes into the token text; parse_expr
+// used to apply a second pass (only double-backslash and backslash-quote)
+// that double-unescaped: "a\\\\b" (4) came out a\\b (3), "x\\\\\"y" (4)
+// came out x\"y (3), "\\\\\"" (2) came out " (1). Pin the full issue
+// table through the same parse path the file runner uses.
+static void ac4348_string_single_unescape() {
+    std::println("\n--- #4348: string literals unescape exactly once ---");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto a = cs.eval(R"((string-length "x\\y"))");
+    CHECK(a.has_value() && is_int(*a) && as_int(*a) == 3, "4348: A x-y two-char-esc len 3");
+    auto b = cs.eval(R"((string-length "x\"y"))");
+    CHECK(b.has_value() && is_int(*b) && as_int(*b) == 3, "4348: B escaped-quote len 3");
+    auto c = cs.eval(R"((string-length "x\\\"y"))");
+    CHECK(c.has_value() && is_int(*c) && as_int(*c) == 4, "4348: C backslash+quote len 4");
+    auto d = cs.eval(R"((string-length "\\\""))");
+    CHECK(d.has_value() && is_int(*d) && as_int(*d) == 2, "4348: D backslash+quote only len 2");
+    auto e = cs.eval(R"((string-length "a\\\\b"))");
+    CHECK(e.has_value() && is_int(*e) && as_int(*e) == 4, "4348: E double-backslash len 4");
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
