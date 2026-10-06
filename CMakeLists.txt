@@ -3693,6 +3693,7 @@ add_executable(test_ir_closure_jit_misc_batch
     tests/compiler/test_comprehensive_live_closure_expire.cpp
     tests/compiler/test_dce_elided_deopt_meta.cpp
     tests/compiler/test_emit_object_deprecated.cpp
+    tests/compiler/test_env_lookup_soa_shadow_reverse.cpp
     tests/compiler/test_force_jit_repromote.cpp
     tests/compiler/test_ir_const_string_intern.cpp
     tests/compiler/test_ir_optimize_type_info_chain.cpp
