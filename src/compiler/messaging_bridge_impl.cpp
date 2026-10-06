@@ -25,6 +25,8 @@ aura::messaging::HttpPostAsyncFn aura::messaging::g_http_post_async = nullptr;
 aura::messaging::DensenessBodyUnlockFn aura::messaging::g_denseness_body_unlock_for_wait = nullptr;
 aura::messaging::DensenessBodyRelockFn aura::messaging::g_denseness_body_relock_after_wait =
     nullptr;
+aura::messaging::CliMainBodyLockAcquireFn aura::messaging::g_cli_main_body_lock_acquire = nullptr;
+aura::messaging::CliMainBodyLockReleaseFn aura::messaging::g_cli_main_body_lock_release = nullptr;
 aura::messaging::ThreadPoolEnqueueFn aura::messaging::g_thread_pool_enqueue = nullptr;
 aura::messaging::EvalAsyncFn aura::messaging::g_eval_async = nullptr;
 aura::messaging::GetMetricsFn aura::messaging::g_get_scheduler_metrics;

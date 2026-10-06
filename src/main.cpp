@@ -3201,6 +3201,11 @@ int main(int argc, char* argv[]) {
     }
 
     bool err = false;
+    // Issue #4356: hold the thread-fiber body mutex for this oneshot eval.
+    // read-line, read-byte, and fiber:join drop it while they block, then
+    // take it back before touching the Evaluator. Destroyed before ~cs
+    // drains still-running workers (they need the mutex to finish).
+    aura::messaging::CliMainEvalBodyLock cli_body_lock;
     // Soft oneshot std prelude (#4178–#4219): auto-load Soft std list /
     // string / hash / math so bare oneshot (`aura -e` / file / pipe) binds
     // foldr, any/all, string-take/drop/pad/trim/split/replace/case,

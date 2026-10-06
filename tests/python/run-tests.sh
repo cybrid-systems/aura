@@ -985,6 +985,43 @@ EOF
 }
 _file_4355
 
+# Issue #4356: a thread fiber allocating strings must not race read-line
+# on the same Evaluator. Both bad-counts stay 0 (no corrupted lines).
+_file_4356() {
+    local dir aura_abs out err
+    dir=$(mktemp -d /tmp/aura-4356.XXXXXX)
+    aura_abs="$AURA"
+    if [ "${aura_abs#/}" = "$aura_abs" ]; then
+        aura_abs="$PWD/$aura_abs"
+    fi
+    cat >"$dir/race.aura" <<'EOF'
+(define (pr k v) (display k) (display "=") (display v) (newline))
+(define (mk n) (let lp ((i 0) (acc (list))) (if (>= i n) acc (lp (+ i 1) (cons (string-append "s" (number->string i)) acc)))))
+(define (chk xs n) (let lp ((ys xs) (i (- n 1)) (bad 0)) (if (null? ys) bad (lp (cdr ys) (- i 1) (if (string=? (car ys) (string-append "s" (number->string i))) bad (+ bad 1))))))
+(define (fwork) (let lp ((k 0) (bad 0)) (if (>= k 6) bad (lp (+ k 1) (+ bad (chk (mk 600) 600))))))
+(define fid (fiber:spawn fwork))
+(define (readall i bad)
+  (let ((l (read-line)))
+    (if (or (eof-object? l) (not (string? l))) (list i bad)
+        (readall (+ i 1) (if (string=? l (string-append "line" (number->string i))) bad (+ bad 1))))))
+(pr "main_lines_bad" (readall 0 0))
+(pr "fiber_bad" (fiber:join fid))
+EOF
+    out=$(python3 -c 'import sys
+for i in range(3000):
+    sys.stdout.write("line%d\n" % i)' | AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 \
+        timeout 25 "$aura_abs" "$dir/race.aura" 2>"$dir/err")
+    err=$(cat "$dir/err")
+    if printf '%s\n' "$out" | grep -q 'main_lines_bad=(3000 0)' \
+        && printf '%s\n' "$out" | grep -q 'fiber_bad=0'; then
+        _record_pass "4356-fiber-read-line-strings"
+    else
+        _record_fail "4356-fiber-read-line-strings" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4356
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

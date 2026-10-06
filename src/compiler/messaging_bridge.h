@@ -143,6 +143,16 @@ using DensenessBodyRelockFn = void (*)(void* lock, bool unlocked);
 extern DensenessBodyUnlockFn g_denseness_body_unlock_for_wait;
 extern DensenessBodyRelockFn g_denseness_body_relock_after_wait;
 
+// Issue #4356: CLI oneshot eval (file / pipe / -e) holds the same body
+// mutex as thread-fiber bodies. The acquire hook locks it and publishes
+// the unique_lock in the denseness TLS slot so read-line, read-byte, and
+// fiber:join can drop it across the wait. nullptr acquire means this
+// thread already holds the lock (do not lock std::mutex twice).
+using CliMainBodyLockAcquireFn = void* (*)();
+using CliMainBodyLockReleaseFn = void (*)(void*);
+extern CliMainBodyLockAcquireFn g_cli_main_body_lock_acquire;
+extern CliMainBodyLockReleaseFn g_cli_main_body_lock_release;
+
 struct DensenessBodyLockWaitGuard {
     void* lock = nullptr; // opaque std::unique_lock<std::mutex>*
     bool unlocked = false;
@@ -156,6 +166,23 @@ struct DensenessBodyLockWaitGuard {
     }
     DensenessBodyLockWaitGuard(const DensenessBodyLockWaitGuard&) = delete;
     DensenessBodyLockWaitGuard& operator=(const DensenessBodyLockWaitGuard&) = delete;
+};
+
+// Issue #4356: RAII for the CLI main thread. Constructed around oneshot
+// eval, destroyed before ~CompilerService drains thread fibers (the
+// workers must be able to acquire the body mutex in order to finish).
+struct CliMainEvalBodyLock {
+    void* lock = nullptr;
+    CliMainEvalBodyLock() {
+        if (g_cli_main_body_lock_acquire)
+            lock = g_cli_main_body_lock_acquire();
+    }
+    ~CliMainEvalBodyLock() {
+        if (lock && g_cli_main_body_lock_release)
+            g_cli_main_body_lock_release(lock);
+    }
+    CliMainEvalBodyLock(const CliMainEvalBodyLock&) = delete;
+    CliMainEvalBodyLock& operator=(const CliMainEvalBodyLock&) = delete;
 };
 
 // Thread pool enqueue — set by serve_async.cpp, used by thread_pool:enqueue primitive.
