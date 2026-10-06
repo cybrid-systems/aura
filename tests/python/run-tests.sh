@@ -934,7 +934,7 @@ EOF
     actual=$(cd "$dir" && AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 \
         AURA_PATH="$lib_path" timeout 8 "$aura_abs" main.aura 2>&1 | tr -d '\r')
     rm -rf "$dir"
-    expected=$'#f\nwrapped\nbase:z\n'
+    expected=$'#f\nwrapped\nbase:z'
     if [ "$actual" = "$expected" ]; then
         _record_pass "4354-load-alias-keeps-base"
     else
@@ -942,6 +942,39 @@ EOF
     fi
 }
 _load_alias_4354
+# Issue #4353: Env::lookup SoA walk must match frame string bindings in
+# reverse - a TCO call frame accumulates copied ancestor bindings then fresh
+# local binds; forward scan resolved a shadowed name to the STALE copy
+# (named-let body read the global instead of the let binding).
+_named_let_shadow_4353() {
+    local dir aura_abs actual expected
+    dir=$(mktemp -d /tmp/aura-4353.XXXXXX)
+    aura_abs="$AURA"
+    if [ "${aura_abs#/}" = "$aura_abs" ]; then
+        aura_abs="$PWD/$aura_abs"
+    fi
+    cat >"$dir/repro.aura" <<'AEOF'
+(define gv 7)
+(define (row a) 99)
+(define (h1 x) (let lp ((i 0) (p1 x)) (if (>= i 2) p1 (lp (+ i 1) p1))))
+(define (h3 x) (let ((gv (+ x 1))) (let lp ((i 0)) (if (>= i 2) gv (lp (+ i 1))))))
+(define (h5 row) (let lp ((i 0)) (if (>= i 2) row (lp (+ i 1)))))
+(display (h1 10)) (newline)
+(display (h3 10)) (newline)
+(display (h5 10)) (newline)
+AEOF
+    actual=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 \
+        timeout 8 "$aura_abs" "$dir/repro.aura" 2>&1 | tr -d '\r')
+    rm -rf "$dir"
+    expected=$'10\n11\n10'
+    if [ "$actual" = "$expected" ]; then
+        _record_pass "4353-named-let-shadow-reverse"
+    else
+        _record_fail "4353-named-let-shadow-reverse" "       expected:" "$expected" "       got:" "$actual"
+    fi
+}
+_named_let_shadow_4353
+
 
 # Issue #4355: a top-level error must not re-run earlier forms. After
 # set-code, the forms that follow the error must still call the closure.
@@ -968,7 +1001,7 @@ EOF
 EOF
     out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" "$dir/a.aura" 2>"$dir/a.err")
     err=$(cat "$dir/a.err")
-    if [ "$out" = $'one 2\ntwo 3\n' ] && printf '%s' "$err" | grep -q 'unbound variable: no-such-proc'; then
+    if [ "$out" = $'one 2\ntwo 3' ] && printf '%s' "$err" | grep -q 'unbound variable: no-such-proc'; then
         _record_pass "4355-error-does-not-rerun-prefix"
     else
         _record_fail "4355-error-does-not-rerun-prefix" "       stdout:" "$out" "       stderr:" "$err"
