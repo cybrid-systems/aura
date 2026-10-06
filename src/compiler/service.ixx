@@ -3022,6 +3022,29 @@ public:
         // after mutate consumes partial re-lower, not only full lower.
         (void)relower_dirty_defines_from_workspace();
 
+        // Issue #4346-CI: multi-form Begin root (set-code multi-define
+        // buffers): the single-define flow below only handles single-Define
+        // roots; register each child Lambda define into the IR/dep
+        // structures here so mark_define_dirty / dep-graph checks see them.
+        // bind_in_env=true mirrors the single-define cache path; the
+        // eval_flat fall-through below re-binds harmlessly.
+        const auto root_v_reg = flat_ptr->get(expanded_root);
+        if (root_v_reg.tag == aura::ast::NodeTag::Begin) {
+            for (auto cid_reg : root_v_reg.children) {
+                if (cid_reg >= flat_ptr->size())
+                    continue;
+                if (auto def_reg = try_extract_define(*flat_ptr, *pool_ptr, cid_reg)) {
+                    auto& [n_reg, b_reg] = *def_reg;
+                    auto bnode_reg =
+                        b_reg < flat_ptr->size() ? flat_ptr->get(b_reg) : aura::ast::NodeView{};
+                    if (bnode_reg.tag == aura::ast::NodeTag::Lambda)
+                        (void)cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, cid_reg,
+                                                          std::string(n_reg), /*bind_in_env=*/true,
+                                                          "__repl__", /*from_eval_ir=*/false);
+                }
+            }
+        }
+
         // Check for top-level (define ...) — cache IR + eval tree-walker for env persistence
         auto def = try_extract_define(*flat_ptr, *pool_ptr, expanded_root);
         if (def) {

@@ -99,13 +99,8 @@ static void ac2_body_only_not_nested() {
 
     CompilerService cs;
     // A body calls B; A also has nested lambda that does not capture B.
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda ()
-  (let ((inner (lambda () 42)))
-    (+ (B) (inner)))))
-")")
+    CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda ()\n  (let ((inner "
+                  "(lambda () 42)))\n    (+ (B) (inner)))))\")")
               .has_value(),
           "set-code A/B");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
@@ -188,11 +183,7 @@ static void ac_source_wiring() {
 static void ac2187_block_edge_after_record() {
     std::println("\n--- #2187 AC1: block edge after define+call / record ---");
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (+ (B) 2)))
-")")
+    CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (+ (B) 2)))\")")
               .has_value(),
           "set-code A/B");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
@@ -220,13 +211,9 @@ static void ac2187_block_edge_after_record() {
 static void ac2187_mutate_callee_call_site_block() {
     std::println("\n--- #2187 AC2/AC5: mutate callee → call-site block dirty ---");
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda ()
-  (let ((inner (lambda () 42)))
-    (+ (B) (inner)))))
-")")
+    CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n"
+                  "(define A (lambda ()\n"
+                  "  (let ((inner (lambda () 42)))\n    (+ (B) (inner)))))\")")
               .has_value(),
           "set-code nested");
     CHECK(cs.eval("(eval-current)").has_value(), "eval nested");
@@ -719,13 +706,9 @@ static void ac3255_1_soft_fork_forces_full() {
           "ac3255 AC1: Soft / Off (strict_or_production false)");
 
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (B)))
-")")
-              .has_value(),
-          "ac3255 AC1: set-code A/B");
+    CHECK(
+        cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (B)))\")").has_value(),
+        "ac3255 AC1: set-code A/B");
     CHECK(cs.eval("(eval-current)").has_value(), "ac3255 AC1: eval");
     cs.public_record_dependency("A", "B");
     CHECK(cs.public_graphs_consistent(), "ac3255 AC1: consistent after record");
@@ -812,13 +795,9 @@ static void ac3255_3_clean_soft_zero_extra() {
     ac3255_enter_soft();
 
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define Y (lambda () 1))
-(define X (lambda () (Y)))
-")")
-              .has_value(),
-          "ac3255 AC3: set-code");
+    CHECK(
+        cs.eval("(set-code \"(define Y (lambda () 1))\n(define X (lambda () (Y)))\")").has_value(),
+        "ac3255 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "ac3255 AC3: eval");
     cs.public_record_dependency("X", "Y");
     CHECK(cs.public_graphs_consistent(), "ac3255 AC3: consistent");
@@ -867,11 +846,7 @@ static void ac3255_4_metrics_soak_and_linter() {
     ac3255_enter_soft();
 
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define leaf (lambda () 1))
-(define root (lambda () (leaf)))
-")")
+    CHECK(cs.eval("(set-code \"(define leaf (lambda () 1))\n(define root (lambda () (leaf)))\")")
               .has_value(),
           "ac3255 AC5: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "ac3255 AC5: eval");
@@ -946,13 +921,8 @@ static void ac3486_1_string_only_inject_production() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-(define h (lambda () (g)))
-(define x3486 (lambda () 0))
-")")
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\n(define h "
+                  "(lambda () (g)))\n(define x3486 (lambda () 0))\")")
               .has_value(),
           "3486 AC1: set-code cone");
     CHECK(cs.eval("(eval-current)").has_value(), "3486 AC1: eval");
@@ -993,12 +963,8 @@ static void ac3486_1b_node_drop_production() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-(define h (lambda () (g)))
-")")
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\n(define h "
+                  "(lambda () (g)))\")")
               .has_value(),
           "3486 AC1b: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3486 AC1b: eval");
@@ -1046,12 +1012,8 @@ static void ac3486_2_cross_fiber() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-(define z3486 (lambda () 0))
-")")
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\n(define z3486 "
+                  "(lambda () 0))\")")
               .has_value(),
           "3486 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3486 AC2: eval");
@@ -1109,13 +1071,8 @@ static void ac3615_1_cone_wide_non_front_fork() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-(define h (lambda () (g)))
-(define x3615 (lambda () 0))
-")")
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\n(define h "
+                  "(lambda () (g)))\n(define x3615 (lambda () 0))\")")
               .has_value(),
           "3615 AC1: set-code cone (f ← g ← h, x3615 separate)");
     CHECK(cs.eval("(eval-current)").has_value(), "3615 AC1: eval");
@@ -1733,11 +1690,7 @@ static void ac3580_1_divergence_injection_visible() {
           "3580 AC1: reverse NodeId-only extra is not a string-authority fail");
 
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define leaf (lambda () 1))
-(define root (lambda () (leaf)))
-")")
+    CHECK(cs.eval("(set-code \"(define leaf (lambda () 1))\n(define root (lambda () (leaf)))\")")
               .has_value(),
           "3580 AC1: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3580 AC1: eval");
@@ -1773,12 +1726,8 @@ static void ac3580_2_production_never_silent_partial() {
 
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define f (lambda () 1))
-(define g (lambda () (f)))
-(define x3580 (lambda () 0))
-")")
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\n(define g (lambda () (f)))\n(define x3580 "
+                  "(lambda () 0))\")")
               .has_value(),
           "3580 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3580 AC2: eval");
@@ -1829,11 +1778,7 @@ static void ac3580_3_soft_undercascade_counters_visible() {
     g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
 
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define leaf (lambda () 1))
-(define root (lambda () (leaf)))
-")")
+    CHECK(cs.eval("(set-code \"(define leaf (lambda () 1))\n(define root (lambda () (leaf)))\")")
               .has_value(),
           "3580 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3580 AC3: eval");
@@ -1924,13 +1869,9 @@ static void ac3657_1_unslotted_production_inconsistent() {
               "3657 AC1: production unslotted callee → false");
     }
     CompilerService cs;
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda () (B)))
-")")
-              .has_value(),
-          "3657 AC1: set-code");
+    CHECK(
+        cs.eval("(set-code \"(define B (lambda () 1))\n(define A (lambda () (B)))\")").has_value(),
+        "3657 AC1: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3657 AC1: eval");
     CHECK(cs.get_define_v2("B") != nullptr, "3657 AC1: B cached");
     const auto* be = cs.get_define_v2("B");
@@ -2018,13 +1959,9 @@ static void ac4331_1_dropped_top_body_slot_drain() {
     CompilerService cs;
     // B: mutated callee. A: caller with a nested lambda — under the #4311
     // production shape its bundle is [body, nested] with no __top__ marker.
-    CHECK(cs.eval(R"(
-(set-code "
-(define B (lambda () 1))
-(define A (lambda ()
-  (let ((inner (lambda () 42)))
-    (+ (B) (inner)))))
-)")
+    CHECK(cs.eval("(set-code \"(define B (lambda () 1))\n"
+                  "(define A (lambda ()\n"
+                  "  (let ((inner (lambda () 42)))\n    (+ (B) (inner)))))\")")
               .has_value(),
           "4331 AC1: set-code nested caller");
     CHECK(cs.eval("(eval-current)").has_value(), "4331 AC1: eval stores bundles");
