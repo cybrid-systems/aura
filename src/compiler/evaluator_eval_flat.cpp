@@ -8066,6 +8066,56 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
     return static_cast<std::int64_t>(id);
 }
 
+void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
+    if (!workspace_flat_ || !workspace_pool_)
+        return;
+    auto* flat = workspace_flat_;
+    auto* pool = workspace_pool_;
+    const auto root = flat->root;
+    if (root == aura::ast::NULL_NODE || !flat->is_live_node(root))
+        return;
+    try {
+        const auto n = flat->size();
+        for (aura::ast::NodeId id = 0; id < n; ++id) {
+            if (!flat->is_free_slot(id))
+                flat->clear_cached_value(id);
+        }
+        last_eval_current_result_.reset();
+        // Guard restore_children bumps generation_ and leaves node_gen_
+        // behind (including 0 on slots the batch appended and then freed
+        // while a child edge still named them). eval_flat refuses those
+        // and the mutation-era IR closure ids stay in top_env.
+        // restamp_subtree_generation writes generation_ even when the
+        // slot was 0; force_align skips that case.
+        flat->restamp_subtree_generation(root);
+        // eval_flat of a Define re-keys top_ onto the workspace pool.
+        // Put the caller's pool back so the surrounding script keeps
+        // its own interned names (same shape as eval-current).
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(top_env());
+        auto result = eval_flat(*flat, *pool, root, top_);
+        if (result && sync_workspace_value_cells_fn_)
+            sync_workspace_value_cells_fn_();
+        // Do not specialize from function_sources_. A rolled-back rebind
+        // updates that table and does not roll it back, so an IR bind
+        // would install the mutation-era body while query:code still
+        // shows the restored tree. The tree-walker closures above eval
+        // the restored bodies.
+        (void)result;
+    } catch (...) {
+        // noexcept: a throw here would terminate the failed batch's dtor.
+    }
+}
+
 bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
     if (id >= snapshot_sources_.size() || workspace_read_only_ || !workspace_flat_ ||
         !workspace_pool_)

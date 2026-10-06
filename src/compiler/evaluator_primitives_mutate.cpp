@@ -6002,6 +6002,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
         bool guard_ok = true;
+        // Issue #4361: the Guard dtor restores children after abort. This
+        // object is declared first so its dtor rebinds top_env afterwards.
+        struct RebindAfterFailedBatch {
+            Evaluator& ev;
+            bool failed = false;
+            ~RebindAfterFailedBatch() {
+                if (failed)
+                    ev.rebind_workspace_defines_after_rollback();
+            }
+        } rebind_after_failed_batch{ev};
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
         auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &guard_ok);
         if (!guard_r) {
@@ -6070,6 +6080,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ev.workspace_flat_->rollback_atomic_batch();
             ev.sync_atomic_batch_metadata_metrics();                  // #1893
             ev.workspace_flat_->rebuild_parent_links_from_children(); // #1502
+            rebind_after_failed_batch.failed = true;                  // #4361
             // #2796: no linear_post_mutate_enforce_all() on abort path
             // (#2559 inventory: enforce remains on non-abort mutate paths)
         };
