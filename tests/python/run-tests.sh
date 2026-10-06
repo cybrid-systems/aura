@@ -943,6 +943,48 @@ EOF
 }
 _load_alias_4354
 
+# Issue #4355: a top-level error must not re-run earlier forms. After
+# set-code, the forms that follow the error must still call the closure.
+_file_4355() {
+    local dir aura_abs out err
+    dir=$(mktemp -d /tmp/aura-4355.XXXXXX)
+    aura_abs="$AURA"
+    if [ "${aura_abs#/}" = "$aura_abs" ]; then
+        aura_abs="$PWD/$aura_abs"
+    fi
+    cat >"$dir/a.aura" <<'EOF'
+(define (f x) (+ x 1))
+(display "one ") (display (f 1)) (newline)
+(display (no-such-proc 1))
+(display "two ") (display (f 2)) (newline)
+EOF
+    cat >"$dir/b.aura" <<'EOF'
+(define (pr k v) (display k) (display "=") (display v) (newline))
+(set-code "(define g (lambda (x) (* x 2)))")
+(eval-current)
+(pr "g" (g 4))
+(pr "x" (no-such-proc 1))
+(pr "after" (g 5))
+EOF
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" "$dir/a.aura" 2>"$dir/a.err")
+    err=$(cat "$dir/a.err")
+    if [ "$out" = $'one 2\ntwo 3\n' ] && printf '%s' "$err" | grep -q 'unbound variable: no-such-proc'; then
+        _record_pass "4355-error-does-not-rerun-prefix"
+    else
+        _record_fail "4355-error-does-not-rerun-prefix" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" "$dir/b.aura" 2>"$dir/b.err")
+    err=$(cat "$dir/b.err")
+    if printf '%s' "$out" | grep -q 'g=8' && printf '%s' "$out" | grep -q 'after=10' \
+        && ! printf '%s' "$err" | grep -q 'invalid closure'; then
+        _record_pass "4355-after-set-code-closure-survives"
+    else
+        _record_fail "4355-after-set-code-closure-survives" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4355
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
