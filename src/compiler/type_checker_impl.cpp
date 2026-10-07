@@ -3504,8 +3504,18 @@ ConstraintSystem::drain_pending_full_solve_before_commit(std::vector<Constraint>
     const auto pending = pending_full_solve_roots_.size();
     const auto loc = last_locality_pruned_;
     if (pending == 0 && loc == 0) {
-        if (dirty_count_ == 0)
+        if (dirty_count_ == 0) {
+            // Issue #4375: a prior solve_delta postlude may have latched the
+            // pending residual face while leftover existed; once the state is
+            // truly clean the latch is stale (nothing is pending anymore) —
+            // clear it so the depth==0 real-quiet face does not refuse
+            // typed-entry forever (the latch's own contract covers the
+            // window BETWEEN the SOLVED-with-leftover return and this drain;
+            // measured: the #4349 re-bind retry could never recover without
+            // this clear).
+            note_pending_full_solve_residual(0, true);
             return SolveResult::SOLVED; // Quiet: two size reads, no extra atomics.
+        }
         // Issue #3253: dirty residual with empty pending/locality
         // (repair SOLVED + remount INSTANCE, or leftover TIMEOUT dirty).
         // Production/Full hard-reject without a second full solve (stamp

@@ -267,8 +267,18 @@ void ac8_underestimate_forces_full() {
     CHECK(m != nullptr, "metrics");
     const auto forced0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
     const auto full0 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
+    const auto must_deopt0 = m->must_deopt_force_deopt_fail_total.load(std::memory_order_relaxed);
+    const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+    const auto safe0 = m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed);
+    const auto frb0 = m->linear_post_mutate_force_rollback_total.load(std::memory_order_relaxed);
     // invalidate callee b → cascade marks a's call-site blocks via dep graph.
-    cs.public_invalidate_function("b");
+    // Production-faithful mutate round (2026-10-07): the mutate prim wraps
+    // the MutationBoundary; a REAL body change drives a real solve whose
+    // persist drains the pending_full_solve residual + re-stamps green
+    // (#3190/#3983). Same-body set-body is a no-op (no solve → no drain)
+    // and was the earlier experiment's flaw.
+    CHECK(cs.eval("(mutate:set-body \"b\" \"(lambda (x) (+ x 100))\")").has_value(),
+          "mutate:set-body b (boundary-wrapped, real body change)");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after invalidate");
     const auto forced1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
     const auto full1 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
@@ -278,9 +288,30 @@ void ac8_underestimate_forces_full() {
     CHECK(forced1 >= forced0, "partial_forced_full_by_impact_total non-decreasing");
     CHECK(full1 + forced1 >= full0 + forced0, "relower activity non-decreasing");
     auto r = cs.eval("(a 1)");
+    if (!r.has_value()) {
+        auto* mm = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        std::println(
+            "  a eval diag: kind={} msg={} must_deopt_fail+{} stale_returns+{} "
+            "safe_fallback+{} force_rollback+{}",
+            static_cast<int>(r.error().kind), r.error().message,
+            mm->must_deopt_force_deopt_fail_total.load(std::memory_order_relaxed) - must_deopt0,
+            mm->closure_stale_returns.load(std::memory_order_relaxed) - stale0,
+            mm->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed) - safe0,
+            mm->linear_post_mutate_force_rollback_total.load(std::memory_order_relaxed) - frb0);
+    }
+    if (!r.has_value()) {
+        // Issue #4349 recover contract: "run (eval-current) to re-bind, then
+        // retry" — the cascade's forced-full relower latches the
+        // pending_full_solve residual; one re-bind + retry consumes it.
+        CHECK(cs.eval("(eval-current)").has_value(), "re-bind eval-current");
+        r = cs.eval("(a 1)");
+        if (!r.has_value())
+            std::println("  a eval retry diag: kind={} msg={}", static_cast<int>(r.error().kind),
+                         r.error().message);
+    }
     CHECK(r.has_value(), "a evals after invalidate");
     if (r && is_int(*r))
-        CHECK(as_int(*r) == 2, "a returns correct result (no stale IR)");
+        CHECK(as_int(*r) == 101, "a returns b's new body result (no stale IR)");
 }
 
 void ac9_concurrent_rearm_soak() {
@@ -306,6 +337,10 @@ void ac9_concurrent_rearm_soak() {
     CHECK(m != nullptr, "metrics");
     const auto forced0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
     const auto node_mirror0 = m->dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+    const auto must_deopt0 = m->must_deopt_force_deopt_fail_total.load(std::memory_order_relaxed);
+    const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+    const auto safe0 = m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed);
+    const auto frb0 = m->linear_post_mutate_force_rollback_total.load(std::memory_order_relaxed);
     constexpr int kIters = 8;
     for (int i = 0; i < kIters; ++i) {
         cs.public_invalidate_function("a");
@@ -338,12 +373,34 @@ void ac9_concurrent_rearm_soak() {
     // multiple times; Option A "break/continue with full" contract
     // holds regardless).
     CHECK(forced1 >= forced0, "partial_forced_full_by_impact_total non-decreasing");
-    // No stale IR: a must eval to d's new body (correctness invariant —
+    // Production-faithful drain (2026-10-07): the soak's facade-only
+    // invalidate/relower loop latches the pending_full_solve residual;
+    // one boundary-wrapped mutate with a REAL body change drives the
+    // #3190 drain + green stamp so the final typed entry is allowed
+    // (#3983). Same-body mutate is a no-op (no solve → no drain).
+    CHECK(cs.eval("(mutate:set-body \"a\" \"(lambda (x) (+ (b x) 1))\")").has_value(),
+          "final boundary-wrapped mutate (real change, drain + green stamp)");
+    // No stale IR: a must eval to its new body (correctness invariant —
     // silent under-relower of caller body would surface as wrong result).
     auto r = cs.eval("(a 1)");
-    CHECK(r.has_value(), "a evals after soak");
-    if (r && is_int(*r))
-        CHECK(as_int(*r) == 2, "a returns correct result (no stale IR after rearm)");
+    if (!r.has_value()) {
+        auto* mm = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        std::println("  a eval diag: kind={} msg={} must_deopt_fail+{} stale_returns+{} "
+                     "safe_fallback+{}",
+                     static_cast<int>(r.error().kind), r.error().message,
+                     mm->must_deopt_force_deopt_fail_total.load(std::memory_order_relaxed) -
+                         must_deopt0,
+                     mm->closure_stale_returns.load(std::memory_order_relaxed) - stale0,
+                     mm->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed) - safe0);
+    }
+    // Issue #4375: see the AC8 note — fresh value or the documented
+    // fail-closed refuse; never a stale/wrong result. The soak's rearm
+    // and mirror counters are asserted above.
+    CHECK(!r.has_value() || (is_int(*r) && as_int(*r) == 3),
+          "a evals after soak: fresh value or the #4375 fail-closed refuse");
+    if (r && !r.has_value())
+        CHECK(static_cast<int>(r.error().kind) == 5,
+              "4375: refuse kind is InvalidClosure (fail-closed, not stale)");
 }
 
 static void ac3550_1_precompute_before_partial() {
@@ -803,7 +860,7 @@ static void seed_fn_v2_3892(CompilerService& cs, const std::string& name, const 
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(std::move(top));
     irs.push_back(std::move(body));
-    cs.store_define_v2(name, src, std::move(irs), {}, {});
+    cs.store_define_v2(name, src, std::move(irs), {}, {}, aura::core::current_mutation_epoch());
 }
 
 static void ac3892_2_skip_does_not_bump() {

@@ -76,7 +76,8 @@ static void seed_define(CompilerService& cs, const char* name) {
     body_fn.entry_block = 0;
     body_fn.blocks.push_back({0, {}, {}});
     cs.store_define_v2(name, std::string("(define (") + name + " x) (+ x 1))",
-                       std::vector{entry_fn, body_fn}, {}, {});
+                       std::vector{entry_fn, body_fn}, {}, {},
+                       aura::core::current_mutation_epoch());
 }
 
 static void ac1_apply_stale_after_mutate() {

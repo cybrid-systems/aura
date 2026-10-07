@@ -1152,6 +1152,30 @@ inline void clear_mid_fallback_refuse_se_tls() noexcept {
 // processes that only link typed_audit and never call
 // apply_production_security_defaults now get the same durable audit
 // trail as the security-defaults path.
+// Test-only: undo apply_production_audit_defaults for compiler test
+// bundles that run members alphabetically in ONE process — an arming
+// member must not leak production posture into later members (observed
+// 2026-10-07: test_cache_stamp_restamp_contract armed at its ACs and
+// every later member of test_aot_jit_stamp_batch failed Soft-assumed
+// evals). Restores the cold-start face: flags drop, strict query epoch
+// disarms, hot harden disarms, pcv stale span clears, force_wal posture
+// disarms and both WAL side-cars disable. Strategy/ratio keep the #2818
+// Full cold-start default. Appends only — no counter/query-key change.
+inline void reset_production_audit_defaults_for_test() noexcept {
+    using namespace ::aura::core::audit_wal;
+    using namespace ::aura::core::security_event_wal;
+    using namespace ::aura::core::wal_slo;
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
+    aura::core::cpp26::note_hot_contract_harden_armed(false);
+    aura::core::set_query_epoch_strict(false);
+    aura_pcv_set_stale_span_exclusive(0);
+    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    ::aura::core::wal_slo::disarm_force_wal_enable_fail();
+    g_mutation_audit_wal().disable();
+    ::aura::core::security_event_wal::g_security_event_wal().disable();
+}
+
 inline void apply_production_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Full);
     set_sample_ratio(1);
@@ -4138,6 +4162,8 @@ inline void reset_pending_full_solve_residual_for_test() noexcept {
     g_pending_full_solve_residual_reject_total.store(0, std::memory_order_relaxed);
 }
 inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcept {
+    std::fprintf(stderr, "PEND note n=%llu hard=%d\n", static_cast<unsigned long long>(n),
+                 hard ? 1 : 0);
     g_pending_full_solve_residual_last.store(n, std::memory_order_relaxed);
     if (n == 0) {
         g_pending_full_solve_residual_face.store(0, std::memory_order_release);

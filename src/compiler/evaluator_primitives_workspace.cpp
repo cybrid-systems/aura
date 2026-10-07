@@ -653,8 +653,13 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 if (!wt->is_under(i, idx))
                     continue;
                 auto& n = wt->nodes_[i];
-                if (n.has_own_flat && n.flat && n.flat != n.parent_flat_)
+                if (n.has_own_flat && n.flat && n.flat != n.parent_flat_) {
                     detach_frames_from_pool(n.pool);
+                    // Issue #4378: expire closures holding this flat BEFORE
+                    // delete_child frees it (heap-use-after-free in the
+                    // expire_stale_live_closures_ walk otherwise).
+                    (void)ev.expire_closures_with_flat(n.flat);
+                }
             }
             if (!wt->delete_child(idx))
                 return make_bool(false);
@@ -912,8 +917,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                         return make_bool(false); // guard-reject (Verify 1)
                     held_guard = std::move(*gr);
                 }
-                if (ws.pool && ws.pool != ws.parent_pool_)
+                if (ws.pool && ws.pool != ws.parent_pool_) {
                     detach_frames_from_pool(ws.pool);
+                }
+                // Issue #4378: expire closures holding the doomed flat before
+                // the delete (heap-use-after-free in the expire walk).
+                (void)ev.expire_closures_with_flat(ws.flat);
                 delete ws.flat;
                 delete ws.pool;
                 ws.flat = ws.parent_flat_;

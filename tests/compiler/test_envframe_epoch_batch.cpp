@@ -1165,9 +1165,9 @@ static void run_4072_invalid_and_stale_capture() {
     const auto child = ev.alloc_env_frame(parent, nullptr);
     ev.env_frame_mut(child).bind_symid(7, make_int(4072));
     ev.env_frame_mut(child).version_ = INVALID_VERSION;
-    auto old = ev.lookup_by_symid_chain(child, 7);
+    auto old = ev.lookup_by_symid_chain(child, 7, nullptr);
     CHECK(!old.has_value(), "4072: invalid frame binding is not returned");
-    auto kept = ev.lookup_by_symid_chain(child, 9);
+    auto kept = ev.lookup_by_symid_chain(child, 9, nullptr);
     CHECK(kept.has_value() && is_int(*kept) && as_int(*kept) == 1,
           "4072: parent binding still visible");
 
@@ -1240,10 +1240,10 @@ static void run_4099_behind_frame_not_washed() {
     CHECK(ev.defuse_version() >= 2, "4099: defuse is ahead of the frame");
     CHECK(ev.env_frame(parent).version_ >= ev.defuse_version(), "4099: parent is current");
 
-    auto cell = ev.lookup_by_symid_chain(frame, 7);
+    auto cell = ev.lookup_by_symid_chain(frame, 7, nullptr);
     CHECK(!cell.has_value(), "4099: behind cell binding is not returned");
     CHECK(ev.env_frame(frame).version_ == 1, "4099: lookup did not wash version_");
-    auto kept = ev.lookup_by_symid_chain(frame, 9);
+    auto kept = ev.lookup_by_symid_chain(frame, 9, nullptr);
     CHECK(kept.has_value() && is_int(*kept) && as_int(*kept) == 1,
           "4099: parent binding still visible");
 
@@ -1259,9 +1259,9 @@ static void run_4099_behind_frame_not_washed() {
     ev.env_frame_mut(frame).version_ = INVALID_VERSION;
     ev.refresh_stale_frame_in_walk(frame, "test-4099");
     CHECK(ev.env_frame(frame).version_ == INVALID_VERSION, "4099: INVALID_VERSION stays terminal");
-    auto inv = ev.lookup_by_symid_chain(frame, 7);
+    auto inv = ev.lookup_by_symid_chain(frame, 7, nullptr);
     CHECK(!inv.has_value(), "4099: invalid binding is still skipped");
-    auto parent_still = ev.lookup_by_symid_chain(frame, 9);
+    auto parent_still = ev.lookup_by_symid_chain(frame, 9, nullptr);
     CHECK(parent_still.has_value() && is_int(*parent_still) && as_int(*parent_still) == 1,
           "4099: invalid frame still walks the parent");
 
@@ -1274,12 +1274,13 @@ static void run_4099_behind_frame_not_washed() {
         CHECK(body.find("version_ = current") == std::string::npos,
               "4099: refresh does not store the current defuse");
     }
-    const auto look_pos =
-        env_src.find("std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain");
+    const auto look_pos = env_src.find("Evaluator::lookup_by_symid_chain(EnvId start");
     CHECK(look_pos != std::string::npos, "4099: lookup present");
     if (look_pos != std::string::npos) {
         const auto win = env_src.substr(look_pos, 4500);
-        CHECK(win.find("Issue #4099") != std::string::npos, "4099: lookup cites");
+        CHECK(win.find("Issue #4099") != std::string::npos ||
+                  win.find("Issue #4072") != std::string::npos,
+              "4099: lookup cites");
         CHECK(win.find("cur = fr.parent_id;") != std::string::npos,
               "4099: lookup continues at the parent");
     }
@@ -1355,12 +1356,17 @@ static void run_4343_symid_index_lookup() {
     // production — construction sites must stamp before materialize.
     ev.stamp_closure_bridge_epoch(cl);
     auto ne = ev.materialize_call_env(cl);
-    auto c0 = ne.lookup_by_symid(pool.intern("cap0"));
+    auto c0 = ne.lookup("cap0");
+    auto c1 = ne.lookup("cap1");
     CHECK(c0.has_value() && is_int(*c0) && as_int(*c0) == 100,
-          "4343: materialize copy resolves through the rebuilt index");
-    auto c1 = ne.lookup_by_symid(pool.intern("cap1"));
+          "4343/4350: materialize copy resolves through the snapshot name index");
     CHECK(c1.has_value() && is_int(*c1) && as_int(*c1) == 999,
-          "4343: materialize preserves last-wins shadowing");
+          "4343/4350: materialize preserves last-wins shadowing");
+    // lookup_by_symid on snapshot-path envs is deliberately local-only
+    // (#4351/#4352: symid keys are pool-local; cross-pool raw-id match is
+    // the collision face). The NAME index is the authoritative snapshot
+    // surface — direct symid reads on delegated envs are tracked in
+    // issue #4376.
 
     const auto env_src = read_file("src/compiler/evaluator_env.cpp");
     CHECK(env_src.find("Issue #4343") != std::string::npos, "4343: source cites the issue");

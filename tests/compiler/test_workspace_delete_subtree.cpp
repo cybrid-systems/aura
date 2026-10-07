@@ -228,6 +228,58 @@ int run_test_workspace_delete_subtree() {
         CHECK(read_file("docs/design/3957-discard-orphan.md").empty(), "3957: no docs/design");
     }
 
+    // ── 2026-10-07 asan-verify UAF regression: delete/discard must expire
+    // closures captured against the doomed child flat BEFORE freeing it.
+    // Pre-fix: delete/discard freed the child's local FlatAST while
+    // tree-walker closures still held cl.flat → the next mark_define_dirty →
+    // expire_stale_live_closures_ walk dereferenced the freed flat
+    // (heap-use-after-free at FlatAST::size, ast.ixx:6557; asan-verify red
+    // on origin/main, repro via the asan unit tier).
+    {
+        std::println("\n--- regression: delete/discard expire closures on the doomed flat ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define keep (lambda (x) (+ x 1)))\")").has_value(),
+              "reg: set-code root define");
+        CHECK(cs.eval("(eval-current)").has_value(), "reg: eval root");
+
+        auto c1 = cs.eval("(workspace :create \"uaf-child\")");
+        CHECK(c1 && is_int(*c1), "reg: create child");
+        const auto child = as_int(*c1);
+        CHECK(cs.eval(std::format("(workspace :switch {})", child)).has_value(),
+              "reg: switch child");
+        // Lazy COW: the child gets its own local FlatAST; the define's
+        // closure captures cl.flat = the child's local flat.
+        CHECK(cs.eval("(set-code \"(define gone (lambda (x) x))\")").has_value(),
+              "reg: set-code child define");
+        CHECK(cs.eval("(eval-current)").has_value(), "reg: eval child");
+
+        auto del = cs.eval(std::format("(workspace:delete {})", child));
+        CHECK(del && is_bool(*del) && as_bool(*del), "reg: delete child");
+
+        // Real mutate round → mark_define_dirty → expire_stale_live_closures_
+        // walk. Pre-fix this walked a freed flat (asan UAF); post-fix the
+        // doomed-flat closures were expired at delete time.
+        CHECK(cs.eval("(mutate:set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
+              "reg: mutate after child delete");
+        auto r = cs.eval("(keep 1)");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 42,
+              "reg: root define callable after child delete");
+
+        // Discard path: same hole (workspace:discard deletes ws.flat).
+        auto c2 = cs.eval("(workspace :create \"uaf-discard\")");
+        CHECK(c2 && is_int(*c2), "reg: create discard child");
+        const auto child2 = as_int(*c2);
+        CHECK(cs.eval(std::format("(workspace :switch {})", child2)).has_value(),
+              "reg: switch discard child");
+        CHECK(cs.eval("(set-code \"(define gone2 (lambda (x) x))\")").has_value(),
+              "reg: set-code discard define");
+        CHECK(cs.eval("(eval-current)").has_value(), "reg: eval discard child");
+        auto dis = cs.eval(std::format("(workspace:discard {})", child2));
+        CHECK(dis && is_bool(*dis) && as_bool(*dis), "reg: discard child");
+        CHECK(cs.eval("(mutate:set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
+              "reg: mutate after discard");
+    }
+
     std::println("\n=== #2789 delete subtree: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
