@@ -6417,7 +6417,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 case aura::ast::NodeTag::Let:
                 case aura::ast::NodeTag::LetRec: {
                     bool rec = (v.tag == aura::ast::NodeTag::LetRec);
-                    auto name = p->resolve(v.sym_id);
+                    // Issue #4350-family: own the name bytes — the init eval
+                    // and binds intern into the pool, which can grow buf_ and
+                    // free the storage this view points at.
+                    std::string name(p->resolve(v.sym_id));
                     auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
                     if (rec) {
@@ -7266,7 +7269,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     return types::make_void();
                 }
                 case aura::ast::NodeTag::Set: {
-                    auto name = p->resolve(v.sym_id);
+                    // Issue #4350-family: own the name bytes — the value eval
+                    // interns into the pool (buf_ growth frees the view's
+                    // storage) and the name is used after (lookup_cell_index).
+                    std::string name(p->resolve(v.sym_id));
                     auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     auto val = eval_flat(*f, *p, val_id, eval_env);
                     if (!val)
@@ -7472,7 +7478,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     return child_result;
                 }
                 case aura::ast::NodeTag::MacroDef: {
-                    auto name = p->resolve(v.sym_id);
+                    // Issue #4350-family: own the name bytes (the registration
+                    // path interns into the pool).
+                    std::string name(p->resolve(v.sym_id));
                     std::vector<std::string> param_names;
                     for (auto pn : v.params)
                         param_names.push_back(std::string(p->resolve(pn)));
