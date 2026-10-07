@@ -25,8 +25,11 @@ namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using types::as_int;
+using types::as_pair_idx;
 using types::as_string_idx;
 using types::is_error;
+using types::is_int;
 using types::is_pair;
 using types::is_string;
 using types::make_bool;
@@ -285,6 +288,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
 
         // set-code manages its own workspace lock — call outside our lock.
+        bool eval_rejected = false;
         if (!blob.source.empty()) {
             // Issue #1397: string_heap_ push_back atomic — only the heap
             // mutation is under alloc_storage_lock_; set-code / eval-current
@@ -306,10 +310,28 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             // leaves top_env cells pointing at pre-load rebind closures.
             // Re-eval so string + SymId bindings match the restored source
             // (aligns file-soul with ast:snapshot/restore live semantics).
+            // Issue #4366: the program value may be a list. make_merr is
+            // (kind . (message . 0)); a normal pair is not a failure.
+            // A real eval error still restores the log below, then returns #f.
             if (auto eval_fn = ev.primitives_.lookup("eval-current")) {
                 auto er = (*eval_fn)({});
-                if (is_pair(er) || is_error(er))
-                    return make_bool(false);
+                auto merr = [&ev](const EvalValue& v) -> bool {
+                    if (!is_pair(v))
+                        return false;
+                    const auto oi = as_pair_idx(v);
+                    if (oi >= ev.pairs_.size())
+                        return false;
+                    const auto& outer = ev.pairs_[oi];
+                    if (!is_string(outer.car) || !is_pair(outer.cdr))
+                        return false;
+                    const auto ii = as_pair_idx(outer.cdr);
+                    if (ii >= ev.pairs_.size())
+                        return false;
+                    const auto& inner = ev.pairs_[ii];
+                    return is_string(inner.car) && is_int(inner.cdr) && as_int(inner.cdr) == 0;
+                };
+                if (is_error(er) || merr(er))
+                    eval_rejected = true;
             }
         }
 
@@ -342,6 +364,10 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
 
         aura_set_module_version_for_eval(&ev, blob.module_version);
         aura_set_aot_region_mask_for_eval(&ev, blob.region_mask);
+        // Issue #4366: code is already the saved program. Returning #f
+        // before the log restore left a half-restored workspace.
+        if (eval_rejected)
+            return make_bool(false);
         return make_bool(true);
     });
 
