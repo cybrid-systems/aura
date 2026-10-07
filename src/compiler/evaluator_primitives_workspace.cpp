@@ -606,47 +606,77 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(n->cow_refused_count));
         });
+    // Issue #4369 / #4352: EnvFrame::pool_ is the pool its SymIds were
+    // interned in. A COW child pool is freed by delete/discard; the
+    // mutation-boundary dual-path walk then resolve()s through that
+    // pointer. Drop the pointer first. String bindings stay authoritative.
+    auto detach_frames_from_pool = [&ev](const aura::ast::StringPool* dying) {
+        if (!dying)
+            return;
+        if (ev.top_env().pool() == dying) {
+            if (ev.workspace_pool_ && ev.workspace_pool_ != dying)
+                ev.top_env().set_pool(ev.workspace_pool_);
+            else
+                ev.top_env().set_pool(nullptr);
+        }
+        std::array<std::unique_lock<std::shared_mutex>, Evaluator::kEnvFramesShardCount> wlock;
+        for (std::size_t i = 0; i < Evaluator::kEnvFramesShardCount; ++i)
+            wlock[i] = std::unique_lock<std::shared_mutex>(ev.env_frame_shard_mu(i));
+        for (auto& fr : ev.env_frames_) {
+            if (fr.pool_ == dying)
+                fr.pool_ = nullptr;
+        }
+    };
     // (workspace:delete id) → #t
     // Issue #2789: delete_child recursively tombstones the whole subtree
     // (descendants before parent). Rebind evaluator if active is under idx.
-    add("workspace:delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-            return make_bool(false);
-        // Issue #1294 Phase 1: capability gate for workspace control.
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            ev.bump_capability_denial();
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: workspace required",
-                                        ev.primitive_error_counter_ptr());
-        }
-        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-        // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
-        // ancestor of the active workspace, free of owned flat/pool would
-        // leave ev.workspace_flat_ dangling. Capture before recursive delete.
-        const bool need_rebind = wt->is_under(wt->active_idx(), idx);
-        if (!wt->delete_child(idx))
-            return make_bool(false);
-        if (need_rebind) {
-            wt->set_active(0);
-            auto* ws = wt->active();
-            if (ws) {
-                ev.workspace_flat_ = ws->flat;
-                ev.workspace_pool_ = ws->pool;
-                ev.workspace_read_only_ = ws->read_only;
-                if (ws->flat)
-                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
-            } else {
-                ev.workspace_flat_ = nullptr;
-                ev.workspace_pool_ = nullptr;
-                ev.workspace_read_only_ = false;
+    add("workspace:delete",
+        [&ev, destroy_defuse_index,
+         detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_bool(false);
+            // Issue #1294 Phase 1: capability gate for workspace control.
+            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
+                !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+                ev.bump_capability_denial();
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "capability denied: workspace required",
+                                            ev.primitive_error_counter_ptr());
             }
-            // ASAN fix #107: drop def-use index bound to freed flat.
-            destroy_defuse_index();
-        }
-        return make_bool(true);
-    });
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+            // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
+            // ancestor of the active workspace, free of owned flat/pool would
+            // leave ev.workspace_flat_ dangling. Capture before recursive delete.
+            const bool need_rebind = wt->is_under(wt->active_idx(), idx);
+            for (std::uint32_t i = 1; i < wt->size(); ++i) {
+                if (!wt->is_under(i, idx))
+                    continue;
+                auto& n = wt->nodes_[i];
+                if (n.has_own_flat && n.flat && n.flat != n.parent_flat_)
+                    detach_frames_from_pool(n.pool);
+            }
+            if (!wt->delete_child(idx))
+                return make_bool(false);
+            if (need_rebind) {
+                wt->set_active(0);
+                auto* ws = wt->active();
+                if (ws) {
+                    ev.workspace_flat_ = ws->flat;
+                    ev.workspace_pool_ = ws->pool;
+                    ev.workspace_read_only_ = ws->read_only;
+                    if (ws->flat)
+                        ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+                } else {
+                    ev.workspace_flat_ = nullptr;
+                    ev.workspace_pool_ = nullptr;
+                    ev.workspace_read_only_ = false;
+                }
+                // ASAN fix #107: drop def-use index bound to freed flat.
+                destroy_defuse_index();
+            }
+            return make_bool(true);
+        });
 
     // (workspace :lock id [read-only?])
     //   → #t on success. Sets/clears read-only flag.
@@ -849,7 +879,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
     add("workspace:discard",
-        [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, destroy_defuse_index,
+         detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
                 return make_bool(false);
             auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -881,6 +912,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                         return make_bool(false); // guard-reject (Verify 1)
                     held_guard = std::move(*gr);
                 }
+                if (ws.pool && ws.pool != ws.parent_pool_)
+                    detach_frames_from_pool(ws.pool);
                 delete ws.flat;
                 delete ws.pool;
                 ws.flat = ws.parent_flat_;
