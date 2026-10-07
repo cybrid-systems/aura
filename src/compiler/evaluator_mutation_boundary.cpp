@@ -1025,9 +1025,13 @@ void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
     const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
     (void)mid_abort_ver;
     BoundaryRollbackStats stats;
-    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-        cp.mutation_log_size, std::move(cp.children_snapshot), std::move(cp.dirty_soa_snapshot),
-        std::move(cp.marker_provenance_snapshot));
+    // Issue #4346: an empty children_ snapshot is not a pre-image.
+    if (cp.heap_slot_only && cp.children_snapshot.empty())
+        stats.field_records_rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
+    else
+        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+            cp.mutation_log_size, std::move(cp.children_snapshot), std::move(cp.dirty_soa_snapshot),
+            std::move(cp.marker_provenance_snapshot));
     stats.children_column_restored = true;
     if (stats.field_records_rolled > 0)
         bump_mutation_log_rollback_count();
@@ -1101,6 +1105,12 @@ void Evaluator::flush_frame_budget_deferred() const noexcept {
 // checkpoint / rollback / typed-audit / impact telemetry.
 
 void Evaluator::enter_mutation_boundary() {
+    // Issue #4346: consume the heap-slot arm even when this enter is not
+    // a heap guard, so a rejected path cannot leak it onto a later AST
+    // boundary. maybe_auto_guard clears it itself when try_acquire fails
+    // before this function runs.
+    const bool heap_slot_enter = heap_slot_quiet_for_next_boundary_;
+    heap_slot_quiet_for_next_boundary_ = false;
     // Issue #3658: outermost enter starts a new type-txn window.
     // Nested lockless helpers must not infer; outer Guard runs once.
     if (active_mutation_stack().empty()) {
@@ -1154,7 +1164,7 @@ void Evaluator::enter_mutation_boundary() {
             workspace_flat_->begin_render_lightweight_checkpoint();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->mutation_lightweight_total.fetch_add(1, std::memory_order_relaxed);
-        } else {
+        } else if (!heap_slot_enter) {
             children_snapshot = workspace_flat_->snapshot_children();
             // Issue #3233: checkpoint snapshot is a live PCV observer.
             aura::ast::pcv_checkpoint_live_enter();
@@ -1163,6 +1173,11 @@ void Evaluator::enter_mutation_boundary() {
                 param_snapshot = workspace_flat_->snapshot_param_columns();
             }
         }
+        // Issue #4346: heap_slot_enter leaves children_snapshot empty.
+        // Copying every child PCV is linear in the define count, and the
+        // slot write does not edit children_. Abort sites roll the log
+        // only when heap_slot_only and this snapshot is empty — they must
+        // not swap an empty vector over the live tree.
         bump_suppressed_at_entry = workspace_flat_->atomic_batch_active();
         flat_generation_at_entry = workspace_flat_->generation();
     }
@@ -1177,7 +1192,10 @@ void Evaluator::enter_mutation_boundary() {
     // Issue #3865: capture the dirty SoA family at checkpoint (non-
     // lightweight) — restored with the topology on abort (no phantom
     // over-dirty cones). Empty on lightweight = keep live columns.
-    if (workspace_flat_ && !lightweight) {
+    // Issue #4346: a heap slot write does not edit dirty / type columns.
+    // Empty snapshots restore as a no-op. children_ stays live; abort
+    // rolls the log only (see heap_slot_only at each restore site).
+    if (workspace_flat_ && !lightweight && !heap_slot_enter) {
         cp.dirty_soa_snapshot = workspace_flat_->snapshot_dirty_soa();
         // Issue #4076: production abort restores marker_ and provenance_
         // with macro_dirty_. Soft/Off pays no extra column copy.
@@ -1218,8 +1236,9 @@ void Evaluator::enter_mutation_boundary() {
     // Issue #4310: production/Full copies type columns and the CS
     // high-water with the occurrence baseline. Soft/Off and lightweight
     // skip the copies (type_face_captured stays false).
-    if (!lightweight && (typed_audit::production_defaults_active() ||
-                         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+    if (!heap_slot_enter && !lightweight &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
         if (workspace_flat_)
             cp.type_column_snapshot = workspace_flat_->snapshot_type_columns();
         void* tc_h = persistent_typechecker();
@@ -1238,6 +1257,10 @@ void Evaluator::enter_mutation_boundary() {
     if (active_mutation_stack().empty()) {
         aura_typed_audit_note_readiness_evaluator(this);
     }
+    // Issue #4346: stamp before the push so the ctor (panic unparse) and
+    // the dtor see it. Lightweight checkpoints stay off this path —
+    // flush treats lightweight as an AST change.
+    cp.heap_slot_only = heap_slot_enter && !lightweight;
     active_mutation_stack().push_back(std::move(cp));
     // Issue #3102: AC2 — open the per-boundary TLS tracker so apply_coercion_map
     // pushes nodes that the abort path can consume + force-dirty. depth>0
@@ -1256,7 +1279,7 @@ void Evaluator::enter_mutation_boundary() {
            !nested_guard_depth_max_.compare_exchange_weak(
                prev_max, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
     }
-    if (depth == 1 && workspace_flat_ && !lightweight) {
+    if (depth == 1 && workspace_flat_ && !lightweight && !heap_slot_enter) {
         for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
             if (workspace_flat_->is_macro_introduced(id))
                 ++macro_introduced_count_at_entry;
@@ -1264,19 +1287,24 @@ void Evaluator::enter_mutation_boundary() {
         active_mutation_stack().back().macro_introduced_count_at_entry =
             macro_introduced_count_at_entry;
     }
-    defuse_version_.fetch_add(1, std::memory_order_release);
-    // Issue #189: bump the total-mutations counter for
-    // observability. Relaxed because it's stats-only.
-    total_mutations_.fetch_add(1, std::memory_order_relaxed);
-    // Issue #4109: the enter bump must not strand still-valid captures
-    // for the DURATION of the boundary (nested eval inside the boundary
-    // materializes through the same behind arm). The mutation-log window
-    // this boundary recorded is still empty at enter, so every behind
-    // frame rides up; the EXIT restamp re-runs the window rule and leaves
-    // frames binding a name the boundary re-defined behind once the new
-    // cell is swapped in.
-    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
-                                cp.mutation_log_size);
+    // Issue #4346: a heap slot write did not change the FlatAST. Bumping
+    // defuse and restamping every capture frame made the next materialize
+    // treat the whole env as behind, and the bump itself is O(frames).
+    if (!(heap_slot_enter && !lightweight)) {
+        defuse_version_.fetch_add(1, std::memory_order_release);
+        // Issue #189: bump the total-mutations counter for
+        // observability. Relaxed because it's stats-only.
+        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #4109: the enter bump must not strand still-valid captures
+        // for the DURATION of the boundary (nested eval inside the boundary
+        // materializes through the same behind arm). The mutation-log window
+        // this boundary recorded is still empty at enter, so every behind
+        // frame rides up; the EXIT restamp re-runs the window rule and leaves
+        // frames binding a name the boundary re-defined behind once the new
+        // cell is swapped in.
+        restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
+                                    cp.mutation_log_size);
+    }
 }
 // Exit a mutation boundary. Pops the checkpoint. If success
 // is true, the version advance is kept; if false, the
@@ -1373,12 +1401,17 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
     // after printing CASE0= and aborting). Soft/Off and production.
     if (eval_current_holds_shared_pin())
         return {};
+    // Issue #4346: arm before try_acquire. enter stamps the checkpoint
+    // so the ctor can skip current-source unparse. A rejected admit
+    // must not leave the flag set for the next real AST guard.
+    heap_slot_quiet_for_next_boundary_ = true;
     // Guard is heap-allocated and dropped after the primitive body
     // (HeapMutateGuardHandle). A stack success flag dies at this return
     // → asan-verify stack-use-after-return in ~Guard (hash-set! / vector-set!).
     // nullptr → owned_flag_ on the Guard object (alive until handle drop).
     auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, nullptr);
     if (!gr) {
+        heap_slot_quiet_for_next_boundary_ = false;
         ok = false;
         return {};
     }
@@ -1387,6 +1420,13 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
         m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
     }
     auto* raw = gr->release();
+    // Issue #4346: stamp the checkpoint the guard just pushed. exit and
+    // the dtor read this to skip walks that scale with define count.
+    {
+        auto& stk = active_mutation_stack();
+        if (!stk.empty() && !stk.back().exit_fence)
+            stk.back().heap_slot_only = true;
+    }
     return HeapMutateGuardHandle{
         raw, [](void* p) noexcept { delete static_cast<MutationBoundaryGuard*>(p); }};
 }
@@ -1451,7 +1491,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             if (on)
                 aura::ast::pcv_checkpoint_live_exit();
         }
-    } pcv_ckpt_exit{!cp.lightweight};
+    } pcv_ckpt_exit{!cp.lightweight && !cp.heap_slot_only};
     if (stack.empty())
         typed_audit::clear_boundary_audit_mid();
     // Issue #3379: outermost exit — drop the TLS evaluator slot so a
@@ -1549,9 +1589,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         if (!cp.topology_restored) {
             // Issue #3897: pass the enter dirty-SoA snapshot so abort
             // does not leave phantom over-dirty cones (#3865 incomplete).
-            stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                cp.mutation_log_size, std::move(cp.children_snapshot),
-                std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
+            // Issue #4346: empty children_ snapshot is not a pre-image.
+            if (cp.heap_slot_only && cp.children_snapshot.empty())
+                stats.field_records_rolled =
+                    workspace_flat_->rollback_to_size(cp.mutation_log_size);
+            else
+                stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                    cp.mutation_log_size, std::move(cp.children_snapshot),
+                    std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
             if (stats.field_records_rolled > 0) {
                 bump_mutation_log_rollback_count();
                 if (nested_boundary)
@@ -1855,21 +1900,25 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Bump version on both success and failure (legacy
     // invariant: 2 bumps per boundary). The lock is
     // released by the unique_lock going out of scope.
-    defuse_version_.fetch_add(1, std::memory_order_release);
-    // Issue #189: bump the total-mutations counter for
-    // observability. Relaxed because it's stats-only.
-    // We bump it even on rollback so dashboards can see
-    // "the boundary attempted to mutate, then rolled back".
-    total_mutations_.fetch_add(1, std::memory_order_relaxed);
-    // Issue #4109: ride still-valid capture frames up to the new defuse
-    // in the same critical section as the bump. The boundary's own
-    // mutation-log window decides invalidation: frames binding a name the
-    // boundary re-defined (mutate:rebind / set-code replaced the Define —
-    // module captures, #2579, are NOT re-defined by unrelated mutates)
-    // stay behind; materialize_call_env then returns the empty Env
-    // instead of copying pre-mutate bindings into the next call.
-    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
-                                cp.mutation_log_size);
+    // Issue #4346: heap slot writes are not AST mutations. Skipping the
+    // second bump keeps capture frames current without a shard walk.
+    if (!cp.heap_slot_only) {
+        defuse_version_.fetch_add(1, std::memory_order_release);
+        // Issue #189: bump the total-mutations counter for
+        // observability. Relaxed because it's stats-only.
+        // We bump it even on rollback so dashboards can see
+        // "the boundary attempted to mutate, then rolled back".
+        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #4109: ride still-valid capture frames up to the new defuse
+        // in the same critical section as the bump. The boundary's own
+        // mutation-log window decides invalidation: frames binding a name the
+        // boundary re-defined (mutate:rebind / set-code replaced the Define —
+        // module captures, #2579, are NOT re-defined by unrelated mutates)
+        // stay behind; materialize_call_env then returns the empty Env
+        // instead of copying pre-mutate bindings into the next call.
+        restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
+                                    cp.mutation_log_size);
+    }
     // Issue #550 / #518: narrowing_refresh_count_ is
     // bumped from TypeChecker::infer_flat_partial's
     // reanalyze_occurrence_contexts path (actual
@@ -2091,7 +2140,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Issue #2144: selective predicate-memo invalidate + occurrence
         // reanalyze on outermost success exit only (long-lived engine).
         // Nested guards defer to outer; after cascade so dirty bits stamp.
-        if (!nested_boundary)
+        // Issue #4346: collect_existing_stale walks every node even when
+        // the mutation log did not grow. A heap-slot write did not stale
+        // an If, so that scan is not this guard's work.
+        const bool heap_occ_quiet = cp.heap_slot_only && !cp.lightweight &&
+                                    workspace_flat_->mutation_log_size() <= cp.mutation_log_size;
+        if (!nested_boundary && !heap_occ_quiet)
             refresh_occurrence_on_guard_exit(cp.mutation_log_size, nodes_changed);
         // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
         // trail + real invariant suite on mutation boundary hot path.
@@ -2140,7 +2194,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // Issue #2223: match sites force Sampled hard-gate / audit
                 // (mirror linear_ops_present — ADT self-mod must not under-sample).
                 bool match_sites = false;
-                if (workspace_flat_) {
+                // Issue #4346: a heap-slot guard did not edit the tree.
+                // has_match_info over every node is O(defines) per write.
+                const bool heap_slot_quiet_4346 =
+                    cp.heap_slot_only && !cp.lightweight &&
+                    !(workspace_flat_ &&
+                      workspace_flat_->mutation_log_size() > cp.mutation_log_size);
+                if (workspace_flat_ && !heap_slot_quiet_4346) {
                     const auto n = workspace_flat_->size();
                     for (aura::ast::NodeId id = 0; id < n; ++id) {
                         if (workspace_flat_->has_match_info(id)) {
@@ -2188,9 +2248,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // Issue #4082: dual topology so dirty SoA matches the
                     // restored children.
                     BoundaryRollbackStats stats;
-                    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                        cp.mutation_log_size, std::move(cp.children_snapshot),
-                        std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
+                    // Issue #4346: empty children_ snapshot is not a pre-image.
+                    if (cp.heap_slot_only && cp.children_snapshot.empty())
+                        stats.field_records_rolled =
+                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                    else
+                        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                            cp.mutation_log_size, std::move(cp.children_snapshot),
+                            std::move(cp.dirty_soa_snapshot),
+                            std::move(cp.marker_provenance_snapshot));
                     if (stats.field_records_rolled > 0) {
                         bump_mutation_log_rollback_count();
                         if (nested_boundary)
@@ -2511,11 +2577,16 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // Issue #3897: pass the enter dirty-SoA snapshot
                             // so invariant force-rollback does not leave
                             // phantom over-dirty cones (#3865 incomplete).
-                            stats.field_records_rolled =
-                                workspace_flat_->abort_restore_dual_topology(
-                                    cp.mutation_log_size, std::move(cp.children_snapshot),
-                                    std::move(cp.dirty_soa_snapshot),
-                                    std::move(cp.marker_provenance_snapshot));
+                            // Issue #4346: empty children_ snapshot is not a pre-image.
+                            if (cp.heap_slot_only && cp.children_snapshot.empty())
+                                stats.field_records_rolled =
+                                    workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                            else
+                                stats.field_records_rolled =
+                                    workspace_flat_->abort_restore_dual_topology(
+                                        cp.mutation_log_size, std::move(cp.children_snapshot),
+                                        std::move(cp.dirty_soa_snapshot),
+                                        std::move(cp.marker_provenance_snapshot));
                             if (stats.field_records_rolled > 0) {
                                 bump_mutation_log_rollback_count();
                                 if (nested_boundary)
@@ -2678,7 +2749,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // flag-off → zero validate cost (skip counter only).
         // (Also covered as provenance leg of #1614 invariant audit when sampled.)
         if (render_fast_exit_this_boundary_ || !get_guard_reflect_validate_enabled() ||
-            rebind_light_skip_heavy_exit(*this)) {
+            rebind_light_skip_heavy_exit(*this) || cp.heap_slot_only) {
             bump_guard_reflect_validate_skipped(); // #2765 AC4 quiet / opt-out
         } else {
             bump_guard_reflect_validate(); // #2765 Agent counter
@@ -2704,9 +2775,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // Issue #3897: pass the enter dirty-SoA snapshot so
                     // Strict reflect-validate rollback does not leave
                     // phantom over-dirty cones (#3865 incomplete).
-                    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                        cp.mutation_log_size, std::move(cp.children_snapshot),
-                        std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
+                    // Issue #4346: empty children_ snapshot is not a pre-image.
+                    if (cp.heap_slot_only && cp.children_snapshot.empty())
+                        stats.field_records_rolled =
+                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                    else
+                        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                            cp.mutation_log_size, std::move(cp.children_snapshot),
+                            std::move(cp.dirty_soa_snapshot),
+                            std::move(cp.marker_provenance_snapshot));
                     if (stats.field_records_rolled > 0) {
                         bump_mutation_log_rollback_count();
                         if (nested_boundary)
@@ -4186,7 +4263,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // no (current-source) primitive — in those cases the
     // Guard just skips the checkpoint step.
     if (outermost) {
-        had_panic_checkpoint_ = ev_->save_panic_checkpoint();
+        const auto& heap_stk = Evaluator::active_mutation_stack_static();
+        const bool heap_slot = !heap_stk.empty() && heap_stk.back().heap_slot_only;
+        // Issue #4346: save_panic_checkpoint calls current-source :workspace,
+        // which unparses every define. The slot write did not change source.
+        if (!heap_slot)
+            had_panic_checkpoint_ = ev_->save_panic_checkpoint();
         // Issue #813: Guard hot path uses explicit Result-style
         // control (success flag / checkpoint bool) — never throws.
         ev_->bump_guard_aura_result_path();
@@ -4898,7 +4980,24 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     bool linear_ops_present_local = false;
     bool match_sites_present_local = false;
     std::uint64_t nodes_changed_local = 0;
-    if (auto* ws = ev_->workspace_flat()) {
+    // Issue #4346: heap slot writes (vector-set! / set-car! / hash-set!)
+    // leave the FlatAST and env bindings unchanged. Scanning every node
+    // and every binding made each write linear in the define count.
+    bool heap_slot_quiet = false;
+    if (ev_) {
+        const auto& stk = ev_->active_mutation_stack();
+        if (!stk.empty()) {
+            const auto& top = stk.back();
+            if (top.heap_slot_only && !top.lightweight && !top.exit_fence) {
+                auto* ws = ev_->workspace_flat();
+                heap_slot_quiet = !ws || ws->mutation_log_size() <= top.mutation_log_size;
+            }
+        }
+    }
+    if (heap_slot_quiet && !render_fast_candidate) {
+        // Quiet: nodes_changed / match / linear stay zero. Soft hard-gate
+        // stays off. Production still hard-gates via mutate_session below.
+    } else if (auto* ws = ev_->workspace_flat()) {
         const auto cur_dirty_calls = ws->mark_dirty_upward_call_count();
         nodes_changed_local = (cur_dirty_calls > dirty_upward_at_enter_)
                                   ? (cur_dirty_calls - dirty_upward_at_enter_)
@@ -5529,7 +5628,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Issue #4357: the rebind body already ran ownership validation.
             // The full closure + env-frame walk is the rest of the millisecond
             // on a one-line Soft rebind. Full / production / hard still walk.
-            if (!linear_pre_exit_enforced && !rebind_light_skip_heavy_exit(*ev_)) {
+            if (!linear_pre_exit_enforced && !rebind_light_skip_heavy_exit(*ev_) &&
+                !heap_slot_quiet) {
                 (void)ev_->enforce_linear_boundary_consistency(
                     Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
             }
@@ -5543,7 +5643,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // (no half-consistent EnvFrame left live after probes).
             // Issue #4357: same light-path skip as the enforce above. The
             // walk locks every env-frame shard, including the Soft prelude.
-            if (!rebind_light_skip_heavy_exit(*ev_)) {
+            // Issue #4346: heap-slot quiet skips the same walk. Each frame's
+            // ensure_dual_path_consistent compares every binding.
+            if (!rebind_light_skip_heavy_exit(*ev_) && !heap_slot_quiet) {
                 std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
                 for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
                     rlock[ef_i] = std::shared_lock<std::shared_mutex>(
@@ -5569,13 +5671,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #3743: persist-reject / inbody force-exit / force-rollback
         // already restamped at the restore site; this outermost triad is
         // the belt (nested abort never reaches here).
-        const auto ur = ev_->unified_restamp_after_boundary(
-            success ? Evaluator::UnifiedRestampSite::BoundarySuccess
-                    : Evaluator::UnifiedRestampSite::AbortRestore);
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-            if (ur.pins > 0)
-                m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(ur.pins),
-                                                         std::memory_order_relaxed);
+        // Issue #4346: a heap-slot write did not change node generations.
+        // restamp_all_node_generations walks the whole workspace per write.
+        if (!heap_slot_quiet) {
+            const auto ur = ev_->unified_restamp_after_boundary(
+                success ? Evaluator::UnifiedRestampSite::BoundarySuccess
+                        : Evaluator::UnifiedRestampSite::AbortRestore);
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                if (ur.pins > 0)
+                    m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(ur.pins),
+                                                             std::memory_order_relaxed);
+            }
         }
         // Issue #3196: outermost triad published — drop nested authority-gap.
         // Issue #3312: record the nested-return → outermost window length.
@@ -5600,7 +5706,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             ws->clear_nested_authority_gap();
         }
         // Issue #2003: EnvFrame lifetime scan at boundary exit.
-        {
+        // Issue #4346: that scan locks every closure shard and walks
+        // every live closure. A heap slot write did not move a capture.
+        if (!heap_slot_quiet) {
             aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
                 aura::core::envframe_lifetime::make_envframe_lifetime_host_with(
                     const_cast<void*>(static_cast<const void*>(ev_)),
@@ -5688,7 +5796,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         } else {
             // Issue #4357: a one-line Soft rebind does not reemit. The
             // recovery walk is the phase-4 cost on that path.
-            if (!rebind_light_skip_heavy_exit(*ev_))
+            if (!rebind_light_skip_heavy_exit(*ev_) && !heap_slot_quiet)
                 ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
                                                        dirty_upward_at_enter_);
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
@@ -6006,7 +6114,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // — #2170 Phase 2 — wired through the same publish_layout_stamp()
         // helper so the last-stamp fields stay consistent regardless of
         // which path bumps the underlying generations).
-        ev_->publish_layout_stamp();
+        // Issue #4346: publish walks every env frame to restamp
+        // env_gen_stamp_. A heap-slot write did not bump env_generation_
+        // or defuse_version_, so the stamp is unchanged.
+        if (!heap_slot_quiet)
+            ev_->publish_layout_stamp();
         // Issue #2250: write current LayoutStamp into the current
         // Fiber (fence captured BEFORE unlock so a concurrent reemit
         // by another fiber of the same Evaluator is detectable at
@@ -6092,7 +6204,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // observability only (no longer drives the success axis).
         std::uint32_t panic_depth_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
-            if (rebind_light_skip_heavy_exit(*ev_))
+            if (rebind_light_skip_heavy_exit(*ev_) || heap_slot_quiet)
                 goto rebind_light_skip_densify_4357;
             // Issue #3238: densify while a mutation is still live (this
             // fiber depth or process-held count) must drop linear_fast_path
@@ -6945,9 +7057,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
 
             PostCompactCloseHooks close_hooks{};
             close_hooks.ctx = static_cast<void*>(ev_);
-            close_hooks.publish_layout_stamp = [](void* c) noexcept {
-                static_cast<Evaluator*>(c)->publish_layout_stamp();
-            };
+            // Issue #4346: the orchestrator always invokes this hook.
+            // Heap-slot quiet already skipped the Phase-5 publish above;
+            // leaving the hook set walks every env frame a second time.
+            if (!heap_slot_quiet) {
+                close_hooks.publish_layout_stamp = [](void* c) noexcept {
+                    static_cast<Evaluator*>(c)->publish_layout_stamp();
+                };
+            }
             close_hooks.set_fiber_resume_stamp = [](void* c) noexcept -> bool {
                 auto* ev = static_cast<Evaluator*>(c);
                 auto* cur_fiber = aura::serve::g_current_fiber;
@@ -7083,7 +7200,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // follow-up. The counter is the precondition
     // that the AI Agent can monitor.
     if (outermost && ev_->arena_group_) {
-        ev_->probe_arena_auto_policy_on_boundary_exit(success);
+        // Issue #4346: a heap-slot write did not allocate AST. The probe
+        // compacts every loaded module arena (std/hash.aura and the rest)
+        // and that walk is linear in program size on each vector-set!.
+        if (!heap_slot_quiet)
+            ev_->probe_arena_auto_policy_on_boundary_exit(success);
     }
     // Issue #490 / #1503: proactive Evaluator tag_arity_index
     // maintenance on successful outermost Guard exit:

@@ -220,6 +220,50 @@ int main() {
               "AC8: hard_fail_extra_close helper present");
     }
 
+    // ── AC9 (#4346): heap-slot writes stay O(1) in the define count ──
+    // vector-set! / set-car! take an outermost Guard. That guard used to
+    // scan every workspace node and compare every env binding, so each
+    // write grew with the number of defines and could drop a caller
+    // closure. The slot write must keep the value and the closure.
+    {
+        std::println("\n--- AC9 (#4346): vector-set!/set-car! keep closures ---");
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        CompilerService cs;
+        const std::string src = "(define (tab) 2)\\n"
+                                "(define (indent n) (* n (tab)))\\n"
+                                "(define v (vector 0))\\n"
+                                "(define p (cons 1 2))\\n";
+        auto sc = cs.eval(std::string("(set-code \"") + src + "\")");
+        CHECK(sc.has_value() && aura::compiler::types::is_bool(*sc) &&
+                  aura::compiler::types::as_bool(*sc),
+              "4346: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4346: eval-current");
+        auto before = cs.eval("(indent 2)");
+        CHECK(before && aura::compiler::types::is_int(*before) &&
+                  aura::compiler::types::as_int(*before) == 4,
+              "4346: (indent 2) = 4 before the writes");
+        (void)cs.eval("(vector-set! v 0 9)");
+        (void)cs.eval("(set-car! p 8)");
+        auto after = cs.eval("(indent 2)");
+        CHECK(after && aura::compiler::types::is_int(*after) &&
+                  aura::compiler::types::as_int(*after) == 4,
+              "4346: (indent 2) = 4 after vector-set! and set-car!");
+        auto vr = cs.eval("(vector-ref v 0)");
+        CHECK(vr && aura::compiler::types::is_int(*vr) && aura::compiler::types::as_int(*vr) == 9,
+              "4346: vector-ref sees 9");
+        auto car = cs.eval("(car p)");
+        CHECK(car && aura::compiler::types::is_int(*car) &&
+                  aura::compiler::types::as_int(*car) == 8,
+              "4346: car sees 8");
+        CHECK(file_contains("src/compiler/evaluator.ixx", "heap_slot_only"),
+              "4346: checkpoint records a heap-slot guard");
+        CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp", "Issue #4346"),
+              "4346: dtor cites the heap-slot skip");
+        CHECK(file_contains("src/compiler/evaluator_mutation_boundary.cpp", "heap_slot_quiet"),
+              "4346: quiet heap guard skips the define walk");
+    }
+
     // ── AC4: source markers ──────────────────────────────────────────
     {
         std::println("\n--- AC4: Wave1 source markers ---");
