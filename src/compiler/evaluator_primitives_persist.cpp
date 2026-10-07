@@ -12,6 +12,7 @@ module;
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 module aura.compiler.evaluator;
@@ -51,6 +52,9 @@ static constexpr std::uint32_t kSecSource = 1;
 static constexpr std::uint32_t kSecMeta = 2;
 static constexpr std::uint32_t kSecMutations = 3;
 static constexpr std::uint32_t kSecEnvPlaceholder = 4; // reserved env_frames
+// Issue #4367: optional. One define name per mutation record (empty when
+// the saved target was not a Define). Old blobs omit the section.
+static constexpr std::uint32_t kSecDefineTargets = 5;
 static constexpr std::uint32_t kSecEnd = 0xFFFFFFFFu;
 
 static std::uint32_t crc32_update(std::uint32_t crc, const void* data, std::size_t len) noexcept {
@@ -102,6 +106,8 @@ struct PersistBlob {
     std::vector<char> raw;
     std::size_t mutations_data_pos = 0;
     std::uint32_t mutations_count = 0;
+    // Parallel to the mutation log. Empty when the blob has no #4367 section.
+    std::vector<std::string> define_targets;
     bool magic_ok = false;
     bool crc_ok = false;
 };
@@ -194,10 +200,90 @@ static bool load_blob(const std::string& path, PersistBlob& blob, std::string* e
             }
             std::memcpy(&blob.mutations_count, blob.raw.data() + pos, 4);
             blob.mutations_data_pos = pos + 4;
+        } else if (tag == kSecDefineTargets) {
+            // Best-effort. A short section leaves names empty and skips remap.
+            std::size_t sp = pos;
+            std::uint32_t count = 0;
+            std::vector<std::string> names;
+            bool names_ok = read_u32(blob.raw, sp, count);
+            if (names_ok) {
+                names.reserve(count);
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    std::uint32_t n = 0;
+                    if (!read_u32(blob.raw, sp, n) || sp + n > pos + len) {
+                        names_ok = false;
+                        break;
+                    }
+                    names.emplace_back(blob.raw.data() + sp, n);
+                    sp += n;
+                }
+            }
+            if (names_ok)
+                blob.define_targets = std::move(names);
         }
         pos += len;
     }
     return true;
+}
+
+// Issue #4367: name of the define at `id`, or empty when the slot is not a
+// live Define. The caller copies the string; the pool view is not kept.
+static std::string define_name_at(aura::ast::StringPool* pool, const aura::ast::FlatAST& flat,
+                                  aura::ast::NodeId id) {
+    if (!pool || id == aura::ast::NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
+        return {};
+    const auto v = flat.get(id);
+    if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+        return {};
+    const auto sv = pool->resolve(v.sym_id);
+    return std::string(sv);
+}
+
+// Issue #4367: set-code reparses, so define ids move. Retarget only records
+// whose saved target was itself a Define (empty name means leave the id).
+static void remap_define_mutation_targets(aura::ast::StringPool* pool, aura::ast::FlatAST& flat,
+                                          const std::vector<std::string>& names) {
+    if (!pool || names.empty())
+        return;
+    auto& log = flat.all_mutations();
+    if (log.empty())
+        return;
+    const auto root = flat.root;
+    if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+        return;
+    std::unordered_map<std::string, aura::ast::NodeId> by_name;
+    std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+    std::vector<aura::ast::NodeId> pending;
+    pending.push_back(root);
+    while (!pending.empty()) {
+        const auto cur = pending.back();
+        pending.pop_back();
+        if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+            seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+            continue;
+        seen[static_cast<std::size_t>(cur)] = 1;
+        const auto v = flat.get(cur);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+            const auto sv = pool->resolve(v.sym_id);
+            if (!sv.empty()) {
+                std::string nm(sv);
+                auto it = by_name.find(nm);
+                // define-lookup prepends, so its car is the highest id.
+                if (it == by_name.end() || cur > it->second)
+                    by_name.insert_or_assign(std::move(nm), cur);
+            }
+        }
+        for (auto child : v.children)
+            pending.push_back(child);
+    }
+    const auto nrec = log.size() < names.size() ? log.size() : names.size();
+    for (std::size_t i = 0; i < nrec; ++i) {
+        if (names[i].empty())
+            continue;
+        const auto it = by_name.find(names[i]);
+        if (it != by_name.end())
+            log[i].target_node = it->second;
+    }
 }
 
 void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -217,13 +303,18 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string source = ev.authoritative_workspace_source();
         std::uint64_t mut_count = 0;
         std::vector<char> mut_blob;
+        std::vector<std::string> define_names;
         if (ev.workspace_flat_) {
             mut_count = static_cast<std::uint64_t>(ev.workspace_flat_->mutation_count());
             const auto& log = ev.workspace_flat_->all_mutations();
             append_u32(mut_blob, static_cast<std::uint32_t>(log.size()));
-            for (const auto& rec : log)
+            define_names.reserve(log.size());
+            for (const auto& rec : log) {
                 aura::ast::mutation::wire_write_mutation_record(
                     mut_blob, rec, aura::ast::mutation::kMutationRecordProvenanceWireVersion);
+                define_names.push_back(
+                    define_name_at(ev.workspace_pool_, *ev.workspace_flat_, rec.target_node));
+            }
         } else {
             append_u32(mut_blob, 0);
         }
@@ -258,6 +349,18 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         append_u32(out, kSecMutations);
         append_u32(out, static_cast<std::uint32_t>(mut_blob.size()));
         append_bytes(out, mut_blob.data(), mut_blob.size());
+        // Issue #4367: define name for each record, so reload can retarget.
+        {
+            std::vector<char> sec;
+            append_u32(sec, static_cast<std::uint32_t>(define_names.size()));
+            for (const auto& name : define_names) {
+                append_u32(sec, static_cast<std::uint32_t>(name.size()));
+                append_bytes(sec, name.data(), name.size());
+            }
+            append_u32(out, kSecDefineTargets);
+            append_u32(out, static_cast<std::uint32_t>(sec.size()));
+            append_bytes(out, sec.data(), sec.size());
+        }
         // Env placeholder (Phase 2 env_frames SoA)
         append_u32(out, kSecEnvPlaceholder);
         append_u32(out, 0);
@@ -359,6 +462,9 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
+            // Issue #4367: names were captured on the pre-save tree.
+            remap_define_mutation_targets(ev.workspace_pool_, *ev.workspace_flat_,
+                                          blob.define_targets);
             ev.unlock_workspace_unique();
         }
 

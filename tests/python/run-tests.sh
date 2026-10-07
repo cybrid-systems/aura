@@ -1527,6 +1527,80 @@ EOF
 }
 _file_4366
 
+# Issue #4367: reloaded mutation targets follow the reparsed define ids.
+_file_4367() {
+    local dir book src
+    dir=$(mktemp -d /tmp/aura-4367.XXXXXX)
+    book="$dir/book.aw"
+    src=$(cat <<EOF
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define (nid n) (car (car (define-lookup n))))
+(define (prov n)
+  (let ((h (query:node-provenance (nid n))))
+    (list n (hash-ref h "mutation_id") (hash-ref h "author-fingerprint"))))
+(define (hit rows id mut)
+  (if (null? rows)
+      #f
+      (let ((s (car rows)))
+        (if (and (>= (string-index s (string-append "id=" (number->string mut) " ")) 0)
+                 (>= (string-index s (string-append "target=" (number->string id) " op=")) 0))
+            #t
+            (hit (cdr rows) id mut)))))
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(define (add a b) (+ a b))\n(hello 3)\n(define t (list 1))\n#t")
+  (eval-current)
+  (mutate:set-agent-fingerprint 42)
+  (typed-mutate-atomic (list "(mutate:rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")" "(mutate:rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"closer\\")"))
+  (mutate:set-agent-fingerprint 3)
+  (typed-mutate-atomic (list "(mutate:rebind \\"add\\" \\"(lambda (a b) (+ b a))\\" \\"flip\\")"))
+  (mutate:set-agent-fingerprint 1)
+  (show "IDS1" (list (nid "hello") (nid "bye") (nid "add")))
+  (show "PROV1" (list (prov "hello") (prov "bye") (prov "add")))
+  (show "SER" (serialize-workspace "$book"))
+  (set-code "(define (zzz) 0)")
+  (eval-current)
+  (show "DES" (deserialize-workspace "$book"))
+  (show "IDS2" (list (nid "hello") (nid "bye") (nid "add")))
+  (show "PROV2" (list (prov "hello") (prov "bye") (prov "add")))
+  (let ((log (query:mutations-since 0))
+        (ph (prov "hello"))
+        (pb (prov "bye"))
+        (pa (prov "add")))
+    (show "HIT" (list (hit log (nid "hello") (car (cdr ph)))
+                      (hit log (nid "bye") (car (cdr pb)))
+                      (hit log (nid "add") (car (cdr pa)))))))
+(main)
+EOF
+)
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 40 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    _ok4367() {
+        local out="$1" p1 p2 i1 i2
+        p1=$(printf '%s\n' "$out" | sed -n 's/^PROV1 //p')
+        p2=$(printf '%s\n' "$out" | sed -n 's/^PROV2 //p')
+        i1=$(printf '%s\n' "$out" | sed -n 's/^IDS1 //p')
+        i2=$(printf '%s\n' "$out" | sed -n 's/^IDS2 //p')
+        [ -n "$p1" ] && [ "$p1" = "$p2" ] && [ -n "$i1" ] && [ "$i1" != "$i2" ] \
+            && printf '%s\n' "$p1" | grep -q '"hello"' \
+            && printf '%s\n' "$p1" | grep -q '42' \
+            && printf '%s\n' "$p1" | grep -q ' 3)' \
+            && ! printf '%s\n' "$p1" | grep -q ' 0)' \
+            && printf '%s\n' "$out" | grep -qx 'SER #t' \
+            && printf '%s\n' "$out" | grep -qx 'DES #t' \
+            && printf '%s\n' "$out" | grep -qx 'HIT (#t #t #t)'
+    }
+    if _ok4367 "$hard" && _ok4367 "$soft" && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4367-persist-remap-define-targets"
+    else
+        _record_fail "4367-persist-remap-define-targets" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4367
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
