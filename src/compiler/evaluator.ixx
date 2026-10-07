@@ -648,6 +648,10 @@ export inline constexpr std::int64_t kNodeOccupancyRingIssue = 3629;
 // #1862 (lookup_by_symid raw iteration),
 // #1863 (bindings_with_names + pool resolve).
 // EnvFrame bind* paths share the same contract.
+// Issue #4350: frozen capture bindings for a closure's calls (defined
+// fully below, after Env). Referenced by Env's delegated-lookup member.
+export struct CapSnapshot;
+
 export class Env final {
 public:
     Env() = default;
@@ -733,6 +737,13 @@ public:
     // evaluator_env.cpp.
     void set_pool(const aura::ast::StringPool* p);
     [[nodiscard]] const aura::ast::StringPool* pool() const noexcept { return pool_; }
+    // Issue #4350: delegated capture bindings (closure-level shared
+    // snapshot with prebuilt O(1) indexes). Consulted after the local
+    // arrays miss; the SoA parent chain is unchanged.
+    void set_cap_snapshot(std::shared_ptr<const CapSnapshot> s) { cap_snap_ = std::move(s); }
+    [[nodiscard]] const std::shared_ptr<const CapSnapshot>& cap_snapshot() const noexcept {
+        return cap_snap_;
+    }
     // Issue #145: SymId-based lookup. Fast path — integer compare
     // instead of string compare. Returns the most recent binding
     // (shadowing semantics preserved).
@@ -846,6 +857,8 @@ private:
     // drop (the original goal) removes this field after the
     // migration completes; see cpp26_guide.md §2.7.7.
     const aura::ast::StringPool* pool_ = nullptr; // Issue #145
+    // Issue #4350: shared capture snapshot (see set_cap_snapshot).
+    std::shared_ptr<const CapSnapshot> cap_snap_;
     std::uint64_t pool_epoch_ = 0;
     // P0 step 2: cells_ pointer removed (was used for cell deref in
     // lookups). Bindings now always return the raw value (cell
@@ -957,6 +970,24 @@ export namespace linear_rt {
 
 // Forward declaration — EnvFrame body follows; resolve result types
 // reference EnvFrame* (Issue #1756).
+// Issue #4350: frozen capture-frame bindings for a closure's calls,
+// built ONCE at closure creation (frames are immutable after alloc, so
+// this is the same point-in-time view the per-call Env copy used) and
+// shared across all calls. Every materialize then binds params locally
+// — the per-call O(capture) array copies + hash-index rebuild are gone.
+// Chain: a closure created inside a delegated call frame chains to that
+// frame's snapshot, so nested closures see the full lexical content.
+export struct CapSnapshot {
+    std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
+    std::vector<std::pair<std::string, types::EvalValue>> bindings_;
+    std::unordered_map<aura::ast::SymId, std::size_t> symid_index_;
+    std::unordered_map<std::string, std::size_t> name_index_;
+    // The capture frame's own parent — the materialized Env's SoA chain
+    // starts here (identical wiring to the per-call copy it replaces).
+    EnvId parent_id = NULL_ENV_ID;
+    std::shared_ptr<const CapSnapshot> parent;
+};
+
 export struct EnvFrame;
 
 // Issue #1756: detailed EnvFrame resolve status — callers must not
@@ -4688,6 +4719,10 @@ public:
     // runtime support pointers the body needs to see, not part
     // of the captured scope itself.
     Env materialize_call_env(const Closure& cl);
+    // Issue #4350: lazily-built shared capture snapshot keyed by capture
+    // frame id (linear-clean frames only; see CapSnapshot). The first
+    // materialize of a closure builds + caches; later calls reuse.
+    std::shared_ptr<const CapSnapshot> cap_snap_for_frame(EnvId frame_id);
     // Issue #2268: Ref-returning overload. Use when the caller
     // needs a use-site fence handle (yield / steal / compact
     // safe). Returns std::nullopt for bridge-stale / OOB / NULL
@@ -5606,6 +5641,9 @@ public:
     // (aether:stats-bump! / hash-set!). Separate from alloc_storage_lock_
     // so pure pair/string growth is not serialized with hash probes.
     mutable std::mutex hash_tables_mtx_;
+    // Issue #4350: per-capture-frame shared snapshots (see cap_snap_for_frame).
+    mutable std::mutex cap_snap_mtx_;
+    std::unordered_map<EnvId, std::shared_ptr<const CapSnapshot>> cap_snap_cache_;
     // Issue #1401: serializes load_module_file ↔ compact_env_frames().
     // compact_env_frames (Issue #1386) re-packs env_frames_ and
     // rewrites Closure::env_id via a remap table. load_module_file
