@@ -18,6 +18,7 @@ module;
 #include "compiler/frame_budget.hh" // #2137 frame-budget cascade isolation
 #include "compiler/ownership_escape_lowering_gate.h" // #2286: set_current_escape_key
 #include "compiler/mutate_type_gate.hh"              // #2219 / #2319 hard gate check
+#include "compiler/mark_all_owner_clear.hh"          // #4360: replace-only owner clear
 #include "compiler/castop_density_policy.hh"         // #2358 HARD force-JIT policy
 #include "core/arena_auto_policy_stats.h"            // in_render_hotpath
 #include "core/transparent_string_hash.hh"           // TransparentStringHash for ir_cache_index
@@ -869,7 +870,11 @@ void CompilerService::mark_all_defines_dirty() {
     // adding stale-check via binding->interpreter->flat/pool failed
     // to compile because IRInterpreter doesn't expose flat/pool.
     // Minimal surgical change: only ir_define_closure_owner_.clear().
-    ir_define_closure_owner_.clear();
+    // Issue #4360: a workspace replace (set-code / snapshot restore) arms
+    // the flag. Flush and define-add still dirty every cache entry below,
+    // but a sibling IR closure must stay dispatchable.
+    if (::aura::compiler::mark_all_clears_ir_owners())
+        ir_define_closure_owner_.clear();
     // Issue #1999 / #600 AC5 + Wave2: set-code soft-dirty is the
     // invalidate path for a full workspace replace. Mark every
     // ir_cache_v2 entry dirty, then ONE bulk jit_.invalidate_all()

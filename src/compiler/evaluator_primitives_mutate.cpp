@@ -1312,6 +1312,42 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                 }
                 auto result = fn(a);
+                // Issue #4360: a hard rebind does not arm the light path, but
+                // the drain drops the caller from the owner map and erases
+                // dep_graph. Snapshot callers before that drain. The destructor
+                // drops the focus if this mutate is rejected before install.
+                // Soft light rebind leaves the arm set and snapshots after.
+                struct HardReinstall {
+                    Evaluator& ev;
+                    std::string focus;
+                    std::vector<std::string> callers;
+                    bool done = false;
+                    explicit HardReinstall(Evaluator& e)
+                        : ev(e) {
+                        if (ev.rebind_light_path())
+                            return;
+                        focus = ev.rebind_light_focus();
+                        if (!focus.empty() && ev.get_dependents_fn_)
+                            callers = ev.get_dependents_fn_(focus);
+                    }
+                    void install() {
+                        if (focus.empty())
+                            return;
+                        ev.bind_workspace_lambda_via_ir(focus);
+                        for (const auto& c : callers) {
+                            if (!c.empty() && c != focus)
+                                ev.bind_workspace_lambda_via_ir(c);
+                        }
+                        ev.disarm_rebind_light_path();
+                        done = true;
+                    }
+                    ~HardReinstall() {
+                        if (!done && !focus.empty())
+                            ev.disarm_rebind_light_path();
+                    }
+                    HardReinstall(const HardReinstall&) = delete;
+                    HardReinstall& operator=(const HardReinstall&) = delete;
+                } hard_reinstall{ev};
                 // Issue #3480: poll existing inbody on the structural
                 // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
                 // cancel armed → force-release hold + depth before a green
@@ -1401,6 +1437,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         }
                     }
                     ev.disarm_rebind_light_path();
+                } else {
+                    hard_reinstall.install();
                 }
                 return result;
             });
@@ -4229,10 +4267,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // The body's guard is nested: its destructor does not drain.
         // Leave the arm set so the outermost drain (after return) takes
         // the light invalidate, then the wrapper binds the new closure.
-        if (ev.rebind_light_path()) {
-            rebind_light_disarm.keep = true;
-            ev.note_rebind_light_focus(name);
-        }
+        // Issue #4360: hard success does not arm the light path (that
+        // would skip typecheck and the full drain). The same focus note
+        // lets the wrapper reinstall this define and its callers after
+        // that drain.
+        rebind_light_disarm.keep = true;
+        ev.note_rebind_light_focus(name);
         rebind_after_rejected.failed = false;
         ev.defines_bound_flat_ = ev.workspace_flat_;
         return make_bool(true);

@@ -45,6 +45,8 @@
 #include <string_view>
 #include <vector>
 
+#include "compiler/mutate_type_gate.hh"
+
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -825,6 +827,72 @@ static void ac4357_workspace_bools() {
           "4357: unparse keeps bool literals for the IR reparse");
 }
 
+// Issue #4360: adding a define must not drop sibling IR closures, and a
+// hard rebind must reinstall the caller after the drain. The light path
+// stays armed only for Soft; hard still typechecks and still drains.
+static void ac4360_sibling_and_hard_caller() {
+    std::println("\n--- #4360: sibling closure and hard caller survive ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define f (lambda (x) (+ x 1)))\n"
+                           "(define g (lambda (x) (* x 2)))\n"
+                           "#t"),
+              "4360: set-code f/g");
+        CHECK(cs.eval("(eval-current)").has_value(), "4360: eval-current");
+        auto g0 = cs.eval("(g 2)");
+        CHECK(g0 && is_int(*g0) && as_int(*g0) == 4, "4360: (g 2) = 4 before add");
+        auto added = cs.eval("(mutate:rebind \"zzz\" \"(lambda (x) x)\" \"s\")");
+        CHECK(added && is_bool(*added) && as_bool(*added), "4360: add zzz");
+        auto bad = cs.eval("(mutate:rebind \"g\" \"(lambda (x\" \"s\")");
+        CHECK(!(bad && is_bool(*bad) && as_bool(*bad)), "4360: bad body is refused");
+        auto src = workspace_source(cs);
+        CHECK(src.find("zzz") != std::string::npos, "4360: workspace keeps zzz");
+        auto g1 = cs.eval("(g 2)");
+        CHECK(g1 && is_int(*g1) && as_int(*g1) == 4, "4360: (g 2) = 4 after add");
+        auto f1 = cs.eval("(f 1)");
+        CHECK(f1 && is_int(*f1) && as_int(*f1) == 2, "4360: (f 1) = 2 after add");
+    }
+    {
+        using aura::compiler::mutate_type_gate::mode;
+        using aura::compiler::mutate_type_gate::MutateTypeGate;
+        using aura::compiler::mutate_type_gate::set_mode;
+        const auto prev = mode();
+        struct RestoreGate {
+            MutateTypeGate prev;
+            ~RestoreGate() { set_mode(prev); }
+        } restore_gate{prev};
+        set_mode(MutateTypeGate::Hard);
+        CompilerService cs;
+        CHECK(set_code(cs, "(define rr-h (lambda (x) (+ x 1)))\n"
+                           "(define rr-u (lambda (y) (rr-h y)))\n"
+                           "#t"),
+              "4360: set-code rr-h/rr-u");
+        CHECK(cs.eval("(eval-current)").has_value(), "4360: hard eval-current");
+        auto u0 = cs.eval("(rr-u 1)");
+        CHECK(u0 && is_int(*u0) && as_int(*u0) == 2, "4360: (rr-u 1) = 2");
+        auto rb = cs.eval("(mutate:rebind \"rr-h\" \"(lambda (x) (+ x 2))\" \"r\")");
+        CHECK(rb && is_bool(*rb) && as_bool(*rb), "4360: hard rebind");
+        auto u1 = cs.eval("(rr-u 1)");
+        CHECK(u1 && is_int(*u1) && as_int(*u1) == 3, "4360: (rr-u 1) = 3 after hard rebind");
+        auto h1 = cs.eval("(rr-h 1)");
+        CHECK(h1 && is_int(*h1) && as_int(*h1) == 3, "4360: (rr-h 1) = 3 after hard rebind");
+    }
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("Issue #4360") != std::string::npos,
+          "4360: owner clear stays gated to a workspace replace");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("Issue #4360") != std::string::npos,
+          "4360: hard rebind reinstalls the caller after the drain");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     ac_dual_workspace();
@@ -837,6 +905,7 @@ int run_test_current_source_roundtrip() {
     ac4349_restore_over_rebind();
     ac4349_snapshot_keeps_caller();
     ac4357_workspace_bools();
+    ac4360_sibling_and_hard_caller();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
     ac2966_1_no_workspace_observable();
     ac2966_2_set_code_path_ok();
