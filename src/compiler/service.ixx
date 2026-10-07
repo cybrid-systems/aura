@@ -12211,7 +12211,13 @@ public:
         // Wrap in a transaction: if evaluation fails (parse or runtime),
         // all mutations performed by the sexpr are automatically rolled back.
         MutationTransaction tx(*current_ast_);
-        auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
+        // Issue #4369: do not parse into current_pool_. After a child
+        // workspace is deleted, that pool can be the freed COW clone
+        // (or a densify-moved service pool). The sexpr is only the
+        // mutate call; the primitive writes workspace_flat_.
+        aura::ast::FlatAST scratch_flat;
+        aura::ast::StringPool scratch_pool;
+        auto pr = aura::parser::parse_to_flat(sexpr, scratch_flat, scratch_pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             auto diag = parse_error_diag(pr);
             return {0, false, diag.format()};
@@ -12242,7 +12248,7 @@ public:
         auto guard = std::move(*guard_r);
 
         auto result =
-            evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
+            evaluator_.eval_flat(scratch_flat, scratch_pool, pr.root, evaluator_.top_env());
         if (!result) {
             // Issue #213 follow-up: the eval failed (e.g. parse
             // error in the mutate code itself). Mark the

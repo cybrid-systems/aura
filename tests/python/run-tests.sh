@@ -1644,6 +1644,98 @@ EOF
 }
 _file_4368
 
+_file_4369() {
+    local dir src_loop src_del src_disc
+    dir=$(mktemp -d /tmp/aura-4369.XXXXXX)
+    src_loop=$(cat <<'EOF'
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define (once)
+  (let ((c (workspace :create "try")))
+    (workspace :switch c)
+    (typed-mutate-atomic (list "(mutate:rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
+    (eval-current)
+    (workspace :switch 0)
+    (let ((s (ast:snapshot "r")))
+      (ast:restore s)
+      (eval-current))
+    (show "HELLO" (hello 1))
+    (workspace:delete c)
+    (show "AFTER" (hello 1))))
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n#t")
+  (eval-current)
+  (once)
+  (once)
+  (show "DONE" 1))
+(main)
+EOF
+)
+    src_del=$(cat <<'EOF'
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n#t")
+  (eval-current)
+  (let ((c (workspace :create "try")))
+    (show "SW1" (workspace :switch c))
+    (show "MUT" (mutate:rebind "hello" "(lambda (x) (* x 10))" "try"))
+    (show "SW0" (workspace :switch 0))
+    (show "ROOT_HELLO" (hello 1))
+    (show "DEL" (workspace:delete c))
+    (show "AFTER_HELLO" (hello 1))))
+(main)
+EOF
+)
+    src_disc=$(cat <<'EOF'
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n#t")
+  (eval-current)
+  (let ((c (workspace :create "try")))
+    (show "SW1" (workspace :switch c))
+    (show "MUT" (mutate:rebind "hello" "(lambda (x) (* x 10))" "try"))
+    (show "SW0" (workspace :switch 0))
+    (show "ROOT_HELLO" (hello 1))
+    (show "DISCARD" (workspace:discard c))
+    (show "AFTER_HELLO" (hello 1))))
+(main)
+EOF
+)
+    _ok_loop() {
+        local out="$1"
+        [ "$(printf '%s\n' "$out" | grep -cx 'HELLO 2')" -eq 2 ] \
+            && [ "$(printf '%s\n' "$out" | grep -cx 'AFTER 2')" -eq 2 ] \
+            && printf '%s\n' "$out" | grep -qx 'DONE 1'
+    }
+    _ok_del() {
+        local out="$1"
+        printf '%s\n' "$out" | grep -qx 'ROOT_HELLO 2' \
+            && printf '%s\n' "$out" | grep -qx 'AFTER_HELLO 2'
+    }
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 40 "$AURA" -e "$src_loop" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src_loop" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    local hardd softd
+    hardd=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 40 "$AURA" -e "$src_del" 2>>"$dir/errh")
+    softd=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src_del" 2>>"$dir/errs")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    local hardc softc
+    hardc=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 40 "$AURA" -e "$src_disc" 2>>"$dir/errh")
+    softc=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src_disc" 2>>"$dir/errs")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    if _ok_loop "$hard" && _ok_loop "$soft" && _ok_del "$hardd" && _ok_del "$softd" \
+        && _ok_del "$hardc" && _ok_del "$softc" && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4369-child-rebind-stays-in-child"
+    else
+        _record_fail "4369-child-rebind-stays-in-child" "       hard-loop:" "$hard" "       soft-loop:" "$soft" "       hard-del:" "$hardd" "       soft-del:" "$softd" "       hard-disc:" "$hardc" "       soft-disc:" "$softc" "       err:" "$errh" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4369
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

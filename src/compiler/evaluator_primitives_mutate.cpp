@@ -4124,6 +4124,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Drop the cached closure from the previous specialise. A clean
             // Define would hand eval_flat that high-bit id back, and the
             // outermost drain then erases its owner.
+            // Issue #4369: that eval re-keys top_ onto the child workspace
+            // pool. workspace:delete then frees it, and the next primitive
+            // lookup interns into the freed pool. Restore the caller pool
+            // the way eval-current does.
+            struct RestoreTopPool {
+                Env& top;
+                const aura::ast::StringPool* saved;
+                explicit RestoreTopPool(Env& t)
+                    : top(t)
+                    , saved(t.pool()) {}
+                ~RestoreTopPool() {
+                    if (saved && saved != top.pool())
+                        top.set_pool(saved);
+                }
+            } restore_top_pool(ev.top_env());
             flat.mark_subtree_dirty(old_define);
             flat.force_align_subtree_gen(old_define);
             auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, old_define, ev.top_env());
@@ -4495,6 +4510,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // (k 1) kept the pre-mutate closure until eval-current.
                 if (ev.workspace_pool_ && env_refresh_node != aura::ast::NULL_NODE &&
                     env_refresh_node < flat.size()) {
+                    // Issue #4369: same caller-pool restore as mutate:rebind.
+                    struct RestoreTopPool {
+                        Env& top;
+                        const aura::ast::StringPool* saved;
+                        explicit RestoreTopPool(Env& t)
+                            : top(t)
+                            , saved(t.pool()) {}
+                        ~RestoreTopPool() {
+                            if (saved && saved != top.pool())
+                                top.set_pool(saved);
+                        }
+                    } restore_top_pool(ev.top_env());
                     flat.force_align_subtree_gen(env_refresh_node);
                     auto refreshed =
                         ev.eval_flat(flat, *ev.workspace_pool_, env_refresh_node, ev.top_env());
