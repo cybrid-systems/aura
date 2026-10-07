@@ -9230,6 +9230,18 @@ public:
                 }
             }
         }
+        // Issue #4375 (方案 1): the cascade relower's solve_delta passes
+        // latch the pending residual face (hard under Full strategy) — and
+        // without a boundary persist the latch has no clear path, so the
+        // depth==0 real-quiet face refuses the caller's next typed entry
+        // (the mutate loop breaks). Drive the drain at the relower's end:
+        // on a clean system the quiet drain clears the stale latch
+        // (note(0)); with residual the full solve runs to SOLVED and
+        // clears it. Soft/Off: one hard-face load, zero cost.
+        if (aura::compiler::typed_audit::production_hard_face_active()) {
+            aura::compiler::TypeChecker drain_tc(type_registry_);
+            (void)drain_tc.constraint_system().drain_pending_full_solve_before_commit();
+        }
         // Issue #3255: clean-cache relower still closes a post-peel fork.
         restore_soft_dual_graph_parity_after_relower_();
         return ok;
