@@ -7,6 +7,7 @@ module;
 
 #include "runtime_shared.h"
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "compiler/mark_all_owner_clear.hh" // Issue #4360: restore clears IR owners
 
 module aura.compiler.evaluator;
 
@@ -639,8 +640,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // (ASAN fix #107 leak) delete the old index.
                     destroy_defuse_index();
                     ev.defuse_affected_syms_.clear();
-                    if (ev.mark_all_defines_dirty_fn_)
-                        ev.mark_all_defines_dirty_fn_();
+                    {
+                        aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
+                        if (ev.mark_all_defines_dirty_fn_)
+                            ev.mark_all_defines_dirty_fn_();
+                    }
                     if (ev.pre_cache_workspace_defines_fn_)
                         ev.pre_cache_workspace_defines_fn_();
                     did_direct = true;

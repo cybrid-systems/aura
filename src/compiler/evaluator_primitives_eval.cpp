@@ -10,8 +10,9 @@ module;
 #include "prim_names.h"            // #904
 #include "security_capabilities.h" // Issue #2485: kCapIoRead for load
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "core/workspace_epoch.hh" // Issue #3691: bump_mutation_epoch on set-code
-#include "typed_mutation_audit.h"  // Issue #4315: production_defaults_active on set-code
+#include "core/workspace_epoch.hh"          // Issue #3691: bump_mutation_epoch on set-code
+#include "typed_mutation_audit.h"           // Issue #4315: production_defaults_active on set-code
+#include "compiler/mark_all_owner_clear.hh" // Issue #4360: set-code clears IR owners
 
 module aura.compiler.evaluator;
 
@@ -427,8 +428,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 republish_workspace_define_sources();
                 // Phase 2: a fresh workspace means every cached define is potentially
                 // changed. Mark all dirty so the next (eval-current) re-evaluates.
-                if (ev.mark_all_defines_dirty_fn_)
-                    ev.mark_all_defines_dirty_fn_();
+                // Issue #4360: this replace drops stale closure ids. An add does not.
+                {
+                    aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
+                    if (ev.mark_all_defines_dirty_fn_)
+                        ev.mark_all_defines_dirty_fn_();
+                }
                 // Pre-populate the v2 IR cache from the new workspace's defines.
                 // For unchanged defines, this is a cache hit (skip lowering).
                 // For new/changed defines, this lowers them once and stores the result.
@@ -518,8 +523,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                             ev.invalidate_tag_arity_index();
                             ev.update_shared_tree_root();
                             republish_workspace_define_sources();
-                            if (ev.mark_all_defines_dirty_fn_)
-                                ev.mark_all_defines_dirty_fn_();
+                            {
+                                aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
+                                if (ev.mark_all_defines_dirty_fn_)
+                                    ev.mark_all_defines_dirty_fn_();
+                            }
                             if (ev.pre_cache_workspace_defines_fn_)
                                 ev.pre_cache_workspace_defines_fn_();
                         } else {

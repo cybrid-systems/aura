@@ -21,6 +21,7 @@ module;
 #include "core/moving_densify_health.hh" // Issue #3421: g_last_objects_moved
 #include "core/lifetime_consistency_proof.hh" // Issue #3421: last_lifetime_consistency_would_allow
 #include "core/densify_consistency_report.h"  // Issue #4125: densify_in_flight_for (eval-keyed)
+#include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
 
 module aura.compiler.evaluator;
 
@@ -8226,8 +8227,11 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
             last_post_restore_violations_ = last_post_restore_report_.violations;
             defuse_index_destroy(reinterpret_cast<void**>(&defuse_index_));
             defuse_affected_syms_.clear();
-            if (mark_all_defines_dirty_fn_)
-                mark_all_defines_dirty_fn_();
+            {
+                aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
+                if (mark_all_defines_dirty_fn_)
+                    mark_all_defines_dirty_fn_();
+            }
             if (pre_cache_workspace_defines_fn_)
                 pre_cache_workspace_defines_fn_();
             return true;
