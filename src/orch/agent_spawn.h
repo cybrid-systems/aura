@@ -242,8 +242,9 @@ inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
 // Issue #2946: production default concurrent hard deny (structured fail).
 inline constexpr int kAgentScopeConcurrentHardDenyIssue = 2946;
 // Issue #2633: scope-local mailbox BP recent gauge. Cap on the bounded
-// map of per-scope gauges; overflow falls back to process bucket +
-// spawn_bp_scope_overflow_total metric. 256 covers typical multi-tenant
+// map of per-scope gauges. Named overflow counts
+// spawn_bp_scope_overflow_total and does not write the process bucket
+// (#3804). 256 covers typical multi-tenant
 // hosts without per-scope allocation storms (each entry = ~24 bytes
 // atomic + string copy on insert).
 // Issue #2778: gauges are no longer immortal — erase_scope_bp_gauge /
@@ -712,10 +713,15 @@ struct OrchModuleStats {
     // #2591) vs "scope-local storm" (this counter, #2633). Each storm
     // type bumps its own counter — no double-counting.
     std::atomic<std::uint64_t> spawn_bp_admit_reject_scope_total{0};
-    // Issue #2633: scope-map overflow counter. Bumped when a new
-    // bp_scope_id exceeds kMailboxBpScopeMapCap (256); the event falls
-    // back to the process bucket + bumps mailbox_bp_recent_total so
-    // production dashboards can alert before scope fragmentation.
+    // Issue #2633 / #3804 / #4371: scope-map overflow counter. Bumped
+    // when a new named bp_scope_id finds the map already at
+    // kMailboxBpScopeMapCap (256). Production writes
+    // g_scope_bp_overflow.recent plus this counter and
+    // spawn_bp_scope_overflow_dropped_total. It does not write the process
+    // bucket or mailbox_bp_recent_total. Admit fail-closes on
+    // the #3804 overflow cohort (deny-detail mailbox-bp-scope-overflow).
+    // Soft/Off LRU-evicts and inserts, bumps this counter, and leaves
+    // the overflow gauge untouched.
     std::atomic<std::uint64_t> spawn_bp_scope_overflow_total{0};
     std::atomic<std::uint64_t> send_closed_total{0};
     // Issue #2848: language-path (orch:agent-send) auto handoff_ref for
