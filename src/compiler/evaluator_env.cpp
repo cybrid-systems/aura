@@ -283,6 +283,22 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                 return it->second;
         }
     }
+    // Issue #4350: delegated capture bindings (shared snapshot with
+    // prebuilt O(1) indexes) — the frozen capture content the per-call
+    // Env copy held before #4350. The chain walks nested snapshot levels
+    // (a closure created inside a delegated call frame chains to that
+    // frame's snapshot).
+    if (cap_snap_) {
+        // NAME index only: string keys are pool-independent (authoritative).
+        // The snapshot's symid keys are pool-local — a raw-id match against
+        // a query interned in a different pool is exactly the #4351/#4352
+        // collision face, so symid matching stays confined to same-pool
+        // env arrays (the local checks above).
+        for (const CapSnapshot* snap = cap_snap_.get(); snap; snap = snap->parent.get()) {
+            if (auto it = snap->name_index_.find(std::string(n)); it != snap->name_index_.end())
+                return snap->bindings_[it->second].second;
+        }
+    }
     // 2. parent_ pointer chain — Wave2: iterative (no recursive C++ stack
     //    per hop). Same hop budget as SoA walk / env_lookup_enter.
     // Issue #2735 / #2739: do NOT return nullopt when parent_ walk misses —
@@ -692,6 +708,16 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
             return it->second;
         }
     }
+    // Issue #4350: delegated capture bindings — resolve the query SymId
+    // to its name in THIS env's pool, then match the shared snapshot's
+    // NAME index. String keys are pool-independent; a raw SymId compare
+    // against the snapshot's pool-local keys is the #4351/#4352
+    // collision face (symid-first lookups included).
+    if (cap_snap_ && pool_) {
+        if (auto it = cap_snap_->name_index_.find(std::string(pool_->resolve(s)));
+            it != cap_snap_->name_index_.end())
+            return cap_snap_->bindings_[it->second].second;
+    }
     // Issue #1128: try SoA owner chain first, then fall through to
     // legacy parent_ so mixed SoA/legacy graphs still resolve.
     // lookup_by_symid_chain is already iterative + hop-bounded.
@@ -812,6 +838,11 @@ std::optional<types::EvalValue> Env::lookup_by_intern(std::string_view n,
                 return make_primitive(*slot);
         }
     }
+    // Issue #4350: final string fallback — covers delegated capture
+    // bindings (the shared snapshot's name index) that the SymId path
+    // cannot see cross-pool.
+    if (auto v = lookup(n))
+        return v;
     return std::nullopt;
 }
 
@@ -1156,6 +1187,50 @@ bool Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const 
 // call sites set them via tail_env.set_*). Keeping them out
 // of this helper makes the helper usable from any code path
 // that has a closure but might not need a fully wired env.
+// Issue #4350: lazily-built shared capture snapshot keyed by capture
+// frame id (linear-clean frames only; see CapSnapshot). The first
+// materialize of a closure builds + caches; later calls reuse. Frames
+// are immutable after alloc, so the frozen view never goes stale.
+std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id) {
+    {
+        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        if (auto it = cap_snap_cache_.find(frame_id); it != cap_snap_cache_.end())
+            return it->second;
+    }
+    if (frame_id == NULL_ENV_ID || frame_id >= env_frames_.size())
+        return nullptr;
+    std::shared_ptr<const CapSnapshot> snap;
+    {
+        std::shared_lock<std::shared_mutex> rlock(
+            env_frame_shards_[env_frame_shard_index(frame_id)].mu);
+        const EnvFrame& cfr = env_frames_[frame_id];
+        bool has_linear = false;
+        for (auto st : cfr.bindings_linear_ownership_state_)
+            if (st != linear_rt::Untracked) {
+                has_linear = true;
+                break;
+            }
+        if (!has_linear) {
+            auto ns = std::make_shared<CapSnapshot>();
+            ns->bindings_symid_ = cfr.bindings_symid_;
+            ns->bindings_ = cfr.bindings_;
+            ns->symid_index_.reserve(ns->bindings_symid_.size() * 2 + 1);
+            for (std::size_t i = 0; i < ns->bindings_symid_.size(); ++i)
+                ns->symid_index_[ns->bindings_symid_[i].first] = i;
+            ns->name_index_.reserve(ns->bindings_.size() * 2 + 1);
+            for (std::size_t i = 0; i < ns->bindings_.size(); ++i)
+                ns->name_index_[ns->bindings_[i].first] = i;
+            ns->parent_id = cfr.parent_id;
+            snap = std::move(ns);
+        }
+    }
+    if (snap) {
+        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        cap_snap_cache_[frame_id] = snap;
+    }
+    return snap;
+}
+
 Env Evaluator::materialize_call_env(const Closure& cl) {
     // Issue #417: cross-TU invariant probe on Env materialization.
     ensure_mutation_invariants();
@@ -1164,6 +1239,44 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // SoA version_ / parent_id_ walks below still refresh or fall back;
     // this documents the unified gate for agents and CI.
     const bool epoch_or_env_stale = closure_is_epoch_or_env_stale(cl);
+    // Issue #4350: O(params) call env — the capture bindings ride a
+    // shared immutable snapshot (prebuilt O(1) indexes) that is built
+    // ONCE per capture frame, lazily at the first call, and cached on
+    // the Evaluator (frames are immutable after alloc, so the frozen
+    // view is the same point-in-time content the per-call copy used and
+    // never goes stale; compaction cannot free it — shared_ptr). Free-
+    // var lookups consult the snapshot after the local params miss; the
+    // SoA parent chain (the capture frame's parent) is unchanged.
+    // Linear-tainted frames never get a snapshot (the legacy copy path
+    // below keeps exact #1539 per-call states). Stale closures skip the
+    // fast path: the legacy frame gates below keep their exact observe
+    // and safe-fallback faces.
+    std::shared_ptr<const CapSnapshot> snap;
+    if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size())
+        snap = cap_snap_for_frame(cl.env_id);
+    if (snap && !epoch_or_env_stale) {
+        Env ne;
+        ne.set_owner(this);
+        ne.set_cap_snapshot(snap);
+        if (cl.pool)
+            ne.set_pool(cl.pool);
+        else if (auto* cp = canonical_pool())
+            ne.set_pool(cp);
+        if (snap->parent_id != NULL_ENV_ID)
+            ne.set_parent_id(snap->parent_id);
+        // (wire_global_access inlined — the lambda is defined further
+        // down in the legacy copy path.)
+        if (ne.owner() == nullptr)
+            ne.set_owner(this);
+        if (ne.parent_id() == NULL_ENV_ID)
+            ne.set_parent_id(0); // root walk + live top_ consult
+        ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+        // Linear ownership: snapshots are only built for linear-clean
+        // captures; params bind fresh (Untracked) at the call site, so
+        // the env's (empty) states array is correct as-is.
+        return ne;
+    }
+
     // Issue #1638: explicit dual-path consistency gate at the frame
     // level (defense in depth — closure_is_epoch_or_env_stale covers
     // the closure-level bridge_epoch / defuse_version drift; this
