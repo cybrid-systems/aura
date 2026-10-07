@@ -369,7 +369,11 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             }
             // Issue #1482: EnvFrame primary storage is bindings_symid_
             // (string bindings_ often empty post-capture).
-            if (pool_ && hop_sym != aura::ast::INVALID_SYM && !pfr.bindings_symid_.empty()) {
+            // Issue #4351/#4352: SymIds are pool-local — only match keys
+            // interned in the SAME pool as this query (frame.pool_ recorded
+            // at capture). Raw-id matches across pools are collisions.
+            if (pool_ && hop_sym != aura::ast::INVALID_SYM && !pfr.bindings_symid_.empty() &&
+                pfr.pool_ == pool_) {
                 for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend();
                      ++it) {
                     if (it->first == hop_sym) {
@@ -692,7 +696,7 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     // legacy parent_ so mixed SoA/legacy graphs still resolve.
     // lookup_by_symid_chain is already iterative + hop-bounded.
     if (owner_ && parent_id_ != NULL_ENV_ID) {
-        if (auto r = owner_->lookup_by_symid_chain(parent_id_, s))
+        if (auto r = owner_->lookup_by_symid_chain(parent_id_, s, pool_))
             return r;
     }
     return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
@@ -1086,6 +1090,13 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // Dual-path capture: preserve string-keyed cells (Define without pool).
     auto bs = e.bindings();
     fr.bindings_.assign(bs.begin(), bs.end());
+    // Issue #4351/#4352: record the pool the SymId keys were interned in.
+    // SymIds are pool-local; a raw-id match against keys from a DIFFERENT
+    // pool is a collision (e.g. `cons`@loaded-pool == `foldl`@prelude-pool
+    // resolved to foldl's closure). Lookup walks only trust the frame's
+    // SymId scan when the query pool equals this pool; the string scan is
+    // pool-independent and stays authoritative for names.
+    fr.pool_ = e.pool();
     // Issue #1539: copy linear ownership SoA (pad/truncate to match).
     auto los = e.bindings_linear_ownership_state();
     fr.bindings_linear_ownership_state_.assign(los.begin(), los.end());
@@ -2841,9 +2852,10 @@ std::size_t Evaluator::compact_env_frames() {
 // cells_ pointer; frames are pure data + indices. This is
 // the canonical path for new SoA code. Legacy Env paths
 // (still using Env::cells_ pointer) remain for transition.
-std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
-    EnvId start,
-    aura::ast::SymId s) const { // Issue #2251: env_gen fence on parent walks. If the start
+std::optional<types::EvalValue>
+Evaluator::lookup_by_symid_chain(EnvId start, aura::ast::SymId s,
+                                 const aura::ast::StringPool* query_pool)
+    const { // Issue #2251: env_gen fence on parent walks. If the start
     // frame has a non-zero stamp that does NOT match current
     // env_gen, treat as foreign-generation (sibling region parent
     // restamped mid-walk). Empty-Env safe fallback: return
@@ -2878,6 +2890,11 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
         if (static_cast<std::size_t>(cur) >= env_frames_.size())
             break;
         const EnvFrame& fr = env_frames_[cur];
+        // Issue #4351/#4352: skip SymId-only frames whose keys were
+        // interned in a different pool than the query (raw-id cross-pool
+        // match = collision). Their string bindings (if any) were already
+        // consulted by the caller's string walk.
+        const bool sym_pool_ok = (query_pool == nullptr) || (fr.pool_ == query_pool);
         if (fr.version_ == INVALID_VERSION) {
             bump_envframe_version_mismatch_in_walk();
             cur = fr.parent_id;
@@ -2895,7 +2912,7 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
             ++hops;
             continue;
         }
-        auto v = fr.lookup_local_by_symid(s);
+        auto v = sym_pool_ok ? fr.lookup_local_by_symid(s) : std::nullopt;
         if (v.has_value()) {
             auto val = *v;
             if (is_cell(val)) {
