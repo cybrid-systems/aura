@@ -1593,12 +1593,39 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (context_.evaluator &&
                             ir_closure_needs_safe_fallback(closure, context_.evaluator,
                                                            context_.metrics)) {
-                            if (auto tw = context_.evaluator->apply_closure(closure_id, call_args))
-                                locals[ops[3]] = *tw;
-                            else
-                                return std::unexpected(Diagnostic{
-                                    ErrorKind::InvalidClosure, "stale IR closure after mutation"});
-                            break;
+                            // Issue #4349: a workspace caller lowers the callee
+                            // into this interpreter. That closure id lives only
+                            // in runtime_closures_. apply_closure cannot see it.
+                            // ast:snapshot bumps defuse without changing the
+                            // body, so restamp and keep the direct call — the
+                            // same recovery call_closure already does. A
+                            // cleared view (func_id out of range) still falls
+                            // back.
+                            if (closure.func_id < module_.functions.size()) {
+                                closure.bridge_epoch = context_.evaluator->current_bridge_epoch();
+                                const auto defuse = context_.evaluator->defuse_version();
+                                if (defuse != 0)
+                                    closure.env_version = defuse;
+                                constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
+                                if (closure.env_id != kNullEnv) {
+                                    const auto eid = static_cast<EnvId>(closure.env_id);
+                                    if (context_.evaluator->is_valid_env_id(eid))
+                                        context_.evaluator->refresh_stale_frame_in_walk(
+                                            eid, "ir_call_opcode_soft_recover_4349");
+                                }
+                                if (context_.metrics)
+                                    context_.metrics->live_closure_epoch_restamp_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                            } else {
+                                if (auto tw =
+                                        context_.evaluator->apply_closure(closure_id, call_args))
+                                    locals[ops[3]] = *tw;
+                                else
+                                    return std::unexpected(
+                                        Diagnostic{ErrorKind::InvalidClosure,
+                                                   "stale IR closure after mutation"});
+                                break;
+                            }
                         }
                         if (closure.func_id >= module_.functions.size())
                             return std::unexpected(
