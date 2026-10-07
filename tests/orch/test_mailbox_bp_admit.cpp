@@ -1848,6 +1848,11 @@ int run_test_mailbox_bp_admit() {
               "ac3804_1_distinct_deny_detail");
         CHECK(spawn.find("kMailboxBpScopeOverflowCohortIssue = 3804") != std::string::npos,
               "ac3804_1_stamp_in_header");
+        CHECK(spawn.find("does not write the process bucket") != std::string::npos,
+              "4371: overflow comment refuses a process-bucket fallback");
+        CHECK(spawn.find("falls back to the process bucket + bumps mailbox_bp_recent_total") ==
+                  std::string::npos,
+              "4371: stale process-bucket fallback sentence is gone");
 
         // AC3 Soft/Off: LRU path unchanged — 257th inserts own gauge; no cohort.
         {
@@ -1883,6 +1888,9 @@ int run_test_mailbox_bp_admit() {
         CHECK(aura::core::audit_wal::g_mutation_audit_wal().is_enabled(),
               "3804: mutation WAL pinned on");
         if (aura::orch::production_defaults_active()) {
+            const auto proc_bp_before =
+                aura::orch::g_orch_module_stats.mailbox_bp_recent_total.load(
+                    std::memory_order_relaxed);
             // Fill 256 live named gauges.
             for (int i = 0; i < static_cast<int>(kMailboxBpScopeMapCap); ++i)
                 aura::orch::note_mailbox_bp_recent_event(std::string("live3804-") +
@@ -1900,6 +1908,9 @@ int run_test_mailbox_bp_admit() {
                   "3804 AC1: storming peer stays overflow (not inserted)");
             CHECK(aura::orch::g_scope_bp_overflow.recent.load(std::memory_order_relaxed) >= 64,
                   "3804 AC1: overflow gauge observes storm (dashboard)");
+            CHECK(aura::orch::g_orch_module_stats.mailbox_bp_recent_total.load(
+                      std::memory_order_relaxed) == proc_bp_before,
+                  "4371: named-scope overflow leaves mailbox_bp_recent_total unchanged");
             // Quiet peer B never shared a gauge — load must be 0 (no crosstalk).
             CHECK(aura::orch::load_mailbox_bp_recent("quiet-overflow-B") == 0,
                   "ac3804_4_quiet_load_no_crosstalk");
