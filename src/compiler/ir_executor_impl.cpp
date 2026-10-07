@@ -510,6 +510,26 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
     return stale;
 }
 
+// Issue #4349: ast:snapshot bumps defuse without rewriting the body.
+// A workspace caller owns the callee closure in this interpreter, so
+// apply_closure cannot see it. Restamp and keep the direct call when
+// the function is still in the module (call_closure already does this).
+static void restamp_ir_call_closure_4349(IRClosure& closure, Evaluator* ev,
+                                         CompilerMetrics* metrics) {
+    closure.bridge_epoch = ev->current_bridge_epoch();
+    const auto defuse = ev->defuse_version();
+    if (defuse != 0)
+        closure.env_version = defuse;
+    constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
+    if (closure.env_id != kNullEnv) {
+        const auto eid = static_cast<EnvId>(closure.env_id);
+        if (ev->is_valid_env_id(eid))
+            ev->refresh_stale_frame_in_walk(eid, "ir_call_opcode_soft_recover_4349");
+    }
+    if (metrics)
+        metrics->live_closure_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
     if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
         return *blocked;
@@ -1593,29 +1613,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (context_.evaluator &&
                             ir_closure_needs_safe_fallback(closure, context_.evaluator,
                                                            context_.metrics)) {
-                            // Issue #4349: a workspace caller lowers the callee
-                            // into this interpreter. That closure id lives only
-                            // in runtime_closures_. apply_closure cannot see it.
-                            // ast:snapshot bumps defuse without changing the
-                            // body, so restamp and keep the direct call — the
-                            // same recovery call_closure already does. A
-                            // cleared view (func_id out of range) still falls
-                            // back.
+                            // Issue #4349: private callee stays a direct call.
                             if (closure.func_id < module_.functions.size()) {
-                                closure.bridge_epoch = context_.evaluator->current_bridge_epoch();
-                                const auto defuse = context_.evaluator->defuse_version();
-                                if (defuse != 0)
-                                    closure.env_version = defuse;
-                                constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
-                                if (closure.env_id != kNullEnv) {
-                                    const auto eid = static_cast<EnvId>(closure.env_id);
-                                    if (context_.evaluator->is_valid_env_id(eid))
-                                        context_.evaluator->refresh_stale_frame_in_walk(
-                                            eid, "ir_call_opcode_soft_recover_4349");
-                                }
-                                if (context_.metrics)
-                                    context_.metrics->live_closure_epoch_restamp_total.fetch_add(
-                                        1, std::memory_order_relaxed);
+                                restamp_ir_call_closure_4349(closure, context_.evaluator,
+                                                             context_.metrics);
                             } else {
                                 if (auto tw =
                                         context_.evaluator->apply_closure(closure_id, call_args))
