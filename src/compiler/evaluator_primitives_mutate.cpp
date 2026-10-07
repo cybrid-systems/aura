@@ -1312,11 +1312,60 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                 }
                 auto result = fn(a);
-                // Issue #4360: a hard rebind does not arm the light path, but
-                // the drain drops the caller from the owner map and erases
-                // dep_graph. Snapshot callers before that drain. The destructor
-                // drops the focus if this mutate is rejected before install.
-                // Soft light rebind leaves the arm set and snapshots after.
+                // Issue #3480: poll existing inbody on the structural
+                // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
+                // cancel armed → force-release hold + depth before a green
+                // result can ride the still-held lock. Happy path: two
+                // loads (reject_enabled + cancel_armed ns==0). Soft:
+                // reject_enabled false → no force-release. Cross-fiber
+                // still only request_hold_budget_cancel (this is same-fiber).
+                if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
+                    aura::compiler::mutation_hold_budget_reject_enabled()) {
+                    if (aura::serve::aura_hold_budget_cancel_armed() != 0 ||
+                        aura::serve::aura_hold_budget_poll_inbody_window() != 0) {
+                        wrapper_guard->force_release_hold_budget_inbody();
+                        aura::compiler::g_mutation_hold_budget_forced_unlock_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        ev.disarm_rebind_light_path();
+                        return mev("hold-budget-cancel", "outermost force-released");
+                    }
+                }
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    const auto wraps_after =
+                        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+                    const auto token_after = aura::compiler::mutate_guard_acquire_token();
+                    // wraps_after == wraps_before is the outermost-naked
+                    // compare (#2986 AC5). Issue #3197: nested acquire
+                    // does not bump wraps — also accept the Guard token.
+                    const bool acquired =
+                        !(wraps_after == wraps_before) || token_after != token_before;
+                    if (!acquired) {
+                        m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #2986 / #3197: production + requires_guard
+                        // naked body → hard fail-closed. Happy Guard path
+                        // does not load production_defaults.
+                        // Issue #3423: belt — wrapper already acquired for
+                        // !exempt; this arm is leftover if acquire is skipped.
+                        if (!guard_exempt &&
+                            aura::compiler::typed_audit::production_defaults_active()) {
+                            m->naked_mutate_fail_closed_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                            if (wrapper_guard)
+                                wrapper_guard->mark_failed();
+                            ev.mark_outermost_mutation_failed();
+                            ev.disarm_rebind_light_path();
+                            return mev("naked-mutate", std::string(op) +
+                                                           " skipped MutationBoundaryGuard under "
+                                                           "production (#2986/#3197/#3423)");
+                        }
+                    } else {
+                        m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                // Issue #4360: snapshot hard-rebind callers after the belt above
+                // and before the drain. The light path snapshots after.
                 struct HardReinstall {
                     Evaluator& ev;
                     std::string focus;
@@ -1348,56 +1397,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     HardReinstall(const HardReinstall&) = delete;
                     HardReinstall& operator=(const HardReinstall&) = delete;
                 } hard_reinstall{ev};
-                // Issue #3480: poll existing inbody on the structural
-                // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
-                // cancel armed → force-release hold + depth before a green
-                // result can ride the still-held lock. Happy path: two
-                // loads (reject_enabled + cancel_armed ns==0). Soft:
-                // reject_enabled false → no force-release. Cross-fiber
-                // still only request_hold_budget_cancel (this is same-fiber).
-                if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
-                    aura::compiler::mutation_hold_budget_reject_enabled()) {
-                    if (aura::serve::aura_hold_budget_cancel_armed() != 0 ||
-                        aura::serve::aura_hold_budget_poll_inbody_window() != 0) {
-                        wrapper_guard->force_release_hold_budget_inbody();
-                        aura::compiler::g_mutation_hold_budget_forced_unlock_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        return mev("hold-budget-cancel", "outermost force-released");
-                    }
-                }
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    const auto wraps_after =
-                        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-                    const auto token_after = aura::compiler::mutate_guard_acquire_token();
-                    // wraps_after == wraps_before is the outermost-naked
-                    // compare (#2986 AC5). Issue #3197: nested acquire
-                    // does not bump wraps — also accept the Guard token.
-                    const bool acquired =
-                        !(wraps_after == wraps_before) || token_after != token_before;
-                    if (!acquired) {
-                        m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #2986 / #3197: production + requires_guard
-                        // naked body → hard fail-closed. Happy Guard path
-                        // does not load production_defaults.
-                        // Issue #3423: belt — wrapper already acquired for
-                        // !exempt; this arm is leftover if acquire is skipped.
-                        if (!guard_exempt &&
-                            aura::compiler::typed_audit::production_defaults_active()) {
-                            m->naked_mutate_fail_closed_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                            if (wrapper_guard)
-                                wrapper_guard->mark_failed();
-                            ev.mark_outermost_mutation_failed();
-                            return mev("naked-mutate", std::string(op) +
-                                                           " skipped MutationBoundaryGuard under "
-                                                           "production (#2986/#3197/#3423)");
-                        }
-                    } else {
-                        m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
                 // Issue #3697: outermost dtor persist-reject / abort_restore
                 // must run before the EDSL return. `return result` left the
                 // body's #t in the return slot, then unique_ptr dtor flipped
