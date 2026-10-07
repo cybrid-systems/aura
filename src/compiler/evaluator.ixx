@@ -6541,6 +6541,10 @@ private:
     std::atomic<std::uint64_t> last_queried_epoch_{0};
     // Issue #266: fine-grained SoA rollback request + stats.
     bool fine_rollback_for_next_boundary_ = false;
+    // Issue #4346: maybe_auto_guard_heap_mutate arms this before
+    // try_acquire. enter consumes it and stamps heap_slot_only before
+    // the ctor unparses a panic checkpoint of the whole workspace.
+    bool heap_slot_quiet_for_next_boundary_ = false;
     BoundaryRollbackStats last_boundary_rollback_stats_{};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
@@ -14728,6 +14732,10 @@ public:
         // is popped. flush must not treat its mutation_log_size (0) as the
         // boundary's enter size.
         bool exit_fence = false;
+        // Issue #4346: vector-set! / set-car! / hash-set! auto-guard.
+        // The slot write does not edit the FlatAST. The dtor skips the
+        // O(defines) node scan, closure walk, and Moving densify.
+        bool heap_slot_only = false;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
