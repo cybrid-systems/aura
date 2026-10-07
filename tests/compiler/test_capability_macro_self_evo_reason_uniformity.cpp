@@ -48,9 +48,18 @@
 #include <string_view>
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/grant_test_support.hh"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
+#include "core/transparent_string_hash.hh"
+
+#include <unordered_map>
 
 import std;
 import aura.compiler.macro_expansion;
+import aura.core;
+import aura.core.ast;
+import aura.parser.parser;
 
 namespace {
 
@@ -248,6 +257,75 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
             return count;
         }();
         CHECK(dual_restore_count >= 3, "AC7: dual_topology abort_restore sites present (>=3)");
+    }
+
+    // ── AC9 (behavioral, 2026-10-07 residual-review wave): real deny→allow ──
+    // Pairs the AC1/AC2 source-cite with runtime: production face WITHOUT
+    // MacroSelfEvo denies clone_macro_body with the structured case-7 reason
+    // "capability-deny"; granting MacroSelfEvo flips the same call site to
+    // success. Exercises check_macro_self_evo → note_hygiene_last_limit_reason
+    // end-to-end instead of only grepping the source.
+    {
+        std::println("\n--- AC9: behavioral capability-deny deny→allow ---");
+        using aura::ast::FlatAST;
+        using aura::ast::NULL_NODE;
+        using aura::ast::StringPool;
+        using aura::compiler::macro_exp::clone_macro_body;
+        using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::reset_capability_effects_for_test;
+        using NameMap3304 = std::unordered_map<std::string, std::string,
+                                               aura::core::TransparentStringHash, std::equal_to<>>;
+
+        // Deny arm: Strict, no MacroSelfEvo → NULL + "capability-deny" (7).
+        reset_capability_effects_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            StringPool sp(alloc);
+            FlatAST src(alloc);
+            auto pr = aura::parser::parse_to_flat("(let ((a 1)) a)", src, sp);
+            CHECK(pr.success && pr.root != NULL_NODE, "AC9: parse body (deny arm)");
+            FlatAST target(alloc);
+            StringPool tp(alloc);
+            NameMap3304 name_map;
+            g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+            auto cloned = clone_macro_body(target, tp, src, sp, pr.root, /*subst=*/nullptr,
+                                           &name_map, aura::ast::SyntaxMarker::MacroIntroduced);
+            CHECK(cloned == NULL_NODE, "AC9: no MacroSelfEvo → clone denied (NULL_NODE)");
+            const auto* rs = hygiene_last_limit_reason_string();
+            CHECK(rs != nullptr && std::string(rs) == "capability-deny",
+                  "AC9: reason string == capability-deny");
+            CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                      kHygieneLimitReasonCapabilityDeny,
+                  "AC9: last_limit_reason == 7 (kHygieneLimitReasonCapabilityDeny)");
+        }
+
+        // Allow arm: grant MacroSelfEvo while Off (#3409 chicken-and-egg),
+        // re-arm Strict → the same clone succeeds.
+        reset_capability_effects_for_test();
+        CHECK(g_capability_registry().grant_macro_self_evo(0, {}, aura_test_grant_prov()),
+              "AC9: MacroSelfEvo grant installed");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            StringPool sp(alloc);
+            FlatAST src(alloc);
+            auto pr = aura::parser::parse_to_flat("(let ((a 1)) a)", src, sp);
+            CHECK(pr.success && pr.root != NULL_NODE, "AC9: parse body (allow arm)");
+            FlatAST target(alloc);
+            StringPool tp(alloc);
+            NameMap3304 name_map;
+            auto cloned = clone_macro_body(target, tp, src, sp, pr.root, /*subst=*/nullptr,
+                                           &name_map, aura::ast::SyntaxMarker::MacroIntroduced);
+            CHECK(cloned != NULL_NODE, "AC9: with MacroSelfEvo → clone succeeds");
+            CHECK(name_map.size() == 1, "AC9: binding mapped into name_map");
+        }
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
     }
 
     // ── AC8: no docs/design/3304-* plan doc ──

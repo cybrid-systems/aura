@@ -129,7 +129,12 @@ int run_test_clone_walk_gensym_ceiling() {
         // Restore unlimited for later tests / process.
         aura_test_set_max_gensym_map_size_for_test(0);
 
-        CHECK(cloned != NULL_NODE || cloned == NULL_NODE, "AC2: clone returns (may be partial)");
+        // 2026-10-07 residual-review wave: exactly two clean outcomes — a
+        // deny (NULL) or a Soft partial write with the map still capped.
+        // No uncapped partial tree may escape (strengthens the old
+        // tautological `cloned != NULL_NODE || cloned == NULL_NODE`).
+        CHECK(cloned == NULL_NODE || name_map.size() <= 2,
+              "AC2: clean deny or capped map (no uncapped partial tree)");
         CHECK(name_map.size() <= 2, "AC2: name_map.size() <= max_gensym_map_size (2)");
         const auto exceed1 =
             g_macro_self_evo_gensym_map_size_exceeded_total.load(std::memory_order_relaxed);
