@@ -4162,8 +4162,6 @@ inline void reset_pending_full_solve_residual_for_test() noexcept {
     g_pending_full_solve_residual_reject_total.store(0, std::memory_order_relaxed);
 }
 inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcept {
-    std::fprintf(stderr, "PEND note n=%llu hard=%d\n", static_cast<unsigned long long>(n),
-                 hard ? 1 : 0);
     g_pending_full_solve_residual_last.store(n, std::memory_order_relaxed);
     if (n == 0) {
         g_pending_full_solve_residual_face.store(0, std::memory_order_release);

@@ -22,6 +22,16 @@ if [ ! -x "$AURA" ]; then
     exit 127
 fi
 
+# ASAN binaries run wall-clock budgets 2-3x slower (libasan interposition);
+# timing-sensitive cases key off this (e.g. #4357's one-tick rebind budget,
+# which observes ~3ms under asan-verify vs <1ms in release). ldd is already
+# used on this binary in CI's asan-verify preamble.
+if ldd "$AURA" 2>/dev/null | grep -q 'asan'; then
+    AURA_ASAN=1
+else
+    AURA_ASAN=0
+fi
+
 green() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 red()   { printf "  \033[31m✗\033[0m %s\n" "$1"; }
 
@@ -1105,6 +1115,8 @@ EOF
     out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$aura_abs" "$dir/relower.aura" 2>"$dir/err")
     err=$(cat "$dir/err")
     local file_ms cold_ms hot_ms rebind_ms after_ms
+    local rebind_budget=1
+    [ "$AURA_ASAN" = 1 ] && rebind_budget=10
     file_ms=$(printf '%s\n' "$out" | sed -n 's/^file=//p' | head -1)
     cold_ms=$(printf '%s\n' "$out" | sed -n 's/^cold=//p' | head -1)
     hot_ms=$(printf '%s\n' "$out" | sed -n 's/^hot=//p' | head -1)
@@ -1116,7 +1128,7 @@ EOF
         && printf '%s\n' "$out" | grep -q 'after-sum=27000' \
         && printf '%s\n' "$out" | grep -q 'strat=incremental' \
         && printf '%s\n' "$out" | grep -q 'strat-calls=incremental' \
-        && [ -n "$rebind_ms" ] && [ "$rebind_ms" -le 1 ] \
+        && [ -n "$rebind_ms" ] && [ "$rebind_ms" -le "$rebind_budget" ] \
         && [ -n "$hot_ms" ] && [ -n "$file_ms" ] && [ "$hot_ms" -lt "$file_ms" ] \
         && [ -n "$cold_ms" ] && [ "$cold_ms" -lt "$file_ms" ] \
         && [ -n "$after_ms" ] && [ "$after_ms" -lt "$file_ms" ]; then
