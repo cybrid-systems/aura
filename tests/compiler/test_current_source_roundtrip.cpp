@@ -742,6 +742,9 @@ static void ac4349_restore_over_rebind() {
     auto stale_val = cs.eval("(g4349 4)");
     CHECK(!(stale_val && is_int(*stale_val)), "4349: stale call never returns a stale int");
     CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current re-binds");
+    // ast:restore republishes function_sources_ from the restored
+    // defines before pre_cache. Without that, eval-current relowers
+    // g from the post-rebind body and (g 4) stays 8.
     auto healed = cs.eval("(g4349 4)");
     CHECK(healed && is_int(*healed) && as_int(*healed) == 4,
           "4349: (g 4) = 4 after recovery (restored identity f)");
