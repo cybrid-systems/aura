@@ -1490,6 +1490,43 @@ EOF
 }
 _file_4365
 
+# Issue #4366: a list value from eval-current is not a deserialize failure.
+_file_4366() {
+    local dir book src out err
+    dir=$(mktemp -d /tmp/aura-4366.XXXXXX)
+    book="$dir/book.aw"
+    src=$(cat <<EOF
+(define (try1 tag src)
+  (set-code src) (eval-current)
+  (mutate:rebind "f" "(lambda (x) (+ x 1))" "why1")
+  (display tag) (display " EV ") (write (eval-current))
+  (serialize-workspace "$book")
+  (set-code "(define z 1)") (eval-current)
+  (display " DES ") (write (deserialize-workspace "$book"))
+  (display " LOG ") (write (length (query:mutations-since 0))) (newline))
+(define (main)
+  (try1 "NUM" "(define (f x) x)\n(f 3)")
+  (try1 "LIST" "(define (f x) x)\n(list 1 2)")
+  (try1 "DEFLIST" "(define (f x) x)\n(define t (list 1 2))")
+  (try1 "DEFLIST_THEN0" "(define (f x) x)\n(define t (list 1 2))\n0"))
+(main)
+EOF
+)
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 30 "$AURA" -e "$src" 2>"$dir/err")
+    err=$(cat "$dir/err" 2>/dev/null || true)
+    if printf '%s\n' "$out" | grep -qx 'NUM EV 4 DES #t LOG 2' \
+        && printf '%s\n' "$out" | grep -qx 'LIST EV (1 2) DES #t LOG 2' \
+        && printf '%s\n' "$out" | grep -qx 'DEFLIST EV (1 2) DES #t LOG 2' \
+        && printf '%s\n' "$out" | grep -qx 'DEFLIST_THEN0 EV 0 DES #t LOG 2' \
+        && [ -z "$err" ]; then
+        _record_pass "4366-deserialize-list-value"
+    else
+        _record_fail "4366-deserialize-list-value" "       stdout:" "$out" "       stderr:" "$err"
+    fi
+    rm -rf "$dir"
+}
+_file_4366
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
