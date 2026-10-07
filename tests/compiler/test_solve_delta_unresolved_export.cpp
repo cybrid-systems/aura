@@ -143,25 +143,24 @@ static void ac3_conflict_exports() {
     cs.add_delta(std::move(c1));
     // First solve binds v = int
     auto r1 = solve_delta_occurrence(cs, {}, nullptr, &metrics);
-    CHECK(r1.status == SolveResult::SOLVED || r1.status == SolveResult::TIMEOUT ||
-              r1.status == SolveResult::CONFLICT,
-          "first solve defined");
+    // 2026-10-07 residual-review wave: a single EQUAL constraint is
+    // deterministic — production escalation (#2900/#2963) never ships
+    // TIMEOUT, so the only correct terminal state here is SOLVED.
+    CHECK(r1.status == SolveResult::SOLVED, "first solve binds v=int (SOLVED)");
     Constraint c2;
     c2.kind = Constraint::EQUAL;
     c2.lhs = v;
     c2.rhs = reg.bool_type();
     cs.add_delta(std::move(c2));
     auto r2 = solve_delta_occurrence(cs, {}, nullptr, &metrics);
-    if (r2.status == SolveResult::CONFLICT) {
-        CHECK(true, "CONFLICT returned");
-        // Unresolved may include the failing constraint for diagnostics.
-        CHECK(r2.unresolved.empty() || r2.unresolved[0].kind == Constraint::EQUAL,
-              "optional failing constraint exported");
-    } else {
-        // Some UF paths may degrade; still must not crash and status defined.
-        CHECK(r2.status == SolveResult::SOLVED || r2.status == SolveResult::TIMEOUT,
-              "non-conflict status still defined");
-    }
+    // 2026-10-07 residual-review wave: v is already bound to int, so a
+    // ground int-vs-bool conflict has exactly one correct terminal state —
+    // CONFLICT. (Soft TIMEOUT lives behind allow_timeout_commit only; this
+    // suite runs the default face, so TIMEOUT here would be a real bug.)
+    CHECK(r2.status == SolveResult::CONFLICT, "int-vs-bool ground conflict reports CONFLICT");
+    // Unresolved may include the failing constraint for diagnostics.
+    CHECK(r2.unresolved.empty() || r2.unresolved[0].kind == Constraint::EQUAL,
+          "optional failing constraint exported");
 }
 
 static void ac4_source_and_2028_lineage() {

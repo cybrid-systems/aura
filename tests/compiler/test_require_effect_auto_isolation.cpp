@@ -630,6 +630,34 @@ static void ac2839_2_for_node_id_restricted_unset_denies() {
     CHECK(!ok, "2839 AC2: Restricted + unset principal denies for_node_id");
 }
 
+// #2839 AC1b (2026-10-07 residual-review wave): behavioral counterpart to the
+// AC1 source-cite — make_stamped_ref → require_effect_on_ref exercised live.
+// Principal + Mutate grant allows for_node_id (stamp path runs); an unset
+// principal on a fresh node denies (gate fires before any occupancy note).
+static void ac2839_1b_for_node_id_allow_then_deny() {
+    std::println("\n--- #2839 AC1b: for_node_id allow/deny behavioral ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(42);
+    const auto me = aura::core::current_mutation_epoch();
+    ev.grant_effect_capability(42, "mutate-2839-ac1b", kEffectMutate, me == 0 ? 1 : me);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "test:2839-ac1b-allow", /*node_id=*/77);
+    CHECK(ok, "2839 AC1b: principal + Mutate grant allows for_node_id (stamp path live)");
+
+    // Unset principal, fresh node → gate denies before any occupancy note.
+    CompilerService cs2;
+    auto& ev2 = cs2.evaluator();
+    ev2.set_effect_sandbox_mode(1);
+    ev2.set_capability_tenant_id(0);
+    const bool deny = ev2.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                     "test:2839-ac1b-deny", /*node_id=*/78);
+    CHECK(!deny, "2839 AC1b: unset principal denies for_node_id (gate before note)");
+}
+
 static void ac2839_6_linter_and_no_invent() {
     std::println("\n--- #2839 AC6: linter wire + no invent ---");
     const auto build = read_file("build.py");
@@ -2986,6 +3014,7 @@ int run_test_require_effect_auto_isolation() {
     ac2706_6_source_cite();
     std::println("\n=== Issue #2839: NodeId for_node_id residual ===");
     ac2839_1_node_id_helper_and_inventory();
+    ac2839_1b_for_node_id_allow_then_deny();
     ac2839_2_for_node_id_restricted_unset_denies();
     ac2839_6_linter_and_no_invent();
     std::println("\n=== Issue #2881: residual NodeId-only workspace coverage ===");
