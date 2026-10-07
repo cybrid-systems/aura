@@ -750,6 +750,38 @@ static void ac4349_restore_over_rebind() {
           "4349: (g 4) = 4 after recovery (restored identity f)");
 }
 
+// Issue #4349 reopen: a plain ast:snapshot (no restore, no mutate) must
+// not drop a define whose body calls another define. The leaf stays
+// callable either way; the caller was the one that became invalid.
+static void ac4349_snapshot_keeps_caller() {
+    std::println("\n--- #4349: snapshot keeps a calling define ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (tab-size) 2)\n(define (indent n) (* n (tab-size)))\n#t"),
+          "4349: set-code indent");
+    CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current before snapshot");
+    auto before = cs.eval("(indent 2)");
+    CHECK(before && is_int(*before) && as_int(*before) == 4,
+          "4349: (indent 2) = 4 before snapshot");
+    auto sid = cs.eval("(ast:snapshot \"t\")");
+    CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4349: snapshot id");
+    auto after = cs.eval("(indent 2)");
+    CHECK(after && is_int(*after) && as_int(*after) == 4, "4349: (indent 2) = 4 after snapshot");
+    auto leaf = cs.eval("(tab-size)");
+    CHECK(leaf && is_int(*leaf) && as_int(*leaf) == 2, "4349: (tab-size) stays 2");
+    auto sid2 = cs.eval("(ast:snapshot \"t2\")");
+    CHECK(sid2 && is_int(*sid2) && as_int(*sid2) >= 0, "4349: second snapshot");
+    auto after2 = cs.eval("(indent 2)");
+    CHECK(after2 && is_int(*after2) && as_int(*after2) == 4,
+          "4349: (indent 2) = 4 after a second snapshot");
+    CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current after snapshot");
+    auto again = cs.eval("(indent 2)");
+    CHECK(again && is_int(*again) && as_int(*again) == 4,
+          "4349: (indent 2) = 4 after a later eval-current");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(ir.find("Issue #4349") != std::string::npos,
+          "4349: IR call restamps a private callee closure");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     ac_dual_workspace();
@@ -760,6 +792,7 @@ int run_test_current_source_roundtrip() {
     ac_null_workspace();
     ac_wiring();
     ac4349_restore_over_rebind();
+    ac4349_snapshot_keeps_caller();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
     ac2966_1_no_workspace_observable();
     ac2966_2_set_code_path_ok();
