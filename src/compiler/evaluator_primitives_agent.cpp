@@ -1757,6 +1757,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         std::size_t slot_code = std::numeric_limits<std::size_t>::max();
         std::size_t slot_err = std::numeric_limits<std::size_t>::max();
         auto put_slot = [&](std::size_t& slot, const std::string& s) -> types::EvalValue {
+            std::size_t fresh = 0;
             {
                 // #2651: reuse-or-append under the heap lock. A bare
                 // size()+push_back races a fiber apply on the same
@@ -1768,8 +1769,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else {
                     ev.string_heap_[slot] = s;
                 }
+                // Issue #4370: never hand the reused slot to a closure.
+                // An equal string already on the heap (not one of the
+                // three slots) is the same value, so reuse that index.
+                // Otherwise copy out before push_back — pushing the
+                // slot's own element would dangle if the heap grows.
+                auto is_slot = [&](std::size_t i) {
+                    return (slot_goal < ev.string_heap_.size() && i == slot_goal) ||
+                           (slot_code < ev.string_heap_.size() && i == slot_code) ||
+                           (slot_err < ev.string_heap_.size() && i == slot_err);
+                };
+                fresh = ev.string_heap_.size();
+                for (std::size_t i = 0; i < ev.string_heap_.size(); ++i) {
+                    if (!is_slot(i) && ev.string_heap_[i] == s) {
+                        fresh = i;
+                        break;
+                    }
+                }
+                if (fresh == ev.string_heap_.size()) {
+                    std::string copy = s;
+                    ev.string_heap_.push_back(std::move(copy));
+                }
             }
-            return types::make_string(slot);
+            return types::make_string(fresh);
         };
         auto finish_result = [&](std::string result_str) -> EvalValue {
             // Only the final status string is retained on the heap.

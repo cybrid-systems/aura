@@ -1736,6 +1736,48 @@ EOF
 }
 _file_4369
 
+_file_4370() {
+    local dir src
+    dir=$(mktemp -d /tmp/aura-4370.XXXXXX)
+    src=$(cat <<'EOF'
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define *errs* (list))
+(define *codes* (list))
+(define *n* 0)
+(define (main)
+  (show "R" (intend "goal"
+                    (lambda (g) "code-1")
+                    (lambda (code) (set! *codes* (cons code *codes*)) (set! *n* (+ *n* 1))
+                                   (string-append "error-" (number->string *n*)))
+                    (lambda (code err g) (set! *errs* (cons err *errs*))
+                                         (string-append "code-" (number->string (+ *n* 1))))
+                    3))
+  (show "ERRS" *errs*)
+  (show "CODES" *codes*))
+(main)
+EOF
+)
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    _ok4370() {
+        local out="$1"
+        printf '%s\n' "$out" | grep -q 'iterations:3' \
+            && printf '%s\n' "$out" | grep -q 'error-3' \
+            && printf '%s\n' "$out" | grep -qx 'ERRS ("error-2" "error-1")' \
+            && printf '%s\n' "$out" | grep -qx 'CODES ("code-3" "code-2" "code-1")'
+    }
+    if _ok4370 "$hard" && _ok4370 "$soft" && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4370-intend-string-values-stay"
+    else
+        _record_fail "4370-intend-string-values-stay" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4370
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
