@@ -599,6 +599,42 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // Issue #263: verify generation/span consistency after restore.
                     ev.last_post_restore_report_ = ev.workspace_flat_->validate_post_restore();
                     ev.last_post_restore_violations_ = ev.last_post_restore_report_.violations;
+                    // Issue #4349: mutate:rebind publishes function_sources_
+                    // for the new body and does not roll that table back.
+                    // eval-current specialises from it, so a restore that only
+                    // swaps the tree reinstalls the mutated lambda.
+                    if (ev.update_function_source_fn_) {
+                        auto& flat = *ev.workspace_flat_;
+                        auto* pool = ev.workspace_pool_;
+                        const auto root = flat.root;
+                        if (root != aura::ast::NULL_NODE && root < flat.size() &&
+                            !flat.is_free_slot(root)) {
+                            std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()),
+                                                            0);
+                            std::vector<aura::ast::NodeId> pending;
+                            pending.push_back(root);
+                            while (!pending.empty()) {
+                                const auto cur = pending.back();
+                                pending.pop_back();
+                                if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+                                    seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+                                    continue;
+                                seen[static_cast<std::size_t>(cur)] = 1;
+                                const auto v = flat.get(cur);
+                                if (v.tag == aura::ast::NodeTag::Define &&
+                                    v.sym_id != aura::ast::INVALID_SYM) {
+                                    auto nm = std::string(pool->resolve(v.sym_id));
+                                    if (!nm.empty()) {
+                                        auto src = aura::ast::unparse_to_string(flat, *pool, cur);
+                                        if (!src.empty())
+                                            ev.update_function_source_fn_(nm, src);
+                                    }
+                                }
+                                for (auto child : v.children)
+                                    pending.push_back(child);
+                            }
+                        }
+                    }
                     // Invalidate caches (same as set-code)
                     // (ASAN fix #107 leak) delete the old index.
                     destroy_defuse_index();

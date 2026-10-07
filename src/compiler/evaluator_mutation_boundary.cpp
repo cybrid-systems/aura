@@ -1103,8 +1103,12 @@ void Evaluator::flush_frame_budget_deferred() const noexcept {
 void Evaluator::enter_mutation_boundary() {
     // Issue #3658: outermost enter starts a new type-txn window.
     // Nested lockless helpers must not infer; outer Guard runs once.
-    if (active_mutation_stack().empty())
+    if (active_mutation_stack().empty()) {
         clear_type_dirty_txn_this_boundary();
+        // Issue #3918: a later heap guard must not inherit the previous
+        // boundary's "AST changed" bit.
+        outermost_ast_mutated_ = false;
+    }
     // Issue #233: the workspace_mtx_ lock was previously
     // acquired HERE as a local unique_lock that destructed
     // at function return, releasing the lock immediately.
@@ -1394,6 +1398,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool nested_boundary = stack.size() > 1;
     auto cp = stack.back();
     stack.pop_back();
+    if (!nested_boundary) {
+        // Issue #3918: hash-set! / vector-set! / set-car! / agent-bump!
+        // take an outermost guard and do not append a FlatAST record.
+        // flush reads this bit. Lightweight field checkpoints still count
+        // (their records live on the side log, not mutation_log_).
+        outermost_ast_mutated_ =
+            workspace_flat_ &&
+            (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size);
+    }
     // Issue #4089: soft-only-below — only orch soft checkpoint frames
     // remain, so this exit IS the type-authority outermost. A failed audit
     // must take the real restore path below (never the nested-success skip
@@ -1408,6 +1421,18 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             break;
         }
     }
+    // Staged defuse names are consumed by this boundary's cascade and by
+    // the outermost occurrence refresh, both before this function returns.
+    // Drop them on the outermost return so the next boundary does not
+    // replay the previous name set.
+    struct ClearStagedDefuseOnOutermost {
+        Evaluator* ev;
+        bool outermost;
+        ~ClearStagedDefuseOnOutermost() {
+            if (outermost && ev)
+                ev->defuse_affected_syms_.clear();
+        }
+    } clear_staged_defuse{this, !nested_boundary};
     // Issue #3322: production/Full force-close the pre-proof observation
     // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
     // Does not stamp TypeLinearCommitProof or persist occurrence.
@@ -5375,8 +5400,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
         g_tls_mutation_audit_wal_precommitted = false;
     }
-    if (!inbody_force_exited_)
-        ev_->exit_mutation_boundary(success);
+    Evaluator::MutationCheckpoint exited_cp{};
+    bool did_exit_boundary = false;
+    if (!inbody_force_exited_) {
+        exited_cp = ev_->exit_mutation_boundary(success);
+        did_exit_boundary = true;
+    }
     // Issue #3517: Full/hard-gate force-rollback inside exit already
     // restored AST; consume the TLS note so local success matches
     // persist-reject (dtor `!success` tail drops grant / proof).
@@ -5437,6 +5466,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         Evaluator::MutationCheckpoint fence{};
         fence.version = ev_->defuse_version_.load(std::memory_order_relaxed);
         fence.evaluator_id = static_cast<void*>(ev_);
+        fence.exit_fence = true;
         Evaluator::active_mutation_stack_static().push_back(std::move(fence));
         exit_fence_pushed = true;
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
@@ -5667,6 +5697,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     // ── Phase 5: flush + depth/unlock LAST (#2120) ──
     if (outermost) {
+        // Issue #3918: re-stamp from this guard's checkpoint immediately
+        // before flush. Phases above can enter another boundary and clear
+        // the bit exit_mutation_boundary already stored.
+        if (did_exit_boundary) {
+            ev_->outermost_ast_mutated_ =
+                ev_->workspace_flat_ &&
+                (exited_cp.lightweight ||
+                 ev_->workspace_flat_->mutation_log_size() > exited_cp.mutation_log_size);
+        }
         ev_->flush_mutation_boundary();
         if (ev_->compiler_metrics())
             aura_macro_hygiene_snapshot_metrics(ev_->compiler_metrics());

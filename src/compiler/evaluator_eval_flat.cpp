@@ -2930,6 +2930,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
         }
     }
     last_eval_current_result_.reset();
+    // Issue #4324 / #3918: public mutate:rebind publishes function_sources_
+    // before the dirty mark. The lockless batch path left that table on
+    // the pre-batch body, so the following eval-current specialised the
+    // identity back over the new closure.
+    if (update_function_source_fn_) {
+        std::string body_src = string_heap_[code_idx];
+        if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
+            body_src.find("(define\n") != 0) {
+            body_src = "(define " + name + " " + body_src + ")";
+        }
+        update_function_source_fn_(name, body_src);
+    }
     // Issue #3918: public mutate:rebind marks IR dirty so the next
     // eval("(f x)") / (begin (f x)) relowers from the live body.
     // Lockless batch used to leave ir_cache_v2_ on the identity.
@@ -6693,7 +6705,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 }
 
                 case aura::ast::NodeTag::Define: {
-                    auto name = p->resolve(v.sym_id);
+                    // Own the name bytes. set_pool below interns into this
+                    // pool and can grow buf_, freeing the view from resolve
+                    // (ASAN heap-use-after-free on typed_mutate define).
+                    std::string name(p->resolve(v.sym_id));
                     auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     Env& me = const_cast<Env&>(eval_env);
                     // Issue #1482 restore: pool so bind dual-writes bindings_symid_
