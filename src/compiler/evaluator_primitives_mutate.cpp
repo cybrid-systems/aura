@@ -1318,9 +1318,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // rolled-back define.
                 if (ev.rebind_light_path()) {
                     const std::string focus = ev.rebind_light_focus();
-                    ev.disarm_rebind_light_path();
+                    std::vector<std::string> callers;
+                    if (!focus.empty() && ev.get_dependents_fn_)
+                        callers = ev.get_dependents_fn_(focus);
+                    // Install the new IR while the arm is still set. That
+                    // bind clears v2.dirty on the focus and its direct
+                    // callers. edsl-ir-cache:cascade-after-mutate still
+                    // requires those callers to stay dirty.
                     if (!focus.empty())
                         ev.bind_workspace_lambda_via_ir(focus);
+                    if (ev.mark_define_dirty_fn_) {
+                        for (const auto& c : callers) {
+                            if (!c.empty() && c != focus)
+                                ev.mark_define_dirty_fn_(c);
+                        }
+                    }
+                    ev.disarm_rebind_light_path();
                 }
                 return result;
             });
@@ -3826,8 +3839,46 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::size_t nnodes = 0;
             if (same_arity)
                 flat.walk_subtree(new_value, [&](aura::ast::NodeId) { ++nnodes; });
-            if (same_arity && nnodes > 0 && nnodes <= 48)
-                ev.arm_rebind_light_path();
+            if (same_arity && nnodes > 0 && nnodes <= 48) {
+                // A free name that is not a primitive and not a workspace
+                // define (undefined-fn) must take the full selective
+                // typecheck. The light skip would leave typecheck-status
+                // at "ok" (ci/p0 typecheck-status-after-bad-mutate).
+                bool body_closed = true;
+                std::unordered_set<aura::ast::SymId> bound_params;
+                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                    const auto nv = flat.get(id);
+                    if (nv.tag == aura::ast::NodeTag::Lambda) {
+                        for (auto p : nv.params)
+                            bound_params.insert(p);
+                    }
+                });
+                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                    if (!body_closed)
+                        return;
+                    const auto nv = flat.get(id);
+                    if (nv.tag != aura::ast::NodeTag::Variable ||
+                        nv.sym_id == aura::ast::INVALID_SYM)
+                        return;
+                    if (bound_params.count(nv.sym_id) != 0)
+                        return;
+                    const auto nm = ev.workspace_pool_->resolve(nv.sym_id);
+                    if (ev.primitives().slot_for_name(nm) < ev.primitives().slot_count())
+                        return;
+                    bool defined = false;
+                    for (aura::ast::NodeId d = 0; d < flat.size() && !defined; ++d) {
+                        if (flat.is_free_slot(d))
+                            continue;
+                        const auto dv = flat.get(d);
+                        if (dv.tag == aura::ast::NodeTag::Define && dv.sym_id == nv.sym_id)
+                            defined = true;
+                    }
+                    if (!defined)
+                        body_closed = false;
+                });
+                if (body_closed)
+                    ev.arm_rebind_light_path();
+            }
         }
 
         // Issue #2792: hygiene on new body — walk the parsed new_value subtree

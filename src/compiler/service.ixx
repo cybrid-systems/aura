@@ -12247,6 +12247,39 @@ public:
         }
         auto guard = std::move(*guard_r);
 
+        // eval_flat(Define) set_pool's the caller onto scratch_pool. That
+        // pool dies with this function. The next typed_mutate then interns
+        // the primitive name into the freed pool (ASAN) or collides with a
+        // user SymId and reports "cannot call: mutate:rebind" (UBSAN).
+        // Re-key back while scratch_pool is still alive. Null any EnvFrame
+        // that still names it (#4352 skips the SymId scan when pool_ is null).
+        struct DetachScratchPool {
+            Evaluator& ev;
+            const aura::ast::StringPool* scratch;
+            const aura::ast::StringPool* saved_top;
+            DetachScratchPool(Evaluator& e, const aura::ast::StringPool* s)
+                : ev(e)
+                , scratch(s)
+                , saved_top(e.top_env().pool()) {}
+            ~DetachScratchPool() {
+                if (!scratch)
+                    return;
+                if (ev.top_env().pool() == scratch) {
+                    if (saved_top && saved_top != scratch)
+                        ev.top_env().set_pool(saved_top);
+                    else
+                        ev.top_env().set_pool(nullptr);
+                }
+                std::unique_lock<std::shared_mutex> wlock[Evaluator::kEnvFramesShardCount];
+                for (std::size_t i = 0; i < Evaluator::kEnvFramesShardCount; ++i)
+                    wlock[i] = std::unique_lock<std::shared_mutex>(ev.env_frame_shard_mu(i));
+                for (auto& fr : ev.env_frames_) {
+                    if (fr.pool_ == scratch)
+                        fr.pool_ = nullptr;
+                }
+            }
+        } detach_scratch(evaluator_, &scratch_pool);
+
         auto result =
             evaluator_.eval_flat(scratch_flat, scratch_pool, pr.root, evaluator_.top_env());
         if (!result) {

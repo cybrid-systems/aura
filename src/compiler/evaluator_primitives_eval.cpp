@@ -233,6 +233,39 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // any mutations if `ok` is false. Every early-return error
             // path sets ok = false so the rollback is consistent.
             bool ok = true;
+            // pre_cache relowers from function_sources_. A prior rebind
+            // leaves that table on the mutated body (#2731 / #1495).
+            auto republish_workspace_define_sources = [&ev]() {
+                if (!ev.update_function_source_fn_ || !ev.workspace_flat_ || !ev.workspace_pool_)
+                    return;
+                auto& flat = *ev.workspace_flat_;
+                auto* pool = ev.workspace_pool_;
+                const auto root = flat.root;
+                if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+                    return;
+                std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+                std::vector<aura::ast::NodeId> pending;
+                pending.push_back(root);
+                while (!pending.empty()) {
+                    const auto cur = pending.back();
+                    pending.pop_back();
+                    if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+                        seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+                        continue;
+                    seen[static_cast<std::size_t>(cur)] = 1;
+                    const auto v = flat.get(cur);
+                    if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+                        auto nm = std::string(pool->resolve(v.sym_id));
+                        if (!nm.empty()) {
+                            auto src = aura::ast::unparse_to_string(flat, *pool, cur);
+                            if (!src.empty())
+                                ev.update_function_source_fn_(nm, src);
+                        }
+                    }
+                    for (auto child : v.children)
+                        pending.push_back(child);
+                }
+            };
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
             auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
                 ev, /*pending=*/1, &ok);
@@ -388,6 +421,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // (ASAN fix #107 leak) delete the old index; without this,
                 // each set-code leaks the previous DefUseIndex (~3KB each).
                 destroy_defuse_index();
+                // Issue #2731: persist:load is set-code of the saved source.
+                // function_sources_ still names the post-save rebind until
+                // this publish, so eval-current specialises the mutated body.
+                republish_workspace_define_sources();
                 // Phase 2: a fresh workspace means every cached define is potentially
                 // changed. Mark all dirty so the next (eval-current) re-evaluates.
                 if (ev.mark_all_defines_dirty_fn_)
@@ -480,6 +517,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                             ev.note_workspace_source_text(src);
                             ev.invalidate_tag_arity_index();
                             ev.update_shared_tree_root();
+                            republish_workspace_define_sources();
                             if (ev.mark_all_defines_dirty_fn_)
                                 ev.mark_all_defines_dirty_fn_();
                             if (ev.pre_cache_workspace_defines_fn_)
@@ -513,6 +551,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             if (ev.workspace_flat_ != nullptr &&
                 aura::compiler::typed_audit::production_defaults_active())
                 ev.workspace_flat_->publish_install_id();
+            // Issue #166: the next form in this program calls the defines
+            // just installed. Macros are registered above; defines stayed
+            // unbound until a separate eval-current, so (f 5) missed f.
+            ev.rebind_workspace_defines_on_switch();
+            ev.defines_bound_flat_ = ev.workspace_flat_;
             return make_bool(true);
         });
 

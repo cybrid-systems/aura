@@ -1881,14 +1881,8 @@ void Evaluator::flush_mutation_boundary() {
     // (2) Release barrier on defuse_version_ so other threads see
     // the current version on their next acquire.
     defuse_version_.fetch_add(0, std::memory_order_release);
-    // Issue #3261 / #1268: outermost-only panic checkpoint + hygiene
-    // restamp on flush (steal/yield boundary). Depth is TLS / per-fiber
-    // stack size (active_mutation_stack / active_mutation_stack_static),
-    // not a cross-thread atomic — sample once from the stack we already
-    // bound. held_ is the per-Evaluator acquire flag. Do not re-read
-    // depth in the if: `|| depth==1` was dead (subsumed by
-    // outermost_active) and would silently re-activate if the predicate
-    // grew extra clauses.
+    // Issue #3261 / #1268: outermost-only. Depth is TLS / per-fiber,
+    // sampled once. Do not re-read depth in the if.
     const auto depth = stack.size();
     const bool outermost_active =
         depth == 1 || (depth == 0 && !mutation_boundary_held_.load(std::memory_order_acquire));
@@ -1898,12 +1892,21 @@ void Evaluator::flush_mutation_boundary() {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
                 m->panic_checkpoint_flush_outermost.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #1274: outermost flush feeds macro dirty → IR cache
-        // invalidation + epoch bump so typecheck/lower never hit stale IR.
+        // Issue #1274: outermost flush invalidates IR after an AST edit.
         if (mark_all_defines_dirty_fn_) {
             // Issue #4357: one-line Soft rebind already stamped this define.
-            if (!rebind_light_path_)
-                mark_all_defines_dirty_fn_();
+            // Issue #3918: heap guards leave the bit false. Yield still has
+            // the real checkpoint; the exit fence uses the bit.
+            if (!rebind_light_path_) {
+                bool ast_mutated = outermost_ast_mutated_;
+                if (!stack.back().exit_fence && workspace_flat_) {
+                    const auto& frame = stack.back();
+                    ast_mutated = frame.lightweight ||
+                                  workspace_flat_->mutation_log_size() > frame.mutation_log_size;
+                }
+                if (ast_mutated)
+                    mark_all_defines_dirty_fn_();
+            }
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->dirty_propagation_to_ir_count.fetch_add(1, std::memory_order_relaxed);
                 m->epoch_bump_for_macro.fetch_add(1, std::memory_order_relaxed);

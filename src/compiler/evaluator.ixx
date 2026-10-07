@@ -14724,6 +14724,10 @@ public:
         bool type_face_restored = false;
         aura::ast::FlatAST::TypeColumnSnapshot type_column_snapshot;
         ConstraintSystem::AbortCsHighWater cs_high_water;
+        // Issue #3918: exit pipeline pushes this after the real checkpoint
+        // is popped. flush must not treat its mutation_log_size (0) as the
+        // boundary's enter size.
+        bool exit_fence = false;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
@@ -16358,6 +16362,12 @@ public:
     // Issue #3261: outermost_active samples stack.size() once (TLS /
     // per-fiber; not a cross-thread atomic). Hygiene prevent bump is
     // not gated on mark_all_defines_dirty_fn_.
+    // Issue #3918: outermost exit records whether this boundary appended
+    // a FlatAST mutation (or took a lightweight field checkpoint). A
+    // heap mutator leaves this false so flush does not call
+    // mark_all_defines_dirty — that clear drops ir_define_closure_owner_
+    // while the env cell still holds the closure id.
+    bool outermost_ast_mutated_ = false;
     void flush_mutation_boundary();
 
     // Issue #236: helpers used by mutate:atomic-batch to apply
