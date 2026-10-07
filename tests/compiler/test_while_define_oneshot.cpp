@@ -152,6 +152,56 @@ static void ac4_source_gate() {
           "AC4: gate cmd (manifest SSOT)");
 }
 
+// Issue #4350 reopen: set! on a captured variable must update the one
+// shared cell when the call rides a capture snapshot. string-trim is
+// the same while-thunk shape and must return.
+static void ac4350_capture_snapshot_set() {
+    std::println("\n--- #4350: set! writes the shared capture cell ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    CompilerService cs;
+    eval_int_eq(cs,
+                R"((begin
+  (define (a1) (let ((i 0)) (define (inc!) (set! i (+ i 1))) (inc!) (inc!) i))
+  (a1)))",
+                2, "4350: inner define set! = 2");
+    eval_int_eq(cs,
+                R"((begin
+  (define (a2)
+    (let ((i 0))
+      (define a (lambda () (set! i (+ i 1)) i))
+      (define b (lambda () (set! i (+ i 1)) i))
+      (a)
+      (b)))
+  (a2)))",
+                2, "4350: two lambdas share the cell");
+    eval_int_eq(cs,
+                R"((begin
+  (define (mk) (let ((c 0)) (lambda () (set! c (+ c 1)) c)))
+  (define ctr (mk))
+  (ctr)
+  (ctr)
+  (ctr)))",
+                3, "4350: counter closure = 3");
+    eval_int_eq(cs,
+                R"((begin
+  (define (a6)
+    (let ((lo 0) (hi 3))
+      (while (lambda () (< lo hi)) (lambda () (set! lo (+ lo 1))))
+      lo))
+  (a6)))",
+                3, "4350: while thunk set! = 3");
+    CHECK(cs.eval("(require \"std/string\" all:)").has_value(), "4350: require std/string");
+    eval_int_eq(cs, R"((if (string=? (string-trim " a ") "a") 1 0))", 1, "4350: string-trim a");
+    eval_int_eq(cs, R"((if (string=? (string-trim "  hi  ") "hi") 1 0))", 1,
+                "4350: string-trim hi");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    CHECK(env.find("Issue #4350: set! writes the capture-snapshot cell") != std::string::npos,
+          "4350: set! consults the capture snapshot");
+    unsetenv("AURA_SANDBOX");
+    unsetenv("AURA_PIPELINE_STRICT");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -160,6 +210,7 @@ int run_test_while_define_oneshot() {
     ac2_multi_define_in_while();
     ac3_preferred_outer_set();
     ac4_source_gate();
+    ac4350_capture_snapshot_set();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

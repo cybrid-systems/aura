@@ -3659,6 +3659,26 @@ ClosureView make_closure_view(const Closure& cl) {
     v.live = true;
     return v;
 }
+
+// Issue #4350: set! writes the capture-snapshot cell.
+// materialize rides a shared snapshot instead of copying the frame,
+// so the cell id is not in the call env. A hit shadows outer frames.
+// Absent means the caller keeps walking.
+static bool cap_snap_cell(const std::shared_ptr<const CapSnapshot>& root, std::string_view n,
+                          std::optional<std::uint64_t>& cell_out) {
+    cell_out.reset();
+    for (const CapSnapshot* snap = root.get(); snap; snap = snap->parent.get()) {
+        auto it = snap->name_index_.find(std::string(n));
+        if (it == snap->name_index_.end())
+            continue;
+        const auto& bound = snap->bindings_[it->second].second;
+        if (is_cell(bound))
+            cell_out = as_cell_id(bound);
+        return true;
+    }
+    return false;
+}
+
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
 //
 // Issue #145 Phase 2.2: parent walk migrates to
@@ -3693,6 +3713,15 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
                     return &(*cells)[ci];
             }
             return nullptr;
+        }
+    }
+    // Issue #4350: set! writes the capture-snapshot cell.
+    if (cap_snap_) {
+        std::optional<std::uint64_t> snap_cell;
+        if (cap_snap_cell(cap_snap_, n, snap_cell)) {
+            if (!snap_cell || *snap_cell >= cells->size())
+                return nullptr;
+            return &(*cells)[*snap_cell];
         }
     }
     // 2. Walk parent chain — prefer SoA walk via env_frames_
@@ -3816,6 +3845,12 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
                 return std::nullopt;
             }
         }
+    }
+    // Issue #4350: set! writes the capture-snapshot cell.
+    if (cap_snap_) {
+        std::optional<std::uint64_t> snap_cell;
+        if (cap_snap_cell(cap_snap_, n, snap_cell))
+            return snap_cell;
     }
     // 2. SoA walk via env_frames_ when registered
     if (owner_ && parent_id_ != NULL_ENV_ID) {
