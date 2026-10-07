@@ -99,7 +99,7 @@ static void seed_fn_v2(CompilerService& cs, const std::string& name, const std::
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(std::move(top));
     irs.push_back(std::move(body));
-    cs.store_define_v2(name, src, std::move(irs), {}, {});
+    cs.store_define_v2(name, src, std::move(irs), {}, {}, aura::core::current_mutation_epoch());
 }
 
 static void seed_workspace(CompilerService& cs, const char* name, const char* src) {

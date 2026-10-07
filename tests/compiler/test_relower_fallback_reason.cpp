@@ -113,13 +113,17 @@ int run_test_relower_fallback_reason() {
         reset_partial_relower_threshold_for_test();
         set_partial_relower_threshold(2); // small thr → many dirties go full
         CompilerService cs;
-        CHECK(cs.eval(R"(
-(set-code "
-(define a (lambda () 1))
-(define b (lambda () (+ (a) 1)))
-")")
-                  .has_value(),
-              "set-code");
+        // Aura string literals do not span raw lines (lexer ends the token at
+        // the newline → outer ParseError "reached end of input"); build the
+        // two-define source as concatenated single-line segments.
+        auto sc = cs.eval("(set-code \""
+                          "(define a (lambda () 1))"
+                          "(define b (lambda () (+ (a) 1)))"
+                          "\")");
+        if (!sc.has_value())
+            std::println("  AC5a set-code diag: kind={} msg={}", static_cast<int>(sc.error().kind),
+                         sc.error().message);
+        CHECK(sc.has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         const auto thr0 = href(cs, "relower-fallback-threshold-count");
         // Mutate a heavily / invalidate chain — cascade may take full.

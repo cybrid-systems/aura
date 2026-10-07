@@ -4482,6 +4482,29 @@ public:
     // and IRExecutor::walk_runtime_closures.
     using ActiveClosureWalkFn = std::function<void(ClosureId, Closure&)>;
     void walk_active_closures(const ActiveClosureWalkFn& fn);
+    // Issue #4378 (asan-verify heap-use-after-free, 2026-10-07): expire
+    // tree-walker / fiber-held closures whose captured flat is `doomed`.
+    // Workspace child delete/discard frees the child's local FlatAST
+    // (unique_ptr) — closures still holding cl.flat == doomed would dangle,
+    // and the next mark_define_dirty → expire_stale_live_closures_ walk
+    // would dereference the freed flat (heap-use-after-free at
+    // FlatAST::size, ast.ixx:6557). Nulls the view (same shape as the
+    // expire walk's unusable-body arm) so the next expire walk skips them.
+    // Returns the number of closures expired.
+    std::size_t expire_closures_with_flat(const ast::FlatAST* doomed) {
+        std::size_t n = 0;
+        if (doomed == nullptr)
+            return 0;
+        walk_active_closures([&]([[maybe_unused]] ClosureId id, Closure& cl) {
+            if (cl.flat != doomed)
+                return;
+            cl.flat = nullptr;
+            cl.pool = nullptr;
+            cl.body_id = aura::ast::NULL_NODE;
+            ++n;
+        });
+        return n;
+    }
     // Scan live closures for linear captures (EnvFrame SoA state !=
     // Untracked). When mark_invalid: stamp Closure::bridge_epoch = 0 so
     // apply_closure takes safe_fallback (is_bridge_stale). Bumps
