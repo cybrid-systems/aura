@@ -410,36 +410,78 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (workspace :switch id) → #t
-    (*w_impls)["workspace:switch"] =
-        PrimFn{[&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-                return make_bool(false);
-            // Issue #1566: tenant isolation before layer switch.
-            if (!ev.check_workspace_isolation(0, 0, 0, "workspace:switch"))
-                return make_bool(false);
-            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-            if (!wt->set_active(idx))
-                return make_bool(false);
-            // Issue #2785: single bind block (was duplicate assign — incomplete
-            // refactor). Issue #141: COW stays lazy (no ensure_local_flat on
-            // switch). Issue #738: sync COW epoch into flat for StableNodeRef.
-            auto* ws = wt->active();
-            if (ws) {
-                ev.workspace_flat_ = ws->flat;
-                ev.workspace_pool_ = ws->pool;
-                if (ws->flat)
-                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
-                ev.workspace_read_only_ = ws->read_only;
-            } else {
-                ev.workspace_flat_ = nullptr;
-                ev.workspace_pool_ = nullptr;
-                ev.workspace_read_only_ = false;
+    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index](
+                                                std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+            return make_bool(false);
+        // Issue #1566: tenant isolation before layer switch.
+        if (!ev.check_workspace_isolation(0, 0, 0, "workspace:switch"))
+            return make_bool(false);
+        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (!wt->set_active(idx))
+            return make_bool(false);
+        // Issue #2785: single bind block (was duplicate assign — incomplete
+        // refactor). Issue #141: COW stays lazy (no ensure_local_flat on
+        // switch). Issue #738: sync COW epoch into flat for StableNodeRef.
+        auto* ws = wt->active();
+        if (ws) {
+            ev.workspace_flat_ = ws->flat;
+            ev.workspace_pool_ = ws->pool;
+            if (ws->flat)
+                ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+            ev.workspace_read_only_ = ws->read_only;
+        } else {
+            ev.workspace_flat_ = nullptr;
+            ev.workspace_pool_ = nullptr;
+            ev.workspace_read_only_ = false;
+        }
+        // (ASAN fix #107 leak) delete the old index.
+        destroy_defuse_index();
+        // Issue #4368: function_sources_ is process-global. A child
+        // rebind publishes the child's body, and the next root
+        // eval-current specialises that text over root's tree.
+        // Republish the defines of the flat we just switched to.
+        if (ev.workspace_flat_ && ev.workspace_pool_ && ev.update_function_source_fn_) {
+            auto& flat = *ev.workspace_flat_;
+            auto* pool = ev.workspace_pool_;
+            const auto root = flat.root;
+            if (root != aura::ast::NULL_NODE && root < flat.size() && !flat.is_free_slot(root)) {
+                std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+                std::vector<aura::ast::NodeId> pending;
+                pending.push_back(root);
+                while (!pending.empty()) {
+                    const auto cur = pending.back();
+                    pending.pop_back();
+                    if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+                        seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+                        continue;
+                    seen[static_cast<std::size_t>(cur)] = 1;
+                    const auto v = flat.get(cur);
+                    if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+                        auto nm = std::string(pool->resolve(v.sym_id));
+                        if (!nm.empty()) {
+                            auto src = unparse_node(flat, *pool, cur, 0);
+                            if (!src.empty())
+                                ev.update_function_source_fn_(nm, src);
+                        }
+                    }
+                    for (auto child : v.children)
+                        pending.push_back(child);
+                }
             }
-            // (ASAN fix #107 leak) delete the old index.
-            destroy_defuse_index();
-            return make_bool(true);
-        }};
+        }
+        // top_env is shared. Re-eval this flat so a call before the
+        // next eval-current already sees this workspace's procedures.
+        // The same flat object again (switch onto a child that still
+        // shares it, after restore) must not re-eval: that walk does
+        // not return. A different flat still rebinds.
+        if (ev.workspace_flat_ != ev.defines_bound_flat_) {
+            ev.rebind_workspace_defines_on_switch();
+            ev.defines_bound_flat_ = ev.workspace_flat_;
+        }
+        return make_bool(true);
+    }};
 
     // (workspace :current) → id
     (*w_impls)["workspace:current"] = PrimFn{[&ev](const auto&) -> EvalValue {
@@ -1150,6 +1192,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             // Issue #4361: ast:restore put the flat back. Rebind defines
             // so a call does not report a stale node or a dead closure.
             ev.rebind_workspace_defines_after_rollback();
+            ev.defines_bound_flat_ = ev.workspace_flat_;
             return make_bool(false);
         }
         // Success: return (result . snap-id)

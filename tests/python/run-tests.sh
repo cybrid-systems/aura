@@ -1601,6 +1601,49 @@ EOF
 }
 _file_4367
 
+# Issue #4368: after a child eval-current, root's switch restores root's body.
+_file_4368() {
+    local dir src
+    dir=$(mktemp -d /tmp/aura-4368.XXXXXX)
+    src=$(cat <<'EOF'
+(define (show k v) (display k) (display " ") (write v) (newline))
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n(hello 3)\n#t")
+  (eval-current)
+  (let ((c (workspace :create "t")))
+    (workspace :switch c)
+    (eval-current)
+    (typed-mutate-atomic (list "(mutate:rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
+    (show "CH" (hello 3))
+    (workspace :switch 0)
+    (eval-current)
+    (show "ROOT_AFTER_CHILD_EVAL" (hello 3))
+    (let ((s (ast:snapshot "r")))
+      (ast:restore s) (eval-current)
+      (show "ROOT_RESTORE" (hello 3)))))
+(main)
+EOF
+)
+    local hard soft errh errs
+    hard=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_MUTATE_TYPE_GATE=hard timeout 40 "$AURA" -e "$src" 2>"$dir/errh")
+    errh=$(cat "$dir/errh" 2>/dev/null || true)
+    soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 40 "$AURA" -e "$src" 2>"$dir/errs")
+    errs=$(cat "$dir/errs" 2>/dev/null || true)
+    _ok4368() {
+        local out="$1"
+        printf '%s\n' "$out" | grep -qx 'CH 30' \
+            && printf '%s\n' "$out" | grep -qx 'ROOT_AFTER_CHILD_EVAL 4' \
+            && printf '%s\n' "$out" | grep -qx 'ROOT_RESTORE 4'
+    }
+    if _ok4368 "$hard" && _ok4368 "$soft" && [ -z "$errh" ] && [ -z "$errs" ]; then
+        _record_pass "4368-switch-restores-root-binding"
+    else
+        _record_fail "4368-switch-restores-root-binding" "       hard:" "$hard" "       hard-err:" "$errh" "       soft:" "$soft" "       soft-err:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4368
+
 # Print final test count
 _finish_parallel
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"

@@ -8117,6 +8117,70 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
     }
 }
 
+void Evaluator::rebind_workspace_defines_on_switch() noexcept {
+    if (!workspace_flat_ || !workspace_pool_)
+        return;
+    auto* flat = workspace_flat_;
+    auto* pool = workspace_pool_;
+    const auto root = flat->root;
+    if (root == aura::ast::NULL_NODE || !flat->is_live_node(root))
+        return;
+    try {
+        last_eval_current_result_.reset();
+        // Issue #4368: do not eval_flat the whole root and do not
+        // restamp_subtree_generation. After ast:restore + delete + create
+        // the root walk tail-calls a cycle (gen-0 slots restamp resurrects
+        // it). A seen-set finds each live define; eval_flat of that define
+        // installs its tree-walker closure and does not follow the cycle.
+        std::vector<unsigned char> seen(static_cast<std::size_t>(flat->size()), 0);
+        std::vector<aura::ast::NodeId> pending;
+        std::vector<aura::ast::NodeId> defines;
+        pending.push_back(root);
+        while (!pending.empty()) {
+            const auto cur = pending.back();
+            pending.pop_back();
+            if (cur == aura::ast::NULL_NODE || cur >= flat->size() ||
+                seen[static_cast<std::size_t>(cur)] || flat->is_free_slot(cur))
+                continue;
+            seen[static_cast<std::size_t>(cur)] = 1;
+            const auto v = flat->get(cur);
+            // Only named defines. A restored flat can carry nameless
+            // Define-tagged slots whose eval_flat tail-calls forever;
+            // unparse already skips those, and they bind nothing.
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+                auto nm = pool->resolve(v.sym_id);
+                if (!nm.empty())
+                    defines.push_back(cur);
+            }
+            for (auto child : v.children)
+                pending.push_back(child);
+        }
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(top_env());
+        bool any = false;
+        for (auto id : defines) {
+            flat->clear_cached_value(id);
+            auto result = eval_flat(*flat, *pool, id, top_);
+            if (result)
+                any = true;
+        }
+        if (any && sync_workspace_value_cells_fn_)
+            sync_workspace_value_cells_fn_();
+    } catch (...) {
+        // [SILENCE-PRIM-#615] noexcept: a throw here would terminate the
+        // switch primitive. Leave the cells unchanged.
+    }
+}
+
 bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
     if (id >= snapshot_sources_.size() || workspace_read_only_ || !workspace_flat_ ||
         !workspace_pool_)

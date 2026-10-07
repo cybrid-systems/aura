@@ -16549,6 +16549,15 @@ private:
     // the restored root into top_ so calls work with no extra eval-current.
     // Append-only at struct end.
     void rebind_workspace_defines_after_rollback() noexcept;
+    // Issue #4368: workspace :switch shares top_env. Re-eval the flat just
+    // activated. Do not restamp free slots — that resurrects a cycle after
+    // restore + delete + create and the walk never returns.
+    // Append-only at struct end.
+    void rebind_workspace_defines_on_switch() noexcept;
+    // Flat whose defines top_env already reflects. Compared, never
+    // dereferenced: a second switch onto this same object skips re-eval.
+    // Append-only at struct end.
+    aura::ast::FlatAST* defines_bound_flat_ = nullptr;
 };
 
 

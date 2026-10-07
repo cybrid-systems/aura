@@ -3517,8 +3517,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             Evaluator& ev;
             bool failed = false;
             ~RebindAfterRejected() {
-                if (failed)
+                if (failed) {
                     ev.rebind_workspace_defines_after_rollback();
+                    ev.defines_bound_flat_ = ev.workspace_flat_;
+                }
             }
         } rebind_after_rejected{ev};
         // Issue #1556: typed try_acquire so mutation quota rejects as
@@ -4158,6 +4160,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ev.note_rebind_light_focus(name);
         }
         rebind_after_rejected.failed = false;
+        ev.defines_bound_flat_ = ev.workspace_flat_;
         return make_bool(true);
     });
 
@@ -6015,8 +6018,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             Evaluator& ev;
             bool failed = false;
             ~RebindAfterFailedBatch() {
-                if (failed)
+                if (failed) {
                     ev.rebind_workspace_defines_after_rollback();
+                    ev.defines_bound_flat_ = ev.workspace_flat_;
+                }
             }
         } rebind_after_failed_batch{ev};
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
@@ -6540,6 +6545,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             views.push_back(s);
 
         auto result = svc->typed_mutate_atomic(views);
+        // Issue #4368: the batch's epoch bump drops the IR closure the
+        // light rebind just installed. Re-eval the live flat so the
+        // binding is a tree-walker closure of the new body.
+        if (result.success) {
+            ev.rebind_workspace_defines_after_rollback();
+            ev.defines_bound_flat_ = ev.workspace_flat_;
+        }
         return make_bool(result.success);
     });
 
