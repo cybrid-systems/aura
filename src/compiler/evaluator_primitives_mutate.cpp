@@ -401,6 +401,73 @@ namespace {
         return flat.resolve_define_after_parse(sym, preferred, size_before_parse);
     }
 
+    // Issue #4357: one-line Soft rebind may arm the light path. Production,
+    // the hard type gate, Full audit, an arity change, and a free name that
+    // is not a primitive and not a workspace define stay on the full cascade
+    // (ci/p0 typecheck-status-after-bad-mutate / undefined-fn). The walk is
+    // outside the rebind handler so the rollback NodeId cite stays in range.
+    [[nodiscard]] bool rebind_light_path_eligible(const aura::ast::FlatAST& flat,
+                                                  aura::ast::NodeId old_define,
+                                                  aura::ast::NodeId new_value,
+                                                  const aura::ast::StringPool* pool,
+                                                  const Primitives& prims) {
+        if (aura::compiler::typed_audit::production_defaults_active() ||
+            aura::compiler::mutate_type_gate::is_hard() ||
+            aura::compiler::typed_audit::get_strategy() ==
+                aura::compiler::typed_audit::AuditStrategy::Full ||
+            new_value == aura::ast::NULL_NODE || new_value >= flat.size() ||
+            flat.get(new_value).tag != aura::ast::NodeTag::Lambda || !pool)
+            return false;
+        bool same_arity = false;
+        if (old_define < flat.size()) {
+            auto old_def_v = flat.get(old_define);
+            if (!old_def_v.children.empty() && old_def_v.child(0) < flat.size()) {
+                auto old_body = flat.get(old_def_v.child(0));
+                auto new_body = flat.get(new_value);
+                same_arity = old_body.tag == aura::ast::NodeTag::Lambda &&
+                             old_body.params.size() == new_body.params.size();
+            }
+        }
+        if (!same_arity)
+            return false;
+        std::size_t nnodes = 0;
+        flat.walk_subtree(new_value, [&](aura::ast::NodeId) { ++nnodes; });
+        if (nnodes == 0 || nnodes > 48)
+            return false;
+        bool body_closed = true;
+        std::unordered_set<aura::ast::SymId> bound_params;
+        flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+            const auto nv = flat.get(id);
+            if (nv.tag == aura::ast::NodeTag::Lambda) {
+                for (auto p : nv.params)
+                    bound_params.insert(p);
+            }
+        });
+        flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+            if (!body_closed)
+                return;
+            const auto nv = flat.get(id);
+            if (nv.tag != aura::ast::NodeTag::Variable || nv.sym_id == aura::ast::INVALID_SYM)
+                return;
+            if (bound_params.count(nv.sym_id) != 0)
+                return;
+            const auto nm = pool->resolve(nv.sym_id);
+            if (prims.slot_for_name(nm) < prims.slot_count())
+                return;
+            bool defined = false;
+            for (aura::ast::NodeId d = 0; d < flat.size() && !defined; ++d) {
+                if (flat.is_free_slot(d))
+                    continue;
+                const auto dv = flat.get(d);
+                if (dv.tag == aura::ast::NodeTag::Define && dv.sym_id == nv.sym_id)
+                    defined = true;
+            }
+            if (!defined)
+                body_closed = false;
+        });
+        return body_closed;
+    }
+
     // Issue #680: detect Lambda/closure descendants for precise invalidation.
     bool subtree_has_closure(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
         if (root == aura::ast::NULL_NODE || root >= flat.size())
@@ -3816,70 +3883,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             new_value = root_v.child(0);
         }
 
-        // Issue #4357: a one-line lambda rebind (no dependants beyond the
-        // direct caller) must finish inside one current-time-ms tick.
-        // Production, the hard type gate, and an arity change keep the
-        // full cascade so the existing arity rejection still runs.
-        if (!aura::compiler::typed_audit::production_defaults_active() &&
-            !aura::compiler::mutate_type_gate::is_hard() &&
-            aura::compiler::typed_audit::get_strategy() !=
-                aura::compiler::typed_audit::AuditStrategy::Full &&
-            new_value != aura::ast::NULL_NODE && new_value < flat.size() &&
-            flat.get(new_value).tag == aura::ast::NodeTag::Lambda) {
-            bool same_arity = false;
-            if (old_define < flat.size()) {
-                auto old_def_v = flat.get(old_define);
-                if (!old_def_v.children.empty() && old_def_v.child(0) < flat.size()) {
-                    auto old_body = flat.get(old_def_v.child(0));
-                    auto new_body = flat.get(new_value);
-                    same_arity = old_body.tag == aura::ast::NodeTag::Lambda &&
-                                 old_body.params.size() == new_body.params.size();
-                }
-            }
-            std::size_t nnodes = 0;
-            if (same_arity)
-                flat.walk_subtree(new_value, [&](aura::ast::NodeId) { ++nnodes; });
-            if (same_arity && nnodes > 0 && nnodes <= 48) {
-                // A free name that is not a primitive and not a workspace
-                // define (undefined-fn) must take the full selective
-                // typecheck. The light skip would leave typecheck-status
-                // at "ok" (ci/p0 typecheck-status-after-bad-mutate).
-                bool body_closed = true;
-                std::unordered_set<aura::ast::SymId> bound_params;
-                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
-                    const auto nv = flat.get(id);
-                    if (nv.tag == aura::ast::NodeTag::Lambda) {
-                        for (auto p : nv.params)
-                            bound_params.insert(p);
-                    }
-                });
-                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
-                    if (!body_closed)
-                        return;
-                    const auto nv = flat.get(id);
-                    if (nv.tag != aura::ast::NodeTag::Variable ||
-                        nv.sym_id == aura::ast::INVALID_SYM)
-                        return;
-                    if (bound_params.count(nv.sym_id) != 0)
-                        return;
-                    const auto nm = ev.workspace_pool_->resolve(nv.sym_id);
-                    if (ev.primitives().slot_for_name(nm) < ev.primitives().slot_count())
-                        return;
-                    bool defined = false;
-                    for (aura::ast::NodeId d = 0; d < flat.size() && !defined; ++d) {
-                        if (flat.is_free_slot(d))
-                            continue;
-                        const auto dv = flat.get(d);
-                        if (dv.tag == aura::ast::NodeTag::Define && dv.sym_id == nv.sym_id)
-                            defined = true;
-                    }
-                    if (!defined)
-                        body_closed = false;
-                });
-                if (body_closed)
-                    ev.arm_rebind_light_path();
-            }
-        }
+        // Issue #4357: closed one-line Soft lambda only. The eligibility
+        // walk is above this handler.
+        if (rebind_light_path_eligible(flat, old_define, new_value, ev.workspace_pool_,
+                                       ev.primitives()))
+            ev.arm_rebind_light_path();
 
         // Issue #2792: hygiene on new body — walk the parsed new_value subtree
         // for MacroIntroduced. The pre-parse check only probes old_define
