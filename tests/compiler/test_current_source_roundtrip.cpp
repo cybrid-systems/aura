@@ -37,6 +37,7 @@
 #include "test_harness.hpp"
 
 #include <cctype>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <print>
@@ -782,6 +783,48 @@ static void ac4349_snapshot_keeps_caller() {
           "4349: IR call restamps a private callee closure");
 }
 
+// Issue #4357: set-code pre-cache unparses defines into function_sources_
+// and eval-current re-lowers that text onto the IR interpreter. A bool
+// printed as 1/0 comes back as an integer ((q) was 1, (boolean? (q)) #f).
+static void ac4357_workspace_bools() {
+    std::println("\n--- #4357: workspace defines keep booleans ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (p) (list \"a\" #t #f))\n"
+                       "(define (q) #t)\n"
+                       "(define (r) (if #t #t #f))\n"
+                       "#t"),
+          "4357: set-code");
+    auto src = workspace_source(cs);
+    CHECK(src.find("#t") != std::string::npos, "4357: workspace source keeps #t");
+    CHECK(src.find("#f") != std::string::npos, "4357: workspace source keeps #f");
+    CHECK(cs.eval("(eval-current)").has_value(), "4357: eval-current");
+    auto q = cs.eval("(q)");
+    CHECK(q && is_bool(*q) && as_bool(*q), "4357: (q) is #t");
+    auto bq = cs.eval("(boolean? (q))");
+    CHECK(bq && is_bool(*bq) && as_bool(*bq), "4357: (boolean? (q))");
+    auto eq = cs.eval("(eq? (q) #t)");
+    CHECK(eq && is_bool(*eq) && as_bool(*eq), "4357: (eq? (q) #t)");
+    auto r = cs.eval("(r)");
+    CHECK(r && is_bool(*r) && as_bool(*r), "4357: (r) is #t");
+    auto mid = cs.eval("(boolean? (car (cdr (p))))");
+    CHECK(mid && is_bool(*mid) && as_bool(*mid), "4357: list element #t");
+    auto tail = cs.eval("(eq? (car (cdr (cdr (p)))) #f)");
+    CHECK(tail && is_bool(*tail) && as_bool(*tail), "4357: list element #f");
+    auto head = cs.eval("(if (string=? (car (p)) \"a\") 1 0)");
+    CHECK(head && is_int(*head) && as_int(*head) == 1, "4357: list head is \"a\"");
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("Issue #4357") != std::string::npos,
+          "4357: unparse keeps bool literals for the IR reparse");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     ac_dual_workspace();
@@ -793,6 +836,7 @@ int run_test_current_source_roundtrip() {
     ac_wiring();
     ac4349_restore_over_rebind();
     ac4349_snapshot_keeps_caller();
+    ac4357_workspace_bools();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
     ac2966_1_no_workspace_observable();
     ac2966_2_set_code_path_ok();

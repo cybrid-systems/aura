@@ -2221,6 +2221,10 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id,
 
     switch (v.tag) {
         case NodeTag::LiteralInt:
+            // Issue #4357: pre-cache re-parses this text into function_sources_.
+            // Printing #t/#f as 1/0 makes the IR closure return an integer.
+            if (flat.marker(id) == SyntaxMarker::BoolLiteral)
+                return v.int_value ? "#t" : "#f";
             return std::to_string(v.int_value);
 
         case NodeTag::LiteralString: {
