@@ -5221,8 +5221,9 @@ public:
     // Evaluator's central cells_ pmr vector. EnvFrame is now
     // free of raw heap pointers. Legacy Env still uses its
     // cells_ pointer during transition.
-    std::optional<types::EvalValue> lookup_by_symid_chain(EnvId start, aura::ast::SymId s) const
-        pre(start != NULL_ENV_ID);
+    std::optional<types::EvalValue>
+    lookup_by_symid_chain(EnvId start, aura::ast::SymId s,
+                          const aura::ast::StringPool* query_pool) const pre(start != NULL_ENV_ID);
     // Issue #2268: Ref-returning overload for parent-chain
     // lookup. Returns the EnvFrameRef of the first frame whose
     // `bindings_symid_` contains `s` (closest frame wins,
