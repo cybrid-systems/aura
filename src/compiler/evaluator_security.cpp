@@ -2299,6 +2299,8 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
     using ::aura::compiler::security::kTenantPathEscapeReason;
     using ::aura::compiler::security::resolve_tenant_host_path;
     using ::aura::compiler::security::tenant_host_path_policy_active;
+    using ::aura::compiler::security::tenant_host_root_for;
+    using ::aura::compiler::security::tenant_path_has_symlink_component;
     using ::aura::compiler::security::TenantHostPathVerdict;
     using ::aura::core::capability::EffectSandboxMode;
     using ::aura::core::capability::g_capability_registry;
@@ -2318,7 +2320,16 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
         mode = 1;
     const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
     const bool active = tenant_host_path_policy_active(mode, mt);
-    const auto result = resolve_tenant_host_path(path, capability_tenant_id_, active);
+    auto result = resolve_tenant_host_path(path, capability_tenant_id_, active);
+    // Issue #4380: O_NOFOLLOW guards only the FINAL path component — refuse
+    // symlink components BELOW the tenant root (fail-closed, no follow) so
+    // a pre-placed `e -> /etc` cannot turn relative `e/passwd` into a host
+    // read/write; the deny joins the same IsolationDeny row below.
+    if (result.verdict == TenantHostPathVerdict::Resolved &&
+        tenant_path_has_symlink_component(result.resolved,
+                                          tenant_host_root_for(capability_tenant_id_))) {
+        result.verdict = TenantHostPathVerdict::Deny;
+    }
     if (result.verdict == TenantHostPathVerdict::Passthrough) {
         out_resolved.assign(path.begin(), path.end());
         return true;

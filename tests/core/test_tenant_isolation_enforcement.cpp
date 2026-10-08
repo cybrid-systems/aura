@@ -5869,6 +5869,178 @@ int main() {
         CHECK(!invent.good(), "4233 AC5: no tests/core/test_issue_4233.cpp (forbidden)");
     }
 
+    // ── Issue #4380: exec-jail embedded absolute paths + symlink components ──
+    {
+        std::println(
+            "\n--- #4380 AC1: quoted / interpreter-arg absolute paths deny at the jail ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4380-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        std::string out;
+        // The issue's exact repro commands: absolute paths hidden inside
+        // quotes / interpreter arguments — the #4233 token-initial scan
+        // let them through; the byte-local mid-token scan denies at the
+        // fence with the shared IsolationDeny row.
+        const std::pair<const char*, const char*> repros[] = {
+            {"python3 -c 'open(\"/etc/passwd\").read()'", "shell"},
+            {"perl -e 'open(F,\"/etc/passwd\");print <F>'", "command-output"},
+            {"python3 -c 'os.symlink(\"/etc\", \"e\")'", "shell"},
+        };
+        for (const auto& [cmd, op] : repros) {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            CHECK(!ev.check_tenant_exec_jail(cmd, out, op),
+                  (std::string("4380 AC1: embedded absolute denies via ") + op).c_str());
+            CHECK(ev.last_mutate_error().find(std::string(op) + ": tenant-path-escape") !=
+                      std::string::npos,
+                  (std::string("4380 AC1: last_mutate_error carries ") + op).c_str());
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 7, "4380 AC1: SE tenant is the caller");
+                CHECK(std::string_view(e.op) == op, "4380 AC1: SE op is the jailed prim");
+            }
+            CHECK(saw, (std::string("4380 AC1: IsolationDeny SE for ") + op).c_str());
+        }
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4380 AC2: scanner — embedded absolute denies, relative allows ---");
+        using aura::compiler::security::tenant_exec_cmd_escapes_root;
+        // Issue repro set: interpreter args with quoted absolute paths.
+        CHECK(tenant_exec_cmd_escapes_root("python3 -c 'open(\"/etc/passwd\").read()'"),
+              "4380 AC2: quoted interpreter absolute scans escape");
+        CHECK(tenant_exec_cmd_escapes_root("perl -e 'open(F,\"/etc/passwd\");print <F>'"),
+              "4380 AC2: perl quoted absolute scans escape");
+        CHECK(tenant_exec_cmd_escapes_root("python3 -c 'os.symlink(\"/etc\", \"e\")'"),
+              "4380 AC2: symlink-creation command scans escape");
+        CHECK(tenant_exec_cmd_escapes_root("convert img.png jpg:/etc/x"),
+              "4380 AC2: ':'-joined absolute scans escape");
+        // Relative-only contract stays: plain relative paths keep working.
+        CHECK(!tenant_exec_cmd_escapes_root("ls src"), "4380 AC2: relative arg stays clean");
+        CHECK(!tenant_exec_cmd_escapes_root("logs/run.txt"),
+              "4380 AC2: relative path stays clean (#4233 pin)");
+        CHECK(!tenant_exec_cmd_escapes_root("./run.sh"), "4380 AC2: dot-relative stays clean");
+        CHECK(!tenant_exec_cmd_escapes_root("sed 's/a/b/' f.txt"),
+              "4380 AC2: sed substitution stays clean");
+        CHECK(!tenant_exec_cmd_escapes_root("echo hi > out.txt"),
+              "4380 AC2: relative redirect stays clean");
+        // Existing #4233 deny families stay denied (no relaxation).
+        CHECK(tenant_exec_cmd_escapes_root("cat /etc/passwd"),
+              "4380 AC2: absolute token still denies");
+        CHECK(tenant_exec_cmd_escapes_root("git --git-dir=/etc/x status"),
+              "4380 AC2: '='-joined absolute still denies");
+    }
+
+    {
+        std::println(
+            "\n--- #4380 AC3: symlink component under tenant root denies the file face ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4380-ac3";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        std::filesystem::create_directories(root_a + "/ok");
+        // Pre-placed symlinks (off-jail provisioning path — the #4380
+        // scanner now denies exec-time creation, so this models the
+        // residual vector): `e -> outside dir`, `lnk -> outside file`.
+        const auto outside = base + "-outside";
+        std::filesystem::create_directories(outside);
+        const auto sentinel = outside + "/secret.txt";
+        {
+            std::ofstream f(sentinel);
+            f << "host-secret";
+        }
+        std::filesystem::create_directory_symlink(outside, root_a + "/e");
+        std::filesystem::create_symlink(sentinel, root_a + "/lnk");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        std::string out;
+        // Relative write into a real dir under the root stays allowed.
+        CHECK(ev.check_tenant_host_path("ok/f.txt", out, "write-file"),
+              "4380 AC3: relative write under own root stays allowed");
+        CHECK(out == root_a + "/ok/f.txt",
+              "4380 AC3: relative write resolves under the tenant root");
+        // Intermediate symlink: every file-face op denies auditable.
+        for (const char* op : {"read-file", "write-file", "directory-list", "file-exists?",
+                               "file-size", "file-delete"}) {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            CHECK(!ev.check_tenant_host_path("e/secret.txt", out, op),
+                  (std::string("4380 AC3: symlink component denies via ") + op).c_str());
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                saw = true;
+            }
+            CHECK(saw, (std::string("4380 AC3: IsolationDeny SE for ") + op).c_str());
+        }
+        // Final-component symlink: stricter than the old silent open-fail —
+        // the fence denies auditable too.
+        const auto se_base_lnk = ring.seq.load(std::memory_order_acquire);
+        CHECK(!ev.check_tenant_host_path("lnk", out, "read-file"),
+              "4380 AC3: final-component symlink denies");
+        CHECK(ring.seq.load(std::memory_order_acquire) > se_base_lnk,
+              "4380 AC3: final symlink deny joins the SE row");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4380 AC4: linter + wiring; scanner SSOT cites ---");
+        const auto hh = read_file("src/compiler/tenant_host_path.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto build = read_file("build.py");
+        const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+        CHECK(hh.find("Issue #4380") != std::string::npos, "4380 AC4: scanner SSOT cites #4380");
+        CHECK(hh.find("tenant_path_has_symlink_component") != std::string::npos,
+              "4380 AC4: symlink-component walk lives in the SSOT");
+        CHECK(sec.find("tenant_path_has_symlink_component") != std::string::npos,
+              "4380 AC4: host-path gate consults the symlink walk");
+        CHECK(build.find("check_tenant_jail_4380") != std::string::npos,
+              "4380 AC4: build.py wires the #4380 linter");
+        CHECK(allow.find("check_tenant_jail_4380.py") != std::string::npos,
+              "4380 AC4: linter on the root allowlist");
+        std::ifstream invent("tests/core/test_issue_4380.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4380.cpp");
+        CHECK(!invent.good(), "4380 AC4: no tests/core/test_issue_4380.cpp (forbidden)");
+    }
+
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
     ac4133_1_target_ta_non_ta_caller_denied();
     ac4133_2_caller_ta_mint_foreign_target_lands();
