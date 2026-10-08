@@ -202,6 +202,87 @@ static void ac4350_capture_snapshot_set() {
     unsetenv("AURA_PIPELINE_STRICT");
 }
 
+// Issue #4372: eval-current installs an IR closure for a workspace lambda.
+// while + set! of a let binding must still be visible on the next iteration.
+static void ac4372_while_set_in_define() {
+    std::println("\n--- #4372: while + set! inside a define ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    const char* sj = R"((define (sj strs sep)
+  (if (null? strs) ""
+      (if (null? (cdr strs)) (car strs)
+          (let ((result (car strs))
+                (rest (cdr strs)))
+            (while (lambda () (pair? rest))
+              (lambda ()
+                (set! result (string-append result sep (car rest)))
+                (set! rest (cdr rest))))
+            result)))))";
+    std::string escaped;
+    escaped.reserve(std::char_traits<char>::length(sj) + 8);
+    for (char c : std::string_view(sj)) {
+        if (c == '\\' || c == '"')
+            escaped += '\\';
+        escaped += c;
+    }
+    CompilerService cs;
+    CHECK(cs.eval(std::format("(set-code \"{}\")", escaped)).has_value(), "4372: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4372: eval-current");
+    eval_int_eq(cs, R"((if (string=? (sj (list "a" "b") ",") "a,b") 1 0))", 1,
+                "4372: sj after eval-current is a,b");
+    CompilerService file_cs;
+    eval_int_eq(file_cs,
+                R"((begin
+  (define (sj strs sep)
+    (if (null? strs) ""
+        (if (null? (cdr strs)) (car strs)
+            (let ((result (car strs))
+                  (rest (cdr strs)))
+              (while (lambda () (pair? rest))
+                (lambda ()
+                  (set! result (string-append result sep (car rest)))
+                  (set! rest (cdr rest))))
+              result))))
+  (if (string=? (sj (list "a" "b") ",") "a,b") 1 0)))",
+                1, "4372: file-mode sj is a,b");
+    eval_int_eq(file_cs,
+                R"((let ((i 0))
+  (while (lambda () (< i 3))
+    (lambda () (set! i (+ i 1))))
+  i))",
+                3, "4372: top-level while is 3");
+    eval_int_eq(file_cs,
+                R"((begin
+  (define (sj xs sep)
+    (if (null? xs) ""
+        (let loop ((xs (cdr xs)) (acc (car xs)) (sep sep))
+          (if (null? xs) acc
+              (loop (cdr xs) (string-append acc sep (car xs)) sep)))))
+  (if (string=? (sj (list "a" "b") ",") "a,b") 1 0)))",
+                1, "4372: named-let join is a,b");
+    CHECK(file_cs.eval("(require \"std/string\" all:)").has_value(), "4372: require std/string");
+    eval_int_eq(file_cs, R"((if (string=? (string-join (list "a" "b") ",") "a,b") 1 0))", 1,
+                "4372: string-join");
+    eval_int_eq(file_cs, R"((if (string=? (car (string-split "a,b" ",")) "a") 1 0))", 1,
+                "4372: string-split head");
+    eval_int_eq(file_cs, R"((if (string=? (car (cdr (string-split "a,b" ","))) "b") 1 0))", 1,
+                "4372: string-split tail");
+    eval_int_eq(file_cs, R"((if (string=? (string-trim "  a  ") "a") 1 0))", 1,
+                "4372: string-trim");
+    eval_int_eq(file_cs, R"((if (string=? (string-replace "ab" "a" "z") "zb") 1 0))", 1,
+                "4372: string-replace");
+    eval_int_eq(file_cs, R"((if (string-contains? "hello" "ell") 1 0))", 1,
+                "4372: string-contains?");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #4372") != std::string::npos, "4372: cite");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -211,6 +292,7 @@ int run_test_while_define_oneshot() {
     ac3_preferred_outer_set();
     ac4_source_gate();
     ac4350_capture_snapshot_set();
+    ac4372_while_set_in_define();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
