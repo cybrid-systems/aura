@@ -237,6 +237,7 @@ check_soft_list_prims_4232.py
 check_serve_setcode_parity_4264.py
 check_tenant_exec_jail_4233.py
 check_tenant_jail_4380.py
+check_git_tenant_jail_4381.py
 check_exec_high_risk_force_4234.py
 check_agent_mint_per_agent_4235.py
 check_join_fail_circuitbreaker_4236.py

@@ -8766,6 +8766,28 @@ def cmd_lint():
             "Issue #4380 tenant jail embedded-path / symlink-component linter failed — run python3 scripts/check_tenant_jail_4380.py"
         )
         return r
+    # Issue #4381 (security): the git-* primitives forked / popen'd / ran
+    # libgit2 against the SHARED PROCESS cwd — the host repo — with no
+    # tenant jail; under Restricted+MT / Strict a second tenant in the
+    # same process read and mutated the host git worktree, and git-stage
+    # passed absolute / ../ path arguments straight to `git add`. Gate
+    # pins: every git-* body consults check_tenant_exec_jail (#4233
+    # fence, no second model) before any repo access, the jailed child
+    # chdir's under the caller's tenant root post-fork (parent cwd
+    # untouched, libgit2 stays Soft/Off-only), git-stage resolves every
+    # path argument through check_tenant_host_path (#3802 face) with
+    # IsolationDeny tenant-path-escape on escape, Soft/Off keeps the
+    # legacy passthrough (popen / fork+execvp / #1161 no-shell fact),
+    # runtime ACs extend the #3802 family host test file, and the
+    # wiring stays on the root allowlist.
+    gitjail4381_script = ROOT / "scripts" / "check_git_tenant_jail_4381.py"
+    if not gitjail4381_script.exists():
+        fail(f"missing {gitjail4381_script}")
+        return 1
+    r = run([sys.executable, str(gitjail4381_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4381 git-* tenant jail linter failed — run python3 scripts/check_git_tenant_jail_4381.py")
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed
