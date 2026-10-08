@@ -10226,6 +10226,50 @@ public:
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return false;
         flat.root = pr.root;
+        // Issue #4372: lambda-form while applies its closures from the
+        // primitive. Those ids are not this define's IR closure, so the
+        // bridge never observes set! of the let cell and the call returns
+        // the value from before the loop. Leave the tree-walker closure
+        // that eval-current just bound.
+        struct LambdaWhile {
+            const aura::ast::FlatAST& f;
+            const aura::ast::StringPool& p;
+            bool hit = false;
+            void walk(aura::ast::NodeId id) {
+                if (hit || id == aura::ast::NULL_NODE || id >= f.size() || f.is_free_slot(id))
+                    return;
+                auto nv = f.get(id);
+                if (nv.tag == aura::ast::NodeTag::Quote)
+                    return;
+                if (nv.tag == aura::ast::NodeTag::Call && nv.children.size() >= 3) {
+                    auto callee_id = nv.child(0);
+                    if (callee_id < f.size()) {
+                        auto cal = f.get(callee_id);
+                        if (cal.tag == aura::ast::NodeTag::Variable &&
+                            p.resolve(cal.sym_id) == "while") {
+                            const bool arm1 = nv.child(1) < f.size() &&
+                                              f.get(nv.child(1)).tag == aura::ast::NodeTag::Lambda;
+                            const bool arm2 = nv.child(2) < f.size() &&
+                                              f.get(nv.child(2)).tag == aura::ast::NodeTag::Lambda;
+                            if (arm1 || arm2)
+                                hit = true;
+                        }
+                    }
+                }
+                if (hit)
+                    return;
+                for (auto c : nv.children)
+                    walk(c);
+            }
+        } lambda_while{flat, pool};
+        lambda_while.walk(pr.root);
+        if (lambda_while.hit)
+            return false;
+        // Value-cell rows point at the tree-walker closure from eval_flat.
+        // Drop this name before lowering so a later caller copies the
+        // specialised body instead of TopCellLoad of that closure.
+        // Issue #4372 keeps the row when the body stays on the walker.
+        ir_value_cell_bindings_.erase(name);
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
@@ -10309,11 +10353,10 @@ public:
                 names.push_back(c);
             }
         }
-        // Value-cell rows point at the tree-walker closure from eval_flat.
-        // Leaving them in front of ir_cache_ makes the caller TopCellLoad
-        // that closure instead of copying the specialised body.
-        for (const auto& n : names)
-            ir_value_cell_bindings_.erase(n);
+        // Value-cell erase happens inside specialize_one_lambda_via_ir,
+        // after the Issue #4372 while check. A define that stays on the
+        // tree walker keeps its cell so a specialised caller TopCellLoads
+        // that closure instead of inlining a loop that cannot see set!.
         auto retw = [&](const std::string& name) {
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
                 if (ws_flat->is_free_slot(id))
