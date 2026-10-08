@@ -1543,8 +1543,10 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         const auto addp = mut.find("auto add_mutate = ");
         // #4332 wave: the wrapper-level lazy COW before fn(a) grew the lambda —
         // the post-fn(a) anchors (force_release, forced unlock/fail-closed
-        // counters) now sit past the old 17000 edge. Grow with the lambda.
-        const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 21000);
+        // counters) now sit past the old 17000 edge. #4385's session-mid
+        // note pushed force_release to ~21500. Same 25000 budget as
+        // check_hold_budget_add_mutate_inbody_poll_3480.py.
+        const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 25000);
         const auto fnp = aw.find("auto result = fn(a);");
         const auto frp = aw.find("force_release_hold_budget_inbody");
         CHECK(fnp != std::string::npos && frp != std::string::npos && frp > fnp,
@@ -1570,8 +1572,9 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         const auto add = mut.find("auto add_mutate = ");
         CHECK(add != std::string::npos, "3480 AC2: add_mutate present");
-        // #3480 AC2 window grown for #4332 lazy-COW (#4332 pushed it past 17000)
-        const auto awin = mut.substr(add, 21000);
+        // #3480 AC2 window grown for #4332 lazy-COW and the #4385 note
+        // (force_release now sits past 21000; checker uses 25000).
+        const auto awin = mut.substr(add, 25000);
         CHECK(awin.find("aura_fiber_request_hold_budget_cancel") == std::string::npos,
               "3480 AC2: wrapper does not unlock from thief thread");
         CHECK(awin.find("force_release_hold_budget_inbody") != std::string::npos,
@@ -2132,7 +2135,9 @@ int run_test_hold_budget_prebody_synthetic_yield_4257() {
           "4257: stamp in mutation_hold_budget.h");
     CHECK(mh.find("4257") != std::string::npos, "4257: issue cite");
     const auto addp = mut.find("auto add_mutate = ");
-    const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 20000);
+    // #4385's session-mid note pushed fn(a) to ~20600 and force_release
+    // to ~21500, past this 20000 edge. Same 25000 budget as #3480.
+    const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 25000);
     const auto syn = aw.find("inject_synthetic_mutation_boundary_yield");
     const auto fnp = aw.find("auto result = fn(a);");
     CHECK(syn != std::string::npos && fnp != std::string::npos && syn < fnp,
