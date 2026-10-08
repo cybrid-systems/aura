@@ -1322,6 +1322,180 @@ static void ac4106_5_no_docs_linter_wired() {
     aura::core::resource_quota::reset_process_resource_quota_for_test();
 }
 
+// Issue #4391: production Restricted + tenant 0 used to skip the bare-int
+// reject inside resolve_query_node_arg and stamp the current occupant.
+// After the slot is recycled, query:node / query:children of the old int
+// must be stale-ref, not the new tag. A schema-2 match whose generation
+// still matches still resolves. Soft still stamps. Own-workspace mutate
+// by name stays allowed.
+static void ac4391_restricted_bare_int_is_stale_ref() {
+    std::println("\n=== #4391: Restricted tenant 0 bare NodeId is stale-ref ===");
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto saved_mode = ev.effect_sandbox_mode();
+    CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "4391: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4391: eval");
+    ev.set_capability_tenant_id(0);
+    ev.set_effect_sandbox_mode(1);
+    CHECK(ev.kernel_self_single_tenant(), "4391: face is Restricted single-tenant");
+    CHECK(aura::compiler::typed_audit::production_defaults_active(), "4391: production defaults");
+
+    auto* flat = ev.workspace_flat();
+    auto* pool = ev.workspace_pool();
+    CHECK(flat != nullptr && pool != nullptr, "4391: workspace");
+    NodeId parent = aura::ast::NULL_NODE;
+    std::uint32_t child_idx = 0;
+    NodeId slot = aura::ast::NULL_NODE;
+    if (flat && pool) {
+        if (auto def = flat->find_define_by_name(*pool, "a")) {
+            auto dv = flat->get(*def);
+            for (std::uint32_t i = 0; i < dv.children.size(); ++i) {
+                const auto c = dv.child(i);
+                if (c == aura::ast::NULL_NODE || c >= flat->size() || flat->is_free_slot(c))
+                    continue;
+                auto cv = flat->get(c);
+                if (cv.tag == NodeTag::LiteralInt && cv.int_value == 1) {
+                    parent = *def;
+                    child_idx = i;
+                    slot = c;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(slot != aura::ast::NULL_NODE, "4391: literal of a is a live NodeId");
+    // Capture a live schema-2 match before the generation bump. query :find
+    // auto-upgrades under production; query :node of that hash must resolve.
+    auto fresh = cs.eval("(query :node (query :find \"b\"))");
+    if (fresh && is_pair(*fresh)) {
+        const auto car = ev.pairs()[as_pair_idx(*fresh)].car;
+        CHECK(is_int(car), "4391: schema-2 match whose generation matches still resolves");
+        CHECK(kind4106(cs, *fresh) != "stale-ref", "4391: fresh schema-2 is not stale-ref");
+    } else {
+        CHECK(false, "4391: schema-2 match whose generation matches still resolves");
+    }
+    if (flat && slot != aura::ast::NULL_NODE && parent != aura::ast::NULL_NODE) {
+        flat->set_child(parent, child_idx, aura::ast::NULL_NODE);
+        CHECK(flat->recycle_dead_nodes() >= 1, "4391: recycle frees the detached literal");
+        CHECK(flat->is_free_slot(slot), "4391: old slot is free");
+        NodeId reused = aura::ast::NULL_NODE;
+        for (int i = 0; i < 64 && flat->is_free_slot(slot); ++i)
+            reused = flat->add_node(NodeTag::LiteralFloat);
+        CHECK(reused == slot, "4391: add_node reuses the old slot");
+        CHECK(flat->get(slot).tag == NodeTag::LiteralFloat, "4391: occupant tag changed");
+    }
+
+    auto node_q = cs.eval(std::format("(query :node {})", slot));
+    CHECK(node_q.has_value(), "4391: query :node binds");
+    if (node_q)
+        CHECK(kind4106(cs, *node_q) == "stale-ref", "4391: query :node old int is stale-ref");
+    auto kids_q = cs.eval(std::format("(query :children {})", slot));
+    CHECK(kids_q.has_value(), "4391: query :children binds");
+    if (kids_q)
+        CHECK(kind4106(cs, *kids_q) == "stale-ref", "4391: query :children old int is stale-ref");
+    if (node_q && is_pair(*node_q)) {
+        // make_merr is (kind . (message . void)).
+        auto& prs = ev.pairs();
+        const auto pidx = as_pair_idx(*node_q);
+        std::string msg;
+        if (pidx < prs.size() && is_pair(prs[pidx].cdr)) {
+            const auto inner = as_pair_idx(prs[pidx].cdr);
+            if (inner < prs.size() && is_string(prs[inner].car)) {
+                const auto& heap = ev.string_heap();
+                const auto midx = as_string_idx(prs[inner].car);
+                if (midx < heap.size())
+                    msg = heap[midx];
+            }
+        }
+        CHECK(msg.find("raw node-id rejected under production") != std::string::npos,
+              std::format("4391: message is the #3395 raw-id reject (got {})", msg));
+    } else {
+        CHECK(false, "4391: stale-ref carries the raw-id message");
+    }
+
+    apply_dev_audit_defaults();
+    CompilerService soft;
+    soft.evaluator().set_effect_sandbox_mode(0);
+    CHECK(soft.eval("(set-code \"(define a 1)\")").has_value(), "4391: soft set-code");
+    CHECK(soft.eval("(eval-current)").has_value(), "4391: soft eval");
+    NodeId soft_slot = aura::ast::NULL_NODE;
+    if (auto* sflat = soft.evaluator().workspace_flat()) {
+        if (auto* spool = soft.evaluator().workspace_pool()) {
+            if (auto def = sflat->find_define_by_name(*spool, "a")) {
+                auto dv = sflat->get(*def);
+                for (std::uint32_t i = 0; i < dv.children.size(); ++i) {
+                    const auto c = dv.child(i);
+                    if (c == aura::ast::NULL_NODE || c >= sflat->size() || sflat->is_free_slot(c))
+                        continue;
+                    auto cv = sflat->get(c);
+                    if (cv.tag == NodeTag::LiteralInt && cv.int_value == 1) {
+                        soft_slot = c;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(soft_slot != aura::ast::NULL_NODE, "4391: soft literal");
+    auto soft_q = soft.eval(std::format("(query :node {})", soft_slot));
+    CHECK(soft_q && is_pair(*soft_q), "4391: soft bare int still returns a node");
+    if (soft_q)
+        CHECK(kind4106(soft, *soft_q) != "stale-ref", "4391: soft bare int is not stale-ref");
+    if (soft_q && is_pair(*soft_q)) {
+        const auto car = soft.evaluator().pairs()[as_pair_idx(*soft_q)].car;
+        CHECK(is_int(car) && as_int(car) == static_cast<std::int64_t>(NodeTag::LiteralInt),
+              "4391: soft stamps the literal tag");
+    }
+
+    auto read_src = [](const char* rel) {
+        std::ifstream f(rel);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    const auto src = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto arm = src.find("} else if (is_int(arg))");
+    const auto stamp =
+        arm == std::string::npos ? std::string::npos : src.find("make_stamped_ref", arm);
+    CHECK(arm != std::string::npos && stamp != std::string::npos, "4391: bare-int arm present");
+    if (arm != std::string::npos && stamp != std::string::npos) {
+        const auto body = src.substr(arm, stamp - arm);
+        CHECK(body.find("Issue #4391") != std::string::npos, "4391: cite on the bare-int arm");
+        CHECK(body.find("production_defaults_active()") != std::string::npos,
+              "4391: production gate remains");
+        CHECK(body.find("kernel_self_single_tenant") == std::string::npos,
+              "4391: single-tenant does not skip the reject");
+        CHECK(body.find("raw node-id rejected under production") != std::string::npos,
+              "4391: reject string unchanged");
+    }
+    const auto sec = read_src("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("kernel_self_workspace_mutate") != std::string::npos,
+          "4391: own-workspace mutate exemption stays");
+    {
+        std::ifstream f("docs/design/4391-restricted-bare-nodeid.md");
+        CHECK(!f.good(), "4391: no docs/design/4391-*");
+    }
+    {
+        std::ifstream f("tests/compiler/test_issue_4391.cpp");
+        CHECK(!f.good(), "4391: no test_issue_4391.cpp");
+    }
+    ev.set_effect_sandbox_mode(saved_mode);
+    apply_dev_audit_defaults();
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
 // ── #4165 ACs — same-tenant multi-Agent Agent-scoped fiber isolation ──
 // Production Agent entry that runs fiberless stamped fiber_id 0 on every
 // export, which permanently skipped the InvalidFiber freshness check (the
@@ -1700,6 +1874,7 @@ int main() {
     ac4106_3_recycled_slot_never_rebound();
     ac4106_4_soft_stable_ref_still_mints();
     ac4106_5_no_docs_linter_wired();
+    ac4391_restricted_bare_int_is_stale_ref();
     // #4165 ACs (5) — same-tenant multi-Agent Agent-scoped fiber isolation.
     ac4165_1_prod_fiberless_entry_stamps_agent_band();
     ac4165_2_same_agent_requery_fresh();

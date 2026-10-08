@@ -361,9 +361,13 @@ int run_test_mutate_capability_force() {
         cs.evaluator().set_effect_sandbox_mode(1);
         auto found = cs.eval("(query :find \"live\")");
         CHECK(found && is_hash(*found), "4322 prod find is a hash");
-        auto lit = cs.eval("(car (query :children (car (query :find \"live\"))))");
+        // #4391: query of a bare NodeId is stale-ref on this face. The
+        // locator is car of children of the find hash, not children of
+        // the unwrapped int. The batch still passes that int to the
+        // lockless replace-value helper.
+        auto lit = cs.eval("(car (query :children (query :find \"live\")))");
         CHECK(lit && is_int(*lit), "4322 prod locator is a node id");
-        auto batch = cs.eval("(let ((lit (car (query :children (car (query :find \"live\"))))))"
+        auto batch = cs.eval("(let ((lit (car (query :children (query :find \"live\")))))"
                              "  (mutate:atomic-batch"
                              "    (list (list \"mutate:replace-value\" lit \"d\" \"repro\"))"
                              "    \"repro\"))");
