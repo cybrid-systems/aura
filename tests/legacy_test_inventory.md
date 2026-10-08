@@ -1500,7 +1500,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (106)
 
-- `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
+- `tests/orch/test_agent_apply_mutex.cpp` (—) [large, domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
 - `tests/orch/test_agent_max_no_yield.cpp` (—) [domain_suite, theme_orch] — Issue #2585 — production default + opt-out (AURA_AGENT_MAX_NO_YIELD_MS=0).
 - `tests/orch/test_agent_scope.cpp` (—) [large, domain_suite, theme_orch] — test_agent_scope.cpp — Issue #2083 AgentScope + #2161 watch_all
