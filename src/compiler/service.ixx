@@ -58,8 +58,9 @@ module;
 #include "spec_jit_controller.h"
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "hot_update_registry.hh" // #2127: deopt-window signals for adaptive thr
-#include "pipeline_policy.hh"     // Issue #2213: tree-walker fallback production gate
+#include "hot_update_registry.hh"       // #2127: deopt-window signals for adaptive thr
+#include "pipeline_policy.hh"           // Issue #2213: tree-walker fallback production gate
+#include "ir_cache_boundary_restamp.hh" // Issue #4377: boundary-exit defuse restamp
 
 export module aura.compiler.service;
 import std;
@@ -1294,6 +1295,8 @@ public:
             this->populate_dep_graph_from_workspace();
             this->populate_ir_cache_v2_from_workspace();
         });
+        // Issue #4377: boundary exit acknowledges defuse on in-boundary stores.
+        push_ir_cache_boundary_restamp(&CompilerService::restamp_boundary_stored_trampoline, this);
         // Issue #2579: after tree-walker eval-current, record value-define
         // cell ids for IR Variable lowering without re-binding env.
         evaluator_.set_sync_workspace_value_cells_fn(
@@ -5804,7 +5807,9 @@ public:
         if (aura::compiler::dirty::residual_castop_persist_active())
             aura::compiler::dirty::bump_residual_castop_persist_content_epoch();
         // Issue #2033 / #2111 / #2183: unified restamp after successful store.
-        restamp_cache_entry_live_(entry, sampled_mut_epoch);
+        // Issue #4377: name is recorded when this store sits inside a
+        // mutation boundary so the exit defuse bump can be acknowledged.
+        restamp_cache_entry_live_(entry, sampled_mut_epoch, name);
         ack_peer_ir_stale_on_restamp_(entry, name);
         // Issue #3136: success-path bitmap coherence — stamp residual force
         // region for the just-restamped define so residual_force_mask()
@@ -6149,7 +6154,8 @@ public:
     // soa keep their live reads (own invalidation axes). Cascade-reemit
     // restamps re-assert the entry's already-stamped mutation_count
     // (re-assert, never advance) so a concurrent bump survives them too.
-    void restamp_cache_entry_live_(IRCacheEntry& entry, std::uint64_t sampled_mut) {
+    void restamp_cache_entry_live_(IRCacheEntry& entry, std::uint64_t sampled_mut,
+                                   std::string_view stored_name = {}) {
         const auto mut = sampled_mut;
         const auto bridge = bridge_epoch();
         const auto defuse = evaluator_.defuse_version();
@@ -6161,6 +6167,35 @@ public:
             abort_force_generation_.load(std::memory_order_acquire);
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #4377: the boundary exit bumps defuse after this stamp.
+        if (!stored_name.empty() && evaluator_.any_active_mutation_boundary())
+            note_ir_cache_stored_inside_boundary(stored_name);
+    }
+
+    // Issue #4377: outermost boundary success. The exit bump is the legacy
+    // second tick of the same boundary, not a later edit of the stored IR.
+    // Write that defuse. Leave the sampled mutation epoch (#4341), bridge,
+    // and soa as the store wrote them.
+    void restamp_defines_after_boundary_exit_() noexcept {
+        const auto live_defuse = evaluator_.defuse_version();
+        if (live_defuse == 0)
+            return;
+        for (const auto& note : ir_cache_boundary_stored_names()) {
+            auto it = ir_cache_v2_.find(note);
+            if (it == ir_cache_v2_.end())
+                continue;
+            auto& entry = it->second;
+            if (entry.dirty || entry.abort_map_invalid || !entry.content_stored_this_epoch)
+                continue;
+            if (entry.version_stamp_.defuse_version == 0 ||
+                entry.version_stamp_.defuse_version == live_defuse)
+                continue;
+            entry.version_stamp_.defuse_version = live_defuse;
+        }
+    }
+
+    static void restamp_boundary_stored_trampoline(void* ctx) noexcept {
+        static_cast<CompilerService*>(ctx)->restamp_defines_after_boundary_exit_();
     }
 
     // Issue #3481: ack peer IR stale + abort-force gen without writing
@@ -6181,7 +6216,7 @@ public:
         ack_cache_entry_fences_live_(entry, name);
         if (entry.dirty || entry.abort_map_invalid || !content_stored_this_epoch)
             return false;
-        restamp_cache_entry_live_(entry, sampled_mut);
+        restamp_cache_entry_live_(entry, sampled_mut, name);
         return true;
     }
 
@@ -7526,7 +7561,7 @@ public:
                         } else {
                             // Issue #2183 AC1: restamp after successful per-fn partial.
                             // Issue #4341: sampled epoch, not store-time live.
-                            restamp_cache_entry_live_(it->second, ir_sample_epoch);
+                            restamp_cache_entry_live_(it->second, ir_sample_epoch, name);
                             ack_peer_ir_stale_on_restamp_(it->second, name);
                             // Issue #3136: success-path bitmap coherence (see 4968).
                             if (aura_production_defaults_active_probe() != 0) {
@@ -9407,7 +9442,7 @@ public:
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return false;
-        restamp_cache_entry_live_(it->second, aura::core::current_mutation_epoch());
+        restamp_cache_entry_live_(it->second, aura::core::current_mutation_epoch(), name);
         ack_peer_ir_stale_on_restamp_(it->second, name);
         // Issue #3136: success-path bitmap coherence (see store_ir_cache_v2).
         if (aura_production_defaults_active_probe() != 0) {
@@ -14386,6 +14421,8 @@ public:
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
     ~CompilerService() {
+        // Issue #4377: drop the boundary-exit hook before teardown.
+        pop_ir_cache_boundary_restamp(this);
         // Issue #3394: drain outstanding thread-backend fiber workers
         // BEFORE any service teardown touches the workspace/AST —
         // release_children_for_teardown() below frees the flat children
