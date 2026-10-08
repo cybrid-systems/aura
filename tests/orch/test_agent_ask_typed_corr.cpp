@@ -741,6 +741,209 @@ int run_test_agent_ask_typed_corr() {
               "4049 AC6: no docs/design file");
     }
 
+    // ── Issue #4384: ask reply mailbox must not charge the process bucket ──
+    // Production reply storm on a named replier (t:1) bumps that gauge
+    // once. mailbox_bp_recent_total and tenant t:2 stay put. Explicit
+    // "-" still shares the process bucket. An unset mailbox under
+    // production does not note that bucket (send_backpressure_total
+    // still moves). Soft empty scope still notes it. No new counter,
+    // query key, or docs/design.
+    {
+        using aura::orch::load_mailbox_bp_recent;
+
+        std::println("\n=== Issue #4384: reply mailbox scope vs process bucket ===");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+
+        std::println("\n--- #4384: agent_ask stamps the reply mailbox ---");
+        AgentHandle ask_target4384{};
+        ask_target4384.ok = true;
+        ask_target4384.id = 43840011;
+        ask_target4384.bp_scope_id = "t:1";
+        ask_target4384.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        std::atomic<bool> stop4384{false};
+        std::atomic<bool> stamped4384{false};
+        std::thread watcher4384([&] {
+            while (!stop4384.load(std::memory_order_relaxed) &&
+                   !stamped4384.load(std::memory_order_relaxed)) {
+                {
+                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    for (const auto& [id, route] : aura::orch::g_pending_asks) {
+                        (void)id;
+                        if (route.target_fiber == ask_target4384.id && route.mailbox &&
+                            route.mailbox->bp_scope_id() == "t:1") {
+                            stamped4384.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                    }
+                }
+                if (!stamped4384.load(std::memory_order_relaxed))
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+        auto asked4384 = agent_ask(ask_target4384, "scope-stamp", /*timeout_ms=*/200);
+        stop4384.store(true, std::memory_order_relaxed);
+        watcher4384.join();
+        CHECK(std::string_view(asked4384.status) == "timeout",
+              std::format("4384: ask waited on the stamped reply mailbox (status={})",
+                          asked4384.status));
+        CHECK(ask_target4384.mailbox->size() == 1, "4384: outbound ask enqueued (no send BP)");
+        CHECK(stamped4384.load(std::memory_order_relaxed),
+              "4384: pending reply mailbox carries the ask target scope t:1");
+        CHECK(load_mailbox_bp_recent("t:1") == 0, "4384: stamp alone does not note BP");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) == 0,
+              "4384: ask wait left the process bucket quiet");
+
+        std::println("\n--- #4384: production reply storm charges t:1 once ---");
+        const auto scope_before4384 = load_mailbox_bp_recent("t:1");
+        const auto other_before4384 = load_mailbox_bp_recent("t:2");
+        const auto proc_before4384 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto clock_before4384 =
+            aura::orch::g_mailbox_bp_last_event_us.load(std::memory_order_relaxed);
+        AgentHandle from4384{};
+        from4384.ok = true;
+        from4384.id = 4384101;
+        from4384.name = "reply4384";
+        from4384.bp_scope_id = "t:1";
+        auto storm4384 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        MailMessage fill4384;
+        fill4384.payload = "fill";
+        CHECK(storm4384->push(std::move(fill4384)) == PushStatus::Ok, "4384: fill reply mb");
+        CHECK(storm4384->bp_scope_id().empty(), "4384: reply mailbox born without a scope");
+        auto bp4384 = agent_reply(4384001, "storm", storm4384.get(), &from4384);
+        CHECK(!bp4384.ok && bp4384.status == "backpressure", "4384: reply backpressure");
+        CHECK(storm4384->bp_scope_id() == "t:1", "4384: reply copied the replier scope");
+        CHECK(load_mailbox_bp_recent("t:1") == scope_before4384 + 1,
+              "4384: named gauge bumped once (not twice)");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc_before4384,
+              "4384: reply storm left the process bucket unchanged");
+        CHECK(load_mailbox_bp_recent("t:2") == other_before4384,
+              "4384: tenant t:2 admit gauge did not move");
+        CHECK(aura::orch::g_mailbox_bp_last_event_us.load(std::memory_order_relaxed) ==
+                  clock_before4384,
+              "4384: named reply did not advance the process quiet clock");
+
+        std::println("\n--- #4384: explicit \"-\" still shares the process bucket ---");
+        const auto proc_dash_before4384 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto t1_before_dash4384 = load_mailbox_bp_recent("t:1");
+        AgentHandle dash4384{};
+        dash4384.ok = true;
+        dash4384.id = 4384102;
+        dash4384.bp_scope_id = "-";
+        auto dash_mb4384 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        MailMessage fill_dash4384;
+        fill_dash4384.payload = "fill";
+        CHECK(dash_mb4384->push(std::move(fill_dash4384)) == PushStatus::Ok, "4384: fill dash mb");
+        auto bp_dash4384 = agent_reply(4384002, "dash", dash_mb4384.get(), &dash4384);
+        CHECK(!bp_dash4384.ok && bp_dash4384.status == "backpressure", "4384: dash reply BP");
+        CHECK(dash_mb4384->bp_scope_id() == "-", "4384: explicit \"-\" copied onto the mailbox");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc_dash_before4384 + 1,
+              "4384: explicit \"-\" charges the process bucket once");
+        CHECK(aura::orch::lookup_scope_bp_gauge("-") == nullptr,
+              "4384: \"-\" is not a named gauge key");
+        CHECK(load_mailbox_bp_recent("t:1") == t1_before_dash4384,
+              "4384: dash reply did not charge t:1");
+
+        std::println("\n--- #4384: production unset mailbox refuses the process bucket ---");
+        const auto proc_empty_before4384 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto send_bp_before4384 =
+            g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
+        auto empty4384 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        MailMessage fill_empty4384;
+        fill_empty4384.payload = "fill";
+        CHECK(empty4384->push(std::move(fill_empty4384)) == PushStatus::Ok, "4384: fill empty mb");
+        MailMessage extra4384;
+        extra4384.payload = "bp";
+        CHECK(empty4384->push(std::move(extra4384)) == PushStatus::Backpressure,
+              "4384: unset mailbox high-water BP");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc_empty_before4384,
+              "4384: production unset push did not charge the process bucket");
+        CHECK(g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed) >
+                  send_bp_before4384,
+              "4384: reject counter still moves when the process note is suppressed");
+
+        const auto ovf_before4384 =
+            aura::orch::g_scope_bp_overflow.recent.load(std::memory_order_relaxed);
+        const auto proc_nh_before4384 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto nh4384 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        MailMessage fill_nh4384;
+        fill_nh4384.payload = "fill";
+        CHECK(nh4384->push(std::move(fill_nh4384)) == PushStatus::Ok, "4384: fill no-handle mb");
+        auto bp_nh4384 = agent_reply(4384003, "nh", nh4384.get(), /*from=*/nullptr);
+        CHECK(!bp_nh4384.ok && bp_nh4384.status == "backpressure", "4384: no-handle reply BP");
+        CHECK(aura::orch::g_scope_bp_overflow.recent.load(std::memory_order_relaxed) >
+                  ovf_before4384,
+              "4384: production missing handle lands on the overflow gauge");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc_nh_before4384,
+              "4384: missing-handle reply left the process bucket clean");
+
+        std::println("\n--- #4384: Soft empty mailbox still charges the process bucket ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        const auto proc_soft_before4384 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto soft4384 = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        MailMessage fill_soft4384;
+        fill_soft4384.payload = "fill";
+        CHECK(soft4384->push(std::move(fill_soft4384)) == PushStatus::Ok, "4384: fill soft mb");
+        MailMessage extra_soft4384;
+        extra_soft4384.payload = "bp";
+        CHECK(soft4384->push(std::move(extra_soft4384)) == PushStatus::Backpressure,
+              "4384: soft empty high-water BP");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc_soft_before4384 + 1,
+              "4384: Soft empty scope charges the process bucket");
+
+        std::println("\n--- #4384: source-cite ---");
+        const auto spawn_src4384 = read_file("src/orch/agent_spawn.h");
+        const auto mb_src4384 = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto hook_src4384 = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto obs_src4384 = read_file("src/compiler/evaluator_primitives_observability.cpp");
+        CHECK(spawn_src4384.find("Issue #4384") != std::string::npos, "4384: ask/reply cite");
+        CHECK(spawn_src4384.find("reply_mb->set_bp_scope_id(target.bp_scope_id)") !=
+                  std::string::npos,
+              "4384: agent_ask stamps the reply mailbox");
+        CHECK(spawn_src4384.find("note_mailbox_bp_recent_event(from->bp_scope_id, from->id)") !=
+                  std::string::npos,
+              "4384: reply scope note kept");
+        CHECK(spawn_src4384.find("note_mailbox_bp_recent_event(h.bp_scope_id,") !=
+                  std::string::npos,
+              "4384: agent_send scope note kept");
+        const auto stats_at4384 = spawn_src4384.find("struct OrchModuleStats");
+        const auto stats_end4384 = spawn_src4384.find("\n};", stats_at4384);
+        CHECK(stats_at4384 != std::string::npos && stats_end4384 != std::string::npos,
+              "4384: OrchModuleStats located");
+        if (stats_at4384 != std::string::npos && stats_end4384 != std::string::npos) {
+            const auto stats4384 = spawn_src4384.substr(stats_at4384, stats_end4384 - stats_at4384);
+            CHECK(stats4384.find("4384") == std::string::npos,
+                  "4384: no new OrchModuleStats counter");
+        }
+        CHECK(mb_src4384.find("Issue #4384") != std::string::npos,
+              "4384: mailbox fail-closed cite");
+        CHECK(hook_src4384.find("g_mf_mailbox_bp_suppress_process_bucket") != std::string::npos,
+              "4384: hook skips the process note when suppressed");
+        CHECK(obs_src4384.find("query:orch-module-stats") != std::string::npos,
+              "4384: query key name unchanged");
+        CHECK(obs_src4384.find("4384") == std::string::npos, "4384: no new query key");
+        CHECK(spawn_src4384.find("class AgentRegistry") == std::string::npos,
+              "4384: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_4384.cpp").empty(), "4384: no standalone test file");
+        CHECK(read_file("docs/design/4384-reply-mailbox-bp.md").empty(),
+              "4384: no docs/design file");
+
+        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
     // ── Issue #4060: non-scalar send/reply is unsupported-payload, no push ──
     // Both faces refuse. This member starts on dev defaults (Soft); the
     // string/int/bool branch is still first and has no production check.
