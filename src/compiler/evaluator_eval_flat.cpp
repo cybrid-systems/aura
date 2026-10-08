@@ -6514,6 +6514,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                         return make_void();
                     } else {
+                        // Issue #4359: (let () body) carries no binding. The
+                        // body runs in this env; a define there is not a let
+                        // variable.
+                        if (v.sym_id == aura::ast::INVALID_SYM) {
+                            if (body_id != aura::ast::NULL_NODE) {
+                                current_id = body_id;
+                                continue;
+                            }
+                            return make_void();
+                        }
                         // For let, bind directly to current eval_env (like define) to avoid
                         // creating a stack-local child env whose parent_ pointer becomes
                         // dangling when captured by a closure (bug: closure capture copies

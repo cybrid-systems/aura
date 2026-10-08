@@ -1490,6 +1490,9 @@ static std::uint32_t lower_flat_expr(
                 state.scopes.pop_back();
                 return body_slot;
             } else {
+                // Issue #4359: (let () body) has no binding.
+                if (v.sym_id == INVALID_SYM)
+                    return lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
                 // let: use Cell binding (like evaluator fix 3392d77)
                 // so that set! can find the mutable Cell inside closures
                 auto ci = state.alloc_local();

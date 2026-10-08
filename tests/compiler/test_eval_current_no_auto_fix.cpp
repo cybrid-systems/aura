@@ -414,8 +414,14 @@ static void ac4373_define_of_eval_binds() {
           "4373: returned closure still sees its internal define");
     auto ge = cs.eval("(>= 1 0)");
     CHECK(ge && is_bool(*ge) && as_bool(*ge), "4373: >= still bound after eval define");
+    auto persisted = cs.eval("(begin"
+                             " (eval \"(define dbl (lambda (x) (* x 2)))\")"
+                             " (if (and (= (dbl 4) 8) (= (eval \"(dbl 4)\") 8)) 1 0))");
+    CHECK(persisted && is_int(*persisted) && as_int(*persisted) == 1,
+          "4359: eval of a top-level define stays callable");
     const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
     CHECK(ev.find("Issue #4373") != std::string::npos, "4373: cites Issue #4373");
+    CHECK(ev.find("Issue #4359") != std::string::npos, "4359: cites Issue #4359");
 }
 
 static void ac4374_eval_let_keeps_primitives() {
