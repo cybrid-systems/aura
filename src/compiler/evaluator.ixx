@@ -7611,6 +7611,12 @@ public:
     // tenant root for the post-fork child chdir (relative-only contract).
     [[nodiscard]] bool check_tenant_exec_jail(std::string_view cmd, std::string& out_jail_root,
                                               std::string_view op = "shell") noexcept;
+    // Issue #4382: http-* scheme jail for http-get / http-post — mirrors
+    // check_tenant_exec_jail under the same #3802 policy predicate. Active
+    // + non-http(s) scheme → IsolationDeny SE (reason tenant-path-escape,
+    // kEffectNetwork face), zero perform; Soft/Off / single-tenant
+    // Restricted passthrough.
+    [[nodiscard]] bool check_tenant_http_scheme(std::string_view url, std::string_view op) noexcept;
     // Stamp FlatAST::StableNodeRef.tenant_id from current principal.
     // Issue #1566 / #2056: stamp tenant (+ fiber) on StableNodeRef.
     void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;

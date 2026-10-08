@@ -2419,6 +2419,55 @@ bool Evaluator::check_tenant_exec_jail(std::string_view cmd, std::string& out_ja
     return true;
 }
 
+// Issue #4382: http-* scheme jail for http-get / http-post — mirrors
+// check_tenant_exec_jail under the same #3802 policy predicate (no
+// second capability model). Soft/Off / single-tenant Restricted
+// passthrough (AC2 parity). Active + non-http(s) scheme (file://,
+// ftp://, …) → IsolationDeny SE (reason tenant-path-escape, kEffectNetwork
+// face, Typed correlate), zero perform / zero exec. Redirects onto
+// refused schemes are additionally blocked inside libcurl
+// (CURLOPT_REDIR_PROTOCOLS) and the curl CLI (--proto-redir) — this gate
+// denies the entry before any perform.
+bool Evaluator::check_tenant_http_scheme(std::string_view url, std::string_view op) noexcept {
+    using ::aura::compiler::security::kEffectNetwork;
+    using ::aura::compiler::security::kTenantPathEscapeReason;
+    using ::aura::compiler::security::tenant_host_path_policy_active;
+    using ::aura::compiler::security::tenant_http_url_scheme_allowed;
+    using ::aura::core::capability::EffectSandboxMode;
+    using ::aura::core::capability::g_capability_registry;
+    using ::aura::core::provenance::hard_capture_tenant_active;
+    using ::aura::core::provenance::multi_tenant_env_active;
+    using ::aura::core::sandbox::is_strict;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+
+    std::uint8_t mode = effect_sandbox_mode();
+    if (mode != 2 && is_strict())
+        mode = 2;
+    if (mode != 2 && g_capability_registry().sandbox_mode == EffectSandboxMode::Strict)
+        mode = 2;
+    if (mode == 0 && g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted)
+        mode = 1;
+    const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
+    if (!tenant_host_path_policy_active(mode, mt))
+        return true; // Soft/Off / single-tenant Restricted — scheme passthrough.
+    if (tenant_http_url_scheme_allowed(url))
+        return true;
+    // Deny — auditable IsolationDeny SE, zero perform / zero exec. The
+    // Typed correlate row stamps the caller tenant (#3994 shape).
+    bump_capability_denial();
+    last_mutate_error_ = std::string(op) + ": " + kTenantPathEscapeReason;
+    const auto epoch = ::aura::core::current_mutation_epoch();
+    const auto mid = production_deny_se_mid();
+    const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+    emit_security_event_durable(SecurityEventKind::IsolationDeny, capability_tenant_id_, mid, epoch,
+                                static_cast<std::uint16_t>(kEffectNetwork), op,
+                                kTenantPathEscapeReason, /*denied=*/true, fiber);
+    typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
+                                                   /*target_node=*/0, fiber, capability_tenant_id_);
+    return false;
+}
+
 namespace {
 
     // Issue #4165: Agent-band base for the fibers minted when production
