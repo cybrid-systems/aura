@@ -462,6 +462,17 @@ __attribute__((weak)) void aura_register_fn_tracked(int64_t func_id, int64_t fn_
     (void)fn_ptr;
 }
 
+// Issue #4387: the product constructor calls this 2-arg aura_register_fn,
+// which is defined in the AOT image. That definition wins over the host
+// 5-arg symbol, so a same-name call never reaches the host table. A
+// differently named weak hook does: the host strong definition (in
+// aura_jit_runtime.cpp) stages into g_jit_fns while a reload is open.
+// Standalone runtime.c keeps this no-op.
+__attribute__((weak)) void aura_note_aot_constructor_jit_fn(int64_t func_id, int64_t fn_ptr) {
+    (void)func_id;
+    (void)fn_ptr;
+}
+
 // Register a function pointer for a given func_id.
 // Called by AOT registration code (generated .c file) before main().
 void aura_register_fn(int64_t func_id, int64_t fn_ptr) {
@@ -469,6 +480,7 @@ void aura_register_fn(int64_t func_id, int64_t fn_ptr) {
     if (id < MAX_FUNCTIONS) {
         s_func_table[id] = (ScalarFn)(intptr_t)fn_ptr;
         aura_register_fn_tracked(func_id, fn_ptr);
+        aura_note_aot_constructor_jit_fn(func_id, fn_ptr);
     }
 }
 

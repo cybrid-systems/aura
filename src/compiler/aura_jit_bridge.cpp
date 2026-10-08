@@ -1445,17 +1445,26 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
 //   1. Enter staging mode (constructor registrations do not touch live slots)
 //   2. dlopen() the new .so/.dylib (constructors write staging table)
 //   3. Probe aot_emit_version / region / defuse / env_frame
-//   4. On success: apply staging → live slots, then commit_func_table_swap
-//      (epoch bump + HotUpdateRegistry notify) so concurrent closure
-//      calls observe either fully-old or fully-new symbols
+//   4. On success: apply staging → live slots, publish staged g_jit_fns,
+//      then commit_func_table_swap (epoch bump + HotUpdateRegistry notify)
+//      so concurrent closure calls observe either fully-old or fully-new
+//      symbols
 //   5. Issue #3539: must_deopt stale live closures, then stage the old
 //      .so for deferred dlclose (not close-before-walk)
 //   6. On any failure: discard staging, dlclose new handle, bump rollback
-//      metric, leave live table + epoch untouched
+//      metric, leave live AOT table + g_jit_fns + epoch untouched
 //
 // Multi-agent isolation (per-eval AotState) remains on the host side
 // of the version/region checks (#1367).
 #include <dlfcn.h>
+
+// Issue #4387: JIT table staging lives in aura_jit_runtime.cpp. Reload holds
+// g_aot_reload_mtx. Commit/discard assume the caller holds the workspace
+// write lock. The drain helper must not take that lock.
+extern "C" void aura_jit_reload_staging_commit_locked(void);
+extern "C" void aura_jit_reload_staging_discard_locked(void);
+extern "C" void aura_jit_drop_so_before_dlclose_unlocked(void* handle);
+extern "C" void aura_jit_replaced_fns_clear_unlocked(void);
 
 namespace {
 
@@ -1699,9 +1708,15 @@ extern "C" void aura_force_drain_old_so(void) {
         g_aura_reload_old_so_pending.store(0, std::memory_order_relaxed);
     }
     for (void* h : to_close) {
-        if (h)
-            ::dlclose(h);
+        if (!h)
+            continue;
+        // Issue #4387: pure-anon inline-cache entries and leftover g_jit_fns
+        // slots that still point into this mapping miss before unmap.
+        // No lock — production_remount and BoundaryExit already hold it.
+        aura_jit_drop_so_before_dlclose_unlocked(h);
+        ::dlclose(h);
     }
+    aura_jit_replaced_fns_clear_unlocked();
 }
 
 extern "C" std::uint64_t aura_reload_old_so_staged_total_v_read(void) {
@@ -1931,6 +1946,12 @@ void note_reload_rollback() noexcept {
 }
 
 } // namespace
+
+// Issue #4387: g_aot_staging_active is internal to this TU. The strong
+// aura_register_fn (other TU) consults it while a reload is open.
+extern "C" int aura_aot_jit_reload_staging_active(void) {
+    return g_aot_staging_active.load(std::memory_order_acquire) ? 1 : 0;
+}
 
 // Issue #2606 soak (CI 0927): a recycled binding must not inherit the retired
 // registration's slot state. Retire paths clear map bindings but leave the
@@ -4037,13 +4058,21 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
 
     // Issue #2012: constructors from the new module stage registrations;
     // live slots stay at the previous generation until commit.
+    // Issue #4387: same window for g_jit_fns. Discard any leftover JIT
+    // staging under the write lock before constructors run.
     clear_aot_staging();
+    aura_lock_workspace_write();
+    aura_jit_reload_staging_discard_locked();
     g_aot_staging_active.store(true, std::memory_order_release);
+    aura_unlock_workspace_write();
 
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         const int dl_errno = errno;
+        aura_lock_workspace_write();
         g_aot_staging_active.store(false, std::memory_order_release);
+        aura_jit_reload_staging_discard_locked();
+        aura_unlock_workspace_write();
         clear_aot_staging();
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
         // Issue #2982: production Dlopen path/errno surface (no auto-retry).
@@ -4071,10 +4100,15 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     // the binary's own aot_emit_version.
     auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
     auto rollback_close = [&](std::string_view audit_reason, AotReloadFail reason) {
-        // Discard staged registrations; live table untouched.
+        // Discard staged registrations; live AOT table and g_jit_fns
+        // untouched (Issue #4387: constructor publishes were staged).
+        // Write lock around dlclose waits out an in-flight reader (#4074).
+        aura_lock_workspace_write();
         g_aot_staging_active.store(false, std::memory_order_release);
+        aura_jit_reload_staging_discard_locked();
         clear_aot_staging();
         ::dlclose(handle);
+        aura_unlock_workspace_write();
         // Epoch must remain epoch_before (no commit_func_table_swap).
         (void)epoch_before;
         // Issue #2093: per-reason rollback (was no-arg before).
@@ -4178,7 +4212,13 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     // slots, then atomically bump g_aot_table_epoch so concurrent
     // probes observe a consistent before/after boundary.
     apply_aot_staging_to_live();
+    // Issue #4387: publish staged g_jit_fns before the old .so is closed.
+    // Flag drops before the write unlock so a waiter does not re-stage.
+    // commit_func_table_swap still owns the table-epoch bump.
+    aura_lock_workspace_write();
+    aura_jit_reload_staging_commit_locked();
     g_aot_staging_active.store(false, std::memory_order_release);
+    aura_unlock_workspace_write();
     commit_func_table_swap();
     clear_aot_staging();
     // Issue #3539: mark stale live closures before the old .so can
