@@ -5963,6 +5963,10 @@ int main() {
         ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
+        // Idempotent across runs: a previous run left links/dirs in place
+        // (create_directory_symlink throws on an existing link).
+        std::error_code rm_ec;
+        std::filesystem::remove_all(root_a, rm_ec);
         std::filesystem::create_directories(root_a + "/ok");
         // Pre-placed symlinks (off-jail provisioning path — the #4380
         // scanner now denies exec-time creation, so this models the
@@ -6039,6 +6043,229 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_4380.cpp");
         CHECK(!invent.good(), "4380 AC4: no tests/core/test_issue_4380.cpp (forbidden)");
+    }
+
+    // ── Issue #4381: git-* tenant FS jail (Restricted+MT / Strict) ──
+    {
+        std::println("\n--- #4381 AC1: git-* runs jailed under the caller tenant root ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4381-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        // Idempotent across runs: a stale tenant repo from a previous run
+        // would fail the provisioning commit (nothing to commit).
+        std::error_code rm_ec;
+        std::filesystem::remove_all(root_a, rm_ec);
+        std::filesystem::create_directories(root_a);
+        // Provision a real repo INSIDE the tenant root; the host process
+        // cwd stays the aura build tree — a jailed git-* face must see the
+        // tenant repo, not the host one.
+        const int setup_rc = std::system(
+            ("cd '" + root_a +
+             "' && git init -q && git config user.email t@tenant && git config user.name t"
+             " && echo one > one.txt && git add one.txt && git commit -q -m init >/dev/null")
+                .c_str());
+        CHECK(setup_rc == 0, "4381 AC1: tenant repo provisioned");
+        std::string expect_sha;
+        {
+            const std::string sha_file = base + "-sha.txt";
+            std::system(("cd '" + root_a + "' && git rev-parse --short HEAD > '" + sha_file +
+                         "' 2>/dev/null")
+                            .c_str());
+            std::ifstream f(sha_file);
+            std::getline(f, expect_sha);
+            if (!expect_sha.empty() && expect_sha.back() == '\n')
+                expect_sha.pop_back();
+        }
+        CHECK(!expect_sha.empty(), "4381 AC1: tenant HEAD sha captured");
+
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        // Install window: the deferred git prims materialize while the
+        // sandbox is Off — the load-time `(require std/git)` face. The
+        // per-call jail arms right after: the prim bodies consult
+        // check_tenant_exec_jail on every invocation.
+        (void)ev.ensure_std_host_prims("std/git");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        auto& heap_w = ev.string_heap_mut();
+
+        // Untracked file → jailed git-status sees the TENANT repo, not the
+        // host aura repo (whose status would never be a single zz.txt line).
+        {
+            std::ofstream f(root_a + "/zz.txt");
+            f << "pending";
+        }
+        auto gs = ev.primitives().lookup("git-status");
+        CHECK(gs.has_value(), "4381 AC1: git-status registered");
+        std::string status_out;
+        if (gs) {
+            const auto r = (*gs)({});
+            CHECK(is_string(r), "4381 AC1: jailed git-status returns string");
+            if (is_string(r))
+                status_out = ev.string_heap()[as_string_idx(r)];
+        }
+        CHECK(status_out.find("zz.txt") != std::string::npos,
+              "4381 AC1: jailed git-status sees the tenant repo (untracked zz.txt)");
+
+        auto gr = ev.primitives().lookup("git-rev-parse");
+        CHECK(gr.has_value(), "4381 AC1: git-rev-parse registered");
+        std::string sha_out;
+        if (gr) {
+            const auto r = (*gr)({});
+            CHECK(is_string(r), "4381 AC1: jailed git-rev-parse returns string");
+            if (is_string(r))
+                sha_out = ev.string_heap()[as_string_idx(r)];
+        }
+        CHECK(sha_out == expect_sha, "4381 AC1: jailed git-rev-parse returns the TENANT repo HEAD");
+
+        // Relative stage succeeds under the jail; escape paths deny with
+        // the shared IsolationDeny row (op git-stage).
+        auto gst = ev.primitives().lookup("git-stage");
+        CHECK(gst.has_value(), "4381 AC1: git-stage registered");
+        heap_w.push_back("zz.txt");
+        int stage_rc = -99;
+        if (gst) {
+            using aura::compiler::types::make_string;
+            const auto r = (*gst)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(is_int(r), "4381 AC1: git-stage returns exit code");
+            if (is_int(r))
+                stage_rc = static_cast<int>(as_int(r));
+        }
+        CHECK(stage_rc == 0, "4381 AC1: relative git-stage succeeds under the jail");
+        for (const char* escape : {"/etc/passwd", "../one.txt"}) {
+            heap_w.push_back(escape);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            int rc = 0;
+            if (gst) {
+                using aura::compiler::types::make_string;
+                const auto r = (*gst)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                if (is_int(r))
+                    rc = static_cast<int>(as_int(r));
+            }
+            CHECK(rc == -1, (std::string("4381 AC1: git-stage denies ") + escape).c_str());
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                if (std::string_view(e.op) != "git-stage")
+                    continue;
+                saw = true;
+            }
+            CHECK(saw, (std::string("4381 AC1: IsolationDeny SE for git-stage ") + escape).c_str());
+        }
+
+        // Jailed commit succeeds; status goes clean; log shows the commit.
+        // git-commit carries the #2072 body choke (Exec|Network), which
+        // fail-closes on DIRECT body invocation with an unstamped ref
+        // (isolation-deny:unstamped-ref — correct production deny; only
+        // the dispatch face stamps refs). The commit op's #4381 jail face
+        // is pinned at the gate level instead: the fence allows the fixed
+        // clean command and carries the caller's jail root.
+        std::string commit_jail;
+        CHECK(ev.check_tenant_exec_jail("commit", commit_jail, "git-commit"),
+              "4381 AC1: git-commit jail fence allows the fixed clean command");
+        CHECK(commit_jail == root_a, "4381 AC1: git-commit fence carries the caller's jail root");
+        // Jailed log read face: `git log --oneline -n 1` against the
+        // tenant repo returns its init commit (proves the jailed read
+        // path end-to-end without the dispatch-stamped commit face).
+        auto gl = ev.primitives().lookup("git-log");
+        CHECK(gl.has_value(), "4381 AC1: git-log registered");
+        std::string log_out;
+        if (gl) {
+            using aura::compiler::types::make_int;
+            const auto r = (*gl)({make_int(1)});
+            CHECK(is_string(r), "4381 AC1: jailed git-log returns string");
+            if (is_string(r))
+                log_out = ev.string_heap()[as_string_idx(r)];
+        }
+        CHECK(log_out.find("init") != std::string::npos,
+              "4381 AC1: jailed git-log shows the tenant repo commit");
+
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4381 AC2: Soft/Off git-* passthrough on the process repo ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        (void)ev.ensure_std_host_prims("std/git");
+        const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+        auto gr = ev.primitives().lookup("git-rev-parse");
+        CHECK(gr.has_value(), "4381 AC2: git-rev-parse registered");
+        std::string prim_sha;
+        if (gr) {
+            const auto r = (*gr)({});
+            CHECK(is_string(r), "4381 AC2: passthrough git-rev-parse returns string");
+            if (is_string(r))
+                prim_sha = ev.string_heap()[as_string_idx(r)];
+        }
+        // Test-side reference: same process cwd, plain git.
+        std::string ref_sha;
+        {
+            const char* tmp = std::getenv("TMPDIR");
+            const std::string sha_file =
+                std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4381-ac2-sha.txt";
+            std::system(("git rev-parse --short HEAD > '" + sha_file + "' 2>/dev/null").c_str());
+            std::ifstream f(sha_file);
+            std::getline(f, ref_sha);
+            if (!ref_sha.empty() && ref_sha.back() == '\n')
+                ref_sha.pop_back();
+        }
+        CHECK(prim_sha == ref_sha,
+              "4381 AC2: Soft/Off git-rev-parse passthrough matches the process repo");
+        CHECK(g_security_event_ring().seq.load(std::memory_order_acquire) == se_base,
+              "4381 AC2: passthrough emits no IsolationDeny SE");
+    }
+
+    {
+        std::println("\n--- #4381 AC3: linter + wiring; git jail cites ---");
+        const auto io_src = read_file("src/compiler/evaluator_primitives_io.cpp");
+        const auto build = read_file("build.py");
+        const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+        CHECK(io_src.find("Issue #4381") != std::string::npos, "4381 AC3: git prims cite #4381");
+        CHECK(
+            io_src.find("check_tenant_exec_jail(\"status --short\", jail_root, \"git-status\")") !=
+                std::string::npos,
+            "4381 AC3: git-status wires the jail fence");
+        CHECK(io_src.find("check_tenant_exec_jail(\"add\", jail_root, \"git-stage\")") !=
+                  std::string::npos,
+              "4381 AC3: git-stage wires the jail fence");
+        CHECK(io_src.find("check_tenant_exec_jail(\"commit\", jail_root, \"git-commit\")") !=
+                  std::string::npos,
+              "4381 AC3: git-commit wires the jail fence");
+        CHECK(io_src.find("check_tenant_host_path(p, resolved, \"git-stage\")") !=
+                  std::string::npos,
+              "4381 AC3: git-stage paths resolve through the host-path gate");
+        CHECK(io_src.find("::chdir(jail_root.c_str())") != std::string::npos,
+              "4381 AC3: jailed git children chdir under the tenant root");
+        CHECK(build.find("check_git_tenant_jail_4381") != std::string::npos,
+              "4381 AC3: build.py wires the #4381 linter");
+        CHECK(allow.find("check_git_tenant_jail_4381.py") != std::string::npos,
+              "4381 AC3: linter on the root allowlist");
+        std::ifstream invent("tests/core/test_issue_4381.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4381.cpp");
+        CHECK(!invent.good(), "4381 AC3: no tests/core/test_issue_4381.cpp (forbidden)");
     }
 
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──

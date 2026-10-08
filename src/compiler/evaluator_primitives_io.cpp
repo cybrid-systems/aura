@@ -181,6 +181,67 @@ namespace {
 } // namespace
 
 
+namespace {
+
+    // Issue #4381: jailed git child for the Restricted+MT / Strict tenant FS
+    // jail (#4233 fence family). Post-fork the child chdir's under the caller's
+    // tenant root BEFORE exec — the parent process cwd is never mutated
+    // (fiber-safe; the libgit2 in-process backend stays Soft/Off-only because
+    // it binds the shared process cwd/repo). argv is explicit (no shell);
+    // stderr is silenced like the legacy fallbacks. capture=true collects
+    // stdout (raw — the caller keeps its own legacy trailing-newline
+    // contract). Returns WEXITSTATUS, or -1 on fork/exec failure.
+    int run_git_jailed(const std::vector<std::string>& args, const std::string& jail_root,
+                       bool capture, std::string* out) {
+        int pfd[2] = {-1, -1};
+        if (capture && ::pipe(pfd) != 0)
+            return -1;
+        std::vector<std::string> buf = args; // owned NUL-terminated storage
+        pid_t pid = ::fork();
+        if (pid < 0) {
+            if (capture) {
+                ::close(pfd[0]);
+                ::close(pfd[1]);
+            }
+            return -1;
+        }
+        if (pid == 0) {
+            if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
+                ::_exit(127);
+            if (capture) {
+                ::close(pfd[0]);
+                ::dup2(pfd[1], STDOUT_FILENO);
+                ::close(pfd[1]);
+            }
+            int devnull = ::open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                ::dup2(devnull, STDERR_FILENO);
+                ::close(devnull);
+            }
+            std::vector<char*> argv;
+            argv.reserve(buf.size() + 2);
+            argv.push_back(const_cast<char*>("git"));
+            for (auto& s : buf)
+                argv.push_back(s.data());
+            argv.push_back(nullptr);
+            ::execvp("git", argv.data());
+            ::_exit(127);
+        }
+        if (capture) {
+            ::close(pfd[1]);
+            std::array<char, 4096> chunk;
+            for (ssize_t n; (n = ::read(pfd[0], chunk.data(), chunk.size())) > 0;)
+                out->append(chunk.data(), static_cast<std::size_t>(n));
+            ::close(pfd[0]);
+        }
+        int status = 0;
+        if (::waitpid(pid, &status, 0) != -1 && WIFEXITED(status))
+            return WEXITSTATUS(status);
+        return -1;
+    }
+
+} // namespace
+
 void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 #if !AURA_ENABLE_GIT
     // Issue #1970: integration vertical disabled for this build.
@@ -196,6 +257,25 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (git-status) → short status string (like "git status --short")
     ev.defer_std_host_prim("git-status", [&ev](const auto&) -> EvalValue {
+        // Issue #4381: Restricted+MT / Strict tenant FS jail — the shared
+        // process cwd is the HOST repo; under an armed jail every git-*
+        // face runs through check_tenant_exec_jail (the #4233 shell fence,
+        // no second model) and the child chdir's under the caller's tenant
+        // root. Fixed argv (no caller text) so the fence sees a clean
+        // command; the libgit2 in-process backend is skipped on the jailed
+        // path. Soft/Off keeps the legacy passthrough (zero-cost).
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail("status --short", jail_root, "git-status"))
+            return make_void();
+        if (!jail_root.empty()) {
+            std::string out;
+            (void)run_git_jailed({"status", "--short"}, jail_root, /*capture=*/true, &out);
+            if (!out.empty() && out.back() == '\n')
+                out.pop_back();
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(out));
+            return make_string(sid);
+        }
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
@@ -228,6 +308,21 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             if (mi < ev.string_heap_.size() && ev.string_heap_[mi] == "staged") {
                 staged = true;
             }
+        }
+        // Issue #4381: tenant FS jail — same fence family as git-status
+        // above; jailed child runs `git diff` under the caller's root.
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail(staged ? "diff --staged" : "diff", jail_root, "git-diff"))
+            return make_void();
+        if (!jail_root.empty()) {
+            std::string out;
+            if (staged)
+                (void)run_git_jailed({"diff", "--staged"}, jail_root, /*capture=*/true, &out);
+            else
+                (void)run_git_jailed({"diff"}, jail_root, /*capture=*/true, &out);
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(out));
+            return make_string(sid);
         }
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
@@ -262,6 +357,21 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         if (n > 1000)
             n = 1000;
         std::string result;
+        // Issue #4381: tenant FS jail — same fence family; jailed child
+        // runs `git log --oneline -n <n>` under the caller's root.
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail("log --oneline", jail_root, "git-log"))
+            return make_void();
+        if (!jail_root.empty()) {
+            std::string out;
+            (void)run_git_jailed({"log", "--oneline", "-n", std::to_string(n)}, jail_root,
+                                 /*capture=*/true, &out);
+            if (!out.empty() && out.back() == '\n')
+                out.pop_back();
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(out));
+            return make_string(sid);
+        }
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
         if (ctx.is_open()) {
@@ -297,6 +407,14 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.require_effect(static_cast<std::uint16_t>(kEffectExec | kEffectNetwork),
                                "git-commit"))
             return make_int(-1);
+        // Issue #4381: tenant FS jail (same fence as shell/command-output,
+        // #4233 family) AFTER the #2072 effect choke — jailed commit
+        // children chdir under the caller's tenant root; libgit2 stays
+        // Soft/Off-only (process-global repo state). The message travels
+        // as execvp argv (no shell), not a path — the fence owns paths.
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail("commit", jail_root, "git-commit"))
+            return make_int(-1);
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
         auto mi = as_string_idx(a[0]);
@@ -304,6 +422,9 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(-1);
         const std::string& msg = ev.string_heap_[mi];
         int rc = -1;
+        if (!jail_root.empty())
+            return make_int(
+                run_git_jailed({"commit", "-m", msg}, jail_root, /*capture=*/false, nullptr));
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
         if (ctx.is_open()) {
@@ -349,6 +470,22 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (git-branch-current) → current branch name (empty if detached)
     ev.defer_std_host_prim("git-branch-current", [&ev](const auto&) -> EvalValue {
+        // Issue #4381: tenant FS jail — same fence family; jailed child
+        // runs `git rev-parse --abbrev-ref HEAD` under the caller's root.
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail("rev-parse --abbrev-ref HEAD", jail_root,
+                                       "git-branch-current"))
+            return make_void();
+        if (!jail_root.empty()) {
+            std::string out;
+            (void)run_git_jailed({"rev-parse", "--abbrev-ref", "HEAD"}, jail_root,
+                                 /*capture=*/true, &out);
+            if (!out.empty() && out.back() == '\n')
+                out.pop_back();
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(out));
+            return make_string(sid);
+        }
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
@@ -376,34 +513,50 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     ev.defer_std_host_prim("git-stage", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_int(-1);
-        int rc = -1;
-#ifdef AURA_HAVE_LIBGIT2
-        std::vector<std::string> paths;
+        // Issue #4381: tenant FS jail — the fence first (#4233 family),
+        // then EVERY path argument resolves through check_tenant_host_path
+        // (#3802 face): absolute / cross-tenant / prefix-escape paths deny
+        // with IsolationDeny tenant-path-escape and zero exec; surviving
+        // paths go to the jailed `git add` child as tenant-rooted
+        // absolutes (child cwd = tenant root).
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail("add", jail_root, "git-stage"))
+            return make_int(-1);
+        std::vector<std::string> path_bufs;
+        path_bufs.reserve(a.size());
         for (const auto& v : a) {
             if (!is_string(v))
                 return make_int(-1);
             auto si = as_string_idx(v);
             if (si >= ev.string_heap_.size())
                 return make_int(-1);
-            paths.push_back(ev.string_heap_[si]);
+            std::string p(ev.string_heap_[si]);
+            if (!jail_root.empty()) {
+                std::string resolved;
+                if (!ev.check_tenant_host_path(p, resolved, "git-stage"))
+                    return make_int(-1);
+                path_bufs.push_back(std::move(resolved));
+            } else {
+                path_bufs.push_back(std::move(p));
+            }
         }
+        if (!jail_root.empty()) {
+            std::vector<std::string> args;
+            args.reserve(path_bufs.size() + 1);
+            args.push_back("add");
+            for (auto& s : path_bufs)
+                args.push_back(std::move(s));
+            return make_int(run_git_jailed(args, jail_root, /*capture=*/false, nullptr));
+        }
+        int rc = -1;
+#ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
         if (ctx.is_open()) {
-            rc = ctx.stage(paths);
+            rc = ctx.stage(path_bufs);
         } else
 #endif
         {
             // Issue #1161: fork+execvp — no shell (matches git-commit #473).
-            std::vector<std::string> path_bufs;
-            path_bufs.reserve(a.size());
-            for (const auto& v : a) {
-                if (!is_string(v))
-                    return make_int(-1);
-                auto si = as_string_idx(v);
-                if (si >= ev.string_heap_.size())
-                    return make_int(-1);
-                path_bufs.push_back(ev.string_heap_[si]);
-            }
             pid_t pid = ::fork();
             if (pid == 0) {
                 int devnull = ::open("/dev/null", O_WRONLY);
@@ -433,6 +586,21 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (git-rev-parse) → current HEAD sha (short, 7 chars)
     ev.defer_std_host_prim("git-rev-parse", [&ev](const auto&) -> EvalValue {
+        // Issue #4381: tenant FS jail — same fence family; jailed child
+        // runs `git rev-parse --short HEAD` under the caller's root.
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail("rev-parse --short HEAD", jail_root, "git-rev-parse"))
+            return make_void();
+        if (!jail_root.empty()) {
+            std::string out;
+            (void)run_git_jailed({"rev-parse", "--short", "HEAD"}, jail_root,
+                                 /*capture=*/true, &out);
+            if (!out.empty() && out.back() == '\n')
+                out.pop_back();
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(out));
+            return make_string(sid);
+        }
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
