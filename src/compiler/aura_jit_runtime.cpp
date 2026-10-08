@@ -131,6 +131,8 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <mutex>
 #include <shared_mutex>
 #include <unwind.h>
+#include <dlfcn.h>
+#include <link.h>
 #include "runtime_shared.h"
 #include "value_tags.h"      // Issue #181 Cycle 2: v2 string encoding helpers
 #include "hash_meta.h"       // Issue #908: kEmptySlot
@@ -4378,6 +4380,24 @@ static std::unordered_map<std::string, JitFnEntry, aura::core::TransparentString
                           std::equal_to<>>
     g_jit_fns_by_name;
 
+// Issue #4387: constructor registrations observed while an AOT reload is
+// staging. Published into the live tables only on commit. Rollback clears
+// this vector and does not write g_jit_fns. Replaced pointers are the
+// previous live ScalarFns overwritten by commit; drain drops cache entries
+// and leftover slots that still hold them before dlclose.
+struct JitReloadStage {
+    int64_t func_id = -1;
+    JitFnEntry entry{};
+    std::string name;
+    bool named = false;
+};
+static std::vector<JitReloadStage> g_jit_reload_staging;
+using JitScalarFn = int64_t (*)(int64_t*, uint32_t);
+static std::vector<JitScalarFn> g_jit_reload_replaced;
+
+// Defined in aura_jit_bridge.cpp (strong) or the light-link stub (weak 0).
+int aura_aot_jit_reload_staging_active(void);
+
 // Issue #4308: jit index of the ScalarFn registered under name, or -1.
 // Scans the primary table, then the overflow map. Does not take a lock
 // and does not bump g_aot_table_epoch. Caller already holds the workspace
@@ -4419,14 +4439,82 @@ static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t)
     }
 }
 
+// Issue #4387: caller holds the workspace write lock.
+static void note_jit_reload_replaced(JitScalarFn fn) {
+    if (!fn)
+        return;
+    for (JitScalarFn p : g_jit_reload_replaced) {
+        if (p == fn)
+            return;
+    }
+    g_jit_reload_replaced.push_back(fn);
+}
+
+static bool jit_reload_replaced_holds(JitScalarFn fn) {
+    if (!fn)
+        return false;
+    for (JitScalarFn p : g_jit_reload_replaced) {
+        if (p == fn)
+            return true;
+    }
+    return false;
+}
+
+static void stage_jit_reload_locked(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                                    int32_t local_count, int32_t arg_count, int32_t env_count,
+                                    const char* name) {
+    if (func_id < 0 || !fn)
+        return;
+    const bool named = name != nullptr && name[0] != '\0';
+    for (auto& rec : g_jit_reload_staging) {
+        if (rec.func_id != func_id || rec.named != named)
+            continue;
+        if (named && rec.name != name)
+            continue;
+        rec.entry = {fn, local_count, arg_count, env_count};
+        return;
+    }
+    JitReloadStage rec;
+    rec.func_id = func_id;
+    rec.entry = {fn, local_count, arg_count, env_count};
+    rec.named = named;
+    if (named)
+        rec.name = name;
+    g_jit_reload_staging.push_back(std::move(rec));
+}
+
+static JitScalarFn jit_live_fn_for_id(int64_t func_id) {
+    if (func_id >= 0 && func_id < 512)
+        return g_jit_fns[func_id].fn;
+    if (func_id >= 512) {
+        auto it = g_jit_fns_overflow.find(func_id);
+        if (it != g_jit_fns_overflow.end())
+            return it->second.fn;
+    }
+    return nullptr;
+}
+
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
                       int32_t arg_count, int32_t env_count) {
     // Issue #157 Phase 2: write lock — function registry mutation
     // must be exclusive vs readers in aura_closure_call (which
     // dereferences g_jit_fns[func_id]).
+    // Issue #4387: while a reload is staging, keep the live table. Commit
+    // publishes; rollback discards. The load is not on the call path.
     aura_lock_workspace_write();
-    register_fn_entry(func_id, fn, local_count, arg_count, env_count);
+    if (aura_aot_jit_reload_staging_active())
+        stage_jit_reload_locked(func_id, fn, local_count, arg_count, env_count, nullptr);
+    else
+        register_fn_entry(func_id, fn, local_count, arg_count, env_count);
     aura_unlock_workspace_write();
+}
+
+// Issue #4387: product runtime.c 2-arg aura_register_fn calls this weak
+// hook. Forward into the strong 5-arg registrar (zero local/arg/env).
+void aura_note_aot_constructor_jit_fn(int64_t func_id, int64_t fn_ptr) {
+    auto* fn =
+        reinterpret_cast<int64_t (*)(int64_t*, uint32_t)>(static_cast<std::uintptr_t>(fn_ptr));
+    aura_register_fn(func_id, fn, 0, 0, 0);
 }
 
 // Issue #660 Option 1: register a function by both id AND name.
@@ -4436,6 +4524,13 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
 void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                             int32_t local_count, int32_t arg_count, int32_t env_count) {
     aura_lock_workspace_write();
+    // Issue #4387: same staging gate as aura_register_fn. Named publish
+    // (by_name + peer clear) waits for commit.
+    if (aura_aot_jit_reload_staging_active()) {
+        stage_jit_reload_locked(func_id, fn, local_count, arg_count, env_count, name);
+        aura_unlock_workspace_write();
+        return;
+    }
     if (name && *name)
         register_fn_entry(func_id, fn, local_count, arg_count, env_count);
     else
@@ -4448,6 +4543,113 @@ void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int
         aura_aot_clear_peer_jit_name_soft_stale(name);
     }
     aura_unlock_workspace_write();
+}
+
+// Issue #4387: caller holds the workspace write lock. Installs staged
+// entries via register_fn_entry (not aura_register_fn) so a still-true
+// staging flag cannot re-stage the publish. Does not touch
+// g_aot_table_epoch. Records replaced live pointers and drops inline-cache
+// entries that still hold them.
+void aura_jit_reload_staging_commit_locked(void) {
+    for (const auto& rec : g_jit_reload_staging) {
+        const JitScalarFn old = jit_live_fn_for_id(rec.func_id);
+        if (old && old != rec.entry.fn)
+            note_jit_reload_replaced(old);
+        if (rec.named) {
+            auto it = g_jit_fns_by_name.find(rec.name);
+            if (it != g_jit_fns_by_name.end() && it->second.fn && it->second.fn != rec.entry.fn)
+                note_jit_reload_replaced(it->second.fn);
+        }
+        register_fn_entry(rec.func_id, rec.entry.fn, rec.entry.local_count, rec.entry.arg_count,
+                          rec.entry.env_count);
+        if (rec.named) {
+            g_jit_fns_by_name[rec.name] = rec.entry;
+            aura_aot_clear_peer_jit_name_soft_stale(rec.name.c_str());
+        }
+    }
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
+        if (jit_reload_replaced_holds(g_closure_cache[i].fn))
+            clear_closure_cache_entry(g_closure_cache[i]);
+    }
+    g_jit_reload_staging.clear();
+}
+
+// Issue #4387: caller holds the workspace write lock. Drops cache entries
+// equal to staged (about-to-unmap) pointers. Does not write g_jit_fns.
+void aura_jit_reload_staging_discard_locked(void) {
+    for (const auto& rec : g_jit_reload_staging) {
+        if (!rec.entry.fn)
+            continue;
+        for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
+            if (g_closure_cache[i].fn == rec.entry.fn)
+                clear_closure_cache_entry(g_closure_cache[i]);
+        }
+    }
+    g_jit_reload_staging.clear();
+}
+
+// Issue #4387: true when fn's object base matches a symbol in handle.
+// Non-PIE mappings can report l_addr 0; anchor dli_fbase equality is the
+// range check, and replaced-pointer equality is the reliable check.
+static bool jit_fn_in_dl_handle(const void* fn, void* handle) noexcept {
+    if (!fn || !handle)
+        return false;
+    Dl_info fn_info{};
+    if (::dladdr(fn, &fn_info) == 0 || fn_info.dli_fbase == nullptr)
+        return false;
+    if (void* anchor = ::dlsym(handle, "aot_emit_version")) {
+        Dl_info anchor_info{};
+        if (::dladdr(anchor, &anchor_info) != 0 && anchor_info.dli_fbase != nullptr &&
+            anchor_info.dli_fbase == fn_info.dli_fbase)
+            return true;
+    }
+    struct link_map* map = nullptr;
+    if (::dlinfo(handle, RTLD_DI_LINKMAP, &map) == 0 && map != nullptr && map->l_addr != 0 &&
+        fn_info.dli_fbase == reinterpret_cast<void*>(map->l_addr))
+        return true;
+    return false;
+}
+
+// Issue #4387: caller already holds the workspace write lock, or is the
+// single-threaded unlocked test drain. Do not lock here — BoundaryExit's
+// dtor and production_remount already hold it (not recursive).
+void aura_jit_drop_so_before_dlclose_unlocked(void* handle) {
+    auto drop_fn = [&](JitScalarFn fn) {
+        if (!fn)
+            return false;
+        if (jit_reload_replaced_holds(fn))
+            return true;
+        return jit_fn_in_dl_handle(reinterpret_cast<const void*>(fn), handle);
+    };
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
+        if (drop_fn(g_closure_cache[i].fn))
+            clear_closure_cache_entry(g_closure_cache[i]);
+    }
+    for (auto& slot : g_jit_fns) {
+        if (drop_fn(slot.fn))
+            slot = {nullptr, 0, 0, 0};
+    }
+    for (auto it = g_jit_fns_overflow.begin(); it != g_jit_fns_overflow.end();) {
+        if (drop_fn(it->second.fn))
+            it = g_jit_fns_overflow.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = g_jit_fns_by_name.begin(); it != g_jit_fns_by_name.end();) {
+        if (drop_fn(it->second.fn))
+            it = g_jit_fns_by_name.erase(it);
+        else
+            ++it;
+    }
+}
+
+void aura_jit_replaced_fns_clear_unlocked(void) {
+    g_jit_reload_replaced.clear();
+}
+
+// Issue #4387: test reader. No query key.
+std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id) {
+    return reinterpret_cast<std::int64_t>(jit_live_fn_for_id(func_id));
 }
 
 // Issue #660 Option 1: runtime-side lookup by name (fallback when

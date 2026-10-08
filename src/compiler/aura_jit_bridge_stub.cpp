@@ -942,6 +942,10 @@ extern "C" __attribute__((weak)) int aura_aot_slot_is_stale(std::int64_t /*func_
 
 extern "C" __attribute__((weak)) void aura_register_fn_tracked(std::int64_t /*id*/,
                                                                std::int64_t /*ptr*/) {}
+// Issue #4387: light-link has no aura_jit_bridge.cpp. Staging is off.
+extern "C" __attribute__((weak)) int aura_aot_jit_reload_staging_active(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void
 aura_set_jit_unhandled_invalidate_fn(aura_jit_unhandled_invalidate_fn_t fn) {
     g_jit_unhandled_invalidate_fn_stub = fn;

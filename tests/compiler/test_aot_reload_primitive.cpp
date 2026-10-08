@@ -10,6 +10,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/aot_reload_consistency_proof.h"
 
 // Issue #2178: C-linkage accessors for the cross-workspace guard + counter.
 // Forward-declared here so the test file can call them without pulling in
@@ -22,6 +23,17 @@ extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
 // state machine's pending_dirty_count_ (defined in
 // hot_update_registry.cpp).
 extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(void);
+extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
+                                          std::int64_t argc);
+extern "C" void aura_invalidate_all_closure_caches(void);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+
+// Issue #4387: constructor publishes the ScalarFn address here before return.
+static std::atomic<std::int64_t> g_4387_noted{0};
+static std::atomic<std::int64_t> g_4387_rollback_ptr{0};
+extern "C" void aura_test_4387_note_fn(std::int64_t p) {
+    g_4387_noted.store(p, std::memory_order_release);
+}
 
 #include <atomic>
 #include <chrono>
@@ -966,6 +978,187 @@ static void ac4245_owner_scoped_reload_cite() {
     CHECK(read_file("docs/design/4245-reload-owner.md").empty(), "4245: no docs/design");
 }
 
+// Issue #4387: .so constructor dlsyms the host 5-arg aura_register_fn and a
+// sentinel that lives in the mapping. Return value is a .so global so a
+// call after dlclose faults instead of returning a baked immediate.
+static std::string build_jit_publishing_so(std::uint64_t version, int func_id, std::int64_t ret,
+                                           const char* tag) {
+    const std::string cpath = std::format("/tmp/aura_aot_4387_{}_{}.c", tag, version);
+    const std::string sopath = std::format("/tmp/aura_aot_4387_{}_{}.so", tag, version);
+    {
+        std::ofstream f(cpath);
+        if (!f)
+            return {};
+        f << "#include <stdint.h>\n#include <dlfcn.h>\n";
+        f << "uint64_t aot_emit_version = " << version << "ULL;\n";
+        f << "uint64_t aot_region_mask = 0ULL;\n";
+        f << "static volatile int64_t live_stamp = " << ret << ";\n";
+        f << "static int64_t sentinel(int64_t* a, uint32_t n) {\n";
+        f << "  (void)a; (void)n; return live_stamp;\n}\n";
+        f << "__attribute__((constructor)) static void reg(void) {\n";
+        f << "  typedef void (*reg5_t)(int64_t, int64_t (*)(int64_t*, uint32_t), int32_t, "
+             "int32_t, int32_t);\n";
+        f << "  typedef void (*note_t)(int64_t);\n";
+        f << "  void* self = dlopen(0, 1);\n";
+        f << "  reg5_t fn = self ? (reg5_t)dlsym(self, \"aura_register_fn\") : 0;\n";
+        f << "  if (!fn) fn = (reg5_t)dlsym((void*)0, \"aura_register_fn\");\n";
+        f << "  if (fn) fn(" << func_id << ", sentinel, 0, 0, 0);\n";
+        f << "  note_t note = self ? (note_t)dlsym(self, \"aura_test_4387_note_fn\") : 0;\n";
+        f << "  if (!note) note = (note_t)dlsym((void*)0, \"aura_test_4387_note_fn\");\n";
+        f << "  if (note) note((int64_t)(void*)sentinel);\n";
+        f << "}\n";
+    }
+    const std::string cmd =
+        std::format("cc -shared -fPIC -o {} {} -ldl 2>/dev/null", sopath, cpath);
+    if (std::system(cmd.c_str()) != 0)
+        return {};
+    return sopath;
+}
+
+static void ac4387_source_cite() {
+    const auto rt = read_file("lib/runtime.c");
+    const auto jit = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(rt.find("aura_note_aot_constructor_jit_fn(func_id, fn_ptr)") != std::string::npos,
+          "4387: runtime.c 2-arg aura_register_fn calls the weak hook");
+    CHECK(jit.find("aura_aot_jit_reload_staging_active()") != std::string::npos,
+          "4387: strong aura_register_fn consults reload staging");
+    CHECK(br.find("aura_jit_reload_staging_commit_locked()") != std::string::npos,
+          "4387: success publishes staged g_jit_fns before the epoch swap");
+    CHECK(br.find("aura_jit_drop_so_before_dlclose_unlocked") != std::string::npos,
+          "4387: drain drops mapping pointers before dlclose");
+    const auto fn = br.find("static void production_remount_then_drain_old_so()");
+    CHECK(fn != std::string::npos, "4387: production remount helper still present");
+    if (fn != std::string::npos) {
+        const auto body = br.substr(fn, 900);
+        CHECK(body.find("aura_jit_drop_so_before_dlclose_unlocked") == std::string::npos,
+              "4387: cache drop stays inside aura_force_drain_old_so");
+        CHECK(body.find("aura_lock_workspace_write()") != std::string::npos &&
+                  body.find("aura_force_drain_old_so()") != std::string::npos,
+              "4387: #4074 lock-then-drain window still inside 900 chars");
+    }
+    CHECK(br.find("schema-4387") == std::string::npos, "4387: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4387.cpp").empty(), "4387: no test_issue_4387.cpp");
+    CHECK(read_file("docs/design/4387-jit-reload-staging.md").empty(), "4387: no docs/design");
+}
+
+static void ac4387_rollback_restores_previous_jit_fn() {
+    std::println("\n--- #4387: rollback does not leave the new ScalarFn callable ---");
+    ac4387_source_cite();
+    aura_set_aot_reload_auto_retry(0);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    aura_set_lock_hooks(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    aura_force_drain_old_so();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+
+    constexpr int kId = 460;
+    constexpr std::int64_t kRetA = 438701;
+    constexpr std::int64_t kRetB = 438702;
+    const auto so_a = build_jit_publishing_so(438701, kId, kRetA, "rbA");
+    const auto so_b = build_jit_publishing_so(438702, kId, kRetB, "rbB");
+    if (so_a.empty() || so_b.empty()) {
+        CHECK(true, "4387 rollback: cc unavailable — source-cite only");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        return;
+    }
+    CompilerService cs;
+    void* eval = &cs.evaluator();
+    aura_set_aot_region_mask_for_eval(eval, 0);
+    aura_set_aot_env_frame_version_for_eval(eval, 0);
+    g_4387_noted.store(0, std::memory_order_relaxed);
+    CHECK(aura_reload_aot_module_for_eval(eval, so_a.c_str(), 0) == true,
+          "4387: first reload commits");
+    const auto ptr_a = g_4387_noted.load(std::memory_order_acquire);
+    CHECK(ptr_a != 0, "4387: constructor noted sentinel A");
+    CHECK(aura_jit_fn_ptr_for_test(kId) == ptr_a, "4387: commit published sentinel A");
+    g_4387_rollback_ptr.store(ptr_a, std::memory_order_relaxed);
+    const auto cid = aura_alloc_closure(kId);
+    CHECK(cid >= 0, "4387: pure-anon alloc");
+    std::int64_t args[1] = {0};
+    const auto warm = aura_closure_call(cid, args, 0);
+    CHECK(warm == kRetA, "4387: warm call returns A's sentinel");
+
+    g_4387_noted.store(0, std::memory_order_relaxed);
+    CHECK(aura_reload_aot_module_for_eval(eval, so_b.c_str(), /*version=*/1) == false,
+          "4387: mismatched aot_emit_version rolls back");
+    const auto ptr_b = g_4387_noted.load(std::memory_order_acquire);
+    CHECK(ptr_b != 0 && ptr_b != ptr_a, "4387: constructor noted sentinel B before rollback");
+    const auto live = aura_jit_fn_ptr_for_test(kId);
+    CHECK(live != ptr_b, "4387: g_jit_fns does not hold the unmapped sentinel");
+    CHECK(live == ptr_a || live == 0, "4387: slot restored to A or left null");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "4387: would_allow_native stays false");
+    const auto after_warm = aura_closure_call(cid, args, 0);
+    CHECK(after_warm == kRetA || after_warm == 0, "4387: warm cache does not call unmapped B");
+    aura_invalidate_all_closure_caches();
+    const auto cold = aura_closure_call(cid, args, 0);
+    CHECK(cold == kRetA || cold == 0, "4387: cold call does not call unmapped B");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4387_owner_scoped_success_drops_old_cache() {
+    std::println("\n--- #4387: owner-scoped success drops pure-anon cache before dlclose ---");
+    aura_set_aot_reload_auto_retry(0);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    aura_set_lock_hooks(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    aura_force_drain_old_so();
+    CompilerService cs_a;
+    CompilerService cs_b;
+    void* eval_a = &cs_a.evaluator();
+    void* eval_b = &cs_b.evaluator();
+    aura_set_aot_region_mask_for_eval(eval_a, 0);
+    aura_set_aot_region_mask_for_eval(eval_b, 0);
+    aura_set_aot_env_frame_version_for_eval(eval_a, 0);
+    aura_set_aot_env_frame_version_for_eval(eval_b, 0);
+    CHECK(aura_aot_state_map_size() >= 2, "4387: dual-eval map");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+
+    constexpr int kId = 461;
+    constexpr std::int64_t kRetA = 438711;
+    constexpr std::int64_t kRetB = 438712;
+    const auto so_a = build_jit_publishing_so(438711, kId, kRetA, "okA");
+    const auto so_b = build_jit_publishing_so(438712, kId, kRetB, "okB");
+    if (so_a.empty() || so_b.empty()) {
+        CHECK(true, "4387 success: cc unavailable — source-cite only");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        return;
+    }
+    g_4387_noted.store(0, std::memory_order_relaxed);
+    CHECK(aura_reload_aot_module_for_eval(eval_a, so_a.c_str(), 0) == true, "4387: load A");
+    const auto ptr_a = g_4387_noted.load(std::memory_order_acquire);
+    CHECK(ptr_a != 0 && aura_jit_fn_ptr_for_test(kId) == ptr_a, "4387: A published");
+    const auto cid = aura_alloc_closure(kId);
+    std::int64_t args[1] = {0};
+    CHECK(aura_closure_call(cid, args, 0) == kRetA, "4387: warm pure-anon cache holds A");
+    const auto epoch = aura_aot_func_table_epoch();
+    g_4387_noted.store(0, std::memory_order_relaxed);
+    CHECK(aura_reload_aot_module_for_eval(eval_a, so_b.c_str(), 0) == true,
+          "4387: compatible load B");
+    CHECK(aura_aot_func_table_epoch() == epoch,
+          "4387: owner-scoped success does not bump table epoch");
+    CHECK(aura_reload_old_so_pending_v_read() == 0, "4387: production drain finished");
+    const auto ptr_b = g_4387_noted.load(std::memory_order_acquire);
+    const auto live = aura_jit_fn_ptr_for_test(kId);
+    CHECK(ptr_b != 0 && ptr_b != ptr_a, "4387: B sentinel distinct");
+    CHECK(live == ptr_b || live == 0, "4387: slot is B or null, not the unmapped A");
+    const auto rolled = g_4387_rollback_ptr.load(std::memory_order_relaxed);
+    if (rolled != 0) {
+        CHECK(aura_jit_fn_ptr_for_test(460) == 0,
+              "4387: drain nulled the slot that still pointed into the old mapping");
+    }
+    const auto got = aura_closure_call(cid, args, 0);
+    CHECK(got == kRetB || got == 0, "4387: pure-anon call runs B or leaves native");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -1858,6 +2051,9 @@ int main() {
         CHECK(s4.attempts_left == 0, "2302.15: post-success attempts_left == 0");
         CHECK(s4.deferred_reemit_pending == 0, "2302.16: post-success deferred_reemit cleared");
     }
+
+    ac4387_rollback_restores_previous_jit_fn();
+    ac4387_owner_scoped_success_drops_old_cache();
 
     if (::aura::test::g_failed)
         return 1;
