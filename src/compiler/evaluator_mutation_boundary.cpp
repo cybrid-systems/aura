@@ -8705,6 +8705,7 @@ bool Evaluator::densify_rewrite_containers_from_published_() noexcept {
         }
         return !missed;
     } catch (...) {
+        // [SILENCE-PRIM-#4386] remap throw fail-closes this window.
         return false;
     }
 }
@@ -8741,6 +8742,7 @@ bool Evaluator::commit_unstable_densify_root_remap(bool relocated) noexcept {
                 release.ok = false;
         }
     } catch (...) {
+        // [SILENCE-PRIM-#4386] commit throw fail-closes; the arm still unlocks.
         release.ok = false;
     }
     if (!release.ok &&
