@@ -108,6 +108,8 @@ import aura.compiler.dirty_propagation;
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "ir_cache_boundary_restamp.hh" // Issue #4377: post-exit defuse on stores
@@ -6298,6 +6300,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // result (objects_moved==0). Face fails via pin_contract.
                 compact_r.pin_contract_held = false;
             }
+            ev_->fold_remap_(compact_r, densify_entry_lcp_blocked);
             // Issue #3185 AC1 / #3782: LCP block forces pin_contract_held false.
             pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             release_workspace_then_drain_after_densify_();
@@ -8206,23 +8209,65 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         if (slot != nullptr && *slot != nullptr)
             known_slots.push_back(slot);
     }
+    // Issue #4386: feature-on copies values into stable slots and drops
+    // element addresses before the container lock is released.
+    const int densify_fill = densify_unstable_fill_begin();
+    if (densify_fill == 3)
+        return 0;
+    struct DensifyHold {
+        Evaluator* ev = nullptr;
+        ~DensifyHold() {
+            if (ev)
+                ev->densify_reregister_inflight_.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    } densify_hold;
+    if (densify_fill == 2 &&
+        densify_value_slot_owner_.load(std::memory_order_acquire) != std::this_thread::get_id() &&
+        densify_unstable_slots_armed_.load(std::memory_order_acquire)) {
+        densify_reregister_inflight_.fetch_add(1, std::memory_order_acq_rel);
+        densify_hold.ev = this;
+        if (!densify_unstable_slots_armed_.load(std::memory_order_acquire)) {
+            densify_hold.ev = nullptr;
+            densify_reregister_inflight_.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
     // Issue #3057: FFI opaque_heap_ aliases. libc-heap / external-native
     // EXEMPT entries are harmless (would_move=false). Arena-tracked
     // aliases get slot rewrite — #3022 note_ffi_opaque_create_exempt
     // is observe-only and is not cover. Vector is stable for the
     // densify window (no push during compact).
-    for (void*& op : opaque_heap_) {
-        if (op)
-            known_slots.push_back(&op);
+    {
+        const std::size_t densify_base = known_slots.size();
+        std::unique_lock<std::recursive_mutex> densify_alloc(alloc_storage_lock_, std::defer_lock);
+        if (densify_fill != 0)
+            densify_alloc.lock();
+        for (void*& op : opaque_heap_) {
+            if (op) {
+                known_slots.push_back(&op);
+                if (densify_fill == 1)
+                    densify_unstable_note_opaque(op);
+            }
+        }
+        known_slots.resize(densify_base);
     }
     // Issue #3443: JIT/module cached Env* (create<T> raw addresses) live
     // in modules_ across Phase-5 Moving. EXEMPT is not cover. Lasting
     // void** slots — same SSOT shape as opaque_heap_. Vector is stable
     // for the densify window (no push during compact). Do not dual-note
     // canary on these slots (#3368).
-    for (auto*& m : modules_) {
-        if (m)
-            known_slots.push_back(reinterpret_cast<void**>(&m));
+    {
+        const std::size_t densify_base = known_slots.size();
+        std::shared_lock<std::shared_mutex> densify_mod(module_mtx_, std::defer_lock);
+        if (densify_fill != 0)
+            densify_mod.lock();
+        for (auto*& m : modules_) {
+            if (m) {
+                known_slots.push_back(reinterpret_cast<void**>(&m));
+                if (densify_fill == 1)
+                    densify_unstable_note_module(m);
+            }
+        }
+        known_slots.resize(densify_base);
     }
     if (require_inject_env_)
         known_slots.push_back(reinterpret_cast<void**>(&require_inject_env_));
@@ -8241,6 +8286,7 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> rlock;
         for (std::size_t rlock_i = 0; rlock_i < kClosuresShardCount; ++rlock_i)
             rlock[rlock_i] = std::shared_lock<std::shared_mutex>(closures_shards_[rlock_i].mu);
+        const std::size_t densify_base = known_slots.size();
         for (auto& cl_sh : closures_shards_)
             for (auto& [cid, cl] : cl_sh.map) {
                 (void)cid;
@@ -8252,7 +8298,10 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
                     known_slots.push_back(reinterpret_cast<void**>(&cl.pool));
                     ++closure_slots;
                 }
+                if (densify_fill == 1)
+                    densify_unstable_note_closure(cl.flat, cl.pool);
             }
+        known_slots.resize(densify_base);
     }
     if (closure_slots > 0) {
         aura::core::densify_consistency::g_moving_closure_slots_registered_total.fetch_add(
@@ -8293,6 +8342,7 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         aura::core::densify_consistency::g_moving_envframe_pool_slots_registered_total.fetch_add(
             envframe_pool_slots, std::memory_order_relaxed);
     }
+    densify_unstable_append_value_slots(known_slots, densify_fill);
     if (!known_slots.empty()) {
         for (void** slot : known_slots)
             arena_group_->register_external_root_slot_for_densify_all(slot);
@@ -8396,21 +8446,18 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             // objects_moved==0 (mirrors #3200 soft-gate blocked publish).
             out.pin_contract_held = false;
             out.incomplete_remap = false;
+            end_densify_arm_();
             aura::core::moving_densify_health::publish_last_moving_densify_window(
                 /*had_moving_densify=*/true, /*pin_contract_held=*/false,
                 /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
                 /*root_remap_fail_total=*/0);
         } else {
             aura::core::densify_consistency::DensifyInFlightGuard densify_inflight(this);
-            const auto compact_r = arena_group_->compact_all_moving_pinned();
+            auto compact_r = arena_group_->compact_all_moving_pinned();
+            fold_remap_(compact_r, false);
             out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             out.incomplete_remap = compact_r.moving_incomplete_remap_any;
-            // Issue #4067: the retry window must be published. Success
-            // (pin held, not incomplete) clears the agent throttle.
-            // objects_moved>0 and incomplete makes
-            // window_would_allow_mutate false and advances
-            // g_last_window_seq. Leaving the previous allow in place
-            // let apply seq-skip a failed retry.
+            // Issue #4067: the retry window must be published.
             const auto root_fail =
                 static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total +
                                            compact_r.root_remap_closure_capture_fail_total);
@@ -8443,6 +8490,8 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
         }
         aura::core::densify_consistency::g_moving_densify_retry_after_recovery_total.fetch_add(
             1, std::memory_order_relaxed);
+    } else {
+        end_densify_arm_();
     }
     // Issue #4143: sticky_cleared resolves POST-publish (the old entry-time
     // clear made it true before any retry outcome existed). True only when
@@ -8462,6 +8511,296 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
     const bool densify_ok =
         !out.densify_retried || (out.pin_contract_held && !out.incomplete_remap);
     out.success = sticky_ok && densify_ok;
+    return out;
+}
+
+// Issue #4386: helpers live past the #4143/#4144 fixed windows.
+
+void* Evaluator::densify_rewrite_lookup_locked_(void* p) const noexcept {
+    if (!p || densify_moved_rewrite_.empty())
+        return p;
+    auto it = densify_moved_rewrite_.find(p);
+    if (it == densify_moved_rewrite_.end() || it->second == nullptr)
+        return p;
+    return it->second;
+}
+
+int Evaluator::densify_unstable_fill_begin() noexcept {
+    if (!arena_group_ || aura::ast::moving_compact_feature_enabled() == 0)
+        return 0;
+    const auto self = std::this_thread::get_id();
+    if (densify_value_slot_owner_.load(std::memory_order_acquire) == self &&
+        (densify_value_slot_filling_ || densify_commit_active_))
+        return 3;
+    if (densify_unstable_slots_armed_.load(std::memory_order_acquire))
+        return 2;
+    if (!densify_value_slot_mu_.try_lock())
+        return 2;
+    if (densify_unstable_slots_armed_.load(std::memory_order_relaxed)) {
+        densify_value_slot_mu_.unlock();
+        return 2;
+    }
+    densify_value_slot_owner_.store(self, std::memory_order_release);
+    densify_value_slot_filling_ = true;
+    {
+        std::lock_guard<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
+        std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+        densify_moved_rewrite_.clear();
+    }
+    densify_opaque_value_slots_.clear();
+    densify_modules_value_slots_.clear();
+    densify_closure_value_slots_.clear();
+    return 1;
+}
+
+void Evaluator::densify_unstable_note_opaque(void* p) noexcept {
+    if (p)
+        densify_opaque_value_slots_.push_back(p);
+}
+
+void Evaluator::densify_unstable_note_module(void* p) noexcept {
+    if (p)
+        densify_modules_value_slots_.push_back(p);
+}
+
+void Evaluator::densify_unstable_note_closure(void* flat, void* pool) noexcept {
+    if (flat)
+        densify_closure_value_slots_.push_back(flat);
+    if (pool)
+        densify_closure_value_slots_.push_back(pool);
+}
+
+void Evaluator::densify_unstable_append_value_slots(std::vector<void**>& known, int fill) noexcept {
+    if (fill != 1 && fill != 2)
+        return;
+    if (fill == 2 && !densify_unstable_slots_armed_.load(std::memory_order_acquire))
+        return;
+    if (fill == 1) {
+        densify_value_slot_filling_ = false;
+        densify_unstable_slots_armed_.store(true, std::memory_order_release);
+    }
+    auto push_vec = [&](std::vector<void*>& slots) {
+        for (void*& s : slots)
+            known.push_back(&s);
+    };
+    push_vec(densify_opaque_value_slots_);
+    push_vec(densify_modules_value_slots_);
+    push_vec(densify_closure_value_slots_);
+}
+
+void Evaluator::densify_forget_value_slots_() noexcept {
+    if (!arena_group_)
+        return;
+    auto forget_vec = [&](std::vector<void*>& slots) {
+        for (void*& s : slots)
+            arena_group_->forget_external_root_slot_all(&s);
+    };
+    forget_vec(densify_opaque_value_slots_);
+    forget_vec(densify_modules_value_slots_);
+    forget_vec(densify_closure_value_slots_);
+}
+
+void Evaluator::fold_remap_(aura::ast::AdaptiveCompactResult& r, bool lcp_blocked) noexcept {
+    if (!commit_unstable_densify_root_remap(!lcp_blocked &&
+                                            (r.objects_moved_total > 0 || r.moved_live_objects))) {
+        r.pin_contract_held = false;
+        r.moving_incomplete_remap_any = true;
+    }
+}
+
+void Evaluator::end_densify_arm_() noexcept {
+    (void)commit_unstable_densify_root_remap(false);
+}
+
+bool Evaluator::densify_rewrite_containers_from_published_() noexcept {
+    try {
+        if (!arena_group_)
+            return false;
+        std::vector<void*> olds;
+        arena_group_->collect_last_window_moved_old(olds);
+        std::unordered_set<void*> old_set;
+        std::unordered_map<void*, void*> remap;
+        old_set.reserve(olds.size());
+        remap.reserve(olds.size());
+        for (void* old : olds) {
+            if (old)
+                old_set.insert(old);
+        }
+        arena_group_->fill_published_moved_rewrite(remap);
+        if (old_set.empty())
+            return false;
+        // One hop only. A destination may itself be some other object's
+        // moved-old address (freelist reuse). Chasing twice would retarget
+        // the survivor. Value slots were already rewritten by live_compact.
+        std::unordered_set<void*> dests;
+        dests.reserve(remap.size());
+        for (const auto& [old, neu] : remap) {
+            (void)old;
+            if (neu)
+                dests.insert(neu);
+        }
+        auto rewrite_one = [&](void*& p) {
+            if (!p)
+                return;
+            auto it = remap.find(p);
+            if (it != remap.end() && it->second)
+                p = it->second;
+        };
+        // Stale = a moved-old key that is not a live destination.
+        auto stale = [&](void* p) {
+            return p && old_set.find(p) != old_set.end() && dests.find(p) == dests.end();
+        };
+        bool missed = false;
+        {
+            std::lock_guard<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
+            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            for (void*& op : opaque_heap_)
+                rewrite_one(op);
+            densify_moved_rewrite_ = remap;
+            for (void* op : opaque_heap_)
+                missed = missed || stale(op);
+            for (void* s : densify_opaque_value_slots_)
+                missed = missed || stale(s);
+        }
+        {
+            std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            for (Env*& m : modules_) {
+                void* p = m;
+                rewrite_one(p);
+                m = static_cast<Env*>(p);
+            }
+            for (Env* m : modules_)
+                missed = missed || stale(m);
+            for (void* s : densify_modules_value_slots_)
+                missed = missed || stale(s);
+        }
+        {
+            std::lock_guard<std::mutex> cover_lock(module_create_cover_mu_);
+            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            for (void*& s : module_create_covers_)
+                rewrite_one(s);
+            for (void* s : module_create_covers_)
+                missed = missed || stale(s);
+        }
+        {
+            std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> wlock;
+            for (std::size_t i = 0; i < kClosuresShardCount; ++i)
+                wlock[i] = std::unique_lock<std::shared_mutex>(closures_shards_[i].mu);
+            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            for (auto& cl_sh : closures_shards_) {
+                for (auto& [cid, cl] : cl_sh.map) {
+                    (void)cid;
+                    void* flat = cl.flat;
+                    void* pool = cl.pool;
+                    rewrite_one(flat);
+                    rewrite_one(pool);
+                    cl.flat = static_cast<decltype(cl.flat)>(flat);
+                    cl.pool = static_cast<decltype(cl.pool)>(pool);
+                    missed = missed || stale(cl.flat) || stale(cl.pool);
+                }
+            }
+            for (void* s : densify_closure_value_slots_)
+                missed = missed || stale(s);
+        }
+        return !missed;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Evaluator::commit_unstable_densify_root_remap(bool relocated) noexcept {
+    if (!densify_unstable_slots_armed_.load(std::memory_order_acquire))
+        return true;
+    const auto self = std::this_thread::get_id();
+    if (densify_value_slot_owner_.load(std::memory_order_acquire) != self)
+        return true;
+    if (densify_commit_active_)
+        return true;
+    densify_commit_active_ = true;
+    struct Release {
+        Evaluator* ev;
+        bool ok = true;
+        ~Release() {
+            ev->densify_unstable_slots_armed_.store(false, std::memory_order_release);
+            while (ev->densify_reregister_inflight_.load(std::memory_order_acquire) != 0)
+                std::this_thread::yield();
+            ev->densify_forget_value_slots_();
+            ev->densify_opaque_value_slots_.clear();
+            ev->densify_modules_value_slots_.clear();
+            ev->densify_closure_value_slots_.clear();
+            ev->densify_value_slot_filling_ = false;
+            ev->densify_commit_active_ = false;
+            ev->densify_value_slot_owner_.store(std::thread::id{}, std::memory_order_release);
+            ev->densify_value_slot_mu_.unlock();
+        }
+    } release{this};
+    try {
+        if (relocated && arena_group_ && aura::ast::moving_compact_feature_enabled() != 0) {
+            if (!densify_rewrite_containers_from_published_())
+                release.ok = false;
+        }
+    } catch (...) {
+        release.ok = false;
+    }
+    if (!release.ok &&
+        aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) > 0)
+        aura::ast::arm_moving_incomplete_remap_sticky();
+    return release.ok;
+}
+
+void Evaluator::push_opaque_heap_for_test(void* p) {
+    const bool gate = aura::ast::moving_compact_feature_enabled() != 0;
+    std::unique_lock<std::recursive_mutex> alloc(alloc_storage_lock_, std::defer_lock);
+    std::unique_lock<std::mutex> rewrite(densify_rewrite_mu_, std::defer_lock);
+    if (gate) {
+        alloc.lock();
+        rewrite.lock();
+        p = densify_rewrite_lookup_locked_(p);
+    }
+    opaque_heap_.push_back(p);
+    // note_ffi_opaque_alias_densify_cover: value-slot cover, not this element.
+}
+
+void Evaluator::push_module_env_for_test(void* p) {
+    const bool gate = aura::ast::moving_compact_feature_enabled() != 0;
+    std::unique_lock<std::shared_mutex> mod(module_mtx_);
+    std::unique_lock<std::mutex> rewrite(densify_rewrite_mu_, std::defer_lock);
+    if (gate) {
+        rewrite.lock();
+        p = densify_rewrite_lookup_locked_(p);
+    }
+    modules_.push_back(static_cast<Env*>(p));
+}
+
+std::vector<void*> Evaluator::copy_opaque_heap_for_test() const {
+    std::lock_guard<std::recursive_mutex> alloc(alloc_storage_lock_);
+    return opaque_heap_;
+}
+
+std::vector<void*> Evaluator::copy_module_ptrs_for_test() const {
+    std::shared_lock<std::shared_mutex> mod(module_mtx_);
+    std::vector<void*> out;
+    out.reserve(modules_.size());
+    for (Env* m : modules_)
+        out.push_back(m);
+    return out;
+}
+
+std::vector<void*> Evaluator::copy_closure_body_ptrs_for_test() const {
+    std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> rlock;
+    for (std::size_t i = 0; i < kClosuresShardCount; ++i)
+        rlock[i] = std::shared_lock<std::shared_mutex>(closures_shards_[i].mu);
+    std::vector<void*> out;
+    for (const auto& cl_sh : closures_shards_) {
+        for (const auto& [cid, cl] : cl_sh.map) {
+            (void)cid;
+            if (cl.flat)
+                out.push_back(cl.flat);
+            if (cl.pool)
+                out.push_back(cl.pool);
+        }
+    }
     return out;
 }
 

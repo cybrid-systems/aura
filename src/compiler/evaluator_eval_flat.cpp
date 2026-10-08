@@ -889,22 +889,41 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     }
                 }
                 if (ret_type == 4) {
-                    // Opaque: store pointer in opaque_heap_, return OpaqueRef
-                    auto oi = opaque_heap_.size();
-                    opaque_heap_.push_back(reinterpret_cast<void*>(result_i));
-                    // Issue #3022 / #3057 / #3274 / #3533: FFI return may alias
-                    // an arena-tracked object (densify-tracked). Under production
-                    // Moving the alias joins the pin/slot/EXEMPT triad via
-                    // slot-rewrite cover (the opaque_heap_ element is a stable
-                    // void**) + #3210 canary fail-closed backstop; Soft/Off
-                    // falls back to EXEMPT (zero extra). Required + no slot
-                    // fail-closes at create (no live untracked ptr).
-                    // GENERAL_OBJECT_PIN_EXEMPT: ffi-return-external
-                    // note_ffi_opaque_alias_densify_cover (via required helper)
-                    void** slot = oi < opaque_heap_.size() ? &opaque_heap_[oi] : nullptr;
-                    if (!aura::ast::opaque_heap_element_cover_or_required_fail(
-                            reinterpret_cast<void*>(result_i), slot, "ffi-return-external")) {
-                        opaque_heap_.pop_back();
+                    // Opaque: store pointer in opaque_heap_, return OpaqueRef.
+                    // Issue #4386: feature-on takes alloc_storage_lock_ then the
+                    // rewrite map and does not enqueue the element address.
+                    auto* raw = reinterpret_cast<void*>(result_i);
+                    const bool moving_gate = aura::ast::moving_compact_feature_enabled() != 0;
+                    bool cover_ok = false;
+                    std::size_t oi = 0;
+                    {
+                        std::unique_lock<std::recursive_mutex> moving_alloc(alloc_storage_lock_,
+                                                                            std::defer_lock);
+                        std::unique_lock<std::mutex> moving_rewrite(densify_rewrite_mu_,
+                                                                    std::defer_lock);
+                        if (moving_gate) {
+                            moving_alloc.lock();
+                            moving_rewrite.lock();
+                            raw = densify_rewrite_lookup_locked_(raw);
+                        }
+                        oi = opaque_heap_.size();
+                        opaque_heap_.push_back(raw);
+                        // Issue #3022 / #3057 / #3274 / #3533: FFI return may alias
+                        // an arena-tracked object (densify-tracked). Under production
+                        // Moving the alias joins the pin/slot/EXEMPT triad via
+                        // slot-rewrite cover (stable value slot, not this element)
+                        // + #3210 canary fail-closed backstop; Soft/Off falls back
+                        // to EXEMPT (zero extra). Required + no slot fail-closes
+                        // at create (no live untracked ptr).
+                        // GENERAL_OBJECT_PIN_EXEMPT: ffi-return-external
+                        // note_ffi_opaque_alias_densify_cover (via required helper)
+                        void** slot = oi < opaque_heap_.size() ? &opaque_heap_[oi] : nullptr;
+                        cover_ok = aura::ast::opaque_heap_element_cover_or_required_fail(
+                            raw, slot, "ffi-return-external", /*enqueue_slot=*/!moving_gate);
+                        if (!cover_ok)
+                            opaque_heap_.pop_back();
+                    }
+                    if (!cover_ok) {
                         auto es = push_string_heap("opaque-heap-pin-required");
                         auto eidx = error_values_.size();
                         error_values_.push_back(types::make_string(es));
@@ -6294,6 +6313,50 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Issue #3443: cached Env* survives Phase-5 Moving —
                                 // lasting void** slot in modules_, not EXEMPT
                                 // (EXEMPT is only legal when would_move==false).
+                                if (aura::ast::moving_compact_feature_enabled()) {
+                                    // Issue #4386: deque element, not &modules_.back().
+                                    // Do not hold module_mtx_ across create_with_cover,
+                                    // and do not hold the deque lock across module_mtx_.
+                                    void** env_slot = nullptr;
+                                    {
+                                        std::lock_guard<std::mutex> cover_lock(
+                                            module_create_cover_mu_);
+                                        module_create_covers_.push_back(nullptr);
+                                        env_slot = &module_create_covers_.back();
+                                    }
+                                    auto* cached_env = inst_arena.create_with_cover<Env>(
+                                        env_slot, nullptr, mod_env);
+                                    if (cached_env) {
+                                        inst_arena.note_intermediate_create_with_cover_(
+                                            cached_env, env_slot, nullptr);
+                                    }
+                                    void* created = nullptr;
+                                    {
+                                        std::lock_guard<std::mutex> cover_lock(
+                                            module_create_cover_mu_);
+                                        created = env_slot ? *env_slot : nullptr;
+                                    }
+                                    std::size_t mod_idx = 0;
+                                    {
+                                        std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+                                        std::lock_guard<std::mutex> rewrite_lock(
+                                            densify_rewrite_mu_);
+                                        created = densify_rewrite_lookup_locked_(created);
+                                        mod_idx = modules_.size();
+                                        modules_.push_back(static_cast<Env*>(created));
+                                        module_cache_[cache_key] = mod_idx;
+                                        module_arena_ptrs_[cache_key] = &inst_arena;
+                                        module_names_.push_back(cache_key);
+                                        functor_instance_cache_[cache_key] = mod_idx;
+                                    }
+                                    {
+                                        std::lock_guard<std::mutex> cover_lock(
+                                            module_create_cover_mu_);
+                                        if (env_slot)
+                                            *env_slot = created;
+                                    }
+                                    return types::make_module(mod_idx);
+                                }
                                 auto mod_idx = modules_.size();
                                 modules_.push_back(nullptr);
                                 void** env_slot = reinterpret_cast<void**>(&modules_.back());

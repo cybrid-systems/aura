@@ -20,6 +20,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.arena; // Issue #4386: moving_compact_feature_enabled
 import aura.core.error;
 import aura.core.envframe_lifetime;   // Issue #2164: hold-pin compact gate
 import aura.core.lifetime_pin;        // Issue #2353: linear_root_snapshot for revalidate
@@ -1887,6 +1888,12 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
     stamp_closure_bridge_epoch(cl);
     const ClosureId id = next_id();
     std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
+    // Issue #4386: shard lock, then the published old→new map, then insert.
+    if (aura::ast::moving_compact_feature_enabled()) {
+        std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+        cl.flat = static_cast<decltype(cl.flat)>(densify_rewrite_lookup_locked_(cl.flat));
+        cl.pool = static_cast<decltype(cl.pool)>(densify_rewrite_lookup_locked_(cl.pool));
+    }
     bump_closures_apply_epoch(); // Issue #3832
     closures_shards_[closures_shard_index(id)].map[id] = std::move(cl);
     return id;

@@ -7474,6 +7474,113 @@ static void ac4304_phase5_inflight_spans_publish() {
           "4304: in-flight clear after the guard drops");
 }
 
+// Issue #4386: sibling realloc / closure:free! during the Moving window must
+// not leave a live container holding a this-window moved-old address.
+static void ac4386_sibling_realloc_rewrites_moved() {
+    std::println("\n--- #4386: sibling push/erase during Moving rewrites old pointers ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins_off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    CompilerService cs;
+    aura::core::lifetime::g_general_object_pin_required_pref.store(0, std::memory_order_release);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::set_moving_compact_enabled(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    auto& ev = cs.evaluator();
+    auto& arena = ev.arena_group().module_arena("4386", 64 * 1024);
+    constexpr int N = 8;
+    void* olds[N] = {};
+    for (int i = 0; i < N; ++i) {
+        auto* pod = arena.create<Pod16>(i, i + 1, i + 2, i + 3);
+        CHECK(pod != nullptr, "4386: pod create");
+        olds[i] = pod;
+        ev.push_opaque_heap_for_test(pod);
+    }
+    aura::compiler::Closure cl;
+    cl.flat = reinterpret_cast<aura::ast::FlatAST*>(olds[0]);
+    cl.pool = reinterpret_cast<aura::ast::StringPool*>(olds[1]);
+    const auto cid = ev.register_active_closure(std::move(cl));
+    ev.push_module_env_for_test(olds[2]);
+    std::atomic<bool> go{false};
+    std::thread sib([&] {
+        while (!go.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        for (int i = 0; i < 128; ++i)
+            ev.push_opaque_heap_for_test(olds[i % N]);
+        ev.push_module_env_for_test(olds[3]);
+        (void)ev.erase_active_closure(cid);
+        aura::compiler::Closure again;
+        again.flat = reinterpret_cast<aura::ast::FlatAST*>(olds[0]);
+        again.pool = reinterpret_cast<aura::ast::StringPool*>(olds[1]);
+        (void)ev.register_active_closure(std::move(again));
+    });
+    (void)ev.register_known_moving_densify_root_slots();
+    go.store(true, std::memory_order_release);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    sib.join();
+    const bool commit_ok =
+        ev.commit_unstable_densify_root_remap(r.objects_moved > 0 || r.moved_live_objects);
+    CHECK(r.objects_moved > 0, "4386: Moving relocated the pods");
+    const auto& published = arena.last_window_moved_old_published();
+    CHECK(!published.empty(), "4386: this window published moved-old keys");
+    std::unordered_set<void*> old_set(published.begin(), published.end());
+    // Freelist reuse: a pod's new address can be another pod's moved-old
+    // key. That bit pattern is the live destination, not a stale alias.
+    std::unordered_set<void*> dests;
+    for (void* old : published) {
+        if (void* neu = arena.resolve_object_remap(old))
+            dests.insert(neu);
+    }
+    auto clean = [&](const std::vector<void*>& xs) {
+        for (void* p : xs) {
+            if (p && old_set.count(p) != 0 && dests.count(p) == 0)
+                return false;
+        }
+        return true;
+    };
+    const auto opaque_now = ev.copy_opaque_heap_for_test();
+    const auto mods_now = ev.copy_module_ptrs_for_test();
+    const auto clos_now = ev.copy_closure_body_ptrs_for_test();
+    const bool containers_clean = clean(opaque_now) && clean(mods_now) && clean(clos_now);
+    auto holds = [](const std::vector<void*>& xs, void* want) {
+        for (void* p : xs)
+            if (p == want)
+                return true;
+        return false;
+    };
+    auto moved_to = [&](void* old) {
+        void* neu = arena.resolve_object_remap(old);
+        return neu ? neu : old;
+    };
+    bool pods_at_dest = true;
+    for (int i = 0; i < N; ++i)
+        pods_at_dest = pods_at_dest && holds(opaque_now, moved_to(olds[i]));
+    CHECK(commit_ok, "4386: commit rewrote every this-window old key");
+    CHECK(containers_clean, "4386: no live container still holds a moved-old key");
+    CHECK(pods_at_dest, "4386: opaque heap holds each pod at its post-move address");
+    CHECK(holds(clos_now, moved_to(olds[0])) && holds(clos_now, moved_to(olds[1])),
+          "4386: closure flat/pool follow the move");
+    CHECK(holds(mods_now, moved_to(olds[2])) && holds(mods_now, moved_to(olds[3])),
+          "4386: module env slots follow the move");
+    void* neu = arena.resolve_object_remap(olds[0]);
+    CHECK(neu != nullptr && static_cast<Pod16*>(neu)->a == 0,
+          "4386: payload intact at the new address");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #4386") != std::string::npos, "4386: mutation boundary cites the issue");
+    CHECK(mut.find("commit_unstable_densify_root_remap") != std::string::npos,
+          "4386: commit entry point present");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto ret = flat.find("ret_type == 4");
+    CHECK(ret != std::string::npos, "4386: opaque return site present");
+    const auto window = flat.substr(ret, 1500);
+    CHECK(window.find("Issue #4386") != std::string::npos, "4386: opaque return cites the issue");
+    CHECK(window.find("alloc_storage_lock_") != std::string::npos,
+          "4386: opaque return takes the alloc lock");
+    CHECK(read_file("tests/core/test_issue_4386.cpp").empty(), "4386: no invent test");
+    CHECK(read_file("docs/design/4386-densify-slot-uaf.md").empty(), "4386: no docs/design");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -8347,6 +8454,9 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Issue #4304: Phase-5 in-flight spans publish; FFI reads it ===");
     ac4304_phase5_inflight_spans_publish();
+
+    std::println("\n=== Issue #4386: unstable densify slots remap under the writer locks ===");
+    ac4386_sibling_realloc_rewrites_moved();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
