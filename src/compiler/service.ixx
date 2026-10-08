@@ -3559,7 +3559,9 @@ public:
         evaluator_.set_current_flat(flat_ptr);
         evaluator_.set_current_pool(pool_ptr);
 
-        // IR pipeline doesn't support macros — fall back to tree-walker evaluator
+        // IR pipeline doesn't support macros — fall back to tree-walker evaluator.
+        // Issue #4390: preserved / defmacro / eval_data_as_code on that walk
+        // consult MacroSelfEvo before expanding. This fallback stays.
         for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
             if (flat_ptr->get(id).tag == aura::ast::NodeTag::MacroDef) {
                 return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root,

@@ -82,6 +82,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::compiler::types::is_void;
 using aura::core::capability::Effect;
 using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_registry;
@@ -2838,6 +2839,135 @@ static void ac4389_capability_deny_stamps_fiber() {
     reset_all();
 }
 
+static std::string describe_eval_4390(const aura::compiler::EvalResult& r) {
+    if (!r)
+        return r.error().format();
+    if (is_int(*r))
+        return std::format("int {}", as_int(*r));
+    if (is_void(*r))
+        return "void";
+    if (is_string(*r))
+        return "string";
+    if (is_pair(*r))
+        return "pair";
+    return std::format("other {:#x}", static_cast<std::uint64_t>((*r).val));
+}
+
+static void ac4390_legacy_eval_macro_denies_without_mse() {
+    std::println("\n--- #4390: defmacro / preserved / eval_data_as_code deny ---");
+    const char* repro = "(defmacro (bad4390 x) `(let ((tmp ,x)) tmp)) (let ((tmp 1)) (bad4390 2))";
+    const char* preserved = "(define-hygienic-macro* (id4390 &x) x) (id4390 7)";
+
+    {
+        reset_all();
+        CompilerService cs;
+        auto ok = cs.eval_ir(repro);
+        std::string sym;
+        if (ok && is_string(*ok)) {
+            const auto idx = as_string_idx(*ok);
+            if (idx >= 0 && static_cast<std::size_t>(idx) < cs.evaluator().string_heap_size())
+                sym = cs.evaluator().string_heap_at(static_cast<std::size_t>(idx));
+        }
+        CHECK(ok.has_value() && sym == "tmp",
+              std::format("4390: Off defmacro returns source symbol tmp (got {} / {})",
+                          describe_eval_4390(ok), sym));
+    }
+    {
+        reset_all();
+        CompilerService cs;
+        auto ok = cs.eval_ir(preserved);
+        CHECK(ok.has_value() && is_int(*ok) && as_int(*ok) == 7,
+              "4390: Off preserved expands to 7");
+    }
+
+    {
+        arm_restricted_no_mse_4389();
+        CompilerService cs;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        set_mode(SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
+        auto denied = cs.eval_ir(repro);
+        CHECK(eval_error_has(denied, "capability-deny"),
+              "4390: eval_ir defmacro is capability-deny");
+        CHECK(!(denied.has_value() && is_int(*denied) && as_int(*denied) == 2),
+              "4390: eval_ir does not return the template value");
+        CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
+              "4390: defmacro deny does not arm the fiber");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 0,
+              "4390: defmacro deny does not block later eval");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  kHygieneLimitReasonCapabilityDeny,
+              "4390: process sentinel is 7");
+        const char* cap = aura::core::capability::capability_deny_last_reason_string();
+        CHECK(cap != nullptr && std::string(cap) == "capability-not-granted",
+              "4390: capability reason is capability-not-granted");
+    }
+    {
+        arm_restricted_no_mse_4389();
+        CompilerService cs;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        set_mode(SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
+        auto denied = cs.eval_ir(preserved);
+        CHECK(eval_error_has(denied, "capability-deny"),
+              "4390: eval_ir preserved is capability-deny");
+        CHECK(!(denied.has_value() && is_int(*denied) && as_int(*denied) == 7),
+              "4390: preserved call is not evaluated");
+        CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
+              "4390: preserved deny does not arm the fiber");
+    }
+
+    {
+        reset_all();
+        CompilerService cs;
+        grant_self_evo_production();
+        auto ok = cs.eval_ir(repro);
+        std::string sym;
+        if (ok && is_string(*ok)) {
+            const auto idx = as_string_idx(*ok);
+            if (idx >= 0 && static_cast<std::size_t>(idx) < cs.evaluator().string_heap_size())
+                sym = cs.evaluator().string_heap_at(static_cast<std::size_t>(idx));
+        }
+        CHECK(ok.has_value() && sym == "tmp",
+              std::format("4390: a MacroSelfEvo grant still expands (got {} / {})",
+                          describe_eval_4390(ok), sym));
+    }
+
+    {
+        const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(src.find("Issue #4390") != std::string::npos, "4390: eval_flat cites #4390");
+        int calls = 0;
+        for (std::size_t p = 0;
+             (p = src.find("legacy_eval_macro_self_evo_deny()", p)) != std::string::npos; p += 1)
+            ++calls;
+        CHECK(calls >= 4, "4390: helper gates preserved, defmacro, and eval_data_as_code");
+        const auto issue = src.find("Issue #4390");
+        const auto edac = src.find("eval_data_as_code: evaluate", issue);
+        CHECK(issue != std::string::npos && edac != std::string::npos,
+              "4390: helper sits above eval_data_as_code");
+        if (issue != std::string::npos && edac != std::string::npos) {
+            const auto body = src.substr(issue, edac - issue);
+            CHECK(body.find("note_hygiene_last_limit_reason") == std::string::npos,
+                  "4390: legacy deny does not stamp the fiber");
+            CHECK(body.find("check_macro_self_evo") != std::string::npos,
+                  "4390: helper uses check_macro_self_evo");
+            CHECK(body.find("\"capability-deny\"") != std::string::npos,
+                  "4390: helper returns capability-deny");
+        }
+        CHECK(src.find("SyntaxMarker::MacroIntroduced") != std::string::npos,
+              "4390: hygienic clone still stamps MacroIntroduced");
+        const auto svc = read_file("src/compiler/service.ixx");
+        CHECK(svc.find("Issue #4390") != std::string::npos, "4390: eval_ir cites the fallback");
+        CHECK(read_file("tests/compiler/test_issue_4390.cpp").empty(),
+              "4390: no test_issue_4390.cpp");
+        CHECK(read_file("docs/design/4390-legacy-macro-eval.md").empty(),
+              "4390: no docs/design/4390-*");
+    }
+
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -2915,6 +3045,8 @@ int run_test_macro_hygiene_limits() {
     ac4309_deny_leaves_caller_arg();
     std::println("\n=== Issue #4389: hygienic MacroSelfEvo deny stamps the fiber ===");
     ac4389_capability_deny_stamps_fiber();
+    std::println("\n=== Issue #4390: legacy eval expansion needs MacroSelfEvo ===");
+    ac4390_legacy_eval_macro_denies_without_mse();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
