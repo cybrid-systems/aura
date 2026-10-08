@@ -11,6 +11,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -20,8 +21,10 @@
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
 #include "core/workspace_epoch.hh"
+#include "orch/security_schedule_gate.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -38,9 +41,16 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::compiler::security::kEffectFfi;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
@@ -773,6 +783,10 @@ static void ac4239_2_refuse_se_joins_mid_zero_only();
 static void ac4239_3_epoch_join_still_allows();
 static void ac4239_4_live_guard_after_refuse_shares_session();
 static void ac4239_5_soft_observe_and_source();
+static void ac4385_production_allow_joins_session();
+static void ac4385_soft_stays_on_epoch();
+static void ac4385_deny_joins_session_tree_unchanged();
+static void ac4385_source_cite();
 
 int run_test_std_ffi_per_call_3725() {
     std::println("=== Issue #3725: std/ffi per-call require_effect choke ===");
@@ -799,6 +813,13 @@ int run_test_std_ffi_per_call_3725() {
     ac4241_3_deny_face_guarantees_refuse_se();
     ac4241_4_soft_off_no_refuse_branch();
     ac4241_5_commit_face_wal_dual_write();
+    // Same dispatch gap as #3966: the batch calls this runner, not
+    // run_test_require_effect_live_mid.
+    std::println("\n=== Issue #4385: effect-allow joins the Mutation session mid ===");
+    ac4385_production_allow_joins_session();
+    ac4385_soft_stays_on_epoch();
+    ac4385_deny_joins_session_tree_unchanged();
+    ac4385_source_cite();
     return aura::test::g_failed ? 1 : 0;
 }
 
@@ -1120,6 +1141,244 @@ static void ac4239_5_soft_observe_and_source() {
           "4239 AC5: no docs/design");
 }
 
+// Issue #4385: production outermost add_mutate stamps effect-allow on
+// the session mid, not the process Mutation epoch the Guard used to
+// mint away from. Soft/Off does not mint. A non-zero tenant with no
+// grant denies on that same session mid and does not write the tree.
+static bool rebind_denied(const aura::compiler::EvalResult& r) {
+    return !r || is_error(*r) || is_pair(*r);
+}
+
+static int count_rebind_se(std::uint64_t seq0, bool want_allow, std::uint64_t* mid_out) {
+    using aura::core::security_event::SecurityEventKind;
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    int n = 0;
+    for (std::uint64_t s = seq0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s || std::string_view(e.op) != "mutate:rebind")
+            continue;
+        const bool allow = !e.denied && e.kind == SecurityEventKind::EffectAllow &&
+                           std::string_view(e.reason) == "effect-allow";
+        if (want_allow != allow)
+            continue;
+        if (!want_allow && !e.denied)
+            continue;
+        ++n;
+        if (mid_out)
+            *mid_out = e.mutation_id;
+    }
+    return n;
+}
+
+// merr is (kind . (message . void)). Dispatch errors are EvalValue errors.
+template <typename R> static std::string describe_eval(Evaluator& ev, const R& r) {
+    if (!r)
+        return r.error().message;
+    const auto& v = *r;
+    if (is_bool(v))
+        return as_bool(v) ? "#t" : "#f";
+    if (is_error(v))
+        return ev.soft_error_message(v);
+    if (!is_pair(v))
+        return aura::compiler::types::format_value(v);
+    const auto& heap = ev.string_heap();
+    const auto& pairs = ev.pairs();
+    auto str_of = [&](const aura::compiler::types::EvalValue& s) -> std::string {
+        if (!is_string(s))
+            return aura::compiler::types::format_value(s);
+        const auto i = as_string_idx(s);
+        return i < heap.size() ? std::string(heap[i]) : std::string("?");
+    };
+    const auto pi = as_pair_idx(v);
+    if (pi >= pairs.size())
+        return "pair?";
+    std::string msg;
+    if (is_pair(pairs[pi].cdr)) {
+        const auto ci = as_pair_idx(pairs[pi].cdr);
+        if (ci < pairs.size())
+            msg = str_of(pairs[ci].car);
+    }
+    return str_of(pairs[pi].car) + ": " + msg;
+}
+
+// Dev install. Production Restricted + WAL-off schedule-denies set-code
+// (posture-degraded) before the #3691 epoch bump, so the workspace is
+// created here and the caller arms the production face afterwards.
+// Earlier members leave the #2213 gate Forbidden; Allow is the install path.
+static void install_n(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ev.set_effect_sandbox_mode(0);
+    ev.set_capability_tenant_id(0);
+    ev.clear_boundary_audit_mid_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    auto sc = cs.eval("(set-code \"(define (n) 1)\")");
+    const bool installed = sc && is_bool(*sc) && as_bool(*sc);
+    CHECK(installed, installed
+                         ? "4385: set-code installs (define (n) 1)"
+                         : std::format("4385: set-code installs ({})", describe_eval(ev, sc)));
+    auto evc = cs.eval("(eval-current)");
+    CHECK(evc.has_value() && current_mutation_epoch() != 0,
+          evc ? "4385: eval-current bumps the Mutation epoch"
+              : std::format("4385: eval-current bumps the Mutation epoch ({})",
+                            describe_eval(ev, evc)));
+}
+
+// Restricted + production defaults, with the mutation WAL on so
+// try_acquire is not AdmissionRejected for posture-degraded. A leftover
+// TypeLinear proof outcome would also commit-not-ready the admit.
+static void arm_production_rebind_face(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    set_mode(SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(0);
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    (void)aura::orch::capability_deny_storm_live();
+    const auto wal = std::filesystem::path("/tmp/aura_4385_wal");
+    std::filesystem::remove_all(wal);
+    std::filesystem::create_directories(wal);
+    CHECK(ev.enable_mutation_audit_wal(wal.string()),
+          "4385: mutation WAL on (Restricted admit is not posture-degraded)");
+}
+
+static void ac4385_production_allow_joins_session() {
+    std::println("\n--- #4385: production effect-allow joins the session mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    set_mode(SandboxMode::Off);
+    aura::core::reset_mutation_epoch_for_test();
+    CompilerService cs;
+    install_n(cs);
+    arm_production_rebind_face(cs);
+    auto& ev = cs.evaluator();
+    const auto epoch = current_mutation_epoch();
+    CHECK(epoch != 0, "4385: set-code left a non-zero Mutation epoch");
+    reset_security_event_ring_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    const auto aud0 = ev.mutation_audit_seq();
+    auto r = cs.eval("(mutate:rebind \"n\" \"(lambda () 2)\" \"4385\")");
+    const bool allowed = r.has_value() && !rebind_denied(r);
+    CHECK(allowed, allowed
+                       ? "4385: production rebind allowed"
+                       : std::format("4385: production rebind allowed ({})", describe_eval(ev, r)));
+    auto got = cs.eval("(n)");
+    CHECK(got && is_int(*got) && as_int(*got) == 2, "4385: (n) is 2 after rebind");
+    CHECK(ev.has_last_completed_audit_mid(), "4385: outermost exit recorded a session mid");
+    const auto session = ev.last_completed_audit_mid();
+    CHECK(session != 0 && session != epoch, "4385: session mid is not the process epoch");
+    std::uint64_t allow_mid = 0;
+    const int allows = count_rebind_se(0, /*want_allow=*/true, &allow_mid);
+    CHECK(allows == 1, "4385: one effect-allow row for mutate:rebind");
+    CHECK(allow_mid == session && allow_mid != epoch,
+          std::format("4385: effect-allow mid {} == session {} (epoch {})", allow_mid, session,
+                      epoch));
+    std::uint64_t deny_mid = 0;
+    CHECK(count_rebind_se(0, /*want_allow=*/false, &deny_mid) == 0,
+          "4385: production allow has no mutate:rebind deny row");
+    const auto aud1 = ev.mutation_audit_seq();
+    int joined = 0;
+    int split = 0;
+    for (std::uint64_t s = aud0; s < aud1; ++s) {
+        const auto& m = ev.mutation_audit_entry_at(s);
+        if (m.seq != s || std::string_view(m.op) != "mutate:rebind")
+            continue;
+        if (m.provenance_mutation_id == session)
+            ++joined;
+        else if (m.provenance_mutation_id != 0)
+            ++split;
+    }
+    CHECK(joined >= 1, "4385: mutation-audit provenance joins the session mid");
+    CHECK(split == 0, "4385: no mutate:rebind audit row stays on another mid");
+    ev.disable_mutation_audit_wal();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4385_soft_stays_on_epoch() {
+    std::println("\n--- #4385: Soft/Off effect-allow stays on the epoch ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    set_mode(SandboxMode::Off);
+    aura::core::reset_mutation_epoch_for_test();
+    CompilerService cs;
+    install_n(cs);
+    auto& ev = cs.evaluator();
+    const auto epoch = current_mutation_epoch();
+    CHECK(epoch != 0, "4385 soft: epoch non-zero");
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+          "4385 soft: production defaults stay off");
+    reset_security_event_ring_for_test();
+    // A leftover TypeLinear proof is the Soft require_effect mid. The
+    // Guard exit still records the epoch, so the allow row would split.
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    auto r = cs.eval("(mutate:rebind \"n\" \"(lambda () 2)\" \"4385-soft\")");
+    CHECK(r.has_value() && !rebind_denied(r), "4385 soft: rebind allowed");
+    CHECK(ev.has_last_completed_audit_mid(), "4385 soft: exit recorded a mid");
+    const auto completed = ev.last_completed_audit_mid();
+    std::uint64_t allow_mid = 0;
+    CHECK(count_rebind_se(0, /*want_allow=*/true, &allow_mid) == 1,
+          "4385 soft: one effect-allow row");
+    CHECK(allow_mid == epoch && completed == epoch,
+          std::format("4385 soft: effect-allow {} == completed {} == epoch {} (no extra mint)",
+                      allow_mid, completed, epoch));
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4385_deny_joins_session_tree_unchanged() {
+    std::println("\n--- #4385: no-grant deny records one SE on the session mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    set_mode(SandboxMode::Off);
+    aura::core::reset_mutation_epoch_for_test();
+    CompilerService cs;
+    install_n(cs);
+    arm_production_rebind_face(cs);
+    auto& ev = cs.evaluator();
+    const auto epoch = current_mutation_epoch();
+    CHECK(epoch != 0, "4385 deny: epoch non-zero");
+    // Tenant 7 is not kernel-self, so dispatch still requires kCapSandbox
+    // before add_mutate can record the effect deny on the session mid.
+    ev.set_capability_tenant_id(7);
+    ev.grant_capability(std::string(aura::compiler::security::kCapSandbox));
+    reset_security_event_ring_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    auto r = cs.eval("(mutate:rebind \"n\" \"(lambda () 9)\" \"4385-deny\")");
+    CHECK(rebind_denied(r), "4385 deny: non-zero tenant without a grant is denied");
+    ev.set_capability_tenant_id(0);
+    auto got = cs.eval("(n)");
+    CHECK(got && is_int(*got) && as_int(*got) == 1, "4385 deny: tree unchanged, (n) is still 1");
+    std::uint64_t allow_mid = 0;
+    std::uint64_t deny_mid = 0;
+    CHECK(count_rebind_se(0, /*want_allow=*/true, &allow_mid) == 0,
+          "4385 deny: no effect-allow row");
+    CHECK(count_rebind_se(0, /*want_allow=*/false, &deny_mid) == 1,
+          "4385 deny: one durable deny SE for mutate:rebind");
+    CHECK(deny_mid != 0 && deny_mid != epoch,
+          std::format("4385 deny: SE mid {} is a session mid (epoch {})", deny_mid, epoch));
+    ev.disable_mutation_audit_wal();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4385_source_cite() {
+    std::println("\n--- #4385: source-cite, mint stays, no new query key ---");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mutate = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
+    CHECK(bound.find("mint_session_audit_mid") != std::string::npos,
+          "4385: Guard still mints the session mid (#3964)");
+    CHECK(mutate.find("Issue #4385") != std::string::npos, "4385: add_mutate cites the early note");
+    CHECK(mutate.find("mint_session_audit_mid") != std::string::npos,
+          "4385: admission mints before require_effect");
+    CHECK(obs.find("schema-4385") == std::string::npos, "4385: no schema-4385 query key");
+    CHECK(read_file("tests/compiler/test_issue_4385.cpp").empty(), "4385: no test_issue_4385.cpp");
+    CHECK(read_file("docs/design/4385-session-mid.md").empty(), "4385: no docs/design");
+}
+
 int run_test_require_effect_live_mid() {
     std::println("=== Issue #2384: require_effect live mutation_id provenance ===");
     ac1_bound_mismatch_denies();
@@ -1149,6 +1408,11 @@ int run_test_require_effect_live_mid() {
     ac4241_3_deny_face_guarantees_refuse_se();
     ac4241_4_soft_off_no_refuse_branch();
     ac4241_5_commit_face_wal_dual_write();
+    std::println("\n=== Issue #4385: effect-allow joins the Mutation session mid ===");
+    ac4385_production_allow_joins_session();
+    ac4385_soft_stays_on_epoch();
+    ac4385_deny_joins_session_tree_unchanged();
+    ac4385_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

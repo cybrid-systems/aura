@@ -1277,6 +1277,42 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             ref_tenant = existing;
                     }
                 }
+                // Issue #4385: production outermost add_mutate stamps
+                // effect-allow on the session mid the Guard would mint.
+                // Note S before require_effect so peek/join see it. Guard
+                // resolve then sees S != epoch and does not mint again
+                // (#3964 mint stays on the Guard). Soft/Off, an already
+                // noted boundary, and a composite pin do not arm. The
+                // note is cleared on every return that never hands it to
+                // an outermost guard (deny stays on S, TLS does not leak).
+                struct AdmitSessionMid {
+                    bool armed = false;
+                    ~AdmitSessionMid() {
+                        if (armed)
+                            aura::compiler::typed_audit::clear_boundary_audit_mid();
+                    }
+                    void release() noexcept { armed = false; }
+                    void arm_if_process_epoch(Evaluator& ev) noexcept {
+                        using namespace aura::compiler::typed_audit;
+                        if (g_tls_boundary_audit_noted || !production_defaults_active())
+                            return;
+                        if (g_tls_composite_batch_join_mid != 0)
+                            return;
+                        const auto epoch = ::aura::core::current_mutation_epoch();
+                        if (epoch == 0 || peek_audit_mutation_id(0) != epoch)
+                            return;
+                        note_boundary_audit_tenant(ev.capability_tenant_id());
+                        note_boundary_audit_mid(
+                            mint_session_audit_mid(epoch, static_cast<const void*>(&ev)));
+                        armed = true;
+                    }
+                    AdmitSessionMid() = default;
+                    AdmitSessionMid(const AdmitSessionMid&) = delete;
+                    AdmitSessionMid& operator=(const AdmitSessionMid&) = delete;
+                } admit_session;
+                if (!guard_exempt)
+                    admit_session.arm_if_process_epoch(ev);
+
                 // Issue #2942: pick mandated entry by target shape.
                 bool effect_ok = false;
                 if (target_node != 0) {
@@ -1378,6 +1414,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (!gr)
                         return mev("guard-reject", gr.error().message);
                     wrapper_guard = std::move(*gr);
+                    // Inert / nested did not publish a session mid. Stay
+                    // armed so the pre-note clears after that guard dies.
+                    // Outermost owns the note from here (#4385).
+                    if (wrapper_guard->is_outermost())
+                        admit_session.release();
                 }
                 // Issue #4257: production outermost — arm synthetic
                 // MutationBoundary yield (#3254) BEFORE fn(a) so any mid-body
