@@ -2061,6 +2061,23 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
     return ast::NULL_NODE;
 }
 
+// Issue #4390: preserved, legacy defmacro, and eval_data_as_code share
+// macro_expand_all's MacroSelfEvo face. Deny before template eval, tail
+// bind, or data_to_flat. check_macro_self_evo already stores the process
+// sentinel and capability-not-granted. Do not stamp the fiber — a mutate
+// deny (#4149) and a later macro-free eval must not see #4078 armed.
+// Soft/Off and a live grant return nullopt and keep the existing arm.
+[[nodiscard]] static std::optional<Diagnostic> legacy_eval_macro_self_evo_deny() {
+    using aura::core::capability::check_macro_self_evo;
+    const auto tenant = macro_exp::tenant_for_macro_self_evo_check();
+    const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
+    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+    if (chk.allowed)
+        return std::nullopt;
+    g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+    return Diagnostic{ErrorKind::InternalError, "capability-deny"};
+}
+
 // ── eval_data_as_code: evaluate macro-expanded data as code ──
 // Macro bodies produce data (lists) via cons/quote chains.
 // This function interprets that data as code and evaluates it.
@@ -2487,6 +2504,12 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         // expanded — the cons chain produced the list `(bar <x>)`
         // but `bar` was just a symbol at re-eval time.
         if (macros_.count(fn_name)) {
+            // Issue #4390: this arm does not read md.hygienic / md.preserved.
+            // Refuse before the tail-env template eval when MacroSelfEvo
+            // is not granted. A granted hygienic clone still stamps
+            // MacroIntroduced in clone_macro_body.
+            if (auto denied = legacy_eval_macro_self_evo_deny())
+                return std::unexpected(*denied);
             auto macro_it = macros_.find(fn_name);
             auto& md = macro_it->second;
             bool is_rest = md.dotted;
@@ -5137,6 +5160,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             // resolve to the literal symbol and
                             // `fields` to the literal field list.
                             if (md.preserved) {
+                                // Issue #4390: no template eval and no
+                                // data_to_flat without MacroSelfEvo.
+                                if (auto denied = legacy_eval_macro_self_evo_deny())
+                                    return std::unexpected(*denied);
                                 if (is_rest) {
                                     // Rest params on preserved
                                     // macros are not yet supported
@@ -5375,6 +5402,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 return eval_data_as_code(*hygienic_result, eval_env, f, p);
                             }
 
+                            // Issue #4390: legacy defmacro double-eval. Refuse
+                            // before the template runs, so a source-named
+                            // binding in the template is not evaluated.
+                            if (auto denied = legacy_eval_macro_self_evo_deny())
+                                return std::unexpected(*denied);
                             // Convert AST args to data (NOT evaluate — macros receive syntax)
                             // Bind regular params first (all but the last)
                             std::size_t regular_count =
