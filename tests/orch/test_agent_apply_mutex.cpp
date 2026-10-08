@@ -81,6 +81,29 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
     return as_int(*r);
 }
 
+// `body` runs on this thread after `mu` is already held by a side thread.
+// Returns true when `body` finished before that hold ended. A parallel-intend
+// that waits on `mu` returns false; one that skips the mutex returns true.
+template <class F> bool finished_while_mutex_held(std::mutex& mu, int hold_ms, F&& body) {
+    std::atomic<int> holding{0};
+    std::atomic<int> done{0};
+    std::atomic<int> finished_while_held{-1};
+    std::thread holder([&] {
+        std::lock_guard<std::mutex> lock(mu);
+        holding.store(1, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
+        finished_while_held.store(done.load(std::memory_order_acquire), std::memory_order_release);
+    });
+    const auto arm = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (holding.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < arm) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    body();
+    done.store(1, std::memory_order_release);
+    holder.join();
+    return finished_while_held.load(std::memory_order_acquire) == 1;
+}
+
 // Hold agent_apply_mu_ for `hold_ms` (simulates apply_closure under the gate).
 // inflight/peak, when set, record how many holders overlapped. Distinct
 // per-Evaluator mutexes reach 2; one shared mutex stays at 1. Wall-clock
@@ -462,6 +485,91 @@ int run_test_agent_apply_mutex() {
         CHECK(agent_src.find("class AgentRegistry") == std::string::npos, "4062: no AgentRegistry");
         CHECK(read_file("docs/design/4062-same-region-apply-mu.md").empty(),
               "4062: no docs/design");
+    }
+
+    // Issue #4383: production non-pure parallel-intend apply waits on the
+    // same per-Evaluator mutex as spawn. Region-fast distinct keys and
+    // Soft do not take it. One eval at a time — setup outside apply_closure
+    // is not the gate.
+    {
+        std::println("\n--- #4383: parallel-intend shares agent_apply_mu_ ---");
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent_src.find("Issue #4383") != std::string::npos, "4383: prim cites the issue");
+        CHECK(agent_src.find("use_eval_gate") != std::string::npos, "4383: production gate flag");
+        CHECK(agent_src.find("gate_spawn_apply_region") != std::string::npos,
+              "4383: intend apply calls the spawn gate");
+        CHECK(agent_src.find("static std::mutex orch_eval_mu") == std::string::npos,
+              "4383: no process-static orch_eval_mu");
+
+        auto run_intend = [](CompilerService& cs, const char* expr) -> int {
+            auto r = cs.eval(expr);
+            if (!r || !is_int(*r))
+                return -1;
+            return static_cast<int>(as_int(*r));
+        };
+        constexpr const char* kOne = R"(
+            (let ((h (parallel-intend (vector (lambda () 1))
+                                    :max-concurrency 1
+                                    :collect-errors #t
+                                    :timeout-ms 10000)))
+              (hash-ref h "ok-count")))";
+        constexpr const char* kRegion = R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 11 22)
+                                    :collect-errors #t
+                                    :timeout-ms 10000)))
+              (hash-ref h "ok-count")))";
+
+        reset_for_test();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        cs.evaluator().set_workspace_region_concurrency_enabled(false);
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4383: warm");
+        auto& mu = cs.evaluator().agent_apply_mu_;
+        const auto before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> okc{-1};
+        const bool finished = finished_while_mutex_held(
+            mu, 1500, [&] { okc.store(run_intend(cs, kOne), std::memory_order_relaxed); });
+        const auto after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(!finished, "4383: production intend waits on agent_apply_mu_");
+        CHECK(okc.load() == 1, "4383: production one-task batch completed after unlock");
+        CHECK(after > before, "4383: agent_apply_lock_acquisitions_total moved");
+
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        const auto region_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> region_ok{-1};
+        const bool region_finished = finished_while_mutex_held(
+            mu, 1500, [&] { region_ok.store(run_intend(cs, kRegion), std::memory_order_relaxed); });
+        const auto region_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(region_finished, "4383: distinct region keys skip agent_apply_mu_");
+        CHECK(region_ok.load() == 2, "4383: region-concurrent batch ok-count");
+        CHECK(region_after == region_before, "4383: region-fast did not take the mutex");
+
+        reset_for_test();
+        CompilerService soft;
+        soft.evaluator().set_effect_sandbox_mode(0);
+        CHECK(soft.eval("(+ 1 1)").has_value(), "4383: soft warm");
+        const auto soft_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> soft_ok{-1};
+        const bool soft_finished =
+            finished_while_mutex_held(soft.evaluator().agent_apply_mu_, 1500, [&] {
+                soft_ok.store(run_intend(soft, kOne), std::memory_order_relaxed);
+            });
+        const auto soft_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(soft_finished, "4383: Soft intend does not wait on agent_apply_mu_");
+        CHECK(soft_ok.load() == 1, "4383: Soft one-task batch completed");
+        CHECK(soft_after == soft_before, "4383: Soft did not acquire agent_apply_mu_");
+        reset_for_test();
     }
 
     std::println("\n=== #2158/#3728 agent apply per-eval mutex: {} passed, {} failed ===", g_passed,

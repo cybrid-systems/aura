@@ -273,7 +273,8 @@ namespace {
     // agent_apply_mu_. Production + region concurrency + non-zero key
     // skips that mutex only when this Evaluator has no live body on the
     // same key (#4062). Does not call decide_isolation (spawn is not a
-    // batch). parallel-intend RegionConcurrent is unchanged. Quota
+    // batch). Production non-pure parallel-intend uses this gate too
+    // (#4383); RegionConcurrent still skips eval_mu. Quota
     // try_acquire reject never reaches here (#2158 AC5).
     // Placed after WorkspaceSwapGuard so #3442 AC3 (resolve_aura_agent
     // window has no extra atomic) stays a pointer walk.
@@ -2847,13 +2848,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
         std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
         tasks.reserve(cids.size());
+        // Issue #4383: a spawn body already inside gate_spawn_apply_region
+        // re-enters parallel-intend on this thread. Workers must not take
+        // agent_apply_mu_ again; the outer hold still excludes other agents.
+        const int caller_apply_hold = Evaluator::agent_apply_hold_depth();
         for (std::size_t i = 0; i < cids.size(); ++i) {
             const auto cid = cids[i];
             const std::uint64_t rkey = (i < region_keys.size()) ? region_keys[i] : 0;
             const std::uint64_t cmask = (i < cone_masks.size()) ? cone_masks[i] : 0;
             tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-                .body = [&ev, ash, cid, i, pure_mode, rkey,
-                         cmask]() -> aura::serve::parallel_orch::TaskResult {
+                .body = [&ev, ash, cid, i, pure_mode, rkey, cmask,
+                         caller_apply_hold]() -> aura::serve::parallel_orch::TaskResult {
                     // Issue #2746 / #2760: stamp parallel-task region + cone
                     // TLS so try_acquire → try_acquire_for_region (#2724) and
                     // mask-AND concurrent admit (#2754/#2757) when enabled.
@@ -2882,12 +2887,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         // region concurrency + non-zero region_key skips eval_mu
                         // (spawn #3728 discipline). Soft / Serialized / BestEffortPure / zero-key
                         // stay locked.
+                        // Issue #4383: production :pure #f also takes the spawn
+                        // gate (agent_apply_mu_, or the region-fast claim when
+                        // region_skip). Soft / Off and :pure keep eval_mu only.
                         const bool force_lock =
                             pure_mode &&
                             (ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0 ||
                              ash->batch_force_eval_mu.load(std::memory_order_relaxed));
                         const bool region_skip = ash->region_concurrent_skip_eval_mu && rkey != 0;
                         const bool use_lock = (!pure_mode || force_lock) && !region_skip;
+                        const bool use_eval_gate =
+                            !pure_mode && caller_apply_hold == 0 &&
+                            aura::compiler::typed_audit::production_defaults_active();
                         std::unique_lock<std::mutex> lock(ash->eval_mu, std::defer_lock);
                         if (use_lock) {
                             lock.lock();
@@ -2903,70 +2914,87 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         } else {
                             ash->region_unlocked_applies.fetch_add(1, std::memory_order_relaxed);
                         }
-                        // Issue #1719: refuse apply on freed closure (sibling of intend).
-                        if (!agent_cid_live(ev, cid)) {
-                            agent_note_closure_freed_call(ev);
-                            tr.ok = false;
-                            tr.error = "closure-freed";
-                            ash->errors[i] = tr.error;
-                        } else {
-                            // Issue #2163 AC3: snapshot defuse for pure-contract probe.
-                            const auto defuse_before =
-                                pure_mode ? ev.defuse_version() : std::uint64_t{0};
-                            // Issue #2634 AC1: extend the pure-contract probe with
-                            // total_mutations() + workspace_generation() snapshots.
-                            // Indirect writers (engine:metrics, side caches,
-                            // persistent TypeChecker reuse #2220) may mutate
-                            // without bumping defuse_version; the additional
-                            // snapshots catch that class of pure-contract
-                            // violation. Zero cost when !pure_mode (the
-                            // ?-expressions short-circuit to literal 0 below).
-                            const auto mut_before =
-                                pure_mode ? ev.total_mutations() : std::uint64_t{0};
-                            const auto ws_gen_before =
-                                pure_mode ? ev.workspace_generation() : std::uint64_t{0};
-                            auto opt = ev.apply_closure(cid, {});
-                            if (!opt) {
+                        auto apply_task = [&]() {
+                            // Issue #1719: refuse apply on freed closure (sibling of intend).
+                            if (!agent_cid_live(ev, cid)) {
+                                agent_note_closure_freed_call(ev);
                                 tr.ok = false;
-                                tr.error = "apply-failed";
+                                tr.error = "closure-freed";
                                 ash->errors[i] = tr.error;
-                            } else if (pure_mode && !force_lock &&
-                                       (ev.defuse_version() != defuse_before ||
-                                        ev.total_mutations() != mut_before ||
-                                        ev.workspace_generation() != ws_gen_before ||
-                                        ev.mutation_boundary_held() ||
-                                        ev.mutation_boundary_depth() > 0)) {
-                                // Mutating thunk under :pure #t — fail task (policy).
-                                tr.ok = false;
-                                tr.error = "pure-contract-violated";
-                                ash->errors[i] = tr.error;
-                                ash->pure_contract_violated.fetch_add(1, std::memory_order_relaxed);
-                                aura::orch::g_orch_module_stats.pure_contract_violated_total
-                                    .fetch_add(1, std::memory_order_relaxed);
-                                // Issue #2662 / #2838: production hardening —
-                                // when the per-batch effective force-lock
-                                // policy is on (production default under
-                                // #2838, host flag, or env force-on), force
-                                // remaining pure tasks in this batch to take
-                                // eval_mu (best-effort-pure → serialized for
-                                // the rest of the batch). NOT a transactional
-                                // isolation promise — best-effort hardening.
-                                // Soft / sandbox=off stays off unless host
-                                // set the atomic or env force-on.
-                                if (ash->force_lock_on_violation_policy) {
-                                    ash->batch_force_eval_mu.store(true, std::memory_order_relaxed);
-                                }
                             } else {
-                                ash->values[i] = *opt;
-                                if (types::is_error(*opt)) {
+                                // Issue #2163 AC3: snapshot defuse for pure-contract probe.
+                                const auto defuse_before =
+                                    pure_mode ? ev.defuse_version() : std::uint64_t{0};
+                                // Issue #2634 AC1: extend the pure-contract probe with
+                                // total_mutations() + workspace_generation() snapshots.
+                                // Indirect writers (engine:metrics, side caches,
+                                // persistent TypeChecker reuse #2220) may mutate
+                                // without bumping defuse_version; the additional
+                                // snapshots catch that class of pure-contract
+                                // violation. Zero cost when !pure_mode (the
+                                // ?-expressions short-circuit to literal 0 below).
+                                const auto mut_before =
+                                    pure_mode ? ev.total_mutations() : std::uint64_t{0};
+                                const auto ws_gen_before =
+                                    pure_mode ? ev.workspace_generation() : std::uint64_t{0};
+                                auto opt = ev.apply_closure(cid, {});
+                                if (!opt) {
                                     tr.ok = false;
-                                    tr.error = "task-error";
+                                    tr.error = "apply-failed";
                                     ash->errors[i] = tr.error;
+                                } else if (pure_mode && !force_lock &&
+                                           (ev.defuse_version() != defuse_before ||
+                                            ev.total_mutations() != mut_before ||
+                                            ev.workspace_generation() != ws_gen_before ||
+                                            ev.mutation_boundary_held() ||
+                                            ev.mutation_boundary_depth() > 0)) {
+                                    // Mutating thunk under :pure #t — fail task (policy).
+                                    tr.ok = false;
+                                    tr.error = "pure-contract-violated";
+                                    ash->errors[i] = tr.error;
+                                    ash->pure_contract_violated.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                    aura::orch::g_orch_module_stats.pure_contract_violated_total
+                                        .fetch_add(1, std::memory_order_relaxed);
+                                    // Issue #2662 / #2838: production hardening —
+                                    // when the per-batch effective force-lock
+                                    // policy is on (production default under
+                                    // #2838, host flag, or env force-on), force
+                                    // remaining pure tasks in this batch to take
+                                    // eval_mu (best-effort-pure → serialized for
+                                    // the rest of the batch). NOT a transactional
+                                    // isolation promise — best-effort hardening.
+                                    // Soft / sandbox=off stays off unless host
+                                    // set the atomic or env force-on.
+                                    if (ash->force_lock_on_violation_policy) {
+                                        ash->batch_force_eval_mu.store(true,
+                                                                       std::memory_order_relaxed);
+                                    }
                                 } else {
-                                    tr.ok = true;
-                                    tr.value = "ok";
+                                    ash->values[i] = *opt;
+                                    if (types::is_error(*opt)) {
+                                        tr.ok = false;
+                                        tr.error = "task-error";
+                                        ash->errors[i] = tr.error;
+                                    } else {
+                                        tr.ok = true;
+                                        tr.value = "ok";
+                                    }
                                 }
                             }
+                        };
+                        if (use_eval_gate) {
+                            ev.gate_spawn_apply_region(
+                                rkey, /*region_fast=*/region_skip, apply_task,
+                                [](std::uint64_t wait_us) {
+                                    aura::orch::g_orch_module_stats
+                                        .agent_apply_lock_acquisitions_total.fetch_add(
+                                            1, std::memory_order_relaxed);
+                                    aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total
+                                        .fetch_add(wait_us, std::memory_order_relaxed);
+                                });
+                        } else {
+                            apply_task();
                         }
                     } catch (const std::exception& ex) {
                         tr.ok = false;

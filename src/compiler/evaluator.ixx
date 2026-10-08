@@ -6965,7 +6965,8 @@ public:
     // Replaces process-static `orch_eval_mu` so multi-CompilerService /
     // multi-workspace agent workloads can apply concurrently. Single-
     // Evaluator multi-agent still serializes (AST / closure-heap safety).
-    // parallel-intend keeps its own batch-local eval_mu (out of scope).
+    // Issue #4383: production non-pure parallel-intend apply uses this
+    // same gate. Soft / Off and :pure keep the batch-local eval_mu.
     // Public for tests/orch/test_agent_apply_mutex concurrent ACs.
     mutable std::mutex agent_apply_mu_;
 
@@ -6981,6 +6982,12 @@ public:
     // already live takes agent_apply_mu_ (on_lock) and waits until it
     // can claim, so two same-key bodies do not overlap. Distinct keys
     // do not take the mutex.
+    // Issue #4383: depth is non-zero on a thread already inside this
+    // gate. A nested parallel-intend captures it and does not lock again.
+    [[nodiscard]] static int agent_apply_hold_depth() noexcept {
+        return agent_apply_hold_depth_tls_();
+    }
+
     template <class F, class OnLock>
     void gate_spawn_apply_region(std::uint64_t region_key, bool region_fast, F&& body,
                                  OnLock&& on_lock) {
@@ -6997,12 +7004,22 @@ public:
             }
         } rel{this, region_key, false};
 
+        auto invoke = [&]() {
+            auto& depth = agent_apply_hold_depth_tls_();
+            ++depth;
+            struct DepthReset {
+                int& depth;
+                ~DepthReset() { --depth; }
+            } reset{depth};
+            body();
+        };
+
         if (region_fast) {
             std::lock_guard<std::mutex> lock(spawn_region_inflight_mu_);
             rel.armed = spawn_region_inflight_.insert(region_key).second;
         }
         if (rel.armed) {
-            body();
+            invoke();
             return;
         }
         const auto t0 = std::chrono::steady_clock::now();
@@ -7018,9 +7035,16 @@ public:
                 lock, [&] { return spawn_region_inflight_.insert(region_key).second; });
             rel.armed = true;
         }
-        body();
+        invoke();
     }
 
+private:
+    [[nodiscard]] static int& agent_apply_hold_depth_tls_() noexcept {
+        static thread_local int depth = 0;
+        return depth;
+    }
+
+public:
     [[nodiscard]] std::size_t spawn_region_inflight_size_for_test() const {
         std::lock_guard<std::mutex> lock(spawn_region_inflight_mu_);
         return spawn_region_inflight_.size();
