@@ -1243,6 +1243,11 @@ public:
         // needing to import CompilerService (which would be circular).
         evaluator_.set_mark_define_dirty_fn(
             [this](const std::string& name) { this->mark_define_dirty(name); });
+        // Issue #3681: the id captured before set-body / rebind is the IR
+        // define closure. Dropping the owner entry makes dispatch return
+        // nullopt; the env refresh below installs a fresh closure.
+        evaluator_.set_drop_ir_define_binding_fn(
+            [this](const std::string& name) { this->clear_ir_define_env_binding(name); });
         evaluator_.set_mark_all_defines_dirty_fn([this]() { this->mark_all_defines_dirty(); });
         // Issue #3033: dual-topology abort → force-dirty + zero-restamp every
         // IR cache entry so should_relower is forced true (abort path leaves
@@ -3068,6 +3073,14 @@ public:
                 if (!result)
                     return result;
                 user_bindings_.insert(std::string(name));
+                // Issue #3681: a bare (define (f …)) is the mutate target.
+                // set-body looks at workspace_flat_, which set-code fills and
+                // a REPL define previously left null — so the pre-reemit IR
+                // closure stayed applicable. Keep an existing workspace.
+                if (!evaluator_.workspace_flat()) {
+                    evaluator_.set_workspace_flat(flat_ptr);
+                    evaluator_.set_workspace_pool(pool_ptr);
+                }
                 return EvalResult(types::make_void());
             }
             // Issue #2568 / #2213: Quote body must tree-walk BEFORE IR bind.

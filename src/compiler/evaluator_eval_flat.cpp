@@ -6752,6 +6752,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         if (!vv)
                             return vv;
                         cells_[ci] = *vv;
+                        // Issue #3681: name the closure so set-body can
+                        // must-deopt this view after the define is dirtied.
+                        if (is_closure(*vv))
+                            name_live_closure(as_closure_id(*vv), name);
                         return *vv;
                     }
 
@@ -6777,6 +6781,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             me.bind_symid(v.sym_id, make_cell(ci));
                         else
                             me.bind(std::string(name), make_cell(ci));
+                        if (is_closure(*vv))
+                            name_live_closure(as_closure_id(*vv), name);
                         return *vv;
                     }
 
@@ -6795,6 +6801,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return vv;
                     }
                     cells_[ci] = *vv;
+                    // Issue #3681: name the closure so set-body can
+                    // must-deopt this view after the define is dirtied.
+                    if (is_closure(*vv))
+                        name_live_closure(as_closure_id(*vv), name);
                     return *vv;
                 }
                 case aura::ast::NodeTag::Begin: {

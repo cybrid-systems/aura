@@ -1102,7 +1102,18 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
 // resolution centralized on Evaluator). This keeps frames
 // as pure, index-only data.
 aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId parent_id) {
-    EnvId pid = (parent_id != NULL_ENV_ID) ? parent_id : e.parent_id();
+    // Issue #4350: a materialized call env keeps free bindings in
+    // cap_snapshot and sets parent_id_ to that frame's parent. Copying
+    // only bindings_ would drop the outer named-let and module defines
+    // (unbound `loop` / `boids-list-ref` inside a nested named let).
+    // Parent the SoA frame at the capture the snapshot was built from.
+    EnvId pid = parent_id;
+    if (parent_id == NULL_ENV_ID) {
+        if (const auto& snap = e.cap_snapshot(); snap && snap->source_frame != NULL_ENV_ID)
+            pid = snap->source_frame;
+        else
+            pid = e.parent_id();
+    }
     EnvId id = alloc_env_frame(pid);
     if (id == NULL_ENV_ID)
         return NULL_ENV_ID;
@@ -1221,6 +1232,7 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
             for (std::size_t i = 0; i < ns->bindings_.size(); ++i)
                 ns->name_index_[ns->bindings_[i].first] = i;
             ns->parent_id = cfr.parent_id;
+            ns->source_frame = frame_id;
             snap = std::move(ns);
         }
     }
@@ -1251,8 +1263,33 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // below keeps exact #1539 per-call states). Stale closures skip the
     // fast path: the legacy frame gates below keep their exact observe
     // and safe-fallback faces.
+    // Issue #2116: length / content desync must reach the hard/soft
+    // gate below. The snapshot fast path returns before that gate, so
+    // an injected desync never bumps hard_fail or soft++.
+    auto capture_dual_diverges = [&](EnvId id) -> bool {
+        if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >= env_frames_.size())
+            return false;
+        std::shared_lock<std::shared_mutex> rlock(env_frame_shards_[env_frame_shard_index(id)].mu);
+        const EnvFrame& fr = env_frames_[id];
+        if (fr.bindings_.size() != fr.bindings_symid_.size())
+            return true;
+        if (fr.bindings_linear_ownership_state_.size() != fr.bindings_symid_.size())
+            return true;
+        if (!fr.pool_ || fr.bindings_.size() != fr.bindings_symid_.size())
+            return false;
+        const std::size_t n = fr.bindings_symid_.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            if (fr.bindings_[i].second != fr.bindings_symid_[i].second)
+                return true;
+            const std::string_view expected = fr.pool_->resolve(fr.bindings_symid_[i].first);
+            if (!expected.empty() && fr.bindings_[i].first != expected)
+                return true;
+        }
+        return false;
+    };
+    const bool dual_diverges = capture_dual_diverges(cl.env_id);
     std::shared_ptr<const CapSnapshot> snap;
-    if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size())
+    if (!dual_diverges && cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size())
         snap = cap_snap_for_frame(cl.env_id);
     if (snap && !epoch_or_env_stale) {
         Env ne;
@@ -1691,6 +1728,35 @@ std::optional<EnvFrameRef> Evaluator::materialize_call_env_ref(const Closure& cl
 // via RAII. Callers at invalidate / compact / truncate / JIT / fiber / GC
 // boundaries pair this with scan_live_closures_for_linear_captures for
 // forced Drop (bridge_epoch=0) on linear/Moved captures.
+void Evaluator::name_live_closure(ClosureId cid, std::string_view name) {
+    if (name.empty())
+        return;
+    std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(cid)].mu);
+    bump_closures_apply_epoch(); // Issue #3832
+    auto& shard = closures_shards_[closures_shard_index(cid)];
+    auto it = shard.map.find(cid);
+    if (it == shard.map.end())
+        return;
+    if (it->second.name.empty())
+        it->second.name = std::string(name);
+}
+
+void Evaluator::must_deopt_closures_named(std::string_view name) {
+    if (name.empty())
+        return;
+    const std::string key(name);
+    // Issue #3681: the closure captured before set-body / rebind still
+    // holds the pre-reemit body. #2569 restamp would make it look current.
+    // must_deopt keeps production apply on the refuse path; Soft still
+    // clears the flag and recovers.
+    walk_active_closures([&](ClosureId, Closure& cl) {
+        if (cl.name != key)
+            return;
+        cl.must_deopt_before_next_call = true;
+        cl.bridge_epoch = 0;
+    });
+}
+
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;
