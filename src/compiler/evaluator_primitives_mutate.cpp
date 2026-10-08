@@ -404,8 +404,12 @@ namespace {
     // Issue #4357: one-line Soft rebind may arm the light path. Production,
     // the hard type gate, Full audit, an arity change, and a free name that
     // is not a primitive and not a workspace define stay on the full cascade
-    // (ci/p0 typecheck-status-after-bad-mutate / undefined-fn). The walk is
-    // outside the rebind handler so the rollback NodeId cite stays in range.
+    // (ci/p0 typecheck-status-after-bad-mutate / undefined-fn). Issue #4362:
+    // a call whose callee is a workspace define, and whose arg count misses
+    // that lambda, also stays on the cascade so soft selective typecheck
+    // refuses it. Primitive and parameter callees stay eligible, so a soft
+    // type error still commits. The walk is outside the rebind handler so
+    // the rollback NodeId cite stays in range.
     [[nodiscard]] bool rebind_light_path_eligible(const aura::ast::FlatAST& flat,
                                                   aura::ast::NodeId old_define,
                                                   aura::ast::NodeId new_value,
@@ -465,7 +469,93 @@ namespace {
             if (!defined)
                 body_closed = false;
         });
-        return body_closed;
+        if (!body_closed)
+            return false;
+
+        // Issue #4362: fixed lambdas need an exact arg count. A dotted rest
+        // (int_value != 0) has no upper bound; min arity is params.size()-1,
+        // matching selective typecheck. The name being rebound uses the new
+        // lambda (same_arity already matched it to the old one).
+        struct DefineArity {
+            bool lambda = false;
+            bool dotted = false;
+            std::size_t nparams = 0;
+        };
+        std::unordered_map<aura::ast::SymId, DefineArity> defs;
+        for (aura::ast::NodeId d = 0; d < flat.size(); ++d) {
+            if (flat.is_free_slot(d))
+                continue;
+            const auto dv = flat.get(d);
+            if (dv.tag != aura::ast::NodeTag::Define || dv.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            DefineArity arity;
+            if (!dv.children.empty() && dv.child(0) < flat.size()) {
+                const auto body = flat.get(dv.child(0));
+                if (body.tag == aura::ast::NodeTag::Lambda) {
+                    arity.lambda = true;
+                    arity.dotted = body.int_value != 0;
+                    arity.nparams = body.params.size();
+                }
+            }
+            defs[dv.sym_id] = arity;
+        }
+        if (old_define < flat.size()) {
+            const auto od = flat.get(old_define);
+            if (od.tag == aura::ast::NodeTag::Define && od.sym_id != aura::ast::INVALID_SYM) {
+                const auto neu = flat.get(new_value);
+                DefineArity arity;
+                arity.lambda = true;
+                arity.dotted = neu.int_value != 0;
+                arity.nparams = neu.params.size();
+                defs[od.sym_id] = arity;
+            }
+        }
+        auto arg_count_misses = [&](aura::ast::SymId sym, std::size_t nargs) -> bool {
+            const auto it = defs.find(sym);
+            if (it == defs.end() || !it->second.lambda)
+                return false;
+            const auto& arity = it->second;
+            if (arity.dotted) {
+                const std::size_t fixed = arity.nparams > 0 ? arity.nparams - 1 : 0;
+                return nargs < fixed;
+            }
+            return nargs != arity.nparams;
+        };
+        bool calls_ok = true;
+        auto call_walk = [&](auto self, aura::ast::NodeId id,
+                             const std::unordered_set<aura::ast::SymId>& scope) -> void {
+            if (!calls_ok || id == aura::ast::NULL_NODE || id >= flat.size())
+                return;
+            const auto nv = flat.get(id);
+            if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                const auto callee_id = nv.child(0);
+                if (callee_id != aura::ast::NULL_NODE && callee_id < flat.size()) {
+                    const auto cv = flat.get(callee_id);
+                    if (cv.tag == aura::ast::NodeTag::Variable &&
+                        cv.sym_id != aura::ast::INVALID_SYM && scope.count(cv.sym_id) == 0) {
+                        const auto nm = pool->resolve(cv.sym_id);
+                        if (prims.slot_for_name(nm) >= prims.slot_count()) {
+                            const std::size_t nargs =
+                                nv.children.size() > 1 ? nv.children.size() - 1 : 0;
+                            if (arg_count_misses(cv.sym_id, nargs))
+                                calls_ok = false;
+                        }
+                    }
+                }
+            }
+            if (nv.tag == aura::ast::NodeTag::Lambda) {
+                auto inner = scope;
+                for (auto p : nv.params)
+                    inner.insert(p);
+                for (auto c : nv.children)
+                    self(self, c, inner);
+                return;
+            }
+            for (auto c : nv.children)
+                self(self, c, scope);
+        };
+        call_walk(call_walk, new_value, {});
+        return calls_ok;
     }
 
     // Issue #680: detect Lambda/closure descendants for precise invalidation.

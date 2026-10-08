@@ -259,6 +259,11 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 note_type_dirty_txn_this_boundary();
                 note_infer_solve_solved(true);
                 copy_infer_type_export_authority(true);
+                // Issue #4362: this skip does not infer. A prior selective
+                // refusal left last_mutate_error_ set, and the rebind handler
+                // rejects on that string. Drop it so the next closed rebind
+                // can commit.
+                last_mutate_error_.clear();
                 return true;
             }
         }
