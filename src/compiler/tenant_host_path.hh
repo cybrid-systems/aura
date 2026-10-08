@@ -26,6 +26,8 @@
 #include <string_view>
 #include <vector>
 
+#include <sys/stat.h>
+
 namespace aura::compiler::security {
 
 inline constexpr int kTenantHostPathIsolationIssue = 3802;
@@ -138,6 +140,13 @@ struct TenantHostPathResult {
 // 2>/abs), ';'-joined (cmd;cat /etc/passwd) and '='-joined
 // (--opt=/abs) forms are caught. Fail-closed: a token that merely looks
 // absolute (quoted prose) denies too — jail posture over convenience.
+// Issue #4380: quotes are NOT meta, so an absolute path can hide
+// mid-token — `python3 -c 'open("/etc/passwd").read()'`,
+// `perl -e 'open(F,"/etc/passwd")'`, `--lib=/etc/x`. The scan stays
+// byte-local (no shell grammar): any `/` that is not clearly part of a
+// relative path denies — token-initial, or preceded by a byte outside
+// [A-Za-z0-9._-] (quote, '=', '(', ',', ':', ...). Plain `sub/file` and
+// `./x` keep the relative-only contract.
 // Soft/Off / single-tenant Restricted never call this (the policy
 // predicate in check_tenant_exec_jail owns the arm).
 [[nodiscard]] inline bool tenant_exec_cmd_escapes_root(std::string_view cmd) noexcept {
@@ -155,14 +164,63 @@ struct TenantHostPathResult {
         if (i == cmd.size() || is_meta(cmd[i])) {
             if (i > tok_begin) {
                 const std::string_view tok = cmd.substr(tok_begin, i - tok_begin);
-                if (tok.front() == '/')
-                    return true; // absolute path token
-                for (std::size_t j = 1; j < tok.size(); ++j)
-                    if (tok[j] == '/' && tok[j - 1] == '=')
-                        return true; // --opt=/abs joined form
+                // Issue #4380: quote-blind byte-local scan — every `/` must
+                // sit inside a plain relative path. Token-initial `/` is the
+                // #4233 absolute token; a `/` after any byte that cannot
+                // continue a relative path ('"', '=', '(', ',', ':', '%',
+                // redirect-adjacent joins) is an embedded absolute path
+                // (interpreter argument / quoted prose / --opt=/abs form —
+                // the '=' special case is subsumed by the set below).
+                for (std::size_t j = 0; j < tok.size(); ++j) {
+                    if (tok[j] != '/')
+                        continue;
+                    if (j == 0)
+                        return true; // absolute path token
+                    const char prev = tok[j - 1];
+                    const bool rel_cont =
+                        (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+                        (prev >= '0' && prev <= '9') || prev == '.' || prev == '_' || prev == '-';
+                    if (!rel_cont)
+                        return true; // embedded absolute path (#4380)
+                }
             }
             tok_begin = i + 1;
         }
+    }
+    return false;
+}
+
+// Issue #4380: lexical resolve + O_NOFOLLOW guard only the FINAL path
+// component. A symlink PRE-PLACED under the tenant root (off-jail
+// provisioning path — the #4380 scanner above now denies exec-time
+// creation) turns a relative `e/passwd` into a host read/write outside
+// the prefix: O_NOFOLLOW does not apply to intermediate components.
+// Fail-closed: lstat every component BELOW the tenant root with
+// AT_SYMLINK_NOFOLLOW; any symlink (including the final one, which the
+// open would only fail on silently) reports escape so the caller emits
+// IsolationDeny tenant-path-escape at the fence. Missing components are
+// not an escape — the open/create path reports them. Caller:
+// Evaluator::check_tenant_host_path under active policy only — Soft/Off
+// / single-tenant Restricted stay zero-cost passthrough.
+[[nodiscard]] inline bool tenant_path_has_symlink_component(std::string_view rooted_path,
+                                                            std::string_view root) {
+    if (root.empty() || rooted_path.size() <= root.size() || !rooted_path.starts_with(root))
+        return false; // not a rooted tenant path — nothing to walk
+    std::size_t i = root.size();
+    while (i < rooted_path.size()) {
+        if (rooted_path[i] == '/') {
+            ++i;
+            continue;
+        }
+        const auto next = rooted_path.find('/', i);
+        const auto end = next == std::string_view::npos ? rooted_path.size() : next;
+        const std::string probe(rooted_path.substr(0, end));
+        struct stat st{};
+        if (::lstat(probe.c_str(), &st) != 0)
+            return false; // missing component — the open/create reports it
+        if (S_ISLNK(st.st_mode))
+            return true;
+        i = end;
     }
     return false;
 }

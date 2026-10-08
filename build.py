@@ -8742,6 +8742,30 @@ def cmd_lint():
             "Issue #4233 shell/command-output tenant exec-jail linter failed — run python3 scripts/check_tenant_exec_jail_4233.py"
         )
         return r
+    # Issue #4380 (security): the #4233 exec jail scanned commands
+    # token-by-token, but quotes are not meta — absolute paths hidden
+    # MID-TOKEN (python3 -c 'open("/etc/passwd").read()', perl -e
+    # 'open(F,"/etc/passwd")') scanned clean while chdir is not a root
+    # jail. Second stage: lexical resolve + O_NOFOLLOW guard only the
+    # FINAL component, so a symlink pre-placed under the tenant root turns
+    # relative e/passwd into a host read/write outside the prefix. Gate
+    # pins: the scanner denies any `/` not clearly part of a relative
+    # path (token-initial or after a byte outside [A-Za-z0-9._-]),
+    # check_tenant_host_path consults the symlink-component walk under
+    # active policy and joins the shared IsolationDeny
+    # tenant-path-escape row, the walk lives in the tenant_host_path.hh
+    # SSOT (::lstat + S_ISLNK), runtime ACs extend the #3802 family host
+    # test file, and the wiring stays on the root allowlist.
+    jail4380_script = ROOT / "scripts" / "check_tenant_jail_4380.py"
+    if not jail4380_script.exists():
+        fail(f"missing {jail4380_script}")
+        return 1
+    r = run([sys.executable, str(jail4380_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4380 tenant jail embedded-path / symlink-component linter failed — run python3 scripts/check_tenant_jail_4380.py"
+        )
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed
