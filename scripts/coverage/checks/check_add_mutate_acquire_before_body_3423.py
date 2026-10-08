@@ -57,9 +57,11 @@ def main() -> int:
         # now sit at +14353..+14570 — past the old 14000 edge.
         # #4332 wave (add_mutate wrapper-level lazy COW before fn(a)) grew it
         # again: the AC4 belt anchors (naked_mutate_attempt belt) now sit at
-        # +19353 — past the old 18000 edge. Grow with the lambda, assertions
-        # unchanged.
-        lam_win = mut[lam : lam + 21000]
+        # +19353 — past the old 18000 edge.
+        # #4385 (session mid noted before require_effect) grew it again:
+        # naked_mutate_attempt now sits at +22760 — past the old 21000 edge.
+        # Grow with the lambda, assertions unchanged.
+        lam_win = mut[lam : lam + 25000]
 
     must("mutate_dispatch_try_acquire", "AC1 wrapper acquire", lam_win)
     acq = lam_win.find("mutate_dispatch_try_acquire")

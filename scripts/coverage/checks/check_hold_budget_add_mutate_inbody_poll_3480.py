@@ -57,8 +57,11 @@ def main() -> int:
         # #4332 wave (add_mutate wrapper-level lazy COW before fn(a)) grew it
         # again: the hold-budget anchors (cancel peek, #3480 cite, forced
         # unlock/fail-closed counters) now sit at +17986..+18531 — past the
-        # old 18000 edge. Grow with the lambda, assertions unchanged.
-        win = mut[start : start + 21000]
+        # old 18000 edge.
+        # #4385 (session mid noted before require_effect) grew it again:
+        # hold-budget-cancel now sits at +21938 — past the old 21000 edge.
+        # Grow with the lambda, assertions unchanged.
+        win = mut[start : start + 25000]
         must("Issue #3480", "AC6 cite", win)
         must("auto result = fn(a);", "AC1 after fn(a)", win)
         fn = win.find("auto result = fn(a);")
