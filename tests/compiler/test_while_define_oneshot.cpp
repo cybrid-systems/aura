@@ -283,6 +283,50 @@ static void ac4372_while_set_in_define() {
     CHECK(svc.find("Issue #4372") != std::string::npos, "4372: cite");
 }
 
+// Issue #4379: a define lowered to an IR closure used to Call the while
+// primitive with MakeClosure arms. That primitive only applies evaluator
+// closures, so the loop did not run and the let cell stayed at its init.
+static void ac4379_ir_while_lambda_set() {
+    std::println("\n--- #4379: IR while-lambda set! ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    CompilerService cs;
+    CHECK(cs.eval(R"((define (t)
+  (let ((lo 0) (hi 3))
+    (while (lambda () (< lo hi))
+      (lambda () (set! lo (+ lo 1))))
+    lo)))")
+              .has_value(),
+          "4379: define counter");
+    eval_int_eq(cs, "(t)", 3, "4379: lambda while set! is 3");
+    CHECK(cs.eval(R"((define (trim s)
+  (define n (string-length s))
+  (let ((lo 0) (hi n))
+    (while (lambda () (and (< lo hi) (= (string-ref s lo) 32)))
+      (lambda () (set! lo (+ lo 1))))
+    (while (lambda () (and (> hi lo) (= (string-ref s (- hi 1)) 32)))
+      (lambda () (set! hi (- hi 1))))
+    (substring s lo hi))))")
+              .has_value(),
+          "4379: define trim");
+    eval_int_eq(cs, R"((if (string=? (trim "  hi  ") "hi") 1 0))", 1, "4379: trim hi");
+    CHECK(cs.eval("(require \"std/string\" all:)").has_value(), "4379: require std/string");
+    eval_int_eq(cs, R"((if (string=? (string-trim "  hi  ") "hi") 1 0))", 1,
+                "4379: module string-trim");
+    eval_int_eq(cs, R"((if (string=? (car (string-split "a,b" ",")) "a") 1 0))", 1,
+                "4379: module string-split head");
+    eval_int_eq(cs, R"((if (string=? (car (cdr (string-split "a,b" ","))) "b") 1 0))", 1,
+                "4379: module string-split tail");
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("Issue #4379") != std::string::npos, "4379: cite");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -293,6 +337,7 @@ int run_test_while_define_oneshot() {
     ac4_source_gate();
     ac4350_capture_snapshot_set();
     ac4372_while_set_in_define();
+    ac4379_ir_while_lambda_set();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
