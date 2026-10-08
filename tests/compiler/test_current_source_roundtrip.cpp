@@ -893,6 +893,125 @@ static void ac4360_sibling_and_hard_caller() {
           "4360: hard rebind reinstalls the caller after the drain");
 }
 
+// Issue #4362: a caller-side arity mismatch must not arm the soft light
+// path. Selective typecheck already refuses it under the hard gate.
+// Same-arity bodies, primitive type errors, and a self-recursive extra
+// arg stay committed. An unbound name stays refused.
+static void ac4362_soft_caller_arity() {
+    std::println("\n--- #4362: soft rebind refuses a caller arity mismatch ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    using aura::compiler::mutate_type_gate::mode;
+    using aura::compiler::mutate_type_gate::MutateTypeGate;
+    using aura::compiler::mutate_type_gate::set_mode;
+    const auto prev = mode();
+    struct RestoreGate {
+        MutateTypeGate prev;
+        ~RestoreGate() { set_mode(prev); }
+    } restore_gate{prev};
+    set_mode(MutateTypeGate::Soft);
+
+    auto fresh = [](CompilerService& cs) {
+        CHECK(set_code(cs, "(define (hello x) (+ x 1))\n"
+                           "(define (bye y) (hello y))\n"
+                           "#t"),
+              "4362: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4362: eval-current");
+    };
+    auto committed = [](const auto& v) { return v && is_bool(*v) && as_bool(*v); };
+
+    {
+        CompilerService cs;
+        fresh(cs);
+        auto rb = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
+        CHECK(!committed(rb), "4362: soft rebind refuses caller arity");
+        auto src = workspace_source(cs);
+        CHECK(src.find("(hello y y)") == std::string::npos, "4362: soft rebind leaves the call");
+        CHECK(src.find("(hello y)") != std::string::npos, "4362: original bye body stays");
+    }
+    {
+        CompilerService cs;
+        fresh(cs);
+        auto tma = cs.eval(
+            "(typed-mutate-atomic (list \"(mutate:rebind \\\"bye\\\" \\\"(lambda (y) (hello y "
+            "y))\\\")\"))");
+        CHECK(!committed(tma), "4362: soft atomic refuses caller arity");
+        auto src = workspace_source(cs);
+        CHECK(src.find("(hello y y)") == std::string::npos, "4362: soft atomic leaves the call");
+    }
+    {
+        CompilerService cs;
+        fresh(cs);
+        auto ok = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (+ (hello y) 1))\" \"s\")");
+        CHECK(committed(ok), "4362: soft same-arity rebind commits");
+        auto src = workspace_source(cs);
+        CHECK(src.find("(hello y)") != std::string::npos, "4362: same-arity body kept");
+        CHECK(src.find("(hello y y)") == std::string::npos, "4362: same-arity is one hello call");
+    }
+    {
+        CompilerService cs;
+        fresh(cs);
+        auto ub = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (+ y nope))\" \"s\")");
+        CHECK(!committed(ub), "4362: soft still refuses an unbound name");
+        auto src = workspace_source(cs);
+        CHECK(src.find("nope") == std::string::npos, "4362: unbound body is not committed");
+    }
+    {
+        CompilerService cs;
+        fresh(cs);
+        auto ty = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (string-append y 1))\" \"s\")");
+        CHECK(committed(ty), "4362: soft still commits a primitive type error");
+        auto src = workspace_source(cs);
+        CHECK(src.find("string-append") != std::string::npos, "4362: type-error body commits");
+    }
+    {
+        set_mode(MutateTypeGate::Hard);
+        CompilerService cs;
+        fresh(cs);
+        auto rb = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
+        CHECK(!committed(rb), "4362: hard still refuses caller arity");
+        auto src = workspace_source(cs);
+        CHECK(src.find("(hello y y)") == std::string::npos, "4362: hard leaves the call");
+    }
+    {
+        set_mode(MutateTypeGate::Soft);
+        CompilerService cs;
+        fresh(cs);
+        auto self = cs.eval("(mutate:rebind \"hello\" \"(lambda (x) (hello x x))\" \"s\")");
+        CHECK(committed(self), "4362: self-recursive rebind still commits");
+        auto src = workspace_source(cs);
+        CHECK(src.find("(hello x x)") != std::string::npos, "4362: self-recursive body commits");
+    }
+    {
+        // Same evaluator: a refused arity check must not poison the next
+        // closed rebind or a primitive type error.
+        set_mode(MutateTypeGate::Soft);
+        CompilerService cs;
+        fresh(cs);
+        auto bad = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
+        CHECK(!committed(bad), "4362: first soft rebind refuses caller arity");
+        fresh(cs);
+        auto ty = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (string-append y 1))\" \"s\")");
+        CHECK(committed(ty), "4362: type error still commits after a refusal");
+        fresh(cs);
+        auto ok = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (+ (hello y) 1))\" \"s\")");
+        CHECK(committed(ok), "4362: same-arity rebind commits after a refusal");
+        auto src = workspace_source(cs);
+        CHECK(src.find("(hello y y)") == std::string::npos,
+              "4362: refused call is not left behind");
+        CHECK(src.find("(hello y)") != std::string::npos, "4362: later body calls hello once");
+    }
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("Issue #4362") != std::string::npos,
+          "4362: caller arity stays off the light path");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     ac_dual_workspace();
@@ -906,6 +1025,7 @@ int run_test_current_source_roundtrip() {
     ac4349_snapshot_keeps_caller();
     ac4357_workspace_bools();
     ac4360_sibling_and_hard_caller();
+    ac4362_soft_caller_arity();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
     ac2966_1_no_workspace_observable();
     ac2966_2_set_code_path_ok();
