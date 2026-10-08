@@ -227,7 +227,8 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                     // mutation_count — never advance to live (a concurrent
                     // Workspace-rank bump between store and this restamp
                     // must keep the entry needs-relower).
-                    restamp_cache_entry_live_(it->second, it->second.version_stamp_.mutation_count);
+                    restamp_cache_entry_live_(it->second, it->second.version_stamp_.mutation_count,
+                                              name);
                     metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                     // Issue #3136: success-path bitmap coherence — root restamp
                     // (cascade-reemit path). Issue #3383: must use the SAME
@@ -258,7 +259,7 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                         // Issue #4341: re-assert the stored sampled
                         // mutation_count (see root restamp above).
                         restamp_cache_entry_live_(it->second,
-                                                  it->second.version_stamp_.mutation_count);
+                                                  it->second.version_stamp_.mutation_count, d);
                         metrics_.cache_stamp_aot_restamp_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
                         // Issue #3136: success-path bitmap coherence — dependent

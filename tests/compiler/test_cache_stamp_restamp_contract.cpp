@@ -289,26 +289,18 @@ int run_test_cache_stamp_restamp_contract() {
         auto* cm3481 = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
         const auto bits0 =
             cm3481->cache_stamp_mismatch_reasons_bits.load(std::memory_order_relaxed);
-        // #4341 sampled-store semantics: store_define_v2 samples the epoch
-        // BEFORE the lower, and this define's relower pass restamps defuse
-        // after the store — the first lookup sees DefuseVersion drift by
-        // design. #3481's contract is the content latch + stamp honesty, so
-        // assert the drift on the first lookup, re-store with a fresh sample
-        // (what the production mutate loop does), and assert the clean hit
-        // on the fresh sample.
+        // Issue #4377: set-code's store runs inside the mutation boundary.
+        // The exit bump used to leave DefuseVersion stale (lookup 1). The
+        // exit now writes that post-exit defuse onto the stored entry and
+        // leaves the sampled mutation epoch alone, so the clean hit is 0.
         const auto hit0 = cs.lookup_define_v2("f3481", hash);
-        CHECK(hit0 == 1, "3481 AC1: first lookup after relower-restamp sees sampled drift (#4341)");
-        // Issue #4377: the production refresh prim is not registered in
-        // this test's CompilerService context, and the clean hit is
-        // currently unreachable — lookup returns 1 (needs-relower) after
-        // the sampled-drift sequence. Gate-level trace pending; tracked in
-        // #4377 (the #3481 latch/stamp checks below still hold).
-        auto ccd = cs.eval("(compile:cache-define \"f3481\")");
-        if (!ccd.has_value())
-            std::println("  3481 cache-define diag: kind={} msg={} (#4377)",
-                         static_cast<int>(ccd.error().kind), ccd.error().message);
+        CHECK(hit0 == 0, "3481 AC1: clean hit after store (Issue #4377)");
+        (void)cs.eval("(compile:cache-define \"f3481\")");
         const auto hit = cs.lookup_define_v2("f3481", hash);
-        CHECK(hit == 1, "3481 AC1: lookup needs-relower until #4377 resolves");
+        CHECK(hit == 0, "3481 AC1: lookup stays 0 (Issue #4377)");
+        const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(boundary.find("Issue #4377") != std::string::npos,
+              "3481 AC1: boundary exit cites Issue #4377");
         cs.public_mark_define_dirty("f3481");
         const auto* e1 = cs.get_define_v2("f3481");
         CHECK(e1 && e1->dirty, "3481 AC1: facade left dirty");

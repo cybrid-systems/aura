@@ -110,6 +110,7 @@ import aura.compiler.dirty_propagation;
 #include <thread>
 #include <utility>
 #include <vector>
+#include "ir_cache_boundary_restamp.hh" // Issue #4377: post-exit defuse on stores
 
 module aura.compiler.evaluator;
 
@@ -1918,6 +1919,19 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // instead of copying pre-mutate bindings into the next call.
         restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
                                     cp.mutation_log_size);
+    }
+    // Issue #4377: a store inside this boundary stamped defuse before the
+    // exit bump above. Outermost success writes that post-exit defuse onto
+    // the stored entries. Failure drops the names (rolled-back IR stays
+    // needs-relower). Nested success keeps them for the outer bump.
+    if (!success) {
+        aura::compiler::clear_ir_cache_boundary_stored_names();
+    } else if (stack.empty()) {
+        if (auto* hook = aura::compiler::current_ir_cache_boundary_restamp()) {
+            if (hook->fn && !aura::compiler::ir_cache_boundary_stored_names().empty())
+                hook->fn(hook->ctx);
+        }
+        aura::compiler::clear_ir_cache_boundary_stored_names();
     }
     // Issue #550 / #518: narrowing_refresh_count_ is
     // bumped from TypeChecker::infer_flat_partial's
