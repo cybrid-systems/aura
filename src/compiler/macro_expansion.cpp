@@ -2120,6 +2120,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #3028: member flag — not TLS sentinel -1 (fiber leak).
                 denied_ = true;
+                // Issue #4389: check_macro_self_evo already stored process
+                // sentinel 7. That atom is not the #4078 authority (#4034 /
+                // #4150). Stamp this fiber so a NULL clone is capability-deny
+                // instead of make_void(). emit_hygiene_limit_se keeps
+                // current_mutation_epoch(). The #4149 mutate deny does not
+                // reach this arm — it stays process-only.
+                note_hygiene_last_limit_reason(kHygieneLimitReasonCapabilityDeny);
                 return;
             }
             // Issue #2241: per-fiber hygiene violation budget gate
@@ -3728,6 +3735,24 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                              "(no clone work performed)\n",
                              chk.deny_reason ? chk.deny_reason : "capability denied");
             }
+            // Issue #4389: a define-hygienic-macro in this flat would have
+            // entered clone_macro_body. Stamp the fiber (code 7) so #4078
+            // refuses typecheck and eval of the unexpanded tree. A macro-free
+            // tree, and defmacro / define-hygienic-macro* (preserved, no
+            // clone), keep the #2023 quiet deny: process sentinel only, so
+            // `(+ 1 2)` still evals. Do not move this stamp into the
+            // capability sentinel — #4149 mutate denies must not arm the fiber.
+            bool hygienic_clone_def = false;
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                if (v.tag == NodeTag::MacroDef && (v.int_value & 2) != 0 &&
+                    (v.int_value & 4) == 0) {
+                    hygienic_clone_def = true;
+                    break;
+                }
+            }
+            if (hygienic_clone_def)
+                note_hygiene_last_limit_reason(kHygieneLimitReasonCapabilityDeny);
             return root;
         }
         g_macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
