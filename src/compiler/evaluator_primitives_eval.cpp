@@ -631,29 +631,64 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Issue #4373: a define inside the eval'd string calls set_pool
         // and re-keys top_ onto that string's pool. The outer define then
         // bind_symid's its name against the wrong pool, so the name stays
-        // unbound. Drop names this call appended so the internal define
-        // stays inside the eval, then restore the caller's pool. The
-        // outer define binds the eval's value.
+        // unbound. Drop names this call appended, then restore the caller's
+        // pool. The outer define binds the eval's value.
+        // Issue #4359: a top-level define of the eval string is the call's
+        // effect. Keep that name. A define nested under let stays dropped,
+        // which is what keeps the internal name inside the eval.
+        std::vector<std::string> root_defines;
+        {
+            auto note = [&](aura::ast::NodeId id) {
+                if (id >= flat_p->size())
+                    return;
+                auto n = flat_p->get(id);
+                if (n.tag == aura::ast::NodeTag::Define)
+                    root_defines.emplace_back(pool_p->resolve(n.sym_id));
+            };
+            auto root_v = flat_p->get(pr.root);
+            if (root_v.tag == aura::ast::NodeTag::Define)
+                note(pr.root);
+            else if (root_v.tag == aura::ast::NodeTag::Begin) {
+                for (std::size_t i = 0; i < root_v.children.size(); ++i)
+                    note(root_v.child(i));
+            }
+        }
         struct RestoreTopPool {
             Env& top;
             const aura::ast::StringPool* saved;
             std::size_t binds;
-            explicit RestoreTopPool(Env& t)
+            const std::vector<std::string>* keep;
+            explicit RestoreTopPool(Env& t, const std::vector<std::string>* k)
                 : top(t)
                 , saved(t.pool())
-                , binds(t.bindings().size()) {}
+                , binds(t.bindings().size())
+                , keep(k) {}
             ~RestoreTopPool() {
-                while (top.bindings().size() > binds) {
-                    std::string name(top.bindings().back().first);
-                    top.unbind_local(name);
-                    if (!top.bindings_symid().empty() &&
-                        top.bindings_symid().size() > top.bindings().size())
-                        top.unbind_local_symid(top.bindings_symid().back().first);
+                std::vector<std::pair<std::string, EvalValue>> kept;
+                if (top.bindings().size() > binds) {
+                    for (std::size_t i = binds; i < top.bindings().size(); ++i) {
+                        const auto& b = top.bindings()[i];
+                        for (const auto& k : *keep) {
+                            if (k == b.first) {
+                                kept.emplace_back(b.first, b.second);
+                                break;
+                            }
+                        }
+                    }
+                    while (top.bindings().size() > binds) {
+                        std::string name(top.bindings().back().first);
+                        top.unbind_local(name);
+                        if (!top.bindings_symid().empty() &&
+                            top.bindings_symid().size() > top.bindings().size())
+                            top.unbind_local_symid(top.bindings_symid().back().first);
+                    }
                 }
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
+                for (auto& kv : kept)
+                    top.bind(kv.first, kv.second);
             }
-        } restore_top_pool(ev.top_env());
+        } restore_top_pool(ev.top_env(), &root_defines);
         auto result = ev.eval_flat(*flat_p, *pool_p, pr.root, ev.top_);
         if (result)
             return *result;

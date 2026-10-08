@@ -967,6 +967,11 @@ NodeId parse_let(ParserState& s, bool rec) {
                 body = s.flat.add_let(it->name, it->val, body);
         }
     }
+    // Issue #4359: (let () body) is still a scope. Returning the body
+    // made a define inside it a root form, so eval kept that name.
+    // Issue #4373: the internal define has to stay inside the eval.
+    if (!rec && bs.empty())
+        return s.flat.add_let(INVALID_SYM, s.flat.add_literal(0), body);
     return body;
 }
 
