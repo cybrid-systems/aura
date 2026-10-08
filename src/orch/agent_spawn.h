@@ -5102,6 +5102,13 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
     // consume-side stale gate never drops a live reply.
     if (held_token)
         stamp_mail_message_handoff_completed(msg, *held_token);
+    // Issue #4384: per-ask reply mailboxes are born without a scope, so
+    // credit / high-water note_self_backpressure used to charge the
+    // process bucket before the replier note below. Copy the replier's
+    // scope first. A scope the caller already set is left alone.
+    if (from && from->ok && dest->bp_scope_id().empty() && !from->bp_scope_id.empty())
+        dest->set_bp_scope_id(from->bp_scope_id);
+    serve::mf_mailbox::clear_mailbox_bp_self_noted();
     const auto st = dest->push(std::move(msg));
     // Issue #3940: charge the same per-scope BP gauge as agent_send.
     // Issue #4049: the gauge is the REPLYING agent's scope (from), and the
@@ -5111,9 +5118,15 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
     // overflow observability gauge instead (never admit-poison for
     // unrelated tenants). Soft/Off empty scope keeps the process bucket
     // (existing contract).
+    // Issue #4384: when push already noted this same scope, do not charge
+    // it again. Mutation-hold / delivery-safety BP does not note inside
+    // push, so the call below still runs for those arms.
     if (st == serve::mf_mailbox::PushStatus::Backpressure) {
         if (from && from->ok) {
-            note_mailbox_bp_recent_event(from->bp_scope_id, from->id);
+            const bool push_noted_same = serve::mf_mailbox::mailbox_bp_self_noted() &&
+                                         dest->bp_scope_id() == from->bp_scope_id;
+            if (!push_noted_same)
+                note_mailbox_bp_recent_event(from->bp_scope_id, from->id);
             if (from->producer_bp_budget > 0) {
                 ++from->consecutive_bp_count;
                 from->last_producer_bp_us = orch_now_us();
@@ -5191,6 +5204,11 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     out.correlation_id = corr_id;
     // Fresh reply mailbox so unrelated traffic doesn't interleave.
     auto reply_mb = std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(/*high_water=*/16);
+    // Issue #4384: the ask target is the replier. Stamp its scope so a
+    // later reply push notes that gauge. Empty stays unset (production
+    // push then refuses the process bucket). Explicit "-" is copied.
+    if (!target.bp_scope_id.empty())
+        reply_mb->set_bp_scope_id(target.bp_scope_id);
     // Issue #2401: register so agent_reply(corr, body) can find dest.
     {
         std::lock_guard<std::mutex> lock(g_pending_ask_mu);

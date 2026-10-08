@@ -1341,6 +1341,20 @@ inline thread_local std::string_view g_mf_mailbox_bp_note_scope{};
 // Issue #3632: sender fiber id for the same note path — set alongside
 // the scope TLS by note_self_backpressure callers that have the message.
 inline thread_local std::uint64_t g_mf_mailbox_bp_note_sender{0};
+// Issue #4384: production push with an unset mailbox scope must not
+// charge mailbox_bp_recent_total. The orch hook still bumps
+// send_backpressure_total. "-" is not unset and stays the process bucket.
+inline thread_local bool g_mf_mailbox_bp_suppress_process_bucket{false};
+// Set when this push's credit / high-water arm already noted a gauge,
+// so agent_reply does not charge the same scope a second time.
+inline thread_local bool g_mf_mailbox_bp_self_noted{false};
+
+inline void clear_mailbox_bp_self_noted() noexcept {
+    g_mf_mailbox_bp_self_noted = false;
+}
+[[nodiscard]] inline bool mailbox_bp_self_noted() noexcept {
+    return g_mf_mailbox_bp_self_noted;
+}
 
 // Backpressure accounting: process + local + optional orch dashboard mirror.
 inline void note_backpressure(MultiFiberMailboxStats* local = nullptr,
@@ -1399,10 +1413,23 @@ public:
     void set_bp_scope_id(std::string id) noexcept { bp_scope_id_ = std::move(id); }
     [[nodiscard]] std::string_view bp_scope_id() const noexcept { return bp_scope_id_; }
     void note_self_backpressure(bool from_fanout = false, std::uint64_t from_fiber = 0) noexcept {
+        // Issue #4384: unset scope under production is not the process
+        // bucket. Reject counters still move. Soft / Off empty scope and
+        // explicit "-" keep the process-bucket note.
+        if (bp_scope_id_.empty() && aura_production_defaults_active_probe() != 0) {
+            g_mf_mailbox_bp_note_scope = {};
+            g_mf_mailbox_bp_note_sender = 0;
+            g_mf_mailbox_bp_suppress_process_bucket = true;
+            g_mf_mailbox_bp_self_noted = false;
+            note_backpressure(&local_stats_, from_fanout);
+            g_mf_mailbox_bp_suppress_process_bucket = false;
+            return;
+        }
         const std::string_view s =
             (bp_scope_id_ == "-") ? std::string_view{} : std::string_view{bp_scope_id_};
         g_mf_mailbox_bp_note_scope = s;
         g_mf_mailbox_bp_note_sender = from_fiber;
+        g_mf_mailbox_bp_self_noted = true;
         note_backpressure(&local_stats_, from_fanout);
         g_mf_mailbox_bp_note_scope = {};
         g_mf_mailbox_bp_note_sender = 0;

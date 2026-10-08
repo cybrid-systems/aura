@@ -3432,6 +3432,10 @@ extern "C" void aura_orch_note_mailbox_backpressure() {
     aura::orch::g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #3566: TLS scope from MultiFiberMailbox::note_self_backpressure.
     // Empty = process bucket (Soft / "-" / unnamed test mailboxes).
+    // Issue #4384: production push with an unset mailbox scope sets the
+    // suppress flag so this hook does not charge that bucket.
+    if (aura::serve::mf_mailbox::g_mf_mailbox_bp_suppress_process_bucket)
+        return;
     aura::orch::note_mailbox_bp_recent_event(aura::serve::mf_mailbox::g_mf_mailbox_bp_note_scope,
                                              aura::serve::mf_mailbox::g_mf_mailbox_bp_note_sender);
 }
