@@ -1422,6 +1422,54 @@ static void ac4338_sampled_epoch_stamp() {
     CHECK(!std::filesystem::exists("tests/issues/test_issue_4338.cpp"), "4338: no invent");
 }
 
+// Issue #4388: a try_jit cache hit that has loaded fn_ptr must re-sample
+// before register_function and before the direct ScalarFn call. A
+// Workspace-held facade skips mutate_mtx_, bumps the epoch or drops
+// native, and the hit must not republish or invoke that pointer.
+static void ac4388_cache_hit_refuses_after_facade_skip() {
+    std::println("\n--- #4388: cache hit does not republish a dropped ScalarFn ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(ixx.find("Issue #4388") != std::string::npos, "4388: service.ixx cites");
+    CHECK(rt.find("Issue #4388") != std::string::npos, "4388: runtime cites");
+    CHECK(ixx.find("jit_cache_hit_still_current_") != std::string::npos,
+          "4388: cache hit re-samples before publish");
+    CHECK(ixx.find("aura_jit_cache_hit_republish_arm") != std::string::npos,
+          "4388: register is armed with the sampled epoch");
+    CHECK(rt.find("cache_hit_republish_stale_after_lock") != std::string::npos,
+          "4388: named register refuses a stale republish");
+    {
+        const auto named = rt.find("void aura_register_fn_named");
+        const auto refuse = rt.find("cache_hit_republish_stale_after_lock", named);
+        const auto clear = rt.find("aura_aot_clear_peer_jit_name_soft_stale(name)", named);
+        CHECK(named != std::string::npos && refuse != std::string::npos &&
+                  clear != std::string::npos && refuse < clear,
+              "4388: refuse returns before clearing name soft-stale");
+    }
+    CHECK(ixx.find("schema-4388") == std::string::npos &&
+              rt.find("schema-4388") == std::string::npos,
+          "4388: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4388.cpp").empty(), "4388: no test_issue file");
+    CHECK(read_file("docs/design/4388-jit-cache-hit.md").empty(), "4388: no docs/design");
+
+    apply_production_audit_defaults();
+    CompilerService cs;
+    const bool commit_blocks = aura::compiler::typed_audit::jit_execute_commit_readiness_blocked();
+    const auto fresh = cs.public_try_jit_facade_raced_hit_for_test(0);
+    CHECK((fresh & 0x100u) == 0, "4388: fresh production hit is not refused");
+    if (!commit_blocks)
+        CHECK((fresh & 0xffu) == 1, "4388: fresh production hit still invokes");
+    const auto epoch_face = cs.public_try_jit_facade_raced_hit_for_test(1);
+    CHECK((epoch_face & 0xffu) == 0, "4388: epoch bump does not invoke the loaded ScalarFn");
+    CHECK((epoch_face & 0x100u) != 0, "4388: epoch bump refuses the cache hit");
+    const auto drop_face = cs.public_try_jit_facade_raced_hit_for_test(2);
+    CHECK((drop_face & 0xffu) == 0, "4388: facade drop does not invoke the loaded ScalarFn");
+    CHECK((drop_face & 0x100u) != 0, "4388: facade drop without an epoch bump refuses");
+    CHECK(cs.public_cache_hit_republish_refuses_for_test() == 1,
+          "4388: register does not write a dropped ScalarFn or clear a matching sample");
+    apply_dev_audit_defaults();
+}
+
 // Issue #4341: store_define_v2 / per-fn partial / cascade restamps stamp
 // the mutation epoch the IR was SAMPLED under (#4338 semantics), not the
 // epoch observed at store — a Workspace-rank EDSL mutate landing between
@@ -1672,6 +1720,7 @@ int run_test_issue_3112() {
     // last_seen_epoch_ is behind current_mutation_epoch.
     ac4073_stale_epoch_try_jit_does_not_invoke();
     ac4338_sampled_epoch_stamp();
+    ac4388_cache_hit_refuses_after_facade_skip();
     ac4341_sampled_epoch_restamp();
 
     // Issue #4146: production facade cone JIT drop — dependents of a

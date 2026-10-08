@@ -10,6 +10,7 @@
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
 #include "core/provenance_tracker.hh" // Issue #4036: multi_tenant_env_active for closure free arm
 #include "core/sandbox.hh"            // Issue #4036: is_strict for closure free arm
+#include "core/workspace_epoch.hh"    // Issue #4388: cache-hit republish re-samples mutation epoch
 #include "observability_metrics.h"    // CompilerMetrics full def (aura_get_aot_metrics returns it)
 
 // Forward decls for symbols defined in aura_jit_bridge.cpp (extern "C").
@@ -4494,6 +4495,49 @@ static JitScalarFn jit_live_fn_for_id(int64_t func_id) {
     return nullptr;
 }
 
+// Issue #4388: a try_jit cache hit samples these, then aura_register_fn*
+// runs after the workspace write lock. A Workspace-held facade skips
+// mutate_mtx_ and can bump the mutation epoch and drop native before
+// that lock is acquired. The armed hit must not republish.
+namespace {
+    struct CacheHitRepublishTls {
+        std::uint64_t epoch = 0;
+        std::uint64_t drop_gen = 0;
+        int armed = 0;
+        int refused = 0;
+    };
+    thread_local CacheHitRepublishTls g_cache_hit_republish;
+    std::atomic<std::uint64_t> g_jit_define_drop_gen{0};
+
+    [[nodiscard]] bool cache_hit_republish_stale_after_lock() noexcept {
+        if (g_cache_hit_republish.armed == 0)
+            return false;
+        if (aura::core::current_mutation_epoch() != g_cache_hit_republish.epoch)
+            return true;
+        return g_jit_define_drop_gen.load(std::memory_order_acquire) !=
+               g_cache_hit_republish.drop_gen;
+    }
+} // namespace
+
+extern "C" void aura_jit_cache_hit_republish_arm(std::uint64_t epoch, std::uint64_t drop_gen) {
+    g_cache_hit_republish.epoch = epoch;
+    g_cache_hit_republish.drop_gen = drop_gen;
+    g_cache_hit_republish.refused = 0;
+    g_cache_hit_republish.armed = 1;
+}
+
+extern "C" void aura_jit_cache_hit_republish_disarm(void) {
+    g_cache_hit_republish.armed = 0;
+}
+
+extern "C" int aura_jit_cache_hit_republish_refused(void) {
+    return g_cache_hit_republish.refused;
+}
+
+extern "C" std::uint64_t aura_jit_define_drop_gen(void) {
+    return g_jit_define_drop_gen.load(std::memory_order_acquire);
+}
+
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
                       int32_t arg_count, int32_t env_count) {
     // Issue #157 Phase 2: write lock — function registry mutation
@@ -4502,6 +4546,13 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
     // Issue #4387: while a reload is staging, keep the live table. Commit
     // publishes; rollback discards. The load is not on the call path.
     aura_lock_workspace_write();
+    // Issue #4388: refuse a cache-hit republish that lost the epoch or
+    // the define-drop generation while waiting for this write lock.
+    if (cache_hit_republish_stale_after_lock()) {
+        g_cache_hit_republish.refused = 1;
+        aura_unlock_workspace_write();
+        return;
+    }
     if (aura_aot_jit_reload_staging_active())
         stage_jit_reload_locked(func_id, fn, local_count, arg_count, env_count, nullptr);
     else
@@ -4524,6 +4575,13 @@ void aura_note_aot_constructor_jit_fn(int64_t func_id, int64_t fn_ptr) {
 void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                             int32_t local_count, int32_t arg_count, int32_t env_count) {
     aura_lock_workspace_write();
+    // Issue #4388: same refuse as aura_register_fn. Do not write the
+    // pre-mutate ScalarFn back and do not clear name soft-stale.
+    if (cache_hit_republish_stale_after_lock()) {
+        g_cache_hit_republish.refused = 1;
+        aura_unlock_workspace_write();
+        return;
+    }
     // Issue #4387: same staging gate as aura_register_fn. Named publish
     // (by_name + peer clear) waits for commit.
     if (aura_aot_jit_reload_staging_active()) {
@@ -4778,6 +4836,9 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
         if (holds(g_closure_cache[i].fn))
             clear_closure_cache_entry(g_closure_cache[i]);
     }
+    // Issue #4388: publishers that sampled this generation before the
+    // drop must not write the cleared ScalarFn back.
+    g_jit_define_drop_gen.fetch_add(1, std::memory_order_release);
 }
 
 extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {

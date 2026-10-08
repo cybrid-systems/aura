@@ -100,6 +100,18 @@ extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 // after ORC prefix removal. Strong def in aura_jit_runtime.cpp.
 extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
 
+// Issue #4388: cache-hit republish samples epoch + define-drop generation.
+// Strong defs in aura_jit_runtime.cpp.
+extern "C" void aura_jit_cache_hit_republish_arm(std::uint64_t epoch, std::uint64_t drop_gen);
+extern "C" void aura_jit_cache_hit_republish_disarm(void);
+extern "C" int aura_jit_cache_hit_republish_refused(void);
+extern "C" std::uint64_t aura_jit_define_drop_gen(void);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+
 // Issue #4084: prologue deopt returns fixnum 0. Take-and-clear the
 // thread-local sentinel so try_jit_execute does not publish that 0.
 // Strong def in aura_jit_bridge.cpp; weak 0 in the light stub.
@@ -4091,6 +4103,11 @@ public:
 
         // Compile ALL functions (with JIT cache) and register with runtime
         int64_t entry_func_id = -1;
+        bool entry_cache_hit = false;
+        bool entry_cache_hit_refused = false;
+        aura::jit::ScalarFn entry_hit_fn = nullptr;
+        std::uint64_t entry_hit_epoch = 0;
+        std::uint64_t entry_hit_drop_gen = 0;
         for (auto& ir_fn : ir_mod.functions) {
             if (ir_fn.id == ir_mod.entry_function_id) {
                 entry_func_id = static_cast<int64_t>(ir_fn.id);
@@ -4103,6 +4120,14 @@ public:
             aura::jit::ScalarFn fn_ptr = nullptr;
             bool is_top_level = (ir_fn.name == "__top__");
             bool need_compile = true;
+            bool cache_hit = false;
+            std::uint64_t hit_epoch = 0;
+            std::uint64_t hit_drop_gen = 0;
+            auto note_cache_hit = [&](const JitCachedFn& cached) {
+                cache_hit = true;
+                hit_epoch = cached.last_seen_epoch_;
+                hit_drop_gen = aura_jit_define_drop_gen();
+            };
             if (!is_top_level) {
                 {
                     std::shared_lock cache_read(jit_cache_mtx_);
@@ -4139,6 +4164,7 @@ public:
                             } else {
                                 fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                                 need_compile = false;
+                                note_cache_hit(cache_it->second);
                             }
                         }
                     }
@@ -4165,6 +4191,7 @@ public:
                     } else if (cache_it != jit_cache_.end()) {
                         fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                         need_compile = false;
+                        note_cache_hit(cache_it->second);
                     }
                 }
             }
@@ -4275,6 +4302,15 @@ public:
                 }
             }
 
+            // Issue #4388: same republish gate as try_jit_execute. No test hook.
+            if (cache_hit && aura::compiler::typed_audit::production_defaults_active() &&
+                !jit_cache_hit_still_current_(ir_fn.name, fn_ptr, hit_epoch, hit_drop_gen)) {
+                if (ir_fn.id == ir_mod.entry_function_id)
+                    entry_cache_hit_refused = true;
+                fn_ptr = nullptr;
+                cache_hit = false;
+            }
+
             // Register with runtime for closure calls.
             // Issue #660 Option 1: pass ir_fn.name so the runtime can
             // register the function by name (for cross-module closure
@@ -4297,10 +4333,30 @@ public:
                     if (reg_marker == 1 && reg_prov != 0)
                         break;
                 }
-                jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
-                                       ir_fn.arg_count, env_count,
-                                       ir_fn.name.empty() ? nullptr : ir_fn.name.c_str(),
-                                       reg_marker, reg_prov);
+                const bool arm_republish =
+                    cache_hit && fn_ptr != nullptr &&
+                    aura::compiler::typed_audit::production_defaults_active();
+                if (arm_republish)
+                    aura_jit_cache_hit_republish_arm(hit_epoch, hit_drop_gen);
+                if (fn_ptr)
+                    jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
+                                           ir_fn.local_count, ir_fn.arg_count, env_count,
+                                           ir_fn.name.empty() ? nullptr : ir_fn.name.c_str(),
+                                           reg_marker, reg_prov);
+                if (arm_republish) {
+                    if (aura_jit_cache_hit_republish_refused() != 0 &&
+                        ir_fn.id == ir_mod.entry_function_id)
+                        entry_cache_hit_refused = true;
+                    aura_jit_cache_hit_republish_disarm();
+                }
+            }
+            if (cache_hit && fn_ptr != nullptr && ir_fn.id == ir_mod.entry_function_id &&
+                !entry_cache_hit_refused &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                entry_cache_hit = true;
+                entry_hit_fn = fn_ptr;
+                entry_hit_epoch = hit_epoch;
+                entry_hit_drop_gen = hit_drop_gen;
             }
         }
 
@@ -4317,6 +4373,14 @@ public:
         std::vector<std::int64_t> locals(entry.local_count, 0);
         // Issue #3758: execute catalog before ScalarFn (exec_jit has no
         // interpreter fallback — TypeError + rollback counter).
+        // Issue #4388: refuse a cache hit that went stale before the call.
+        if (entry_cache_hit_refused ||
+            (entry_cache_hit &&
+             !jit_cache_hit_still_current_(entry.name, entry_hit_fn, entry_hit_epoch,
+                                           entry_hit_drop_gen))) {
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          "jit cache hit refused"});
+        }
         if (aura::compiler::typed_audit::jit_execute_commit_readiness_blocked()) {
             metrics_.linear_post_mutate_force_rollback_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
@@ -14960,6 +15024,94 @@ public:
         return try_jit_scalar_invokes_for_test_.load(std::memory_order_relaxed);
     }
 
+    // Issue #4388: low 8 bits are ScalarFn invokes, bit 8 is set when the
+    // cache hit was refused before publish / invoke. mode 0 leaves the hit
+    // alone. mode 1 bumps the mutation epoch (single-eval face). mode 2
+    // erases the cache entry and drops native without an epoch bump
+    // (owner-scoped face). Production defaults must already be active.
+    std::uint32_t public_try_jit_facade_raced_hit_for_test(int mode) {
+        try_jit_scalar_invokes_for_test_.store(0, std::memory_order_relaxed);
+        try_jit_entry_hit_refused_for_test_ = 0;
+        try_jit_scalar_override_for_test_ = &counting_scalar_fn_for_test_;
+        try_jit_facade_skip_mode_for_test_ = mode;
+        constexpr const char* kName = "ac4388_hit";
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            auto [it, _ins] = jit_cache_.try_emplace(kName);
+            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
+            it->second.local_count = 1;
+            it->second.arg_count = 0;
+            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+        }
+        aura::ir::IRModule mod;
+        aura::ir::IRFunction fn;
+        fn.id = 0;
+        fn.name = kName;
+        fn.local_count = 1;
+        fn.arg_count = 0;
+        aura::ir::BasicBlock block;
+        block.id = 0;
+        aura::ir::IRInstruction ret;
+        ret.opcode = aura::ir::IROpcode::Return;
+        ret.operands[0] = 0;
+        block.instructions.push_back(ret);
+        fn.blocks.push_back(std::move(block));
+        mod.functions.push_back(std::move(fn));
+        mod.entry_function_id = 0;
+        (void)try_jit_execute(mod, nullptr);
+        try_jit_scalar_override_for_test_ = nullptr;
+        try_jit_facade_skip_mode_for_test_ = 0;
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_cache_.erase(kName);
+        }
+        const auto invokes = try_jit_scalar_invokes_for_test_.load(std::memory_order_relaxed);
+        return (invokes & 0xffu) | (try_jit_entry_hit_refused_for_test_ != 0 ? 0x100u : 0u);
+    }
+
+    // Issue #4388: an armed cache-hit register must not replace a live
+    // ScalarFn after the mutation epoch moves or a define drop runs, and
+    // a matching sample must still publish. Returns 1 when both hold.
+    int public_cache_hit_republish_refuses_for_test() {
+        constexpr std::int64_t kId = 438800;
+        aura_register_fn_named("ac4388_republish", kId, &ac4388_sentinel_a_, 0, 0, 0);
+        const auto installed = aura_jit_fn_ptr_for_test(kId);
+        const auto epoch = aura::core::current_mutation_epoch();
+        const auto gen = aura_jit_define_drop_gen();
+        aura_jit_cache_hit_republish_arm(epoch, gen);
+        aura::core::bump_mutation_epoch();
+        aura_register_fn_named("ac4388_republish", kId, &ac4388_sentinel_b_, 0, 0, 0);
+        const int epoch_refused = aura_jit_cache_hit_republish_refused();
+        const auto after_epoch = aura_jit_fn_ptr_for_test(kId);
+        aura_jit_cache_hit_republish_disarm();
+
+        const auto epoch_now = aura::core::current_mutation_epoch();
+        const auto gen_now = aura_jit_define_drop_gen();
+        aura_jit_cache_hit_republish_arm(epoch_now, gen_now);
+        aura_register_fn_named("ac4388_republish", kId, &ac4388_sentinel_b_, 0, 0, 0);
+        const int fresh_refused = aura_jit_cache_hit_republish_refused();
+        const auto published = aura_jit_fn_ptr_for_test(kId);
+        aura_jit_cache_hit_republish_disarm();
+
+        aura_jit_cache_hit_republish_arm(aura::core::current_mutation_epoch(),
+                                         aura_jit_define_drop_gen());
+        aura_drop_jit_fn_native_for_define("ac4388_unrelated");
+        aura_register_fn_named("ac4388_republish", kId, &ac4388_sentinel_a_, 0, 0, 0);
+        const int drop_refused = aura_jit_cache_hit_republish_refused();
+        const auto after_drop = aura_jit_fn_ptr_for_test(kId);
+        aura_jit_cache_hit_republish_disarm();
+        aura_drop_jit_fn_native_for_define("ac4388_republish");
+
+        const auto sentinel_b = reinterpret_cast<std::int64_t>(&ac4388_sentinel_b_);
+        if (installed == 0 || after_epoch != installed || epoch_refused == 0)
+            return 0;
+        if (fresh_refused != 0 || published != sentinel_b)
+            return 0;
+        if (drop_refused == 0 || after_drop != sentinel_b)
+            return 0;
+        return 1;
+    }
+
     // Issue #1377: opt-in SoA dual-emit (default off). When false,
     // lower_to_ir skips IRFunctionSoA columns + bridge counters.
     void set_soa_dual_emit(bool enable) noexcept {
@@ -15346,6 +15498,11 @@ public:
         try_jit_scalar_invokes_for_test_.fetch_add(1, std::memory_order_relaxed);
         return 42;
     }
+    // Issue #4388: distinct pointers so a refused republish is observable.
+    static int64_t ac4388_sentinel_a_(int64_t*, uint32_t) { return 1; }
+    static int64_t ac4388_sentinel_b_(int64_t*, uint32_t) { return 2; }
+    int try_jit_facade_skip_mode_for_test_ = 0;
+    int try_jit_entry_hit_refused_for_test_ = 0;
     // Issue #59 Iter 2: shared_mutex for jit_cache_. Read-heavy access
     // pattern (most lookups just probe the cache), so multiple readers
     // can hold the shared lock concurrently. Writers take the unique
@@ -16404,6 +16561,29 @@ public:
     // per-service set_soa_dual_emit stays discoverable for agents/tests.
     std::atomic<bool> enable_soa_dual_emit_{false};
 
+    // Issue #4388: a cache hit that has not yet published or called must
+    // still see the sampled mutation epoch, the define-drop generation,
+    // and the same jit_cache_ pointer. Workspace-held mark_define_dirty
+    // skips mutate_mtx_, so the shared lock taken at entry does not
+    // fence the facade. Soft/Off does not call this.
+    [[nodiscard]] bool jit_cache_hit_still_current_(const std::string& name, aura::jit::ScalarFn fn,
+                                                    std::uint64_t hit_epoch,
+                                                    std::uint64_t hit_drop_gen) const {
+        if (fn == nullptr)
+            return false;
+        if (aura::core::current_mutation_epoch() != hit_epoch)
+            return false;
+        if (aura_jit_define_drop_gen() != hit_drop_gen)
+            return false;
+        std::shared_lock cache_read(jit_cache_mtx_);
+        auto it = jit_cache_.find(name);
+        if (it == jit_cache_.end())
+            return false;
+        if (it->second.last_seen_epoch_ != hit_epoch)
+            return false;
+        return it->second.fn_ptr.load(std::memory_order_acquire) == fn;
+    }
+
     // Try to execute an IRModule via LLVM JIT
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
     // escape_maps: optional pre-computed escape maps from EscapeAnalysisWrap pass.
@@ -16428,6 +16608,14 @@ public:
         // Set string pool before compiling (for OpConstString)
         jit_.set_string_pool(&ir_mod.string_pool);
 
+        // Issue #4388: entry cache-hit state across the register loop.
+        bool entry_cache_hit = false;
+        bool entry_cache_hit_refused = false;
+        aura::jit::ScalarFn entry_hit_fn = nullptr;
+        std::uint64_t entry_hit_epoch = 0;
+        std::uint64_t entry_hit_drop_gen = 0;
+        try_jit_entry_hit_refused_for_test_ = 0;
+
         // Compile ALL functions (with JIT cache) and register with runtime
         for (auto& ir_fn : ir_mod.functions) {
             std::uint32_t env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
@@ -16435,6 +16623,14 @@ public:
             // Check JIT cache (shared lock for read, unique for write).
             aura::jit::ScalarFn fn_ptr = nullptr;
             bool need_compile = true;
+            bool cache_hit = false;
+            std::uint64_t hit_epoch = 0;
+            std::uint64_t hit_drop_gen = 0;
+            auto note_cache_hit = [&](const JitCachedFn& entry) {
+                cache_hit = true;
+                hit_epoch = entry.last_seen_epoch_;
+                hit_drop_gen = aura_jit_define_drop_gen();
+            };
             {
                 std::shared_lock cache_read(jit_cache_mtx_);
                 auto cache_it = jit_cache_.find(ir_fn.name);
@@ -16455,6 +16651,7 @@ public:
                     } else {
                         fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                         need_compile = false;
+                        note_cache_hit(cache_it->second);
                     }
                 }
             }
@@ -16483,6 +16680,7 @@ public:
                 } else if (cache_it != jit_cache_.end()) {
                     fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                     need_compile = false;
+                    note_cache_hit(cache_it->second);
                 }
             }
             if (!fn_ptr) {
@@ -16599,6 +16797,7 @@ public:
                             cached->second.last_seen_epoch_ ==
                                 aura::core::current_mutation_epoch()) {
                             fn_ptr = cached->second.fn_ptr.load(std::memory_order_acquire);
+                            note_cache_hit(cached->second);
                         }
                     }
                 }
@@ -16637,6 +16836,30 @@ public:
                 }
             }
 
+            // Issue #4388: production cache hit re-samples before publish.
+            // The test hook stands in for the other fiber's facade.
+            if (cache_hit && aura::compiler::typed_audit::production_defaults_active()) {
+                if (try_jit_facade_skip_mode_for_test_ != 0) {
+                    const int mode = try_jit_facade_skip_mode_for_test_;
+                    try_jit_facade_skip_mode_for_test_ = 0;
+                    if (mode == 1)
+                        aura::core::bump_mutation_epoch();
+                    {
+                        std::unique_lock cache_write(jit_cache_mtx_);
+                        jit_cache_.erase(ir_fn.name);
+                    }
+                    aura_drop_jit_fn_native_for_define(ir_fn.name.c_str());
+                }
+                if (!jit_cache_hit_still_current_(ir_fn.name, fn_ptr, hit_epoch, hit_drop_gen)) {
+                    if (ir_fn.id == ir_mod.entry_function_id) {
+                        entry_cache_hit_refused = true;
+                        try_jit_entry_hit_refused_for_test_ = 1;
+                    }
+                    fn_ptr = nullptr;
+                    cache_hit = false;
+                }
+            }
+
             // Register with runtime for closure calls
             // Issue #2022: preserve MacroIntroduced into native side-table.
             {
@@ -16654,10 +16877,32 @@ public:
                     if (reg_marker == 1 && reg_prov != 0)
                         break;
                 }
-                jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
-                                       ir_fn.arg_count, env_count,
-                                       ir_fn.name.empty() ? nullptr : ir_fn.name.c_str(),
-                                       reg_marker, reg_prov);
+                const bool arm_republish =
+                    cache_hit && fn_ptr != nullptr &&
+                    aura::compiler::typed_audit::production_defaults_active();
+                if (arm_republish)
+                    aura_jit_cache_hit_republish_arm(hit_epoch, hit_drop_gen);
+                if (fn_ptr)
+                    jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
+                                           ir_fn.local_count, ir_fn.arg_count, env_count,
+                                           ir_fn.name.empty() ? nullptr : ir_fn.name.c_str(),
+                                           reg_marker, reg_prov);
+                if (arm_republish) {
+                    if (aura_jit_cache_hit_republish_refused() != 0 &&
+                        ir_fn.id == ir_mod.entry_function_id) {
+                        entry_cache_hit_refused = true;
+                        try_jit_entry_hit_refused_for_test_ = 1;
+                    }
+                    aura_jit_cache_hit_republish_disarm();
+                }
+            }
+            if (cache_hit && fn_ptr != nullptr && ir_fn.id == ir_mod.entry_function_id &&
+                !entry_cache_hit_refused &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                entry_cache_hit = true;
+                entry_hit_fn = fn_ptr;
+                entry_hit_epoch = hit_epoch;
+                entry_hit_drop_gen = hit_drop_gen;
             }
         }
 
@@ -16676,6 +16921,15 @@ public:
         // Soft/Off: jit_execute_commit_readiness_blocked is false with
         // no commit_readiness load. Return nullopt → interpreter fallback
         // (owns linear_post_mutate_force_rollback_total).
+        // Issue #4388: a cache hit that survived the load must re-sample
+        // once more immediately before the direct ScalarFn call.
+        if (entry_cache_hit_refused)
+            return std::nullopt;
+        if (entry_cache_hit && !jit_cache_hit_still_current_(entry.name, entry_hit_fn,
+                                                             entry_hit_epoch, entry_hit_drop_gen)) {
+            try_jit_entry_hit_refused_for_test_ = 1;
+            return std::nullopt;
+        }
         if (aura::compiler::typed_audit::jit_execute_commit_readiness_blocked())
             return std::nullopt;
         auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
