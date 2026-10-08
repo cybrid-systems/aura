@@ -985,6 +985,10 @@ export struct CapSnapshot {
     // The capture frame's own parent — the materialized Env's SoA chain
     // starts here (identical wiring to the per-call copy it replaces).
     EnvId parent_id = NULL_ENV_ID;
+    // Frame this snapshot was built from. A call env does not copy these
+    // bindings; alloc_env_frame_from_env of that env must parent here so
+    // a nested named let still sees them (#4350).
+    EnvId source_frame = NULL_ENV_ID;
     std::shared_ptr<const CapSnapshot> parent;
 };
 
@@ -3003,6 +3007,12 @@ public:
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
         mark_define_dirty_fn_ = std::move(fn);
     }
+    // Issue #3681: cache_define closures live in the IR owner map, not the
+    // tree-walker shard. Drop that binding so production apply of the
+    // pre-reemit id cannot dispatch the old body.
+    void set_drop_ir_define_binding_fn(std::function<void(const std::string&)> fn) {
+        drop_ir_define_binding_fn_ = std::move(fn);
+    }
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
@@ -4482,6 +4492,11 @@ public:
     // and IRExecutor::walk_runtime_closures.
     using ActiveClosureWalkFn = std::function<void(ClosureId, Closure&)>;
     void walk_active_closures(const ActiveClosureWalkFn& fn);
+    // Issue #3681: tree-walker Define closures are created with an empty
+    // name. Stamp the define so set-body / rebind can must-deopt the
+    // pre-reemit closure without touching a later re-eval of the same name.
+    void name_live_closure(ClosureId cid, std::string_view name);
+    void must_deopt_closures_named(std::string_view name);
     // Issue #4378 (asan-verify heap-use-after-free, 2026-10-07): expire
     // tree-walker / fiber-held closures whose captured flat is `doomed`.
     // Workspace child delete/discard frees the child's local FlatAST
@@ -6711,6 +6726,8 @@ private:
     // define_impact_scope_fn_(node)      → ir_cache_pure impact_scope (#680)
     // update_function_source_fn_(name,src) → function_sources_ SSOT (#2730)
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
+    // Issue #3681: clear_ir_define_env_binding for the mutated name only.
+    std::function<void(const std::string&)> drop_ir_define_binding_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
     // Issue #3033 / #3117: dual-topology abort IR-cache fence (set by
     // CompilerService on init; null when standalone).

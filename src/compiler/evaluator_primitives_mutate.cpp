@@ -370,6 +370,34 @@ namespace {
 
     using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
 
+    // Issue #3681: (define (f …)) is cached through cache_define, not the
+    // tree-walker Define arm, so the live closure's name stays empty.
+    // must_deopt_closures_named misses it. Poison the closure the env cell
+    // still holds (the id a caller captured before set-body / rebind).
+    void must_deopt_bound_define(Evaluator& ev, std::string_view name) {
+        if (name.empty())
+            return;
+        auto bound = ev.top_env().lookup_binding(name);
+        if (!bound)
+            return;
+        types::EvalValue v = *bound;
+        if (types::is_cell(v)) {
+            const auto ci = types::as_cell_id(v);
+            if (ci < ev.cells().size())
+                v = ev.cells()[ci];
+        }
+        if (!types::is_closure(v))
+            return;
+        const auto cid = types::as_closure_id(v);
+        ev.name_live_closure(cid, name);
+        ev.walk_active_closures([&](ClosureId id, Closure& cl) {
+            if (id != cid)
+                return;
+            cl.must_deopt_before_next_call = true;
+            cl.bridge_epoch = 0;
+        });
+    }
+
     // Issue #270: verify a node is still attached under its parent.
     std::optional<std::uint32_t> parent_child_index_if_attached(const aura::ast::FlatAST& flat,
                                                                 aura::ast::NodeId match_id) {
@@ -4134,6 +4162,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // (eval-current) re-lowers it.
         if (ev.mark_define_dirty_fn_)
             ev.mark_define_dirty_fn_(name);
+        // Issue #3681: the closure captured before this rebind still holds
+        // the pre-reemit body. Poison it after dirty so production apply
+        // refuses; the re-eval below installs a fresh closure.
+        if (ev.drop_ir_define_binding_fn_)
+            ev.drop_ir_define_binding_fn_(name);
+        ev.must_deopt_closures_named(name);
+        must_deopt_bound_define(ev, name);
 
         // Issue #63723: re-populate the dep_graph so subsequent
         // public_invalidate_function(name) sees the same caller
@@ -4690,6 +4725,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // over full cache_define. Parity with mutate:rebind.
                 if (ev.mark_define_dirty_fn_)
                     ev.mark_define_dirty_fn_(name);
+                // Issue #3681: poison the pre-reemit closure. The env
+                // refresh below evals the new body into a new closure.
+                if (ev.drop_ir_define_binding_fn_)
+                    ev.drop_ir_define_binding_fn_(name);
+                ev.must_deopt_closures_named(name);
+                must_deopt_bound_define(ev, name);
                 if (ev.repopulate_workspace_dep_graph_fn_)
                     ev.repopulate_workspace_dep_graph_fn_();
 
