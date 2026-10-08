@@ -628,6 +628,32 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto* flat_p = flat.get();
         auto* pool_p = pool.get();
         ev.retain_eval_program(std::move(flat), std::move(pool));
+        // Issue #4373: a define inside the eval'd string calls set_pool
+        // and re-keys top_ onto that string's pool. The outer define then
+        // bind_symid's its name against the wrong pool, so the name stays
+        // unbound. Drop names this call appended so the internal define
+        // stays inside the eval, then restore the caller's pool. The
+        // outer define binds the eval's value.
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            std::size_t binds;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool())
+                , binds(t.bindings().size()) {}
+            ~RestoreTopPool() {
+                while (top.bindings().size() > binds) {
+                    std::string name(top.bindings().back().first);
+                    top.unbind_local(name);
+                    if (!top.bindings_symid().empty() &&
+                        top.bindings_symid().size() > top.bindings().size())
+                        top.unbind_local_symid(top.bindings_symid().back().first);
+                }
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(ev.top_env());
         auto result = ev.eval_flat(*flat_p, *pool_p, pr.root, ev.top_);
         if (result)
             return *result;

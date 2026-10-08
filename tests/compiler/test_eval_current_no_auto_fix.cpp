@@ -366,6 +366,58 @@ static void ac4122_set_with_pair_mutate() {
     CHECK(read_file("docs/design/4122-set-bang-set-car.md").empty(), "4122: no docs/design");
 }
 
+extern "C" int setenv(const char*, const char*, int);
+extern "C" int unsetenv(const char*);
+
+static void ac4373_define_of_eval_binds() {
+    std::println("\n--- #4373: top-level define of eval with an internal define binds ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    const char* prev_ps = std::getenv("AURA_PIPELINE_STRICT");
+    const std::string saved_sb = prev_sb ? prev_sb : "";
+    const std::string saved_ps = prev_ps ? prev_ps : "";
+    const bool had_sb = prev_sb != nullptr;
+    const bool had_ps = prev_ps != nullptr;
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        std::string sb;
+        std::string ps;
+        bool had_sb;
+        bool had_ps;
+        ~RestoreEnv() {
+            if (had_sb)
+                setenv("AURA_SANDBOX", sb.c_str(), 1);
+            else
+                unsetenv("AURA_SANDBOX");
+            if (had_ps)
+                setenv("AURA_PIPELINE_STRICT", ps.c_str(), 1);
+            else
+                unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore{saved_sb, saved_ps, had_sb, had_ps};
+
+    CompilerService cs;
+    auto r = cs.eval("(begin"
+                     " (define (from-fn) (eval \"(let () (define (h x) (+ x 1)) (h 3))\"))"
+                     " (define top (eval \"(let () (define (k x) (+ x 1)) (k 5))\"))"
+                     " (define leaked (try (begin (k 1) 1) (catch (e) 0)))"
+                     " (if (and (= (from-fn) 4) (= top 6) (= leaked 0)) 1 0))");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4373: from-fn is 4, top is 6, internal k stays inside the eval");
+    auto plain = cs.eval("(begin (define plain (eval \"(+ 2 3)\")) plain)");
+    CHECK(plain && is_int(*plain) && as_int(*plain) == 5, "4373: eval without define still binds");
+    auto fact =
+        cs.eval("(begin"
+                " (define f (eval \"(let () (define (k x) (if (= x 0) 1 (* x (k (- x 1))))) k)\"))"
+                " (f 4))");
+    CHECK(fact && is_int(*fact) && as_int(*fact) == 24,
+          "4373: returned closure still sees its internal define");
+    auto ge = cs.eval("(>= 1 0)");
+    CHECK(ge && is_bool(*ge) && as_bool(*ge), "4373: >= still bound after eval define");
+    const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(ev.find("Issue #4373") != std::string::npos, "4373: cites Issue #4373");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -380,8 +432,9 @@ int run_test_eval_current_no_auto_fix() {
     ac4122_set_with_pair_mutate();
     ac4079_second_eval_current_displays();
     ac4095_status_carries_display();
-    std::println("\n=== #2484/#3915/#3917/#3918/#3927 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    ac4373_define_of_eval_binds();
+    std::println("\n=== #2484/#3915/#3917/#3918/#3927/#4373 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
