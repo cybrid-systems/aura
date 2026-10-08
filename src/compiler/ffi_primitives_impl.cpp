@@ -347,19 +347,36 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             if (!need(sizeof(ptr)))
                 return make_int(0);
             std::memcpy(&ptr, base + offset, sizeof(ptr));
+            // Issue #4386: feature-on push takes the Evaluator's alloc mutex
+            // then the rewrite mutex and stores the published new address.
+            // The element address is not enqueued — realloc would free it
+            // under the slot walk. Feature-off stays the unlocked push.
+            const bool moving_gate = opaque_alloc_mu_ != nullptr && opaque_rewrite_mu_ != nullptr &&
+                                     aura::ast::moving_compact_feature_enabled() != 0;
+            std::unique_lock<std::recursive_mutex> moving_alloc;
+            std::unique_lock<std::mutex> moving_rewrite;
+            if (moving_gate) {
+                moving_alloc = std::unique_lock<std::recursive_mutex>(*opaque_alloc_mu_);
+                moving_rewrite = std::unique_lock<std::mutex>(*opaque_rewrite_mu_);
+                if (opaque_rewrite_ && ptr) {
+                    auto found = opaque_rewrite_->find(ptr);
+                    if (found != opaque_rewrite_->end() && found->second)
+                        ptr = found->second;
+                }
+            }
             auto ni = oh->size();
             oh->push_back(ptr);
             // Issue #3022 / #3057 / #3274 / #3533: opaque-struct-copy may alias
             // an arena-tracked object (densify-tracked). Under production Moving
             // the alias joins the pin/slot/EXEMPT triad via slot-rewrite cover
-            // (the opaque_heap_ element is a stable void**) + #3210 canary
+            // (stable value slot, not this element) + #3210 canary
             // fail-closed backstop; Soft/Off falls back to EXEMPT (zero extra).
             // Required + no slot fail-closes at create (no live untracked ptr).
             // GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
             // note_ffi_opaque_alias_densify_cover (via required helper)
             void** slot = ni < oh->size() ? &(*oh)[ni] : nullptr;
-            if (!aura::ast::opaque_heap_element_cover_or_required_fail(ptr, slot,
-                                                                       "opaque-struct-copy")) {
+            if (!aura::ast::opaque_heap_element_cover_or_required_fail(
+                    ptr, slot, "opaque-struct-copy", /*enqueue_slot=*/!moving_gate)) {
                 oh->pop_back();
                 return make_int(0);
             }

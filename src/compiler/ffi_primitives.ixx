@@ -169,6 +169,17 @@ public:
         return double_free_total_;
     }
 
+    // Issue #4386: Evaluator publishes the alloc mutex, the rewrite mutex,
+    // and the this-window old→new map. Null (tests that build FFIRuntime
+    // alone) keeps the unlocked push. Set after register_primitives; the
+    // lambdas run later.
+    void set_opaque_heap_moving_gate(std::recursive_mutex* alloc_mu, std::mutex* rewrite_mu,
+                                     std::unordered_map<void*, void*>* rewrite) noexcept {
+        opaque_alloc_mu_ = alloc_mu;
+        opaque_rewrite_mu_ = rewrite_mu;
+        opaque_rewrite_ = rewrite;
+    }
+
 private:
     std::vector<void*> libs_;
     std::vector<FFIFunc> funcs_;
@@ -178,6 +189,10 @@ private:
     // Issue #1230: leak / free hygiene counters.
     std::uint64_t free_unknown_total_ = 0;
     std::uint64_t double_free_total_ = 0;
+    // Issue #4386: non-owning. Evaluator outlives the lambdas.
+    std::recursive_mutex* opaque_alloc_mu_ = nullptr;
+    std::mutex* opaque_rewrite_mu_ = nullptr;
+    std::unordered_map<void*, void*>* opaque_rewrite_ = nullptr;
 };
 
 } // namespace aura::compiler

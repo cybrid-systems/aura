@@ -1154,12 +1154,18 @@ export inline void note_ffi_opaque_alias_densify_cover(void* p, void** slot,
 // note_ffi_opaque_alias_densify_cover (LifetimePin SSOT). Production
 // required without a live void** slot fail-closes (no live untracked
 // ptr). Soft / pref<=0: existing cover helper (one required-pref load).
+// Issue #4386: enqueue_slot=false skips registering `slot` (and skips the
+// canary). Callers that pass false keep a stable value-slot copy instead
+// of the vector element address, which realloc would free under *slot.
+// Default true preserves every existing 3-arg caller.
 export inline bool opaque_heap_element_cover_or_required_fail(void* p, void** slot,
-                                                              const char* reason) noexcept {
+                                                              const char* reason,
+                                                              bool enqueue_slot = true) noexcept {
     if (!p)
         return true;
     if (!aura::core::lifetime::general_object_pin_required_active()) {
-        note_ffi_opaque_alias_densify_cover(p, slot, reason);
+        if (enqueue_slot)
+            note_ffi_opaque_alias_densify_cover(p, slot, reason);
         return true;
     }
     if (slot == nullptr || *slot == nullptr) {
@@ -1171,6 +1177,8 @@ export inline bool opaque_heap_element_cover_or_required_fail(void* p, void** sl
                                                                          std::memory_order_release);
         return false;
     }
+    if (!enqueue_slot)
+        return true;
     note_ffi_opaque_alias_densify_cover(p, slot, reason);
     return true;
 }
@@ -1296,6 +1304,16 @@ export inline void arm_production_pin_guard_soft_gate() noexcept {
         /*had_moving_densify=*/true, /*pin_contract_held=*/false,
         /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
         /*root_remap_fail_total=*/0);
+}
+
+// Issue #4386: arm sticky densify-off only. No publish and no throttle.
+// The exchange stays in this TU so recovery source stays free of it.
+export inline void arm_moving_incomplete_remap_sticky() noexcept {
+    const auto prev =
+        g_moving_incomplete_remap_sticky_densify_off.exchange(1, std::memory_order_acq_rel);
+    if (prev == 0) {
+        g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 inline void stamp_last_moving_compact_now() noexcept {
@@ -1484,6 +1502,9 @@ export using RootRemapHookFn = void (*)(
 // Reuses the same fn / ctx + mutex pattern as CompactHook / LayoutChangeHook /
 // RootRemapHook so the existing set_arena switch / clear path covers it.
 export using KnownRootsHookFn = void (*)(void* ctx) noexcept;
+// Issue #4386: after Moving relocate, rewrite Evaluator containers whose
+// element addresses are not stable. Null hook is success (no containers).
+export using UnstableRemapCommitFn = bool (*)(void* ctx, bool relocated) noexcept;
 
 export struct CompactHook {
     CompactHookFn fn = nullptr;
@@ -1846,6 +1867,30 @@ public:
         copy();
     }
 
+    // Issue #4386: post-relocate container rewrite. Copied under the mutex
+    // and invoked outside it. No hook → true (module arenas).
+    void set_unstable_remap_commit_hook(UnstableRemapCommitFn fn, void* ctx = nullptr) noexcept {
+        std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+        unstable_remap_commit_fn_ = fn;
+        unstable_remap_commit_ctx_ = ctx;
+    }
+    [[nodiscard]] bool has_unstable_remap_commit_hook() const noexcept {
+        std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+        return unstable_remap_commit_fn_ != nullptr;
+    }
+    [[nodiscard]] bool invoke_unstable_remap_commit(bool relocated) noexcept {
+        UnstableRemapCommitFn fn = nullptr;
+        void* ctx = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+            fn = unstable_remap_commit_fn_;
+            ctx = unstable_remap_commit_ctx_;
+        }
+        if (!fn)
+            return true;
+        return fn(ctx, relocated);
+    }
+
     // Issue #2775: register an external pointer that the caller holds and
     // wants declared for the next live_compact(Moving) densify. Single-
     // pointer overload. Bumps g_moving_external_root_prep_register_total
@@ -1934,6 +1979,16 @@ public:
             return;
         external_root_slots_for_densify_.push_back(slot);
         register_external_root_for_densify(*slot);
+    }
+
+    // Issue #4386: drop a void** from the slot list only. The value stays in
+    // external_roots_for_densify_ (observability). Used when a stable
+    // value-slot vector is about to be cleared while other arenas may still
+    // hold the address.
+    void forget_external_root_slot_for_densify(void** slot) noexcept {
+        if (slot == nullptr)
+            return;
+        std::erase(external_root_slots_for_densify_, slot);
     }
 
     // Issue #3055 / #3781: observe-only live pointer for the post-Moving
@@ -3186,6 +3241,11 @@ public:
                     }
                 }
             }
+            // Issue #4386: publish this window's moved-old addresses before
+            // the scratch clear. A later zero-move entry that reaches here
+            // swaps an empty vector; callers apply the publish only when
+            // THIS compact relocated.
+            last_window_moved_old_published_.swap(last_moving_relocated_old_);
             // Issue #3633: per-window scratch — consumed; no retention.
             last_moving_relocated_old_.clear();
             // Issue #3308: stamp unified LifetimeConsistencyProof BEFORE
@@ -3293,6 +3353,11 @@ public:
             return nullptr;
         }
         return neu;
+    }
+    // Issue #4386: moved-old addresses from the latest window that reached
+    // the scratch clear. Empty after a zero-move publish.
+    [[nodiscard]] const std::vector<void*>& last_window_moved_old_published() const noexcept {
+        return last_window_moved_old_published_;
     }
     // Issue #4046 test seam: one tombstone in this arena's existing
     // last_object_remap_ (the table resolve_object_remap reads).
@@ -4245,6 +4310,13 @@ public:
                         } else {
                             r = live_compact(LiveCompactMode::Moving);
                         }
+                        // Issue #4386: rewrite unstable containers before publish.
+                        // LCP skip passes relocated=false (release the arm only).
+                        if (!invoke_unstable_remap_commit(r.objects_moved > 0 ||
+                                                          r.moved_live_objects)) {
+                            r.pin_contract_held = false;
+                            r.moving_incomplete_remap = true;
+                        }
                         // Issue #3783 / #3739: any production auto-arm Moving
                         // attempt must publish densify health (Phase-5 face).
                         // Pre-#3783 only the non-soft_gated success branch
@@ -4544,6 +4616,11 @@ public:
     // maybe_auto_compact_on_alloc + maybe_try_auto_compact_.
     mutable std::mutex known_roots_mtx_;
     KnownRootsHook known_roots_hook_{};
+    // Issue #4386: Evaluator post-pass. Not part of the known-roots hook so
+    // a null commit hook stays success on module arenas.
+    mutable std::mutex unstable_remap_commit_mtx_;
+    UnstableRemapCommitFn unstable_remap_commit_fn_ = nullptr;
+    void* unstable_remap_commit_ctx_ = nullptr;
     // Issue #3055: observe-only residual live ptrs (not a remap registry).
     std::vector<void*> post_moving_live_canaries_;
     // Issue #3633: old addresses physically relocated THIS window (neu !=
@@ -4557,6 +4634,8 @@ public:
     // Issue #3781: also the source of this_window_remap for slot/pin/
     // linear/RootRemap rewrite paths (resolve keeps the full #3469 table).
     std::vector<void*> last_moving_relocated_old_;
+    // Issue #4386: swapped from last_moving_relocated_old_ at window exit.
+    std::vector<void*> last_window_moved_old_published_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.
     mutable std::shared_mutex owner_mtx_;
@@ -4849,6 +4928,63 @@ public:
             if (arena)
                 arena->register_external_root_slot_for_densify(slot);
         }
+    }
+
+    // Issue #4386: erase slot from every arena's rewrite list. Leaves the
+    // value-only prep set alone. Shared arenas_mtx_, same as register_all.
+    void forget_external_root_slot_all(void** slot) noexcept {
+        if (slot == nullptr)
+            return;
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        for (auto& [_, arena] : arenas_) {
+            if (arena)
+                arena->forget_external_root_slot_for_densify(slot);
+        }
+    }
+
+    // Issue #4386: this-window moved-old addresses across the group.
+    // Unlocked walk, same shape as compact_all_moving_pinned.
+    void collect_last_window_moved_old(std::vector<void*>& out) const noexcept {
+        out.clear();
+        for (const auto& [_, arena] : arenas_) {
+            if (!arena)
+                continue;
+            const auto& published = arena->last_window_moved_old_published();
+            out.insert(out.end(), published.begin(), published.end());
+        }
+    }
+
+    // Issue #4386: this-window container rewrite. A reused old address is
+    // still chased when the destination is live — the container stored the
+    // pre-move address. A dead destination is left unmapped. Not the #4242
+    // bind chase (that one refuses a live key). Compact thread only.
+    void fill_published_moved_rewrite(std::unordered_map<void*, void*>& remap) const noexcept {
+        for (const auto& [_, arena] : arenas_) {
+            if (!arena)
+                continue;
+            for (void* old : arena->last_window_moved_old_published()) {
+                if (!old || remap.find(old) != remap.end())
+                    continue;
+                void* neu = arena->resolve_object_remap(old);
+                if (!neu || !arena->tracks_live_object(neu))
+                    continue;
+                remap.emplace(old, neu);
+            }
+        }
+    }
+
+    // Issue #4386: bind-chase across every arena. Compact thread only —
+    // last_object_remap_ is not synchronized for foreign readers.
+    [[nodiscard]] void* resolve_object_remap_for_bind_any(void* old_ptr) const noexcept {
+        if (!old_ptr)
+            return nullptr;
+        for (const auto& [_, arena] : arenas_) {
+            if (!arena)
+                continue;
+            if (void* neu = arena->resolve_object_remap_for_bind(old_ptr))
+                return neu;
+        }
+        return nullptr;
     }
 
     // Issue #3092: parallel to register_external_root_slot_for_densify_all —

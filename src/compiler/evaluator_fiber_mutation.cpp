@@ -1047,6 +1047,14 @@ void aura::compiler::Evaluator::on_arena_known_roots_hook_thunk(void* ctx) noexc
         static_cast<Evaluator*>(ctx)->register_known_moving_densify_root_slots();
 }
 
+// Issue #4386: auto-arm commit hook. Null ctx is success (no arm to release).
+bool aura::compiler::Evaluator::on_arena_unstable_remap_commit_thunk(void* ctx,
+                                                                     bool relocated) noexcept {
+    if (!ctx)
+        return true;
+    return static_cast<Evaluator*>(ctx)->commit_unstable_densify_root_remap(relocated);
+}
+
 void aura::compiler::Evaluator::on_arena_compact_hook() {
     clear_sym_intern();
     re_pin_cow_children_from_snapshot();

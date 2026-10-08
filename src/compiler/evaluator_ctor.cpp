@@ -162,6 +162,9 @@ Evaluator::Evaluator() {
                 boot_add(std::move(name), std::move(fn));
             },
             &string_heap_, &opaque_heap_, &coverage_counters_);
+        // Issue #4386: lambdas run later. Null gate keeps the unlocked push.
+        ffi_runtime_.set_opaque_heap_moving_gate(&alloc_storage_lock_, &densify_rewrite_mu_,
+                                                 &densify_moved_rewrite_);
     }
 
     adt_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,
@@ -313,6 +316,10 @@ Evaluator::~Evaluator() {
     // join — a misbehaving agent body can't stall Evaluator teardown.
     cleanup_orch_agents();
 
+    // Issue #4386: drop a value-slot arm while arena_group_ is still alive.
+    if (densify_unstable_slots_armed_.load(std::memory_order_acquire))
+        (void)commit_unstable_densify_root_remap(false);
+
     // Issue #1662 (P0): clear arena owner + compact hooks FIRST so a
     // surviving ASTArena cannot UAF into this dying Evaluator via
     // allocate_raw (quota callback) or on_compact_hook. set_arena /
@@ -330,6 +337,7 @@ Evaluator::~Evaluator() {
             // Issue #3370: drop known-roots hook with the prior arena
             // (same UAF avoidance as compact + root_remap hooks above).
             arena_->set_known_roots_hook(nullptr);
+            arena_->set_unstable_remap_commit_hook(nullptr);
             arena_ = nullptr;
         }
         if (temp_arena_) {

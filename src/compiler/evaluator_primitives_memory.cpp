@@ -253,8 +253,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.vector_heap_.shrink_to_fit();
             ev.vector_slot_tenants_.clear(); // Issue #4298
             ev.vector_slot_tenants_.shrink_to_fit();
-            ev.opaque_heap_.clear();
-            ev.opaque_heap_.shrink_to_fit();
+            {
+                // Issue #4386: module is already held. alloc inside that block.
+                std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
+                ev.opaque_heap_.clear();
+                ev.opaque_heap_.shrink_to_fit();
+            }
             // gc-heap is a stronger reset than gc-temp; also clear
             // module + workspace state under the matching locks so
             // (gc-heap) is actually a "stronger reset than gc-temp"
@@ -341,8 +345,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.vector_heap_.shrink_to_fit();
         ev.vector_slot_tenants_.clear(); // Issue #4298
         ev.vector_slot_tenants_.shrink_to_fit();
-        ev.opaque_heap_.clear();
-        ev.opaque_heap_.shrink_to_fit();
+        {
+            // Issue #4386: shard locks are already released. alloc alone.
+            std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
+            ev.opaque_heap_.clear();
+            ev.opaque_heap_.shrink_to_fit();
+        }
 
         return types::make_bool(true);
     });

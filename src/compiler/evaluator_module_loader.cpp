@@ -15,6 +15,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.arena; // Issue #4386: moving_compact_feature_enabled
 import aura.compiler.value;
 import aura.diag;
 import aura.parser.parser;
@@ -613,10 +614,16 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // (gc) could half-clear the cache between the push_back and the
     // module_cache_[resolved] = mod_idx assignment.
     // Issue #2354: Module rank (after Closures in total order when audit on).
-    auto mod_idx = modules_.size();
+    std::size_t mod_idx = 0;
     {
         aura::compiler::lock_order::AuditScope lo_module(aura::compiler::lock_order::Level::Module);
         std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+        // Issue #4386: rewrite a this-window moved Env* before it is published.
+        if (aura::ast::moving_compact_feature_enabled()) {
+            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            mod_env = static_cast<Env*>(densify_rewrite_lookup_locked_(mod_env));
+        }
+        mod_idx = modules_.size();
         modules_.push_back(mod_env);
         module_cache_[resolved] = mod_idx;
         module_arena_ptrs_[resolved] = &mod_arena;

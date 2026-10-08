@@ -50,6 +50,7 @@ module;
 #include <memory_resource>
 #include <mutex>
 #include <new>
+#include <thread>
 #include <optional>
 #include <shared_mutex>
 #include <span>
@@ -1904,6 +1905,10 @@ public:
     }
 
     void set_arena(ast::ASTArena* a) {
+        // Issue #4386: release a value-slot arm before arena_set_mtx_.
+        // commit does not take that mutex. Not armed → one load.
+        if (densify_unstable_slots_armed_.load(std::memory_order_acquire))
+            (void)commit_unstable_densify_root_remap(false);
         // Issue #1663: serialize set_arena transitions (rare path).
         // ASTArena::owner_mtx_ separately atomicizes owner+fn vs allocate_raw.
         std::lock_guard<std::mutex> lock(arena_set_mtx_);
@@ -1919,6 +1924,7 @@ public:
             // Issue #3370: drop known-roots hook with the prior arena
             // (same UAF avoidance as compact + root_remap hooks above).
             arena_->set_known_roots_hook(nullptr);
+            arena_->set_unstable_remap_commit_hook(nullptr);
         }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
@@ -1946,6 +1952,8 @@ public:
             // hook if already wired (tests may override).
             if (switching || !arena_->has_known_roots_hook()) {
                 arena_->set_known_roots_hook(&Evaluator::on_arena_known_roots_hook_thunk, this);
+                arena_->set_unstable_remap_commit_hook(
+                    &Evaluator::on_arena_unstable_remap_commit_thunk, this);
             }
             // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before
@@ -4837,6 +4845,17 @@ public:
     // g_moving_known_roots_auto_registered_total.
     [[nodiscard]] std::size_t register_known_moving_densify_root_slots() noexcept;
 
+    // Issue #4386: after Moving relocate, rewrite live containers from the
+    // published old→new map and release the stable value-slot arm.
+    // Not armed, or called from a thread that does not own the arm: true,
+    // and the mutex is left held by the owner.
+    [[nodiscard]] bool commit_unstable_densify_root_remap(bool relocated) noexcept;
+    void push_opaque_heap_for_test(void* p);
+    void push_module_env_for_test(void* p);
+    [[nodiscard]] std::vector<void*> copy_opaque_heap_for_test() const;
+    [[nodiscard]] std::vector<void*> copy_module_ptrs_for_test() const;
+    [[nodiscard]] std::vector<void*> copy_closure_body_ptrs_for_test() const;
+
     // Issue #2935: Agent recovery after sticky densify-off.
     // (a) re-register known roots (b) clear sticky densify-off when armed
     // (c) optionally attempt one Moving densify (compact_all_moving_pinned).
@@ -5786,6 +5805,26 @@ public:
     std::vector<std::int64_t> env_id_remap_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
+    // Issue #4386: stable copies of opaque_heap_ / modules_ / closure body
+    // pointers. Their element addresses are what live_compact rewrites.
+    // Destroyed after ffi_runtime_ (declared first) so the FFI gate's
+    // mutex / map pointers stay valid for the FFIRuntime lifetime.
+    // Held from fill through commit on the arming thread only.
+    std::mutex densify_value_slot_mu_;
+    std::atomic<bool> densify_unstable_slots_armed_{false};
+    std::atomic<std::thread::id> densify_value_slot_owner_{};
+    bool densify_value_slot_filling_ = false;
+    bool densify_commit_active_ = false;
+    std::atomic<int> densify_reregister_inflight_{0};
+    std::vector<void*> densify_opaque_value_slots_;
+    std::vector<void*> densify_modules_value_slots_;
+    std::vector<void*> densify_closure_value_slots_;
+    std::mutex densify_rewrite_mu_;
+    std::unordered_map<void*, void*> densify_moved_rewrite_;
+    // Functor create-cover slots. deque so push_back does not move them.
+    // Not module_mtx_ — create_with_cover must not run under that lock.
+    std::mutex module_create_cover_mu_;
+    std::deque<void*> module_create_covers_;
     // Issue #131: FFI state moved to FFIRuntime instance
     // (formerly file-scope statics in the monolithic evaluator TU).
     FFIRuntime ffi_runtime_;
@@ -5802,6 +5841,18 @@ public:
     const AdtRuntime& adt_runtime() const { return adt_runtime_; }
 
 private:
+    // Issue #4386: caller holds densify_rewrite_mu_.
+    [[nodiscard]] void* densify_rewrite_lookup_locked_(void* p) const noexcept;
+    [[nodiscard]] int densify_unstable_fill_begin() noexcept;
+    void densify_unstable_note_opaque(void* p) noexcept;
+    void densify_unstable_note_module(void* p) noexcept;
+    void densify_unstable_note_closure(void* flat, void* pool) noexcept;
+    void densify_unstable_append_value_slots(std::vector<void**>& known, int fill) noexcept;
+    [[nodiscard]] bool densify_rewrite_containers_from_published_() noexcept;
+    void densify_forget_value_slots_() noexcept;
+    void fold_remap_(aura::ast::AdaptiveCompactResult& r, bool lcp_blocked) noexcept;
+    void end_densify_arm_() noexcept;
+
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
     // Issue #63 Phase 3: extend with tunable fields.
@@ -15086,6 +15137,8 @@ public:
     // relocate. No module
     // import from arena.ixx — ctx is the owning Evaluator.
     static void on_arena_known_roots_hook_thunk(void* ctx) noexcept;
+    // Issue #4386: auto-arm calls this after live_compact, before publish.
+    static bool on_arena_unstable_remap_commit_thunk(void* ctx, bool relocated) noexcept;
     // Issue #1473: public test accessors for the 3 hook points wired by
     // #1473 (validate_or_refresh sweeps for pinned StableNodeRefs). The
     // production code paths (restore_post_yield_or_rollback,
