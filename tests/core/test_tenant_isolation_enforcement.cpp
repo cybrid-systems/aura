@@ -6268,6 +6268,153 @@ int main() {
         CHECK(!invent.good(), "4381 AC3: no tests/core/test_issue_4381.cpp (forbidden)");
     }
 
+    // ── Issue #4382: http-* scheme jail (file:// / non-http(s) deny) ──
+    {
+        std::println("\n--- #4382 AC1: http-* scheme fence denies non-http(s) URLs ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4382-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        std::string out;
+        // Fence deny matrix: file://, single-slash file:, ftp:// deny with
+        // the shared IsolationDeny row (kEffectNetwork face, op carried);
+        // http(s) URLs allow case-insensitively with zero SE.
+        const std::pair<const char*, const char*> deny_matrix[] = {
+            {"file:///etc/passwd", "http-get"},
+            {"file:/etc/passwd", "http-get"},
+            {"ftp://host/x", "http-post"},
+            {"file:///etc/passwd", "http-post"},
+        };
+        for (const auto& [url, op] : deny_matrix) {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            CHECK(!ev.check_tenant_http_scheme(url, op),
+                  (std::string("4382 AC1: scheme denies ") + url + " via " + op).c_str());
+            CHECK(ev.last_mutate_error().find(std::string(op) + ": tenant-path-escape") !=
+                      std::string::npos,
+                  (std::string("4382 AC1: last_mutate_error carries ") + op).c_str());
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                if (std::string_view(e.op) != op)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 7, "4382 AC1: SE tenant is the caller");
+            }
+            CHECK(saw, (std::string("4382 AC1: IsolationDeny SE for ") + op).c_str());
+        }
+        const auto se_base_allow = ring.seq.load(std::memory_order_acquire);
+        CHECK(ev.check_tenant_http_scheme("http://example.com/x", "http-get"),
+              "4382 AC1: http:// allows at the fence");
+        CHECK(ev.check_tenant_http_scheme("HTTPS://Example.com/x", "http-post"),
+              "4382 AC1: https:// allows case-insensitively");
+        CHECK(ring.seq.load(std::memory_order_acquire) == se_base_allow,
+              "4382 AC1: scheme allow emits no SE");
+
+        // Prim-level deny: the http-get / http-post bodies consult the
+        // fence BEFORE any perform / async / CLI exec (install window at
+        // Off, then arm — deferred prims materialize like #4233 AC2).
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        (void)ev.ensure_std_host_prims("std/net");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        auto& heap_w = ev.string_heap_mut();
+        auto hg = ev.primitives().lookup("http-get");
+        CHECK(hg.has_value(), "4382 AC1: http-get registered");
+        heap_w.push_back("file:///etc/passwd");
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            bool denied = false;
+            if (hg) {
+                using aura::compiler::types::make_string;
+                const auto r = (*hg)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                denied = !is_string(r);
+            }
+            CHECK(denied, "4382 AC1: http-get prim denies file:// (zero perform)");
+            CHECK(ring.seq.load(std::memory_order_acquire) > se_base,
+                  "4382 AC1: http-get prim deny joins the SE row");
+        }
+        auto hp = ev.primitives().lookup("http-post");
+        CHECK(hp.has_value(), "4382 AC1: http-post registered");
+        heap_w.push_back("file:///etc/passwd");
+        heap_w.push_back("{}");
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            bool denied = false;
+            if (hp) {
+                using aura::compiler::types::make_string;
+                const auto r = (*hp)({make_string(static_cast<std::uint64_t>(heap_w.size() - 2)),
+                                      make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                denied = !is_string(r);
+            }
+            CHECK(denied, "4382 AC1: http-post prim denies file:// (zero perform / zero exec)");
+            CHECK(ring.seq.load(std::memory_order_acquire) > se_base,
+                  "4382 AC1: http-post prim deny joins the SE row");
+        }
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4382 AC2: Soft/Off scheme passthrough (legacy face) ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+        CHECK(ev.check_tenant_http_scheme("file:///etc/passwd", "http-get"),
+              "4382 AC2: Off scheme passthrough (no jail arm)");
+        CHECK(g_security_event_ring().seq.load(std::memory_order_acquire) == se_base,
+              "4382 AC2: passthrough emits no IsolationDeny SE");
+    }
+
+    {
+        std::println("\n--- #4382 AC3: linter + wiring; scheme jail cites ---");
+        const auto io_src = read_file("src/compiler/evaluator_primitives_io.cpp");
+        const auto hh = read_file("src/compiler/tenant_host_path.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto build = read_file("build.py");
+        const auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+        CHECK(hh.find("Issue #4382") != std::string::npos,
+              "4382 AC3: scheme allowlist SSOT cites #4382");
+        CHECK(hh.find("tenant_http_url_scheme_allowed") != std::string::npos,
+              "4382 AC3: allowlist predicate lives in the SSOT");
+        CHECK(sec.find("check_tenant_http_scheme") != std::string::npos &&
+                  sec.find("Issue #4382") != std::string::npos,
+              "4382 AC3: Evaluator fence defined and cited");
+        CHECK(io_src.find("check_tenant_http_scheme(url, \"http-get\")") != std::string::npos,
+              "4382 AC3: http-get wires the scheme fence");
+        CHECK(io_src.find("check_tenant_http_scheme(curl_url, \"http-post\")") != std::string::npos,
+              "4382 AC3: http-post wires the scheme fence");
+        CHECK(io_src.find("CURLOPT_REDIR_PROTOCOLS") != std::string::npos,
+              "4382 AC3: libcurl redirect protocols restricted");
+        CHECK(io_src.find("\"--proto-redir\"") != std::string::npos,
+              "4382 AC3: curl CLI fallback restricts redirect protocols");
+        CHECK(build.find("check_http_tenant_scheme_4382") != std::string::npos,
+              "4382 AC3: build.py wires the #4382 linter");
+        CHECK(allow.find("check_http_tenant_scheme_4382.py") != std::string::npos,
+              "4382 AC3: linter on the root allowlist");
+        std::ifstream invent("tests/core/test_issue_4382.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4382.cpp");
+        CHECK(!invent.good(), "4382 AC3: no tests/core/test_issue_4382.cpp (forbidden)");
+    }
+
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
     ac4133_1_target_ta_non_ta_caller_denied();
     ac4133_2_caller_ta_mint_foreign_target_lands();

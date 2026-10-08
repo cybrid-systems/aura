@@ -225,6 +225,30 @@ struct TenantHostPathResult {
     return false;
 }
 
+// Issue #4382: http-* scheme allowlist for http-get / http-post — under
+// the tenant jail only http:// and https:// may be named. file:// and any
+// other scheme is a host-FS read/write in URL clothing (a Network grant
+// must not reach /etc/passwd), and redirects onto them are refused by the
+// CURLOPT_REDIR_PROTOCOLS / --proto-redir layers. Case-insensitive per
+// RFC 3986 (scheme normalization). Soft/Off / single-tenant Restricted
+// never consult this (the policy predicate in the Evaluator fence owns
+// the arm).
+[[nodiscard]] inline bool tenant_http_url_scheme_allowed(std::string_view url) noexcept {
+    auto starts_with_ci = [](std::string_view u, std::string_view scheme) noexcept {
+        if (u.size() < scheme.size())
+            return false;
+        for (std::size_t i = 0; i < scheme.size(); ++i) {
+            char c = u[i];
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+            if (c != scheme[i])
+                return false;
+        }
+        return true;
+    };
+    return starts_with_ci(url, "http://") || starts_with_ci(url, "https://");
+}
+
 // Extract tenant id from `<base>/t-<id>(/...)` when path sits under base.
 // Returns 0 when not a tenant-prefixed path.
 [[nodiscard]] inline std::uint64_t tenant_id_from_host_path(std::string_view path,

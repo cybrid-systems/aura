@@ -678,6 +678,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (uidx >= ev.string_heap_.size())
                 return make_void();
             const auto& url = ev.string_heap_[uidx];
+            // Issue #4382: scheme jail — only http/https under the tenant
+            // jail; file:// and other schemes deny IsolationDeny
+            // tenant-path-escape with zero perform.
+            if (!ev.check_tenant_http_scheme(url, "http-get"))
+                return make_void();
 
             std::string result;
             // Prefer libcurl (no shell) when available.
@@ -693,6 +698,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
                     get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
                     get_curl().easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+                    // Issue #4382: restrict protocols to http/https —
+                    // redirects onto file:// or other schemes are refused
+                    // by the library (REDIR_PROTOCOLS).
+                    get_curl().easy_setopt(curl, CURLOPT_PROTOCOLS,
+                                           static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+                    get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
+                                           static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
                     CURLcode res = get_curl().easy_perform(curl);
                     get_curl().easy_cleanup(curl);
                     if (res != CURLE_OK && result.empty())
@@ -726,6 +738,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (aidx < ev.string_heap_.size())
                 auth = ev.string_heap_[aidx];
         }
+        // Issue #4382: scheme jail — same fence as http-get, before the
+        // async / libcurl / CLI paths (zero perform / zero exec on deny).
+        if (!ev.check_tenant_http_scheme(curl_url, "http-post"))
+            return make_void();
 
         // Async HTTP via thread (fiber-friendly, serve mode only).
         // Issue #4053: copy URL/body before unlocking denseness body mutex
@@ -778,6 +794,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
                 get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
                 get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+                // Issue #4382: restrict protocols to http/https — the
+                // scheme fence already denied non-http(s) URLs; this
+                // keeps redirects and libcurl default schemes in line.
+                get_curl().easy_setopt(curl, CURLOPT_PROTOCOLS,
+                                       static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+                get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
+                                       static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
 
                 CURLcode res = get_curl().easy_perform(curl);
                 get_curl().slist_free_all(headers);
@@ -814,7 +837,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 ::dup2(out[1], STDOUT_FILENO);
                 ::close(in[0]);
                 ::close(out[1]);
-                const char* argv[16]{};
+                const char* argv[24]{};
                 int i = 0;
                 argv[i++] = "curl";
                 argv[i++] = "-s";
@@ -832,6 +855,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 argv[i++] = "30";
                 argv[i++] = "--connect-timeout";
                 argv[i++] = "10";
+                // Issue #4382: restrict protocols to http/https (and
+                // redirects onto them) — mirrors the libcurl face.
+                argv[i++] = "--proto";
+                argv[i++] = "=http,https";
+                argv[i++] = "--proto-redir";
+                argv[i++] = "=http,https";
                 argv[i++] = url.c_str();
                 argv[i] = nullptr;
                 ::execvp("curl", const_cast<char* const*>(argv));

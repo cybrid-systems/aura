@@ -8788,6 +8788,29 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4381 git-* tenant jail linter failed — run python3 scripts/check_git_tenant_jail_4381.py")
         return r
+    # Issue #4382 (security): http-get / http-post accepted file:// and
+    # every other libcurl scheme (no CURLOPT_PROTOCOLS /
+    # CURLOPT_REDIR_PROTOCOLS) and never consulted the tenant host-path
+    # gate — a Network grant alone read /etc/passwd into string_heap_,
+    # and FOLLOWLOCATION could redirect an http(s) response onto file://.
+    # The curl CLI fallback received the raw URL as argv with no --proto
+    # restriction. Gate pins: Evaluator::check_tenant_http_scheme
+    # mirrors the #4233 jail under the same #3802 policy predicate (deny
+    # joins the shared IsolationDeny tenant-path-escape row with the
+    # kEffectNetwork face), the http:///https:// allowlist predicate
+    # lives in the tenant_host_path.hh SSOT, both prim bodies consult
+    # the fence before any perform / async / CLI exec, libcurl paths set
+    # PROTOCOLS + REDIR_PROTOCOLS, the CLI fallback passes
+    # --proto / --proto-redir, runtime ACs extend the #3802 family host
+    # test file, and the wiring stays on the root allowlist.
+    httpscheme4382_script = ROOT / "scripts" / "check_http_tenant_scheme_4382.py"
+    if not httpscheme4382_script.exists():
+        fail(f"missing {httpscheme4382_script}")
+        return 1
+    r = run([sys.executable, str(httpscheme4382_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4382 http-* scheme jail linter failed — run python3 scripts/check_http_tenant_scheme_4382.py")
+        return r
     # Issue #4037 (security residual): mutate:set-agent-fingerprint was
     # SECURITY_EXEMPT, so the author fingerprint — the blame label
     # TypedTransactionGuard copies onto every sub-mutation of the next typed
