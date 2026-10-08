@@ -65,7 +65,9 @@ def main() -> int:
     must("entry.dirty", "AC1 maybe_restamp dirty gate", maybe_win)
     must("abort_map_invalid", "AC1 maybe_restamp abort gate", maybe_win)
     must("content_stored_this_epoch", "AC1 maybe_restamp content gate", maybe_win)
-    must("restamp_cache_entry_live_(entry, sampled_mut)", "AC1 maybe_restamp content write", maybe_win)
+    # Issue #4377: the call also passes the stored name. The sampled
+    # epoch argument is unchanged.
+    must("restamp_cache_entry_live_(entry, sampled_mut, name)", "AC1 maybe_restamp content write", maybe_win)
 
     cas = dirty.find("void CompilerService::notify_hot_update_after_cascade_")
     cas_win = dirty[cas : cas + 16000] if cas >= 0 else ""
@@ -80,7 +82,7 @@ def main() -> int:
     store_win = ixx[store : store + 2200] if store >= 0 else ""
     must("content_stored_this_epoch = true", "AC1 store sets latch", store_win)
     must("abort_map_invalid = false", "AC1 store clears abort before restamp", store_win)
-    must("restamp_cache_entry_live_(entry, sampled_mut_epoch)", "AC1 store still restamps", store_win)
+    must("restamp_cache_entry_live_(entry, sampled_mut_epoch, name)", "AC1 store still restamps", store_win)
 
     rb = ixx.find("bool relower_define_blocks(")
     rb_win = ixx[rb : rb + 22000] if rb >= 0 else ""

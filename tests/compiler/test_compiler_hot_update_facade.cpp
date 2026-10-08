@@ -1434,31 +1434,34 @@ static void ac4341_sampled_epoch_restamp() {
     CHECK(ixx.find("Issue #4341") != std::string::npos, "4341: service.ixx cites");
     CHECK(dirty.find("Issue #4341") != std::string::npos, "4341: service_dirty.cpp cites");
     // restamp takes the sampled epoch; the live current_mutation_epoch()
-    // read inside restamp_cache_entry_live_ is gone.
+    // read inside restamp_cache_entry_live_ is gone. Issue #4377 appends
+    // the stored name; the sampled-epoch argument stays first.
     CHECK(ixx.find(
-              "void restamp_cache_entry_live_(IRCacheEntry& entry, std::uint64_t sampled_mut)") !=
+              "void restamp_cache_entry_live_(IRCacheEntry& entry, std::uint64_t sampled_mut,") !=
               std::string::npos,
           "4341: restamp takes the sampled epoch");
     CHECK(ixx.find("const auto mut = aura::core::current_mutation_epoch();") == std::string::npos,
           "4341: no live mutation read inside the restamp");
     // store_define_v2 carries the sampled epoch to the unified restamp.
-    CHECK(ixx.find("restamp_cache_entry_live_(entry, sampled_mut_epoch);") != std::string::npos,
+    CHECK(ixx.find("restamp_cache_entry_live_(entry, sampled_mut_epoch, name)") !=
+              std::string::npos,
           "4341: store_define_v2 stamps the sampled epoch");
     // relower_define_blocks samples BEFORE any per-fn / full re-lower and
     // feeds both the partial restamp and the full-fallback store.
     CHECK(ixx.find("const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();") !=
               std::string::npos,
           "4341: relower samples before the lower");
-    CHECK(ixx.find("restamp_cache_entry_live_(it->second, ir_sample_epoch);") != std::string::npos,
+    CHECK(ixx.find("restamp_cache_entry_live_(it->second, ir_sample_epoch, name)") !=
+              std::string::npos,
           "4341: per-fn partial restamps the sampled epoch");
     CHECK(ixx.find("ir_mod.string_pool, ir_sample_epoch);") != std::string::npos,
           "4341: full-fallback store stamps the sampled epoch");
     // Cascade-reemit restamps re-assert the already-stamped sampled
     // mutation_count — never advance to live.
     size_t cascade_reassert = 0;
-    for (auto pos = dirty.find("it->second.version_stamp_.mutation_count);");
+    for (auto pos = dirty.find("it->second.version_stamp_.mutation_count,");
          pos != std::string::npos;
-         pos = dirty.find("it->second.version_stamp_.mutation_count);", pos + 1))
+         pos = dirty.find("it->second.version_stamp_.mutation_count,", pos + 1))
         ++cascade_reassert;
     CHECK(cascade_reassert >= 2,
           "4341: cascade root + dependent restamps re-assert the sampled stamp");
