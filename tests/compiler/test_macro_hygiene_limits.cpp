@@ -62,6 +62,7 @@ using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
 using aura::compiler::macro_exp::hard_hygiene_depth_limit;
 using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
 using aura::compiler::macro_exp::inner_expand_production_limit_deny;
+using aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny;
 using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
 using aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling;
 using aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced;
@@ -2590,6 +2591,253 @@ static void ac4309_deny_leaves_caller_arg() {
     }
 }
 
+// Issue #4389: MacroSelfEvo deny on a hygienic clone must stamp the fiber
+// slot #4078 reads. The process sentinel stays the #4149 mutate face.
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
+extern "C" void aura_macro_hygiene_capability_deny_sentinel(void) noexcept;
+
+static std::uint8_t own_fiber_limit_reason_4389() {
+    return get_fiber_hygiene_metrics(static_cast<std::uint32_t>(aura_fiber_current_id()))
+        .last_limit_reason;
+}
+
+static void arm_restricted_no_mse_4389() {
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    set_mode(SandboxMode::Restricted);
+}
+
+static void ac4389_capability_deny_stamps_fiber() {
+    std::println("\n--- #4389: hygienic MacroSelfEvo deny stamps the fiber slot ---");
+    reset_all();
+
+    // Macro-free tree: process sentinel only. Eval of (+ 1 2) continues.
+    {
+        arm_restricted_no_mse_4389();
+        StringPool pool;
+        FlatAST flat;
+        auto plus = flat.add_variable(pool.intern("+"));
+        flat.root = flat.add_call(
+            plus, std::vector<aura::ast::NodeId>{flat.add_literal(1), flat.add_literal(2)});
+        const auto size0 = flat.size();
+        const auto root0 = flat.root;
+        auto out = macro_expand_all(flat, pool, flat.root, 8);
+        CHECK(out == root0 && flat.size() == size0, "4389: macro-free expand returns the root");
+        CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
+              "4389: macro-free deny does not arm the fiber");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 0, "4389: macro-free deny does not block");
+        CompilerService cs;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        set_mode(SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
+        auto sum = cs.eval("(+ 1 2)");
+        CHECK(sum.has_value() && is_int(*sum) && as_int(*sum) == 3,
+              "4389: (+ 1 2) still evals without MacroSelfEvo");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 0, "4389: (+ 1 2) did not block eval");
+    }
+
+    // defmacro does not enter clone_macro_body. Same quiet deny.
+    {
+        arm_restricted_no_mse_4389();
+        StringPool pool;
+        FlatAST flat;
+        auto y = pool.intern("y");
+        auto d = pool.intern("d4389");
+        auto body = flat.add_variable(y);
+        (void)flat.add_macrodef(d, {y}, body, false, false);
+        flat.root = flat.add_call(flat.add_variable(d),
+                                  std::vector<aura::ast::NodeId>{flat.add_literal(1)});
+        const auto size0 = flat.size();
+        (void)macro_expand_all(flat, pool, flat.root, 4);
+        CHECK(flat.size() == size0, "4389: defmacro deny does not expand");
+        CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
+              "4389: defmacro deny does not arm the fiber");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 0, "4389: defmacro deny does not block");
+    }
+
+    // define-hygienic-macro in the flat: zero expansion, fiber 7, gate fires.
+    {
+        arm_restricted_no_mse_4389();
+        StringPool pool;
+        FlatAST flat;
+        auto y = pool.intern("y");
+        auto d = pool.intern("dbl4389");
+        auto body = flat.add_variable(y);
+        (void)flat.add_macrodef(d, {y}, body, false, true);
+        flat.root = flat.add_call(flat.add_variable(d),
+                                  std::vector<aura::ast::NodeId>{flat.add_literal(3)});
+        const auto size0 = flat.size();
+        const auto root0 = flat.root;
+        auto out = macro_expand_all(flat, pool, flat.root, 8);
+        CHECK(out == root0 && flat.size() == size0, "4389: hygienic expand_all does no clone");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  kHygieneLimitReasonCapabilityDeny,
+              "4389: process sentinel is still 7");
+        CHECK(own_fiber_limit_reason_4389() == kHygieneLimitReasonCapabilityDeny,
+              "4389: expand_all stamps fiber last_limit_reason 7");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 1, "4389: expand_all deny blocks eval");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "capability-deny",
+              "4389: reason string capability-deny");
+    }
+
+    // Direct clone (eval_flat hygienic arm) stamps the same fiber slot.
+    {
+        arm_restricted_no_mse_4389();
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::bump_mutation_epoch();
+        const auto epoch = aura::core::current_mutation_epoch();
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::kSecurityEventRingSize;
+        using aura::core::security_event::SecurityEventKind;
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        StringPool pool;
+        FlatAST src;
+        auto y = pool.intern("y");
+        auto body = src.add_variable(y);
+        src.root = body;
+        FlatAST target;
+        StringPool tp;
+        NameMap names;
+        auto cloned = clone_macro_body(target, tp, src, pool, body, nullptr, &names,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned == NULL_NODE, "4389: clone without MacroSelfEvo is NULL");
+        CHECK(target.size() == 0, "4389: clone wrote no nodes");
+        CHECK(own_fiber_limit_reason_4389() == kHygieneLimitReasonCapabilityDeny,
+              "4389: clone stamps fiber last_limit_reason 7");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 1, "4389: clone deny blocks eval");
+        bool saw = false;
+        auto& ring = g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        const auto scan = head < kSecurityEventRingSize ? head : kSecurityEventRingSize;
+        for (std::uint64_t s = head; s > head - scan; --s) {
+            if (s == 0)
+                break;
+            const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+            if (e.seq < seq0)
+                continue;
+            if (e.kind == SecurityEventKind::MacroHygiene && e.denied &&
+                std::string_view(e.reason) == "capability-deny" && e.epoch == epoch)
+                saw = true;
+        }
+        CHECK(saw, "4389: typed SE epoch is current_mutation_epoch");
+        aura::core::reset_mutation_epoch_for_test();
+    }
+
+    // eval_flat hygienic call: capability-deny, not make_void and not the body.
+    {
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        StringPool pool;
+        FlatAST flat;
+        auto y = pool.intern("y");
+        auto d = pool.intern("dbl4389b");
+        auto plus = flat.add_variable(pool.intern("+"));
+        auto body = flat.add_call(
+            plus, std::vector<aura::ast::NodeId>{flat.add_variable(y), flat.add_literal(1)});
+        auto def = flat.add_macrodef(d, {y}, body, false, true);
+        auto call = flat.add_call(flat.add_variable(d),
+                                  std::vector<aura::ast::NodeId>{flat.add_literal(2)});
+        ac4101_bind_flat(ev, flat, pool);
+        CHECK(ev.eval_flat(flat, pool, def, ev.top_env()).has_value(), "4389: define registers");
+        const auto size0 = flat.size();
+        arm_restricted_no_mse_4389();
+        auto r = ev.eval_flat(flat, pool, call, ev.top_env());
+        CHECK(eval_error_has(r, "capability-deny"), "4389: eval_flat returns capability-deny");
+        CHECK(!(r.has_value() && is_int(*r) && as_int(*r) == 3),
+              "4389: eval_flat does not run the unexpanded body");
+        CHECK(flat.size() == size0, "4389: eval_flat clone wrote nothing");
+        CHECK(own_fiber_limit_reason_4389() == kHygieneLimitReasonCapabilityDeny,
+              "4389: eval_flat deny left fiber 7");
+        ac4101_unbind_flat(ev);
+    }
+
+    // CompilerService::eval of define-hygienic-macro stops before the call.
+    {
+        arm_restricted_no_mse_4389();
+        CompilerService cs;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        set_mode(SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
+        auto denied = cs.eval("(begin (define-hygienic-macro (dbl4389c y) (* y 2)) (dbl4389c 3))");
+        // Fiber 7 is the #4078 authority. The module string is the same
+        // face production aura_macro_hygiene_last_limit_reason_string
+        // returns. Light-link interposes a weak stub of that extern "C"
+        // symbol (empty), so hygiene_expand_deny_diag_4078 falls back to
+        // hygiene-pass-limit. Either text means eval stopped.
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(own_fiber_limit_reason_4389() == kHygieneLimitReasonCapabilityDeny,
+              "4389: eval left fiber last_limit_reason 7");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 1, "4389: eval deny blocks");
+        CHECK(rs != nullptr && std::string(rs) == "capability-deny",
+              "4389: eval fiber string is capability-deny");
+        CHECK(!denied.has_value() && (eval_error_has(denied, "capability-deny") ||
+                                      eval_error_has(denied, "hygiene-pass-limit")),
+              std::format("4389: eval stops (diag [{}])",
+                          denied.has_value() ? std::string("<value>") : denied.error().format()));
+    }
+
+    // Soft/Off still expands. The sentinel itself does not arm the fiber.
+    {
+        reset_all();
+        CompilerService cs;
+        auto ok = cs.eval("(begin (define-hygienic-macro (dbl4389d y) (* y 2)) (dbl4389d 3))");
+        CHECK(ok.has_value() && is_int(*ok) && as_int(*ok) == 6, "4389: Off still expands to 6");
+        aura_test_reset_macro_hygiene_last_limit_reason_full();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        set_mode(SandboxMode::Restricted);
+        aura_macro_hygiene_capability_deny_sentinel();
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  kHygieneLimitReasonCapabilityDeny,
+              "4389: sentinel still stores process 7");
+        CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
+              "4389: sentinel does not arm the fiber (#4149)");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 0, "4389: sentinel alone does not block");
+    }
+
+    {
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #4389") != std::string::npos, "4389: macro_expansion cites #4389");
+        const auto stamp = "note_hygiene_last_limit_reason(kHygieneLimitReasonCapabilityDeny)";
+        const auto first = me.find(stamp);
+        const auto second =
+            first == std::string::npos ? std::string::npos : me.find(stamp, first + 1);
+        CHECK(first != std::string::npos && second != std::string::npos,
+              "4389: clone and expand_all both stamp the fiber");
+        const auto sent = me.find("void aura_macro_hygiene_capability_deny_sentinel");
+        const auto sent_end = sent == std::string::npos ? std::string::npos : me.find('}', sent);
+        CHECK(sent != std::string::npos && sent_end != std::string::npos, "4389: sentinel present");
+        if (sent != std::string::npos && sent_end != std::string::npos) {
+            const auto body = me.substr(sent, sent_end - sent);
+            CHECK(body.find("g_macro_hygiene_last_limit_reason.store(7") != std::string::npos,
+                  "4389: sentinel still stores 7");
+            CHECK(body.find("note_hygiene_last_limit_reason") == std::string::npos,
+                  "4389: sentinel does not call note_hygiene_last_limit_reason");
+        }
+        CHECK(read_file("tests/compiler/test_issue_4389.cpp").empty(),
+              "4389: no test_issue_4389.cpp");
+        CHECK(read_file("docs/design/4389-macro-self-evo-fiber.md").empty(),
+              "4389: no docs/design/4389-*");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto diag = svc.find("hygiene_expand_deny_diag_4078");
+        CHECK(diag != std::string::npos &&
+                  svc.find("aura_macro_hygiene_last_limit_reason_string()", diag) !=
+                      std::string::npos &&
+                  svc.find("hygiene-pass-limit", diag) != std::string::npos,
+              "4389: eval diag uses the fiber string, empty falls back");
+        const auto strong = me.find("const char* aura_macro_hygiene_last_limit_reason_string");
+        CHECK(strong != std::string::npos &&
+                  me.find("return hygiene_last_limit_reason_string()", strong) != std::string::npos,
+              "4389: strong string is the fiber-preferring face");
+    }
+
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    aura::core::reset_mutation_epoch_for_test();
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -2665,6 +2913,8 @@ int run_test_macro_hygiene_limits() {
     ac4292_inner_owns_checkpoint_when_idle();
     std::println("\n=== Issue #4309: subst must not dirty caller arguments ---");
     ac4309_deny_leaves_caller_arg();
+    std::println("\n=== Issue #4389: hygienic MacroSelfEvo deny stamps the fiber ===");
+    ac4389_capability_deny_stamps_fiber();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
