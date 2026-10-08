@@ -7412,6 +7412,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             cur = fr.parent_id;
                         }
                     }
+                    // Issue #4374: display and newline are primitives, not
+                    // cells. set! of a name that was never bound is not an
+                    // unbound variable. Leave the primitive in place — a new
+                    // cell would be updated in place by a later eval define.
+                    if (eval_env.lookup_primitive(name))
+                        return *val;
                     // Suggest closest bound variables
                     {
                         std::vector<std::string> candidates;

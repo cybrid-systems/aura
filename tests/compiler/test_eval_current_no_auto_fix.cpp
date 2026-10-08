@@ -418,6 +418,62 @@ static void ac4373_define_of_eval_binds() {
     CHECK(ev.find("Issue #4373") != std::string::npos, "4373: cites Issue #4373");
 }
 
+static void ac4374_eval_let_keeps_primitives() {
+    std::println("\n--- #4374: eval let does not replace display or newline ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    const char* prev_ps = std::getenv("AURA_PIPELINE_STRICT");
+    const std::string saved_sb = prev_sb ? prev_sb : "";
+    const std::string saved_ps = prev_ps ? prev_ps : "";
+    const bool had_sb = prev_sb != nullptr;
+    const bool had_ps = prev_ps != nullptr;
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        std::string sb;
+        std::string ps;
+        bool had_sb;
+        bool had_ps;
+        ~RestoreEnv() {
+            if (had_sb)
+                setenv("AURA_SANDBOX", sb.c_str(), 1);
+            else
+                unsetenv("AURA_SANDBOX");
+            if (had_ps)
+                setenv("AURA_PIPELINE_STRICT", ps.c_str(), 1);
+            else
+                unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore{saved_sb, saved_ps, had_sb, had_ps};
+
+    CompilerService cs;
+    auto before = cs.eval("(begin (define saved display) (try (begin (set! display saved) 1) "
+                          "(catch (e) 0)))");
+    CHECK(before && is_int(*before) && as_int(*before) == 1,
+          "4374: set! of display before any shadow does not throw");
+    auto internal = cs.eval("(eval \"(let () (define (display v) 1) (define (newline) 1) 0)\")");
+    CHECK(internal && is_int(*internal) && as_int(*internal) == 0,
+          "4374: internal define eval returns 0");
+    auto after = cs.eval("(try (begin (set! display saved) 1) (catch (e) 0))");
+    CHECK(after && is_int(*after) && as_int(*after) == 1,
+          "4374: set! display after eval does not throw");
+    auto shown = cs.eval("(display \"z\")");
+    CHECK(shown && !is_int(*shown), "4374: display is still the primitive");
+    auto nl = cs.eval("(newline)");
+    CHECK(nl && !is_int(*nl), "4374: newline is still the primitive");
+    auto letb = cs.eval("(eval \"(let ((display (lambda (v) 1)) (newline (lambda () 1))) 0)\")");
+    CHECK(letb && is_int(*letb) && as_int(*letb) == 0, "4374: let-binding eval returns 0");
+    auto shown2 = cs.eval("(display \"z\")");
+    CHECK(shown2 && !is_int(*shown2), "4374: display stays primitive after a let binding");
+    auto unknown = cs.eval("(try (begin (set! no-such-4374 1) 1) (catch (e) 0))");
+    CHECK(unknown && is_int(*unknown) && as_int(*unknown) == 0,
+          "4374: set! of an unknown name still errors");
+    auto real = cs.eval("(begin (define x 1) (set! x 2) x)");
+    CHECK(real && is_int(*real) && as_int(*real) == 2,
+          "4374: set! of a real variable still writes");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #4374") != std::string::npos, "4374: cites Issue #4374");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -433,8 +489,10 @@ int run_test_eval_current_no_auto_fix() {
     ac4079_second_eval_current_displays();
     ac4095_status_carries_display();
     ac4373_define_of_eval_binds();
-    std::println("\n=== #2484/#3915/#3917/#3918/#3927/#4373 results: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    ac4374_eval_let_keeps_primitives();
+    std::println(
+        "\n=== #2484/#3915/#3917/#3918/#3927/#4373/#4374 results: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
