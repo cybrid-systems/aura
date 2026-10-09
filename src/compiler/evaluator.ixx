@@ -16360,6 +16360,10 @@ public:
         thread_local std::uint32_t depth = 0;
         return depth;
     }
+    // Issue #4407: test observe of the C-ABI adopt nest. Not a query key.
+    [[nodiscard]] static std::uint32_t workspace_lock_adopt_depth_for_test() noexcept {
+        return workspace_lock_adopt_depth_tls();
+    }
     void lock_workspace_shared() {
         // Issue #4270: adopt when Workspace depth already held (Guard /
         // WorkspaceUniqueIfNeeded / prior shared). Nested shared_lock on a
@@ -16378,6 +16382,10 @@ public:
             aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
             return;
         }
+        // Issue #4407: force-release already dropped the physical mutex
+        // and the adopt layers. A stale unlock must not unlock_shared.
+        if (!aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace))
+            return;
         workspace_mtx_.unlock_shared();
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
     }
@@ -16403,6 +16411,9 @@ public:
             aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
             return;
         }
+        // Issue #4407: same stale-unlock guard as unlock_workspace_shared.
+        if (!aura::compiler::lock_order::is_held(aura::compiler::lock_order::Level::Workspace))
+            return;
         workspace_mtx_.unlock();
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
     }

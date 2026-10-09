@@ -5469,12 +5469,17 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // Fiber::check_gc_safepoint). Scheduler idle / busy-path re-arm only
     // — they do not unlock unique_lock from a foreign thread. Soft:
     // helper returns 0 after reject_enabled.
-    (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
+    // Issue #4407: a non-zero poll already force-released the unique
+    // workspace lock and the C-ABI adopt layers. Do not enter native
+    // and do not unlock_shared (the mutex is free; adopt depth is 0).
+    const int hold_budget_released = aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
     // Issue #3988: honor is_force_safepoint_requested the same way
     // check_gc_safepoint does (cancel peek + force-safepoint consume +
     // inbody force-release). Native entry is one cooperative edge;
     // JIT Jump / IR opcode stride poll in-loop. Soft: helper 0.
-    (void)aura_jit_poll_hold_budget_safepoint();
+    const int safepoint_released = aura_jit_poll_hold_budget_safepoint();
+    if (hold_budget_released != 0 || safepoint_released != 0)
+        return 0;
 
     // ── Inline cache check (Issue #1707: generation double-check) ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
