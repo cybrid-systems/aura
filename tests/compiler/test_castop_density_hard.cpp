@@ -15,6 +15,9 @@
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
+#include "core/security_event.hh"
+#include "core/workspace_epoch.hh"
 
 #include <cstdint>
 #include <fstream>
@@ -23,6 +26,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -573,6 +577,207 @@ static void ac3140_5_additive_counter_and_source_cite() {
           "3140 AC5: no tests/issues/test_issue_3140.cpp");
 }
 
+static std::string cap_cstr(const char* p, std::size_t cap) {
+    std::size_t n = 0;
+    while (n < cap && p[n] != '\0')
+        ++n;
+    return std::string(p, n);
+}
+
+static bool newest_se_for_mid(std::uint64_t mid, std::string& op, std::string& reason) {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    const auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
+        if (head <= i)
+            break;
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.mutation_id != mid)
+            continue;
+        op = cap_cstr(e.op, sizeof(e.op));
+        reason = cap_cstr(e.reason, sizeof(e.reason));
+        return true;
+    }
+    return false;
+}
+
+static bool decision_op_is(CompilerService& cs, const char* expect) {
+    auto v =
+        cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"last-se-op\")");
+    if (!v || !aura::compiler::types::is_string(*v))
+        return false;
+    const auto& heap = cs.evaluator().string_heap();
+    const auto idx = aura::compiler::types::as_string_idx(*v);
+    return idx < heap.size() && heap[idx] == expect;
+}
+
+// Issue #4403: belts that never emit their own SE must leave the gate
+// token on the durable row. Restore stays first; the exit stamp uses it.
+static void ac4403_deny_belt_keeps_gate_op() {
+    std::println("\n--- #4403: deny-belt SE op is the gate token ---");
+    using aura::compiler::Evaluator;
+    using aura::compiler::castop_density::density_gate_reject_pending;
+    using aura::compiler::castop_density::g_density_gate_reject_pending;
+    using aura::compiler::castop_density::reset_density_gate_reject_pending_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::AuditOutcome;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::clear_boundary_audit_mid;
+    using aura::compiler::typed_audit::clear_invariant_deny_se_tls;
+    using aura::compiler::typed_audit::composite_txn_exit;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::note_boundary_audit_mid;
+    using aura::compiler::typed_audit::note_boundary_deny_op;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::typed_audit::reset_for_test;
+    using aura::compiler::typed_audit::take_boundary_deny_op;
+    using aura::compiler::typed_audit::trail_find_by_mutation_id;
+    using aura::compiler::typed_audit::TypedMutationAuditEvent;
+
+    const auto bdy = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(aud.find("note_boundary_deny_op") != std::string::npos, "4403: note helper");
+    CHECK(aud.find("take_boundary_deny_op") != std::string::npos, "4403: take helper");
+    CHECK(bdy.find("take_boundary_deny_op()") != std::string::npos,
+          "4403: exit consumes the token");
+    for (const char* tok :
+         {"linear-boundary", "pending-full-solve", "density-streak", "post-mutate-typecheck",
+          "occurrence-sdo", "persist-reject", "post-persist-linear", "post-persist-density"}) {
+        CHECK(bdy.find(tok) != std::string::npos, std::format("4403: boundary cites {}", tok));
+    }
+    CHECK(tc.find("note_boundary_deny_op(\"density-streak\")") != std::string::npos,
+          "4403: density arm notes the gate");
+    CHECK(bdy.find("\"post-persist-deny\"") != std::string::npos, "4403: #4044 amend reason stays");
+    CHECK(bdy.find("\"guard-reflect-validate-force-rollback\"") != std::string::npos,
+          "4403: reflect path keeps its own op");
+    auto window_notes = [&](std::string_view anchor) {
+        const auto p = bdy.find(anchor);
+        if (p == std::string::npos)
+            return true;
+        return bdy.substr(p, 450).find("note_boundary_deny_op") != std::string::npos;
+    };
+    CHECK(!window_notes("if (!audit_ok)"), "4403: audit-fail belt is not retokened");
+    CHECK(!window_notes("if (need_occurrence_mid)"), "4403: mid==0 refuse is not retokened");
+    CHECK(!window_notes("if (!ev_->emit_mutation_audit"), "4403: WAL-miss flip is not retokened");
+
+    reset_for_test();
+    note_boundary_deny_op("linear-boundary");
+    note_boundary_deny_op("density-streak");
+    CHECK(std::string_view(take_boundary_deny_op()) == "linear-boundary", "4403: first token wins");
+    CHECK(std::string_view(take_boundary_deny_op()) == "rollback",
+          "4403: absent token is rollback");
+
+    reset_for_test();
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    // Production enter mints a session mid (epoch XOR Evaluator*) when the
+    // resolved mid equals the Mutation epoch. query:evolution-audit-decision
+    // publishes that mid through make_int. A minted id with bit 62 set
+    // fails the fixnum contract and aborts the query. Pin a small noted
+    // mid that is not the epoch so the guard keeps it and last-se-op runs.
+    const auto saved_epoch = aura::core::current_mutation_epoch();
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 7);
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    composite_txn_exit();
+    clear_boundary_audit_mid();
+    clear_invariant_deny_se_tls();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4403: warm");
+    CHECK(cs.eval("(set-code \"(define f4403 1)\")").has_value(), "4403: set-code under dev");
+    CHECK(cs.eval("(eval-current)").has_value(), "4403: eval");
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "4403: production audit face");
+    composite_txn_exit();
+    clear_boundary_audit_mid();
+    clear_invariant_deny_se_tls();
+    note_boundary_audit_mid(440301);
+    reset_density_gate_reject_pending_for_test();
+    g_density_gate_reject_pending.store(1, std::memory_order_release);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(!density_gate_reject_pending(), "4403: pre-persist belt consumed density");
+    CHECK(!ok, "4403: belt flipped success");
+    CHECK(cs.evaluator().has_last_completed_audit_mid(), "4403: completed mid recorded");
+    const auto mid = cs.evaluator().last_completed_audit_mid();
+    CHECK(mid != 0, "4403: session mid is not 0");
+    std::string se_op;
+    std::string se_reason;
+    CHECK(newest_se_for_mid(mid, se_op, se_reason), "4403: durable SE for the belt mid");
+    CHECK(se_op == "density-streak", std::format("4403: SE op is density-streak (got {})", se_op));
+    CHECK(se_reason.find("op=density-streak") != std::string::npos,
+          std::format("4403: reason keeps op=density-streak (got {})", se_reason));
+    CHECK(se_reason.find("boundary") != std::string::npos, "4403: deny_kind stays boundary");
+    TypedMutationAuditEvent te{};
+    CHECK(trail_find_by_mutation_id(mid, te), "4403: newest typed row");
+    CHECK(std::string_view(te.name) == "density-streak",
+          std::format("4403: typed op is density-streak (got {})", te.name));
+    CHECK(te.outcome == AuditOutcome::Rollback, "4403: typed outcome stays Rollback");
+    CHECK(decision_op_is(cs, "density-streak"), "4403: last-se-op is density-streak");
+
+    clear_invariant_deny_se_tls();
+    composite_txn_exit();
+    clear_boundary_audit_mid();
+    note_boundary_audit_mid(440302);
+    cs.evaluator().clear_last_mutate_error();
+    g_density_gate_reject_pending.store(1, std::memory_order_release);
+    bool ok_arm = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok_arm);
+        const bool committed = cs.evaluator().finish_mutate_hard_gate(
+            1, /*linear_ops_present=*/false, "mutate:rebind");
+        CHECK(!committed, "4403: density arm returns false");
+        CHECK(cs.evaluator().last_mutate_error().find("density streak") != std::string::npos,
+              std::format("4403: density arm error (got {})", cs.evaluator().last_mutate_error()));
+        if (!committed)
+            ok_arm = false;
+    }
+    CHECK(!ok_arm, "4403: arm path flips the guard");
+    CHECK(!density_gate_reject_pending(), "4403: arm consumed density");
+    const auto arm_mid = cs.evaluator().last_completed_audit_mid();
+    CHECK(arm_mid != 0 && arm_mid != mid, "4403: arm boundary has its own mid");
+    std::string arm_op;
+    std::string arm_reason;
+    CHECK(newest_se_for_mid(arm_mid, arm_op, arm_reason), "4403: arm SE row");
+    CHECK(arm_op == "density-streak",
+          std::format("4403: arm SE op is density-streak (got {})", arm_op));
+    TypedMutationAuditEvent te_arm{};
+    CHECK(trail_find_by_mutation_id(arm_mid, te_arm), "4403: arm typed row");
+    CHECK(std::string_view(te_arm.name) == "density-streak",
+          std::format("4403: arm typed op is density-streak (got {})", te_arm.name));
+    CHECK(decision_op_is(cs, "density-streak"), "4403: arm last-se-op is density-streak");
+
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CHECK(!production_defaults_active(), "4403: soft face");
+    CHECK(get_strategy() != AuditStrategy::Full, "4403: soft strategy is not Full");
+    reset_density_gate_reject_pending_for_test();
+    clear_invariant_deny_se_tls();
+    g_density_gate_reject_pending.store(1, std::memory_order_release);
+    bool ok_soft = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok_soft);
+    }
+    CHECK(ok_soft, "4403: soft guard stays success");
+    CHECK(density_gate_reject_pending(), "4403: soft belt does not consume density");
+    CHECK(std::string_view(take_boundary_deny_op()) == "rollback", "4403: soft notes no token");
+
+    reset_density_gate_reject_pending_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    cs.evaluator().clear_last_mutate_error();
+    apply_dev_audit_defaults();
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, saved_epoch);
+    reset_for_test();
+}
+
 static void ac3699_identity_must_deopt_and_streak_reject() {
     std::println("\n--- #3699: leftover identity MustDeopt + streak gate reject mutate ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
@@ -701,8 +906,9 @@ int run_test_castop_density_hard() {
     ac3140_4_quiet_epoch_match_zero_extra();
     ac3140_5_additive_counter_and_source_cite();
     ac3699_identity_must_deopt_and_streak_reject();
-    std::println("\n=== #2358/#3046/#3084/#3107/#3140/#3699: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    ac4403_deny_belt_keeps_gate_op();
+    std::println("\n=== #2358/#3046/#3084/#3107/#3140/#3699/#4403: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
