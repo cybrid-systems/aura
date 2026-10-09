@@ -428,6 +428,109 @@ int run_test_mutate_type_gate() {
         bad.evaluator().set_sandbox_mode(prev_sandbox);
     }
 
+    // Issue #4398: string-append, append, min/max, and error are dotted-rest
+    // in the checker, matching the evaluator. A fixed-arity cons and a free
+    // name past the string-append prefix still reject. Hard forces infer;
+    // the let-bound greet is not light-path eligible, so Soft infers too.
+    {
+        std::println("\n--- #4398: variadic string-append typecheck after rebind ---");
+        auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        CHECK(impl.find("register_primitive(\"string-append\", {String, String}, String, true)") !=
+                  std::string::npos,
+              "string-append variadic");
+        CHECK(impl.find("register_primitive(\"append\", {Dyn, Dyn}, Dyn, true)") !=
+                  std::string::npos,
+              "append variadic");
+        CHECK(impl.find("register_primitive(\"error\", {Dyn}, Void, true)") != std::string::npos,
+              "error variadic");
+        CHECK(impl.find("register_primitive(\"min\", {Dyn, Dyn}, Dyn, true)") != std::string::npos,
+              "min variadic");
+        CHECK(impl.find("register_primitive(\"max\", {Dyn, Dyn}, Dyn, true)") != std::string::npos,
+              "max variadic");
+        CHECK(impl.find("register_poly_primitive(\"append\", {Dyn, Dyn}, Dyn, {_a}, true)") !=
+                  std::string::npos,
+              "append poly variadic");
+        CHECK(impl.find("register_poly_primitive(\"min\", {_num, _num}, _num, {_num}, true)") !=
+                  std::string::npos,
+              "min poly variadic");
+        CHECK(impl.find("register_poly_primitive(\"max\", {_num, _num}, _num, {_num}, true)") !=
+                  std::string::npos,
+              "max poly variadic");
+        auto math_sig = read_file("lib/std/math.aura-type");
+        CHECK(math_sig.find("min: Any Any ... -> Any") != std::string::npos, "math.aura-type min");
+        CHECK(math_sig.find("max: Any Any ... -> Any") != std::string::npos, "math.aura-type max");
+
+        reset_for_test();
+        CompilerService sandbox_probe;
+        const bool prev_sandbox = sandbox_probe.evaluator().sandbox_mode();
+        const char* forms =
+            "(define (greet a b) (string-append \\\"hi \\\" a \\\" and \\\" b))"
+            "(define (one a) (string-append a))"
+            "(define (greet2 a b) (let ((s \\\" and \\\")) (string-append \\\"hi \\\" a s b)))"
+            "(define (ap xs ys zs) (append xs ys zs))"
+            "(define (mm x y z) (min x y z))"
+            "(define (mx x y z) (max x y z))"
+            "(define (e0) (error))"
+            "(define (e2 a b) (error a b))";
+        auto rebind_true = [](CompilerService& cs, const char* expr, const std::string& label) {
+            auto r = cs.eval(expr);
+            const bool ok = r && is_bool(*r) && as_bool(*r);
+            if (!ok)
+                std::println("  {} last_mutate_error={}", label,
+                             cs.evaluator().last_mutate_error());
+            CHECK(ok, label);
+        };
+        auto drive = [&](MutateTypeGate gate, const char* tag) {
+            set_mode(gate);
+            CompilerService cs;
+            cs.evaluator().set_sandbox_mode(false);
+            CHECK(cs.eval(std::string("(set-code \"") + forms + "\")").has_value(),
+                  std::string(tag) + " set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval");
+            rebind_true(cs,
+                        "(mutate:rebind \"greet\" \"(lambda (a b) (string-append \\\"hi \\\" a "
+                        "\\\" and \\\" b))\" \"id\")",
+                        std::string(tag) + " string-append 4");
+            rebind_true(cs, "(mutate:rebind \"one\" \"(lambda (a) (string-append a))\" \"id\")",
+                        std::string(tag) + " string-append 1");
+            rebind_true(cs,
+                        "(mutate:rebind \"greet2\" \"(lambda (a b) (let ((s \\\" and \\\")) "
+                        "(string-append \\\"hi \\\" a s b)))\" \"id\")",
+                        std::string(tag) + " string-append let");
+            rebind_true(cs,
+                        "(mutate:rebind \"ap\" \"(lambda (xs ys zs) (append xs ys zs))\" \"id\")",
+                        std::string(tag) + " append 3");
+            rebind_true(cs, "(mutate:rebind \"mm\" \"(lambda (x y z) (min x y z))\" \"id\")",
+                        std::string(tag) + " min 3");
+            rebind_true(cs, "(mutate:rebind \"mx\" \"(lambda (x y z) (max x y z))\" \"id\")",
+                        std::string(tag) + " max 3");
+            rebind_true(cs, "(mutate:rebind \"e0\" \"(lambda () (error))\" \"id\")",
+                        std::string(tag) + " error 0");
+            rebind_true(cs, "(mutate:rebind \"e2\" \"(lambda (a b) (error a b))\" \"id\")",
+                        std::string(tag) + " error 2");
+        };
+        drive(MutateTypeGate::Hard, "hard");
+        drive(MutateTypeGate::Soft, "soft");
+
+        set_mode(MutateTypeGate::Hard);
+        CompilerService bad;
+        bad.evaluator().set_sandbox_mode(false);
+        CHECK(bad.eval("(set-code \"(define (bad a) (cons a a a))"
+                       "(define (free a) (string-append \\\"hi \\\" a \\\" and \\\" "
+                       "not-a-real-name))\")")
+                  .has_value(),
+              "4398 bad set-code");
+        CHECK(bad.eval("(eval-current)").has_value(), "4398 bad eval");
+        auto refused = bad.eval("(mutate:rebind \"bad\" \"(lambda (a) (cons a a a))\" \"cons\")");
+        CHECK(refused.has_value(), "4398 bad rebind eval");
+        CHECK(!(refused && is_bool(*refused) && as_bool(*refused)), "cons 3 is not #t");
+        const auto& err = bad.evaluator().last_mutate_error();
+        CHECK(err.find("call 'cons': expected 2 arguments, got 3") != std::string::npos, err);
+        CHECK(err.find("unbound variable: not-a-real-name") != std::string::npos, err);
+        CHECK(err.find("call 'string-append': expected 2") == std::string::npos, err);
+        bad.evaluator().set_sandbox_mode(prev_sandbox);
+    }
+
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

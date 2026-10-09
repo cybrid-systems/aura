@@ -2614,11 +2614,14 @@ private:
     aura::core::TypeId lub(aura::core::TypeId a, aura::core::TypeId b);
 
     // Register all built-in primitives in the type environment
+    // variadic: dotted rest (FuncType.variadic). Min arity is
+    // param_types.size()-1. Issue #4398.
     void register_primitive(std::string name, std::vector<aura::core::TypeId> param_types,
-                            aura::core::TypeId ret_type);
+                            aura::core::TypeId ret_type, bool variadic = false);
+    // variadic: same dotted-rest flag as register_primitive. Issue #4398.
     void register_poly_primitive(std::string name, std::vector<aura::core::TypeId> param_types,
                                  aura::core::TypeId ret_type,
-                                 std::vector<aura::core::TypeId> type_vars);
+                                 std::vector<aura::core::TypeId> type_vars, bool variadic = false);
 };
 
 // ── TypeChecker — Public API ─────────────────────────────
