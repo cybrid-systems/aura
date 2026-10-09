@@ -3270,13 +3270,14 @@ public:
     }
     // Issue #196: hook to query the incremental-compilation
     // observability struct from the CompilerService. Returns
-    // a packed uint64 with (cache_size << 48) | (dirty_count << 32)
-    // | (epoch << 16) | (edges & 0xFFFF). Returns 0 if no hook
-    // is installed (e.g. unit-test Evaluator without a
-    // CompilerService). The 16-bit per-field packing is fine
-    // for the realistic scale of AI multi-round mutations
-    // (typically < 64K defines, < 64K dirty entries, < 64K
-    // mutation epoch, < 64K dep edges per define).
+    // a packed uint64: cache lane, dirty lane, epoch lane, edges.
+    // Each lane is 16 bits. Returns 0 if no hook is installed
+    // (e.g. unit-test Evaluator without a CompilerService).
+    // Issue #4395: Mutation epoch does not fit in the epoch lane.
+    // The pack stores 0xFFFF there on overflow instead of shifting
+    // the raw uint64 into dirty-count and cache-size. compile:epoch
+    // and query:jit-stats-hash mutation-epoch publish
+    // current_mutation_epoch() in full.
     using GetIncrementalStatsFn = std::uint64_t();
     std::function<GetIncrementalStatsFn> get_incremental_stats_fn_ = nullptr;
     void set_get_incremental_stats_fn(std::function<GetIncrementalStatsFn> fn) {

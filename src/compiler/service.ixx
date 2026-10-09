@@ -1423,14 +1423,21 @@ public:
         // (compile:dirty-count), (compile:epoch), (compile:dep-edges)
         // primitives.
         evaluator_.set_get_incremental_stats_fn([this]() -> std::uint64_t {
-            // Return 4 values packed as (cache << 48) | (dirty << 32) | (epoch << 16) | edges
+            // Four 16-bit lanes: cache, dirty, epoch, edges. The word
+            // cannot grow past uint64.
+            // Issue #4395: Mutation epoch is a uint64. Shifting it raw
+            // ORs bits 16-31 into dirty-count and bits 32-47 into
+            // cache-size. The epoch lane is 0xFFFF when the value does
+            // not fit (overflow sentinel, not a sibling alias).
+            // compile:epoch and query:jit-stats-hash publish
+            // current_mutation_epoch() in full.
             std::uint64_t cache_size = static_cast<std::uint64_t>(ir_cache_v2_.size());
             std::uint64_t dirty_count = 0;
             for (auto& [_, e] : ir_cache_v2_) {
                 if (e.dirty)
                     ++dirty_count;
             }
-            std::uint64_t epoch = aura::core::current_mutation_epoch();
+            const std::uint64_t epoch = aura::core::current_mutation_epoch();
             std::uint64_t edges = 0;
             {
                 std::shared_lock dep_read(dep_graph_mtx_);
@@ -1439,9 +1446,9 @@ public:
                     edges += static_cast<std::uint64_t>(dep_entry.called_by.size());
                 }
             }
-            // Pack into a single uint64 — simpler than a struct
-            // crossing the module boundary.
-            return (cache_size << 48) | (dirty_count << 32) | (epoch << 16) | (edges & 0xFFFF);
+            constexpr std::uint64_t kLane = 0xFFFFu;
+            const std::uint64_t epoch_lane = epoch > kLane ? kLane : epoch;
+            return (cache_size << 48) | (dirty_count << 32) | (epoch_lane << 16) | (edges & kLane);
         });
         // Issue #196: per-block dirty hooks. Mirror the
         // get_incremental_stats hook pattern: stateless

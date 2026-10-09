@@ -16,6 +16,7 @@ module;
 #include "security_capabilities.h"
 #include "typed_mutation_audit.h"     // Issue #3650: clear-marker MSE deny audit
 #include "core/security_event_wal.hh" // Issue #3650: clear-marker MSE deny WAL
+#include "core/workspace_epoch.hh"    // Issue #4395: full Mutation epoch
 
 
 module aura.compiler.evaluator;
@@ -2267,15 +2268,14 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 23 (orig 1818-1888)
 void CompilePrims::register_compile_p23(PrimRegistrar add, Evaluator& ev) {
 
-    // (compile:epoch) — Issue #196: current mutation_epoch_ value.
-    // The epoch is bumped atomically on every mutation. Cache
-    // entries that haven't seen the current epoch are stale.
-    // Returns 0 if no hook is installed.
+    // (compile:epoch) — Issue #196: WorkspaceEpoch Mutation.
+    // Issue #4395: the packed hook lane is 16 bits. Publish the
+    // full uint64 from current_mutation_epoch(). The hook still
+    // gates a unit-test Evaluator with no CompilerService (returns 0).
     ObservabilityPrims::register_stats_impl("compile:epoch", [&ev](const auto&) -> EvalValue {
         if (!ev.get_incremental_stats_fn_)
             return make_int(0);
-        auto packed = ev.get_incremental_stats_fn_();
-        return make_int(static_cast<std::int64_t>((packed >> 16) & 0xFFFF));
+        return make_int(static_cast<std::int64_t>(aura::core::current_mutation_epoch()));
     });
 
     // (compile:dirty-reason-counts) — Issue #344: returns

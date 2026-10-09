@@ -7,8 +7,11 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/prim_registrar_scaffold.hh"
 #include "compiler/runtime_shared.h"
+#include "compiler/security_defaults.hh"
+#include "core/workspace_epoch.hh"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -2446,6 +2449,152 @@ static int run_3626_metrics_smoke() {
 
 } // namespace aura_obs_run_3626
 
+// Issue #4395: incremental stats pack must not truncate Mutation epoch
+// into the dirty-count / cache-size lanes.
+namespace aura_obs_run_4395 {
+
+using aura::compiler::CompilerService;
+using aura::compiler::security::apply_production_security_defaults;
+using aura::compiler::typed_audit::reset_production_audit_defaults_for_test;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::core::bump_mutation_epoch;
+using aura::core::current_mutation_epoch;
+using aura::core::reset_mutation_epoch_for_test;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+struct SavedEnv {
+    const char* key;
+    bool had = false;
+    std::string value;
+    explicit SavedEnv(const char* k)
+        : key(k) {
+        if (const char* v = std::getenv(k)) {
+            had = true;
+            value = v;
+        }
+        unsetenv(key);
+    }
+    void restore() const {
+        if (had)
+            setenv(key, value.c_str(), 1);
+        else
+            unsetenv(key);
+    }
+};
+
+static std::int64_t metric_int(CompilerService& cs, const char* name) {
+    auto r = cs.eval(std::format("(engine:metrics \"{}\")", name));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+// jit-stats-hash stores string keys. hash-ref needs the string, not a symbol.
+static std::int64_t jit_epoch(CompilerService& cs) {
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:jit-stats-hash\") \"mutation-epoch\")");
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static void set_epoch(std::uint64_t epoch) {
+    reset_mutation_epoch_for_test();
+    if (epoch != 0)
+        bump_mutation_epoch(epoch);
+}
+
+int run_4395_epoch_pack() {
+    std::println("\n=== #4395: incremental epoch pack does not alias dirty/cache ===");
+    SavedEnv sandbox("AURA_SANDBOX");
+    SavedEnv audit("AURA_TYPED_AUDIT");
+    SavedEnv mt("AURA_MULTI_TENANT");
+    const auto saved_epoch = current_mutation_epoch();
+    apply_production_security_defaults();
+    CompilerService cs;
+
+    set_epoch(42);
+    const auto dirty0 = metric_int(cs, "compile:dirty-count");
+    const auto cache0 = metric_int(cs, "compile:cache-size");
+    CHECK(dirty0 >= 0 && cache0 >= 0, "4395: dirty and cache readable");
+    CHECK(metric_int(cs, "compile:epoch") == 42, "4395: in-lane compile:epoch is 42");
+    CHECK(jit_epoch(cs) == 42, "4395: in-lane mutation-epoch is 42");
+
+    set_epoch(65536);
+    CHECK(current_mutation_epoch() == 65536, "4395: WorkspaceEpoch Mutation is 65536");
+    CHECK(metric_int(cs, "compile:epoch") == 65536, "4395: compile:epoch is the full epoch");
+    CHECK(jit_epoch(cs) == 65536, "4395: mutation-epoch is the full epoch");
+    CHECK(metric_int(cs, "compile:dirty-count") == dirty0,
+          "4395: dirty-count independent of epoch bit 16");
+    CHECK(metric_int(cs, "compile:cache-size") == cache0,
+          "4395: cache-size independent of epoch bit 16");
+
+    constexpr std::uint64_t kWide = (std::uint64_t{1} << 32) + 65536;
+    set_epoch(kWide);
+    CHECK(current_mutation_epoch() == kWide, "4395: epoch holds bit 32");
+    CHECK(metric_int(cs, "compile:epoch") == static_cast<std::int64_t>(kWide),
+          "4395: compile:epoch keeps bits 32-47");
+    CHECK(jit_epoch(cs) == static_cast<std::int64_t>(kWide),
+          "4395: mutation-epoch keeps bits 32-47");
+    CHECK(metric_int(cs, "compile:dirty-count") == dirty0,
+          "4395: dirty-count independent of epoch bits 32-47");
+    CHECK(metric_int(cs, "compile:cache-size") == cache0,
+          "4395: cache-size independent of epoch bits 32-47");
+    CHECK(metric_int(cs, "compile:dep-edges") >= 0, "4395: dep-edges lane still an int");
+
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto hook = svc.find("set_get_incremental_stats_fn");
+    const std::string pack = hook == std::string::npos ? std::string{} : svc.substr(hook, 2500);
+    CHECK(pack.find("Issue #4395") != std::string::npos, "4395: pack cites the issue");
+    CHECK(pack.find("epoch_lane") != std::string::npos, "4395: epoch lane sentinel");
+    CHECK(pack.find("(epoch << 16)") == std::string::npos, "4395: raw epoch shift gone");
+    const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    const auto ep = compile.find("\"compile:epoch\"");
+    const std::string ep_fn = ep == std::string::npos ? std::string{} : compile.substr(ep, 700);
+    CHECK(ep_fn.find("current_mutation_epoch") != std::string::npos,
+          "4395: compile:epoch reads the full clock");
+    CHECK(ep_fn.find(">> 16") == std::string::npos, "4395: compile:epoch does not unpack 16 bits");
+    const auto jit = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(jit.find("Issue #4395") != std::string::npos, "4395: jit-stats cites the issue");
+    CHECK(jit.find("(packed >> 16)") == std::string::npos,
+          "4395: jit-stats does not unpack 16 bits");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev.find("Issue #4395") != std::string::npos, "4395: hook contract cites the issue");
+    CHECK(ev.find("< 64K\n    // mutation epoch") == std::string::npos,
+          "4395: hook no longer claims epoch fits in 16 bits");
+    const auto metrics = read_file("src/compiler/observability_metrics.h");
+    const auto struct_at = metrics.find("struct CompilerMetrics");
+    const auto deopt = metrics.find("deopt_count", struct_at == std::string::npos ? 0 : struct_at);
+    const auto spec =
+        metrics.find("specialization_hits", struct_at == std::string::npos ? 0 : struct_at);
+    CHECK(struct_at != std::string::npos && deopt != std::string::npos && deopt < spec,
+          "4395: CompilerMetrics still starts at deopt_count");
+    CHECK(metrics.find("4395") == std::string::npos, "4395: no CompilerMetrics counter");
+    CHECK(read_file("tests/compiler/test_issue_4395.cpp").empty(), "4395: no invent test file");
+    CHECK(read_file("docs/design/4395-incremental-epoch-pack.md").empty(), "4395: no docs/design");
+
+    set_epoch(saved_epoch);
+    reset_production_audit_defaults_for_test();
+    mt.restore();
+    audit.restore();
+    sandbox.restore();
+    return g_failed != 0 ? 1 : 0;
+}
+
+} // namespace aura_obs_run_4395
+
 int main() {
 
 
@@ -3243,6 +3392,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## #3626 apply_closure hot-path counter compile-out ########");
     if (int rc = aura_obs_run_3626::run_3626_metrics_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## #4395 incremental epoch pack ########");
+    if (int rc = aura_obs_run_4395::run_4395_epoch_pack(); rc != 0)
         return rc;
 
     std::println("\ntest_obs_metrics_smoke_batch: OK");
