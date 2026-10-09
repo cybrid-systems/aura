@@ -228,6 +228,23 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
     add(aura::compiler::prim::kSetCode,
         [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
+            // Issue #4400: lookup() callers (deserialize-workspace, gc,
+            // workspace sync/merge, ast:restore source fallback) enter this
+            // body with no dispatch effect — infer maps set-code to none.
+            // This is the sole Mutate choke. Do not also infer the name
+            // (a single-use grant would be consumed twice). Deny before the
+            // boundary and before any workspace_flat_ swap. Op is a variable
+            // and ref_tenant is the caller: no NodeId, so this is the #2942
+            // no-target shape (same as load, #4059).
+            const std::string_view set_code_op = "set-code";
+            if (!ev.require_effect(aura::compiler::security::kEffectMutate, set_code_op, 0,
+                                   ev.capability_tenant_id())) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            aura::compiler::security::format_deny_reason(
+                                                aura::compiler::security::kEffectMutate,
+                                                ev.capability_tenant_id(), "set-code"),
+                                            ev.primitive_error_counter_ptr());
+            }
             // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
             // defuse_version_ + rollback. The Guard's dtor bumps
             // version exactly once on successful exit and rolls back

@@ -7,6 +7,7 @@ module;
 #include "aura_jit_bridge.h"
 #include "hash_meta.h"
 #include "runtime_shared.h"
+#include "security_capabilities.h" // Issue #4400: format_deny_reason on the log rewrite
 
 #include <cstdint>
 #include <cstring>
@@ -392,9 +393,15 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         if (pidx >= ev.string_heap_.size())
             return make_bool(false);
         const std::string path = ev.string_heap_[pidx];
+        // Issue #4400: fence before any host read. Deny → #f, no load_blob,
+        // no set-code. load_blob uses the resolved path (tenant root when
+        // the policy is active; the caller string on passthrough).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "deserialize-workspace"))
+            return make_bool(false);
         std::string err;
         PersistBlob blob;
-        if (!load_blob(path, blob, &err))
+        if (!load_blob(resolved, blob, &err))
             return make_bool(false);
 
         // set-code manages its own workspace lock — call outside our lock.
@@ -413,8 +420,13 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!set_fn)
                 return make_bool(false);
             auto r = (*set_fn)({make_string(sidx)});
-            // set-code returns merr pair on parse failure
-            if (is_pair(r) || is_error(r))
+            // Issue #4400: set-code's effect-deny is an error value the Agent
+            // must see. Propagate it and skip the log rewrite (the grant was
+            // already consumed, or the deny happened before any swap).
+            // Parse failure stays the merr pair → #f.
+            if (is_error(r))
+                return r;
+            if (is_pair(r))
                 return make_bool(false);
             // Issue #2731: set-code restores FlatAST + IR dirty/pre-cache but
             // leaves top_env cells pointing at pre-load rebind closures.
@@ -447,6 +459,21 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
 
         // Restore mutation log (audit trail) onto workspace flat.
         if (ev.workspace_flat_ && blob.mutations_count > 0) {
+            // Issue #4400: a non-empty source already paid Mutate inside
+            // set-code. An empty source skips that call and would still
+            // log.clear() — pay once here, and only on this branch.
+            if (blob.source.empty()) {
+                const std::string_view deser_mutate_op = "deserialize-workspace";
+                if (!ev.require_effect(aura::compiler::security::kEffectMutate, deser_mutate_op, 0,
+                                       ev.capability_tenant_id())) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                aura::compiler::security::format_deny_reason(
+                                                    aura::compiler::security::kEffectMutate,
+                                                    ev.capability_tenant_id(),
+                                                    "deserialize-workspace"),
+                                                ev.primitive_error_counter_ptr());
+                }
+            }
             ev.lock_workspace_unique();
             auto& log = ev.workspace_flat_->all_mutations();
             log.clear();

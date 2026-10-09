@@ -6,6 +6,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "security_capabilities.h" // Issue #4400: format_deny_reason on direct restore
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: restore clears IR owners
 
@@ -559,6 +560,27 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (id >= ev.snapshot_sources_.size())
             return make_bool(false);
 
+        // Issue #4400: the direct copy assigns the snapshot flat with no
+        // dispatch effect. Pay Mutate once, before cache clears and before
+        // the boundary, and only when this call will take the direct path.
+        // Deny returns the effect-deny error and does not fall through to
+        // set-code. The source fallback is gated inside set-code (a second
+        // check here would consume a single-use grant twice).
+        const bool can_direct = id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].has_flat &&
+                                ev.snapshot_flats_[id].flat && ev.snapshot_flats_[id].pool &&
+                                ev.workspace_flat_ && ev.workspace_pool_;
+        if (can_direct) {
+            const std::string_view ast_restore_op = "ast:restore";
+            if (!ev.require_effect(aura::compiler::security::kEffectMutate, ast_restore_op, 0,
+                                   ev.capability_tenant_id())) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            aura::compiler::security::format_deny_reason(
+                                                aura::compiler::security::kEffectMutate,
+                                                ev.capability_tenant_id(), "ast:restore"),
+                                            ev.primitive_error_counter_ptr());
+            }
+        }
+
         // Clear any previous restore error / eval cache
         ev.last_set_code_error_kind_.clear();
         ev.last_set_code_error_msg_.clear();
@@ -587,9 +609,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 ok = false;
                 return make_bool(false);
             }
-            if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].has_flat &&
-                ev.snapshot_flats_[id].flat && ev.snapshot_flats_[id].pool && ev.workspace_flat_ &&
-                ev.workspace_pool_) {
+            if (can_direct) {
                 try {
                     *ev.workspace_flat_ = *ev.snapshot_flats_[id].flat;
                     *ev.workspace_pool_ = *ev.snapshot_flats_[id].pool;
@@ -675,6 +695,10 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (!set_fn)
             return make_bool(false);
         auto result = (*set_fn)({make_string(source_idx)});
+        // Issue #4400: set-code already returned the effect-deny string.
+        // Surface it. Parse merr pairs stay #f.
+        if (is_error(result))
+            return result;
         return make_bool(is_bool(result) ? as_bool(result) : false);
     });
 
