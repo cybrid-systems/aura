@@ -2934,6 +2934,31 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :rebind: old body NodeId not live after parse (#2795)"});
     }
+    // Issue #4406: public mutate:rebind walks the child set_child unlinks.
+    // A User Define's old value can still be MacroIntroduced. !allow only;
+    // the #3374 new-body walk above stays the install gate.
+    {
+        const bool allow_macro_old = get_allow_macro_mutate() || parse_allow_macro_opt_out(a);
+        if (!allow_macro_old && old_value_node != aura::ast::NULL_NODE) {
+            aura::ast::NodeId hit = aura::ast::NULL_NODE;
+            flat.walk_subtree(old_value_node, [&](aura::ast::NodeId id) {
+                if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                    hit = id;
+            });
+            if (hit != aura::ast::NULL_NODE) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                flat.note_rebind_hygiene_reject();
+                record_hygiene_violation_attempt();
+                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :rebind: cannot replace MacroIntroduced child without "
+                    ":allow-macro? #t"});
+            }
+        }
+    }
     auto mid = flat.add_mutation_with_rollback(
         old_define, "batch-rebind", std::string("Define:") + name, std::string("Define:") + name,
         summary, aura::ast::MutationStatus::Committed, 0,
@@ -3515,6 +3540,42 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
         body_to_set = root_v.child(0);
     }
     auto new_root_v = flat.get(body_to_set);
+    // Issue #4406: public mutate:set-body walks the child this install
+    // unlinks (Define's lambda, or that lambda's body). Target/lambda
+    // node checks above miss a User parent. !allow only.
+    {
+        const bool allow_old = get_allow_macro_mutate() || parse_allow_macro_opt_out(a);
+        if (!allow_old) {
+            aura::ast::NodeId displaced = aura::ast::NULL_NODE;
+            if (new_root_v.tag == aura::ast::NodeTag::Lambda) {
+                auto dv = flat.get(target);
+                if (!dv.children.empty())
+                    displaced = dv.child(0);
+            } else {
+                auto lv = flat.get(lambda_id);
+                if (!lv.children.empty())
+                    displaced = lv.child(0);
+            }
+            aura::ast::NodeId hit = aura::ast::NULL_NODE;
+            if (displaced != aura::ast::NULL_NODE) {
+                flat.walk_subtree(displaced, [&](aura::ast::NodeId id) {
+                    if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                        hit = id;
+                });
+            }
+            if (hit != aura::ast::NULL_NODE) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                record_hygiene_violation_attempt();
+                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :set-body: cannot replace MacroIntroduced child without "
+                    "public mutate:set-body :allow-macro? #t"});
+            }
+        }
+    }
     if (new_root_v.tag == aura::ast::NodeTag::Lambda) {
         flat.set_child(target, 0, body_to_set);
     } else {
