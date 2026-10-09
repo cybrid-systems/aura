@@ -1411,8 +1411,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (!guard_exempt) {
                     auto gr =
                         aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &wrapper_ok);
-                    if (!gr)
+                    if (!gr) {
+                        // Reject exit holds no guard — zero topology write
+                        // (the #3423 AC2 "no write on acquire fail" face).
+                        contract_assert(!wrapper_guard);
                         return mev("guard-reject", gr.error().message);
+                    }
                     wrapper_guard = std::move(*gr);
                     // Inert / nested did not publish a session mid. Stay
                     // armed so the pre-note clears after that guard dies.
@@ -1470,6 +1474,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ev.workspace_pool_ = static_cast<aura::ast::StringPool*>(cow_pool);
                     }
                 }
+                // C++26 contract mirror of the #3423 source-cite check:
+                // structural mutates reach fn(a) only under the wrapper
+                // boundary guard; GUARD_EXEMPT metadata prims skip it.
+                contract_assert(guard_exempt || wrapper_guard != nullptr);
                 auto result = fn(a);
                 // Issue #3480: poll existing inbody on the structural
                 // wrapper. A non-coop fn(a) never hits check_gc_safepoint;

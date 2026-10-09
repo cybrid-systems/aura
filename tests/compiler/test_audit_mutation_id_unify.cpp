@@ -1442,13 +1442,89 @@ static void ac3994_2_soft_unchanged() {
     reset_all();
 }
 
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Replaces the
+// fixed-size windows (2800 → 4200, drift-bait): the body itself is the
+// window, so only structural changes go red.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
 static void ac3994_3_source_cite() {
     std::println("\n--- #3994 AC3: source-cite host-path correlate tenant; no invent ---");
     const auto es = read_file("src/compiler/evaluator_security.cpp");
     CHECK(es.find("Issue #3994") != std::string::npos, "3994 AC3: check_tenant_host_path cites");
     auto pos = es.find("bool Evaluator::check_tenant_host_path");
     CHECK(pos != std::string::npos, "3994 AC3: host-path present");
-    auto win = pos == std::string::npos ? std::string{} : es.substr(pos, 4200);
+    // Window = brace-matched function body (drift-proof; was fixed 4200).
+    const auto win = brace_block_after(es, pos);
+    CHECK(!win.empty(), "3994 AC3: host-path body (brace-matched)");
     CHECK(win.find("capture_security_correlated_audit") != std::string::npos,
           "3994 AC3: host-path correlates");
     CHECK(win.find("capability_tenant_id_") != std::string::npos,

@@ -547,6 +547,81 @@ static void ac3352_4_run_all_once_and_linter() {
     CHECK(t1 == t0 + 1, "AC4: run_all acquires Guard once (not per rule)");
 }
 
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Replaces the
+// fixed-size windows (14000 → 20000 → 28000 → 900, all broken by benign
+// inserts): the body itself is the window, so only structural changes go
+// red — exactly the invariant these source-cite checks exist for.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
 static void ac3423_1_acquire_before_fn() {
     std::println("\n--- #3423 AC1: add_mutate acquire textually before fn(a) ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
@@ -555,16 +630,16 @@ static void ac3423_1_acquire_before_fn() {
     CHECK(mut.find("Issue #3423") != std::string::npos, "AC1 cite");
     const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
     CHECK(lam != std::string::npos, "AC1 add_mutate lambda");
-    // Window drift history: original 14000 (hold-budget/trail comment
-    // blocks pushed needle to 14692) → 20000 → 28000 (lambda→fn(a)
-    // re-measured at 20600 after the latest mutate-side inserts).
-    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 28000);
-    const auto acq = win.find("mutate_dispatch_try_acquire");
-    const auto fn = win.find("auto result = fn(a)");
+    // Window = brace-matched lambda body (drift-proof: the fixed
+    // 14000/20000/28000 windows all broke on benign comment/param inserts).
+    const auto body = brace_block_after(mut, lam);
+    CHECK(!body.empty(), "AC1 add_mutate lambda body (brace-matched)");
+    const auto ro = body.find("workspace_read_only_");
+    const auto acq = body.find("mutate_dispatch_try_acquire");
+    const auto fn = body.find("auto result = fn(a)");
     CHECK(acq != std::string::npos && fn != std::string::npos && acq < fn,
           "AC1 acquire before fn(a)");
-    CHECK(win.find("guard-reject") != std::string::npos, "AC1 guard-reject kind");
-    const auto ro = win.find("workspace_read_only_");
+    CHECK(body.find("guard-reject") != std::string::npos, "AC1 guard-reject kind");
     CHECK(ro != std::string::npos && acq != std::string::npos && ro < acq,
           "3450: wrapper RO fence before acquire");
 }
@@ -586,9 +661,10 @@ static void ac3423_2_production_rebind_and_reject_kind() {
           "AC2 happy path is not naked-mutate");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 28000);
-    const auto rej = win.find("guard-reject");
-    const auto fna = win.find("auto result = fn(a)");
+    const auto body = brace_block_after(mut, lam);
+    CHECK(!body.empty(), "AC2 add_mutate lambda body (brace-matched)");
+    const auto rej = body.find("guard-reject");
+    const auto fna = body.find("auto result = fn(a)");
     CHECK(rej != std::string::npos && fna != std::string::npos && rej < fna,
           "AC2 guard-reject precedes fn(a) (no write on acquire fail)");
 }
@@ -679,8 +755,12 @@ static void ac3452_3_exempt_skip_acquire() {
     const auto pos = mut.find("add(\"mutate:set-agent-fingerprint\"");
     CHECK(pos != std::string::npos, "3452 AC3: fingerprint add");
     if (pos != std::string::npos) {
-        const auto win = mut.substr(pos, 900);
-        CHECK(win.find("mutate_dispatch_try_acquire") == std::string::npos,
+        // Brace-matched fingerprint body: the whole body is checked for
+        // acquire-freedom (the fixed 900-char window could miss an acquire
+        // beyond the edge).
+        const auto body = brace_block_after(mut, pos);
+        CHECK(!body.empty(), "3452 AC3: fingerprint body (brace-matched)");
+        CHECK(body.find("mutate_dispatch_try_acquire") == std::string::npos,
               "3452 AC3: fingerprint body does not acquire");
     }
 }
