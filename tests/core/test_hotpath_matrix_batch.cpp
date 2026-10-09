@@ -11,6 +11,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/transparent_string_hash.hh"
 
 #include <array>
@@ -2111,6 +2112,69 @@ static void run_1407_constraint_solver_cache_epoch() {
         const auto stats = tc.stats();
         CHECK(stats.cs_cache_lookups >= 2, "cs_cache_lookups >= 2 (one per call)");
         CHECK(stats.cs_cache_hits >= 1, "cs_cache_hits >= 1 (second call hit)");
+
+        // Issue #4408: a production TypeError must not be cached as SOLVED.
+        // The second same-epoch infer goes into a fresh collector and still
+        // reports. A cached non-SOLVED entry re-runs instead of returning
+        // a type into that empty collector.
+        std::println("\n--- #4408: production TypeError is not a same-epoch cache hit ---");
+        struct RestoreProductionDefaults {
+            std::uint32_t prev;
+            ~RestoreProductionDefaults() {
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(prev, std::memory_order_relaxed);
+            }
+        } restore_production{aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                                 .production_defaults_active.load(std::memory_order_relaxed)};
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        auto has_type_error = [](const aura::diag::DiagnosticCollector& d) {
+            for (const auto& item : d.diagnostics()) {
+                if (item.kind == aura::diag::ErrorKind::TypeError)
+                    return true;
+            }
+            return false;
+        };
+        aura::core::TypeRegistry reg_bad;
+        aura::diag::DiagnosticCollector diag_a;
+        aura::ast::ASTArena arena_bad;
+        auto alloc_bad = arena_bad.allocator();
+        aura::ast::FlatAST flat_bad(alloc_bad);
+        aura::ast::StringPool pool_bad;
+        auto callee = flat_bad.add_literal(42);
+        auto arg = flat_bad.add_literal(1);
+        const std::array<aura::ast::NodeId, 1> args{arg};
+        auto call = flat_bad.add_call(callee, args);
+        flat_bad.set_type(call, 0);
+        aura::compiler::TypeChecker tc_bad(reg_bad);
+        tc_bad.set_strict(true);
+        tc_bad.set_cache_epoch(100);
+        auto bad1 = tc_bad.infer_flat(flat_bad, pool_bad, call, diag_a);
+        (void)bad1;
+        CHECK(has_type_error(diag_a), std::format("first collector has production TypeError (n={})",
+                                                  diag_a.diagnostics().size()));
+        CHECK(tc_bad.cs_cache_size() == 0, "production TypeError is not stored as SOLVED");
+        const auto hits_after_first = tc_bad.stats().cs_cache_hits;
+        aura::diag::DiagnosticCollector diag_b;
+        tc_bad.set_cache_epoch(100);
+        auto bad2 = tc_bad.infer_flat(flat_bad, pool_bad, call, diag_b);
+        (void)bad2;
+        CHECK(has_type_error(diag_b),
+              "second collector still has the TypeError (not a masked SOLVED hit)");
+        CHECK(tc_bad.stats().cs_cache_hits == hits_after_first,
+              "production TypeError same-epoch retry is not a cs_cache hit");
+        CHECK(tc_bad.cs_cache_size() == 0, "retry still does not store the TypeError");
+        const auto shape = aura::compiler::TypeChecker::hash_node_shape(flat_bad, call, 0);
+        tc_bad.cs_cache_store(call, 100, shape, aura::compiler::SolveResult::CONFLICT,
+                              aura::core::TypeId{1});
+        const auto hits_before_conflict = tc_bad.stats().cs_cache_hits;
+        aura::diag::DiagnosticCollector diag_c;
+        auto bad3 = tc_bad.infer_flat(flat_bad, pool_bad, call, diag_c);
+        (void)bad3;
+        CHECK(tc_bad.stats().cs_cache_hits == hits_before_conflict + 1,
+              "seeded CONFLICT entry is a same-epoch cache hit");
+        CHECK(has_type_error(diag_c),
+              "non-SOLVED cache hit does not return a type into an empty collector");
     }
     // AC2: cache miss when epoch advances
     {
