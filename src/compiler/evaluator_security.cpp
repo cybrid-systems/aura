@@ -2295,6 +2295,30 @@ bool Evaluator::inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
     return false;
 }
 
+// Issue #3802 / #4399: arm predicate shared with check_tenant_host_path.
+// Strict, or Restricted + (hard-capture or AURA_MULTI_TENANT). Soft/Off
+// and single-tenant Restricted stay false. Mode ladder is the one the
+// gate already used — extracted so a passthrough-vs-active caller cannot
+// drift from the deny decision.
+bool Evaluator::host_path_policy_active() const noexcept {
+    using ::aura::compiler::security::tenant_host_path_policy_active;
+    using ::aura::core::capability::EffectSandboxMode;
+    using ::aura::core::capability::g_capability_registry;
+    using ::aura::core::provenance::hard_capture_tenant_active;
+    using ::aura::core::provenance::multi_tenant_env_active;
+    using ::aura::core::sandbox::is_strict;
+
+    std::uint8_t mode = effect_sandbox_mode();
+    if (mode != 2 && is_strict())
+        mode = 2;
+    if (mode != 2 && g_capability_registry().sandbox_mode == EffectSandboxMode::Strict)
+        mode = 2;
+    if (mode == 0 && g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted)
+        mode = 1;
+    const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
+    return tenant_host_path_policy_active(mode, mt);
+}
+
 // Issue #3802: host FS path-prefix isolation for EXEMPT_2ARG write-file /
 // sys-* under Restricted+MT / Strict. Soft/Off / single-tenant Restricted
 // passthrough (AC2). Cross-tenant / escape → IsolationDeny SE reason
@@ -2304,28 +2328,14 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
     using ::aura::compiler::security::kEffectWrite;
     using ::aura::compiler::security::kTenantPathEscapeReason;
     using ::aura::compiler::security::resolve_tenant_host_path;
-    using ::aura::compiler::security::tenant_host_path_policy_active;
     using ::aura::compiler::security::tenant_host_root_for;
     using ::aura::compiler::security::tenant_path_has_symlink_component;
     using ::aura::compiler::security::TenantHostPathVerdict;
-    using ::aura::core::capability::EffectSandboxMode;
-    using ::aura::core::capability::g_capability_registry;
-    using ::aura::core::provenance::hard_capture_tenant_active;
-    using ::aura::core::provenance::multi_tenant_env_active;
-    using ::aura::core::sandbox::is_strict;
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
 
     out_resolved.clear();
-    std::uint8_t mode = effect_sandbox_mode();
-    if (mode != 2 && is_strict())
-        mode = 2;
-    if (mode != 2 && g_capability_registry().sandbox_mode == EffectSandboxMode::Strict)
-        mode = 2;
-    if (mode == 0 && g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted)
-        mode = 1;
-    const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
-    const bool active = tenant_host_path_policy_active(mode, mt);
+    const bool active = host_path_policy_active();
     auto result = resolve_tenant_host_path(path, capability_tenant_id_, active);
     // Issue #4380: O_NOFOLLOW guards only the FINAL path component — refuse
     // symlink components BELOW the tenant root (fail-closed, no follow) so

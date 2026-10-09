@@ -7671,6 +7671,11 @@ public:
     // tenant-path-escape), zero write. Returns true on allow; on allow
     // with remap, `out_resolved` holds the absolute path under the
     // caller's tenant root. EXEMPT_2ARG inventory size unchanged.
+    // Issue #4399: same arm the host-path gate uses. Callers that still
+    // search the host (resolve_module_path) on the passthrough face use
+    // this so an already-canonical in-root absolute is not treated as
+    // Soft/Off passthrough.
+    [[nodiscard]] bool host_path_policy_active() const noexcept;
     [[nodiscard]] bool check_tenant_host_path(std::string_view path, std::string& out_resolved,
                                               std::string_view op = "write-file") noexcept;
     // Issue #4233: Restricted+MT / Strict exec-face jail for shell /
