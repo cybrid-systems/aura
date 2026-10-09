@@ -2722,13 +2722,15 @@ int main() {
     {
         std::println("\n--- #3040 AC1: Restricted NodeId compile entry denied before body ---");
         reset_all();
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         CompilerService cs;
         auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);
-        ev.set_capability_tenant_id(7);
+        // Issue #4400: set-code is the workspace install, not the gate under
+        // test. Install under Off, then arm Restricted with no Mutate grant.
         CHECK(cs.eval("(set-code \"(define (n3040 x) x)\")").has_value(), "3040 set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3040 eval");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3040 workspace");
         const auto before_bumps = ws->subtree_bump_count();
@@ -2755,14 +2757,16 @@ int main() {
     {
         std::println("\n--- #3040 AC2: foreign stamped ref denied before body ---");
         reset_all();
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        // Issue #4400: install under Off so the setup set-code does not
+        // consume the single-use Mutate grant the foreign-ref deny needs.
+        CHECK(cs.eval("(set-code \"(define (n3040b x) x)\")").has_value(), "3040 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3040 AC2 eval");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(7);
         ev.grant_effect_capability(/*tenant=*/7, "mut-3040-ac2", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3040b x) x)\")").has_value(), "3040 AC2 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3040 AC2 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3040 AC2 workspace");
         const auto id = first_live(*ws);
@@ -2855,16 +2859,18 @@ int main() {
     {
         std::println("\n--- #3415 AC1: Restricted+MT occupancy of B's NodeId IsolationDeny ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        // Issue #4400: install under Off. Both Mutate grants stay for the
+        // occupancy deny (set-code would consume tenant 99's single-use row).
+        CHECK(cs.eval("(set-code \"(define (n3415 x) x)\")").has_value(), "3415 AC1 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC1 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(99);
         ev.grant_effect_capability(/*tenant=*/99, "mut-3415-b", kEffectMutate, /*mid=*/1);
         ev.grant_effect_capability(/*tenant=*/7, "mut-3415-a", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3415 x) x)\")").has_value(), "3415 AC1 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC1 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3415 AC1 workspace");
         const auto id = first_live(*ws);
@@ -2885,15 +2891,15 @@ int main() {
     {
         std::println("\n--- #3415 AC2: stamped foreign on_ref still denies ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3415b x) x)\")").has_value(), "3415 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC2 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(7);
         ev.grant_effect_capability(/*tenant=*/7, "mut-3415-ac2", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3415b x) x)\")").has_value(), "3415 AC2 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC2 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3415 AC2 workspace");
         const auto id = first_live(*ws);
@@ -2937,13 +2943,14 @@ int main() {
     {
         std::println("\n--- #3415 AC5: no Mutate grant denies with zero write ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
         CompilerService cs;
         auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);
-        ev.set_capability_tenant_id(7);
+        // Issue #4400: the workspace install is not the deny under test.
         CHECK(cs.eval("(set-code \"(define (n3415c x) x)\")").has_value(), "3415 AC5 set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3415 AC5 eval");
+        set_mode(SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3415 AC5 workspace");
         const auto before_bumps = ws->subtree_bump_count();
@@ -4036,15 +4043,15 @@ int main() {
     {
         std::println("\n--- #3722 AC1: no-Mutate rollback denies before write ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3722a x) x)\")").has_value(), "3722 AC1 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC1 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(99);
         ev.grant_effect_capability(/*tenant=*/99, "rb-3722-b", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3722a x) x)\")").has_value(), "3722 AC1 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC1 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3722 AC1 workspace");
         const auto id = first_live(*ws);
@@ -4092,16 +4099,16 @@ int main() {
     {
         std::println("\n--- #3722 AC2: foreign-mid rollback isolation deny ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3722b x) x)\")").has_value(), "3722 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC2 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(99);
         ev.grant_effect_capability(/*tenant=*/99, "rb-3722-b", kEffectMutate, /*mid=*/1);
         ev.grant_effect_capability(/*tenant=*/7, "rb-3722-a", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3722b x) x)\")").has_value(), "3722 AC2 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC2 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3722 AC2 workspace");
         const auto id = first_live(*ws);
@@ -4213,16 +4220,16 @@ int main() {
     {
         std::println("\n--- #3722 AC4: leaked foreign mid cannot fire rollback ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3722d x) x)\")").has_value(), "3722 AC4 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC4 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(99);
         ev.grant_effect_capability(/*tenant=*/99, "rb-3722-b", kEffectMutate, /*mid=*/1);
         ev.grant_effect_capability(/*tenant=*/7, "rb-3722-a", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3722d x) x)\")").has_value(), "3722 AC4 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC4 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3722 AC4 workspace");
         const auto id = first_live(*ws);
@@ -4335,15 +4342,15 @@ int main() {
     {
         std::println("\n--- #3792 AC1-AC3: history tenant filter ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3792a x) x)\")").has_value(), "3792 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3792 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(7);
         ev.grant_effect_capability(/*tenant=*/7, "mh-3792-a", kEffectMutate, /*mid=*/1);
-        CHECK(cs.eval("(set-code \"(define (n3792a x) x)\")").has_value(), "3792 set-code");
-        CHECK(cs.eval("(eval-current)").has_value(), "3792 eval");
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3792 workspace");
         const auto own = static_cast<NodeId>(ws->size() - 2);
@@ -4447,14 +4454,16 @@ int main() {
     {
         std::println("\n--- #3772 AC1: forged foreign ref re-entry denies ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);
-        ev.set_capability_tenant_id(99);
+        // Issue #4400: install the workspace under Off. The deny under test
+        // is the foreign ref re-entry, which still runs with no Mutate grant.
         CHECK(cs.eval("(set-code \"(define (n3772a x) x)\")").has_value(), "3772 AC1 set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3772 AC1 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(99);
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3772 AC1 workspace");
         const auto id = first_live(*ws);
@@ -4499,14 +4508,15 @@ int main() {
     {
         std::println("\n--- #3772 AC2: own-node export round-trip observes ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);
-        ev.set_capability_tenant_id(7);
+        // Issue #4400: install under Off, then arm. ast:ref-get is a read.
         CHECK(cs.eval("(set-code \"(define (n3772b x) x)\")").has_value(), "3772 AC2 set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3772 AC2 eval");
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3772 AC2 workspace");
         const auto id = first_live(*ws);
@@ -6786,6 +6796,378 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_4399.cpp");
         CHECK(!invent.good(), "4399 AC3: no tests/core/test_issue_4399.cpp (forbidden)");
+    }
+
+    // ── Issue #4400: deserialize-workspace / set-code / ast:restore Mutate ──
+    {
+        std::println("\n--- #4400 AC1: Restricted+MT path escape never reads ---");
+        reset_all();
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4400";
+        std::error_code rm_ec;
+        std::filesystem::remove_all(base, rm_ec);
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        std::filesystem::create_directories(root_a);
+        const std::string crafted = root_a + "/crafted.bin";
+        const std::string victim = base + "/victim-4400.bin";
+        const std::string missing = base + "/missing-4400.bin";
+        {
+            std::ofstream f(victim, std::ios::binary);
+            f << "SECRET4400";
+        }
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            CompilerService crafter;
+            auto& ev = crafter.evaluator();
+            ev.set_effect_sandbox_mode(0);
+            CHECK(crafter.eval("(set-code \"(define (marker) 7)\")").has_value(),
+                  "4400 setup: Off set-code marker");
+            CHECK(crafter.eval("(eval-current)").has_value(), "4400 setup: Off eval-current");
+            auto& heap_w = ev.string_heap_mut();
+            heap_w.push_back(crafted);
+            auto ser = ev.primitives().lookup("serialize-workspace");
+            CHECK(ser.has_value(), "4400 setup: serialize-workspace registered");
+            if (ser) {
+                using aura::compiler::types::make_string;
+                const auto r = (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_bool(r) && as_bool(r), "4400 setup: Off serialize crafted blob");
+            }
+        }
+        {
+            std::ifstream in(crafted);
+            std::string magic(8, '\0');
+            in.read(magic.data(), 8);
+            CHECK(magic == "AURASOUL", "4400 setup: crafted blob magic");
+        }
+
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.host_path_policy_active(), "4400 AC1: Restricted+MT arms host-path policy");
+        const auto& ring = g_security_event_ring();
+        auto& heap_w = ev.string_heap_mut();
+        using aura::compiler::types::make_string;
+        auto deser = ev.primitives().lookup("deserialize-workspace");
+        CHECK(deser.has_value(), "4400 AC1: deserialize-workspace registered");
+        auto slurp = [](const std::string& p) {
+            std::ifstream in(p);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        auto saw_escape = [&](std::uint64_t se_base) {
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                if (std::string_view(e.op) != "deserialize-workspace")
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 7, "4400 AC1: IsolationDeny tenant is the caller");
+            }
+            return saw;
+        };
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            heap_w.push_back(missing);
+            const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(is_bool(r) && !as_bool(r), "4400 AC1: missing outside path returns #f");
+            CHECK(saw_escape(se_base),
+                  "4400 AC1: missing path emits IsolationDeny before load_blob");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            heap_w.push_back(victim);
+            const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(is_bool(r) && !as_bool(r), "4400 AC1: outside victim returns #f");
+            CHECK(slurp(victim) == "SECRET4400", "4400 AC1: victim bytes unchanged");
+            CHECK(saw_escape(se_base), "4400 AC1: victim path emits IsolationDeny");
+            CHECK(ev.last_mutate_error().find("deserialize-workspace: tenant-path-escape") !=
+                      std::string::npos,
+                  "4400 AC1: deny reason is tenant-path-escape");
+        }
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4400 AC2: in-root blob without Mutate leaves the workspace ---");
+        reset_all();
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4400";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        const std::string crafted = root_a + "/crafted.bin";
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        CHECK(cs.eval("(set-code \"(define (sentinel) 1)\")").has_value(),
+              "4400 AC2: Off sentinel set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4400 AC2: Off sentinel eval");
+        auto* flat = ev.workspace_flat();
+        CHECK(flat != nullptr, "4400 AC2: sentinel workspace live");
+        const auto log_n = flat ? flat->all_mutations().size() : 0;
+        auto bound = [&](std::string_view name) {
+            for (const auto& kv : ev.top_env().bindings()) {
+                if (kv.first == name)
+                    return true;
+            }
+            return false;
+        };
+        CHECK(bound("sentinel"), "4400 AC2: sentinel bound before the attack");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.host_path_policy_active(), "4400 AC2: policy armed after the sentinel");
+        auto& heap_w = ev.string_heap_mut();
+        using aura::compiler::types::make_string;
+        auto deser = ev.primitives().lookup("deserialize-workspace");
+        CHECK(deser.has_value(), "4400 AC2: deserialize-workspace registered");
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        heap_w.push_back(crafted);
+        const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+        CHECK(is_error(r), "4400 AC2: in-root deserialize without Mutate is an error");
+        const auto msg = ev.soft_error_message(r);
+        CHECK(msg.find("effect-denied:") != std::string::npos, "4400 AC2: effect-denied visible");
+        CHECK(msg.find("op=set-code") != std::string::npos, "4400 AC2: deny op is set-code");
+        CHECK(ev.workspace_flat() == flat, "4400 AC2: workspace_flat_ pointer unchanged");
+        CHECK(flat && flat->all_mutations().size() == log_n,
+              "4400 AC2: mutation log size unchanged");
+        CHECK(bound("sentinel"), "4400 AC2: sentinel still bound");
+        auto called = cs.eval("(sentinel)");
+        CHECK(called && is_int(*called) && as_int(*called) == 1, "4400 AC2: (sentinel) still 1");
+        auto marker = cs.eval("(marker)");
+        CHECK(!(marker && is_int(*marker) && as_int(*marker) == 7),
+              "4400 AC2: marker was not installed");
+        auto find = ev.primitives().lookup("workspace:find-define");
+        CHECK(find.has_value(), "4400 AC2: workspace:find-define registered");
+        heap_w.push_back("marker");
+        if (find) {
+            const auto fr = (*find)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(!(is_int(fr) && as_int(fr) == 2),
+                  "4400 AC2: find-define marker is not integer 2");
+        }
+        bool path_escape = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.op) == "deserialize-workspace" &&
+                std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                path_escape = true;
+        }
+        CHECK(!path_escape, "4400 AC2: in-root absolute path is not a tenant-path-escape");
+        const auto se_rel = ring.seq.load(std::memory_order_acquire);
+        const auto flat_after = ev.workspace_flat();
+        const auto log_after = flat_after ? flat_after->all_mutations().size() : 0;
+        heap_w.push_back("crafted.bin");
+        const auto rel = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+        CHECK(is_error(rel), "4400 AC2: in-root relative deserialize without Mutate is an error");
+        const auto rel_msg = ev.soft_error_message(rel);
+        CHECK(rel_msg.find("effect-denied:") != std::string::npos &&
+                  rel_msg.find("op=set-code") != std::string::npos,
+              "4400 AC2: relative path is Mutate-denied, not path-denied");
+        CHECK(ev.workspace_flat() == flat_after, "4400 AC2: relative deny keeps the flat pointer");
+        CHECK(flat_after && flat_after->all_mutations().size() == log_after,
+              "4400 AC2: relative deny keeps the mutation log");
+        bool rel_escape = false;
+        for (std::uint64_t s = se_rel; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.op) == "deserialize-workspace" &&
+                std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                rel_escape = true;
+        }
+        CHECK(!rel_escape, "4400 AC2: relative in-root path is not a tenant-path-escape");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println(
+            "\n--- #4400 AC3: Off deserialize still installs and emits no path escape ---");
+        reset_all();
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4400";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const std::string crafted = tenant_host_root_for(7) + "/crafted.bin";
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        CHECK(!ev.host_path_policy_active(), "4400 AC3: Off does not arm host-path policy");
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        auto& heap_w = ev.string_heap_mut();
+        using aura::compiler::types::make_string;
+        auto deser = ev.primitives().lookup("deserialize-workspace");
+        CHECK(deser.has_value(), "4400 AC3: deserialize-workspace registered");
+        heap_w.push_back(crafted);
+        const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+        CHECK(is_bool(r) && as_bool(r), "4400 AC3: Off deserialize returns #t");
+        auto called = cs.eval("(marker)");
+        CHECK(called && is_int(*called) && as_int(*called) == 7,
+              "4400 AC3: Off (marker) returns 7");
+        auto find = ev.primitives().lookup("workspace:find-define");
+        heap_w.push_back("marker");
+        if (find) {
+            const auto fr = (*find)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            CHECK(is_int(fr), "4400 AC3: Off find-define marker is an integer");
+        }
+        bool path_escape = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                path_escape = true;
+        }
+        CHECK(!path_escape, "4400 AC3: Off deserialize emits no tenant-path-escape");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+    }
+
+    {
+        std::println(
+            "\n--- #4400 AC4: ast:restore direct path without Mutate keeps workspace B ---");
+        reset_all();
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        CHECK(cs.eval("(set-code \"(define (marker) 1)\")").has_value(), "4400 AC4: set-code A");
+        CHECK(cs.eval("(eval-current)").has_value(), "4400 AC4: eval A");
+        auto snap = cs.eval("(ast:snapshot \"pre-4400\")");
+        CHECK(snap && is_int(*snap) && as_int(*snap) >= 0, "4400 AC4: snapshot id");
+        CHECK(cs.eval("(set-code \"(define (marker) 9)\")").has_value(), "4400 AC4: set-code B");
+        CHECK(cs.eval("(eval-current)").has_value(), "4400 AC4: eval B");
+        auto before = cs.eval("(marker)");
+        CHECK(before && is_int(*before) && as_int(*before) == 9, "4400 AC4: workspace is B");
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        using aura::compiler::types::make_int;
+        auto restore = ev.primitives().lookup("ast:restore");
+        CHECK(restore.has_value(), "4400 AC4: ast:restore registered");
+        const auto r = (*restore)({make_int(as_int(*snap))});
+        CHECK(is_error(r), "4400 AC4: direct restore without Mutate is an error");
+        const auto msg = ev.soft_error_message(r);
+        CHECK(msg.find("effect-denied:") != std::string::npos, "4400 AC4: effect-denied visible");
+        CHECK(msg.find("op=ast:restore") != std::string::npos, "4400 AC4: deny op is ast:restore");
+        auto after = cs.eval("(marker)");
+        CHECK(after && is_int(*after) && as_int(*after) == 9, "4400 AC4: workspace stays B");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4400 AC5: wiring cite; no EXEMPT, no infer, no query, no invent ---");
+        const auto eval_src = read_file("src/compiler/evaluator_primitives_eval.cpp");
+        const auto persist = read_file("src/compiler/evaluator_primitives_persist.cpp");
+        const auto ast = read_file("src/compiler/evaluator_primitives_ast.cpp");
+        const auto exempt =
+            read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        const auto infer = read_file("src/compiler/security_side_effect.hh");
+        const auto gate = eval_src.find("const std::string_view set_code_op = \"set-code\"");
+        const auto req = gate == std::string::npos ? gate : eval_src.find("require_effect", gate);
+        const auto acquire = gate == std::string::npos ? gate : eval_src.find("try_acquire", gate);
+        const auto assign =
+            gate == std::string::npos ? gate : eval_src.find("ev.workspace_flat_ = flat_ptr", gate);
+        CHECK(gate != std::string::npos && req != std::string::npos && req < acquire &&
+                  acquire != std::string::npos && assign != std::string::npos && req < assign,
+              "4400 AC5: set-code require_effect is before try_acquire and the flat swap");
+        CHECK(eval_src.find(
+                  "require_effect(aura::compiler::security::kEffectMutate, set_code_op, 0,") !=
+                  std::string::npos,
+              "4400 AC5: set-code uses the no-target 4-arg shape");
+        CHECK(eval_src.find("ev.capability_tenant_id()") != std::string::npos,
+              "4400 AC5: set-code stamps the caller tenant");
+        const auto path_gate =
+            persist.find("check_tenant_host_path(path, resolved, \"deserialize-workspace\")");
+        const auto load_resolved = persist.find("load_blob(resolved, blob, &err)");
+        CHECK(path_gate != std::string::npos && load_resolved != std::string::npos &&
+                  path_gate < load_resolved,
+              "4400 AC5: deserialize path gate is before load_blob(resolved)");
+        const auto empty_op =
+            persist.find("const std::string_view deser_mutate_op = \"deserialize-workspace\"");
+        const auto log_clear = persist.find("log.clear();");
+        CHECK(empty_op != std::string::npos && log_clear != std::string::npos &&
+                  empty_op < log_clear,
+              "4400 AC5: empty-source log rewrite pays Mutate before log.clear");
+        CHECK(persist.find("if (blob.source.empty())") != std::string::npos,
+              "4400 AC5: log Mutate gate is only the empty-source branch");
+        const auto restore_at = ast.find("add(\"ast:restore\"");
+        const auto restore_end = ast.find("add(\"ast:diff\"", restore_at);
+        CHECK(restore_at != std::string::npos && restore_end != std::string::npos &&
+                  restore_end > restore_at,
+              "4400 AC5: ast:restore body located");
+        if (restore_at != std::string::npos && restore_end > restore_at) {
+            const auto body = ast.substr(restore_at, restore_end - restore_at);
+            const auto op_at = body.find("const std::string_view ast_restore_op = \"ast:restore\"");
+            const auto req_at = body.find("require_effect");
+            const auto acq_at = body.find("try_acquire");
+            const auto wr_at = body.find("*ev.workspace_flat_ = *ev.snapshot_flats_[id].flat");
+            const auto can_at = body.find("if (can_direct)");
+            CHECK(can_at != std::string::npos && op_at != std::string::npos &&
+                      req_at != std::string::npos && acq_at != std::string::npos &&
+                      wr_at != std::string::npos && can_at < op_at && op_at < acq_at &&
+                      req_at < wr_at,
+                  "4400 AC5: direct ast:restore require_effect precedes the flat write");
+            CHECK(
+                body.find(
+                    "require_effect(aura::compiler::security::kEffectMutate, ast_restore_op, 0,") !=
+                    std::string::npos,
+                "4400 AC5: ast:restore uses the no-target 4-arg shape");
+        }
+        CHECK(exempt.find("\"set-code\"") == std::string::npos,
+              "4400 AC5: set-code not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("\"deserialize-workspace\"") == std::string::npos,
+              "4400 AC5: deserialize-workspace not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("\"ast:restore\"") == std::string::npos,
+              "4400 AC5: ast:restore not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("len(EXEMPT_2ARG_OPS) != 7") != std::string::npos,
+              "4400 AC5: EXEMPT_2ARG_OPS count guard stays 7");
+        CHECK(infer.find("set-code") == std::string::npos &&
+                  infer.find("deserialize-workspace") == std::string::npos &&
+                  infer.find("ast:restore") == std::string::npos,
+              "4400 AC5: infer_required_effects_from_name does not name these ops");
+        CHECK(eval_src.find("query:4400") == std::string::npos &&
+                  persist.find("query:4400") == std::string::npos &&
+                  ast.find("query:4400") == std::string::npos,
+              "4400 AC5: no new query key");
+        std::ifstream invent("tests/core/test_issue_4400.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4400.cpp");
+        CHECK(!invent.good(), "4400 AC5: no tests/core/test_issue_4400.cpp (forbidden)");
     }
 
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
