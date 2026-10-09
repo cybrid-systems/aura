@@ -7520,6 +7520,192 @@ static void ac4150_3_source_cite_no_artifacts() {
           "4150 AC3: root allowlist append");
 }
 
+// Issue #4406: name-path rebind / set-body must refuse the MacroIntroduced
+// child a User Define/Lambda is about to unlink. The parent itself stays User.
+static aura::ast::NodeId define_named_4406(Evaluator& ev, std::string_view name) {
+    auto* ws = ev.workspace_flat();
+    auto* pool = ev.workspace_pool();
+    if (!ws || !pool)
+        return aura::ast::NULL_NODE;
+    aura::ast::NodeId found = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_free_slot(id))
+            continue;
+        auto v = ws->get(id);
+        if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+            continue;
+        if (pool->resolve(v.sym_id) == name)
+            found = id;
+    }
+    return found;
+}
+
+static bool body_still_4406(Evaluator& ev, aura::ast::NodeId def, aura::ast::NodeId lam,
+                            aura::ast::NodeId body) {
+    auto* ws = ev.workspace_flat();
+    if (!ws || def >= ws->size() || lam >= ws->size() || body >= ws->size())
+        return false;
+    auto dv = ws->get(def);
+    if (dv.children.empty() || dv.child(0) != lam)
+        return false;
+    auto lv = ws->get(lam);
+    if (lv.children.empty() || lv.child(0) != body)
+        return false;
+    return ws->is_macro_introduced(body) && !ws->is_macro_introduced(def) &&
+           !ws->is_macro_introduced(lam);
+}
+
+static bool ring_hygiene_epoch_4406(std::uint64_t epoch_before) {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::SecurityEventKind;
+    auto& ring = g_security_event_ring();
+    const auto cur = ring.seq.load(std::memory_order_acquire);
+    const auto end = cur > kSecurityEventRingSize ? cur - kSecurityEventRingSize : 0;
+    const auto epoch_after = aura::core::current_mutation_epoch();
+    for (auto s = cur; s > end; --s) {
+        const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+        if (e.kind != SecurityEventKind::MacroHygiene)
+            continue;
+        if (std::string_view(e.reason) != "hygiene-macro-introduced")
+            continue;
+        if (std::string_view(e.op) != "macro-hygiene")
+            continue;
+        return e.epoch != 0 && (e.epoch == epoch_before || e.epoch == epoch_after);
+    }
+    return false;
+}
+
+static void ac4406_displaced_child_default_reject() {
+    std::println("\n=== Issue #4406: displaced MacroIntroduced child default-reject ===");
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (define (g x) (+ x 1)) (define base 10)\")")
+              .has_value(),
+          "4406: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4406: eval-current");
+    auto& ev = cs.evaluator();
+    const auto def = define_named_4406(ev, "f");
+    const auto gdef = define_named_4406(ev, "g");
+    const auto bdef = define_named_4406(ev, "base");
+    CHECK(def != aura::ast::NULL_NODE && gdef != aura::ast::NULL_NODE &&
+              bdef != aura::ast::NULL_NODE,
+          "4406: defines present");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "4406: workspace");
+    auto dv = ws->get(def);
+    CHECK(!dv.children.empty(), "4406: f has a child");
+    const auto lam = dv.child(0);
+    auto lv = ws->get(lam);
+    CHECK(lv.tag == aura::ast::NodeTag::Lambda && !lv.children.empty(), "4406: f body is a lambda");
+    const auto body = lv.child(0);
+    CHECK(!ws->is_macro_introduced(def) && !ws->is_macro_introduced(lam) &&
+              !ws->is_macro_introduced(body),
+          "4406: define, lambda, and call start User");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", static_cast<unsigned>(body))).has_value(),
+          "4406: forge MacroIntroduced on the call");
+    CHECK(ws->is_macro_introduced(body) && !ws->is_macro_introduced(def) &&
+              !ws->is_macro_introduced(lam),
+          "4406: only the displaced call is MacroIntroduced");
+    auto gv = ws->get(gdef);
+    CHECK(!gv.children.empty(), "4406: g has a child");
+    const auto glam = gv.child(0);
+    auto glv = ws->get(glam);
+    CHECK(glv.tag == aura::ast::NodeTag::Lambda && !glv.children.empty(), "4406: g lambda");
+    const auto gbody = glv.child(0);
+
+    auto deny = [&](const char* expr, const char* label) {
+        grant_3301_production_mutate(cs);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        const auto epoch_before = aura::core::current_mutation_epoch();
+        auto r = cs.eval(expr);
+        CHECK(r.has_value(), label);
+        if (r)
+            CHECK(merr_kind_3027(cs, *r) == "hygiene-protected", label);
+        const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced", label);
+        CHECK(body_still_4406(cs.evaluator(), def, lam, body), label);
+        CHECK(ring_hygiene_epoch_4406(epoch_before), label);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    };
+    deny("(mutate:set-body \"f\" \"(+ x 2)\")", "4406: public set-body");
+    deny("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\")", "4406: public rebind");
+    deny("(mutate:atomic-batch (list (list \"mutate:set-body\" \"f\" \"(+ x 2)\")) \"4406\")",
+         "4406: lockless set-body");
+    deny("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\")) "
+         "\"4406\")",
+         "4406: lockless rebind");
+
+    grant_3301_production_mutate(cs);
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    auto gok = cs.eval("(mutate:set-body \"g\" \"(+ x 3)\")");
+    CHECK(gok.has_value() && is_bool(*gok) && as_bool(*gok), "4406: user set-body still writes");
+    {
+        auto* live = cs.evaluator().workspace_flat();
+        CHECK(live != nullptr && glam < live->size(), "4406: g lambda live");
+        auto after = live->get(glam);
+        CHECK(!after.children.empty() && after.child(0) != gbody, "4406: g body replaced");
+        CHECK(body_still_4406(cs.evaluator(), def, lam, body), "4406: f unchanged after g");
+    }
+    grant_3301_production_mutate(cs);
+    auto bok = cs.eval("(mutate:rebind \"base\" \"11\")");
+    CHECK(bok.has_value() && is_bool(*bok) && as_bool(*bok),
+          "4406: user literal rebind still writes");
+    {
+        auto* live = cs.evaluator().workspace_flat();
+        auto bv = live->get(bdef);
+        CHECK(!bv.children.empty(), "4406: base still has a value");
+        auto lit = live->get(bv.child(0));
+        CHECK(lit.tag == aura::ast::NodeTag::LiteralInt && lit.int_value == 11,
+              "4406: base value is 11");
+    }
+
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(mut.find("Issue #4406") != std::string::npos, "4406: public cite");
+    CHECK(efl.find("Issue #4406") != std::string::npos, "4406: lockless cite");
+    const auto reb = mut.find("add_mutate(\"mutate:rebind\"");
+    const auto sb = mut.find("add_mutate(\"mutate:set-body\"");
+    CHECK(reb != std::string::npos && sb != std::string::npos && reb < sb, "4406: prim order");
+    const auto rwin = mut.substr(reb, sb - reb);
+    const auto old_probe = rwin.find("first_macro_introduced_in_subtree(flat, old_value_node)");
+    const auto rset = rwin.find("flat.set_child(old_define, 0, new_value)");
+    CHECK(old_probe != std::string::npos && rset != std::string::npos && old_probe < rset,
+          "4406: public rebind probes the old child before set_child");
+    const auto sb_next = mut.find("add_mutate(", sb + 20);
+    const auto swin = mut.substr(sb, sb_next > sb ? sb_next - sb : std::string::npos);
+    const auto sb_cite = swin.find("Issue #4406");
+    const auto sb_set = swin.find("flat.set_child(lambda_id, 0, body_to_set)");
+    CHECK(sb_cite != std::string::npos && sb_set != std::string::npos && sb_cite < sb_set,
+          "4406: public set-body probes before the expression set_child");
+    const auto lreb = efl.find("EvalResult Evaluator::eval_flat_apply_mutate_rebind(");
+    const auto lsb = efl.find("EvalResult Evaluator::eval_flat_apply_mutate_set_body(");
+    CHECK(lreb != std::string::npos && lsb != std::string::npos && lreb < lsb,
+          "4406: lockless order");
+    const auto lrwin = efl.substr(lreb, lsb - lreb);
+    const auto lr_cite = lrwin.find("Issue #4406");
+    const auto lr_set = lrwin.find("flat.set_child(old_define, 0, new_value)");
+    CHECK(lr_cite != std::string::npos && lr_set != std::string::npos && lr_cite < lr_set,
+          "4406: lockless rebind probes before set_child");
+    const auto lnext = efl.find("EvalResult Evaluator::eval_flat_apply_mutate_", lsb + 20);
+    const auto lswin = efl.substr(lsb, lnext > lsb ? lnext - lsb : std::string::npos);
+    const auto ls_cite = lswin.find("Issue #4406");
+    const auto ls_set = lswin.find("flat.set_child(lambda_id, 0, body_to_set)");
+    CHECK(ls_cite != std::string::npos && ls_set != std::string::npos && ls_cite < ls_set,
+          "4406: lockless set-body probes before set_child");
+    CHECK(read_file("tests/compiler/test_issue_4406.cpp").empty(), "4406: no new test file");
+
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -7784,6 +7970,8 @@ int main() {
     ac4150_1_fiber_preferring_string_and_query();
     ac4150_2_expand_deny_authority_and_4149_boundary();
     ac4150_3_source_cite_no_artifacts();
+    std::println("\n=== Issue #4406: displaced MacroIntroduced child ===");
+    ac4406_displaced_child_default_reject();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

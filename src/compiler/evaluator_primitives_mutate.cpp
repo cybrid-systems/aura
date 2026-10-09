@@ -4146,6 +4146,26 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("internal", "rebind: old body NodeId not live after parse (stale capture "
                                    "prevented; #2795)");
         }
+        // Issue #4406: set_child unlinks old_value_node. A User Define can
+        // hold a MacroIntroduced child (expand stamps the clone, not the
+        // parent). The pre-parse probe only sees old_define; the #2792 walk
+        // only sees the new body. Same default-reject helper, !allow only.
+        {
+            const bool allow_macro_old =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            if (!allow_macro_old) {
+                const auto old_hit = first_macro_introduced_in_subtree(flat, old_value_node);
+                if (old_hit != aura::ast::NULL_NODE) {
+                    aura::ast::NodeId probe_arr[1] = {old_hit};
+                    if (auto err =
+                            hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                        free_rebind_parse_orphans();
+                        ok = false;
+                        return *err;
+                    }
+                }
+            }
+        }
         flat.add_mutation_with_rollback(
             old_define, "rebind", name, summary, summary, aura::ast::MutationStatus::Committed,
             /*field_offset=*/0, static_cast<std::uint64_t>(old_value_node),
@@ -4591,6 +4611,33 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ok = false;
                     return mev("type-error", std::string("function \"") + name +
                                                  "\" body is not a Lambda after parse");
+                }
+
+                // Issue #4406: walk the child set_child unlinks (Define's lambda,
+                // or that lambda's body). Node gates miss a User parent. !allow.
+                if (!allow_macro_set_body) {
+                    auto peek = flat.get(pr.root);
+                    if (peek.tag == aura::ast::NodeTag::Define && !peek.children.empty())
+                        peek = flat.get(peek.child(0));
+                    aura::ast::NodeId displaced = aura::ast::NULL_NODE;
+                    if (peek.tag == aura::ast::NodeTag::Lambda) {
+                        auto dv = flat.get(id);
+                        if (!dv.children.empty())
+                            displaced = dv.child(0);
+                    } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
+                        auto lv = flat.get(lambda_id);
+                        if (!lv.children.empty())
+                            displaced = lv.child(0);
+                    }
+                    const auto old_hit = first_macro_introduced_in_subtree(flat, displaced);
+                    if (old_hit != aura::ast::NULL_NODE) {
+                        free_set_body_parse_orphans();
+                        ok = false;
+                        if (auto err = reject_structural_macro_hygiene(
+                                ev, flat, old_hit, /*allow=*/false, "set-body", mev))
+                            return *err;
+                        return mev("hygiene-protected", "hygiene-macro-introduced");
+                    }
                 }
 
                 // Record mutation
