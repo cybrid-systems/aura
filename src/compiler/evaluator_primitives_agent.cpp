@@ -3659,6 +3659,30 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                    /*emit_retry=*/false);
                     return build_orch_hash(rkv);
                 }
+                // Issue #4393: live name-table body (!is_done). find()
+                // already retired #3805 abandon husks. Deny before
+                // spawn_agent_with_mailbox: no second fiber, no
+                // agents_active bump, old reservation untouched.
+                // Soft/Off keeps the historical replace.
+                if (pending && aura::compiler::typed_audit::production_defaults_active() &&
+                    aura::orch::slot_is_live_running(*pending)) {
+                    aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto ridx = ev.push_string_heap(name);
+                    auto eidx = ev.push_string_heap(
+                        "orch:spawn-agent: name-reuse-while-live — join or stop "
+                        "the running body before reuse");
+                    std::vector<std::pair<std::string, EvalValue>> rkv = {
+                        {"ok", make_bool(false)},        {"id", make_int(0)},
+                        {"name", make_string(ridx)},     {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(false)},
+                        {"error", make_string(eidx)},    {"cleanup-pending", make_bool(false)},
+                    };
+                    add_reclaimed_pending_lifecycle(rkv, /*pending=*/false);
+                    add_deny_class(rkv, aura::orch::AgentDenyClass::Other, "name-reuse-while-live",
+                                   0, /*emit_retry=*/false);
+                    return build_orch_hash(rkv);
+                }
             }
 
             // Issue #3937: reverse of #3925. Production spawn-agent of a
@@ -3812,9 +3836,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // register into agent_names_ (no leaked name-table slots).
             // Issue #3467: put is non-consuming on deny — if the name is
             // still Reclaimed-pending, keep the handle and report !ok.
+            bool put_refused = false;
             if (ok) {
-                if (ev.agent_names_->put(std::move(handle)) == nullptr)
+                // Issue #4393: nullptr means the occupant is still pending
+                // or still running. The fresh handle was not stored.
+                // Cancel it and transfer the agents_active one-shot.
+                if (ev.agent_names_->put(std::move(handle)) == nullptr) {
                     ok = false;
+                    put_refused = true;
+                    aura::orch::release_refused_spawn(handle);
+                }
             }
 
             // Issue #2011 / #2079: quota reject returns a structured hash (not
@@ -3867,11 +3898,23 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
             auto nidx = ev.push_string_heap(out_name);
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(ok)},           {"id", make_int(static_cast<std::int64_t>(id))},
-                {"name", make_string(nidx)},     {"schema", make_int(1588)},
-                {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(quota_exceeded)},
+                {"ok", make_bool(ok)},
+                {"id", make_int(put_refused ? static_cast<std::int64_t>(0)
+                                            : static_cast<std::int64_t>(id))},
+                {"name", make_string(nidx)},
+                {"schema", make_int(1588)},
+                {"schema-2011", make_int(2011)},
+                {"quota-exceeded", make_bool(quota_exceeded)},
             };
-            if (!ok && !err.empty()) {
+            if (put_refused) {
+                auto eidx =
+                    ev.push_string_heap("orch:spawn-agent: name-reuse-while-live — join or stop "
+                                        "the running body before reuse");
+                kv.push_back({"error", make_string(eidx)});
+                kv.push_back({"cleanup-pending", make_bool(false)});
+                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "name-reuse-while-live", 0,
+                               /*emit_retry=*/false);
+            } else if (!ok && !err.empty()) {
                 auto eidx = ev.push_string_heap(err);
                 kv.push_back({"error", make_string(eidx)});
             }

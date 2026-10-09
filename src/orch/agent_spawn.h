@@ -3189,6 +3189,28 @@ inline void transfer_agents_active_oneshot_to_fiber(AgentHandle& h) noexcept {
 // to the Scheduler orphan reaper instead of leaking off the name-table.
 inline void cancel_and_drain_fiber(serve::Fiber* f, std::uint64_t drain_ms) noexcept;
 
+// Issue #4393: AgentNameTable::put refused this fresh spawn (pending
+// race or a still-running occupant). The handle was not stored. Transfer
+// the agents_active one-shot onto the Fiber (#4299) and cancel it so
+// on_fiber_done consumes the gauge. This handle's reservation is
+// released; the occupant's reservation stays because put did not
+// move-assign. #2661: no body-stack free.
+inline void release_refused_spawn(AgentHandle& h) noexcept {
+    if (h.fiber && !h.fiber->is_done()) {
+        if (h.agents_active_held)
+            transfer_agents_active_oneshot_to_fiber(h);
+        cancel_and_drain_fiber(h.fiber, /*drain_ms=*/0);
+    } else if (h.agents_active_held) {
+        release_agents_active_once(h);
+    }
+    if (h.mailbox && h.fiber)
+        h.mailbox->detach(h.fiber);
+    h.mailbox.reset();
+    h.release_reservation_if_any();
+    h.ok = false;
+    h.id = 0;
+}
+
 inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
     if (jr.status == serve::JoinStatus::Reclaimed) {
         // Defer path: global tables only, never body-stack.
@@ -3322,6 +3344,15 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     // Abandon shape markers (force-recycle live arm / abandon_reclaimed
     // Timeout): name cleared + mailbox detach/reset.
     return h.name.empty() && !h.mailbox;
+}
+
+// Issue #4393: still-running occupant. Distinct from the #3805 abandon
+// husk (that retires) and from Reclaimed-pending (#3467/#3497). Cost:
+// the abandon predicate plus ok / fiber / is_done — no new atomic.
+[[nodiscard]] inline bool slot_is_live_running(const AgentHandle& h) noexcept {
+    if (slot_is_abandoned_live(h))
+        return false;
+    return h.ok && h.fiber && !h.fiber->is_done();
 }
 
 // Issue #3644: second recycle for Reclaimed slots that survived the

@@ -130,6 +130,12 @@ struct AgentNameTable {
                 auto [ins_clean, _ins_clean] = impl_->agents_.emplace(name, std::move(h));
                 return &ins_clean->second;
             }
+            // Issue #4393: do not move-assign over a still-running body.
+            // The #3805 abandon husk already took the retire path above.
+            // Soft/Off keeps today's replace (one production load).
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                aura::orch::slot_is_live_running(it->second))
+                return nullptr;
             it->second = std::move(h);
             return &it->second;
         }

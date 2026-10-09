@@ -1445,6 +1445,12 @@ static void ac3497_scope_spawn_pending_name() {
         // admit gate instead of exercising the clean same-name append.
         a.region_key = 1;
         const bool ok1 = scope.spawn(a).ok;
+        // Issue #4393: a still-running namesake is a typed deny. This AC
+        // is the finished-body append, so a body that has not exited yet
+        // is marked done before the second spawn. Reservation stays, so
+        // the slot is not a Done husk and still appends.
+        if (auto* live = scope.find("3497-clean"); live && live->fiber && !live->fiber->is_done())
+            live->fiber->set_state(aura::serve::FiberState::Done);
         a.region_key = 2;
         const bool ok2 = scope.spawn(a).ok;
         CHECK(ok1 && ok2, "3497 AC2: both clean spawns ok");

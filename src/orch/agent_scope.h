@@ -547,6 +547,22 @@ public:
                     failed.name = spec.name;
                     return failed;
                 }
+                // Issue #4393: still-running same name, not an abandon
+                // husk. Deny before spawn_agent_with_mailbox so no second
+                // fiber, no agents_active bump, reservation untouched.
+                // Pending deny above stays #3497. Soft/Off skips this walk.
+                if (hp.name == spec.name && aura::orch::slot_is_live_running(hp)) {
+                    g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    thread_local AgentHandle failed;
+                    failed = AgentHandle{};
+                    failed.ok = false;
+                    failed.error = "AgentScope: name-reuse-while-live (#4393)";
+                    failed.name = spec.name;
+                    failed.deny_class = AgentDenyClass::Other;
+                    failed.quota_dimension = "name-reuse-while-live";
+                    return failed;
+                }
             }
         }
         // Issue #4238: close the #3803 observation→admit loop for Scope

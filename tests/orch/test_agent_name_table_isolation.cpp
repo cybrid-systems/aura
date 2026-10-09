@@ -1068,6 +1068,207 @@ static void ac3944_1_prod_sweeps_cross_name_husks() {
           "3944 AC3: sweep is production-gated");
 }
 
+// Issue #4393: production same-name spawn over a still-running body
+// fails closed before a second fiber. Soft still replaces / appends.
+// Pending deny (#3467/#3497) and abandon retire (#3805) stay as they are.
+static void ac4393_live_name_reuse() {
+    using aura::orch::AgentDenyClass;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::JoinPolicy;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4393: live same-name spawn fails closed ---");
+
+    auto active = [] {
+        return aura::orch::g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+    };
+    auto stop_handle = [](aura::orch::AgentHandle& hh) {
+        if (!hh.fiber)
+            return;
+        hh.fiber->request_cancel();
+        JoinPolicy policy;
+        policy.primary_ms = 2000;
+        policy.drain_ms = 200;
+        (void)aura::orch::join_agent(hh, policy);
+    };
+    auto sleeping = [](const char* name) {
+        AgentSpec spec;
+        spec.name = name;
+        spec.body = [] { aura::orch::fiber_sleep_ms(5000); };
+        return spec;
+    };
+    // Workers start inside Scheduler::run. Without the IO thread a spawned
+    // fiber stays !is_done forever, join waits out the timeout, and
+    // on_fiber_done never consumes the transferred agents_active one-shot.
+    struct SchedRunner {
+        Scheduler& sched;
+        std::thread thr;
+        explicit SchedRunner(Scheduler& s)
+            : sched(s)
+            , thr([&s] { s.run(); }) {}
+        ~SchedRunner() {
+            sched.stop();
+            if (thr.joinable())
+                thr.join();
+        }
+    };
+
+    // AC1: production put does not move-assign over !is_done. The refused
+    // spawn is cancelled and its agents_active one-shot is transferred.
+    {
+        ac3727_set_prod(true);
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentNameTable table;
+        auto first = aura::orch::spawn_agent_with_mailbox(sched, sleeping("put-4393"));
+        CHECK(first.ok && first.fiber && !first.fiber->is_done(), "4393 AC1: first spawn live");
+        const auto id0 = first.id;
+        const auto res0 = first.reserved_memory_bytes;
+        CHECK(table.put(std::move(first)) != nullptr, "4393 AC1: first put");
+        const auto n_active = active();
+        auto second = aura::orch::spawn_agent_with_mailbox(sched, sleeping("put-4393"));
+        CHECK(second.ok && second.fiber, "4393 AC1: second spawn exists for the belt");
+        CHECK(active() == n_active + 1, "4393 AC1: belt spawn did bump agents_active");
+        CHECK(table.put(std::move(second)) == nullptr, "4393 AC1: put over live returns nullptr");
+        aura::orch::release_refused_spawn(second);
+        CHECK(!second.agents_active_held, "4393 AC1: handle gave up the agents_active one-shot");
+        CHECK(second.fiber && second.fiber->is_cancel_requested(),
+              "4393 AC1: refused body cancelled");
+        auto* slot = table.find("put-4393");
+        CHECK(slot && slot->id == id0, "4393 AC1: occupant id unchanged");
+        CHECK(slot && slot->reserved_memory_bytes == res0,
+              "4393 AC1: occupant reservation untouched");
+        CHECK(table.size() == 1, "4393 AC1: table size stays 1");
+        if (second.fiber)
+            (void)aura::serve::Fiber::join(second.fiber, std::optional<std::uint64_t>{2000});
+        for (int i = 0; i < 50 && active() != n_active; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(active() == n_active, "4393 AC1: refused spawn released its agents_active");
+        if (slot)
+            stop_handle(*slot);
+        ac3727_set_prod(false);
+    }
+
+    // AC2: AgentScope::spawn denies before emplace. Directory stays one row.
+    {
+        ac3727_set_prod(true);
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        auto& h1 = scope.spawn(sleeping("scope-4393"));
+        CHECK(h1.ok && h1.fiber && !h1.fiber->is_done(), "4393 AC2: scope spawn live");
+        const auto id0 = h1.id;
+        const auto res0 = h1.reserved_memory_bytes;
+        const auto n0 = scope.size();
+        const auto n_active = active();
+        auto& h2 = scope.spawn(sleeping("scope-4393"));
+        CHECK(!h2.ok && h2.id == 0, "4393 AC2: second spawn ok=#f id=0");
+        CHECK(h2.deny_class == AgentDenyClass::Other, "4393 AC2: deny-class other");
+        CHECK(h2.quota_dimension == "name-reuse-while-live", "4393 AC2: deny detail");
+        CHECK(h2.error.find("name-reuse-while-live") != std::string::npos, "4393 AC2: error");
+        CHECK(scope.size() == n0, "4393 AC2: handles_ unchanged");
+        CHECK(scope.handles()[0].id == id0, "4393 AC2: first id stays");
+        CHECK(scope.handles()[0].reserved_memory_bytes == res0, "4393 AC2: reservation untouched");
+        CHECK(active() == n_active, "4393 AC2: no agents_active bump");
+        auto snap = scope.directory_snapshot({});
+        CHECK(snap.entries.size() == 1, "4393 AC2: directory one row");
+        CHECK(scope.find("scope-4393") && scope.find("scope-4393")->id == id0,
+              "4393 AC2: resolve is the first fiber");
+        stop_handle(scope.handles_mut()[0]);
+        ac3727_set_prod(false);
+    }
+
+    // AC3: Soft still appends a live namesake.
+    {
+        ac3727_set_prod(false);
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        auto& h1 = scope.spawn(sleeping("soft-4393"));
+        CHECK(h1.ok, "4393 AC3: soft first ok");
+        const auto id1 = h1.id;
+        auto& h2 = scope.spawn(sleeping("soft-4393"));
+        CHECK(h2.ok && h2.id != id1, "4393 AC3: soft still appends");
+        CHECK(scope.size() == 2, "4393 AC3: soft size 2");
+        auto hs = scope.handles_mut();
+        stop_handle(hs[0]);
+        stop_handle(hs[1]);
+    }
+
+    // AC4: orch:spawn-agent / orch:scope-spawn typed deny, id 0, no bump.
+    {
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(true);
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        CompilerService cs;
+        const auto n_active = active();
+        auto seeded = aura::orch::spawn_agent_with_mailbox(sched, sleeping("w4393"));
+        CHECK(seeded.ok && seeded.fiber && !seeded.fiber->is_done(), "4393 AC4: seeded live");
+        const auto id0 = seeded.id;
+        CHECK(cs.evaluator().agent_names_->put(std::move(seeded)) != nullptr, "4393 AC4: seed put");
+        const auto after_seed = active();
+        CHECK(after_seed == n_active + 1, "4393 AC4: seed bumped once");
+        auto denied = cs.eval(R"(
+            (let ((d (orch:spawn-agent "w4393" (lambda () 1))))
+              (and (not (hash-ref d "ok"))
+                   (= (hash-ref d "id") 0)
+                   (string=? (hash-ref d "deny-class" "") "other")
+                   (string=? (hash-ref d "deny-detail" "") "name-reuse-while-live")))
+        )");
+        CHECK(denied && is_bool(*denied) && as_bool(*denied),
+              "4393 AC4: spawn-agent ok=#f id=0 deny-detail name-reuse-while-live");
+        CHECK(active() == after_seed, "4393 AC4: spawn-agent did not bump agents_active");
+        auto* slot = cs.evaluator().agent_names_->find("w4393");
+        CHECK(slot && slot->id == id0, "4393 AC4: name resolve still the first fiber");
+
+        auto& scope =
+            aura::orch::get_or_create_agent_scope(static_cast<void*>(&cs.evaluator()), sched);
+        auto& sh = scope.spawn(sleeping("s4393"));
+        CHECK(sh.ok && sh.fiber && !sh.fiber->is_done(), "4393 AC4: scope seed live");
+        const auto sid = sh.id;
+        const auto scope_active = active();
+        auto sdenied = cs.eval(R"(
+            (let ((d (orch:scope-spawn "s4393" (lambda () 1))))
+              (and (not (hash-ref d "ok"))
+                   (= (hash-ref d "id") 0)
+                   (string=? (hash-ref d "deny-class" "") "other")
+                   (string=? (hash-ref d "deny-detail" "") "name-reuse-while-live")))
+        )");
+        CHECK(sdenied && is_bool(*sdenied) && as_bool(*sdenied),
+              "4393 AC4: scope-spawn ok=#f id=0 deny-detail name-reuse-while-live");
+        CHECK(active() == scope_active, "4393 AC4: scope-spawn did not bump agents_active");
+        CHECK(scope.size() == 1, "4393 AC4: scope size stays 1");
+        auto resolved = cs.eval(R"((hash-ref (orch:scope-resolve "s4393") "id"))");
+        CHECK(resolved && is_int(*resolved) && as_int(*resolved) == static_cast<std::int64_t>(sid),
+              "4393 AC4: scope-resolve is the first id");
+        auto rows = cs.eval(R"((hash-ref (orch:agent-directory) "count"))");
+        CHECK(rows && is_int(*rows) && as_int(*rows) == 1, "4393 AC4: directory one alive row");
+        if (slot)
+            stop_handle(*slot);
+        stop_handle(scope.handles_mut()[0]);
+        reset_all_agent_scopes_for_test();
+        ac3727_set_prod(false);
+    }
+
+    // AC5: source cite. No new query key, no invented test/docs file.
+    {
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto table = read_file("src/compiler/agent_name_table.h");
+        const auto scope = read_file("src/orch/agent_scope.h");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(prim.find("name-reuse-while-live") != std::string::npos, "4393 AC5: spawn detail");
+        CHECK(prim.find("Issue #4393") != std::string::npos, "4393 AC5: prim cite");
+        CHECK(table.find("slot_is_live_running") != std::string::npos, "4393 AC5: put belt");
+        CHECK(table.find("Issue #4393") != std::string::npos, "4393 AC5: table cite");
+        CHECK(scope.find("name-reuse-while-live") != std::string::npos, "4393 AC5: scope detail");
+        CHECK(spawn.find("release_refused_spawn") != std::string::npos, "4393 AC5: refused spawn");
+        CHECK(prim.find("query:4393") == std::string::npos, "4393 AC5: no new query key");
+        CHECK(read_file("tests/orch/test_issue_4393.cpp").empty(), "4393 AC5: no test_issue_4393");
+        CHECK(read_file("docs/design/4393-live-name-reuse.md").empty(), "4393 AC5: no design doc");
+    }
+}
+
 int run_test_agent_name_table_isolation() {
     std::println("=== Issue #2078: per-Evaluator orch agent name table ===");
     ac1_source_and_no_static();
@@ -1089,6 +1290,7 @@ int run_test_agent_name_table_isolation() {
     ac3925_5_soft_and_source();
     ac3937_1_prod_denies_live_scope();
     ac3937_5_soft_and_source();
+    ac4393_live_name_reuse();
     ac3729_1_scope_export_import_recv();
     ac3729_2_stash_bounded();
     ac3729_4_join_observe_only();
