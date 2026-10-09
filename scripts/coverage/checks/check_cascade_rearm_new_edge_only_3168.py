@@ -16,8 +16,9 @@
 #     - In the rearm_observed_mid_loop branch (when want_partial && rearmed):
 #       - Walk [initial_deferred_edges_size, current) under shared
 #         dep_graph_mtx_ and snapshot the new-edge range
-#       - For edges touching THIS define (caller or callee == name), mark
-#         only those blocks via mark_block_dirty (precise, idempotent)
+#       - For edges touching THIS define (caller or callee == name), dirty
+#         the define via one mark_blocks_dirty span per function (#4411;
+#         one SoA fence, not N mark_block_dirty calls)
 #       - Bump cascade_rearm_new_edge_only_total + keep want_partial true
 #         (partial peel preserved)
 #     - Defensive fallback (new-edge set empty / cannot be attributed):
@@ -97,8 +98,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/compiler/service.ixx",
-        r"it->second\.mark_block_dirty\(fi,\ bi\)",
-        "service: precise mark_block_dirty used in attribution",
+        r"it->second\.mark_blocks_dirty\(fi,\ ids\)",
+        "service: one mark_blocks_dirty span per function (#4411)",
     ),
     (
         "src/compiler/service.ixx",
@@ -241,7 +242,7 @@ def _self_test() -> int:
                 }
             }
         }
-        for (fi, bi) it->second.mark_block_dirty(fi, bi);
+        it->second.mark_blocks_dirty(fi, ids);
         metrics_.cascade_rearm_new_edge_only_total.fetch_add(1, std::memory_order_relaxed);
         // Defensive last-resort: new-edge set empty or
         // cannot be attributed.

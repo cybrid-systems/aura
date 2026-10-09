@@ -9097,9 +9097,9 @@ public:
             if (rearm_observed_mid_loop && want_partial) {
                 // Issue #3168: prefer new-edge-only mark over full fallback.
                 // Walk [initial_deferred_edges_size, current) under shared
-                // dep_graph_mtx_ and mark only the target callee blocks for
-                // THIS define via mark_block_dirty. Last-resort full
-                // (mark_all_blocks_dirty + counter) preserved only when the
+                // dep_graph_mtx_. One matching edge dirties this define via
+                // one mark_blocks_dirty span per function (#4411). Last-resort
+                // full (mark_all_blocks_dirty + counter) only when the
                 // new-edge set is empty / cannot be attributed. Bumps
                 // cascade_rearm_new_edge_only_total when attribution succeeds
                 // (additive only — #3097 semantics unchanged).
@@ -9118,19 +9118,21 @@ public:
                     }
                 }
                 if (!new_edges_snapshot.empty()) {
-                    // Mark only the target blocks of the newly-armed edges
-                    // that touch THIS define (caller or callee == name).
-                    // mark_block_dirty is idempotent — re-applying the same
-                    // dirty bit is safe. block_dirty_per_func_ grows on demand.
+                    // Issue #4411: the edge is a (caller, callee) name pair
+                    // with no block id, so one match dirties the whole define.
+                    // One mark_blocks_dirty span per function is one SoA fence.
                     for (const auto& [caller_name, callee_name] : new_edges_snapshot) {
                         if (caller_name != name && callee_name != name)
                             continue;
                         const auto func_count = it->second.block_dirty_per_func_.size();
                         for (std::size_t fi = 0; fi < func_count; ++fi) {
-                            const auto block_count = it->second.block_dirty_per_func_[fi].size();
-                            for (std::uint32_t bi = 0; bi < block_count; ++bi) {
-                                it->second.mark_block_dirty(fi, bi);
-                            }
+                            const auto nblk = it->second.block_dirty_per_func_[fi].size();
+                            if (nblk == 0)
+                                continue;
+                            std::vector<std::uint32_t> ids(nblk);
+                            for (std::uint32_t bi = 0; bi < nblk; ++bi)
+                                ids[bi] = bi;
+                            it->second.mark_blocks_dirty(fi, ids);
                         }
                         attributed_new_edge = true;
                         break; // one match is enough to keep want_partial

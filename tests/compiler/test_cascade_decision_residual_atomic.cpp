@@ -409,8 +409,8 @@ int main() {
 // new-edge-only mark over mark_all_blocks_dirty. Snapshot
 // deferred_hybrid_edges_.size() at lock acquisition; in the
 // rearm_observed_mid_loop branch walk [initial_size, current) under
-// shared dep_graph_mtx_ and mark only the target callee blocks for
-// THIS define via mark_block_dirty. Last-resort full path preserved
+// shared dep_graph_mtx_ and dirty this define via one mark_blocks_dirty
+// span per function (#4411). Last-resort full path preserved
 // only when new-edge set is empty / cannot be attributed (#3097
 // semantics). Soft/Off + single-fiber + clean (armed==0): zero extra
 // (need_lock + defer_lock pattern preserved, AC2).
@@ -426,8 +426,19 @@ static void ac3168_1_production_rearm_new_edge_only() {
           "3168 AC1: attribution block cites #3168");
     CHECK(ixx.find("initial_deferred_edges_size") != std::string::npos,
           "3168 AC1: initial_deferred_edges_size snapshotted");
-    CHECK(ixx.find("mark_block_dirty(fi, bi)") != std::string::npos,
-          "3168 AC1: precise mark_block_dirty used in attribution");
+    const auto attr4411 = ixx.find("Issue #3168: prefer new-edge-only mark over full fallback");
+    CHECK(attr4411 != std::string::npos, "4411: attribution block present");
+    if (attr4411 != std::string::npos) {
+        const auto mark_win = ixx.substr(attr4411, 2800);
+        CHECK(mark_win.find("Issue #4411") != std::string::npos, "4411: cite");
+        CHECK(mark_win.find("it->second.mark_blocks_dirty(fi, ids)") != std::string::npos,
+              "4411: one mark_blocks_dirty span per function");
+        CHECK(mark_win.find("mark_block_dirty(fi, bi)") == std::string::npos,
+              "4411: rearm does not fence once per block");
+    }
+    CHECK(ixx.find("schema-4411") == std::string::npos, "4411: no schema-4411");
+    CHECK(read_file("tests/compiler/test_issue_4411.cpp").empty(), "4411: no invent test");
+    CHECK(read_file("docs/design/4411-rearm-batch-dirty.md").empty(), "4411: no design doc");
     CHECK(ixx.find("cascade_rearm_new_edge_only_total") != std::string::npos,
           "3168 AC1: counter bumped in attribution block");
     CHECK(ixx.find("Issue #3097") != std::string::npos ||
