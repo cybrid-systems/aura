@@ -106,6 +106,8 @@ static void ac4236_run_added_tests();
 // Issue #4237: RetryN compose arms RestartN with max_restarts=0 —
 // restart belief without re-spawn fuel (extend-in-place at end of file).
 static void ac4237_run_added_tests();
+// Issue #4401: orch:run-workflow outer ok + child scope for watch/residual.
+static void ac4401_run_added_tests();
 // #3206 production-face toggle (defined mid-file; the #2539 AC2 dev-face
 // pin and the #3052 AC4 both-face fixture below call it before its
 // definition point).
@@ -453,6 +455,8 @@ int run_test_failure_policy_bridge() {
     // Issue #4237: RestartN fuel face (pure policy-level ACs — no
     // scheduler involvement, safe anywhere in the runner).
     ac4237_run_added_tests();
+    // Issue #4401: run-workflow outer ok + child watch/residual.
+    ac4401_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -2665,6 +2669,312 @@ static void ac4236_run_added_tests() {
     ac4236_2_circuit_breaker_residual_cancels_scope();
     ac4236_3_explicit_report_only_observe_first();
     ac4236_4_source_cite_no_invent();
+}
+
+// ── Issue #4401: run-workflow outer ok + child watch/residual ──
+
+struct Ac4401ParkedS {
+    std::unique_ptr<aura::serve::Fiber> fiber;
+    aura::orch::AgentScope* root = nullptr;
+    aura::serve::Fiber* raw = nullptr;
+};
+
+static void ac4401_face_off() {
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    ac3206_set_prod(false);
+}
+
+// Session-root S is a not-Done handle with no liveness and no coop, so
+// watch_all classifies it Closed (RestartN bumps the skip counter) and
+// cancel_all would request_cancel. The fiber is never scheduled.
+static bool ac4401_arm_s(aura::compiler::CompilerService& cs, Ac4401ParkedS& s) {
+    auto probe = cs.eval(R"((orch:scope-spawn "probe-4401"))");
+    (void)probe;
+    s.root = aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator()));
+    if (!s.root)
+        return false;
+    s.fiber = std::make_unique<aura::serve::Fiber>([] {});
+    aura::orch::AgentHandle parked;
+    parked.ok = true;
+    parked.name = "S-4401";
+    parked.fiber = s.fiber.get();
+    parked.keepalive_interval_ms = 0;
+    auto& slot = s.root->adopt_handle_without_spec_for_test(std::move(parked));
+    s.raw = slot.fiber;
+    return slot.ok && s.raw && !s.raw->is_done() && !s.raw->is_cancel_requested();
+}
+
+static void ac4401_disarm(Ac4401ParkedS& s) {
+    if (s.raw)
+        s.raw->set_state(aura::serve::FiberState::Done);
+    aura::orch::reset_all_agent_scopes_for_test();
+    s.fiber.reset();
+    s.raw = nullptr;
+    s.root = nullptr;
+    ac4401_face_off();
+}
+
+static bool ac4401_s_on_root(const Ac4401ParkedS& s) {
+    if (!s.root)
+        return false;
+    for (const auto& h : s.root->handles()) {
+        if (h.name == "S-4401")
+            return true;
+    }
+    return false;
+}
+
+static std::string ac4401_run_workflow_slice() {
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto b = q.find("add(\"orch:run-workflow\"");
+    const auto e =
+        q.find("ObservabilityPrims::register_stats_impl", b == std::string::npos ? 0 : b);
+    if (b == std::string::npos || e == std::string::npos || e < b)
+        return {};
+    return q.substr(b, e - b);
+}
+
+static void ac4401_1_outer_ok_tracks_stage_status() {
+    std::println("\n--- #4401 AC1: outer ok=#f when a stage status is not ok ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    ac4401_face_off();
+    CompilerService cs;
+    ac3206_set_prod(true);
+    ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    auto invalid = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
+          (let ((w (orch:run-workflow (list h))))
+            (let ((st (vector-ref (hash-ref w "stages") 0)))
+              (if (and (not (hash-ref w "ok"))
+                       (= (hash-ref w "stages-failed") 1)
+                       (= (hash-ref w "stages-ok") 0)
+                       (not (hash-ref st "ok"))
+                       (string=? (hash-ref st "status") "invalid"))
+                  1 0))))
+    )");
+    CHECK(invalid && is_int(*invalid) && as_int(*invalid) == 1,
+          "4401 AC1: missing region keys → stage invalid and outer ok=#f");
+    auto ff = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () (error "boom")))
+                     "failure-policy" "fail-fast")))
+          (let ((w (orch:run-workflow (list h))))
+            (let ((st (vector-ref (hash-ref w "stages") 0)))
+              (if (and (not (hash-ref w "ok"))
+                       (= (hash-ref w "stages-failed") 1)
+                       (string=? (hash-ref st "status") "fail-fast"))
+                  1 0))))
+    )");
+    CHECK(ff && is_int(*ff) && as_int(*ff) == 1, "4401 AC1: fail-fast stage keeps outer ok=#f");
+    auto ok = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1)))))
+          (let ((w (orch:run-workflow (list h))))
+            (if (and (hash-ref w "ok")
+                     (= (hash-ref w "stages-failed") 0)
+                     (= (hash-ref w "stages-ok") 1))
+                1 0)))
+    )");
+    CHECK(ok && is_int(*ok) && as_int(*ok) == 1, "4401 AC1: a single ok stage keeps outer ok=#t");
+    auto empty = cs.eval(R"(
+        (let ((w (orch:run-workflow (vector))))
+          (if (and (hash-ref w "ok") (= (hash-ref w "stages-failed") 0)) 1 0))
+    )");
+    CHECK(empty && is_int(*empty) && as_int(*empty) == 1,
+          "4401 AC1: empty stages stay ok=#t (no hard deny)");
+    ac4401_face_off();
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4401_2_residual_cancel_spares_session_s() {
+    std::println("\n--- #4401 AC2: production residual cancel hits the child, not S ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    ac4401_face_off();
+    CompilerService cs;
+    Ac4401ParkedS s;
+    CHECK(ac4401_arm_s(cs, s), "4401 AC2: session-root S armed");
+    ac3206_set_prod(true);
+    CHECK(s.raw && !s.raw->is_cancel_requested(), "4401 AC2: S not cancelled before workflow");
+    const auto children0 = s.root->child_count();
+    const auto cancel0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    auto r = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
+          (let ((w (orch:run-workflow (list h) :residual 'cancel)))
+            (let ((st (vector-ref (hash-ref w "stages") 0)))
+              (if (and (not (hash-ref w "ok"))
+                       (= (hash-ref w "stages-failed") 1)
+                       (string=? (hash-ref st "status") "invalid")
+                       (string=? (hash-ref w "residual-action") "cancel"))
+                  1 0))))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4401 AC2: invalid stage, outer ok=#f, residual-action=cancel");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == cancel0 + 1,
+          "4401 AC2: residual cancel still recorded");
+    CHECK(s.raw && !s.raw->is_cancel_requested(),
+          "4401 AC2: session-root S was not request_cancel'd");
+    CHECK(ac4401_s_on_root(s), "4401 AC2: S handle remains on the session root");
+    CHECK(s.root && s.root->child_count() == children0 + 1,
+          "4401 AC2: run-workflow used one child scope");
+    ac4401_disarm(s);
+}
+
+static void ac4401_3_watch_does_not_restart_s() {
+    std::println("\n--- #4401 AC3: :watch-scope #t does not RestartN session-root S ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    ac4401_face_off();
+    CompilerService cs;
+    Ac4401ParkedS s;
+    CHECK(ac4401_arm_s(cs, s), "4401 AC3: session-root S armed");
+    ac3206_set_prod(true);
+    const auto children0 = s.root->child_count();
+    const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load();
+    auto r = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2))
+                     "watch-scope" #t
+                     "failure-policy" "retry-n"
+                     "max-retries" 2)))
+          (let ((w (orch:run-workflow (list h))))
+            (let ((st (vector-ref (hash-ref w "stages") 0)))
+              (if (and (not (hash-ref w "ok"))
+                       (string=? (hash-ref st "status") "invalid")
+                       (hash-ref st "watch-scope"))
+                  1 0))))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4401 AC3: watch-scope stage still denied (status=invalid, outer ok=#f)");
+    CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load() == skip0,
+          "4401 AC3: RestartN did not see session-root S");
+    CHECK(s.raw && !s.raw->is_cancel_requested(), "4401 AC3: watch did not cancel S");
+    CHECK(ac4401_s_on_root(s), "4401 AC3: S stays on the session root");
+    CHECK(s.root && s.root->child_count() == children0 + 1,
+          "4401 AC3: watch ran against this run's child");
+    ac4401_disarm(s);
+}
+
+static void ac4401_4_join_drain_report_defer_soft() {
+    std::println("\n--- #4401 AC4: join-drain child; Report/Defer/Soft stay observe ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    ac4401_face_off();
+    CompilerService cs;
+    Ac4401ParkedS s;
+    CHECK(ac4401_arm_s(cs, s), "4401 AC4: session-root S armed");
+    ac3206_set_prod(true);
+    const auto drain0 = g_orch_module_stats.workflow_residual_join_drain_total.load();
+    const auto cancel0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    auto jd = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
+          (let ((w (orch:run-workflow (list h) :residual 'join-drain)))
+            (if (and (not (hash-ref w "ok"))
+                     (string=? (hash-ref w "residual-action") "join-drain"))
+                1 0)))
+    )");
+    CHECK(jd && is_int(*jd) && as_int(*jd) == 1,
+          "4401 AC4: production join-drain residual-action=join-drain");
+    CHECK(g_orch_module_stats.workflow_residual_join_drain_total.load() == drain0 + 1,
+          "4401 AC4: join-drain counter +1");
+    CHECK(s.raw && !s.raw->is_cancel_requested(), "4401 AC4: join-drain did not cancel S");
+    auto rep = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
+          (let ((w (orch:run-workflow (list h) :residual 'report)))
+            (if (string=? (hash-ref w "residual-action") "observe") 1 0)))
+    )");
+    CHECK(rep && is_int(*rep) && as_int(*rep) == 1, "4401 AC4: production Report stays observe");
+    auto def = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
+          (let ((w (orch:run-workflow (list h) :residual 'defer)))
+            (if (string=? (hash-ref w "residual-action") "observe") 1 0)))
+    )");
+    CHECK(def && is_int(*def) && as_int(*def) == 1, "4401 AC4: production Defer stays observe");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == cancel0,
+          "4401 AC4: Report/Defer/join-drain did not bump cancel");
+    CHECK(s.raw && !s.raw->is_cancel_requested(), "4401 AC4: Report/Defer did not cancel S");
+    ac3206_set_prod(false);
+    const auto soft_cancel0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    auto soft = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () (error "boom")))
+                     "failure-policy" "fail-fast")))
+          (let ((w (orch:run-workflow (list h) :residual 'cancel)))
+            (let ((st (vector-ref (hash-ref w "stages") 0)))
+              (if (and (not (hash-ref w "ok"))
+                       (string=? (hash-ref st "status") "fail-fast")
+                       (string=? (hash-ref w "residual-action") "observe"))
+                  1 0))))
+    )");
+    CHECK(soft && is_int(*soft) && as_int(*soft) == 1,
+          "4401 AC4: Soft Cancel is observe and outer ok=#f");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == soft_cancel0,
+          "4401 AC4: Soft cancel-total unchanged");
+    CHECK(s.raw && !s.raw->is_cancel_requested(), "4401 AC4: Soft did not cancel S");
+    auto soft_ok = cs.eval(R"(
+        (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
+          (let ((w (orch:run-workflow (list h))))
+            (if (hash-ref w "ok") 1 0)))
+    )");
+    CHECK(soft_ok && is_int(*soft_ok) && as_int(*soft_ok) == 1,
+          "4401 AC4: Soft two-task stage still runs (region-key deny stays production)");
+    ac4401_disarm(s);
+}
+
+static void ac4401_5_source_cite_no_invent() {
+    std::println("\n--- #4401 AC5: child scope cite; no new query key; no invent ---");
+    const auto slice = ac4401_run_workflow_slice();
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    CHECK(!slice.empty(), "4401 AC5: run-workflow slice found");
+    CHECK(slice.find("Issue #4401") != std::string::npos, "4401 AC5: prim cites #4401");
+    CHECK(slice.find("auto& wf_scope = wf_root.spawn_child();") != std::string::npos,
+          "4401 AC5: this run uses spawn_child");
+    CHECK(slice.find("wf_scope.watch_all") != std::string::npos,
+          "4401 AC5: watch_all stays on the child");
+    CHECK(slice.find("apply_residual_reclaim_action(wf_scope, w)") != std::string::npos,
+          "4401 AC5: residual cancel|join-drain stays on the child");
+    CHECK(slice.find("wf_root.watch_all") == std::string::npos, "4401 AC5: root is not watched");
+    CHECK(slice.find("apply_residual_reclaim_action(wf_root") == std::string::npos,
+          "4401 AC5: residual does not take the session root");
+    CHECK(slice.find("{\"ok\", make_bool(stages_failed == 0)}") != std::string::npos,
+          "4401 AC5: outer ok follows stages-failed");
+    CHECK(slice.find("{\"ok\", make_bool(true)}") == std::string::npos,
+          "4401 AC5: outer ok is not hardcoded #t");
+    CHECK(slice.find("if (status != \"ok\")") != std::string::npos,
+          "4401 AC5: any non-ok status (invalid/fail-fast/quota-exceeded) fails the stage");
+    CHECK(slice.find("lookup(\"parallel-intend\")") != std::string::npos,
+          "4401 AC5: stages still call parallel-intend");
+    CHECK(slice.find("decide_isolation") == std::string::npos,
+          "4401 AC5: workflow does not recompute isolation");
+    CHECK(q.find("query:orch-module-stats") != std::string::npos,
+          "4401 AC5: query:orch-module-stats unchanged");
+    CHECK(q.find("query:4401") == std::string::npos, "4401 AC5: no query:4401");
+    CHECK(q.find("class AgentRegistry") == std::string::npos, "4401 AC5: no AgentRegistry");
+    CHECK(t.find("ac4401_1_outer_ok_tracks_stage_status") != std::string::npos,
+          "4401 AC5: tests live in this file");
+    CHECK(read_file("tests/orch/test_issue_4401.cpp").empty(), "4401 AC5: no test_issue_4401.cpp");
+    CHECK(read_file("docs/design/4401-run-workflow-ok.md").empty(),
+          "4401 AC5: no docs/design/4401-*");
+}
+
+static void ac4401_run_added_tests() {
+    ac4401_1_outer_ok_tracks_stage_status();
+    ac4401_2_residual_cancel_spares_session_s();
+    ac4401_3_watch_does_not_restart_s();
+    ac4401_4_join_drain_report_defer_soft();
+    ac4401_5_source_cite_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
