@@ -1927,6 +1927,24 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
     return t1 == t2;
 }
 
+// Issue #4409: same-tag grounds whose identity is the payload, not the tag.
+// Scalar leaves stay out: type_equals' default is false when the ids differ,
+// which would reject distinct interned Int/Bool/String ids. FORALL stays on
+// consistent_instance (type_equals also requires the same var index).
+static bool structural_same_tag_ground(TypeTag tag) noexcept {
+    switch (tag) {
+        case TypeTag::VARIANT:
+        case TypeTag::LINEAR:
+        case TypeTag::RECORD:
+        case TypeTag::MODULE:
+        case TypeTag::EFFECT:
+        case TypeTag::CAPABILITY:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     // Issue #383: bump the consistent_unify counter
     // for observability. Every call (success or
@@ -2045,7 +2063,10 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
             // concrete non-var grounds with unequal tags — not only
             // primitive pairs (List~Int, distinct ADT names, PAIR~VECTOR,
             // etc.). Int↔Float stays the single intentional numeric
-            // coercion; same-tag structural consistency is unchanged.
+            // coercion.
+            // Issue #4409: equal tags are not a free pass when the TypeIds
+            // differ. VARIANT / LINEAR / RECORD / MODULE / EFFECT /
+            // CAPABILITY go through type_equals. Scalars do not.
             if (a != b && !is_intentional_numeric_coercion) {
                 if (metrics_) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
@@ -2053,6 +2074,14 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
                                                                          std::memory_order_relaxed);
                 }
                 return false; // hard TypeError — early Agent feedback
+            }
+            if (a == b && t1 != t2 && structural_same_tag_ground(a) && !reg_.type_equals(t1, t2)) {
+                if (metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->gradual_ground_incompatible_error_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                return false;
             }
         }
         // Issue #2992: do NOT flip this boolean — program continues. Agent
@@ -2139,6 +2168,10 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
             const bool numeric = (a == TypeTag::INT && b == TypeTag::FLOAT) ||
                                  (a == TypeTag::FLOAT && b == TypeTag::INT);
             if (a != b && !numeric)
+                return false;
+            // Issue #4409: same tag, different TypeId. Width/nominal
+            // structure comes from is_subtype. Soft stays return true.
+            if (a == b && sub != sup && structural_same_tag_ground(a) && !reg_.is_subtype(sub, sup))
                 return false;
         }
         return true;
@@ -4000,6 +4033,8 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
 // unify stays true (program continues). Production+Strict hard-rejects
 // in consistent_unify (boolean false — no CastOp). Dynamic ~ T and
 // Int ↔ Float stay quiet.
+// Issue #4409: a failed same-tag structural compare uses this same stamp
+// so the check_flat success arm cannot stay silent.
 void InferenceEngine::maybe_report_ground_inconsistency(TypeId inferred, TypeId expected) {
     const auto mode = effective_gradual_permissiveness();
     if (mode == GradualPermissiveness::Permissive)
@@ -4020,7 +4055,11 @@ void InferenceEngine::maybe_report_ground_inconsistency(TypeId inferred, TypeId 
         return t == TypeTag::INT || t == TypeTag::BOOL || t == TypeTag::STRING ||
                t == TypeTag::FLOAT || t == TypeTag::VOID;
     };
-    if (!is_prim(from_tag) || !is_prim(to_tag) || from_tag == to_tag)
+    // Issue #4409: equal structural tags are not "already consistent".
+    // Scalars with the same tag stay quiet (distinct interned ids).
+    const bool structural_mismatch = from_tag == to_tag && structural_same_tag_ground(from_tag) &&
+                                     !reg_.type_equals(inferred, expected);
+    if (!structural_mismatch && (!is_prim(from_tag) || !is_prim(to_tag) || from_tag == to_tag))
         return;
     // Intentional numeric allow-list stays silent / Note-level.
     if ((from_tag == TypeTag::INT && to_tag == TypeTag::FLOAT) ||
