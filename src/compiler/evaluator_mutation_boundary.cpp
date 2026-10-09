@@ -5237,6 +5237,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const bool batch_active =
             ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
         typed_audit::InvariantAuditResult inv{};
+        // Issue #4402: epoch pair is the Mutation epoch. mid_audit stays
+        // the session audit mid (mutation_id only).
+        const auto mut_epoch = ::aura::core::current_mutation_epoch();
         // Issue #3778: join SSOT (cp.audit_mid / session / join_audit_and_se_mid)
         // — never stamp defuse_version_ as the Typed/SE/Occurrence mid.
         std::uint64_t mid_audit = 0;
@@ -5250,14 +5253,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 mid_audit = typed_audit::join_audit_and_se_mid(0);
         }
         (void)ev_->run_typed_mutation_invariant_audit(mid_audit, "outermost-pre-persist", 0,
-                                                      mid_audit, mid_audit,
+                                                      mut_epoch, mut_epoch,
                                                       /*composite_mode=*/false, &inv);
         if (!inv.adt_ok)
             audit_ok = false;
         if (batch_active) {
             typed_audit::CompositeTxnCommitResult ccr{};
-            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mid_audit,
-                                                 mid_audit,
+            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mut_epoch,
+                                                 mut_epoch,
                                                  /*nested=*/false, /*batch_active=*/true, &ccr) &&
                        audit_ok;
         } else if (mutated) {
