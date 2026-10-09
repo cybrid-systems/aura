@@ -4337,16 +4337,31 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     aura_process_mutation_boundary_held_exit();
     aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
     aura::gc_hooks::release_mutation_hold_defer();
+    bool released_physical = false;
     if (region_mode_) {
         if (region_lock_.owns_lock()) {
             region_shard_occ_clear(region_shard_);
             region_lock_.unlock();
             ev_->workspace_region_holders_[region_shard_].fetch_sub(1, std::memory_order_relaxed);
         }
-        if (shared_lock_.owns_lock())
+        if (shared_lock_.owns_lock()) {
             shared_lock_.unlock();
+            released_physical = true;
+        }
     } else if (lock_.owns_lock()) {
         lock_.unlock();
+        released_physical = true;
+    }
+    // Issue #4407: C-ABI lock_workspace_shared/unique under this Guard only
+    // bumps workspace_lock_adopt_depth_tls and lock_order. The unlock above
+    // freed workspace_mtx_; those layers must drop on this thread or
+    // is_held(Workspace) stays true while a peer lock()s the mutex. A
+    // foreign fiber never reaches this helper (same-fiber gate).
+    if (released_physical) {
+        while (Evaluator::workspace_lock_adopt_depth_tls() > 0) {
+            --Evaluator::workspace_lock_adopt_depth_tls();
+            aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+        }
     }
     aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
     cancel_force_released_ = true;

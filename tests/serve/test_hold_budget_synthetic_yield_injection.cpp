@@ -21,7 +21,9 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/lock_order_audit.h"
 #include "compiler/mutation_hold_budget.h"
+#include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/gc_hooks.h" // #3825 MutationHold defer release check
 #include "serve/fiber.h"
@@ -31,6 +33,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <print>
@@ -2373,6 +2376,342 @@ int run_test_hold_budget_no_edge_quarantine_3859() {
     return failed == 0 ? 0 : 1;
 }
 
+// Issue #4407: file-scope native so aura_register_fn can call it. Slow arm
+// holds ~300ms only when the body actually runs, so a peer try_lock can
+// observe overlap. The fixed poll returns before this function.
+static std::atomic<int> g4407_slow{0};
+static std::atomic<int> g4407_native_ran{0};
+static std::atomic<int> g4407_native_in{0};
+static std::atomic<int> g4407_peer_in{0};
+static std::atomic<int> g4407_overlap{0};
+
+extern "C" int64_t aura4407_hold_budget_native(int64_t* /*locals*/, uint32_t /*argc*/) {
+    if (g4407_slow.load(std::memory_order_acquire) == 0) {
+        g4407_native_ran.store(1, std::memory_order_release);
+        return 7;
+    }
+    g4407_native_in.store(1, std::memory_order_release);
+    g4407_native_ran.store(1, std::memory_order_release);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (g4407_peer_in.load(std::memory_order_acquire) != 0)
+            g4407_overlap.store(1, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (g4407_peer_in.load(std::memory_order_acquire) != 0)
+        g4407_overlap.store(1, std::memory_order_release);
+    g4407_native_in.store(0, std::memory_order_release);
+    return 7;
+}
+
+extern "C" {
+void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
+                      int32_t arg_count, int32_t env_count);
+int64_t aura_alloc_closure(int64_t func_id);
+void aura_closure_set_env_gen(int64_t closure_id, uint64_t gen);
+int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int64_t* args, int64_t argc);
+uint64_t aura_get_aot_live_env_frame_version(void);
+void aura_free_closure(int64_t closure_id);
+}
+
+// Issue #4407: hold-budget force-release inside
+// aura_closure_dispatch_native_checked dropped workspace_mtx_ and still
+// entered native, leaving C-ABI adopt depth so is_held(Workspace) stayed
+// true. Production reject: a non-zero same-fiber poll returns before
+// native, adopt depth and lock_order drop with that release, and a second
+// thread locks the mutex while the Guard object is still alive.
+int run_test_hold_budget_dispatch_force_release_4407() {
+    std::println("=== Issue #4407: dispatch force-release returns before native ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    {
+        std::println("\n--- AC1: source — poll return, adopt drain, no foreign unlock ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto evx = read_file("src/compiler/evaluator.ixx");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        CHECK(!rt.empty(), "4407: aura_jit_runtime.cpp readable");
+        CHECK(!emb.empty(), "4407: evaluator_mutation_boundary.cpp readable");
+        const auto poll = rt.find("const int hold_budget_released =");
+        const auto canary = poll == std::string::npos
+                                ? std::string::npos
+                                : rt.rfind("NativeMovingCanary native_moving_canary", poll);
+        const auto ret = rt.find("if (hold_budget_released != 0 || safepoint_released != 0)", poll);
+        const auto fn_locals =
+            ret == std::string::npos ? std::string::npos : rt.find("fn(locals", ret);
+        const auto entry_fn =
+            ret == std::string::npos ? std::string::npos : rt.find("entry.fn(", ret);
+        CHECK(canary != std::string::npos && canary < poll, "4407: canary stays before the polls");
+        CHECK(poll != std::string::npos && ret != std::string::npos && poll < ret,
+              "4407: both polls run before the return");
+        CHECK(fn_locals != std::string::npos && entry_fn != std::string::npos && ret < fn_locals &&
+                  ret < entry_fn,
+              "4407: return is before fn(locals and entry.fn");
+        const auto between = (canary != std::string::npos && ret != std::string::npos)
+                                 ? rt.substr(canary, ret - canary)
+                                 : std::string{};
+        CHECK(between.find("Issue #4407") != std::string::npos, "4407: runtime cites the issue");
+        CHECK(between.find("Issue #3951") != std::string::npos, "4407: #3951 comment stays");
+        CHECK(between.find("foreign thread") != std::string::npos,
+              "4407: foreign-thread phrase stays");
+        CHECK(between.find("Issue #3988") != std::string::npos, "4407: #3988 comment stays");
+        CHECK(between.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint()") !=
+                  std::string::npos,
+              "4407: try_hold poll still called");
+        CHECK(between.find("aura_jit_poll_hold_budget_safepoint()") != std::string::npos,
+              "4407: safepoint poll still called");
+        CHECK(between.find("(void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint") ==
+                  std::string::npos,
+              "4407: try_hold result is not discarded");
+        CHECK(between.find("(void)aura_jit_poll_hold_budget_safepoint") == std::string::npos,
+              "4407: safepoint result is not discarded");
+        CHECK(between.find("aura_unlock_workspace_read") == std::string::npos,
+              "4407: early return does not unlock_shared");
+        const auto fr =
+            emb.find("void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_");
+        CHECK(fr != std::string::npos, "4407: force_release helper present");
+        const auto frwin = fr == std::string::npos ? std::string{} : emb.substr(fr, 2200);
+        CHECK(frwin.find("Issue #4407") != std::string::npos,
+              "4407: force_release cites the issue");
+        CHECK(frwin.find("workspace_lock_adopt_depth_tls") != std::string::npos,
+              "4407: force_release drains adopt depth");
+        CHECK(frwin.find("on_release") != std::string::npos,
+              "4407: force_release pairs lock_order on_release");
+        CHECK(emb.find("if (!inbody_force_exited_)") != std::string::npos,
+              "4407: dtor inbody gate literal stays");
+        const auto holder = emb.find("aura_evaluator_force_release_outermost_holder");
+        CHECK(holder != std::string::npos, "4407: outermost holder helper present");
+        const auto hwin = holder == std::string::npos ? std::string{} : emb.substr(holder, 1800);
+        CHECK(hwin.find("if (!same)") != std::string::npos,
+              "4407: foreign arm still does not unlock");
+        CHECK(evx.find("workspace_lock_adopt_depth_for_test") != std::string::npos,
+              "4407: adopt depth test accessor");
+        CHECK(evx.find("A stale unlock must not unlock_shared") != std::string::npos,
+              "4407: stale shared unlock is a no-op");
+        CHECK(mhb.find("schema-4407") == std::string::npos, "4407: no new query key");
+        CHECK(mhb.find("g_4407_") == std::string::npos,
+              "4407: no new counter in hold-budget header");
+        CHECK(rt.find("g_4407_") == std::string::npos, "4407: no g_4407_ in runtime");
+        CHECK(emb.find("g_4407_") == std::string::npos, "4407: no g_4407_ in mutation boundary");
+        CHECK(read_file("tests/serve/test_issue_4407.cpp").empty(), "4407: no test_issue_4407.cpp");
+        CHECK(read_file("tests/issues/test_issue_4407.cpp").empty(),
+              "4407: no tests/issues/test_issue_4407.cpp");
+        CHECK(read_file("docs/design/4407-hold-budget-dispatch.md").empty(),
+              "4407: no docs/design");
+    }
+
+    {
+        std::println("\n--- AC2: production poll returns before native; peer locks ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::compiler::lock_order::is_held;
+        using aura::compiler::lock_order::Level;
+        using aura::serve::Scheduler;
+
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        aura::compiler::security::apply_production_security_defaults();
+        CHECK(std::getenv("AURA_SANDBOX") == nullptr, "4407: sandbox unset while arming");
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "4407: production defaults active");
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "4407: reject_enabled under production");
+
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        struct RestoreOff {
+            Evaluator* ev;
+            ~RestoreOff() {
+                ::setenv("AURA_SANDBOX", "off", 1);
+                aura::compiler::security::apply_production_security_defaults();
+                aura::compiler::typed_audit::apply_dev_audit_defaults();
+                if (ev)
+                    ev->set_effect_sandbox_mode(0);
+                Evaluator::set_query_evaluator(nullptr);
+            }
+        } restore{&cs.evaluator()};
+
+        cs.register_jit_primitives();
+        constexpr int64_t kFn = 463;
+        aura_register_fn(kFn, &aura4407_hold_budget_native, 0, 0, 0);
+
+        g4407_slow.store(0, std::memory_order_relaxed);
+        g4407_native_ran.store(0, std::memory_order_relaxed);
+        g4407_native_in.store(0, std::memory_order_relaxed);
+        g4407_peer_in.store(0, std::memory_order_relaxed);
+        g4407_overlap.store(0, std::memory_order_relaxed);
+
+        std::atomic<int> go{0};
+        std::atomic<int> ran{0};
+        std::atomic<int> fiber_exc{0};
+        std::atomic<int> saw_cancel{0};
+        std::atomic<int64_t> cid_store{-1};
+        std::atomic<int> warm_rc{-1};
+        std::atomic<int> warm_native{0};
+        std::atomic<int> adopt_before{-1};
+        std::atomic<int> adopt_after_warm{-1};
+        std::atomic<int> held_after_warm{-1};
+        std::atomic<int> deny_rc{-1};
+        std::atomic<int> deny_native{-1};
+        std::atomic<int> adopt_after{-1};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> unlock_threw{-1};
+        std::atomic<int> peer_locked{0};
+        std::atomic<int> peer_done{0};
+        std::atomic<int> peer_adopt{-1};
+        std::atomic<int> native_in_at_lock{-1};
+
+        auto* ev = &cs.evaluator();
+        std::thread peer([ev, &go, &peer_locked, &peer_done, &peer_adopt, &native_in_at_lock]() {
+            const auto go_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+            while (go.load(std::memory_order_acquire) == 0 &&
+                   std::chrono::steady_clock::now() < go_deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            if (go.load(std::memory_order_acquire) == 0) {
+                peer_done.store(1, std::memory_order_release);
+                return;
+            }
+            const auto lock_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (std::chrono::steady_clock::now() < lock_deadline) {
+                if (ev->try_lock_workspace_unique()) {
+                    peer_adopt.store(
+                        static_cast<int>(Evaluator::workspace_lock_adopt_depth_for_test()),
+                        std::memory_order_relaxed);
+                    const int nin = g4407_native_in.load(std::memory_order_acquire);
+                    native_in_at_lock.store(nin, std::memory_order_relaxed);
+                    if (nin != 0)
+                        g4407_overlap.store(1, std::memory_order_release);
+                    g4407_peer_in.store(1, std::memory_order_release);
+                    ev->unlock_workspace_unique();
+                    peer_locked.store(1, std::memory_order_release);
+                    peer_done.store(1, std::memory_order_release);
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            peer_done.store(1, std::memory_order_release);
+        });
+
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            try {
+                bool ok = true;
+                {
+                    Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                    auto* f = aura::serve::g_current_fiber;
+                    if (f != nullptr && is_held(Level::Workspace)) {
+                        const auto cid = aura_alloc_closure(kFn);
+                        cid_store.store(cid, std::memory_order_relaxed);
+                        ev->lock_workspace_shared();
+                        const auto live = aura_get_aot_live_env_frame_version();
+                        aura_closure_set_env_gen(cid, live);
+                        const auto adopt1 = Evaluator::workspace_lock_adopt_depth_for_test();
+                        adopt_before.store(static_cast<int>(adopt1), std::memory_order_relaxed);
+
+                        g4407_slow.store(0, std::memory_order_release);
+                        g4407_native_ran.store(0, std::memory_order_release);
+                        const auto warm = aura_closure_dispatch_native_checked(cid, nullptr, 0);
+                        warm_rc.store(static_cast<int>(warm), std::memory_order_relaxed);
+                        warm_native.store(g4407_native_ran.load(std::memory_order_acquire),
+                                          std::memory_order_relaxed);
+                        adopt_after_warm.store(
+                            static_cast<int>(Evaluator::workspace_lock_adopt_depth_for_test()),
+                            std::memory_order_relaxed);
+                        held_after_warm.store(is_held(Level::Workspace) ? 1 : 0,
+                                              std::memory_order_relaxed);
+
+                        if (warm == 7 && g4407_native_ran.load(std::memory_order_acquire) == 1 &&
+                            adopt1 >= 1 && Evaluator::workspace_lock_adopt_depth_for_test() >= 1 &&
+                            is_held(Level::Workspace)) {
+                            g4407_slow.store(1, std::memory_order_release);
+                            g4407_native_ran.store(0, std::memory_order_release);
+                            g4407_native_in.store(0, std::memory_order_release);
+                            g4407_peer_in.store(0, std::memory_order_release);
+                            g4407_overlap.store(0, std::memory_order_release);
+                            f->request_hold_budget_cancel();
+                            aura::compiler::g_hold_budget_cancel_armed_ns.store(
+                                1, std::memory_order_release);
+                            go.store(1, std::memory_order_release);
+                            const auto denied =
+                                aura_closure_dispatch_native_checked(cid, nullptr, 0);
+                            deny_rc.store(static_cast<int>(denied), std::memory_order_relaxed);
+                            deny_native.store(g4407_native_ran.load(std::memory_order_acquire),
+                                              std::memory_order_relaxed);
+                            adopt_after.store(
+                                static_cast<int>(Evaluator::workspace_lock_adopt_depth_for_test()),
+                                std::memory_order_relaxed);
+                            held_after.store(is_held(Level::Workspace) ? 1 : 0,
+                                             std::memory_order_relaxed);
+                            for (int i = 0;
+                                 i < 400 && peer_done.load(std::memory_order_acquire) == 0; ++i) {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                            }
+                            int threw = 0;
+                            try {
+                                ev->unlock_workspace_shared();
+                            } catch (...) {
+                                threw = 1;
+                            }
+                            unlock_threw.store(threw, std::memory_order_relaxed);
+                            saw_cancel.store(1, std::memory_order_release);
+                        }
+                    }
+                }
+            } catch (const std::exception& ex) {
+                std::println(std::cerr, "4407 fiber exception: {}", ex.what());
+                fiber_exc.store(1, std::memory_order_relaxed);
+            } catch (...) {
+                fiber_exc.store(1, std::memory_order_relaxed);
+            }
+            ran.store(1, std::memory_order_release);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 1500 && ran.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        sched.stop();
+        io.join();
+        if (peer.joinable())
+            peer.join();
+        if (cid_store.load(std::memory_order_relaxed) >= 0)
+            aura_free_closure(cid_store.load(std::memory_order_relaxed));
+
+        std::println("4407 warm={} native={} adopt_before={} adopt_warm={} held_warm={} exc={}",
+                     warm_rc.load(), warm_native.load(), adopt_before.load(),
+                     adopt_after_warm.load(), held_after_warm.load(), fiber_exc.load());
+        std::println("4407 deny={} native={} adopt={} held={} peer={} overlap={} in_at_lock={} "
+                     "peer_adopt={} unlock_threw={} saw={}",
+                     deny_rc.load(), deny_native.load(), adopt_after.load(), held_after.load(),
+                     peer_locked.load(), g4407_overlap.load(), native_in_at_lock.load(),
+                     peer_adopt.load(), unlock_threw.load(), saw_cancel.load());
+
+        CHECK(fiber_exc.load() == 0, "4407: fiber did not throw");
+        CHECK(ran.load() == 1, "4407: fiber body finished");
+        CHECK(warm_rc.load() == 7, "4407: warm dispatch reached native and returned 7");
+        CHECK(warm_native.load() == 1, "4407: warm native ran");
+        CHECK(adopt_before.load() >= 1, "4407: adopt depth > 0 before dispatch");
+        CHECK(adopt_after_warm.load() == adopt_before.load(),
+              "4407: warm unlock paired its own adopt layer");
+        CHECK(held_after_warm.load() == 1, "4407: warm left the guard holding Workspace");
+        CHECK(saw_cancel.load() == 1, "4407: cancel dispatch ran");
+        CHECK(deny_rc.load() == 0, "4407: cancel dispatch returned 0");
+        CHECK(deny_native.load() == 0, "4407: native body did not run after force-release");
+        CHECK(adopt_after.load() == 0, "4407: adopt depth is 0 after the poll");
+        CHECK(held_after.load() == 0, "4407: is_held(Workspace) is false while the guard lives");
+        CHECK(peer_locked.load() == 1, "4407: peer try_lock_workspace_unique succeeded");
+        CHECK(peer_adopt.load() == 0, "4407: peer took the physical mutex, not an adopt");
+        CHECK(native_in_at_lock.load() == 0, "4407: native was not in its body at peer lock");
+        CHECK(g4407_overlap.load() == 0, "4407: peer lock did not overlap the native body");
+        CHECK(unlock_threw.load() == 0, "4407: stale unlock_workspace_shared did not throw");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #4407 dispatch force-release: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -2402,6 +2741,9 @@ int main() {
     const int rc16 = run_test_hold_budget_prebody_synthetic_yield_4257();
     if (rc16 != 0)
         return rc16;
+    const int rc17 = run_test_hold_budget_dispatch_force_release_4407();
+    if (rc17 != 0)
+        return rc17;
     return rc1 != 0
                ? rc1
                : (rc2 != 0
