@@ -1117,6 +1117,13 @@ EOF
     local file_ms cold_ms hot_ms rebind_ms after_ms
     local rebind_budget=1
     [ "$AURA_ASAN" = 1 ] && rebind_budget=10
+    # CI release runners are shared and loaded: the same one-line rebind that
+    # lands in <1ms locally observes 2ms there (seen on 2026-10-09 twice).
+    # Keep the tight local budget; give CI a small slack — a relower storm is
+    # tens of ms, so 5 still separates the fast path from a regression.
+    if [ "$AURA_ASAN" != 1 ] && [ -n "${CI:-}" ]; then
+        rebind_budget=5
+    fi
     file_ms=$(printf '%s\n' "$out" | sed -n 's/^file=//p' | head -1)
     cold_ms=$(printf '%s\n' "$out" | sed -n 's/^cold=//p' | head -1)
     hot_ms=$(printf '%s\n' "$out" | sed -n 's/^hot=//p' | head -1)
