@@ -4946,6 +4946,11 @@ inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
     if (g_tls_invariant_deny_se_mid == mid)
         return; // one SE per deny (both helpers may run for the same deny)
     g_tls_invariant_deny_se_mid = mid;
+    // Issue #4402: SecurityEvent.epoch is the Mutation epoch at emit.
+    // Caller before/after (defuse delta, session mid, hygiene 0) stay on
+    // the typed trail. Do not copy them into this column. mutation_id
+    // stays the session audit mid.
+    epoch = ::aura::core::current_mutation_epoch();
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
     emit_security_event_durable(SecurityEventKind::InvariantFail, tenant_id, mid, epoch,

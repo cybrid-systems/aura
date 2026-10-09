@@ -28,6 +28,7 @@
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
+#include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
@@ -1446,6 +1447,170 @@ int run_test_security_audit_unify() {
               "3498 AC5: no test_issue_3498.cpp");
         CHECK(read_file("docs/design/3498-typed-miss-se-wal.md").empty(),
               "3498 AC5: no docs/design/3498-*");
+    }
+
+    // Issue #4402: invariant / boundary deny SecurityEvent.epoch is the
+    // Mutation epoch at emit. Caller before/after (defuse delta or the
+    // session mid) stay on the typed trail. mutation_id stays the session
+    // audit mid. Soft stays zero-cost. No new query key, no SE field.
+    {
+        std::println("\n--- #4402: invariant/boundary deny SE.epoch is Mutation epoch ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "4402: production_defaults_active");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted; no Mutate grant
+        const auto saved_epoch = aura::core::current_mutation_epoch();
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 4402);
+        CHECK(aura::core::current_mutation_epoch() == 4402, "4402: Mutation epoch armed");
+        const auto seq_fx = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        const bool effect_denied = !ev.check_and_record_effect_for_test(
+            kEffectMutate, kEffectMutate, "test:4402-effect", 0, /*tenant_id=*/7,
+            /*provenance_mutation_id=*/4402001);
+        CHECK(effect_denied, "4402: effect deny without a Mutate grant");
+        const auto seq_fx1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq_fx1 > seq_fx, "4402: effect deny advanced the SE ring");
+        const auto& effect = g_security_event_ring().ring[(seq_fx1 - 1) % kSecurityEventRingSize];
+        CHECK(effect.kind == SecurityEventKind::EffectDeny, "4402: effect row is EffectDeny");
+        CHECK(effect.epoch == 4402, "4402: effect row epoch is the Mutation epoch");
+
+        constexpr std::uint64_t kDefuseBefore = 11;
+        constexpr std::uint64_t kDefuseAfter = 22;
+        constexpr std::uint64_t kSessionMid = 4402011;
+        aura::compiler::typed_audit::composite_txn_exit();
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        aura::compiler::typed_audit::InvariantAuditResult bad;
+        bad.type_ok = false;
+        const auto seq_inv = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_invariant_audit_result(
+            kSessionMid, "structural", bad, kDefuseBefore, kDefuseAfter, /*node=*/0,
+            /*fiber=*/5, /*tenant=*/7);
+        const auto seq_inv1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq_inv1 > seq_inv, "4402: invariant deny advanced the SE ring");
+        const auto& inv = g_security_event_ring().ring[(seq_inv1 - 1) % kSecurityEventRingSize];
+        CHECK(inv.kind == SecurityEventKind::InvariantFail, "4402: kind InvariantFail");
+        CHECK(inv.mutation_id == kSessionMid, "4402: mutation_id stays the session mid");
+        CHECK(inv.epoch == aura::core::current_mutation_epoch(),
+              "4402: SE.epoch == current_mutation_epoch()");
+        CHECK(inv.epoch == effect.epoch, "4402: effect row and InvariantFail share epoch");
+        CHECK(inv.epoch != kDefuseAfter, "4402: SE.epoch is not the defuse after");
+        CHECK(inv.epoch != kSessionMid, "4402: SE.epoch is not the session mid");
+        TypedMutationAuditEvent te{};
+        CHECK(trail_find_by_mutation_id(kSessionMid, te), "4402: typed trail keeps the mid");
+        CHECK(te.before_epoch == kDefuseBefore && te.after_epoch == kDefuseAfter,
+              "4402: typed trail before/after stay the defuse delta");
+
+        ev.set_capability_tenant_id(7); // requester must match the tenant filter
+        auto q = cs.eval(R"((engine:metrics "query:security-audit" 8 7 5 0 4402011))");
+        CHECK(q.has_value(), "4402: query:security-audit by session mid");
+        bool saw_query = false;
+        if (q) {
+            for (const auto& ln : list_string_lines(cs, *q)) {
+                if (ln.find("kind=InvariantFail") != std::string::npos &&
+                    ln.find("mutation_id=4402011") != std::string::npos &&
+                    ln.find("epoch=4402") != std::string::npos &&
+                    ln.find("epoch=22") == std::string::npos)
+                    saw_query = true;
+            }
+        }
+        CHECK(saw_query, "4402: query prints Mutation epoch, not the defuse after");
+
+        // Pre-persist shape: caller passes the session mid as both epochs.
+        // SE still stamps the Mutation epoch; the trail keeps the caller pair.
+        aura::compiler::typed_audit::composite_txn_exit();
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        constexpr std::uint64_t kPreMid = 4402002;
+        const auto seq_b = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(
+            kPreMid, "rollback", /*before=*/kPreMid, /*after=*/kPreMid);
+        const auto seq_b1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq_b1 > seq_b, "4402: boundary deny advanced the SE ring");
+        const auto& bnd = g_security_event_ring().ring[(seq_b1 - 1) % kSecurityEventRingSize];
+        CHECK(bnd.kind == SecurityEventKind::InvariantFail, "4402: boundary kind InvariantFail");
+        CHECK(bnd.mutation_id == kPreMid, "4402: boundary mutation_id stays the session mid");
+        CHECK(bnd.epoch == 4402, "4402: boundary SE.epoch is the Mutation epoch, not the mid");
+        CHECK(bnd.epoch != kPreMid, "4402: boundary SE.epoch is not the passed session mid");
+        TypedMutationAuditEvent te_b{};
+        CHECK(trail_find_by_mutation_id(kPreMid, te_b), "4402: boundary trail keeps the mid");
+        CHECK(te_b.before_epoch == kPreMid && te_b.after_epoch == kPreMid,
+              "4402: boundary trail still records the caller epoch pair");
+
+        // Hygiene passes epoch 0. The SE column is still the Mutation epoch.
+        aura::compiler::typed_audit::composite_txn_exit();
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        constexpr std::uint64_t kHygMid = 4402003;
+        const auto seq_h = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::capture_macro_hygiene_audit(
+            "hygiene-4402", AuditOutcome::Error, /*node=*/3, /*fiber=*/5, /*tenant=*/7, kHygMid);
+        const auto seq_h1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq_h1 > seq_h, "4402: hygiene deny advanced the SE ring");
+        const auto& hyg = g_security_event_ring().ring[(seq_h1 - 1) % kSecurityEventRingSize];
+        CHECK(hyg.mutation_id == kHygMid, "4402: hygiene mutation_id stays the session mid");
+        CHECK(hyg.epoch == 4402, "4402: hygiene SE.epoch is the Mutation epoch, not 0");
+
+        apply_dev_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        const auto seq_soft = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::InvariantAuditResult soft_bad;
+        soft_bad.linear_ok = false;
+        aura::compiler::typed_audit::record_invariant_audit_result(
+            4402004, "structural", soft_bad, kDefuseBefore, kDefuseAfter, 0, 5, 7);
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(4402005, "rollback", 11,
+                                                                        22);
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq_soft,
+              "4402: Soft/Off invariant+boundary deny add no SE");
+
+        const auto typed = read_file("src/compiler/typed_mutation_audit.h");
+        const auto emit = typed.find("inline void emit_invariant_deny_se");
+        CHECK(emit != std::string::npos, "4402: emit_invariant_deny_se present");
+        const auto emit_body = typed.substr(emit, 4000);
+        const auto stamp = emit_body.find("current_mutation_epoch()");
+        const auto durable = emit_body.find("emit_security_event_durable");
+        CHECK(emit_body.find("Issue #4402") != std::string::npos, "4402: emit cites #4402");
+        CHECK(stamp != std::string::npos && durable != std::string::npos && stamp < durable,
+              "4402: emit stamps current_mutation_epoch() before the durable write");
+
+        const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto pre = boundary.find(
+            "run_typed_mutation_invariant_audit(mid_audit, \"outermost-pre-persist\"");
+        CHECK(pre != std::string::npos, "4402: pre-persist audit call present");
+        const auto pre_slice = boundary.substr(pre, 320);
+        CHECK(pre_slice.find("mut_epoch, mut_epoch") != std::string::npos,
+              "4402: pre-persist epoch pair is mut_epoch");
+        CHECK(pre_slice.find("mid_audit, mid_audit") == std::string::npos,
+              "4402: pre-persist does not copy the session mid into the epoch pair");
+        const auto comp =
+            boundary.find("composite_txn_commit(mid_audit, \"outermost-pre-persist\"");
+        CHECK(comp != std::string::npos, "4402: pre-persist composite call present");
+        const auto comp_slice = boundary.substr(comp, 240);
+        CHECK(comp_slice.find("mut_epoch") != std::string::npos,
+              "4402: composite epoch pair is mut_epoch");
+        CHECK(comp_slice.find("mid_audit, mid_audit") == std::string::npos,
+              "4402: composite does not copy the session mid into the epoch pair");
+        CHECK(boundary.find("slot.epoch_after = epoch_after;") != std::string::npos,
+              "4402: mutation-impact ring still stores epoch_after");
+        CHECK(boundary.find("epoch_after = defuse_version_.load") != std::string::npos,
+              "4402: mutation-impact epoch_after stays the defuse surrogate");
+
+        const auto seh = read_file("src/core/security_event.hh");
+        const auto ep = seh.find("std::uint64_t epoch = 0;");
+        const auto fib = seh.find("std::int64_t fiber_id = 0;");
+        CHECK(ep != std::string::npos && fib != std::string::npos && ep < fib,
+              "4402: SecurityEvent layout unchanged (epoch then fiber_id)");
+        CHECK(typed.find("query:4402") == std::string::npos, "4402: no query:4402 key");
+        CHECK(read_file("tests/compiler/test_issue_4402.cpp").empty(),
+              "4402: no test_issue_4402.cpp");
+
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, saved_epoch);
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
