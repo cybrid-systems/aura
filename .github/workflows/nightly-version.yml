@@ -41,7 +41,13 @@ jobs:
           echo "candidate ${tag} -> ${sha} (committer ${when})"
 
           for attempt in 1 2 3; do
-            current=$(gh api "repos/${repo}/git/ref/${ref}" --jq .object.sha 2>/dev/null || true)
+            # GET /git/ref/{ref} wants tags/<name>, not refs/tags/<name>.
+            # A 404 prints a JSON body on stdout; jq is not applied, and
+            # `|| true` would otherwise keep that body as the "current" sha.
+            current=$(gh api "repos/${repo}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null || true)
+            if [[ ! "${current}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              current=""
+            fi
             if [[ -z "${current}" ]]; then
               if gh api --method POST "repos/${repo}/git/refs" \
                   -f ref="${ref}" -f sha="${sha}" >/dev/null; then
@@ -55,13 +61,16 @@ jobs:
               echo "${tag} already at ${sha}"
               exit 0
             fi
-            status=$(gh api "repos/${repo}/compare/${current}...${sha}" --jq .status)
+            status=$(gh api "repos/${repo}/compare/${current}...${sha}" --jq .status) || {
+              echo "compare failed; retry ${attempt}"
+              continue
+            }
             echo "compare ${current:0:12}...${sha:0:12} = ${status}"
             case "${status}" in
               ahead)
                 gh api --method PATCH "repos/${repo}/git/refs/tags/${tag}" \
                   -f sha="${sha}" -F force=true >/dev/null
-                now=$(gh api "repos/${repo}/git/ref/${ref}" --jq .object.sha)
+                now=$(gh api "repos/${repo}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null || true)
                 if [[ "${now}" == "${sha}" ]]; then
                   echo "moved ${tag} -> ${sha}"
                   exit 0
