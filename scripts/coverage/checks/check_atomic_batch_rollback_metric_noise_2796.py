@@ -43,7 +43,9 @@ def main() -> int:
 
     pos = mut.find('add_mutate("mutate:atomic-batch"')
     if pos < 0:
-        pos = mut.find("mutate:atomic-batch")
+        # Issue #4392 lengthened the capture list, so clang-format wraps
+        # the name: add_mutate(\n        "mutate:atomic-batch".
+        pos = mut.find('"mutate:atomic-batch"')
     # Issue #3652: the pre-audit opt-out arm gained the #3542 MSE gate
     # (~1.5KB, incl. its own abort_batch_workspace call) — widen the window
     # so the throw/!sub_result/!ok abort paths stay counted (was 22000).

@@ -41,7 +41,9 @@ def main() -> int:
 
     pos = mut.find('add_mutate("mutate:atomic-batch"')
     if pos < 0:
-        pos = mut.find("mutate:atomic-batch")
+        # Issue #4392 lengthened the capture list, so clang-format wraps
+        # the name: add_mutate(\n        "mutate:atomic-batch".
+        pos = mut.find('"mutate:atomic-batch"')
     if pos < 0:
         fails.append("AC1: mutate:atomic-batch not found")
         ab_win = ""
@@ -52,7 +54,9 @@ def main() -> int:
         # the #2794 no-op path past 22000; bump to 26000.
         # Issue #3652: the pre-audit opt-out arm gained the #3542 MSE gate
         # (~1.5KB more) — bump to 30000 so the no-op path stays in-window.
-        ab_win = mut[pos : pos + 30000]
+        # Issue #4392: the production spine walk sits before the sub-op
+        # loop, so the bool-false no-op is past 30000. 50000 covers it.
+        ab_win = mut[pos : pos + 50000]
 
     # AC1: soft no-op path
     must("Issue #2794", "AC1", ab_win)

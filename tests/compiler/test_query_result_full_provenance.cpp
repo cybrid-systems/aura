@@ -41,6 +41,7 @@
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
 #include "orch/agent_spawn.h"
+#include "compiler/runtime_shared.h"
 
 #include <cstdint>
 #include <cstring>
@@ -1969,6 +1970,10 @@ void test_ac3993_1_packed_stamped_allows_when_cap_ok() {
     const auto log0 = ws ? ws->mutation_log_size() : 0;
     ev.set_effect_sandbox_mode(1);
     grant_tenant(1); // re-grant after Restricted (epoch / high-bits fence)
+    // #4385 mints a session mid when the noted join still equals the
+    // epoch. Pin the epoch the grants were bound to so this allow is
+    // checked against that row, not a mid the body never sees.
+    ev.note_boundary_audit_mid_for_test(aura::core::current_mutation_epoch());
     expect_true("3993 AC1: bind add_mutate packed",
                 cs.eval("(define r3993 (mutate:replace-type sr3993 \"Int\"))").has_value());
     auto eq_ok = cs.eval(
@@ -1982,6 +1987,7 @@ void test_ac3993_1_packed_stamped_allows_when_cap_ok() {
     expect_true("3993 AC1: topology write", ws && ws->mutation_log_size() > log0);
     if (!wal_was)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
+    ev.clear_boundary_audit_mid_for_test();
     ev.disarm_production_audit_defaults_for_test();
     aura::core::provenance::set_multi_tenant_env_active(false);
     aura::ast::clear_restamp_hot_cone_held_for_test();
@@ -3680,14 +3686,6 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     auto held_car = cs.eval("(car held4314)");
     expect_true("4314 AC1: packed car is NodeId", held_car && is_int(*held_car));
 
-    auto expect_stale = [&](const char* label, const char* expr) {
-        const std::string def = std::string("(define ") + label + " " + expr + ")";
-        expect_true(std::string("4314 AC1: bind ") + label, cs.eval(def).has_value());
-        auto eq = cs.eval(std::string("(and (pair? ") + label + " (equal? (car " + label +
-                          ") \"stale-ref\"))");
-        expect_true(std::string("4314 AC1: ") + label + " is stale-ref",
-                    eq && is_bool(*eq) && as_bool(*eq));
-    };
     // define installs a workspace binding and can advance generation
     // before the init runs. Resolve probes eval the call directly so
     // the just-captured ref is still the live occupant.
@@ -3703,6 +3701,11 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
             return false;
         const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
         return si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+    };
+    auto expect_stale = [&](const char* label, const char* expr) {
+        auto v = cs.eval(expr);
+        expect_true(std::string("4314 AC1: ") + label + " is stale-ref",
+                    is_stale_ref_pair(v, cs.evaluator()));
     };
     auto expect_resolves_hash = [&](const char* label, const char* expr) {
         auto v = cs.eval(expr);
@@ -3724,7 +3727,26 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     expect_stale("ch4314", "(query :children held4314)");
     expect_stale("pa4314", "(query :parent-stable held4314)");
     expect_stale("as4314", "(query:as-stable-ref held4314)");
-    expect_stale("mu4314", "(mutate:replace-subtree held4314 \"(lambda () 2)\")");
+    {
+        // Same face as the cow half: the mutate wrapper may replace the
+        // body's stale-ref with persist-reject after the boundary aborts.
+        auto mu = cs.eval("(mutate:replace-subtree held4314 \"(lambda () 2)\")");
+        const bool refused = is_stale_ref_pair(mu, cs.evaluator()) || [&] {
+            using aura::compiler::types::as_pair_idx;
+            using aura::compiler::types::as_string_idx;
+            using aura::compiler::types::is_pair;
+            using aura::compiler::types::is_string;
+            if (!mu || !is_pair(*mu))
+                return false;
+            auto& ev = cs.evaluator();
+            const auto p = static_cast<std::size_t>(as_pair_idx(*mu));
+            if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+                return false;
+            const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+            return si < ev.string_heap().size() && ev.string_heap()[si] == "persist-reject";
+        }();
+        expect_true("4314 AC1: mu4314 refuses stale handle", refused);
+    }
 
     // Re-query after the advance. The pre-advance QueryResult hash is
     // itself stale; a ref captured now carries the live wrap. Each
@@ -4018,6 +4040,369 @@ void test_ac4315_3_source_cite() {
                 !std::ifstream("docs/design/4315-set-code-install.md").good());
 }
 
+// Issue #4392: mutate:atomic-batch lockless helpers must not write a bare
+// NodeId as the current occupant under Restricted + multi-tenant production.
+std::string ac4392_heap_str(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_string;
+    if (!is_string(v))
+        return {};
+    const auto i = as_string_idx(v);
+    const auto heap = cs.evaluator().string_heap();
+    if (i >= heap.size())
+        return {};
+    return std::string(heap[i]);
+}
+
+bool ac4392_merr_kind(CompilerService& cs, std::string_view bound, std::string_view kind) {
+    auto v = cs.eval(std::string("(and (pair? ") + std::string(bound) + ") (equal? (car " +
+                     std::string(bound) + ") \"" + std::string(kind) + "\"))");
+    return v && is_bool(*v) && as_bool(*v);
+}
+
+void test_ac4392_lockless_batch_rejects_bare_nodeid() {
+    std::print("AC4392 -- production atomic-batch bare NodeId is stale-ref; "
+               "packed and schema-2 still run\n");
+    using aura::compiler::security::kCapSandbox;
+    using aura::compiler::security::kCapWildcard;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("4392: set-code",
+                cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")").has_value());
+    expect_true("4392: eval", cs.eval("(eval-current)").has_value());
+    // mid==0 binds the row to the current epoch. A non-zero mid is the
+    // session join the boundary will keep when it is not the epoch (#3964).
+    auto grant_tenant = [&](std::uint64_t t, std::uint64_t mid) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "4392-tenant");
+        const auto prov = aura_test_grant_prov(mid);
+        // Restricted TA fence: caller 0 + session_bound is the authorized
+        // mint, so the first TenantAdmin row lands with no prior admin.
+        // The durable re-grant (caller = t) then sees that bit. Tenant 7
+        // is not the #4322 kernel-self exemption, so dispatch still
+        // requires the string-only kCapSandbox mirror.
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin, prov,
+                                      /*single_use=*/false, /*session_bound=*/true,
+                                      /*caller_principal=*/0);
+        ev.grant_capability(std::string(kCapWildcard));
+        ev.grant_capability(std::string(kCapSandbox));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin, prov, false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard), prov,
+                                      false, false,
+                                      /*caller_principal=*/t);
+    };
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(7, 0);
+    ev.arm_production_audit_defaults_for_test();
+    apply_production_audit_defaults();
+    admit_clean_mutate_for_test();
+    std::filesystem::create_directories("build/test-wal-4392");
+    const bool wal_was = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_was) {
+        expect_true("4392: mutation WAL enable",
+                    aura::core::audit_wal::g_mutation_audit_wal().enable(
+                        std::string_view("build/test-wal-4392"), nullptr, 0));
+    }
+    ev.set_effect_sandbox_mode(1);
+    // Drop the epoch-bound rows. The outermost guard remints when the
+    // noted join still equals the epoch, and the inner require_effect_on_ref
+    // then misses those rows. Pin a session mid the guard will keep.
+    aura::core::capability::reset_capability_effects_for_test();
+    ev.set_effect_sandbox_mode(1);
+    const auto epoch = aura::core::current_mutation_epoch();
+    auto session_mid = epoch ^ 0xC0FFEE4392ULL;
+    if (session_mid == 0 || session_mid == epoch)
+        session_mid = 0x4392ULL;
+    ev.note_boundary_audit_mid_for_test(session_mid);
+    grant_tenant(7, session_mid);
+    expect_true("4392: principal 7", ev.capability_tenant_id() == 7);
+    // Production :children is a schema-2 hash, so car of it is not a
+    // NodeId. The bare int the lockless helper would write is the live
+    // LiteralInt of a. Bind that id into the image and pass it raw.
+    auto* ws = ev.workspace_flat();
+    expect_true("4392: workspace", ws != nullptr);
+    aura::ast::NodeId lit_id = aura::ast::NULL_NODE;
+    if (ws) {
+        for (aura::ast::NodeId n = 0; n < ws->size(); ++n) {
+            if (!ws->is_live_node(n))
+                continue;
+            const auto nv = ws->get(n);
+            if (nv.tag == aura::ast::NodeTag::LiteralInt && nv.int_value == 1) {
+                lit_id = n;
+                break;
+            }
+        }
+    }
+    expect_true("4392: literal node of a", lit_id != aura::ast::NULL_NODE);
+    expect_true("4392: bind bare node id",
+                cs.eval("(define lit4392 " + std::to_string(static_cast<long long>(lit_id)) + ")")
+                    .has_value());
+    auto lit = cs.eval("lit4392");
+    expect_true("4392: locator is an int", lit && is_int(*lit) && as_int(*lit) == lit_id);
+    const auto log_bare = ws ? ws->mutation_log_size() : 0;
+    expect_true("4392: literal starts at 1",
+                ws && lit_id != aura::ast::NULL_NODE && ws->is_live_node(lit_id) &&
+                    ws->get(lit_id).tag == aura::ast::NodeTag::LiteralInt &&
+                    ws->get(lit_id).int_value == 1);
+    // 99 is a value the lockless helper would commit. A string on a
+    // LiteralInt type-errors inside the helper and would hide a missed gate.
+    // Outermost exit clears the boundary note. Re-note the same session
+    // mid before each mutate so peek stays on the grant, not the epoch.
+    auto renote = [&] { ev.note_boundary_audit_mid_for_test(session_mid); };
+    expect_true("4392: bind bare batch",
+                cs.eval("(define r4392 (mutate:atomic-batch (list (list "
+                        "\"mutate:replace-value\" lit4392 99 \"repro\")) \"repro\"))")
+                    .has_value());
+    expect_true("4392: bare batch is stale-ref", ac4392_merr_kind(cs, "r4392", "stale-ref"));
+    auto bare_msg = cs.eval("(if (and (pair? r4392) (pair? (cdr r4392))) (car (cdr r4392)) \"\")");
+    expect_true("4392: bare batch names the production reject",
+                bare_msg &&
+                    ac4392_heap_str(cs, *bare_msg).find("raw node-id rejected under production") !=
+                        std::string::npos);
+    expect_true("4392: bare batch did not write",
+                ws && ws->get(lit_id).int_value == 1 && ws->mutation_log_size() == log_bare);
+    renote();
+    expect_true("4392: bind public replace-value",
+                cs.eval("(define p4392 (mutate:replace-value lit4392 99 \"repro\"))").has_value());
+    expect_true("4392: public replace-value still stale-ref",
+                ac4392_merr_kind(cs, "p4392", "stale-ref"));
+    expect_true("4392: public replace-value did not write", ws && ws->get(lit_id).int_value == 1);
+
+    expect_true("4392: bind find a", cs.eval("(define qra (query :find \"a\"))").has_value());
+    expect_true(
+        "4392: bind packed b",
+        cs.eval("(define srb (query:as-stable-ref (query :find \"b\") :index 0))").has_value());
+    expect_true("4392: bind packed a",
+                cs.eval("(define sra (query:as-stable-ref qra :index 0))").has_value());
+    auto a_car = cs.eval("(car sra)");
+    auto b_car = cs.eval("(car srb)");
+    expect_true("4392: packed cars are node ids",
+                a_car && is_int(*a_car) && b_car && is_int(*b_car));
+    const auto a_id = a_car && is_int(*a_car) ? static_cast<std::uint32_t>(as_int(*a_car)) : 0;
+    const auto b_id = b_car && is_int(*b_car) ? static_cast<std::uint32_t>(as_int(*b_car)) : 0;
+    const auto seq_before = ev.mutation_audit_seq();
+    renote();
+    expect_true(
+        "4392: bind allow batch",
+        cs.eval("(define ok4392 (mutate:atomic-batch (list (list \"mutate:remove-node\" qra) "
+                "(list \"mutate:remove-node\" srb)) \"repro\"))")
+            .has_value());
+    auto ok = cs.eval("ok4392");
+    expect_true("4392: packed and schema-2 batch returns #t", ok && is_bool(*ok) && as_bool(*ok));
+    // query :find's hash is owner-stamped by the JIT hook. Restricted+MT
+    // hash-ref of that table returns void when the hook is unwired, so
+    // match length is not the tree check. remove-node detaches; the slot
+    // can stay live as an orphan, so walk from the root.
+    auto reachable_define = [&](std::string_view name) {
+        auto* pool = ev.workspace_pool();
+        if (!ws || !pool || ws->root == aura::ast::NULL_NODE || !ws->is_live_node(ws->root))
+            return false;
+        std::vector<aura::ast::NodeId> stack;
+        std::vector<unsigned char> seen(static_cast<std::size_t>(ws->size()), 0);
+        stack.push_back(ws->root);
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            if (id >= ws->size() || seen[static_cast<std::size_t>(id)] || !ws->is_live_node(id))
+                continue;
+            seen[static_cast<std::size_t>(id)] = 1;
+            const auto nv = ws->get(id);
+            if (nv.tag == aura::ast::NodeTag::Define && pool->resolve(nv.sym_id) == name)
+                return true;
+            for (const auto child : ws->children(id))
+                stack.push_back(child);
+        }
+        return false;
+    };
+    expect_true("4392: define a is gone", !reachable_define("a"));
+    expect_true("4392: define b is gone", !reachable_define("b"));
+    bool saw_allow = false;
+    std::uint64_t allow_mid = 0;
+    std::uint32_t allow_node = 0;
+    const auto seq = ev.mutation_audit_seq();
+    const auto nring = std::min<std::uint64_t>(seq, 64);
+    for (std::uint64_t i = 0; i < nring; ++i) {
+        const auto& e = ev.mutation_audit_entry_at(seq - 1 - i);
+        if (e.seq < seq_before)
+            break;
+        if (e.effect_denied)
+            continue;
+        if (std::string_view(e.op) != "mutate:remove-node")
+            continue;
+        if (e.target_node != a_id && e.target_node != b_id)
+            continue;
+        if (e.provenance_mutation_id == 0)
+            continue;
+        saw_allow = true;
+        allow_mid = e.provenance_mutation_id;
+        allow_node = e.target_node;
+        break;
+    }
+    expect_true("4392: allow row names the removed node", saw_allow && allow_node != 0);
+    bool joined = false;
+    if (ws) {
+        for (const auto& rec : ws->all_mutations()) {
+            if (rec.composite_transaction_id == allow_mid && rec.mutation_id != allow_mid &&
+                allow_mid != 0) {
+                joined = true;
+                break;
+            }
+        }
+    }
+    expect_true("4392: composite id joins the audit mid and is not mutation_id", joined);
+
+    const auto log_fx = ws ? ws->mutation_log_size() : 0;
+    expect_true("4392: bind find c", cs.eval("(define qrc (query :find \"c\"))").has_value());
+    // hash-set! does not write under Restricted+MT when the table owner
+    // (JIT hook, 0 if unwired) differs from the caller, and the call still
+    // returns void. Stamp the schema-2 key in place so decode copies
+    // tenant 99 onto the match.
+    {
+        using aura::compiler::types::as_hash_idx;
+        using aura::compiler::types::as_string_idx;
+        using aura::compiler::types::is_string;
+        using aura::compiler::types::make_int;
+        auto qv = cs.eval("qrc");
+        expect_true("4392: find c is a hash", qv && is_hash(*qv));
+        bool stamped = false;
+        if (qv && is_hash(*qv)) {
+            const auto hidx = static_cast<std::size_t>(as_hash_idx(*qv));
+            auto* ht = hidx < g_hash_tables.size() ? g_hash_tables[hidx] : nullptr;
+            const auto heap = ev.string_heap();
+            if (ht != nullptr) {
+                auto* meta = ht->metadata();
+                auto* keys = ht->keys();
+                auto* vals = ht->values();
+                for (std::uint64_t i = 0; i < ht->capacity && !stamped; ++i) {
+                    if (meta[i] == 0xFF)
+                        continue;
+                    aura::compiler::types::EvalValue k{keys[i]};
+                    if (!is_string(k))
+                        continue;
+                    const auto si = as_string_idx(k);
+                    if (si < heap.size() && heap[si] == "tenant-id") {
+                        vals[i] = make_int(99).val;
+                        stamped = true;
+                    }
+                }
+            }
+        }
+        expect_true("4392: schema-2 tenant-id is 99", stamped);
+    }
+    renote();
+    expect_true("4392: bind foreign hash batch",
+                cs.eval("(define rfc (mutate:atomic-batch (list (list \"mutate:remove-node\" qrc)) "
+                        "\"repro\"))")
+                    .has_value());
+    expect_true("4392: foreign hash is tenant-isolation-denied",
+                ac4392_merr_kind(cs, "rfc", "tenant-isolation-denied"));
+    expect_true("4392: foreign hash wrote nothing", ws && ws->mutation_log_size() == log_fx);
+    expect_true("4392: define c still present", reachable_define("c"));
+    expect_true(
+        "4392: bind packed c",
+        cs.eval("(define src (query:as-stable-ref (query :find \"c\") :index 0))").has_value());
+    expect_true(
+        "4392: rebuild tenant-0 spine",
+        cs.eval("(define src0 (cons (car src) (cons (car (cdr src)) (cons (car (cdr (cdr src))) "
+                "(cons 0 (cdr (cdr (cdr (cdr src)))))))))")
+            .has_value());
+    auto c_car = cs.eval("(car src)");
+    expect_true("4392: packed c car is a node id", c_car && is_int(*c_car));
+    if (c_car && is_int(*c_car)) {
+        aura::core::provenance::note_stamped_node(static_cast<std::uint32_t>(as_int(*c_car)), 99);
+    }
+    const auto log_occ = ws ? ws->mutation_log_size() : 0;
+    renote();
+    expect_true(
+        "4392: bind occupancy batch",
+        cs.eval("(define roc (mutate:atomic-batch (list (list \"mutate:remove-node\" src0)) "
+                "\"repro\"))")
+            .has_value());
+    expect_true("4392: foreign occupancy is tenant-isolation-denied",
+                ac4392_merr_kind(cs, "roc", "tenant-isolation-denied"));
+    expect_true("4392: occupancy deny wrote nothing", ws && ws->mutation_log_size() == log_occ);
+    expect_true("4392: define c survives occupancy deny", reachable_define("c"));
+
+    if (!wal_was)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    ev.clear_boundary_audit_mid_for_test();
+    ev.disarm_production_audit_defaults_for_test();
+    ev.set_effect_sandbox_mode(0);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::ast::clear_restamp_hot_cone_held_for_test();
+    aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(0, "4392-cleanup");
+    aura::core::capability::reset_capability_effects_for_test();
+    apply_dev_audit_defaults();
+
+    CompilerService soft;
+    expect_true("4392 soft: set-code", soft.eval("(set-code \"(define s 1)\")").has_value());
+    expect_true("4392 soft: eval", soft.eval("(eval-current)").has_value());
+    expect_true(
+        "4392 soft: bind literal",
+        soft.eval("(define lits (car (query :children (car (query :find \"s\")))))").has_value());
+    auto slit = soft.eval("lits");
+    expect_true("4392 soft: locator is an int", slit && is_int(*slit));
+    auto* sws = soft.evaluator().workspace_flat();
+    const auto sid = slit && is_int(*slit) ? static_cast<aura::ast::NodeId>(as_int(*slit))
+                                           : aura::ast::NULL_NODE;
+    auto sbatch = soft.eval("(mutate:atomic-batch (list (list \"mutate:replace-value\" lits 99 "
+                            "\"repro\")) \"repro\")");
+    expect_true("4392 soft: bare int batch returns #t",
+                sbatch && is_bool(*sbatch) && as_bool(*sbatch));
+    expect_true("4392 soft: literal is 99",
+                sws && sid != aura::ast::NULL_NODE && sws->is_live_node(sid) &&
+                    sws->get(sid).tag == aura::ast::NodeTag::LiteralInt &&
+                    sws->get(sid).int_value == 99);
+}
+
+void test_ac4392_source_cite() {
+    std::print("AC4392 -- source-cite; no invented test or design doc\n");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    const auto cite = mut.find("Issue #4392");
+    expect_true("4392 cite: batch comments the gate", cite != std::string::npos);
+    const auto win = cite == std::string::npos ? std::string{} : mut.substr(cite, 700);
+    expect_true("4392 cite: production_defaults_active gates the walk",
+                win.find("production_defaults_active()") != std::string::npos);
+    expect_true("4392 cite: resolve_mutate_node_arg",
+                win.find("resolve_mutate_node_arg") != std::string::npos);
+    expect_true("4392 cite: require_effect_on_ref",
+                mut.find("require_effect_on_ref") != std::string::npos);
+    expect_true("4392 cite: composite join", mut.find("BatchSeCompositeJoin") != std::string::npos);
+    // The resolver keeps the #3395 string. query:as-stable-ref already
+    // had the same words before this gate. The batch walk must return
+    // the resolver's mev and not add another copy.
+    const auto gate = mut.find("Issue #4392: lockless helpers");
+    const auto gate_end = mut.find("BatchSeCompositeJoin", gate);
+    const auto gate_body = (gate == std::string::npos || gate_end == std::string::npos)
+                               ? std::string{}
+                               : mut.substr(gate, gate_end - gate);
+    expect_true("4392 cite: #3395 string stays on the resolver",
+                mut.find("raw node-id rejected under production") != std::string::npos &&
+                    mut.find("raw node-id rejected under production") < gate);
+    expect_true("4392 cite: batch gate does not duplicate the #3395 string",
+                gate_body.find("raw node-id rejected under production") == std::string::npos);
+    expect_true("4392 cite: no test_issue_4392.cpp",
+                !std::ifstream("tests/compiler/test_issue_4392.cpp").good());
+    expect_true("4392 cite: no docs/design",
+                !std::ifstream("docs/design/4392-atomic-batch-node-id.md").good());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -4136,6 +4521,8 @@ int main() {
     // test_ac3827_3_children_stable_stays_green();
     test_ac3827_4_soft_and_source();
     test_ac3993_1_packed_stamped_allows_when_cap_ok();
+    test_ac4392_lockless_batch_rejects_bare_nodeid();
+    test_ac4392_source_cite();
     test_ac3993_2_incomplete_gen_still_denies();
     test_ac3993_3_soft_unchanged();
     test_ac3993_4_source_cite();
