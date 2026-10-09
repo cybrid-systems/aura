@@ -8612,10 +8612,149 @@ void Evaluator::end_densify_arm_() noexcept {
     (void)commit_unstable_densify_root_remap(false);
 }
 
+bool Evaluator::densify_apply_container_remap_(const std::unordered_set<void*>& old_set,
+                                               std::unordered_map<void*, void*> remap,
+                                               bool check_value_slots) noexcept {
+    try {
+        // Issue #4396: the pre-unlock pass already applied one hop. A
+        // destination can also be a moved-old key (freelist reuse). Chasing
+        // that bit pattern again retargets the survivor. The published pass
+        // skips those. The first pass still chases them — the container
+        // still holds the pre-move address.
+        const bool skip_if_live_dest = check_value_slots && densify_live_containers_prerewritten_;
+        std::unordered_set<void*> dests;
+        dests.reserve(remap.size());
+        for (const auto& [old, neu] : remap) {
+            (void)old;
+            if (neu)
+                dests.insert(neu);
+        }
+        auto rewrite_one = [&](void*& p) {
+            if (!p)
+                return;
+            if (skip_if_live_dest && dests.find(p) != dests.end())
+                return;
+            auto it = remap.find(p);
+            if (it != remap.end() && it->second)
+                p = it->second;
+        };
+        // Stale = a moved-old key that is not a live destination.
+        auto stale = [&](void* p) {
+            return p && old_set.find(p) != old_set.end() && dests.find(p) == dests.end();
+        };
+        bool missed = false;
+        // One snapshot. Closures before Module (#2354). alloc / cover /
+        // rewrite are outside that audit. rewrite is last so a peer that
+        // already holds a container lock can finish its lookup. The #3210
+        // canary mutex is already held by live_compact; this function does
+        // not take it (c-struct takes alloc and not the canary).
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> shards;
+        for (std::size_t i = 0; i < kClosuresShardCount; ++i)
+            shards[i] = std::unique_lock<std::shared_mutex>(closures_shards_[i].mu);
+        std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+        std::lock_guard<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
+        std::lock_guard<std::mutex> cover_lock(module_create_cover_mu_);
+        std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+        for (void*& op : opaque_heap_)
+            rewrite_one(op);
+        if (!check_value_slots && densify_live_containers_prerewritten_) {
+            for (const auto& [k, v] : remap) {
+                if (k && v)
+                    densify_moved_rewrite_.insert_or_assign(k, v);
+            }
+        } else {
+            densify_moved_rewrite_ = remap;
+        }
+        for (void* op : opaque_heap_)
+            missed = missed || stale(op);
+        if (check_value_slots) {
+            for (void* s : densify_opaque_value_slots_)
+                missed = missed || stale(s);
+        }
+        for (Env*& m : modules_) {
+            void* p = m;
+            rewrite_one(p);
+            m = static_cast<Env*>(p);
+        }
+        for (Env* m : modules_)
+            missed = missed || stale(m);
+        if (check_value_slots) {
+            for (void* s : densify_modules_value_slots_)
+                missed = missed || stale(s);
+        }
+        for (void*& s : module_create_covers_)
+            rewrite_one(s);
+        for (void* s : module_create_covers_)
+            missed = missed || stale(s);
+        for (auto& cl_sh : closures_shards_) {
+            for (auto& [cid, cl] : cl_sh.map) {
+                (void)cid;
+                void* flat = cl.flat;
+                void* pool = cl.pool;
+                rewrite_one(flat);
+                rewrite_one(pool);
+                cl.flat = static_cast<decltype(cl.flat)>(flat);
+                cl.pool = static_cast<decltype(cl.pool)>(pool);
+                missed = missed || stale(cl.flat) || stale(cl.pool);
+            }
+        }
+        if (check_value_slots) {
+            for (void* s : densify_closure_value_slots_)
+                missed = missed || stale(s);
+        }
+        densify_live_containers_prerewritten_ = !check_value_slots;
+        return !missed;
+    } catch (...) {
+        // [SILENCE-PRIM-#4386] remap throw fail-closes this window.
+        // A partial pre-unlock rewrite must still suppress the second hop.
+        if (check_value_slots)
+            densify_live_containers_prerewritten_ = false;
+        else
+            densify_live_containers_prerewritten_ = true;
+        return false;
+    }
+}
+
+bool Evaluator::rewrite_live_containers_for_arena_(aura::ast::ASTArena* arena) noexcept {
+    // Issue #4396: this arena's inflight scratch only. Does not disarm the
+    // #4386 value-slot arm and does not stale-check those copies — the slot
+    // walk after unlock rewrites them, and the later commit checks them.
+    if (!arena || aura::ast::moving_compact_feature_enabled() == 0)
+        return true;
+    try {
+        std::vector<void*> olds;
+        arena->copy_inflight_moved_old(olds);
+        if (olds.empty())
+            return true;
+        std::unordered_set<void*> old_set;
+        std::unordered_map<void*, void*> remap;
+        old_set.reserve(olds.size());
+        remap.reserve(olds.size());
+        for (void* old : olds) {
+            if (!old || !old_set.insert(old).second)
+                continue;
+            void* neu = arena->resolve_object_remap(old);
+            if (!neu || !arena->tracks_live_object(neu))
+                continue;
+            remap.emplace(old, neu);
+        }
+        if (old_set.empty())
+            return true;
+        return densify_apply_container_remap_(old_set, std::move(remap),
+                                              /*check_value_slots=*/false);
+    } catch (...) {
+        // [SILENCE-PRIM-#4396] remap throw fail-closes this window.
+        densify_live_containers_prerewritten_ = true;
+        return false;
+    }
+}
+
 bool Evaluator::densify_rewrite_containers_from_published_() noexcept {
     try {
-        if (!arena_group_)
+        if (!arena_group_) {
+            densify_live_containers_prerewritten_ = false;
             return false;
+        }
         std::vector<void*> olds;
         arena_group_->collect_last_window_moved_old(olds);
         std::unordered_set<void*> old_set;
@@ -8627,85 +8766,18 @@ bool Evaluator::densify_rewrite_containers_from_published_() noexcept {
                 old_set.insert(old);
         }
         arena_group_->fill_published_moved_rewrite(remap);
-        if (old_set.empty())
+        if (old_set.empty()) {
+            densify_live_containers_prerewritten_ = false;
             return false;
+        }
         // One hop only. A destination may itself be some other object's
         // moved-old address (freelist reuse). Chasing twice would retarget
         // the survivor. Value slots were already rewritten by live_compact.
-        std::unordered_set<void*> dests;
-        dests.reserve(remap.size());
-        for (const auto& [old, neu] : remap) {
-            (void)old;
-            if (neu)
-                dests.insert(neu);
-        }
-        auto rewrite_one = [&](void*& p) {
-            if (!p)
-                return;
-            auto it = remap.find(p);
-            if (it != remap.end() && it->second)
-                p = it->second;
-        };
-        // Stale = a moved-old key that is not a live destination.
-        auto stale = [&](void* p) {
-            return p && old_set.find(p) != old_set.end() && dests.find(p) == dests.end();
-        };
-        bool missed = false;
-        {
-            std::lock_guard<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
-            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
-            for (void*& op : opaque_heap_)
-                rewrite_one(op);
-            densify_moved_rewrite_ = remap;
-            for (void* op : opaque_heap_)
-                missed = missed || stale(op);
-            for (void* s : densify_opaque_value_slots_)
-                missed = missed || stale(s);
-        }
-        {
-            std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
-            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
-            for (Env*& m : modules_) {
-                void* p = m;
-                rewrite_one(p);
-                m = static_cast<Env*>(p);
-            }
-            for (Env* m : modules_)
-                missed = missed || stale(m);
-            for (void* s : densify_modules_value_slots_)
-                missed = missed || stale(s);
-        }
-        {
-            std::lock_guard<std::mutex> cover_lock(module_create_cover_mu_);
-            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
-            for (void*& s : module_create_covers_)
-                rewrite_one(s);
-            for (void* s : module_create_covers_)
-                missed = missed || stale(s);
-        }
-        {
-            std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> wlock;
-            for (std::size_t i = 0; i < kClosuresShardCount; ++i)
-                wlock[i] = std::unique_lock<std::shared_mutex>(closures_shards_[i].mu);
-            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
-            for (auto& cl_sh : closures_shards_) {
-                for (auto& [cid, cl] : cl_sh.map) {
-                    (void)cid;
-                    void* flat = cl.flat;
-                    void* pool = cl.pool;
-                    rewrite_one(flat);
-                    rewrite_one(pool);
-                    cl.flat = static_cast<decltype(cl.flat)>(flat);
-                    cl.pool = static_cast<decltype(cl.pool)>(pool);
-                    missed = missed || stale(cl.flat) || stale(cl.pool);
-                }
-            }
-            for (void* s : densify_closure_value_slots_)
-                missed = missed || stale(s);
-        }
-        return !missed;
+        return densify_apply_container_remap_(old_set, std::move(remap),
+                                              /*check_value_slots=*/true);
     } catch (...) {
         // [SILENCE-PRIM-#4386] remap throw fail-closes this window.
+        densify_live_containers_prerewritten_ = false;
         return false;
     }
 }

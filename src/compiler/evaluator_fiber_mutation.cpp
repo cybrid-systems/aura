@@ -1055,6 +1055,16 @@ bool aura::compiler::Evaluator::on_arena_unstable_remap_commit_thunk(void* ctx,
     return static_cast<Evaluator*>(ctx)->commit_unstable_densify_root_remap(relocated);
 }
 
+// Issue #4396: pre-unlock live-container rewrite. Null ctx / arena is
+// success (no containers). Does not release the value-slot arm.
+bool aura::compiler::Evaluator::on_arena_live_container_rewrite_thunk(void* ctx,
+                                                                      void* arena) noexcept {
+    if (!ctx || !arena)
+        return true;
+    return static_cast<Evaluator*>(ctx)->rewrite_live_containers_for_arena_(
+        static_cast<aura::ast::ASTArena*>(arena));
+}
+
 void aura::compiler::Evaluator::on_arena_compact_hook() {
     clear_sym_intern();
     re_pin_cow_children_from_snapshot();

@@ -11,7 +11,10 @@ module;
 
 #include <dlfcn.h>
 #include "compiler/ffi_hot_path.hh"
+#include "compiler/typed_mutation_audit.h"
+#include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h" // Issue #2005: ffi_pin_defer_active + arm/release
+#include "core/moving_densify_health.hh"
 
 module aura.compiler.ffi_primitives;
 
@@ -38,6 +41,25 @@ template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
 struct FfiRenderHotpathGuard {
     FfiRenderHotpathGuard() = default;
 };
+
+// Issue #4396: production c-struct must not memcpy a densify-old opaque
+// after Moving recycle and before the live container store. In-flight
+// covers the recycle→publish gap (a previous green window still allows
+// mutate). A red window refuses the same way. Soft/Off: first line.
+// Not the apply LCP / remap / seq-skip chain.
+[[nodiscard]] bool production_c_struct_densify_old_refuse(const void* eval_id) noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    if (aura::core::densify_consistency::densify_in_flight_for(eval_id))
+        return true;
+    using namespace aura::core::moving_densify_health;
+    return !window_would_allow_mutate(
+        g_last_had_moving_densify.load(std::memory_order_relaxed) != 0,
+        g_last_pin_contract_held.load(std::memory_order_relaxed) != 0,
+        g_last_moving_incomplete_remap.load(std::memory_order_relaxed) != 0,
+        g_last_untracked_kept.load(std::memory_order_relaxed),
+        g_last_root_remap_fail_total.load(std::memory_order_relaxed));
+}
 
 void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
                                      std::vector<void*>* opaque_heap,
@@ -243,6 +265,11 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             return make_void();
         if (types::as_int(a[1]) < 0)
             return make_void();
+        // Issue #4396: production_defaults_active and
+        // densify_in_flight_for(densify_eval_id_) or !window_would_allow_mutate
+        // refuse before memcpy. Recycle may already have reused this address.
+        if (production_c_struct_densify_old_refuse(densify_eval_id_))
+            return make_void();
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto* base = static_cast<char*>((*oh)[oi]);
         auto& val = a[2];
@@ -320,6 +347,11 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (oi >= oh->size() || !(*oh)[oi])
             return make_int(0);
         if (types::as_int(a[1]) < 0)
+            return make_int(0);
+        // Issue #4396: production_defaults_active and
+        // densify_in_flight_for(densify_eval_id_) or !window_would_allow_mutate
+        // refuse before memcpy. Returns 0 so a ref can prove the set missed.
+        if (production_c_struct_densify_old_refuse(densify_eval_id_))
             return make_int(0);
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto type = static_cast<int>(types::as_int(a[2]));

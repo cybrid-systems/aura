@@ -32,15 +32,18 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutation_concurrency_health.hh"
+#include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
 #include "core/lifetime_consistency_proof.hh"
 #include "core/moving_densify_health.hh"
+#include "core/sandbox.hh"
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <print>
@@ -53,6 +56,7 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+import aura.compiler.value;
 import aura.core.arena;
 import aura.core.ast;
 import aura.core.lifetime_pin;
@@ -7581,6 +7585,287 @@ static void ac4386_sibling_realloc_rewrites_moved() {
     CHECK(read_file("docs/design/4386-densify-slot-uaf.md").empty(), "4386: no docs/design");
 }
 
+// Issue #4396: c-struct refuses a densify-old opaque under production, and
+// live containers are rewritten before the canary mutex drops.
+struct Ac4396Face {
+    std::uint8_t mode = 0;
+    int pin = -1;
+    int moving = -1;
+    int hard = -1;
+    bool was_prod = false;
+    bool was_mt = false;
+    bool had_sandbox_env = false;
+    std::string sandbox_env;
+    Ac4396Face() {
+        mode = aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+        pin = aura::core::lifetime::g_general_object_pin_required_pref.load(
+            std::memory_order_relaxed);
+        moving = aura::ast::g_moving_compact_enabled_pref.load(std::memory_order_relaxed);
+        hard = aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+        was_prod = aura::compiler::typed_audit::production_defaults_active();
+        was_mt = aura::core::provenance::multi_tenant_env_active();
+        if (const char* e = std::getenv("AURA_SANDBOX")) {
+            had_sandbox_env = true;
+            sandbox_env = e;
+        }
+    }
+    ~Ac4396Face() {
+        if (had_sandbox_env)
+            ::setenv("AURA_SANDBOX", sandbox_env.c_str(), 1);
+        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(mode));
+        aura::core::provenance::set_multi_tenant_env_active(was_mt);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+        aura::compiler::typed_audit::reset_production_audit_defaults_for_test();
+        if (was_prod)
+            aura::compiler::typed_audit::apply_production_audit_defaults();
+        else
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::lifetime::g_general_object_pin_required_pref.store(pin,
+                                                                       std::memory_order_release);
+        aura::ast::g_moving_compact_enabled_pref.store(moving, std::memory_order_relaxed);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(hard, std::memory_order_relaxed);
+    }
+    void latch_production() {
+        // Security defaults take the dev path when AURA_SANDBOX=off and do
+        // not latch production_defaults_active. Unset only for the call.
+        if (had_sandbox_env && sandbox_env == "off")
+            ::unsetenv("AURA_SANDBOX");
+        aura::compiler::security::apply_production_security_defaults();
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::set_moving_compact_enabled(1);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    }
+};
+
+static bool ac4396_int_is(CompilerService& cs, const char* expr, std::int64_t want,
+                          const char* label) {
+    auto r = cs.eval(expr);
+    if (!r || !aura::compiler::types::is_int(*r) || aura::compiler::types::as_int(*r) != want) {
+        const std::string got = r ? aura::compiler::types::format_value(*r) : std::string("empty");
+        CHECK(false, std::string(label) + " got " + got);
+        return false;
+    }
+    CHECK(true, label);
+    return true;
+}
+
+static void ac4396_c_struct_refuses_inflight_and_red_window() {
+    std::println("\n--- #4396: production c-struct refuses in-flight and a red window ---");
+    Ac4396Face face;
+    face.latch_production();
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "4396: production_defaults_active latched");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto inst = ev.ensure_std_host_prims("std/ffi");
+    if (aura::compiler::types::is_error(inst)) {
+        // Effect grant is not this gate. Latch already happened; Off on this
+        // evaluator keeps production_defaults_active and lets c-* run.
+        ev.set_sandbox_mode(false);
+        inst = ev.ensure_std_host_prims("std/ffi");
+    }
+    CHECK(!aura::compiler::types::is_error(inst), "4396: std/ffi installed");
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "4396: production stays latched after ffi install");
+    // Earlier members, and each eval's Phase-5 exit, may publish a red
+    // Moving window. The primitive sees that publish. Reset after the
+    // previous eval returns and before a set/ref that must be allowed.
+    auto reset_window = [] {
+        aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    };
+    reset_window();
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(&ev),
+          "4396: evaluator id is clear before the baseline");
+    CHECK(cs.eval("(define p (c-alloc 16))").has_value(), "4396: c-alloc");
+    auto pref = cs.eval("p");
+    CHECK(pref && aura::compiler::types::is_opaque(*pref), "4396: c-alloc returned an opaque");
+    reset_window();
+    CHECK(cs.eval("(c-struct-set! p 0 42)").has_value(), "4396: baseline set");
+    reset_window();
+    if (!ac4396_int_is(cs, "(c-struct-ref p 0 0)", 42, "4396: baseline ref is 42"))
+        return;
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard inflight(&ev);
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(&ev),
+              "4396: guard arms the evaluator id");
+        if (!ac4396_int_is(cs, "(c-struct-ref p 0 0)", 0, "4396: in-flight ref is 0"))
+            return;
+        CHECK(cs.eval("(c-struct-set! p 0 99)").has_value(),
+              "4396: refused set still returns void");
+    }
+    reset_window();
+    if (!ac4396_int_is(cs, "(c-struct-ref p 0 0)", 42, "4396: in-flight set did not memcpy"))
+        return;
+    aura::core::moving_densify_health::publish_last_moving_densify_window(
+        /*had_moving_densify=*/true, /*pin_contract_held=*/false,
+        /*moving_incomplete_remap=*/true, /*objects_moved=*/1, /*untracked_kept=*/0,
+        /*root_remap_fail_total=*/0);
+    if (!ac4396_int_is(cs, "(c-struct-ref p 0 0)", 0, "4396: red window ref is 0"))
+        return;
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    if (!ac4396_int_is(cs, "(c-struct-ref p 0 0)", 42, "4396: green window ref is 42"))
+        return;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+          "4396: Soft drops production");
+    aura::core::moving_densify_health::publish_last_moving_densify_window(true, false, true, 1, 0,
+                                                                          0);
+    ac4396_int_is(cs, "(c-struct-ref p 0 0)", 42, "4396: Soft red window still returns 42");
+}
+
+static void ac4396_heap_rewritten_before_commit() {
+    std::println("\n--- #4396: opaque_heap_ is rewritten when live_compact returns ---");
+    const int saved_hard =
+        aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+    struct RestoreHard {
+        int saved;
+        ~RestoreHard() {
+            aura::ast::g_moving_untracked_hard_abort_pref.store(saved, std::memory_order_relaxed);
+        }
+    } restore_hard{saved_hard};
+    MovingFlagGuard on(1);
+    RequiredPinGuard pins(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    CompilerService cs;
+    aura::core::lifetime::g_general_object_pin_required_pref.store(0, std::memory_order_release);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::set_moving_compact_enabled(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    auto& ev = cs.evaluator();
+    auto& arena = ev.arena_group().module_arena("4396", 64 * 1024);
+    constexpr int N = 8;
+    void* olds[N] = {};
+    for (int i = 0; i < N; ++i) {
+        auto* pod = arena.create<Pod16>(i, i + 1, i + 2, i + 3);
+        CHECK(pod != nullptr, "4396: pod create");
+        olds[i] = pod;
+        ev.push_opaque_heap_for_test(pod);
+    }
+    (void)ev.register_known_moving_densify_root_slots();
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "4396: Moving relocated the pods");
+    const auto& published = arena.last_window_moved_old_published();
+    CHECK(!published.empty(), "4396: window published moved-old keys");
+    std::unordered_set<void*> old_set(published.begin(), published.end());
+    std::unordered_set<void*> dests;
+    for (void* old : published) {
+        if (void* neu = arena.resolve_object_remap(old))
+            dests.insert(neu);
+    }
+    const auto heap = ev.copy_opaque_heap_for_test();
+    bool clean = true;
+    for (void* p : heap) {
+        if (p && old_set.count(p) != 0 && dests.count(p) == 0)
+            clean = false;
+    }
+    bool pods_at_dest = true;
+    for (int i = 0; i < N; ++i) {
+        void* neu = arena.resolve_object_remap(olds[i]);
+        void* want = neu ? neu : olds[i];
+        bool found = false;
+        for (void* p : heap)
+            found = found || p == want;
+        pods_at_dest = pods_at_dest && found;
+        if (neu)
+            pods_at_dest = pods_at_dest && static_cast<Pod16*>(neu)->a == i;
+    }
+    CHECK(clean, "4396: heap holds no stale moved-old before commit");
+    CHECK(pods_at_dest, "4396: heap holds each pod at its post-move address before commit");
+    const bool commit_ok =
+        ev.commit_unstable_densify_root_remap(r.objects_moved > 0 || r.moved_live_objects);
+    CHECK(commit_ok, "4396: later commit still accepts the rewritten containers");
+}
+
+static void ac4396_inflight_refcount() {
+    std::println("\n--- #4396: nested densify-in-flight refcount ---");
+    int token = 0;
+    const void* id = &token;
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(id), "4396: idle slot is clear");
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard outer(id);
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(id), "4396: outer arms");
+        {
+            aura::core::densify_consistency::DensifyInFlightGuard inner(id);
+            CHECK(aura::core::densify_consistency::densify_in_flight_for(id), "4396: inner arms");
+        }
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(id),
+              "4396: inner clear leaves the outer guard");
+    }
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(id),
+          "4396: outer clear drops it");
+}
+
+static void ac4396_source_cite() {
+    std::println("\n--- #4396: source cite ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto rel = arena.find("relocate_tracked_objects_for_moving_(&untracked_kept_local)");
+    CHECK(rel != std::string::npos, "4396: relocate call present");
+    if (rel != std::string::npos) {
+        const auto after = arena.substr(rel, 900);
+        const auto invoke = after.find("invoke_live_container_rewrite");
+        const auto unlock = after.find("canary_quiescent.unlock()");
+        CHECK(after.find("Issue #4396") != std::string::npos, "4396: unlock site cites the issue");
+        CHECK(invoke != std::string::npos && unlock != std::string::npos && invoke < unlock,
+              "4396: container rewrite runs before the canary unlock");
+    }
+    const auto arm = arena.find("should_production_auto_arm_moving(frag_before)");
+    CHECK(arm != std::string::npos, "4396: auto-arm site present");
+    if (arm != std::string::npos) {
+        const auto win = arena.substr(arm, 6500);
+        const auto armed = win.find("arm_densify_in_flight");
+        const auto moving = win.find("live_compact(LiveCompactMode::Moving)");
+        const auto pub = win.find("publish_last_moving_densify_window");
+        CHECK(win.find("Issue #4396") != std::string::npos, "4396: auto-arm cites the issue");
+        CHECK(armed != std::string::npos && moving != std::string::npos && armed < moving,
+              "4396: in-flight arms before live_compact(Moving)");
+        CHECK(pub != std::string::npos && moving < pub,
+              "4396: publish stays inside the auto-arm scope");
+        CHECK(win.find("clear_densify_in_flight") != std::string::npos,
+              "4396: auto-arm RAII clears in-flight");
+    }
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto set_at = ffi.find("add(\"c-struct-set!\"");
+    const auto ref_at = ffi.find("add(\"c-struct-ref\"");
+    CHECK(set_at != std::string::npos && ref_at != std::string::npos && set_at < ref_at,
+          "4396: both c-struct prims present");
+    if (set_at != std::string::npos && ref_at != std::string::npos) {
+        const auto set_body = ffi.substr(set_at, ref_at - set_at);
+        const auto ref_end = ffi.find("add(\"", ref_at + 8);
+        const auto ref_body =
+            ffi.substr(ref_at, ref_end == std::string::npos ? 2500 : ref_end - ref_at);
+        for (const char* needle : {"Issue #4396", "production_defaults_active",
+                                   "densify_in_flight_for", "window_would_allow_mutate"}) {
+            CHECK(set_body.find(needle) != std::string::npos,
+                  std::string("4396: set! body has ") + needle);
+            CHECK(ref_body.find(needle) != std::string::npos,
+                  std::string("4396: ref body has ") + needle);
+        }
+        const auto set_gate = set_body.find("production_c_struct_densify_old_refuse");
+        const auto set_copy = set_body.find("std::memcpy");
+        const auto ref_gate = ref_body.find("production_c_struct_densify_old_refuse");
+        const auto ref_copy = ref_body.find("std::memcpy");
+        CHECK(set_gate != std::string::npos && set_copy != std::string::npos && set_gate < set_copy,
+              "4396: set! refuses before memcpy");
+        CHECK(ref_gate != std::string::npos && ref_copy != std::string::npos && ref_gate < ref_copy,
+              "4396: ref refuses before memcpy");
+    }
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #4396") != std::string::npos, "4396: mutation boundary cites the issue");
+    CHECK(mut.find("rewrite_live_containers_for_arena_") != std::string::npos,
+          "4396: pre-unlock rewrite entry");
+    CHECK(mut.find("copy_inflight_moved_old") != std::string::npos,
+          "4396: rewrite reads the inflight scratch");
+    CHECK(read_file("tests/core/test_issue_4396.cpp").empty(), "4396: no invent test");
+    CHECK(read_file("docs/design/4396-c-struct-densify-old.md").empty(), "4396: no docs/design");
+    CHECK(ffi.find("g_4396_") == std::string::npos, "4396: no g_4396_ symbol");
+    CHECK(arena.find("PinRegistry") == std::string::npos, "4396: arena has no pin registry");
+    CHECK(mut.find("PinRegistry") == std::string::npos, "4396: rewrite has no pin registry");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -8457,6 +8742,12 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Issue #4386: unstable densify slots remap under the writer locks ===");
     ac4386_sibling_realloc_rewrites_moved();
+
+    std::println("\n=== Issue #4396: c-struct refuses densify-old during Moving recycle ===");
+    ac4396_c_struct_refuses_inflight_and_red_window();
+    ac4396_heap_rewritten_before_commit();
+    ac4396_inflight_refcount();
+    ac4396_source_cite();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
