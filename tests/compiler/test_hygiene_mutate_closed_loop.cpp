@@ -2571,6 +2571,34 @@ static void ac3239_6_linter_no_docs() {
 // ──   - mutate:set-body now uses mutate_dispatch_try_acquire (sibling #3074 / #2124 contract).
 // ──   - source-cite linter scans all structural mutate primitives for the acquire.
 
+// #4392: clang-format may wrap a prim name onto the next line, e.g.
+//   add_mutate(
+//           "mutate:atomic-batch", ...).
+// Accept the single-line literal, the static-table form, or the wrapped form
+// so a benign reformat does not fail this source-cite scan (sibling of
+// check_add_mutate_acquire_before_body_3423 / check_add_mutate_read_only_fence_3450).
+static std::size_t find_mutate_registration(const std::string& mut, const std::string& prim) {
+    auto pos = mut.find(std::string("add_mutate(\"") + prim + "\"");
+    if (pos != std::string::npos)
+        return pos;
+    pos = mut.find(std::string("{\"") + prim + "\",");
+    if (pos != std::string::npos)
+        return pos;
+    const std::string head = "add_mutate(";
+    const std::string needle = std::string("\"") + prim + "\"";
+    std::size_t i = 0;
+    while ((i = mut.find(head, i)) != std::string::npos) {
+        std::size_t j = i + head.size();
+        while (j < mut.size() &&
+               (mut[j] == ' ' || mut[j] == '\t' || mut[j] == '\n' || mut[j] == '\r'))
+            ++j;
+        if (mut.compare(j, needle.size(), needle) == 0)
+            return i;
+        i += head.size();
+    }
+    return std::string::npos;
+}
+
 static void ac3192_1_set_body_uses_ssol_acquire() {
     std::println("\n--- 3192 AC1: mutate:set-body uses mutate_dispatch_try_acquire ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
@@ -2602,9 +2630,7 @@ static void ac3192_2_all_structural_primitives_acquire() {
         // #3399: structural prims moved from add_mutate() calls to the
         // static dispatch table — accept either registration form, and
         // anchor the acquire window on the body usage-comment.
-        auto pos = mut.find(std::string("add_mutate(\"") + prim + "\"");
-        if (pos == std::string::npos)
-            pos = mut.find(std::string("{\"") + prim + "\",");
+        auto pos = find_mutate_registration(mut, prim);
         CHECK(pos != std::string::npos, std::format("3192 AC2: {} registered", prim));
         if (pos != std::string::npos) {
             auto body = mut.find(std::string("(") + prim + " ");
@@ -2629,7 +2655,7 @@ static void ac3192_3_nested_batch_unchanged() {
           "3192 AC3: #3166 nested exit dirty pending preserved");
     // The atomic-batch prim still uses mutate_dispatch_try_acquire.
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-    const auto pos = mut.find("add_mutate(\"mutate:atomic-batch\"");
+    const auto pos = find_mutate_registration(mut, "mutate:atomic-batch");
     CHECK(pos != std::string::npos, "3192 AC3: atomic-batch registered");
     const auto block = mut.substr(pos, 16000);
     CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
