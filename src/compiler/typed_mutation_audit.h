@@ -4922,6 +4922,36 @@ inline void clear_invariant_deny_se_tls() noexcept {
     g_tls_invariant_deny_se_mid = 0;
 }
 
+// Issue #4403: Guard deny belts that never emit their own invariant SE
+// (density streak, linear boundary, pending full solve, post-mutate
+// typecheck, occurrence SDO, persist-reject, post-persist linear/density)
+// leave a first-wins gate token. exit_mutation_boundary(!success) consumes
+// it as the record_boundary_deny_after_restore op, so the durable SE, the
+// reason's op=, last-se-op, and the newest typed row name the gate.
+// Absent token stays "rollback". Soft/Off belts do not call note. Do not
+// note on paths that already emit a specific op. Not a metrics field.
+inline thread_local const char* g_tls_boundary_deny_op = nullptr;
+
+inline void note_boundary_deny_op(const char* op) noexcept {
+    if (op == nullptr || op[0] == '\0')
+        return;
+    if (g_tls_boundary_deny_op != nullptr)
+        return;
+    g_tls_boundary_deny_op = op;
+}
+
+inline void clear_boundary_deny_op() noexcept {
+    g_tls_boundary_deny_op = nullptr;
+}
+
+[[nodiscard]] inline const char* take_boundary_deny_op() noexcept {
+    const char* op = g_tls_boundary_deny_op;
+    g_tls_boundary_deny_op = nullptr;
+    if (op == nullptr || op[0] == '\0')
+        return "rollback";
+    return op;
+}
+
 inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
                                    std::int64_t fiber_id, std::uint64_t epoch, std::string_view op,
                                    std::string_view deny_kind) noexcept {
@@ -5759,6 +5789,7 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 // unit tests keep the fast-iteration path; cold-start process default is
 // Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
+    clear_boundary_deny_op();
     drop_deferred_outermost_green_proof();
     g_inject_linear_synth_after_persist_for_test.store(0, std::memory_order_relaxed);
     g_inject_post_persist_amend_append_fail_for_test.store(0, std::memory_order_relaxed);

@@ -2908,11 +2908,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         }
     } else if (!success) {
         // Issue #1589: TypedMutationAudit rollback trail.
+        // Issue #4403: a deny belt that never emitted its own SE leaves a
+        // first-wins gate token. Absent token stays the ungated rollback.
+        // Stamp stays after restore (#3217). epoch_after stays defuse.
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
         const std::uint64_t mid = cp.audit_mid;
         const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-        typed_audit::record_boundary_deny_after_restore(mid, "rollback", cp.version, epoch_after, 0,
-                                                        0, fid);
+        const char* deny_op = typed_audit::take_boundary_deny_op();
+        typed_audit::record_boundary_deny_after_restore(mid, deny_op, cp.version, epoch_after, 0, 0,
+                                                        fid);
     }
     // Issue #2690: unified PendingRecovery drain. Boundary exit routes
     // through the same single-owner drain as `maybe_storm_clear_health_pass`
@@ -3984,6 +3988,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // consumed would roll back the next successful rebind (#t + old body).
     if (outermost) {
         typed_audit::g_tls_outermost_persist_reject_needs_restore = false;
+        // Issue #4403: a gate token belongs to the boundary that noted it.
+        typed_audit::clear_boundary_deny_op();
         // A prior boundary's synth/post-mutate/escape sticky must not
         // restore this boundary's children after a #t return.
         ev_->clear_linear_synth_hard_fail_pending();
@@ -5122,6 +5128,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             aura::compiler::castop_density::consume_density_gate_reject_pending();
         if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
             density_gate) {
+            // Issue #4403: first match. Un-stamp stays before the exit stamp.
+            const char* gate_op = "density-streak";
+            if (!lin.all_safe || ev_->linear_synth_hard_fail_pending())
+                gate_op = "linear-boundary";
+            else if (!drain_pre_persist_ok)
+                gate_op = "pending-full-solve";
+            typed_audit::note_boundary_deny_op(gate_op);
             typed_audit::clear_type_linear_commit_proof_on_abort();
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);
@@ -5157,6 +5170,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
         if (mutated) {
             if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::note_boundary_deny_op("post-mutate-typecheck");
                 typed_audit::clear_type_linear_commit_proof_on_abort();
                 typed_audit::publish_type_linear_proof_outcome(
                     typed_audit::kTypeLinearProofOutcomeReject);
@@ -5192,6 +5206,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
         if (mutated) {
             if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::note_boundary_deny_op("occurrence-sdo");
                 typed_audit::clear_type_linear_commit_proof_on_abort();
                 typed_audit::publish_type_linear_proof_outcome(
                     typed_audit::kTypeLinearProofOutcomeReject);
@@ -5379,6 +5394,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         0, std::memory_order_acq_rel) != 0)
                     ev_->note_linear_synth_hard_fail_pending();
                 if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+                    typed_audit::note_boundary_deny_op("persist-reject");
                     typed_audit::drop_deferred_outermost_green_proof();
                     success = false;
                     success_flag_store(flag_, false);
@@ -5403,8 +5419,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const auto lin = ev_->enforce_linear_boundary_consistency(
             Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
         linear_pre_exit_enforced = true;
-        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() ||
-            aura::compiler::castop_density::consume_density_gate_reject_pending()) {
+        const bool post_persist_linear = !lin.all_safe || ev_->linear_synth_hard_fail_pending();
+        const bool post_persist_density =
+            !post_persist_linear &&
+            aura::compiler::castop_density::consume_density_gate_reject_pending();
+        if (post_persist_linear || post_persist_density) {
+            typed_audit::note_boundary_deny_op(post_persist_linear ? "post-persist-linear"
+                                                                   : "post-persist-density");
             typed_audit::clear_type_linear_commit_proof_on_abort();
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);
@@ -5523,6 +5544,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     if (!inbody_force_exited_) {
         exited_cp = ev_->exit_mutation_boundary(success);
         did_exit_boundary = true;
+    } else {
+        // Issue #4403: in-body exit already stamped. Drop a token noted
+        // after that exit so it cannot name a later boundary.
+        typed_audit::clear_boundary_deny_op();
     }
     // Issue #3517: Full/hard-gate force-rollback inside exit already
     // restored AST; consume the TLS note so local success matches
