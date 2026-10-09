@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -93,6 +94,39 @@ template <class F> bool finished_while_mutex_held(std::mutex& mu, int hold_ms, F
         holding.store(1, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
         finished_while_held.store(done.load(std::memory_order_acquire), std::memory_order_release);
+    });
+    const auto arm = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (holding.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < arm) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    body();
+    done.store(1, std::memory_order_release);
+    holder.join();
+    return finished_while_held.load(std::memory_order_acquire) == 1;
+}
+
+// `body` runs on this thread after `key` is claimed in spawn_region_inflight_
+// (region-fast, no agent_apply_mu_). Returns true when `body` finished
+// before that claim ended. A supervise closure on the same key waits
+// inside gate_spawn_apply_region and returns false.
+template <class Ev, class F>
+bool finished_while_region_held(Ev& ev, std::uint64_t key, int hold_ms, F&& body) {
+    std::atomic<int> holding{0};
+    std::atomic<int> done{0};
+    std::atomic<int> finished_while_held{-1};
+    std::thread holder([&] {
+        ev.gate_spawn_apply_region(
+            key, /*region_fast=*/true,
+            [&] {
+                holding.store(1, std::memory_order_release);
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(hold_ms);
+                while (std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                finished_while_held.store(done.load(std::memory_order_acquire),
+                                          std::memory_order_release);
+            },
+            [](std::uint64_t) {});
     });
     const auto arm = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (holding.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < arm) {
@@ -419,6 +453,153 @@ int run_test_agent_apply_mutex() {
               "3728 AC4: no test_issue_3728.cpp");
         CHECK(!std::filesystem::exists("docs/design/3728-region-apply-mu.md"),
               "3728 AC4: no docs/design/3728-*");
+    }
+
+    // Issue #4394: supervise-batch must enter gate_spawn_apply_region.
+    // Placed here, while orch_sched is still in Scheduler::run(). #4383
+    // holds agent_apply_mu_ for several seconds with no orch spawn, and
+    // the holder idle-stops after ~3s. ensure() does not restart it, so
+    // a later supervise-batch queues fibers that never run.
+    // A live region-fast claim on the same key blocks the supervise
+    // closure. Distinct keys still skip agent_apply_mu_. :watch-scope #f
+    // uses that gate, not a private mutex. Missing keys and Soft take
+    // the shared mutex.
+    {
+        std::println("\n--- #4394: supervise-batch shares the spawn region gate ---");
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        using aura::orch::reset_all_agent_scopes_for_test;
+        constexpr int kHoldMs = 1500;
+        auto supervise_ok = [](CompilerService& cs, bool watch, std::string_view keys) -> int {
+            const char* w = watch ? "#t" : "#f";
+            std::string expr;
+            if (keys.empty()) {
+                expr = std::format("(let ((pol (orch:compose-workflow 'collect-all))"
+                                   "      (tasks (list (lambda () 1) (lambda () 2))))"
+                                   "  (let ((h (orch:supervise-batch tasks pol :watch-scope {})))"
+                                   "    (if (hash-ref h \"ok\") 1 0)))",
+                                   w);
+            } else {
+                expr = std::format("(let ((pol (orch:compose-workflow 'collect-all))"
+                                   "      (tasks (list (lambda () 1) (lambda () 2)))"
+                                   "      (keys (vector {})))"
+                                   "  (let ((h (orch:supervise-batch tasks pol :watch-scope {} "
+                                   ":region-keys keys)))"
+                                   "    (if (hash-ref h \"ok\") 1 0)))",
+                                   keys, w);
+            }
+            auto r = cs.eval(expr);
+            if (!r || !is_int(*r))
+                return -1;
+            return static_cast<int>(as_int(*r));
+        };
+
+        reset_for_test();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        apply_production_audit_defaults();
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4394: warm");
+        reset_all_agent_scopes_for_test();
+        auto ping = cs.eval(R"((begin
+            (orch:spawn-agent "ping-4394" (lambda () 1))
+            (hash-ref (orch:agent-join "ping-4394" :timeout-ms 800) "ok")))");
+        CHECK(ping && is_bool(*ping) && as_bool(*ping), "4394: orch scheduler still live");
+        reset_all_agent_scopes_for_test();
+        CHECK(supervise_ok(cs, true, "3 4") == 1, "4394: warmup watch batch ok");
+        reset_all_agent_scopes_for_test();
+        auto& ev = cs.evaluator();
+        auto& mu = ev.agent_apply_mu_;
+
+        const auto collide_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> watch_ok{-1};
+        const bool watch_overlapped = finished_while_region_held(ev, 1, kHoldMs, [&] {
+            watch_ok.store(supervise_ok(cs, true, "1 2"), std::memory_order_relaxed);
+        });
+        const auto collide_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(!watch_overlapped, "4394: watch same key waits for the inflight claim");
+        CHECK(watch_ok.load() == 1, "4394: watch same-key batch ok after the claim drops");
+        CHECK(collide_after > collide_before, "4394: same-key waiter took agent_apply_mu_");
+        CHECK(ev.spawn_region_inflight_size_for_test() == 0, "4394: watch inflight drained");
+        reset_all_agent_scopes_for_test();
+
+        const auto nowatch_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> nowatch_ok{-1};
+        const bool nowatch_overlapped = finished_while_region_held(ev, 1, kHoldMs, [&] {
+            nowatch_ok.store(supervise_ok(cs, false, "1 2"), std::memory_order_relaxed);
+        });
+        const auto nowatch_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(!nowatch_overlapped, "4394: watch-scope #f same key waits for the inflight claim");
+        CHECK(nowatch_ok.load() == 1, "4394: watch-scope #f same-key batch ok");
+        CHECK(nowatch_after > nowatch_before, "4394: #f same-key waiter took agent_apply_mu_");
+        CHECK(ev.spawn_region_inflight_size_for_test() == 0, "4394: #f inflight drained");
+        reset_all_agent_scopes_for_test();
+
+        const auto distinct_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> distinct_ok{-1};
+        const bool distinct_finished = finished_while_mutex_held(mu, kHoldMs, [&] {
+            distinct_ok.store(supervise_ok(cs, true, "11 22"), std::memory_order_relaxed);
+        });
+        const auto distinct_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(distinct_finished, "4394: distinct keys skip agent_apply_mu_");
+        CHECK(distinct_ok.load() == 1, "4394: distinct-key watch batch ok");
+        CHECK(distinct_after == distinct_before, "4394: distinct keys did not take the mutex");
+        reset_all_agent_scopes_for_test();
+
+        std::atomic<int> distinct_f_ok{-1};
+        const bool distinct_f_finished = finished_while_mutex_held(mu, kHoldMs, [&] {
+            distinct_f_ok.store(supervise_ok(cs, false, "11 22"), std::memory_order_relaxed);
+        });
+        CHECK(distinct_f_finished, "4394: watch-scope #f distinct keys skip agent_apply_mu_");
+        CHECK(distinct_f_ok.load() == 1, "4394: distinct-key #f batch ok");
+        reset_all_agent_scopes_for_test();
+
+        const auto missing_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> missing_ok{-1};
+        const bool missing_finished = finished_while_mutex_held(mu, kHoldMs, [&] {
+            missing_ok.store(supervise_ok(cs, false, ""), std::memory_order_relaxed);
+        });
+        const auto missing_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(!missing_finished, "4394: missing keys take the shared mutex");
+        CHECK(missing_ok.load() == 1, "4394: missing-key #f batch ok");
+        CHECK(missing_after > missing_before, "4394: missing keys acquired agent_apply_mu_");
+        reset_all_agent_scopes_for_test();
+
+        reset_for_test();
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        std::atomic<int> soft_ok{-1};
+        const bool soft_finished = finished_while_mutex_held(mu, kHoldMs, [&] {
+            soft_ok.store(supervise_ok(cs, false, "1 2"), std::memory_order_relaxed);
+        });
+        CHECK(!soft_finished, "4394: Soft #f takes agent_apply_mu_");
+        CHECK(soft_ok.load() == 1, "4394: Soft #f batch ok");
+        CHECK(ev.spawn_region_inflight_size_for_test() == 0, "4394: Soft did not touch inflight");
+        reset_all_agent_scopes_for_test();
+
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto sup = agent_src.find("add(\"orch:supervise-batch\"");
+        CHECK(sup != std::string::npos, "4394: supervise-batch prim");
+        const auto slice = agent_src.substr(sup, 28000);
+        CHECK(slice.find("run_supervised_apply") != std::string::npos,
+              "4394: both arms call the spawn gate helper");
+        CHECK(slice.find("Issue #4394") != std::string::npos, "4394: prim cites the issue");
+        CHECK(agent_src.find("gate_spawn_apply_region") != std::string::npos,
+              "4394: helper enters the spawn gate");
+        CHECK(agent_src.find("make_shared<std::mutex>") == std::string::npos,
+              "4394: no private supervise mutex");
+        CHECK(agent_src.find("query:4394") == std::string::npos, "4394: no new query key");
+        CHECK(read_file("tests/orch/test_issue_4394.cpp").empty(), "4394: no test_issue_4394.cpp");
+        CHECK(read_file("docs/design/4394-supervise-region-gate.md").empty(),
+              "4394: no docs/design");
+        reset_for_test();
     }
 
     // Issue #4062: same region key must not overlap apply_closure.
