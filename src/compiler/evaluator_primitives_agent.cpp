@@ -6658,6 +6658,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Each stage entry is a hash: tasks + optional :failure-policy /
     // :max-concurrency / :timeout-ms / :watch-scope / :stop-on-fail.
     // Soft never hard-denies empty stages. No AgentRegistry / saga / WAL.
+    // Issue #4401: outer ok is #f when any stage status is not ok
+    // (invalid / fail-fast / quota-exceeded / partial / timeout).
+    // :watch-scope and production residual cancel|join-drain act on this
+    // run's child AgentScope, not the session root (#3726 model).
+    // Soft / Report / Defer stay observe-only (#2661 / #3206).
     add("orch:run-workflow",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() ||
@@ -6758,8 +6763,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::vector<EvalValue> stage_out;
             stage_out.reserve(stage_hashes.size());
             orch_sched.ensure(2);
-            auto& wf_scope =
+            auto& wf_root =
                 aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+            // Issue #4401: one child per run. watch_all and production
+            // residual cancel|join-drain stay on this child. Stage bodies
+            // still call parallel-intend below; this prim does not
+            // recompute isolation or bypass region-key deny. Session-root
+            // agents are not cancelled, joined, or RestartN'd.
+            auto& wf_scope = wf_root.spawn_child();
 
             auto push_str = [&ev](const char* s) -> EvalValue {
                 auto idx = ev.push_string_heap(s);
@@ -6834,14 +6845,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if ((types::is_vector(tasks_ev) || types::is_pair(tasks_ev)) && intend) {
                     std::vector<EvalValue> pargs;
                     pargs.push_back(tasks_ev);
-                    pargs.push_back(push_str("failure-policy"));
-                    pargs.push_back(push_str(aura::orch::failure_policy_name(w.batch_policy)));
                     pargs.push_back(push_str("max-concurrency"));
                     pargs.push_back(make_int(static_cast<std::int64_t>(max_concurrency)));
                     pargs.push_back(push_str("timeout-ms"));
                     pargs.push_back(make_int(static_cast<std::int64_t>(timeout_ms)));
                     pargs.push_back(push_str("max-retries"));
                     pargs.push_back(make_int(static_cast<std::int64_t>(pp.max_retries)));
+                    // Issue #4401: parallel-intend treats any :max-retries
+                    // int as RetryN and overwrites an earlier
+                    // :failure-policy. Stage policy is last so
+                    // fail-fast is not rewritten to RetryN.
+                    pargs.push_back(push_str("failure-policy"));
+                    pargs.push_back(push_str(aura::orch::failure_policy_name(w.batch_policy)));
                     auto par = (*intend)(std::span<const EvalValue>(pargs));
                     auto stv = hash_lookup(par, "status");
                     if (types::is_string(stv))
@@ -6893,7 +6908,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto residual_ev = push_str(aura::orch::residual_preference_name(residual));
             auto residual_action_ev = push_str(residual_action);
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},
+                // Issue #4401: stages-failed counts every status != "ok".
+                {"ok", make_bool(stages_failed == 0)},
                 {"stages", make_vector(svidx)},
                 {"stages-ok", make_int(static_cast<std::int64_t>(stages_ok))},
                 {"stages-failed", make_int(static_cast<std::int64_t>(stages_failed))},
