@@ -879,13 +879,15 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
                                     : capability_tenant_id_;
         if ((req_bits != aura::compiler::security::kEffectMutate ||
              !kernel_self_workspace_mutate(op, ref_tenant)) &&
-            !check_workspace_isolation(/*target=*/iso_target,
-                                       /*ref_tenant=*/ref_tenant, req_bits, op))
+            !check_workspace_isolation(
+                /*target=*/iso_target,
+                /*ref_tenant=*/ref_tenant || target_node ? ref_tenant : capability_tenant_id_,
+                req_bits, op))
             return false; // IsolationDeny emitted (single-count, #2388)
     }
     // Issue #3296: Soft/Off SSOT is TypedMid → epoch. Issue #3966: hard
-    // face joins caller_mid=0 (composite/boundary/resolve beat leftover
-    // proof). Issue #3843/#3594/#3462: join==0 refuses — no phantom mid=1
+    // face joins caller_mid=0 (composite/boundary/resolve). Issue #3843/#3594/#3462:
+    // join==0 refuses — no phantom mid=1
     // (mid-fallback-refused SE; Soft / Off keeps the mid=1 observe stamp,
     // #2493 AC4). #3837 string-fence mid join is a separate site.
     std::uint64_t mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
@@ -918,6 +920,10 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     }
     return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_, mid);
 }
+// Issue #4392: a no-target mutate passes ref_tenant 0. The isolation
+// argument above self-stamps that empty case onto the caller so #3365
+// does not deny Restricted+MT before atomic-batch resolves each spine.
+// A real NodeId with tenant 0 still redirects to require_effect_for_node_id.
 
 // Issue #2658: thin helper for call sites that already hold a stamped
 // ast::FlatAST::StableNodeRef. Extracts ref.tenant_id + ref.id and routes

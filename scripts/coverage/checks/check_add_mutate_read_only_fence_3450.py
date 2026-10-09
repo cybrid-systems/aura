@@ -18,6 +18,7 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -65,7 +66,9 @@ def main() -> int:
         fails.append("AC1: acquire still before fn(a) (#3423)")
     must("3450 AC1: replace-type read-only", "AC1 test", t)
 
-    must('add_mutate("mutate:atomic-batch"', "AC2 atomic-batch via add_mutate", mut)
+    # Issue #4392: clang-format may wrap the name onto the next line.
+    if 'add_mutate("mutate:atomic-batch"' not in mut and not re.search(r'add_mutate\(\s*"mutate:atomic-batch"', mut):
+        fails.append("AC2 atomic-batch via add_mutate: missing add_mutate atomic-batch")
     must("3450 AC2: atomic-batch read-only", "AC2 test", t)
     must("3450 AC2: zero sub-op writes", "AC2 no partial", t)
 

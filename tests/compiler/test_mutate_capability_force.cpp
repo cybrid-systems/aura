@@ -38,6 +38,7 @@ using aura::compiler::security::kCapWildcard;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
@@ -363,15 +364,46 @@ int run_test_mutate_capability_force() {
         CHECK(found && is_hash(*found), "4322 prod find is a hash");
         // #4391: query of a bare NodeId is stale-ref on this face. The
         // locator is car of children of the find hash, not children of
-        // the unwrapped int. The batch still passes that int to the
-        // lockless replace-value helper.
+        // the unwrapped int. #4392: that int is no longer a lockless
+        // write. The batch returns the resolver stale-ref and live stays
+        // "c". Name rebind has no node spine and still returns #t.
         auto lit = cs.eval("(car (query :children (query :find \"live\")))");
         CHECK(lit && is_int(*lit), "4322 prod locator is a node id");
         auto batch = cs.eval("(let ((lit (car (query :children (query :find \"live\")))))"
                              "  (mutate:atomic-batch"
                              "    (list (list \"mutate:replace-value\" lit \"d\" \"repro\"))"
                              "    \"repro\"))");
-        CHECK(batch && is_bool(*batch) && as_bool(*batch), "4322 prod batch #t");
+        CHECK(batch && is_pair(*batch), "4322 prod batch is stale-ref merr");
+        if (batch && is_pair(*batch)) {
+            const auto& p = cs.evaluator().pairs()[as_pair_idx(*batch)];
+            auto heap_str = [&](const auto& v) -> std::string {
+                if (!is_string(v))
+                    return {};
+                const auto i = as_string_idx(v);
+                const auto heap = cs.evaluator().string_heap();
+                if (i >= heap.size())
+                    return {};
+                return std::string(heap[i]);
+            };
+            const auto kind_s = heap_str(p.car);
+            std::string msg_s;
+            if (is_pair(p.cdr))
+                msg_s = heap_str(cs.evaluator().pairs()[as_pair_idx(p.cdr)].car);
+            CHECK(kind_s == "stale-ref", "4322 prod batch kind stale-ref");
+            CHECK(is_pair(p.cdr), "4322 prod batch has a message");
+            if (is_pair(p.cdr)) {
+                CHECK(msg_s.find("raw node-id rejected under production") != std::string::npos,
+                      "4322 prod batch names the production reject");
+            }
+        }
+        auto live = cs.eval("live");
+        CHECK(live && is_string(*live), "4322 prod live still a string");
+        if (live && is_string(*live)) {
+            const auto si = as_string_idx(*live);
+            CHECK(si < cs.evaluator().string_heap().size() &&
+                      cs.evaluator().string_heap()[si] == "c",
+                  "4322 prod live stays c");
+        }
         auto rebind = cs.eval("(mutate:rebind \"live\" \"\\\"d\\\"\" \"repro\")");
         CHECK(rebind && is_bool(*rebind) && as_bool(*rebind), "4322 prod rebind #t");
         aura::compiler::typed_audit::apply_dev_audit_defaults();

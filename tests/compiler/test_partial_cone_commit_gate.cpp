@@ -1073,10 +1073,14 @@ static void ac4170_1_live_recover_solved_allows() {
     CHECK(ws != nullptr, "AC1: workspace flat");
     const auto lit = ws ? find_literal_int_3686(*ws, 1) : aura::ast::NULL_NODE;
     CHECK(lit != aura::ast::NULL_NODE, "AC1: literal node found");
-    CHECK(cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 2)))",
-                              static_cast<long long>(lit)))
-              .has_value(),
-          "AC1: mutation drives commit-TC boundary");
+    // #4392: a production bare int is stale-ref inside atomic-batch, so
+    // this boundary is a name rebind (no node spine). #t, not merely
+    // has_value — a hard-gate merr must not look like a commit.
+    {
+        auto mut = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" "
+                           "\"ac4170_live\" \"2\")) \"4170\")");
+        CHECK(mut && is_bool(*mut) && as_bool(*mut), "AC1: rebind drives commit-TC boundary");
+    }
     CHECK(cs.eval("(typecheck-current)").has_value(), "AC1: typecheck-current settles CS");
     aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
     CHECK(aura_typed_audit_current_commit_type_checker() != nullptr,
@@ -1121,10 +1125,11 @@ static void ac4170_2_override_true_conflict_still_fails_closed() {
     CHECK(ws2 != nullptr, "AC2: workspace flat");
     const auto lit2 = ws2 ? find_literal_int_3686(*ws2, 1) : aura::ast::NULL_NODE;
     CHECK(lit2 != aura::ast::NULL_NODE, "AC2: literal node found");
-    CHECK(cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 2)))",
-                              static_cast<long long>(lit2)))
-              .has_value(),
-          "AC2: mutation drives commit-TC boundary");
+    {
+        auto mut = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" "
+                           "\"ac4170_neg\" \"2\")) \"4170\")");
+        CHECK(mut && is_bool(*mut) && as_bool(*mut), "AC2: rebind drives commit-TC boundary");
+    }
     CHECK(cs.eval("(typecheck-current)").has_value(), "AC2: typecheck-current settles CS");
     aura_typed_audit_note_readiness_evaluator(&cs.evaluator());
     aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
