@@ -17395,8 +17395,9 @@ def cmd_cascade_rearm_new_edge_only_3168():
     Wire-up: relower_dirty_defines_from_workspace critical section (per
     #3135 cascade_decision_mtx_) snapshots initial_deferred_edges_size;
     in the rearm_observed_mid_loop branch walks the [initial, current)
-    range under shared dep_graph_mtx_ and marks only target callee
-    blocks via mark_block_dirty. Defensive last-resort fallback (new-edge
+    range under shared dep_graph_mtx_ and dirties the matched define
+    via one mark_blocks_dirty span per function (#4411). Defensive
+    last-resort fallback (new-edge
     set empty / non-attributable) preserves the existing
     mark_all_blocks_dirty + partial_forced_full_by_impact_total path
     (#3097). Soft/Off + clean (armed==0) single-fiber skips the lock
