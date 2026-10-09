@@ -585,14 +585,25 @@ inline DensifyEvalSlot* densify_eval_slot_occupy(const void* eval_id) noexcept {
 }
 inline void arm_densify_in_flight(const void* eval_id) noexcept {
     if (auto* s = densify_eval_slot_occupy(eval_id)) {
-        s->in_flight.store(1, std::memory_order_release);
+        // Issue #4396: Phase-5 and the production auto-arm can both hold
+        // this slot. A store of 1 lets the inner clear drop the outer
+        // guard. Saturating add; densify_in_flight_for stays != 0.
+        auto cur = s->in_flight.load(std::memory_order_relaxed);
+        while (cur < 0xffu && !s->in_flight.compare_exchange_weak(
+                                  cur, static_cast<std::uint8_t>(cur + 1),
+                                  std::memory_order_release, std::memory_order_relaxed)) {
+        }
         return;
     }
     densify_overflow_arm(eval_id);
 }
 inline void clear_densify_in_flight(const void* eval_id) noexcept {
     if (auto* s = densify_eval_slot_find(eval_id)) {
-        s->in_flight.store(0, std::memory_order_release);
+        auto cur = s->in_flight.load(std::memory_order_relaxed);
+        while (cur > 0 && !s->in_flight.compare_exchange_weak(
+                              cur, static_cast<std::uint8_t>(cur - 1), std::memory_order_release,
+                              std::memory_order_relaxed)) {
+        }
         return;
     }
     densify_overflow_clear_if(eval_id);

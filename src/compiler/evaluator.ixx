@@ -1925,6 +1925,7 @@ public:
             // (same UAF avoidance as compact + root_remap hooks above).
             arena_->set_known_roots_hook(nullptr);
             arena_->set_unstable_remap_commit_hook(nullptr);
+            arena_->set_live_container_rewrite_hook(nullptr);
         }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
@@ -1954,7 +1955,14 @@ public:
                 arena_->set_known_roots_hook(&Evaluator::on_arena_known_roots_hook_thunk, this);
                 arena_->set_unstable_remap_commit_hook(
                     &Evaluator::on_arena_unstable_remap_commit_thunk, this);
+                // Issue #4396: pre-unlock rewrite. Installed with the commit
+                // hook; does not release the value-slot arm.
+                arena_->set_live_container_rewrite_hook(
+                    &Evaluator::on_arena_live_container_rewrite_thunk, this);
             }
+            if (arena_group_)
+                arena_group_->set_default_live_container_rewrite_hook(
+                    &Evaluator::on_arena_live_container_rewrite_thunk, this);
             // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before
             // every allocation (orphan arenas stay unlimited).
@@ -5816,6 +5824,10 @@ public:
     std::atomic<std::thread::id> densify_value_slot_owner_{};
     bool densify_value_slot_filling_ = false;
     bool densify_commit_active_ = false;
+    // Issue #4396: a pre-unlock container rewrite already applied one hop.
+    // The later commit must not chase a destination that is also a moved-old
+    // key (freelist reuse). Cleared when that commit finishes.
+    bool densify_live_containers_prerewritten_ = false;
     std::atomic<int> densify_reregister_inflight_{0};
     std::vector<void*> densify_opaque_value_slots_;
     std::vector<void*> densify_modules_value_slots_;
@@ -5850,6 +5862,13 @@ private:
     void densify_unstable_note_closure(void* flat, void* pool) noexcept;
     void densify_unstable_append_value_slots(std::vector<void**>& known, int fill) noexcept;
     [[nodiscard]] bool densify_rewrite_containers_from_published_() noexcept;
+    // Issue #4396: apply old→new onto live containers. check_value_slots
+    // is false for the pre-unlock pass — those copies are still densify-old
+    // until the slot walk after the canary unlock (#4386).
+    [[nodiscard]] bool densify_apply_container_remap_(const std::unordered_set<void*>& old_set,
+                                                      std::unordered_map<void*, void*> remap,
+                                                      bool check_value_slots) noexcept;
+    [[nodiscard]] bool rewrite_live_containers_for_arena_(aura::ast::ASTArena* arena) noexcept;
     void densify_forget_value_slots_() noexcept;
     void fold_remap_(aura::ast::AdaptiveCompactResult& r, bool lcp_blocked) noexcept;
     void end_densify_arm_() noexcept;
@@ -15140,6 +15159,8 @@ public:
     static void on_arena_known_roots_hook_thunk(void* ctx) noexcept;
     // Issue #4386: auto-arm calls this after live_compact, before publish.
     static bool on_arena_unstable_remap_commit_thunk(void* ctx, bool relocated) noexcept;
+    // Issue #4396: live_compact calls this before the canary mutex drops.
+    static bool on_arena_live_container_rewrite_thunk(void* ctx, void* arena) noexcept;
     // Issue #1473: public test accessors for the 3 hook points wired by
     // #1473 (validate_or_refresh sweeps for pinned StableNodeRefs). The
     // production code paths (restore_post_yield_or_rollback,

@@ -180,6 +180,10 @@ public:
         opaque_rewrite_ = rewrite;
     }
 
+    // Issue #4396: plain c-struct eval is outside the mutation-boundary
+    // TLS identity. Phase-5 and the auto-arm store this Evaluator.
+    void set_densify_eval_id(const void* id) noexcept { densify_eval_id_ = id; }
+
 private:
     std::vector<void*> libs_;
     std::vector<FFIFunc> funcs_;
@@ -193,6 +197,8 @@ private:
     std::recursive_mutex* opaque_alloc_mu_ = nullptr;
     std::mutex* opaque_rewrite_mu_ = nullptr;
     std::unordered_map<void*, void*>* opaque_rewrite_ = nullptr;
+    // Issue #4396: non-owning Evaluator*. Null until the ctor publishes it.
+    const void* densify_eval_id_ = nullptr;
 };
 
 } // namespace aura::compiler

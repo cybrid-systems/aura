@@ -1505,6 +1505,11 @@ export using KnownRootsHookFn = void (*)(void* ctx) noexcept;
 // Issue #4386: after Moving relocate, rewrite Evaluator containers whose
 // element addresses are not stable. Null hook is success (no containers).
 export using UnstableRemapCommitFn = bool (*)(void* ctx, bool relocated) noexcept;
+// Issue #4396: rewrite live opaque_heap_ / modules_ / closure flat·pool
+// from THIS arena's inflight moved-old list. Called while the #3210
+// canary mutex is still held, before unlock. Does not release the
+// #4386 value-slot arm. Null hook is success (arenas with no Evaluator).
+export using LiveContainerRewriteFn = bool (*)(void* ctx, void* arena) noexcept;
 
 export struct CompactHook {
     CompactHookFn fn = nullptr;
@@ -1889,6 +1894,26 @@ public:
         if (!fn)
             return true;
         return fn(ctx, relocated);
+    }
+
+    // Issue #4396: same mutex as the commit hook. Copied under the lock,
+    // invoked outside it. Null → true (no live containers to rewrite).
+    void set_live_container_rewrite_hook(LiveContainerRewriteFn fn, void* ctx = nullptr) noexcept {
+        std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+        live_container_rewrite_fn_ = fn;
+        live_container_rewrite_ctx_ = ctx;
+    }
+    [[nodiscard]] bool invoke_live_container_rewrite() noexcept {
+        LiveContainerRewriteFn fn = nullptr;
+        void* ctx = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+            fn = live_container_rewrite_fn_;
+            ctx = live_container_rewrite_ctx_;
+        }
+        if (!fn)
+            return true;
+        return fn(ctx, this);
     }
 
     // Issue #2775: register an external pointer that the caller holds and
@@ -2762,6 +2787,14 @@ public:
                 // one atomic load (no mutex — this thread already holds it).
                 note_temporary_moving_live_canaries();
                 result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
+                // Issue #4396: recycle already returned the old block.
+                // Rewrite opaque_heap_ / modules_ / closure flat·pool
+                // before this mutex drops. c-struct does not take it.
+                // No hook → true. The #4386 arm stays armed.
+                if (result.objects_moved > 0 && !invoke_live_container_rewrite()) {
+                    result.pin_contract_held = false;
+                    result.moving_incomplete_remap = true;
+                }
                 canary_quiescent.unlock();
             }
             result.untracked_kept_count = untracked_kept_local;
@@ -3358,6 +3391,12 @@ public:
     // the scratch clear. Empty after a zero-move publish.
     [[nodiscard]] const std::vector<void*>& last_window_moved_old_published() const noexcept {
         return last_window_moved_old_published_;
+    }
+    // Issue #4396: this-window scratch, valid from relocate return until
+    // the window-exit swap. The pre-unlock container rewrite reads it;
+    // the published vector is still the previous window at that point.
+    void copy_inflight_moved_old(std::vector<void*>& out) const noexcept {
+        out.insert(out.end(), last_moving_relocated_old_.begin(), last_moving_relocated_old_.end());
     }
     // Issue #4046 test seam: one tombstone in this arena's existing
     // last_object_remap_ (the table resolve_object_remap reads).
@@ -4293,11 +4332,17 @@ public:
                     // fallback (mark-only) — refuse to relocate objects the
                     // Evaluator still holds in unregistered void** slots.
                     if (has_known_roots_hook()) {
+                        // Issue #4396: arm before relocate; clear after publish.
+                        void* inflight_owner = nullptr;
+                        struct AutoArmInFlight {
+                            void*& owner;
+                            ~AutoArmInFlight() {
+                                if (owner)
+                                    aura::core::densify_consistency::clear_densify_in_flight(owner);
+                            }
+                        } auto_arm_inflight{inflight_owner};
                         invoke_known_roots_hook();
-                        // Issue #3884: same densify-entry LCP consult as
-                        // Phase-5 / recover (#3782). Skip Moving relocate
-                        // under stamped reject. Soft/Off never reach this
-                        // arm (should_production_auto_arm_moving).
+                        // Issue #3884: densify-entry LCP consult before Moving.
                         LiveCompactResult r{};
                         auto poll = aura::core::lifetime_consistency_proof::
                             consult_last_lcp_for_densify_entry(arena_owner());
@@ -4308,24 +4353,19 @@ public:
                             r.moving_blocked_precondition = true;
                             r.pin_contract_held = false;
                         } else {
+                            inflight_owner = arena_owner();
+                            if (inflight_owner)
+                                aura::core::densify_consistency::arm_densify_in_flight(
+                                    inflight_owner);
                             r = live_compact(LiveCompactMode::Moving);
                         }
                         // Issue #4386: rewrite unstable containers before publish.
-                        // LCP skip passes relocated=false (release the arm only).
                         if (!invoke_unstable_remap_commit(r.objects_moved > 0 ||
                                                           r.moved_live_objects)) {
                             r.pin_contract_held = false;
                             r.moving_incomplete_remap = true;
                         }
-                        // Issue #3783 / #3739: any production auto-arm Moving
-                        // attempt must publish densify health (Phase-5 face).
-                        // Pre-#3783 only the non-soft_gated success branch
-                        // published; incomplete/hard paths armed sticky then
-                        // Soft-fell-back with last window still
-                        // would_allow_mutate=true after objects already moved.
-                        // Soft/Off never reach this arm (should_production_
-                        // auto_arm_moving). Blocked → force pin false so the
-                        // window is not vacuous-green (#3200 shape).
+                        // Issue #3783: publish densify health before Soft fallback.
                         {
                             const auto root_fail =
                                 static_cast<std::uint64_t>(r.root_remap_stable_ref_fail_total +
@@ -4350,10 +4390,7 @@ public:
                             }
                         }
                         if (r.moving_blocked_precondition || r.soft_gated) {
-                            // Issue #3404 AC1: Soft fallback after Moving
-                            // blocked — do NOT claim a real reclaim; the
-                            // Soft mark-only below does not relocate
-                            // objects. (#3783 health already published.)
+                            // Issue #3404 AC1: Soft fallback is not a real reclaim.
                             const auto marked = live_compact(/*force=*/false);
                             if (marked > 0) {
                                 // Mark-only still frees holes; treat as a
@@ -4621,6 +4658,10 @@ public:
     mutable std::mutex unstable_remap_commit_mtx_;
     UnstableRemapCommitFn unstable_remap_commit_fn_ = nullptr;
     void* unstable_remap_commit_ctx_ = nullptr;
+    // Issue #4396: pre-unlock live-container rewrite. Same mutex as the
+    // commit hook. Not a pin inventory.
+    LiveContainerRewriteFn live_container_rewrite_fn_ = nullptr;
+    void* live_container_rewrite_ctx_ = nullptr;
     // Issue #3055: observe-only residual live ptrs (not a remap registry).
     std::vector<void*> post_moving_live_canaries_;
     // Issue #3633: old addresses physically relocated THIS window (neu !=
@@ -4844,6 +4885,19 @@ public:
     // Issue #1554: propagate default quota owner to every module arena
     // (existing + future module_arena creates). Same C-style callback
     // pattern as ASTArena::set_arena_owner — no Evaluator import.
+    // Issue #4396: pre-unlock live-container rewrite for every module
+    // arena (existing + future). Not a pin registry. Null clears.
+    void set_default_live_container_rewrite_hook(LiveContainerRewriteFn fn,
+                                                 void* ctx = nullptr) noexcept {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
+        default_live_rewrite_fn_ = fn;
+        default_live_rewrite_ctx_ = ctx;
+        for (auto& [_, arena] : arenas_) {
+            if (arena)
+                arena->set_live_container_rewrite_hook(fn, ctx);
+        }
+    }
+
     void set_default_arena_owner(void* owner, ASTArena::ArenaQuotaAllowFn allow_fn) noexcept {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         default_owner_ = owner;
@@ -4877,6 +4931,11 @@ public:
         // #1554: new module arenas inherit group default quota owner.
         if (default_owner_ && default_allow_fn_)
             inserted->second->set_arena_owner(default_owner_, default_allow_fn_);
+        // Issue #4396: module arenas compact in Phase-5 without the
+        // primary arena's known-roots hook. Copy the pre-unlock rewrite.
+        if (default_live_rewrite_fn_)
+            inserted->second->set_live_container_rewrite_hook(default_live_rewrite_fn_,
+                                                              default_live_rewrite_ctx_);
         return *inserted->second;
     }
 
@@ -5355,6 +5414,9 @@ private:
     // Issue #1554: default quota owner for module arenas.
     void* default_owner_ = nullptr;
     ASTArena::ArenaQuotaAllowFn default_allow_fn_ = nullptr;
+    // Issue #4396: copied onto module arenas at create and on set.
+    LiveContainerRewriteFn default_live_rewrite_fn_ = nullptr;
+    void* default_live_rewrite_ctx_ = nullptr;
 
     // Issue #335: adaptive auto-compact heuristics.
     //

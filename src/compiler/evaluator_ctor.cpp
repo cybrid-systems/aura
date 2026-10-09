@@ -165,6 +165,9 @@ Evaluator::Evaluator() {
         // Issue #4386: lambdas run later. Null gate keeps the unlocked push.
         ffi_runtime_.set_opaque_heap_moving_gate(&alloc_storage_lock_, &densify_rewrite_mu_,
                                                  &densify_moved_rewrite_);
+        // Issue #4396: c-struct probes this Evaluator, the same id Phase-5
+        // and the auto-arm store in the densify-in-flight slot.
+        ffi_runtime_.set_densify_eval_id(this);
     }
 
     adt_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,
@@ -338,14 +341,17 @@ Evaluator::~Evaluator() {
             // (same UAF avoidance as compact + root_remap hooks above).
             arena_->set_known_roots_hook(nullptr);
             arena_->set_unstable_remap_commit_hook(nullptr);
+            arena_->set_live_container_rewrite_hook(nullptr);
             arena_ = nullptr;
         }
         if (temp_arena_) {
             temp_arena_->clear_arena_owner();
             temp_arena_ = nullptr;
         }
-        if (arena_group_)
+        if (arena_group_) {
+            arena_group_->set_default_live_container_rewrite_hook(nullptr, nullptr);
             arena_group_->clear_default_arena_owner();
+        }
     }
 
     // Issue #63723: clear all thread-local Evaluator* slots
