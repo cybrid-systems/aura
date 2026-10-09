@@ -24,6 +24,7 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.value;
 
 using aura::compiler::CompilerService;
 using aura::compiler::mutate_type_gate::apply_production_defaults;
@@ -35,6 +36,8 @@ using aura::compiler::mutate_type_gate::MutateTypeGate;
 using aura::compiler::mutate_type_gate::reset_for_test;
 using aura::compiler::mutate_type_gate::set_mode;
 using aura::compiler::mutate_type_gate::snapshot;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::is_bool;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -336,6 +339,93 @@ int run_test_mutate_type_gate() {
         setenv("AURA_HARD_TYPE_GATE_ABORT", "true", 1);
         CHECK(read_hard_type_gate_abort_env(), "AC6.24: AURA_HARD_TYPE_GATE_ABORT=true");
         unsetenv("AURA_HARD_TYPE_GATE_ABORT");
+    }
+
+    // Issue #4397: try/catch, while (statement and thunk), apply, and an
+    // evaluator primitive with no checker signature typecheck inside rebind.
+    // Hard forces infer. A free name and a catch outside try still reject.
+    {
+        std::println("\n--- #4397: core forms typecheck after mutate:rebind ---");
+        auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        auto ev_tc = read_file("src/compiler/evaluator_typecheck.cpp");
+        CHECK(impl.find("synthesize_flat_try_form") != std::string::npos, "try form");
+        CHECK(impl.find("synthesize_flat_while_form") != std::string::npos, "while form");
+        CHECK(impl.find("register_primitive(\"apply\", {Dyn, Dyn}, Dyn)") != std::string::npos,
+              "apply (Dyn, Dyn) -> Dyn");
+        CHECK(ev_tc.find("prim_name_registered") != std::string::npos, "primitive probe");
+
+        reset_for_test();
+        CompilerService sandbox_probe;
+        const bool prev_sandbox = sandbox_probe.evaluator().sandbox_mode();
+
+        const char* forms =
+            "(define (f x) (try (car x) (catch (e) e)))"
+            "(define (g n) (let ((i 0)) (while (lambda () (< i n)) "
+            "(lambda () (set! i (+ i 1)))) i))"
+            "(define (h xs) (apply + xs))"
+            "(define (k n) (let ((i 0)) (while (< i n) (set! i (+ i 1))) i))"
+            "(define (p n) (let ((i 0)) (current-time-ms) (workspace) (ast:restore) "
+            "(engine:metrics) (query:defines) (query:code) i))";
+
+        auto rebind_true = [](CompilerService& cs, const char* expr, const std::string& label) {
+            auto r = cs.eval(expr);
+            const bool ok = r && is_bool(*r) && as_bool(*r);
+            if (!ok)
+                std::println("  {} last_mutate_error={}", label,
+                             cs.evaluator().last_mutate_error());
+            CHECK(ok, label);
+        };
+        auto drive = [&](MutateTypeGate gate, const char* tag) {
+            set_mode(gate);
+            CompilerService cs;
+            cs.evaluator().set_sandbox_mode(false);
+            CHECK(cs.eval(std::string("(set-code \"") + forms + "\")").has_value(),
+                  std::string(tag) + " set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval");
+            rebind_true(cs,
+                        "(mutate:rebind \"f\" \"(lambda (x) (try (car x) (catch (e) e)))\" \"id\")",
+                        std::string(tag) + " try");
+            rebind_true(cs,
+                        "(mutate:rebind \"f\" \"(lambda (x) (try (car x) (catch e 0)))\" \"bare\")",
+                        std::string(tag) + " catch bare var");
+            rebind_true(cs,
+                        "(mutate:rebind \"g\" \"(lambda (n) (let ((i 0)) "
+                        "(while (lambda () (< i n)) (lambda () (set! i (+ i 1)))) i))\" \"id\")",
+                        std::string(tag) + " while thunk");
+            rebind_true(cs, "(mutate:rebind \"h\" \"(lambda (xs) (apply + xs))\" \"id\")",
+                        std::string(tag) + " apply");
+            rebind_true(cs,
+                        "(mutate:rebind \"k\" \"(lambda (n) (let ((i 0)) "
+                        "(while (< i n) (set! i (+ i 1))) i))\" \"id\")",
+                        std::string(tag) + " while statement");
+            rebind_true(cs,
+                        "(mutate:rebind \"p\" \"(lambda (n) (let ((i 0)) (current-time-ms) "
+                        "(workspace) (ast:restore) (engine:metrics) (query:defines) "
+                        "(query:code) i))\" \"id\")",
+                        std::string(tag) + " primitive fallback");
+        };
+        drive(MutateTypeGate::Hard, "hard");
+        drive(MutateTypeGate::Soft, "soft");
+
+        set_mode(MutateTypeGate::Hard);
+        CompilerService bad;
+        bad.evaluator().set_sandbox_mode(false);
+        CHECK(bad.eval("(set-code \"(define (c x) (catch (e) x))"
+                       "(define (m xs) (not-a-real-name xs))\")")
+                  .has_value(),
+              "bad set-code");
+        CHECK(bad.eval("(eval-current)").has_value(), "bad eval");
+        auto refused =
+            bad.eval("(mutate:rebind \"m\" \"(lambda (xs) (not-a-real-name xs))\" \"free\")");
+        CHECK(refused.has_value(), "bad rebind eval");
+        CHECK(!(refused && is_bool(*refused) && as_bool(*refused)), "free name is not #t");
+        const auto& err = bad.evaluator().last_mutate_error();
+        CHECK(err.find("unbound variable: not-a-real-name") != std::string::npos, err);
+        CHECK(err.find("unbound variable: catch") != std::string::npos, err);
+        CHECK(err.find("unbound variable: try") == std::string::npos, err);
+        CHECK(err.find("unbound variable: while") == std::string::npos, err);
+        CHECK(err.find("unbound variable: apply") == std::string::npos, err);
+        bad.evaluator().set_sandbox_mode(prev_sandbox);
     }
 
     reset_for_test();

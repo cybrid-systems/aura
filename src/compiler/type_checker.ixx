@@ -1851,6 +1851,11 @@ export class InferenceEngine {
     // Balanced. set_strict(true) still wins (effective Strict).
     GradualPermissiveness gradual_permissiveness_ = gradual_permissiveness_from_env();
 
+    // Issue #4397: evaluator primitive table, without importing the evaluator.
+    // Null (unit tests, lowering) still reports UnboundVariable.
+    bool (*registered_prim_probe_)(const void* ctx, std::string_view name) noexcept = nullptr;
+    const void* registered_prim_ctx_ = nullptr;
+
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 
     // Issue #280: most recent IfExpr's narrowing evidence bitmask.
@@ -1960,6 +1965,13 @@ public:
     void set_metrics(void* m) {
         metrics_ = m;
         cs_.set_metrics(m);
+    }
+    // Issue #4397: a primitive the evaluator registered but this env did not
+    // give a signature typechecks as Dynamic instead of UnboundVariable.
+    void set_registered_prim_probe(bool (*probe)(const void* ctx, std::string_view name) noexcept,
+                                   const void* ctx) noexcept {
+        registered_prim_probe_ = probe;
+        registered_prim_ctx_ = ctx;
     }
     // Issue #536: forward solve_delta observability hooks.
     void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
@@ -2512,6 +2524,13 @@ private:
                                            aura::ast::NodeId id, aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                             aura::ast::NodeView v);
+    // Issue #4397: evaluator core forms. try binds each catch var; while
+    // covers the statement shape and the thunk-lambda shape.
+    aura::core::TypeId synthesize_flat_try_form(aura::ast::FlatAST& flat,
+                                                aura::ast::StringPool& pool, aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_while_form(aura::ast::FlatAST& flat,
+                                                  aura::ast::StringPool& pool,
+                                                  aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                               aura::ast::NodeView v,
                                               // Issue #384: bidirectional check-mode plumbing
@@ -2712,7 +2731,10 @@ export TypeCheckResult type_check_flat_pure(
     bool strict = false, std::uint64_t cache_epoch = 0,
     void* metrics = nullptr,        // Issue #258: optional metrics pointer
     bool bidirectional_mode = true, // Issue #283 follow-up #5
-    GradualPermissiveness gradual_permissiveness = GradualPermissiveness::Balanced) // Issue #2992
+    GradualPermissiveness gradual_permissiveness = GradualPermissiveness::Balanced, // Issue #2992
+    // Issue #4397: null probe keeps UnboundVariable (pass_impls, unit tests).
+    bool (*registered_prim_probe)(const void* ctx, std::string_view name) noexcept = nullptr,
+    const void* registered_prim_ctx = nullptr)
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /
@@ -2853,6 +2875,13 @@ export struct TypeChecker {
     // thread-local current_escape_key before lowering, so the
     // escape_blocks_move_elision_for_current lookup matches.
     [[nodiscard]] std::uint64_t cache_epoch() const noexcept { return cache_epoch_; }
+    // Issue #4397: copied onto both short-lived engines (infer_flat and
+    // infer_flat_partial). Null leaves unregistered names unbound.
+    void set_registered_prim_probe(bool (*probe)(const void* ctx, std::string_view name) noexcept,
+                                   const void* ctx) noexcept {
+        registered_prim_probe_ = probe;
+        registered_prim_ctx_ = ctx;
+    }
     // Issue #2355: on epoch advance, prune type_dep edges stamped at older
     // epochs (epoch > 0 && epoch < new_epoch). AC3: same epoch → no-op.
     void set_cache_epoch(std::uint64_t epoch) {
@@ -3544,6 +3573,11 @@ private:
     // call. Forwarded to the per-call InferenceEngine, which
     // invalidates its cache on epoch advance.
     std::uint64_t cache_epoch_ = 0;
+
+    // Issue #4397: evaluator Primitives* plus lookup, held as a function
+    // pointer so this module does not import aura.compiler.evaluator.
+    bool (*registered_prim_probe_)(const void* ctx, std::string_view name) noexcept = nullptr;
+    const void* registered_prim_ctx_ = nullptr;
 
     // Issue #1407 R1: ConstraintSolver engine-level cache.
     // Per NodeId, store the (epoch, constraints_hash, solve_result)
