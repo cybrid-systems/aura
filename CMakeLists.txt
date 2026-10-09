@@ -3196,6 +3196,10 @@ aura_add_issue_test(test_arena_defrag)
 aura_issue_test_link_llvm_jit_minimal(test_arena_defrag)
 add_dependencies(all_test_issue_targets test_arena_defrag)
 
+aura_add_issue_test(test_raw_pointer_safety)
+aura_issue_test_link_llvm_jit_minimal(test_raw_pointer_safety)
+add_dependencies(all_test_issue_targets test_raw_pointer_safety)
+
 
 
 

@@ -2189,6 +2189,15 @@ public:
     [[nodiscard]] std::uint64_t type_registry_generation() const noexcept {
         return type_registry_gen_.load(std::memory_order_acquire);
     }
+    // Issue #4404: TypeRegistry::compact() keeps the same pointer and
+    // resets TypeEntryArena. Pins and the persistent checker only watch
+    // type_registry_gen_. Call this only after compact() actually ran.
+    // An idle refusal (live MutationBoundary, reclaimed not performed)
+    // must not bump the generation or invalidate the checker.
+    void note_type_registry_content_compacted() noexcept {
+        type_registry_gen_.fetch_add(1, std::memory_order_release);
+        invalidate_persistent_typechecker();
+    }
     [[nodiscard]] std::uint64_t workspace_flat_generation() const noexcept {
         return workspace_flat_gen_.load(std::memory_order_acquire);
     }
