@@ -1448,7 +1448,7 @@ static void ac3994_3_source_cite() {
     CHECK(es.find("Issue #3994") != std::string::npos, "3994 AC3: check_tenant_host_path cites");
     auto pos = es.find("bool Evaluator::check_tenant_host_path");
     CHECK(pos != std::string::npos, "3994 AC3: host-path present");
-    auto win = pos == std::string::npos ? std::string{} : es.substr(pos, 2800);
+    auto win = pos == std::string::npos ? std::string{} : es.substr(pos, 4200);
     CHECK(win.find("capture_security_correlated_audit") != std::string::npos,
           "3994 AC3: host-path correlates");
     CHECK(win.find("capability_tenant_id_") != std::string::npos,

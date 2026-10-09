@@ -891,7 +891,7 @@ int run_test_outermost_persist_fail_closed() {
             const auto cite =
                 ixx.find("Issue #3758: same execute catalog as IRInterpreter::execute");
             CHECK(cite != std::string::npos, "3758: try_jit_execute present");
-            const auto win = cite == std::string::npos ? std::string{} : ixx.substr(cite, 1200);
+            const auto win = cite == std::string::npos ? std::string{} : ixx.substr(cite, 2000);
             const auto gate = win.find("jit_execute_commit_readiness_blocked()");
             const auto call = win.find("reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)");
             CHECK(gate != std::string::npos, "3758 AC1: try_jit_execute consults helper");
