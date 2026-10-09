@@ -4047,14 +4047,15 @@ void InferenceEngine::maybe_report_ground_inconsistency(TypeId inferred, TypeId 
 }
 
 void InferenceEngine::register_primitive(std::string name, std::vector<TypeId> param_types,
-                                         TypeId ret_type) {
-    auto func_type = reg_.register_func(std::move(param_types), ret_type);
+                                         TypeId ret_type, bool variadic) {
+    auto func_type = reg_.register_func(std::move(param_types), ret_type, variadic);
     env_.bind(std::move(name), func_type);
 }
 
 void InferenceEngine::register_poly_primitive(std::string name, std::vector<TypeId> param_types,
-                                              TypeId ret_type, std::vector<TypeId> type_vars) {
-    auto func_type = reg_.register_func(std::move(param_types), ret_type);
+                                              TypeId ret_type, std::vector<TypeId> type_vars,
+                                              bool variadic) {
+    auto func_type = reg_.register_func(std::move(param_types), ret_type, variadic);
     for (auto it = type_vars.rbegin(); it != type_vars.rend(); ++it)
         func_type = reg_.register_forall(*it, func_type);
     env_.bind(std::move(name), func_type);
@@ -4147,7 +4148,9 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("equal?", {Dyn, Dyn}, Bool);
 
     // String operations
-    register_primitive("string-append", {String, String}, String);
+    // Issue #4398: evaluator string-append is (...strings) -> string, not
+    // a fixed pair. Dotted rest: one String required, further args allowed.
+    register_primitive("string-append", {String, String}, String, true);
     register_primitive("string-length", {String}, Int);
     register_primitive("string-ref", {String, Int}, Int);
     register_primitive("substring", {String, Int, Int}, String);
@@ -4207,7 +4210,8 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("length", {Dyn}, Int);
     register_primitive("list-ref", {Dyn, Int}, Dyn);
     register_primitive("member", {Dyn, Dyn}, Dyn);
-    register_primitive("append", {Dyn, Dyn}, Dyn);
+    // Issue #4398: evaluator append is (...lists) -> list.
+    register_primitive("append", {Dyn, Dyn}, Dyn, true);
     register_primitive("reverse", {Dyn}, Dyn);
     register_primitive("take", {Dyn, Int}, Dyn); // Issue #4177: R7RS (take lst k)
     register_primitive("drop", {Dyn, Int}, Dyn); // Issue #4177: R7RS (drop lst k)
@@ -4238,7 +4242,8 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
         register_poly_primitive("write", {a}, Void, {a});
     }
     register_primitive("newline", {}, Void);
-    register_primitive("error", {Dyn}, Void);
+    // Issue #4398: evaluator error takes zero or more; only a[0] is the cause.
+    register_primitive("error", {Dyn}, Void, true);
     register_primitive("assert", {Dyn}, Void);
 
     // Introspection
@@ -4291,8 +4296,9 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_primitive("abs", {Int}, Int);
     register_primitive("gcd", {Int, Int}, Int);
     register_primitive("lcm", {Int, Int}, Int);
-    register_primitive("min", {Dyn, Dyn}, Dyn);
-    register_primitive("max", {Dyn, Dyn}, Dyn);
+    // Issue #4398: evaluator min/max are (...numbers) -> number.
+    register_primitive("min", {Dyn, Dyn}, Dyn, true);
+    register_primitive("max", {Dyn, Dyn}, Dyn, true);
 
     // Character primitives
     register_primitive("char?", {Dyn}, Bool);
@@ -4337,7 +4343,9 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_poly_primitive("flatten", {Dyn}, Dyn, {_a});
     register_poly_primitive("partition", {reg_.register_func({_a}, Bool), Dyn}, Dyn, {_a});
     register_poly_primitive("sort", {Dyn, reg_.register_func({_a, _a}, Bool)}, Dyn, {_a});
-    register_poly_primitive("append", {Dyn, Dyn}, Dyn, {_a});
+    // Issue #4398: this overwrites the register_primitive above. The live
+    // scheme has to stay dotted-rest or the gate still sees arity 2.
+    register_poly_primitive("append", {Dyn, Dyn}, Dyn, {_a}, true);
     register_poly_primitive("member", {Dyn, Dyn}, Bool, {_a});
 
     // std/string
@@ -4363,8 +4371,9 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_poly_primitive("sqrt", {_num}, _num, {_num});
     register_primitive("pi", {}, Float);
     register_poly_primitive("abs", {_num}, _num, {_num});
-    register_poly_primitive("min", {_num, _num}, _num, {_num});
-    register_poly_primitive("max", {_num, _num}, _num, {_num});
+    // Issue #4398: live min/max binding (overwrites the Dyn pair above).
+    register_poly_primitive("min", {_num, _num}, _num, {_num}, true);
+    register_poly_primitive("max", {_num, _num}, _num, {_num}, true);
     register_primitive("sin", {_num}, _num);
     register_primitive("cos", {_num}, _num);
     register_primitive("tan", {_num}, _num);
@@ -5952,8 +5961,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     if (f_ty_copy) {
         auto& ft = *f_ty_copy;
         auto saved_loc = cur_loc_;
-        std::size_t n_expected =
-            std::min(ft.args.size(), v.children.size() > 1 ? v.children.size() - 1 : 0);
+        const std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
+        const std::size_t n_expected = std::min(ft.args.size(), num_args);
         for (std::size_t i = 0; i < n_expected; i++) {
             auto arg_id = v.child(i + 1);
             auto arg_v = flat.get(arg_id);
@@ -6052,7 +6061,16 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 }
             }
         }
-        std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
+        // Issue #4398: dotted-rest has no upper bound. Synthesize args past
+        // the prefix so a free name there is still UnboundVariable. Do not
+        // unify them with the rest binding — that type is the list, not one
+        // element (user `(lambda (a . rest) ...)`).
+        if (ft.variadic) {
+            for (std::size_t i = n_expected; i < num_args; ++i) {
+                auto arg_id = v.child(i + 1);
+                (void)synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
+            }
+        }
         // Skip arity check for known variadic primitives (and/or/+ / …)
         bool named_variadic = false;
         auto callee_v = flat.get(func_id);

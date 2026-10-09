@@ -13,8 +13,8 @@ sin: Any -> Any
 cos: Any -> Any
 tan: Any -> Any
 abs: Any -> Any
-min: Any Any -> Any
-max: Any Any -> Any
+min: Any Any ... -> Any
+max: Any Any ... -> Any
 atan2: Any Any -> Any
 degrees->radians: Any -> Any
 radians->degrees: Any -> Any
