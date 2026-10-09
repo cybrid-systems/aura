@@ -313,6 +313,37 @@ namespace {
         }
     }
 
+    // Issue #4394: orch:supervise-batch apply. Same gate as spawn-agent
+    // (#4062) and production parallel-intend (#4383). region_fast is the
+    // batch skip_mu predicate (RegionConcurrent + production + workspace
+    // region concurrency) and a non-zero key — not a second isolation
+    // model. Same key joins spawn_region_inflight_ and does not overlap.
+    // Distinct keys skip ev.agent_apply_mu_. Missing keys and Soft / Off
+    // take that shared mutex (region_fast false). :watch-scope #f must
+    // not allocate a private mutex. A caller already inside the gate
+    // does not lock ev.agent_apply_mu_ again (#4383).
+    template <class Body>
+    void run_supervised_apply(Evaluator& ev, bool skip_mu, bool use_eval_gate,
+                              int caller_apply_hold, std::uint64_t rkey, Body&& body) {
+        if (use_eval_gate) {
+            ev.gate_spawn_apply_region(
+                rkey, /*region_fast=*/skip_mu && rkey != 0, std::forward<Body>(body),
+                [](std::uint64_t wait_us) {
+                    aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
+                        wait_us, std::memory_order_relaxed);
+                });
+            return;
+        }
+        if (caller_apply_hold == 0) {
+            std::lock_guard<std::mutex> lock(ev.agent_apply_mu_);
+            std::forward<Body>(body)();
+            return;
+        }
+        std::forward<Body>(body)();
+    }
+
     // Issue #1236: JSON string escape for LLM payload construction.
     std::string json_escape(std::string_view s) {
         std::string out;
@@ -6372,7 +6403,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // join/workflow observe; Phase A TaskSpec still defaults 0
             // (Serialized) unless the host supplies :region-keys.
             auto& child = root.spawn_child();
-            auto eval_mu = std::make_shared<std::mutex>();
             std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
             auto rkey_at = [&region_keys](std::size_t i) -> std::uint64_t {
                 return i < region_keys.size() ? region_keys[i] : 0;
@@ -6386,6 +6416,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const bool skip_mu =
                 iso_dec.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
                 prod && ev.workspace_region_concurrency_enabled();
+            const int caller_apply_hold = Evaluator::agent_apply_hold_depth();
+            // Issue #4394: production, and not already inside the spawn
+            // gate. Soft / Off and nested re-entry use the helper's
+            // non-gate arm (shared ev.agent_apply_mu_, or the outer hold).
+            const bool use_eval_gate = caller_apply_hold == 0 && prod;
             // Issue #4000: same TLS stamp as parallel-intend #3840 so
             // try_acquire → try_acquire_for_region when keys are live.
             // Always stamp a non-zero key; skip_mu still batch-gated.
@@ -6405,25 +6440,24 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     aura::orch::AgentSpec spec;
                     spec.name = "supervise-batch-" + std::to_string(ti);
                     spec.region_key = rkey;
-                    spec.body = [&ev, cid, rkey, skip_mu]() {
+                    spec.body = [&ev, cid, rkey, skip_mu, use_eval_gate, caller_apply_hold]() {
                         try {
                             SuperviseRegionTls region_tls(rkey);
-                            const bool use_lock = !skip_mu || rkey == 0;
-                            std::unique_lock<std::mutex> lock(ev.agent_apply_mu_, std::defer_lock);
-                            if (use_lock)
-                                lock.lock();
-                            if (!agent_cid_live(ev, cid)) {
-                                agent_note_closure_freed_call(ev);
-                                return;
-                            }
-                            (void)ev.apply_closure(cid, {});
-                            // Issue #4050: stamp body progress on this
-                            // one-shot slot (coop registration is
-                            // fiber-local, #2540). Progress at apply_closure
-                            // return is enough: the body then exits, so the
-                            // fiber clock reads Done instead of a stale
-                            // injected coop window.
-                            (void)aura::orch::agent_poll();
+                            run_supervised_apply(ev, skip_mu, use_eval_gate, caller_apply_hold,
+                                                 rkey, [&] {
+                                                     if (!agent_cid_live(ev, cid)) {
+                                                         agent_note_closure_freed_call(ev);
+                                                         return;
+                                                     }
+                                                     (void)ev.apply_closure(cid, {});
+                                                     // Issue #4050: stamp body progress on this
+                                                     // one-shot slot (coop registration is
+                                                     // fiber-local, #2540). Progress at
+                                                     // apply_closure return is enough: the body
+                                                     // then exits, so the fiber clock reads Done
+                                                     // instead of a stale injected coop window.
+                                                     (void)aura::orch::agent_poll();
+                                                 });
                         } catch (...) {
                             // [SILENCE-PRIM-#3726] agent body errors surface
                             // via join/status only (#1669 class B).
@@ -6452,23 +6486,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     const auto rkey = rkey_at(ti);
                     aura::serve::parallel_orch::TaskSpec ts;
                     ts.region_key = rkey;
-                    ts.body = [&ev, eval_mu, cid, ti, rkey,
-                               skip_mu]() -> aura::serve::parallel_orch::TaskResult {
+                    ts.body = [&ev, cid, ti, rkey, skip_mu, use_eval_gate,
+                               caller_apply_hold]() -> aura::serve::parallel_orch::TaskResult {
                         SuperviseRegionTls region_tls(rkey);
-                        const bool use_lock = !skip_mu || rkey == 0;
-                        std::unique_lock<std::mutex> lock(*eval_mu, std::defer_lock);
-                        if (use_lock)
-                            lock.lock();
                         aura::serve::parallel_orch::TaskResult tr;
                         tr.task_index = ti;
-                        auto opt = ev.apply_closure(cid, {});
-                        if (!opt) {
-                            tr.ok = false;
-                            tr.error = "apply-failed";
-                        } else if (types::is_error(*opt)) {
-                            tr.ok = false;
-                            tr.error = "task-error";
-                        }
+                        run_supervised_apply(ev, skip_mu, use_eval_gate, caller_apply_hold, rkey,
+                                             [&] {
+                                                 auto opt = ev.apply_closure(cid, {});
+                                                 if (!opt) {
+                                                     tr.ok = false;
+                                                     tr.error = "apply-failed";
+                                                 } else if (types::is_error(*opt)) {
+                                                     tr.ok = false;
+                                                     tr.error = "task-error";
+                                                 }
+                                             });
                         return tr;
                     };
                     tasks.push_back(std::move(ts));
