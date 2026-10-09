@@ -1462,6 +1462,8 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
 // g_aot_reload_mtx. Commit/discard assume the caller holds the workspace
 // write lock. The drain helper must not take that lock.
 extern "C" void aura_jit_reload_staging_commit_locked(void);
+extern "C" void aura_jit_reload_staging_bind_unnamed_defines_locked(const char* const* names,
+                                                                    unsigned len);
 extern "C" void aura_jit_reload_staging_discard_locked(void);
 extern "C" void aura_jit_drop_so_before_dlclose_unlocked(void* handle);
 extern "C" void aura_jit_replaced_fns_clear_unlocked(void);
@@ -4215,7 +4217,18 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     // Issue #4387: publish staged g_jit_fns before the old .so is closed.
     // Flag drops before the write unlock so a waiter does not re-stage.
     // commit_func_table_swap still owns the table-epoch bump.
+    // Issue #4405: unnamed rows carry no name into aura_register_fn.
+    // Bind IR func_id from aot_fn_version_names[] before commit so the
+    // next define drop can see the slot. dlsym runs before the workspace
+    // write lock (loader lock vs workspace).
+    const char* const* version_names = nullptr;
+    unsigned version_names_len = 0;
+    if (auto* lenp = static_cast<const unsigned*>(::dlsym(handle, "aot_fn_versions_len")))
+        version_names_len = *lenp;
+    if (auto* np = static_cast<const char* const*>(::dlsym(handle, "aot_fn_version_names")))
+        version_names = np;
     aura_lock_workspace_write();
+    aura_jit_reload_staging_bind_unnamed_defines_locked(version_names, version_names_len);
     aura_jit_reload_staging_commit_locked();
     g_aot_staging_active.store(false, std::memory_order_release);
     aura_unlock_workspace_write();
@@ -5510,6 +5523,10 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "\n");
     fprintf(f, "// Runtime: register function by func_id for closure dispatch\n");
     fprintf(f, "void aura_register_fn(int64_t func_id, int64_t fn_ptr);\n");
+    // Issue #4405: 2-arg aura_register_fn does not take the define name.
+    // The host strong symbol (weak no-op in runtime.c) binds this IR
+    // func_id to the define so a later owner-scoped drop can retire it.
+    fprintf(f, "void aura_note_ir_func_define(int64_t func_id, const char* name);\n");
     fprintf(f, "\n");
 
     // Compute mangled (identity) + link names once.
@@ -5684,6 +5701,7 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
 
     for (unsigned int i = 0; i < num_functions; ++i) {
         fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i], link_names[i].c_str());
+        fprintf(f, "    aura_note_ir_func_define(%u, \"%s\");\n", func_ids[i], functions[i].name);
     }
 
     fprintf(f, "}\n");

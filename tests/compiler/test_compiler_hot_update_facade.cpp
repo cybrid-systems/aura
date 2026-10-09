@@ -1360,6 +1360,157 @@ static void ac3977_unnamed_owner_scoped_skips_process_count() {
           "3977 AC4: Soft unnamed count consult is a load");
 }
 
+// Issue #4405: owner-scoped invalidate must retire a ScalarFn that was
+// published only by IR func_id (AOT constructor / unnamed commit). The
+// live closure has an empty name and stable id 0, so the name-map scan
+// and the stable-id soft_stale slot both miss it. Drop binds that
+// func_id to the define and MustDeopts only closures that index it.
+extern "C" void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                                 int32_t local_count, int32_t arg_count, int32_t env_count);
+extern "C" void aura_note_ir_func_define(int64_t func_id, const char* name);
+extern "C" int64_t aura_alloc_closure(int64_t func_id);
+extern "C" void aura_free_closure(int64_t closure_id);
+extern "C" int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc);
+extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+extern "C" std::uint64_t aura_get_current_bridge_epoch(void);
+extern "C" std::uint64_t aura_get_aot_defuse_version(void);
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
+
+static int64_t ac4405_hit_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 440501;
+}
+static int64_t ac4405_other_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 440502;
+}
+static int64_t ac4405_anon_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 440503;
+}
+
+static void ac4405_func_id_only_leaves_native() {
+    std::println("\n--- #4405: func_id-only ScalarFn leaves native on define drop ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto rc = read_file("lib/runtime.c");
+    CHECK(rt.find("Issue #4405") != std::string::npos, "4405: runtime cites #4405");
+    CHECK(rt.find("g_ir_func_define_names") != std::string::npos,
+          "4405: IR func_id is bound to the define name");
+    CHECK(rt.find("void aura_note_ir_func_define(") != std::string::npos,
+          "4405: note binds the func_id without writing the name map");
+    CHECK(rt.find("aura_jit_reload_staging_bind_unnamed_defines_locked") != std::string::npos,
+          "4405: unnamed commit binds aot_fn_version_names");
+    const auto reg_call = br.find("aura_register_fn(%u, (int64_t)%s)");
+    const auto note_call = br.find("aura_note_ir_func_define(%u,");
+    CHECK(reg_call != std::string::npos && note_call != std::string::npos && note_call > reg_call,
+          "4405: registration C notes the define after the 2-arg register");
+    CHECK(br.find("aura_jit_reload_staging_bind_unnamed_defines_locked(version_names, "
+                  "version_names_len)") != std::string::npos,
+          "4405: reload commit binds unnamed rows before publish");
+    CHECK(rc.find("void aura_note_ir_func_define(int64_t func_id, const char* name)") !=
+              std::string::npos,
+          "4405: runtime.c keeps a weak no-op so the AOT image still links");
+    CHECK(rt.find("schema-4405") == std::string::npos, "4405: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4405.cpp").empty(), "4405: no test_issue file");
+    CHECK(read_file("docs/design/4405-func-id-only-scalar.md").empty(), "4405: no docs/design");
+
+    constexpr int64_t kHit = 500;
+    constexpr int64_t kOther = 501;
+    constexpr int64_t kAnon = 502;
+    aura_register_fn(kHit, ac4405_hit_fn, 1, 0, 0);
+    aura_note_ir_func_define(kHit, "ac4405_F");
+    aura_register_fn(kOther, ac4405_other_fn, 1, 0, 0);
+    aura_note_ir_func_define(kOther, "ac4405_other");
+    aura_register_fn(kAnon, ac4405_anon_fn, 1, 0, 0);
+    const auto cid = aura_alloc_closure(kHit);
+    const auto oid = aura_alloc_closure(kOther);
+    const auto aid = aura_alloc_closure(kAnon);
+    CHECK(cid >= 0 && oid >= 0 && aid >= 0, "4405: alloc func_id-only closures");
+    std::int64_t args[1] = {0};
+    const auto pre_hit = aura_closure_call(cid, args, 0);
+    const auto pre_other = aura_closure_call(oid, args, 0);
+    const auto pre_anon = aura_closure_call(aid, args, 0);
+    const bool native_reachable = pre_hit == 440501 && pre_other == 440502 && pre_anon == 440503;
+
+    const auto pending0 = aura_jit_deopt_pending_count();
+    const auto table0 = aura_aot_func_table_epoch();
+    const auto bridge0 = aura_get_current_bridge_epoch();
+    const auto defuse0 = aura_get_aot_defuse_version();
+    aura_drop_jit_fn_native_for_define("ac4405_F");
+    CHECK(aura_jit_deopt_pending_count() == pending0,
+          "4405: drop does not raise deopt_pending_count");
+    CHECK(aura_aot_func_table_epoch() == table0, "4405: drop does not bump the table epoch");
+    CHECK(aura_get_current_bridge_epoch() == bridge0, "4405: drop does not bump C-bridge");
+    CHECK(aura_get_aot_defuse_version() == defuse0, "4405: drop does not bump defuse");
+    CHECK(aura_jit_fn_ptr_for_test(kHit) == 0, "4405: g_jit_fns slot for the define is cleared");
+    CHECK(aura_jit_fn_ptr_for_test(kOther) != 0, "4405: other define's slot stays installed");
+    CHECK(aura_jit_fn_ptr_for_test(kAnon) != 0, "4405: unnoted pure-anon slot stays installed");
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "4405: matching func_id closure is MustDeopt");
+    CHECK(aura_closure_get_must_deopt(oid) == 0, "4405: other define's closure is not MustDeopt");
+    CHECK(aura_closure_get_must_deopt(aid) == 0, "4405: unnoted pure-anon is not MustDeopt");
+    const auto post_hit = aura_closure_call(cid, args, 0);
+    CHECK(post_hit != 440501, "4405: matching closure does not run the pre-mutate ScalarFn");
+    if (native_reachable) {
+        CHECK(aura_closure_call(oid, args, 0) == 440502,
+              "4405: other define's closure still enters native");
+        CHECK(aura_closure_call(aid, args, 0) == 440503,
+              "4405: unnoted pure-anon still enters native");
+    }
+    aura_free_closure(cid);
+
+    apply_production_audit_defaults();
+    {
+        CompilerService cs_a;
+        CompilerService cs_b;
+        void* owner = &cs_a.evaluator();
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        aura_register_fn(kHit, ac4405_hit_fn, 1, 0, 0);
+        aura_note_ir_func_define(kHit, "ac4405_F");
+        const auto cid2 = aura_alloc_closure(kHit);
+        CHECK(cid2 >= 0, "4405: alloc after re-publish");
+        const auto pending1 = aura_jit_deopt_pending_count();
+        const auto table1 = aura_aot_func_table_epoch();
+        const auto bridge1 = aura_get_current_bridge_epoch();
+        const auto defuse1 = aura_get_aot_defuse_version();
+        const auto h0 = cross_eval_hard_owner_scoped_total_v_read();
+        cs_a.public_invalidate_function("ac4405_F");
+        const auto h1 = cross_eval_hard_owner_scoped_total_v_read();
+        CHECK(aura_jit_fn_ptr_for_test(kHit) == 0,
+              "4405: production invalidate clears the func_id-only slot");
+        CHECK(aura_closure_get_must_deopt(cid2) == 1,
+              "4405: production invalidate MustDeopts the func_id-only closure");
+        CHECK(aura_jit_fn_ptr_for_test(kAnon) != 0,
+              "4405: production invalidate leaves the unnoted pure-anon slot");
+        CHECK(aura_closure_get_must_deopt(aid) == 0,
+              "4405: production invalidate does not MustDeopt the unnoted pure-anon");
+        if (h1 > h0 && aura_aot_state_map_size() > 1 &&
+            aura_aot_last_table_bump_owner_scoped() != 0) {
+            CHECK(aura_jit_deopt_pending_count() == pending1,
+                  "4405: owner-scoped invalidate does not raise deopt_pending_count");
+            CHECK(aura_aot_func_table_epoch() == table1, "4405: owner-scoped table epoch frozen");
+            CHECK(aura_get_current_bridge_epoch() == bridge1, "4405: owner-scoped C-bridge frozen");
+            CHECK(aura_get_aot_defuse_version() == defuse1, "4405: owner-scoped defuse frozen");
+        } else {
+            std::println("  [4405] single-state / global fallback — owner-scope clocks skipped");
+        }
+        CHECK(aura_closure_call(cid2, args, 0) != 440501,
+              "4405: post-invalidate closure does not run the pre-mutate ScalarFn");
+        aura_free_closure(cid2);
+    }
+    aura_drop_jit_fn_native_for_define("ac4405_other");
+    aura_note_ir_func_define(kAnon, "ac4405_cleanup");
+    aura_drop_jit_fn_native_for_define("ac4405_cleanup");
+    aura_free_closure(oid);
+    aura_free_closure(aid);
+    apply_dev_audit_defaults();
+}
+
 // Issue #4073: try_jit_execute must not invoke a ScalarFn whose
 // last_seen_epoch_ is behind current_mutation_epoch. Named facade
 // eviction is not what drops this entry.
@@ -1715,6 +1866,9 @@ int run_test_issue_3112() {
     // Issue #3977: unnamed deopt_pending_count is not the owner-scoped
     // peer-anon leave-native gate.
     ac3977_unnamed_owner_scoped_skips_process_count();
+
+    // Issue #4405: func_id-only ScalarFn leaves native on this define's drop.
+    ac4405_func_id_only_leaves_native();
 
     // Issue #4073: try_jit_execute must not run a ScalarFn whose
     // last_seen_epoch_ is behind current_mutation_epoch.

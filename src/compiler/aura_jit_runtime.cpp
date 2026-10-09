@@ -4381,6 +4381,13 @@ static std::unordered_map<std::string, JitFnEntry, aura::core::TransparentString
                           std::equal_to<>>
     g_jit_fns_by_name;
 
+// Issue #4405: IR func_id → define name for a ScalarFn that aura_register_fn
+// published without a g_jit_fns_by_name row (AOT constructor / unnamed
+// staging commit). Drop reads it so the pointer scan and per-cid MustDeopt
+// see the slot the unnamed closure indexes. Not a closure table, not a
+// query key, not a metrics field.
+static std::unordered_map<int64_t, std::string> g_ir_func_define_names;
+
 // Issue #4387: constructor registrations observed while an AOT reload is
 // staging. Published into the live tables only on commit. Rollback clears
 // this vector and does not write g_jit_fns. Replaced pointers are the
@@ -4391,6 +4398,9 @@ struct JitReloadStage {
     JitFnEntry entry{};
     std::string name;
     bool named = false;
+    // Issue #4405: define name for an unnamed publish. Commit writes
+    // g_ir_func_define_names and does not write g_jit_fns_by_name.
+    std::string define_name;
 };
 static std::vector<JitReloadStage> g_jit_reload_staging;
 using JitScalarFn = int64_t (*)(int64_t*, uint32_t);
@@ -4425,6 +4435,11 @@ static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t)
                               int32_t local_count, int32_t arg_count, int32_t env_count) {
     if (func_id < 0 || !fn)
         return;
+    // Issue #4405: a fresh slot publish drops a stale func_id→define
+    // binding. Unnamed commit restores it when the staged record carries
+    // the define name (after this erase). A named publish leaves the
+    // name map as the authority for the pointer scan.
+    g_ir_func_define_names.erase(func_id);
     if (func_id < 512) {
         g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
         return;
@@ -4568,6 +4583,35 @@ void aura_note_aot_constructor_jit_fn(int64_t func_id, int64_t fn_ptr) {
     aura_register_fn(func_id, fn, 0, 0, 0);
 }
 
+// Issue #4405: bind an IR func_id to the define that owns the func_id-only
+// ScalarFn. Call after aura_register_fn. While a reload is staging, the
+// name stays on the unnamed staged record and commit publishes it; a
+// failed reload discards it with the record. Otherwise write the live
+// map. Does not write g_jit_fns_by_name and does not clear peer soft-stale.
+void aura_note_ir_func_define(int64_t func_id, const char* name) {
+    if (func_id < 0 || name == nullptr || name[0] == '\0')
+        return;
+    aura_lock_workspace_write();
+    if (aura_aot_jit_reload_staging_active()) {
+        for (auto& rec : g_jit_reload_staging) {
+            if (rec.func_id == func_id && !rec.named) {
+                rec.define_name = name;
+                aura_unlock_workspace_write();
+                return;
+            }
+        }
+        JitReloadStage rec;
+        rec.func_id = func_id;
+        rec.named = false;
+        rec.define_name = name;
+        g_jit_reload_staging.push_back(std::move(rec));
+        aura_unlock_workspace_write();
+        return;
+    }
+    g_ir_func_define_names[func_id] = name;
+    aura_unlock_workspace_write();
+}
+
 // Issue #660 Option 1: register a function by both id AND name.
 // The name is stable across modules (assigned by cache_define),
 // so when the closure's func_id is invalid at runtime, the name
@@ -4603,6 +4647,26 @@ void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int
     aura_unlock_workspace_write();
 }
 
+// Issue #4405: caller holds the workspace write lock. Fill define_name on
+// unnamed staged rows from the loaded module's aot_fn_version_names[],
+// which is parallel to IR func_id (generate_registration_c uses the index
+// as func_id). A row that aura_note_ir_func_define already named is left
+// alone. Does not write g_jit_fns_by_name and does not bump epochs.
+void aura_jit_reload_staging_bind_unnamed_defines_locked(const char* const* names, unsigned len) {
+    if (names == nullptr || len == 0)
+        return;
+    for (auto& rec : g_jit_reload_staging) {
+        if (rec.named || !rec.define_name.empty())
+            continue;
+        if (rec.func_id < 0 || static_cast<unsigned>(rec.func_id) >= len)
+            continue;
+        const char* def = names[rec.func_id];
+        if (def == nullptr || def[0] == '\0')
+            continue;
+        rec.define_name = def;
+    }
+}
+
 // Issue #4387: caller holds the workspace write lock. Installs staged
 // entries via register_fn_entry (not aura_register_fn) so a still-true
 // staging flag cannot re-stage the publish. Does not touch
@@ -4620,6 +4684,12 @@ void aura_jit_reload_staging_commit_locked(void) {
         }
         register_fn_entry(rec.func_id, rec.entry.fn, rec.entry.local_count, rec.entry.arg_count,
                           rec.entry.env_count);
+        // Issue #4405: publish the func_id→define binding for an unnamed
+        // row that actually installed a ScalarFn. register_fn_entry
+        // cleared any stale binding. Named rows stay on g_jit_fns_by_name
+        // only (the pointer scan already sees that pointer).
+        if (!rec.named && rec.entry.fn && !rec.define_name.empty())
+            g_ir_func_define_names[rec.func_id] = rec.define_name;
         if (rec.named) {
             g_jit_fns_by_name[rec.name] = rec.entry;
             aura_aot_clear_peer_jit_name_soft_stale(rec.name.c_str());
@@ -4683,15 +4753,22 @@ void aura_jit_drop_so_before_dlclose_unlocked(void* handle) {
         if (drop_fn(g_closure_cache[i].fn))
             clear_closure_cache_entry(g_closure_cache[i]);
     }
-    for (auto& slot : g_jit_fns) {
-        if (drop_fn(slot.fn))
-            slot = {nullptr, 0, 0, 0};
+    for (int slot_i = 0; slot_i < 512; ++slot_i) {
+        if (!drop_fn(g_jit_fns[slot_i].fn))
+            continue;
+        g_jit_fns[slot_i] = {nullptr, 0, 0, 0};
+        // Issue #4405: the mapping is going away. Drop the func_id→define
+        // binding with the slot so a later publish is not retired by the
+        // unmapped define's name.
+        g_ir_func_define_names.erase(slot_i);
     }
     for (auto it = g_jit_fns_overflow.begin(); it != g_jit_fns_overflow.end();) {
-        if (drop_fn(it->second.fn))
+        if (drop_fn(it->second.fn)) {
+            g_ir_func_define_names.erase(it->first);
             it = g_jit_fns_overflow.erase(it);
-        else
+        } else {
             ++it;
+        }
     }
     for (auto it = g_jit_fns_by_name.begin(); it != g_jit_fns_by_name.end();) {
         if (drop_fn(it->second.fn))
@@ -4814,6 +4891,47 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
             g_closure_must_deopt[cid] = 1;
         }
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
+    }
+
+    // Issue #4405: func_id-only ScalarFn (AOT constructor / unnamed
+    // commit) is not in g_jit_fns_by_name, and the closure's name is
+    // empty so the walk above continues. The IR func_id was bound to
+    // this define at note / unnamed commit. Note that pointer so the
+    // scan below clears every slot and cache entry that still holds
+    // it, clear the g_jit_fns slot the closure calls, and MustDeopt
+    // only cids whose g_closure_func_ids equal that id. Does not raise
+    // deopt_pending_count and does not bump table / C-bridge / defuse.
+    std::vector<int64_t> func_only_ids;
+    for (const auto& [fid, def] : g_ir_func_define_names) {
+        if (jit_key_matches_define(def, name))
+            func_only_ids.push_back(fid);
+    }
+    for (int64_t fid : func_only_ids) {
+        note(jit_live_fn_for_id(fid));
+        if (fid >= 0 && fid < 512)
+            g_jit_fns[fid] = {nullptr, 0, 0, 0};
+        else if (fid >= 512)
+            g_jit_fns_overflow.erase(fid);
+        g_ir_func_define_names.erase(fid);
+    }
+    if (!func_only_ids.empty()) {
+        const auto nids = g_closure_func_ids.size();
+        for (std::size_t cid = 0; cid < nids; ++cid) {
+            const auto cf = g_closure_func_ids[cid];
+            bool hit = false;
+            for (int64_t fid : func_only_ids) {
+                if (cf == fid) {
+                    hit = true;
+                    break;
+                }
+            }
+            if (!hit)
+                continue;
+            if (g_closure_must_deopt.size() <= cid)
+                g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+            g_closure_must_deopt[cid] = 1;
+            invalidate_closure_cache_for(static_cast<int64_t>(cid));
+        }
     }
 
     for (auto& slot : g_jit_fns) {
@@ -6962,6 +7080,7 @@ void aura_reset_runtime() {
         clear_closure_cache_entry(g_closure_cache[i]);
     g_jit_fns_overflow.clear(); // Issue #1304
     g_jit_fns_by_name.clear();
+    g_ir_func_define_names.clear(); // Issue #4405
     g_cell_heap.clear();
     // Issue #4093: tenant stamps die with the slots (a stale stamp must
     // never survive a reset and re-attach to a reused index).

@@ -473,6 +473,14 @@ __attribute__((weak)) void aura_note_aot_constructor_jit_fn(int64_t func_id, int
     (void)fn_ptr;
 }
 
+// Issue #4405: generated registration calls this with the define name.
+// Weak no-op so a runtime.c-only AOT link succeeds. The host strong
+// definition binds the IR func_id for the next define drop.
+__attribute__((weak)) void aura_note_ir_func_define(int64_t func_id, const char* name) {
+    (void)func_id;
+    (void)name;
+}
+
 // Register a function pointer for a given func_id.
 // Called by AOT registration code (generated .c file) before main().
 void aura_register_fn(int64_t func_id, int64_t fn_ptr) {
