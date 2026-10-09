@@ -469,19 +469,6 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_hash(hidx);
         });
 
-    // (type-registry-compact) — Issue #78: reclaim all non-predefined
-    // entries. Bumps the generation counter so any TypeId from the
-    // previous generation becomes stale. Returns the number of entries
-    // reclaimed.
-    add("type-registry-compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.type_registry_) {
-            return make_int(0);
-        }
-        auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-        std::uint32_t reclaimed = treg.compact();
-        return make_int(static_cast<std::int64_t>(reclaimed));
-    });
-
     // Issue #3269: close check-then-act TOCTOU on arena compact/defrag.
     // TLS any_active_mutation_boundary skips same-fiber compact-under-Guard
     // (workspace unique is non-recursive). Otherwise unique-lock workspace
@@ -502,6 +489,26 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return body();
     };
+
+    // (type-registry-compact) — Issue #78: reclaim all non-predefined
+    // entries. Bumps the TypeRegistry generation so any TypeId from the
+    // previous generation becomes stale. Returns the number of entries
+    // reclaimed.
+    // Issue #4404: same idle gate as arena:compact. A live MutationBoundary
+    // returns 0 and does not reset the arena, bump type_registry_gen_, or
+    // invalidate the persistent checker. A compact that runs (even when
+    // it reclaims 0) publishes a new pin generation.
+    add("type-registry-compact",
+        [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
+            if (!ev.type_registry_)
+                return make_int(0);
+            return with_arena_compact_idle([&] {
+                auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+                auto reclaimed = treg.compact();
+                ev.note_type_registry_content_compacted();
+                return make_int(static_cast<std::int64_t>(reclaimed));
+            });
+        });
 
     // (arena:compact) — Issue #187 (P0): conservative arena buffer
     // compaction. Reclaims the unused tail of the main arena's pmr

@@ -203,13 +203,25 @@ public:
     // pool and doesn't affect the existing types the caller holds.
     bool is_subtype(TypeId sub, TypeId sup) const pre(sub.valid()) pre(sup.valid());
 
+    // Structural equality by payload, not raw TypeId. Scalar leaves stay
+    // false when the ids differ (nominal identity is `a == b`).
+    // Issue #4409: production same-tag consistent_unify uses this.
+    bool type_equals(TypeId a, TypeId b) const;
+
     // ── 预定义常量 ──
-    TypeId dynamic_type() const { return TypeId{0, 1}; }
-    TypeId int_type() const { return TypeId{1, 1}; }
-    TypeId bool_type() const { return TypeId{2, 1}; }
-    TypeId string_type() const { return TypeId{3, 1}; }
-    TypeId void_type() const { return TypeId{4, 1}; }
-    TypeId type_type() const { return TypeId{5, 1}; }
+    // Issue #4404: generation is the live registry generation. A TypeId
+    // copied before compact() keeps the old generation and fails closed
+    // in tag_of / name_of / *_of. TypeId::valid() is unchanged.
+    TypeId dynamic_type() const {
+        return TypeId{0, next_generation_.load(std::memory_order_acquire)};
+    }
+    TypeId int_type() const { return TypeId{1, next_generation_.load(std::memory_order_acquire)}; }
+    TypeId bool_type() const { return TypeId{2, next_generation_.load(std::memory_order_acquire)}; }
+    TypeId string_type() const {
+        return TypeId{3, next_generation_.load(std::memory_order_acquire)};
+    }
+    TypeId void_type() const { return TypeId{4, next_generation_.load(std::memory_order_acquire)}; }
+    TypeId type_type() const { return TypeId{5, next_generation_.load(std::memory_order_acquire)}; }
 
     // ── Instantiate a forall type with fresh type variables
     TypeId instantiate(TypeId forall_id, std::function<TypeId()> fresh_var);
@@ -223,7 +235,7 @@ public:
     // ── 工具 ──
     std::string format_type(TypeId id) const;
     size_t size() const { return entries_.size(); }
-    uint32_t generation() const { return next_generation_; }
+    uint32_t generation() const { return next_generation_.load(std::memory_order_acquire); }
     // Number of entries at construction (the predefined types that
     // survive every compact() call). Used to distinguish "user types"
     // from "always-present" types in tests / diagnostics.
@@ -298,11 +310,8 @@ private:
     // ~TypeRegistry() both invoke this.
     void destroy_all_entries() noexcept;
 
-    // TypeId interning: type_equals compares two TypeIds by structural
-    // content (not raw id). type_hash produces a stable hash for the
-    // structural content (used for the dedup intern table — though the
-    // initial implementation uses linear scan over entries_).
-    bool type_equals(TypeId a, TypeId b) const;
+    // type_hash is the structural hash for the dedup intern table
+    // (the initial implementation still linear-scans entries_).
     std::uint64_t type_hash(TypeId a) const;
 
 public:
@@ -367,7 +376,12 @@ private:
     TypeEntryArena arena_;        // bump-allocates Entry objects
     std::unordered_map<std::string, TypeId, aura::core::TransparentStringHash, std::equal_to<>>
         name_to_id_;
-    uint32_t next_generation_ = 1;
+    // Issue #4404: compact() publishes the next generation under the
+    // exclusive lock, then destroys Entry storage. Accessors that do
+    // not take the lock (generation(), *_type()) load acquire so they
+    // do not race that increment. Lookups load relaxed while they hold
+    // the mutex.
+    std::atomic<uint32_t> next_generation_{1};
 
     // Issue #1431: TypeRegistry thread-safety. InferenceEngine is
     // constructed fresh per infer_flat() call (cached InferenceEngine
@@ -379,10 +393,34 @@ private:
     // mutex, TypeEntryArena::bump_slot races and returns overlapping or
     // stale memory, surfacing as `Entry::Entry(this=0x0)` SIGSEGV.
     //
-    // The mutex serializes all register_* methods. Read-only accessors
-    // (*_of, lookup_type, *_type() predefined, etc.) are lock-free
-    // because entries_ pointers are stable across registrations.
-    mutable std::recursive_mutex type_registry_mutex_;
+    // Issue #4404: compact() destroys entries_, so readers are not
+    // lock-free. Shared readers and exclusive compact share this mutex.
+    // std::shared_mutex is not recursive. register_* calls other
+    // register_* / *_of while it already holds unique, so unique nests
+    // by depth and a shared lock on that same hold is skipped.
+    class TypeRegistryLock {
+    public:
+        TypeRegistryLock() = default;
+        TypeRegistryLock(const TypeRegistryLock&) = delete;
+        TypeRegistryLock& operator=(const TypeRegistryLock&) = delete;
+        void lock();
+        void unlock();
+        void lock_shared();
+        void unlock_shared();
+
+    private:
+        std::shared_mutex mu_;
+    };
+    mutable TypeRegistryLock type_registry_mutex_;
+
+    [[nodiscard]] uint32_t current_generation() const noexcept {
+        return next_generation_.load(std::memory_order_relaxed);
+    }
+    // Caller holds shared or unique on type_registry_mutex_.
+    [[nodiscard]] bool id_current(TypeId id) const noexcept {
+        return id.index < entries_.size() && entries_[id.index] != nullptr &&
+               id.generation == current_generation();
+    }
 };
 
 } // namespace aura::core
