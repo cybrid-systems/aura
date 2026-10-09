@@ -9026,9 +9026,10 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // The cache lives on the TypeChecker (persistent across
     // infer_flat calls). For each NodeId we store
     // {epoch, node-shape-hash, solve_result, inferred_type}.
-    // On a cache hit (same epoch, same shape), skip the
+    // On a SOLVED cache hit (same epoch, same shape), skip the
     // expensive type_check_flat_pure call entirely and
-    // return the cached inferred_type. The fingerprint is
+    // return the cached inferred_type. A non-SOLVED hit re-runs.
+    // The fingerprint is
     // the AST node's type-relevant shape (tag + sym_id +
     // int_value + float_value + recursive child hashes,
     // bounded depth 8). If the AST under the NodeId
@@ -9049,19 +9050,19 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
         SolveResult cached_result{};
         TypeId cached_type{};
         if (cs_cache_lookup(node, cache_epoch_, node_hash, cached_result, cached_type)) {
-            // Cache hit. The cached inferred_type is safe to
-            // return because:
-            //   - cache_epoch_ matched (no mutation advanced
-            //     past the cache entry's epoch)
-            //   - node_hash matched (AST shape unchanged)
-            // We do NOT call type_check_flat_pure; the
-            // caller gets the cached type directly.
+            // Issue #4408: only a SOLVED entry may skip type_check_flat_pure.
+            // A CONFLICT / TIMEOUT hit must re-run so a fresh collector still
+            // receives the diagnostic. Production TypeError is not stored
+            // (below), so that same-epoch retry misses instead of returning
+            // a type into an empty collector.
             // Issue #1528: surface cs_cache hits on CompilerMetrics.
-            if (metrics_) {
-                static_cast<struct CompilerMetrics*>(metrics_)
-                    ->solve_delta_cache_hit_total.fetch_add(1, std::memory_order_relaxed);
+            if (cached_result == SolveResult::SOLVED) {
+                if (metrics_) {
+                    static_cast<struct CompilerMetrics*>(metrics_)
+                        ->solve_delta_cache_hit_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return cached_type;
             }
-            return cached_type;
         }
     }
     // Issue #212 Phase 1d: route through the pure function.
@@ -9070,6 +9071,9 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // to the pure function. The result struct bundles the
     // inferred type, deferred coercions, and per-call stats so
     // we don't need to call back into the engine.
+    // Issue #4408: only diagnostics this call added count as a production
+    // TypeError. A caller-supplied collector may already hold older ones.
+    const std::size_t diag_before = diag.diagnostics().size();
     auto r =
         type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_, strict_,
                              cache_epoch_, metrics_, bidirectional_mode_, gradual_permissiveness_,
@@ -9111,18 +9115,26 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
         if (r.uncovered_bidirectional_tag_hard_fail)
             last_uncovered_bidirectional_tag_hard_fail_ = true;
     }
-    // Issue #1407 R1: cache the outcome for next call. Only
-    // cache when we have a stable epoch (cache_epoch_ > 0);
-    // otherwise we'd be caching into an invalid-keyed entry.
-    if (cache_epoch_ > 0 && node != aura::ast::NULL_NODE && node < flat.size()) {
+    // Issue #1407 R1 / #4408: cache a clean SOLVED outcome only.
+    // TypeCheckResult.last_solve_status is the engine status. Do not
+    // store CONFLICT / TIMEOUT as SOLVED, and do not store a production
+    // TypeError (production_defaults or the hard face, same predicate
+    // as #4107) as SOLVED. A same-epoch hit of either would return the
+    // type into an empty collector and drop the diagnostic.
+    bool production_type_error = false;
+    if (aura::compiler::typed_audit::production_defaults_active() ||
+        aura::compiler::typed_audit::production_hard_face_active()) {
+        const auto reported = diag.diagnostics();
+        for (std::size_t i = diag_before; i < reported.size(); ++i) {
+            if (reported[i].kind == ErrorKind::TypeError) {
+                production_type_error = true;
+                break;
+            }
+        }
+    }
+    if (cache_epoch_ > 0 && node != aura::ast::NULL_NODE && node < flat.size() &&
+        r.last_solve_status == SolveResult::SOLVED && !production_type_error) {
         const uint64_t node_hash = hash_node_shape(flat, node, 0);
-        // SolveResult isn't currently exposed through
-        // TypeCheckResult (we'd need to plumb a new field).
-        // Cache as SOLVED for now — CONFLICT/TIMEOUT outcomes
-        // are reported via diag_ and we don't want to mask
-        // them on a cache hit. A future follow-up that adds
-        // SolveResult to TypeCheckResult can also cache the
-        // real status.
         cs_cache_store(node, cache_epoch_, node_hash, SolveResult::SOLVED, r.inferred_type);
     }
     return r.inferred_type;
