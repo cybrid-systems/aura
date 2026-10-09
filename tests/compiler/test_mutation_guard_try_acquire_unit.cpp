@@ -555,10 +555,10 @@ static void ac3423_1_acquire_before_fn() {
     CHECK(mut.find("Issue #3423") != std::string::npos, "AC1 cite");
     const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
     CHECK(lam != std::string::npos, "AC1 add_mutate lambda");
-    // The morning-wave hold-budget/trail comment blocks inside the lambda
-    // pushed the guard-reject block past the original 14000-char window
-    // (measured: lambda→fn(a) = 14692). Widen.
-    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 20000);
+    // Window drift history: original 14000 (hold-budget/trail comment
+    // blocks pushed needle to 14692) → 20000 → 28000 (lambda→fn(a)
+    // re-measured at 20600 after the latest mutate-side inserts).
+    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 28000);
     const auto acq = win.find("mutate_dispatch_try_acquire");
     const auto fn = win.find("auto result = fn(a)");
     CHECK(acq != std::string::npos && fn != std::string::npos && acq < fn,
@@ -586,7 +586,7 @@ static void ac3423_2_production_rebind_and_reject_kind() {
           "AC2 happy path is not naked-mutate");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 20000);
+    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 28000);
     const auto rej = win.find("guard-reject");
     const auto fna = win.find("auto result = fn(a)");
     CHECK(rej != std::string::npos && fna != std::string::npos && rej < fna,
@@ -650,15 +650,24 @@ static void ac3452_1_raw_add_exempt_only() {
 static void ac3452_2_structural_add_mutate() {
     std::println("\n--- #3452 AC2: structural list still add_mutate ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-    CHECK(mut.find("add_mutate(\"mutate:replace-type\"") != std::string::npos,
+    // Whitespace-stripped match: #4392 lengthened the atomic-batch capture
+    // list and clang-format wrapped that registration across lines, so the
+    // one-line literal no longer exists verbatim. Strip-match tolerates
+    // layout for all six structural registrations.
+    std::string flat;
+    flat.reserve(mut.size());
+    for (const char c : mut)
+        if (c != ' ' && c != '\n' && c != '\t' && c != '\r')
+            flat.push_back(c);
+    CHECK(flat.find("add_mutate(\"mutate:replace-type\"") != std::string::npos,
           "3452 AC2: replace-type");
-    CHECK(mut.find("add_mutate(\"mutate:atomic-batch\"") != std::string::npos,
+    CHECK(flat.find("add_mutate(\"mutate:atomic-batch\"") != std::string::npos,
           "3452 AC2: atomic-batch");
-    CHECK(mut.find("add_mutate(\"mutate:set-body\"") != std::string::npos, "3452 AC2: set-body");
-    CHECK(mut.find("add_mutate(\"mutate:rebind\"") != std::string::npos, "3452 AC2: rebind");
-    CHECK(mut.find("add_mutate(\"mutate:replace-pattern\"") != std::string::npos,
+    CHECK(flat.find("add_mutate(\"mutate:set-body\"") != std::string::npos, "3452 AC2: set-body");
+    CHECK(flat.find("add_mutate(\"mutate:rebind\"") != std::string::npos, "3452 AC2: rebind");
+    CHECK(flat.find("add_mutate(\"mutate:replace-pattern\"") != std::string::npos,
           "3452 AC2: replace-pattern");
-    CHECK(mut.find("add_mutate(\"mutate:rename-symbol\"") != std::string::npos,
+    CHECK(flat.find("add_mutate(\"mutate:rename-symbol\"") != std::string::npos,
           "3452 AC2: rename-symbol");
 }
 
