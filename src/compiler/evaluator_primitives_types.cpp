@@ -90,10 +90,20 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto path = ev.resolve_module_path(ev.string_heap_[idx]);
+        const std::string caller = ev.string_heap_[idx];
+        // Issue #4399: fence before any read or .aura-type write. Deny →
+        // #f, zero bytes. An active allow is already a lexical absolute
+        // under the caller tenant root. resolve_module_path realpaths
+        // that absolute (symlink follow) and, on a relative input, searches
+        // CWD / AURA_PATH / ../lib — host IO the jail must not reopen.
+        // Passthrough (Soft/Off / single-tenant Restricted) keeps the search.
+        std::string gated;
+        if (!ev.check_tenant_host_path(caller, gated, "generate-type-sigs"))
+            return make_bool(false);
+        std::string path =
+            ev.host_path_policy_active() ? std::move(gated) : ev.resolve_module_path(gated);
         if (path.empty()) {
-            std::println(std::cerr, "generate-type-sigs: cannot resolve '{}'",
-                         ev.string_heap_[idx]);
+            std::println(std::cerr, "generate-type-sigs: cannot resolve '{}'", caller);
             return make_bool(false);
         }
 

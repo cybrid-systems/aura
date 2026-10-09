@@ -6415,6 +6415,379 @@ int main() {
         CHECK(!invent.good(), "4382 AC3: no tests/core/test_issue_4382.cpp (forbidden)");
     }
 
+    // ── Issue #4399: serialize-workspace / generate-type-sigs / import ──
+    {
+        std::println(
+            "\n--- #4399 AC1: Restricted+MT denies host paths outside the tenant root ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4399-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        std::error_code rm_ec;
+        std::filesystem::remove_all(base, rm_ec);
+        std::filesystem::create_directories(root_a);
+        const std::string victim = base + "/victim.txt";
+        const std::string outside = base + "/outside-helper.aura";
+        const std::string outside_type = base + "/outside-helper.aura-type";
+        const std::string deny_bin = base + "/should-deny.bin";
+        const std::string escape_soul = base + "/escape.soul";
+        {
+            std::ofstream f(victim);
+            f << "SECRET";
+        }
+        {
+            std::ofstream f(outside);
+            f << "(define (helper x) (+ x 1))\n";
+        }
+        {
+            std::ofstream f(root_a + "/helper.aura");
+            f << "(define (helper x) (+ x 1))\n";
+        }
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.host_path_policy_active(), "4399 AC1: Restricted+MT arms host-path policy");
+        const auto& ring = g_security_event_ring();
+        auto& heap_w = ev.string_heap_mut();
+        using aura::compiler::types::EvalValue;
+        using aura::compiler::types::is_module;
+        using aura::compiler::types::is_void;
+        using aura::compiler::types::make_string;
+        using aura::compiler::types::make_void;
+
+        auto slurp = [](const std::string& p) {
+            std::ifstream in(p);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        auto bound = [&](std::string_view name) {
+            for (const auto& kv : ev.top_env().bindings()) {
+                if (kv.first == name)
+                    return true;
+            }
+            return false;
+        };
+        auto saw_escape = [&](std::uint64_t se_base, std::string_view op) {
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                if (std::string_view(e.op) != op)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 7, "4399 AC1: IsolationDeny tenant is the caller");
+            }
+            return saw;
+        };
+        auto call1 = [&](auto& fn, const std::string& arg) -> EvalValue {
+            if (!fn)
+                return make_void();
+            heap_w.push_back(arg);
+            return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+        };
+
+        auto ser = ev.primitives().lookup("serialize-workspace");
+        auto gen = ev.primitives().lookup("generate-type-sigs");
+        auto loadm = ev.primitives().lookup("load-module");
+        auto use = ev.primitives().lookup("use");
+        auto import = ev.primitives().lookup("import");
+        CHECK(ser.has_value(), "4399 AC1: serialize-workspace registered");
+        CHECK(gen.has_value(), "4399 AC1: generate-type-sigs registered");
+        CHECK(loadm.has_value(), "4399 AC1: load-module registered");
+        CHECK(use.has_value(), "4399 AC1: use registered");
+        CHECK(import.has_value(), "4399 AC1: import registered");
+
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(ser, victim);
+            CHECK(is_bool(r) && !as_bool(r),
+                  "4399 AC1: serialize-workspace outside root returns #f");
+            CHECK(slurp(victim) == "SECRET", "4399 AC1: victim bytes unchanged (zero trunc)");
+            CHECK(ev.last_mutate_error().find("serialize-workspace: tenant-path-escape") !=
+                      std::string::npos,
+                  "4399 AC1: serialize-workspace deny reason is tenant-path-escape");
+            CHECK(saw_escape(se_base, "serialize-workspace"),
+                  "4399 AC1: IsolationDeny SE op serialize-workspace");
+        }
+        {
+            std::filesystem::remove(outside_type, rm_ec);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(gen, outside);
+            CHECK(is_bool(r) && !as_bool(r),
+                  "4399 AC1: generate-type-sigs outside root returns #f");
+            CHECK(!std::filesystem::exists(outside_type),
+                  "4399 AC1: no .aura-type written outside the tenant root");
+            CHECK(slurp(outside).find("(define (helper x)") != std::string::npos,
+                  "4399 AC1: outside module source unchanged");
+            CHECK(saw_escape(se_base, "generate-type-sigs"),
+                  "4399 AC1: IsolationDeny SE op generate-type-sigs");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(loadm, outside);
+            CHECK(is_void(r), "4399 AC1: load-module deny returns void (no module)");
+            CHECK(!is_module(r), "4399 AC1: load-module deny is not a module");
+            CHECK(!bound("helper"), "4399 AC1: load-module deny injects no helper binding");
+            CHECK(saw_escape(se_base, "load-module"), "4399 AC1: IsolationDeny SE op load-module");
+        }
+        {
+            const auto r = call1(use, outside);
+            CHECK(is_void(r) && !bound("helper"), "4399 AC1: use deny returns void, no binding");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(import, outside);
+            CHECK(is_error(r), "4399 AC1: import deny is module-load-failed, not a binding");
+            CHECK(!bound("helper"), "4399 AC1: import deny does not inject helper");
+            CHECK(saw_escape(se_base, "load-module"),
+                  "4399 AC1: import deny is the loader fence (op load-module)");
+            auto called = cs.eval("(helper 1)");
+            CHECK(!(called && is_int(*called) && as_int(*called) == 2),
+                  "4399 AC1: denied import does not make (helper 1) return 2");
+        }
+        {
+            auto wf = ev.primitives().lookup("write-file");
+            CHECK(wf.has_value(), "4399 AC1: write-file still registered");
+            heap_w.push_back(deny_bin);
+            heap_w.push_back("x");
+            if (wf) {
+                using aura::compiler::types::make_string;
+                const auto r = (*wf)({make_string(static_cast<std::uint64_t>(heap_w.size() - 2)),
+                                      make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(!(is_int(r) && as_int(r) == 1),
+                      "4399 AC1: write-file control does not succeed outside the root");
+            }
+            CHECK(!std::filesystem::exists(deny_bin),
+                  "4399 AC1: write-file control creates no file");
+        }
+        {
+            const auto r = call1(import, "std/list");
+            CHECK(is_error(r), "4399 AC1: jailed import does not search the host lib");
+        }
+        {
+            const auto r = call1(import, "helper.aura");
+            CHECK(is_bool(r) && as_bool(r),
+                  "4399 AC1: relative import resolves under the tenant root");
+            CHECK(bound("helper"), "4399 AC1: in-root import injects helper");
+            auto called = cs.eval("(helper 1)");
+            CHECK(called && is_int(*called) && as_int(*called) == 2,
+                  "4399 AC1: in-root (helper 1) returns 2");
+        }
+        {
+            const auto r = call1(gen, "helper.aura");
+            CHECK(is_bool(r) && as_bool(r),
+                  "4399 AC1: generate-type-sigs writes the in-root sibling");
+            const auto sig = slurp(root_a + "/helper.aura-type");
+            CHECK(sig.find("helper:") != std::string::npos,
+                  "4399 AC1: .aura-type sibling lives under the tenant root");
+            CHECK(!std::filesystem::exists(outside_type),
+                  "4399 AC1: in-root generate-type-sigs does not write the outside sibling");
+        }
+        {
+            const auto r = call1(ser, "snap.soul");
+            CHECK(is_bool(r) && as_bool(r),
+                  "4399 AC1: relative serialize-workspace writes under the root");
+            CHECK(slurp(root_a + "/snap.soul").starts_with("AURASOUL"),
+                  "4399 AC1: relative serialize blob is under the tenant root");
+            const auto abs = call1(ser, root_a + "/snap-abs.soul");
+            CHECK(is_bool(abs) && as_bool(abs),
+                  "4399 AC1: in-root absolute serialize-workspace writes");
+            CHECK(slurp(root_a + "/snap-abs.soul").starts_with("AURASOUL"),
+                  "4399 AC1: in-root absolute blob stays under the tenant root");
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto esc = call1(ser, "../escape.soul");
+            CHECK(is_bool(esc) && !as_bool(esc), "4399 AC1: ../ serialize-workspace returns #f");
+            CHECK(!std::filesystem::exists(escape_soul),
+                  "4399 AC1: ../ serialize writes zero bytes");
+            CHECK(saw_escape(se_base, "serialize-workspace"),
+                  "4399 AC1: ../ escape emits IsolationDeny");
+            CHECK(slurp(victim) == "SECRET", "4399 AC1: victim still SECRET after in-root writes");
+        }
+
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4399 AC2: Off and single-tenant Restricted keep passthrough ---");
+        reset_all();
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4399-ac2";
+        std::error_code rm_ec;
+        std::filesystem::remove_all(base, rm_ec);
+        std::filesystem::create_directories(base);
+        const std::string outside = base + "/outside-helper.aura";
+        const std::string outside_type = base + "/outside-helper.aura-type";
+        const std::string soul = base + "/passthrough.soul";
+        {
+            std::ofstream f(outside);
+            f << "(define (helper x) (+ x 1))\n";
+        }
+        auto slurp = [](const std::string& p) {
+            std::ifstream in(p);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            ev.set_effect_sandbox_mode(0);
+            CHECK(!ev.host_path_policy_active(), "4399 AC2: Off does not arm host-path policy");
+            const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+            auto& heap_w = ev.string_heap_mut();
+            using aura::compiler::types::make_string;
+            auto ser = ev.primitives().lookup("serialize-workspace");
+            CHECK(ser.has_value(), "4399 AC2: serialize-workspace registered");
+            heap_w.push_back(soul);
+            if (ser) {
+                const auto r = (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_bool(r) && as_bool(r), "4399 AC2: Off serialize-workspace still writes");
+            }
+            CHECK(slurp(soul).starts_with("AURASOUL"), "4399 AC2: Off serialize blob landed");
+            auto import = ev.primitives().lookup("import");
+            CHECK(import.has_value(), "4399 AC2: import registered");
+            heap_w.push_back(outside);
+            if (import) {
+                const auto r =
+                    (*import)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_bool(r) && as_bool(r),
+                      "4399 AC2: Off import of an absolute path still loads");
+            }
+            auto called = cs.eval("(helper 1)");
+            CHECK(called && is_int(*called) && as_int(*called) == 2,
+                  "4399 AC2: Off import still binds helper");
+            auto gen = ev.primitives().lookup("generate-type-sigs");
+            heap_w.push_back(outside);
+            if (gen) {
+                const auto r = (*gen)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_bool(r) && as_bool(r), "4399 AC2: Off generate-type-sigs still writes");
+            }
+            CHECK(std::filesystem::exists(outside_type),
+                  "4399 AC2: Off .aura-type sibling written");
+            CHECK(g_security_event_ring().seq.load(std::memory_order_acquire) == se_base,
+                  "4399 AC2: Off passthrough emits no IsolationDeny");
+        }
+
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            ev.set_effect_sandbox_mode(1);
+            ev.set_capability_tenant_id(7);
+            CHECK(!ev.host_path_policy_active(),
+                  "4399 AC2: single-tenant Restricted does not arm host-path policy");
+            const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+            const std::string soul_st = base + "/single-tenant.soul";
+            auto& heap_w = ev.string_heap_mut();
+            using aura::compiler::types::make_string;
+            auto ser = ev.primitives().lookup("serialize-workspace");
+            heap_w.push_back(soul_st);
+            if (ser) {
+                const auto r = (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_bool(r) && as_bool(r),
+                      "4399 AC2: single-tenant Restricted serialize-workspace still writes");
+            }
+            CHECK(slurp(soul_st).starts_with("AURASOUL"),
+                  "4399 AC2: single-tenant serialize blob landed outside any tenant root");
+            auto import = ev.primitives().lookup("import");
+            heap_w.push_back(outside);
+            if (import) {
+                const auto r =
+                    (*import)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_bool(r) && as_bool(r),
+                      "4399 AC2: single-tenant Restricted import still loads an absolute path");
+            }
+            auto called = cs.eval("(helper 1)");
+            CHECK(called && is_int(*called) && as_int(*called) == 2,
+                  "4399 AC2: single-tenant import still binds helper");
+            // Passthrough must not emit tenant-path-escape. Other
+            // IsolationDeny rows (eval / stamp) are outside this fence.
+            bool path_escape = false;
+            std::string stray;
+            const auto& ring = g_security_event_ring();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                stray += std::string(e.op) + "=" + e.reason + ";";
+                if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                    path_escape = true;
+            }
+            CHECK(!path_escape,
+                  std::string("4399 AC2: single-tenant passthrough emits no tenant-path-escape") +
+                      (stray.empty() ? std::string() : " (" + stray + ")"));
+        }
+    }
+
+    {
+        std::println(
+            "\n--- #4399 AC3: wiring cite; no EXEMPT growth, no new query, no invent test ---");
+        const auto persist = read_file("src/compiler/evaluator_primitives_persist.cpp");
+        const auto types_src = read_file("src/compiler/evaluator_primitives_types.cpp");
+        const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
+        const auto exempt =
+            read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        CHECK(persist.find("check_tenant_host_path(path, resolved, \"serialize-workspace\")") !=
+                  std::string::npos,
+              "4399 AC3: serialize-workspace wires check_tenant_host_path");
+        CHECK(persist.find("std::ofstream ofs(resolved, std::ios::binary | std::ios::trunc)") !=
+                  std::string::npos,
+              "4399 AC3: serialize-workspace writes the resolved path");
+        CHECK(persist.find("check_tenant_host_path(path, resolved, \"deserialize-workspace\")") !=
+                  std::string::npos,
+              "4400: deserialize-workspace wires check_tenant_host_path (#4399 left it open)");
+        CHECK(types_src.find("check_tenant_host_path(caller, gated, \"generate-type-sigs\")") !=
+                  std::string::npos,
+              "4399 AC3: generate-type-sigs wires check_tenant_host_path");
+        CHECK(types_src.find("ev.host_path_policy_active() ? std::move(gated)") !=
+                  std::string::npos,
+              "4399 AC3: active generate-type-sigs does not re-enter host search");
+        CHECK(types_src.find("check_tenant_host_path(caller, gated, \"check-module-signature\")") ==
+                  std::string::npos,
+              "4399 AC3: check-module-signature stays out of this fence");
+        CHECK(loader.find("check_tenant_host_path(path, gated, \"load-module\")") !=
+                  std::string::npos,
+              "4399 AC3: load_module_file wires check_tenant_host_path");
+        CHECK(loader.find(
+                  "host_path_policy_active() ? std::move(gated) : resolve_module_path(gated)") !=
+                  std::string::npos,
+              "4399 AC3: active load uses the gated path; passthrough keeps resolve_module_path");
+        CHECK(exempt.find("\"serialize-workspace\"") == std::string::npos,
+              "4399 AC3: serialize-workspace not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("\"generate-type-sigs\"") == std::string::npos,
+              "4399 AC3: generate-type-sigs not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("\"load-module\"") == std::string::npos,
+              "4399 AC3: load-module not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("len(EXEMPT_2ARG_OPS) != 7") != std::string::npos,
+              "4399 AC3: EXEMPT_2ARG_OPS count guard stays 7");
+        CHECK(persist.find("query:4399") == std::string::npos &&
+                  types_src.find("query:4399") == std::string::npos &&
+                  loader.find("query:4399") == std::string::npos,
+              "4399 AC3: no new query key");
+        std::ifstream invent("tests/core/test_issue_4399.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4399.cpp");
+        CHECK(!invent.good(), "4399 AC3: no tests/core/test_issue_4399.cpp (forbidden)");
+    }
+
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
     ac4133_1_target_ta_non_ta_caller_denied();
     ac4133_2_caller_ta_mint_foreign_target_lands();

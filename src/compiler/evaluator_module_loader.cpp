@@ -315,6 +315,14 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             std::println(std::cerr, "load_module_file: refuse non-module path '{}'", shown);
         return types::make_void();
     }
+    // Issue #4399: import / use / load-module and source-level require
+    // (eval_flat expands require to import) all enter here. Fence before
+    // any read or eval. Deny → void, no resolve, no stat, no ifstream,
+    // no binding. An active allow is the tenant-rooted absolute; only
+    // the passthrough face may search CWD / AURA_PATH / ../lib.
+    std::string gated;
+    if (!check_tenant_host_path(path, gated, "load-module"))
+        return types::make_void();
     std::lock_guard interlock(compact_env_frames_lock_);
     // Issue #3457-fix: string_intern_by_sym_ / keyword_intern_by_sym_ are
     // keyed by POOL-LOCAL SymIds. Each module load swaps in its own pool
@@ -336,8 +344,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         SymInternPoolReset(const SymInternPoolReset&) = delete;
         SymInternPoolReset& operator=(const SymInternPoolReset&) = delete;
     } sym_intern_pool_reset(*this);
-    // 1. Resolve path
-    auto resolved = resolve_module_path(path);
+    // 1. Resolve path. Active policy already produced the only path
+    // the rest of this load may touch (Issue #4399).
+    auto resolved = host_path_policy_active() ? std::move(gated) : resolve_module_path(gated);
     if (resolved.empty()) {
         std::println(std::cerr, "load_module_file: cannot resolve '{}'",
                      truncate_path_for_log(path));

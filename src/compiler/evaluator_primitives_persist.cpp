@@ -295,6 +295,13 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         if (pidx >= ev.string_heap_.size())
             return make_bool(false);
         const std::string path = ev.string_heap_[pidx];
+        // Issue #4399: fence before the workspace snapshot and before
+        // ios::trunc. Deny → #f and zero host bytes. ofstream uses the
+        // resolved path (tenant root when the policy is active; the
+        // caller string on Soft/Off / single-tenant passthrough).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "serialize-workspace"))
+            return make_bool(false);
 
         // Shared lock: pure read of workspace + mutation log (#1376 pattern).
         // Issue #2920 SSOT: authoritative source (live unparse preferred;
@@ -370,7 +377,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::uint32_t crc = crc32_update(0, out.data(), out.size());
         append_u32(out, crc);
 
-        std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+        std::ofstream ofs(resolved, std::ios::binary | std::ios::trunc);
         if (!ofs)
             return make_bool(false);
         ofs.write(out.data(), static_cast<std::streamsize>(out.size()));
