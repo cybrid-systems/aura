@@ -285,6 +285,11 @@ static void ac3208_2_prod_unset_cancel() {
     ac3208_stop(scope, keep);
 }
 
+// #3208 AC3: keep the reclaimed fiber deterministically live until the test
+// releases it. A fixed sleep flaked under load — the body could finish before
+// join_all ran, turning the handle into a Done husk that gets compacted away.
+static std::atomic<bool> g_3208_reclaim_release{false};
+
 static void ac3208_3_reclaimed_skip() {
     std::println("\n--- #3208 AC3: Reclaimed still-running skip Cancel (#2661) ---");
     ac3208_set_prod(true);
@@ -293,9 +298,13 @@ static void ac3208_3_reclaimed_skip() {
     AgentScope scope(sched);
     AgentSpec spec;
     spec.name = "3208-reclaimed";
-    spec.body = [] { aura::orch::fiber_sleep_ms(400); };
+    g_3208_reclaim_release.store(false, std::memory_order_relaxed);
+    spec.body = [] {
+        while (!g_3208_reclaim_release.load(std::memory_order_relaxed))
+            aura::orch::fiber_sleep_ms(5);
+    };
     scope.spawn(spec);
-    if (scope.handles()[0].fiber)
+    if (!scope.handles().empty() && scope.handles()[0].fiber)
         scope.handles()[0].fiber->mark_reclaimed();
     const auto c0 =
         g_orch_module_stats.agent_join_fail_action_cancel_total.load(std::memory_order_relaxed);
@@ -305,7 +314,13 @@ static void ac3208_3_reclaimed_skip() {
     jp.drain_ms = 0;
     (void)scope.join_all(jp); // production unset Cancel — must skip reclaimed
     // Reclaimed live agents are not Done-husk-compacted (#3776).
-    CHECK(!scope.handles().empty(), "ac3208_3_reclaimed_skip: handle retained");
+    const bool retained = !scope.handles().empty();
+    CHECK(retained, "ac3208_3_reclaimed_skip: handle retained");
+    if (!retained) {
+        g_3208_reclaim_release.store(true, std::memory_order_relaxed);
+        ac3208_set_prod(false);
+        return;
+    }
     CHECK(scope.handles()[0].reclaimed_deferred_cleanup ||
               (scope.handles()[0].fiber && scope.handles()[0].fiber->is_reclaimed()),
           "ac3208_3_reclaimed_skip: still reclaimed");
@@ -313,6 +328,7 @@ static void ac3208_3_reclaimed_skip() {
           "AC3: reclaimed is not join_fail fuel");
     CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load() == c0,
           "AC3: no Cancel action on reclaimed live");
+    g_3208_reclaim_release.store(true, std::memory_order_relaxed);
     if (scope.handles()[0].fiber) {
         scope.handles()[0].fiber->set_state(aura::serve::FiberState::Done);
         scope.handles()[0].fiber->note_body_exit_if_reclaimed();
