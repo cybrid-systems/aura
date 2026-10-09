@@ -4652,6 +4652,147 @@ static void ac4317_unequal_grounds_in_consistent_subtype() {
     apply_dev_audit_defaults();
 }
 
+// Issue #4409: same-tag VARIANT / LINEAR / RECORD (and the other
+// structural grounds) are not consistent just because tag_of matches.
+// Scalars and FORALL stay off type_equals. Soft stays true.
+static void ac4409_same_tag_structural_grounds() {
+    std::println("\n--- #4409: same-tag structural grounds are not a free pass ---");
+    using aura::compiler::GradualPermissiveness;
+    using aura::core::ModuleType;
+    using aura::core::RecordType;
+    using aura::core::TypeTag;
+    using aura::core::VariantType;
+    using aura::diag::ErrorKind;
+
+    auto make_maybe = [](TypeRegistry& reg) {
+        VariantType vt;
+        vt.variants.push_back({"Just", {reg.int_type()}});
+        vt.variants.push_back({"Nothing", {}});
+        return reg.register_variant(std::move(vt));
+    };
+    auto make_either = [](TypeRegistry& reg) {
+        VariantType vt;
+        vt.variants.push_back({"Left", {reg.int_type()}});
+        vt.variants.push_back({"Right", {reg.string_type()}});
+        return reg.register_variant(std::move(vt));
+    };
+    auto has_kind = [](const DiagnosticCollector& diag, ErrorKind kind) {
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == kind)
+                return true;
+        }
+        return false;
+    };
+
+    {
+        ProdScope3253 prod;
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        const auto maybe = make_maybe(reg);
+        const auto either = make_either(reg);
+        CHECK(maybe != either, "4409: Maybe and Either are distinct TypeIds");
+        CHECK(!cs.consistent_unify(maybe, either), "4409: prod Maybe ~ Either false");
+        CHECK(!cs.consistent_unify(either, maybe), "4409: prod Either ~ Maybe false");
+        const auto lin_i = reg.register_linear(reg.int_type());
+        const auto lin_s = reg.register_linear(reg.string_type());
+        CHECK(!cs.consistent_unify(lin_i, lin_s),
+              "4409: prod (Linear Int) ~ (Linear String) false");
+        CHECK(!cs.consistent_unify(lin_s, lin_i), "4409: prod reverse Linear false");
+        CHECK(cs.consistent_unify(lin_i, lin_i), "4409: same Linear id stays true");
+        RecordType rx;
+        rx.fields.push_back({"x", reg.int_type()});
+        RecordType ry;
+        ry.fields.push_back({"x", reg.string_type()});
+        RecordType rxy;
+        rxy.fields.push_back({"x", reg.int_type()});
+        rxy.fields.push_back({"y", reg.int_type()});
+        const auto rec_x = reg.register_record(std::move(rx));
+        const auto rec_y = reg.register_record(std::move(ry));
+        const auto rec_xy = reg.register_record(std::move(rxy));
+        CHECK(!cs.consistent_unify(rec_x, rec_y), "4409: prod distinct records false");
+        CHECK(!cs.consistent_unify(rec_xy, rec_x), "4409: prod wider record ~ narrower false");
+        CHECK(cs.consistent_subtype(rec_xy, rec_x),
+              "4409: prod wider record <: narrower stays width-true");
+        CHECK(!cs.consistent_subtype(lin_i, lin_s), "4409: prod Linear Int <: Linear String false");
+        CHECK(!cs.consistent_subtype(rec_y, rec_x), "4409: prod Record String <: Record Int false");
+        const auto io = reg.register_effect("IO");
+        const auto file = reg.register_effect("FileRead");
+        CHECK(!cs.consistent_unify(io, file), "4409: prod distinct effects false");
+        ModuleType ma;
+        ma.members.push_back({"a", reg.int_type()});
+        ModuleType mb;
+        mb.members.push_back({"a", reg.string_type()});
+        CHECK(!cs.consistent_unify(reg.register_module(std::move(ma)),
+                                   reg.register_module(std::move(mb))),
+              "4409: prod distinct modules false");
+        const auto cap_r = reg.register_capability({"Read"});
+        const auto cap_w = reg.register_capability({"Write"});
+        CHECK(!cs.consistent_unify(cap_r, cap_w), "4409: prod distinct capabilities false");
+        const auto nat = reg.register_type(TypeTag::INT, "Nat");
+        CHECK(nat != reg.int_type(), "4409: Nat is a distinct Int id");
+        CHECK(cs.consistent_unify(reg.int_type(), nat), "4409: distinct Int ids stay consistent");
+        const auto va = cs.fresh_var();
+        const auto vb = cs.fresh_var();
+        CHECK(cs.consistent_unify(reg.register_forall(va, reg.int_type()),
+                                  reg.register_forall(vb, reg.string_type())),
+              "4409: FORALL stays off type_equals");
+        const auto fl = reg.lookup_type("Float");
+        CHECK(cs.consistent_unify(reg.int_type(), fl), "4409: Int ~ Float stays true");
+        ConstraintSystem solved(reg);
+        solved.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        Constraint goal;
+        goal.kind = Constraint::CONSISTENT;
+        goal.lhs = maybe;
+        goal.rhs = either;
+        solved.add(std::move(goal));
+        CHECK(solved.solve() == SolveResult::CONFLICT, "4409: CONSISTENT Maybe~Either is CONFLICT");
+        DiagnosticCollector diag;
+        InferenceEngine ie(reg, diag);
+        ie.set_gradual_permissiveness(GradualPermissiveness::Strict);
+        ie.maybe_report_ground_inconsistency(maybe, either);
+        CHECK(has_kind(diag, ErrorKind::TypeError), "4409: structural mismatch stamps TypeError");
+        DiagnosticCollector diag_int;
+        InferenceEngine ie_int(reg, diag_int);
+        ie_int.maybe_report_ground_inconsistency(reg.int_type(), nat);
+        CHECK(diag_int.diagnostics().empty(), "4409: distinct Int ids stay quiet");
+        // Unify's ground arm is still Strict-only. Balanced keeps the boolean.
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        CHECK(cs.consistent_unify(maybe, either), "4409: prod Balanced unify stays Strict-only");
+        CHECK(!cs.consistent_subtype(lin_i, lin_s),
+              "4409: prod Balanced subtype still rejects Linear mismatch");
+    }
+    {
+        apply_dev_audit_defaults();
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        const auto maybe = make_maybe(reg);
+        const auto either = make_either(reg);
+        CHECK(cs.consistent_unify(maybe, either), "4409: soft Maybe ~ Either stays true");
+        CHECK(cs.consistent_subtype(reg.register_linear(reg.int_type()),
+                                    reg.register_linear(reg.string_type())),
+              "4409: soft Linear Int <: Linear String stays true");
+        DiagnosticCollector diag;
+        InferenceEngine ie(reg, diag);
+        ie.set_gradual_permissiveness(GradualPermissiveness::Balanced);
+        ie.maybe_report_ground_inconsistency(maybe, either);
+        CHECK(has_kind(diag, ErrorKind::Warning), "4409: soft Balanced stamps Warning");
+        DiagnosticCollector quiet;
+        InferenceEngine ie_p(reg, quiet);
+        ie_p.set_gradual_permissiveness(GradualPermissiveness::Permissive);
+        ie_p.maybe_report_ground_inconsistency(maybe, either);
+        CHECK(quiet.diagnostics().empty(), "4409: permissive stays quiet");
+    }
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("Issue #4409") != std::string::npos, "4409: cite");
+    CHECK(impl.find("structural_same_tag_ground") != std::string::npos, "4409: structural tags");
+    CHECK(impl.find("schema-4409") == std::string::npos, "4409: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4409.cpp").empty(), "4409: no invent");
+    CHECK(read_file("docs/design/4409-same-tag-grounds.md").empty(), "4409: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 static void ac4251_5_source_and_linter() {
     std::println("\n--- #4251 AC5: linter wired; no invent ---");
     const auto lint = read_file("scripts/check_dep_closure_miss_4251.py");
@@ -4834,6 +4975,8 @@ int run_test_solve_delta_unresolved_export() {
     ac4251_5_source_and_linter();
     std::println("\n=== Issue #4317: consistent_subtype unequal grounds ===");
     ac4317_unequal_grounds_in_consistent_subtype();
+    std::println("\n=== Issue #4409: same-tag structural grounds ===");
+    ac4409_same_tag_structural_grounds();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
