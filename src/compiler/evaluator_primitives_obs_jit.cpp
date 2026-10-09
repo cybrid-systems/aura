@@ -320,8 +320,9 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
                     m->compiler_closure_epoch_mismatch_hits.load(std::memory_order_relaxed);
             }
             if (ev.get_incremental_stats_fn_) {
-                const auto packed = ev.get_incremental_stats_fn_();
-                mutation_epoch = (packed >> 16) & 0xFFFFu;
+                // Issue #4395: do not unpack the 16-bit lane. Join
+                // WorkspaceEpoch Mutation. The hook still gates "no service".
+                mutation_epoch = aura::core::current_mutation_epoch();
             }
             constexpr std::int64_t k_opcode_total = 53; // IROpcode::Nop..TopCellLoad
             const std::int64_t coverage_pct =
