@@ -394,6 +394,32 @@ static void ac3432_empty_pair_no_dynamic() {
         CHECK(treg.tag_of(ty) != TypeTag::DYNAMIC, "3432 AC2: car path not Dynamic");
     }
 
+    // Issue #4410: a TypeError that exists only in the cdr must reach
+    // the collector. The pair stays typed as the car.
+    {
+        std::println("\n--- 4410: Pair cdr is typechecked; type stays the car ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto car = flat.add_literal(42);
+        auto callee = flat.add_literal(1);
+        aura::ast::NodeId args[1] = {flat.add_literal(0)};
+        auto call = flat.add_call(callee, args);
+        auto id = flat.add_pair(car, call);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty == treg.int_type(), "4410: well-typed car stays Int");
+        CHECK(flat.type_id(id) == treg.int_type().index, "4410: pair cache is the car");
+        bool saw = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == aura::diag::ErrorKind::TypeError &&
+                d.message.find("cannot apply non-function") != std::string::npos)
+                saw = true;
+        }
+        CHECK(saw, "4410: cdr ground non-function call is TypeError");
+        CHECK(flat.node_error(call) == static_cast<std::uint8_t>(aura::diag::ErrorKind::TypeError),
+              "4410: cdr call node stamped TypeError");
+    }
+
     // Soft: same fresh_var (no Dynamic compat on empty Pair).
     {
         std::println("\n--- 3432 AC3: Soft empty Pair also not Dynamic ---");
@@ -429,6 +455,11 @@ static void ac3432_empty_pair_no_dynamic() {
           "3432 AC1: Pair arm does not cache Dynamic");
     CHECK(pair_body.find("synthesize_flat(flat, pool, v.child(0)") != std::string::npos,
           "3432 AC2: car still synthesized");
+    CHECK(pair_body.find("Issue #4410") != std::string::npos, "4410: cite");
+    CHECK(pair_body.find("v.child(1)") != std::string::npos, "4410: cdr visited");
+    CHECK(impl.find("schema-4410") == std::string::npos, "4410: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4410.cpp").empty(), "4410: no invent");
+    CHECK(read_file("docs/design/4410-pair-cdr.md").empty(), "4410: no docs/design");
     CHECK(read_file("docs/design/3432-empty-pair-no-dynamic.md").empty(),
           "3432 AC4: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3432.cpp").empty(), "3432 AC4: no invent");

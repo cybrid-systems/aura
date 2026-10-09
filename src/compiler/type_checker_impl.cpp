@@ -5437,10 +5437,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         case Tag::DefineModule:
             result = synthesize_flat_define_module(flat, pool, v);
             break;
-        // Issue #976: structural / SV / EDSL tags that previously fell to Dyn
-        // without explicit cases (11 tags). Pair/Export are scheme structure;
-        // Interface…Class are SV/SVA containers — type as Void/Dyn until
-        // specialized synthesize peels land.
+        // Issue #976: Export…Class are structure/SV shells, typed Void.
         case Tag::Pair:
             // Issue #3432: empty Pair is incomplete cons, not Any.
             // Residual of #976/#3330: covered tag still cached Dynamic.
@@ -5451,6 +5448,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 break;
             }
             result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+            // Issue #4410
+            if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+                (void)synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
             break;
         case Tag::Export:
         case Tag::Interface:
