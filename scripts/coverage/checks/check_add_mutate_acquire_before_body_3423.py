@@ -30,6 +30,57 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _brace_block(text: str, start: int) -> str:
+    """Return the brace block opening at/after byte ``start``, skipping
+    braces inside string/char literals and // /* */ comments. Empty when no
+    '{' follows or the block is unterminated."""
+    open_idx = text.find("{", start)
+    if open_idx < 0:
+        return ""
+    depth = 0
+    in_str = in_chr = in_line = in_blk = False
+    i = open_idx
+    n = len(text)
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line:
+            if c == "\n":
+                in_line = False
+        elif in_blk:
+            if c == "*" and nxt == "/":
+                in_blk = False
+                i += 1
+        elif in_str:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                in_str = False
+        elif in_chr:
+            if c == "\\":
+                i += 1
+            elif c == "'":
+                in_chr = False
+        elif c == "/" and nxt == "/":
+            in_line = True
+            i += 1
+        elif c == "/" and nxt == "*":
+            in_blk = True
+            i += 1
+        elif c == '"':
+            in_str = True
+        elif c == "'":
+            in_chr = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx : i + 1]
+        i += 1
+    return ""
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -51,17 +102,12 @@ def main() -> int:
         fails.append("AC1: add_mutate lambda missing")
         lam_win = ""
     else:
-        # Window covering wrapper body through the post-check belt.
-        # #3975-#3988 wave (#3999 hold-budget/cancel work) grew the add_mutate
-        # lambda: later anchors (guard_exempt skip, try_acquire, guard-reject)
-        # now sit at +14353..+14570 — past the old 14000 edge.
-        # #4332 wave (add_mutate wrapper-level lazy COW before fn(a)) grew it
-        # again: the AC4 belt anchors (naked_mutate_attempt belt) now sit at
-        # +19353 — past the old 18000 edge.
-        # #4385 (session mid noted before require_effect) grew it again:
-        # naked_mutate_attempt now sits at +22760 — past the old 21000 edge.
-        # Grow with the lambda, assertions unchanged.
-        lam_win = mut[lam : lam + 25000]
+        # Window = brace-matched lambda body (drift-proof). The fixed windows
+        # (14000 → 18000 → 21000 → 25000) all broke on benign inserts; the
+        # body itself is now the window, assertions unchanged.
+        lam_win = _brace_block(mut, lam)
+        if not lam_win:
+            fails.append("AC1: add_mutate lambda body unterminated")
 
     must("mutate_dispatch_try_acquire", "AC1 wrapper acquire", lam_win)
     acq = lam_win.find("mutate_dispatch_try_acquire")

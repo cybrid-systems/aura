@@ -30,6 +30,57 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _brace_block(text: str, start: int) -> str:
+    """Return the brace block opening at/after byte ``start``, skipping
+    braces inside string/char literals and // /* */ comments. Empty when no
+    '{' follows or the block is unterminated."""
+    open_idx = text.find("{", start)
+    if open_idx < 0:
+        return ""
+    depth = 0
+    in_str = in_chr = in_line = in_blk = False
+    i = open_idx
+    n = len(text)
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line:
+            if c == "\n":
+                in_line = False
+        elif in_blk:
+            if c == "*" and nxt == "/":
+                in_blk = False
+                i += 1
+        elif in_str:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                in_str = False
+        elif in_chr:
+            if c == "\\":
+                i += 1
+            elif c == "'":
+                in_chr = False
+        elif c == "/" and nxt == "/":
+            in_line = True
+            i += 1
+        elif c == "/" and nxt == "*":
+            in_blk = True
+            i += 1
+        elif c == '"':
+            in_str = True
+        elif c == "'":
+            in_chr = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx : i + 1]
+        i += 1
+    return ""
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -48,11 +99,13 @@ def main() -> int:
     build = _read("build.py")
 
     lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt")
-    # #3975-#3988 wave (#3999) grew the add_mutate lambda — ordering pins
-    # (workspace_read_only_ → try_acquire → fn(a)) sit past the old edge.
-    # #4335 wave grew it further (cow-refused fail-close blocks); fn(a) sits
-    # at delta 18197 — 21000 keeps the full ordering pin inside the window.
-    win = mut[lam : lam + 21000] if lam >= 0 else ""
+    # Window = brace-matched lambda body (drift-proof). The fixed
+    # 14000 → 21000 offsets broke on benign inserts (incl. the #3423
+    # contract_assert pair); the body itself is now the window,
+    # assertions unchanged.
+    win = _brace_block(mut, lam) if lam >= 0 else ""
+    if lam >= 0 and not win:
+        fails.append("AC1: add_mutate lambda body unterminated")
     must("kAddMutateReadOnlyFenceIssue", "AC1 stamp", disp)
     must("Issue #3450", "AC1 wrapper cite", win)
     must("workspace_read_only_", "AC1 RO load", win)

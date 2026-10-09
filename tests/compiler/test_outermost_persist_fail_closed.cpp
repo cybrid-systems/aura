@@ -133,6 +133,80 @@ void arm_linear_pending_3697() {
 
 } // namespace
 
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Replaces the
+// fixed-size windows (1800/2000/2400, all drift-bait): the body itself is
+// the window, so only structural changes go red.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
 // Issue #4310: production persist-reject and outermost abort put type
 // columns and the solve_delta high-water back. Soft does not copy.
 static void ac4310_abort_restores_type_columns_and_cs() {
@@ -140,7 +214,10 @@ static void ac4310_abort_restores_type_columns_and_cs() {
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto ast = read_file("src/core/ast.ixx");
     const auto helper = emb.find("void Evaluator::restore_abort_type_face");
-    const auto win = helper == std::string::npos ? std::string{} : emb.substr(helper, 1800);
+    CHECK(helper != std::string::npos, "4310: helper present");
+    // Window = brace-matched helper body (drift-proof; was fixed 1800).
+    const auto win = brace_block_after(emb, helper);
+    CHECK(!win.empty(), "4310: helper body (brace-matched)");
     CHECK(emb.find("Issue #4310") != std::string::npos, "4310: boundary cite");
     CHECK(win.find("restore_type_columns") != std::string::npos, "4310: restores columns");
     CHECK(win.find("restore_abort_high_water") != std::string::npos, "4310: restores CS");
@@ -922,11 +999,17 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(contains(mut, "Issue #3697"), "3697: add_mutate cites #3697");
         const auto cite = mut.find("Issue #3697: outermost dtor persist-reject");
         CHECK(cite != std::string::npos, "3697: add_mutate wrapper cite");
-        const auto win = cite == std::string::npos ? std::string{} : mut.substr(cite, 1800);
-        CHECK(contains(win, "wrapper_guard.reset()"),
+        // Window = brace-matched add_mutate lambda body (the dtor
+        // persist/abort_restore face lives at the end of the wrapper body;
+        // the fixed 1800-char cite window was drift-bait).
+        const auto lam =
+            mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
+        const auto body = brace_block_after(mut, lam);
+        CHECK(!body.empty(), "3697: add_mutate lambda body (brace-matched)");
+        CHECK(contains(body, "wrapper_guard.reset()"),
               "3697: dtor persist/abort_restore runs before EDSL return");
-        CHECK(contains(win, "\"persist-reject\""), "3697: structured persist-reject mev");
-        CHECK(contains(win, "wrapper_ok"), "3697: consults the success flag the dtor flips");
+        CHECK(contains(body, "\"persist-reject\""), "3697: structured persist-reject mev");
+        CHECK(contains(body, "wrapper_ok"), "3697: consults the success flag the dtor flips");
         CHECK(mut.find("\"hold-budget-cancel\"") != std::string::npos,
               "3697: hold-budget cancel still replaces result");
         CHECK(mut.find("schema-3697") == std::string::npos, "3697 AC5: no new query key");
