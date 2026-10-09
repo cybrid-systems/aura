@@ -79,6 +79,16 @@ namespace {
         static_cast<CompilerMetrics*>(metrics)->inline_typecheck_exception_total.fetch_add(
             1, std::memory_order_relaxed);
     }
+
+    // Issue #4397: type checker cannot import the evaluator. Report whether
+    // `name` is in this process's primitive table so an unregistered checker
+    // signature falls back to Dynamic instead of UnboundVariable.
+    bool prim_name_registered(const void* ctx, std::string_view name) noexcept {
+        if (!ctx || name.empty())
+            return false;
+        const auto* prims = static_cast<const Primitives*>(ctx);
+        return prims->slot_for_name(name) < prims->slot_count();
+    }
 } // namespace
 
 std::string Evaluator::run_typecheck_no_lock() {
@@ -110,6 +120,8 @@ std::string Evaluator::run_typecheck_no_lock() {
             }
         }
         auto& tc = *tc_ptr;
+        // Issue #4397: persistent and stack checkers both see the primitive table.
+        tc.set_registered_prim_probe(&prim_name_registered, &primitives_);
         aura::diag::DiagnosticCollector diag;
         auto result =
             tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
@@ -177,6 +189,8 @@ bool Evaluator::run_typecheck_no_lock_bool() {
             }
         }
         auto& tc = *tc_ptr;
+        // Issue #4397: persistent and stack checkers both see the primitive table.
+        tc.set_registered_prim_probe(&prim_name_registered, &primitives_);
         aura::diag::DiagnosticCollector diag;
         tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
         // Issue #116: apply deferred coercions — the caller (fuzzer
@@ -295,6 +309,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             }
         }
         auto& tc = *tc_ptr;
+        // Issue #4397: selective and full post-mutate engines copy this probe.
+        tc.set_registered_prim_probe(&prim_name_registered, &primitives_);
         // Issue #3655: mark infer-ran even when fingerprint is 0 (empty
         // live goals). Distinguishes vacuous SOLVED from skipped SDO.
         auto stage_fp_if_solved = [&]() {
@@ -2880,6 +2896,8 @@ void* Evaluator::ensure_typechecker() noexcept {
             tc->set_metrics(compiler_metrics_);
         // Epoch for cs_cache_ / predicate memo invalidation (#168 / #2065).
         tc->set_cache_epoch(defuse_version_.load(std::memory_order_relaxed));
+        // Issue #4397: every ensure caller typechecks against live primitives.
+        tc->set_registered_prim_probe(&prim_name_registered, &primitives_);
         return persistent_typechecker_opaque_;
     } catch (...) {
         // [SILENCE-PRIM] ensure is best-effort; callers fall back to stack TC.
@@ -3499,6 +3517,8 @@ void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
             guard_infer_registry_gen_ = reg_gen;
         }
         auto* eng = static_cast<InferenceEngine*>(guard_infer_engine_opaque_);
+        // Issue #4397: occurrence reanalysis uses this engine, not TypeChecker.
+        eng->set_registered_prim_probe(&prim_name_registered, &primitives_);
         eng->set_cache_epoch(current_cache_epoch());
         if (compiler_metrics_) {
             // ConstraintSystem metrics pointer (narrowing_dirty_recovery etc.)

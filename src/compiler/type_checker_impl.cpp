@@ -4120,6 +4120,12 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("<=", {Dyn, Dyn}, Bool);
     register_primitive(">=", {Dyn, Dyn}, Bool);
 
+    // Issue #4397: apply is (fn, arg-list) -> Dyn, matching the evaluator
+    // (a[0] function, a[1] list). while calls are a special form; this
+    // signature binds a first-class reference so it is not unbound.
+    register_primitive("apply", {Dyn, Dyn}, Dyn);
+    register_primitive("while", {Dyn, Dyn}, Void);
+
     // Boolean logic: runtime #t/#f are lexed as Int 0/1, so
     // truthiness-checking ops work on any value.
     // and/or are variadic — minimal signature uses 2 args
@@ -5839,6 +5845,11 @@ TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, Nod
 
     auto ty_raw = env_.lookup(var_name);
     if (!ty_raw.valid()) {
+        // Issue #4397: evaluator-registered primitive with no checker
+        // signature. Dynamic, and do not report UnboundVariable. A null
+        // probe (direct InferenceEngine tests) keeps the diagnostic.
+        if (registered_prim_probe_ && registered_prim_probe_(registered_prim_ctx_, var_name))
+            return reg_.dynamic_type();
         // Collect candidate names from environment for "did you mean" suggestion
         std::vector<std::string> candidates;
         env_.collect_names(candidates);
@@ -5884,6 +5895,22 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     // Issue #3518: empty Call is incomplete, not Any (same as empty Pair).
     if (v.children.empty())
         return cs_.fresh_var();
+
+    // Issue #4397: try / while before callee synthesis. Otherwise `try`,
+    // `catch`, and `while` are UnboundVariable, and the catch binder is too.
+    {
+        auto callee_id = v.child(0);
+        if (callee_id != NULL_NODE && callee_id < flat.size()) {
+            auto callee = flat.get(callee_id);
+            if (callee.tag == NodeTag::Variable && callee.sym_id != INVALID_SYM) {
+                auto cname = pool.resolve(callee.sym_id);
+                if (cname == "try")
+                    return synthesize_flat_try_form(flat, pool, v);
+                if (cname == "while")
+                    return synthesize_flat_while_form(flat, pool, v);
+            }
+        }
+    }
 
     auto func_id = v.child(0);
     TypeId func_type = synthesize_flat(flat, pool, func_id, flat.get(func_id));
@@ -6127,6 +6154,88 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         }
     }
     return reg_.dynamic_type();
+}
+
+TypeId InferenceEngine::synthesize_flat_try_form(FlatAST& flat, StringPool& pool, NodeView v) {
+    // Issue #4397: (try body (catch (var) handler) ...) and (catch var handler).
+    // catch is not a primitive. Bind the catch variable as Dynamic and join
+    // the body with each handler. Do not synthesize the catch callee — that
+    // reports UnboundVariable for `catch` and for the binder.
+    TypeId result = reg_.dynamic_type();
+    bool have = false;
+    auto take = [&](TypeId ty) {
+        result = have ? lub(result, ty) : ty;
+        have = true;
+    };
+    if (v.children.size() >= 2) {
+        auto body = v.child(1);
+        if (body != NULL_NODE && body < flat.size())
+            take(synthesize_flat(flat, pool, body, flat.get(body)));
+    }
+    for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+        auto catch_id = v.child(ci);
+        if (catch_id == NULL_NODE || catch_id >= flat.size())
+            continue;
+        auto cv = flat.get(catch_id);
+        bool catch_form = false;
+        std::string var_name;
+        NodeId handler_id = NULL_NODE;
+        if (cv.tag == NodeTag::Call && cv.children.size() >= 3) {
+            auto fn_id = cv.child(0);
+            if (fn_id != NULL_NODE && fn_id < flat.size()) {
+                auto fn = flat.get(fn_id);
+                if (fn.tag == NodeTag::Variable && fn.sym_id != INVALID_SYM &&
+                    pool.resolve(fn.sym_id) == "catch") {
+                    auto var_id = cv.child(1);
+                    if (var_id != NULL_NODE && var_id < flat.size()) {
+                        auto var_form = flat.get(var_id);
+                        if (var_form.tag == NodeTag::Call && !var_form.children.empty()) {
+                            auto vn = var_form.child(0);
+                            if (vn != NULL_NODE && vn < flat.size()) {
+                                auto var_node = flat.get(vn);
+                                if (var_node.tag == NodeTag::Variable &&
+                                    var_node.sym_id != INVALID_SYM)
+                                    var_name = std::string(pool.resolve(var_node.sym_id));
+                            }
+                        } else if (var_form.tag == NodeTag::Variable &&
+                                   var_form.sym_id != INVALID_SYM) {
+                            var_name = std::string(pool.resolve(var_form.sym_id));
+                        }
+                    }
+                    handler_id = cv.child(2);
+                    catch_form = true;
+                }
+            }
+        }
+        if (catch_form) {
+            if (handler_id == NULL_NODE || handler_id >= flat.size())
+                continue;
+            env_.push_scope();
+            ownership_env_.push_scope();
+            if (!var_name.empty())
+                env_.bind(var_name, reg_.dynamic_type());
+            auto handler_ty = synthesize_flat(flat, pool, handler_id, flat.get(handler_id));
+            ownership_env_.pop_scope();
+            env_.pop_scope();
+            take(handler_ty);
+            continue;
+        }
+        take(synthesize_flat(flat, pool, catch_id, cv));
+    }
+    return have ? result : reg_.dynamic_type();
+}
+
+TypeId InferenceEngine::synthesize_flat_while_form(FlatAST& flat, StringPool& pool, NodeView v) {
+    // Issue #4397: statement (while cond body) and thunk
+    // (while (lambda () pred) (lambda () body)). Both return void.
+    // Lambdas open their own scope; the statement body stays in this env.
+    for (std::size_t i = 1; i < v.children.size(); ++i) {
+        auto id = v.child(i);
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        (void)synthesize_flat(flat, pool, id, flat.get(id));
+    }
+    return reg_.void_type();
 }
 
 std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat, StringPool& pool,
@@ -8945,7 +9054,8 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // we don't need to call back into the engine.
     auto r =
         type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_, strict_,
-                             cache_epoch_, metrics_, bidirectional_mode_, gradual_permissiveness_);
+                             cache_epoch_, metrics_, bidirectional_mode_, gradual_permissiveness_,
+                             registered_prim_probe_, registered_prim_ctx_);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -9013,10 +9123,12 @@ TypeCheckResult type_check_flat_pure(
     bool strict, std::uint64_t cache_epoch,
     void* metrics,                                // Issue #258: optional metrics pointer
     bool bidirectional_mode,                      // Issue #283 f/u #5
-    GradualPermissiveness gradual_permissiveness) // Issue #2992
-{
+    GradualPermissiveness gradual_permissiveness, // Issue #2992
+    bool (*registered_prim_probe)(const void* ctx, std::string_view name) noexcept,
+    const void* registered_prim_ctx) {
     TypeCheckResult result;
     InferenceEngine engine(types, diag);
+    engine.set_registered_prim_probe(registered_prim_probe, registered_prim_ctx);
     engine.declared_modules_ = module_src;
     engine.declared_sigs_ = sigs;
     engine.set_strict(strict);                                 // Issue #79: plumb strict mode
@@ -9773,6 +9885,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // TypeChecker::infer_flat — short-lived engine per
     // re-inference pass.
     InferenceEngine engine(types, diag);
+    engine.set_registered_prim_probe(registered_prim_probe_, registered_prim_ctx_);
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
     engine.set_strict(strict_);                                 // Issue #79: plumb strict mode
