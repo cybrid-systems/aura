@@ -1613,6 +1613,183 @@ static void ac4417_remount_fail_stays_off_native() {
           "4417: #2503 fail path still sets MustDeopt");
 }
 
+// Issue #4418: installing a ScalarFn at a jit slot a different live closure
+// still dispatches must keep that closure off native. Owner-scoped clocks
+// stay frozen, so a residual remount looks fresh and would clear a one-shot
+// MustDeopt. The define's own name is not a victim.
+// Decls stay below the inventory head (first 50 lines) so this file's
+// theme bucket does not move.
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+extern "C" void aura_note_jit_slot_installed_for_define(std::int64_t slot, const char* name);
+static int g_ac4418_victim_hits = 0;
+static int g_ac4418_def_hits = 0;
+static std::int64_t ac4418_victim_native(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    ++g_ac4418_victim_hits;
+    return 441801;
+}
+static std::int64_t ac4418_def_native(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    ++g_ac4418_def_hits;
+    return 441802;
+}
+
+static void ac4418_foreign_slot_stays_off_native() {
+    std::println("\n--- #4418: clobbered jit slot stays off native until retarget ---");
+    using namespace aura::compiler::typed_audit;
+    struct Restore {
+        unsigned prod;
+        ~Restore() {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(prod, std::memory_order_relaxed);
+            aura_clear_densify_object_remap();
+            aura_clear_densify_candidates();
+            aura_test_set_residual_remount_force_skip(0);
+            aura_test_reset_residual_remount_state();
+        }
+    } restore{
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed)};
+    // A red densify window returns before the call. Frozen clocks are fresh
+    // (domain inactive), so the unfixed residual path would clear MustDeopt.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura_clear_densify_object_remap();
+    aura_clear_densify_candidates();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_force_skip(0);
+
+    {
+        const auto once = aura_alloc_closure(432);
+        CHECK(once >= 0, "4418: one-shot alloc");
+        aura_closure_set_must_deopt(once, 1);
+        CHECK(aura_closure_call(once, nullptr, 0) == 0, "4418: one-shot call returns 0");
+        CHECK(aura_closure_get_must_deopt(once) == 0, "4418: setter belt is still one-shot");
+        aura_free_closure(once);
+    }
+
+    g_ac4418_victim_hits = 0;
+    g_ac4418_def_hits = 0;
+    aura_register_fn(/*func_id=*/430, ac4418_victim_native, 0, 0, 0);
+    const auto victim = aura_alloc_closure(/*func_id=*/430);
+    CHECK(victim >= 0, "4418: victim alloc");
+    aura_closure_set_must_deopt(victim, 0);
+    aura_register_fn_named("ac4418_other", 430, ac4418_def_native, 0, 0, 0);
+    CHECK(aura_closure_get_must_deopt(victim) == 1, "4418: named install flags the other closure");
+
+    aura_test_set_residual_remount_budget(1);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(victim));
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_residual_remount_ok_total_v_read() > ok0, "4418: residual tick healed the victim");
+    CHECK(aura_closure_get_must_deopt(victim) == 1, "4418: fresh remount does not clear the belt");
+    CHECK(aura_closure_call(victim, nullptr, 0) == 0, "4418: first call stays off native");
+    CHECK(g_ac4418_victim_hits == 0, "4418: first call does not run the old body");
+    CHECK(g_ac4418_def_hits == 0, "4418: first call does not run the new body");
+    CHECK(aura_closure_get_must_deopt(victim) == 1, "4418: consume does not clear the belt");
+    CHECK(aura_closure_call(victim, nullptr, 0) == 0, "4418: second call stays off native");
+    CHECK(g_ac4418_victim_hits == 0, "4418: second call does not run the old body");
+    CHECK(g_ac4418_def_hits == 0, "4418: second call does not run the new body");
+
+    aura_closure_set_must_deopt(victim, 0);
+    CHECK(aura_closure_get_must_deopt(victim) == 0, "4418: setter can zero MustDeopt");
+    CHECK(aura_closure_call(victim, nullptr, 0) == 0,
+          "4418: setter does not open the clobbered slot");
+    CHECK(g_ac4418_def_hits == 0, "4418: setter path does not run the new body");
+    CHECK(g_ac4418_victim_hits == 0, "4418: setter path does not run the old body");
+
+    const auto owner = aura_alloc_closure(/*func_id=*/430);
+    CHECK(owner >= 0, "4418: owner alloc");
+    aura_closure_set_name(owner, "ac4418_other");
+    aura_closure_set_must_deopt(owner, 0);
+    aura_register_fn_named("ac4418_other", 430, ac4418_def_native, 0, 0, 0);
+    CHECK(aura_closure_get_must_deopt(owner) == 0, "4418: same-name owner is not flagged");
+    CHECK(aura_closure_get_must_deopt(victim) == 1, "4418: victim stays flagged");
+    CHECK(aura_closure_call(victim, nullptr, 0) == 0, "4418: victim still stays off native");
+    CHECK(g_ac4418_def_hits == 0, "4418: victim still does not run the new body");
+    CHECK(aura_closure_call(owner, nullptr, 0) == 441802, "4418: owner runs the installed body");
+    CHECK(g_ac4418_def_hits == 1, "4418: owner call entered the new ScalarFn");
+    CHECK(g_ac4418_victim_hits == 0, "4418: owner call did not enter the old ScalarFn");
+
+    aura_register_fn(/*func_id=*/431, ac4418_victim_native, 0, 0, 0);
+    const auto noted = aura_alloc_closure(/*func_id=*/431);
+    CHECK(noted >= 0, "4418: direct-note alloc");
+    aura_closure_set_must_deopt(noted, 0);
+    aura_note_jit_slot_installed_for_define(431, "ac4418_sid");
+    CHECK(aura_closure_get_must_deopt(noted) == 1, "4418: direct note flags the unnamed closure");
+    const auto noted_owner = aura_alloc_closure(/*func_id=*/431);
+    CHECK(noted_owner >= 0, "4418: direct-note owner alloc");
+    aura_closure_set_name(noted_owner, "ac4418_sid");
+    aura_closure_set_must_deopt(noted_owner, 0);
+    aura_note_jit_slot_installed_for_define(431, "ac4418_sid");
+    aura_note_jit_slot_installed_for_define(-1, "ac4418_sid");
+    aura_note_jit_slot_installed_for_define(431, "");
+    aura_note_jit_slot_installed_for_define(431, nullptr);
+    CHECK(aura_closure_get_must_deopt(noted_owner) == 0, "4418: direct note skips the same name");
+    CHECK(aura_closure_get_must_deopt(noted) == 1, "4418: empty name does not drop the belt");
+    aura_test_set_residual_remount_budget(1);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(noted));
+    const auto ok1 = aura_residual_remount_ok_total_v_read();
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_residual_remount_ok_total_v_read() > ok1, "4418: direct-note residual walked");
+    CHECK(aura_closure_get_must_deopt(noted) == 1, "4418: direct-note remount keeps MustDeopt");
+    const auto hits_before = g_ac4418_victim_hits;
+    CHECK(aura_closure_call(noted, nullptr, 0) == 0, "4418: direct-note call stays off native");
+    CHECK(g_ac4418_victim_hits == hits_before, "4418: direct-note call does not run the slot");
+
+    aura_free_closure(victim);
+    aura_free_closure(owner);
+    aura_free_closure(noted);
+    aura_free_closure(noted_owner);
+
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(rt.find("Issue #4418") != std::string::npos, "4418: runtime cites the issue");
+    CHECK(rt.find("query:4418") == std::string::npos, "4418: no new query key");
+    CHECK(rt.find("g_4418_") == std::string::npos, "4418: no g_4418_ global");
+    CHECK(rt.find("g_closure_func_ids[cid] = jit_id") != std::string::npos,
+          "4418: remap still stores the jit id");
+    CHECK(rt.find("g_closure_must_deopt[cid] = 1; // Issue #3060") != std::string::npos,
+          "4418: #3060 assignment stays exact");
+    const auto jit = rt.find("g_closure_func_ids[cid] = jit_id");
+    if (jit != std::string::npos) {
+        const auto win = rt.substr(jit, 800);
+        CHECK(win.find("jit_closure_bridge_stamp_now()") != std::string::npos,
+              "4418: #3503 bridge stamp stays in the remap window");
+        CHECK(win.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
+              "4418: #3503 MustDeopt clear stays in the remap window");
+        const auto heal = rt.substr(jit, 1600);
+        CHECK(heal.find("closure_slot_foreign_clear_unlocked") != std::string::npos,
+              "4418: retarget clears the foreign belt");
+    }
+    const auto reg = br.find("static bool register_stable_id_in_func_table");
+    CHECK(reg != std::string::npos, "4418: stable-id install present");
+    if (reg != std::string::npos) {
+        const auto body = br.substr(reg, 800);
+        CHECK(body.find("aura_note_jit_slot_installed_for_define") != std::string::npos,
+              "4418: stable-id install flags the slot");
+    }
+    const auto named = rt.find("void aura_register_fn_named(");
+    CHECK(named != std::string::npos, "4418: named register present");
+    if (named != std::string::npos) {
+        const auto body = rt.substr(named, 2500);
+        CHECK(body.find("aura_note_jit_slot_installed_for_define") != std::string::npos,
+              "4418: named publish flags the slot");
+    }
+    const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    CHECK(call != std::string::npos, "4418: dispatch present");
+    if (call != std::string::npos) {
+        const auto body = rt.substr(call, 8000);
+        CHECK(body.find("closure_remount_fail_sticky_unlocked") != std::string::npos,
+              "4418: #4417 consume consult stays in the dispatch window");
+        CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
+              "4418: one-shot clear stays in the dispatch window");
+        CHECK(body.find("closure_slot_foreign_unlocked") != std::string::npos,
+              "4418: dispatch consults the foreign belt");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4418.cpp").empty(), "4418: no invent test");
+    CHECK(read_file("docs/design/4418-slot-foreign.md").empty(), "4418: no docs/design");
+}
+
 // Issue #4246: production bare remount wraps remount_or_force_deopt.
 static void ac4246_bare_remount_production_wraps() {
     std::println("\n--- #4246 AC: production bare remount → MustDeopt path ---");
@@ -1684,6 +1861,8 @@ int run_test_remount_force_deopt() {
     ac4246_bare_remount_production_wraps();
     std::println("\n=== Issue #4417: remount-fail MustDeopt stays off native ===");
     ac4417_remount_fail_stays_off_native();
+    std::println("\n=== Issue #4418: clobbered jit slot stays off native ===");
+    ac4418_foreign_slot_stays_off_native();
     if (g_failed)
         return 1;
     std::println(

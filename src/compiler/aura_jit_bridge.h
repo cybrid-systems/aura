@@ -741,6 +741,9 @@ void aura_cleanup_aot_state(void* eval_ptr);
 std::uint64_t aura_aot_state_map_size(void);
 
 void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
+// Issue #4418: live closures dispatching `slot` under a different name
+// MustDeopt until remap retargets them. Strong in aura_jit_runtime.cpp.
+void aura_note_jit_slot_installed_for_define(int64_t slot, const char* name);
 std::uint64_t aura_aot_func_table_epoch(void);
 // Issue #3605: non-consuming prediction of the table bumper's scope —
 // same inputs as the owner-scoped branch of aura_aot_bump_func_table_epoch
