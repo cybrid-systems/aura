@@ -1005,6 +1005,468 @@ static void ac4413_exec_fs_jail() {
     reset_all();
 }
 
+// Issue #4414: query:module-exports and check-module-signature never entered
+// the host-path fence. generate-type-sigs and load-module fenced the .aura
+// path, then opened the derived .aura-type with a following stat/stream.
+static void ac4414_module_reader_host_path() {
+    std::println("\n--- #4414: module readers and .aura-type siblings stay inside the root ---");
+    reset_all();
+    const char* saved_aura_path = std::getenv("AURA_PATH");
+    const std::string saved_path = saved_aura_path ? saved_aura_path : "";
+    const bool had_path = saved_aura_path != nullptr;
+    auto restore_aura_path = [&]() {
+        if (had_path)
+            ::setenv("AURA_PATH", saved_path.c_str(), 1);
+        else
+            ::unsetenv("AURA_PATH");
+    };
+
+    const std::string base = std::string("/tmp/aura-4414-") + std::to_string(::getpid());
+    const std::string victim_bytes = "SECRET4414-BYTES\npwned: String -> String\n";
+    const std::string outside_src = "(export leaked)\n(define (leaked x) x)\n";
+    std::error_code rm_ec;
+    std::filesystem::remove_all(base, rm_ec);
+
+    {
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        const std::string path_dir = base + "/on-path";
+        std::filesystem::create_directories(root_a);
+        std::filesystem::create_directories(path_dir);
+        const std::string victim = base + "/victim-secret.txt";
+        const std::string outside = base + "/outside-mod.aura";
+        const std::string outside_type = base + "/outside-mod.aura-type";
+        const std::string path_mod = path_dir + "/pathonly.aura";
+        auto writef = [](const std::string& p, const std::string& body) {
+            std::ofstream f(p);
+            f << body;
+        };
+        writef(victim, victim_bytes);
+        writef(outside, outside_src);
+        writef(outside_type, "leaked: Any -> Any\n");
+        writef(path_mod, "(export pathonly)\n(define (pathonly x) x)\n");
+        writef(root_a + "/helper.aura", "(export helper)\n(define (helper x) (+ x 1))\n");
+        writef(root_a + "/bad.aura", "(define (badfn x) (+ x 1))\n");
+        writef(root_a + "/bad.aura-type", "badfn: String -> String\n");
+        writef(root_a + "/linked.aura", "(export linked)\n(define (linked x) (+ x 1))\n");
+        std::filesystem::create_symlink(outside, root_a + "/via-link.aura", rm_ec);
+        CHECK(!rm_ec, "4414 setup: via-link.aura symlink");
+        rm_ec.clear();
+        std::filesystem::create_symlink(victim, root_a + "/linked.aura-type", rm_ec);
+        CHECK(!rm_ec, "4414 setup: linked.aura-type symlink");
+        ::setenv("AURA_PATH", path_dir.c_str(), 1);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.host_path_policy_active(), "4414: Restricted+MT arms host-path policy");
+        const auto& ring = g_security_event_ring();
+        auto& heap_w = ev.string_heap_mut();
+        using aura::compiler::types::is_module;
+        using aura::compiler::types::is_void;
+        using aura::compiler::types::make_string;
+
+        auto slurp = [](const std::string& p) {
+            std::ifstream in(p);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        auto saw_escape = [&](std::uint64_t se_base, std::string_view op) {
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                if (std::string_view(e.op) != op)
+                    continue;
+                saw = true;
+            }
+            return saw;
+        };
+        auto call1 = [&](auto& fn, const std::string& arg) {
+            if (!fn)
+                return aura::compiler::types::make_void();
+            heap_w.push_back(arg);
+            return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+        };
+        auto exports_have = [&](aura::compiler::types::EvalValue v, std::string_view name) {
+            for (int guard = 0; guard < 64 && is_pair(v); ++guard) {
+                const auto ix = static_cast<std::size_t>(as_pair_idx(v));
+                if (ix >= ev.pairs().size())
+                    return false;
+                const auto& p = ev.pairs()[ix];
+                if (is_string(p.car)) {
+                    const auto si = as_string_idx(p.car);
+                    if (si < ev.string_heap().size() && ev.string_heap()[si] == name)
+                        return true;
+                }
+                v = p.cdr;
+            }
+            return false;
+        };
+
+        auto qex = ev.primitives().lookup("query:module-exports");
+        auto chk = ev.primitives().lookup("check-module-signature");
+        auto gen = ev.primitives().lookup("generate-type-sigs");
+        auto loadm = ev.primitives().lookup("load-module");
+        CHECK(qex.has_value() && chk.has_value() && gen.has_value() && loadm.has_value(),
+              "4414: module readers registered");
+
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(qex, outside);
+            CHECK(is_void(r), "4414: query of an outside absolute path returns void");
+            CHECK(!exports_have(r, "leaked"), "4414: outside export name is not returned");
+            CHECK(slurp(outside) == outside_src, "4414: outside module bytes unchanged");
+            CHECK(ev.last_mutate_error().find("query:module-exports: tenant-path-escape") !=
+                      std::string::npos,
+                  "4414: query deny reason is tenant-path-escape");
+            CHECK(saw_escape(se_base, "query:module-exports"),
+                  "4414: IsolationDeny SE op query:module-exports");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(qex, "pathonly.aura");
+            CHECK(is_void(r) && !exports_have(r, "pathonly"),
+                  "4414: active policy does not search AURA_PATH");
+            CHECK(slurp(path_mod).find("pathonly") != std::string::npos,
+                  "4414: AURA_PATH module bytes unchanged");
+            CHECK(!saw_escape(se_base, "query:module-exports"),
+                  "4414: missing in-root relative is not a path-escape deny");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(qex, "../outside-mod.aura");
+            CHECK(is_void(r) && !exports_have(r, "leaked"),
+                  "4414: ../ module path does not return outside exports");
+            CHECK(saw_escape(se_base, "query:module-exports"),
+                  "4414: ../ module path emits IsolationDeny");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(qex, "via-link.aura");
+            CHECK(is_void(r) && !exports_have(r, "leaked"),
+                  "4414: in-root symlink module is not followed");
+            CHECK(slurp(outside) == outside_src, "4414: symlink target bytes unchanged");
+            CHECK(saw_escape(se_base, "query:module-exports"),
+                  "4414: symlink module emits IsolationDeny");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(qex, "helper.aura");
+            CHECK(exports_have(r, "helper"), "4414: in-root query returns helper");
+            CHECK(!saw_escape(se_base, "query:module-exports"),
+                  "4414: in-root query emits no path-escape");
+            const auto abs = call1(qex, root_a + "/helper.aura");
+            CHECK(exports_have(abs, "helper"), "4414: in-root absolute query returns helper");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(chk, outside);
+            CHECK(is_bool(r) && !as_bool(r), "4414: check of an outside path returns #f");
+            CHECK(slurp(outside) == outside_src, "4414: check does not modify the outside module");
+            CHECK(slurp(outside_type).find("leaked:") != std::string::npos,
+                  "4414: outside .aura-type bytes unchanged");
+            CHECK(saw_escape(se_base, "check-module-signature"),
+                  "4414: IsolationDeny SE op check-module-signature");
+        }
+        {
+            // A regular sibling with a disagreeing decl must be read: a missed
+            // open leaves zero decls and returns #t. Mismatch is #f, and it is
+            // not a path-escape.
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto bad = call1(chk, "bad.aura");
+            CHECK(is_bool(bad) && !as_bool(bad),
+                  "4414: in-root check reads a regular .aura-type sibling");
+            CHECK(slurp(root_a + "/bad.aura-type").find("badfn:") != std::string::npos,
+                  "4414: regular sibling bytes unchanged");
+            CHECK(!saw_escape(se_base, "check-module-signature"),
+                  "4414: in-root regular sibling is not a path-escape");
+        }
+        {
+            const auto r = call1(gen, "helper.aura");
+            CHECK(is_bool(r) && as_bool(r), "4414: in-root generate-type-sigs writes");
+            const auto sig = slurp(root_a + "/helper.aura-type");
+            CHECK(sig.find("helper:") != std::string::npos,
+                  "4414: regular .aura-type sibling lives under the root");
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto ok = call1(chk, "helper.aura");
+            // bad.aura above proves a regular sibling is read. This call only
+            // has to finish on the generated file without a path-escape.
+            CHECK(is_bool(ok), "4414: in-root check-module-signature returns a bool");
+            CHECK(!saw_escape(se_base, "check-module-signature"),
+                  "4414: in-root check emits no path-escape");
+        }
+        {
+            const auto r = call1(loadm, "helper.aura");
+            CHECK(is_module(r), "4414: in-root load-module returns a module");
+            CHECK(slurp(root_a + "/helper.aura-type").find("helper:") != std::string::npos,
+                  "4414: load-module does not rewrite a regular sibling");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(gen, "linked.aura");
+            CHECK(is_bool(r) && !as_bool(r),
+                  "4414: generate-type-sigs of a symlink sibling returns #f");
+            CHECK(slurp(victim) == victim_bytes, "4414: symlink target was not truncated");
+            CHECK(saw_escape(se_base, "generate-type-sigs"),
+                  "4414: symlink sibling create emits IsolationDeny");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(chk, "linked.aura");
+            CHECK(is_bool(r) && !as_bool(r), "4414: check of a symlink sibling returns #f");
+            CHECK(slurp(victim) == victim_bytes, "4414: check does not read the symlink target");
+            CHECK(saw_escape(se_base, "check-module-signature"),
+                  "4414: symlink sibling check emits IsolationDeny");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(loadm, "linked.aura");
+            CHECK(is_module(r), "4414: symlink sibling does not abort the module load");
+            CHECK(slurp(victim) == victim_bytes, "4414: load does not modify the symlink target");
+            CHECK(saw_escape(se_base, "load-module"),
+                  "4414: symlink sibling load emits IsolationDeny op load-module");
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto r = call1(loadm, outside);
+            CHECK(is_void(r), "4414: load-module of an outside path stays void");
+            CHECK(saw_escape(se_base, "load-module"), "4414: outside load-module still denies");
+        }
+
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        restore_aura_path();
+    }
+
+    {
+        std::println("\n--- #4414: Off and single-tenant Restricted keep passthrough ---");
+        const std::string off_base = base + "-off";
+        std::filesystem::remove_all(off_base, rm_ec);
+        std::filesystem::create_directories(off_base);
+        const std::string mod = off_base + "/off-helper.aura";
+        const std::string mod_type = off_base + "/off-helper.aura-type";
+        const std::string secret = off_base + "/secret.txt";
+        const std::string sym_mod = off_base + "/symmod.aura";
+        const std::string sym_type = off_base + "/symmod.aura-type";
+        const std::string secret_bytes = "SECRET4414-OFF\n";
+        {
+            std::ofstream f(mod);
+            f << "(export leaked)\n(define (leaked x) (+ x 1))\n";
+        }
+        {
+            std::ofstream f(secret);
+            f << secret_bytes;
+        }
+        {
+            std::ofstream f(sym_mod);
+            f << "(define (symfn x) (+ x 1))\n";
+        }
+        std::filesystem::create_symlink(secret, sym_type, rm_ec);
+        CHECK(!rm_ec, "4414 setup: passthrough .aura-type symlink");
+        auto slurp = [](const std::string& p) {
+            std::ifstream in(p);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            ev.set_effect_sandbox_mode(0);
+            CHECK(!ev.host_path_policy_active(), "4414: Off does not arm host-path policy");
+            const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+            auto& heap_w = ev.string_heap_mut();
+            using aura::compiler::types::is_void;
+            using aura::compiler::types::make_string;
+            auto call1 = [&](auto& fn, const std::string& arg) {
+                heap_w.push_back(arg);
+                return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            };
+            auto exports_have = [&](aura::compiler::types::EvalValue v, std::string_view name) {
+                for (int guard = 0; guard < 64 && is_pair(v); ++guard) {
+                    const auto ix = static_cast<std::size_t>(as_pair_idx(v));
+                    if (ix >= ev.pairs().size())
+                        return false;
+                    const auto& p = ev.pairs()[ix];
+                    if (is_string(p.car)) {
+                        const auto si = as_string_idx(p.car);
+                        if (si < ev.string_heap().size() && ev.string_heap()[si] == name)
+                            return true;
+                    }
+                    v = p.cdr;
+                }
+                return false;
+            };
+            auto qex = ev.primitives().lookup("query:module-exports");
+            auto chk = ev.primitives().lookup("check-module-signature");
+            auto gen = ev.primitives().lookup("generate-type-sigs");
+            CHECK(qex.has_value() && chk.has_value() && gen.has_value(),
+                  "4414: passthrough primitives registered");
+            if (qex && chk && gen) {
+                const auto qr = call1(qex, mod);
+                CHECK(!is_void(qr) && exports_have(qr, "leaked"),
+                      "4414: Off query of an absolute path still returns exports");
+                const auto cr = call1(chk, mod);
+                CHECK(is_bool(cr) && as_bool(cr),
+                      "4414: Off check still reads a module with no sig file");
+                const auto gr = call1(gen, mod);
+                CHECK(is_bool(gr) && as_bool(gr), "4414: Off generate-type-sigs still writes");
+                CHECK(slurp(mod_type).find("leaked:") != std::string::npos,
+                      "4414: Off .aura-type sibling written");
+                const auto sr = call1(gen, sym_mod);
+                CHECK(is_bool(sr) && !as_bool(sr),
+                      "4414: Off symlink sibling fails the O_NOFOLLOW open");
+                CHECK(slurp(secret) == secret_bytes,
+                      "4414: Off open does not truncate the symlink target");
+            }
+            bool path_escape = false;
+            const auto& ring = g_security_event_ring();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                    path_escape = true;
+            }
+            CHECK(!path_escape, "4414: Off passthrough emits no tenant-path-escape");
+        }
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            ev.set_effect_sandbox_mode(1);
+            ev.set_capability_tenant_id(7);
+            CHECK(!ev.host_path_policy_active(),
+                  "4414: single-tenant Restricted does not arm host-path policy");
+            const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+            auto& heap_w = ev.string_heap_mut();
+            using aura::compiler::types::make_string;
+            auto qex = ev.primitives().lookup("query:module-exports");
+            CHECK(qex.has_value(), "4414: single-tenant query registered");
+            bool saw_leaked = false;
+            if (qex) {
+                heap_w.push_back(mod);
+                auto v = (*qex)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                for (int guard = 0; guard < 64 && is_pair(v); ++guard) {
+                    const auto ix = static_cast<std::size_t>(as_pair_idx(v));
+                    if (ix >= ev.pairs().size())
+                        break;
+                    const auto& p = ev.pairs()[ix];
+                    if (is_string(p.car)) {
+                        const auto si = as_string_idx(p.car);
+                        if (si < ev.string_heap().size() && ev.string_heap()[si] == "leaked")
+                            saw_leaked = true;
+                    }
+                    v = p.cdr;
+                }
+            }
+            CHECK(saw_leaked, "4414: single-tenant Restricted query still returns exports");
+            bool path_escape = false;
+            const auto& ring = g_security_event_ring();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                    path_escape = true;
+            }
+            CHECK(!path_escape, "4414: single-tenant passthrough emits no tenant-path-escape");
+        }
+        std::filesystem::remove_all(off_base, rm_ec);
+    }
+
+    {
+        const auto types_src = read_file("src/compiler/evaluator_primitives_types.cpp");
+        const auto query_src = read_file("src/compiler/evaluator_primitives_query.cpp");
+        const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
+        const auto exempt =
+            read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        CHECK(types_src.find("check_tenant_host_path(caller, gated, \"check-module-signature\")") !=
+                  std::string::npos,
+              "4414: check-module-signature fences the caller path");
+        CHECK(types_src.find(
+                  "check_tenant_host_path(sig_path, sig_gated, \"check-module-signature\")") !=
+                  std::string::npos,
+              "4414: check-module-signature fences the .aura-type sibling");
+        CHECK(types_src.find(
+                  "check_tenant_host_path(type_sig_path, type_gated, \"generate-type-sigs\")") !=
+                  std::string::npos,
+              "4414: generate-type-sigs fences the .aura-type sibling");
+        const auto sib = types_src.find(
+            "check_tenant_host_path(type_sig_path, type_gated, \"generate-type-sigs\")");
+        const auto wr = types_src.find("write_regular_nofollow(type_gated", sib);
+        CHECK(sib != std::string::npos && wr != std::string::npos && sib < wr,
+              "4414: sibling fence precedes the nofollow create");
+        CHECK(types_src.find("O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW") != std::string::npos,
+              "4414: .aura-type create is O_NOFOLLOW");
+        CHECK(types_src.find("ev.host_path_policy_active() ? std::move(gated)") !=
+                  std::string::npos,
+              "4414: active check-module-signature does not re-enter host search");
+        const auto active = query_src.find("if (ev.host_path_policy_active())");
+        const auto else_at = query_src.find("} else {", active);
+        CHECK(active != std::string::npos && else_at != std::string::npos && else_at > active,
+              "4414: query active arm located");
+        if (active != std::string::npos && else_at > active) {
+            const auto arm = query_src.substr(active, else_at - active);
+            CHECK(arm.find("resolve_module_path") == std::string::npos,
+                  "4414: active query does not call resolve_module_path");
+            CHECK(arm.find("read_regular_nofollow") != std::string::npos,
+                  "4414: active query opens with the nofollow reader");
+        }
+        CHECK(query_src.find("O_RDONLY | O_NOFOLLOW | O_CLOEXEC") != std::string::npos,
+              "4414: query reader is O_NOFOLLOW");
+        CHECK(query_src.find("check_tenant_host_path(path, gated, \"query:module-exports\")") !=
+                  std::string::npos,
+              "4414: query:module-exports fences the caller path");
+        CHECK(loader.find("check_tenant_host_path(type_sig_path, type_gated, \"load-module\")") !=
+                  std::string::npos,
+              "4414: load-module fences the .aura-type sibling");
+        CHECK(loader.find("O_RDONLY | O_NOFOLLOW | O_CLOEXEC") != std::string::npos,
+              "4414: load-module reader is O_NOFOLLOW");
+        CHECK(loader.find(
+                  "host_path_policy_active() ? std::move(gated) : resolve_module_path(gated)") !=
+                  std::string::npos,
+              "4414: active load still uses the gated path");
+        CHECK(exempt.find("\"query:module-exports\"") == std::string::npos &&
+                  exempt.find("\"check-module-signature\"") == std::string::npos &&
+                  exempt.find("len(EXEMPT_2ARG_OPS) != 7") != std::string::npos,
+              "4414: EXEMPT_2ARG_OPS unchanged");
+        CHECK(types_src.find("query:4414") == std::string::npos &&
+                  query_src.find("query:4414") == std::string::npos &&
+                  loader.find("query:4414") == std::string::npos,
+              "4414: no new query key");
+        std::ifstream invent("tests/core/test_issue_4414.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4414.cpp");
+        CHECK(!invent.good(), "4414: no tests/core/test_issue_4414.cpp");
+    }
+
+    restore_aura_path();
+    ::unsetenv("AURA_TENANT_FS_ROOT");
+    ::unsetenv("AURA_MULTI_TENANT");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    std::filesystem::remove_all(base, rm_ec);
+    reset_all();
+}
+
 int main() {
     reset_all();
 
@@ -7061,9 +7523,9 @@ int main() {
         CHECK(types_src.find("ev.host_path_policy_active() ? std::move(gated)") !=
                   std::string::npos,
               "4399 AC3: active generate-type-sigs does not re-enter host search");
-        CHECK(types_src.find("check_tenant_host_path(caller, gated, \"check-module-signature\")") ==
+        CHECK(types_src.find("check_tenant_host_path(caller, gated, \"check-module-signature\")") !=
                   std::string::npos,
-              "4399 AC3: check-module-signature stays out of this fence");
+              "4414: check-module-signature enters the host-path fence");
         CHECK(loader.find("check_tenant_host_path(path, gated, \"load-module\")") !=
                   std::string::npos,
               "4399 AC3: load_module_file wires check_tenant_host_path");
@@ -7473,6 +7935,7 @@ int main() {
     ac3904_5_source_cite();
     ac4165_agent_fiber_isolation();
     ac4413_exec_fs_jail();
+    ac4414_module_reader_host_path();
 
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,

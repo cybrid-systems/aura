@@ -39,10 +39,14 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdio>
+#include <fcntl.h>
 #include <filesystem>
+#include <sys/stat.h>
 #include <fstream>
 #include <mutex>
+#include <unistd.h>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
@@ -503,25 +507,76 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                                     void*& type_registry, ModulePathResolver resolve_module_path,
                                     Evaluator& ev);
 
+namespace {
+
+    // Issue #4414: open of a path that already passed check_tenant_host_path.
+    // O_NOFOLLOW fails the final component (ELOOP) so a swapped symlink is
+    // not read. The passthrough face keeps module_export_cache::lookup_or_load.
+    [[nodiscard]] bool read_regular_nofollow(const std::string& path, std::string& out) {
+        out.clear();
+        const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0)
+            return false;
+        struct stat st{};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            ::close(fd);
+            return false;
+        }
+        char buf[4096];
+        while (true) {
+            const auto n = ::read(fd, buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                ::close(fd);
+                return false;
+            }
+            if (n == 0)
+                break;
+            out.append(buf, static_cast<std::size_t>(n));
+        }
+        ::close(fd);
+        return true;
+    }
+
+} // namespace
+
 void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                std::pmr::vector<std::string>& string_heap, void*& type_registry,
                                ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #1680: mtime-keyed cache; amortize re-read/re-parse of module files.
     add("query:module-exports",
-        [&pairs, &string_heap, resolve_module_path](std::span<const EvalValue> a) -> EvalValue {
+        [&pairs, &string_heap, &ev,
+         resolve_module_path](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_string(a[0]))
                 return make_void();
             auto idx = as_string_idx(a[0]);
             if (idx >= string_heap.size())
                 return make_void();
-            auto path = string_heap[idx];
-            auto resolved = resolve_module_path(path);
-            if (resolved.empty())
+            const std::string path = string_heap[idx];
+            // Issue #4414: fence before resolve or read. Deny → void, zero
+            // read. Active policy uses the gated absolute only.
+            std::string gated;
+            if (!ev.check_tenant_host_path(path, gated, "query:module-exports"))
                 return make_void();
-            auto [ok, exports] = module_export_cache::lookup_or_load(resolved);
-            if (!ok)
-                return make_void();
+            std::vector<std::string> exports;
+            if (ev.host_path_policy_active()) {
+                // Do not search CWD / AURA_PATH / ../lib / ./lib, and do not
+                // last_write_time (that follows a final symlink).
+                std::string content;
+                if (!read_regular_nofollow(gated, content))
+                    return make_void();
+                exports = module_export_cache::parse_module_exports(content);
+            } else {
+                auto resolved = resolve_module_path(gated);
+                if (resolved.empty())
+                    return make_void();
+                auto [ok, cached] = module_export_cache::lookup_or_load(resolved);
+                if (!ok)
+                    return make_void();
+                exports = std::move(cached);
+            }
             EvalValue lst = make_void();
             for (auto it = exports.rbegin(); it != exports.rend(); ++it) {
                 auto sidx = string_heap.size();

@@ -3,7 +3,9 @@
 
 module;
 
+#include <cerrno>
 #include <cstdlib>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "runtime_shared.h"
@@ -298,6 +300,43 @@ struct WorkspaceAdoptIfNeeded {
     }
 };
 
+namespace {
+
+    // Issue #4414: open of a path that already passed check_tenant_host_path.
+    // O_NOFOLLOW fails the final component (ELOOP) so a swapped symlink is
+    // not read. OpenFailed covers the old ::stat miss; ReadFailed covers the
+    // old ifstream miss. An empty regular file is Ok with an empty string.
+    enum class NofollowRead { Ok, OpenFailed, ReadFailed };
+
+    [[nodiscard]] NofollowRead read_regular_nofollow(const std::string& path, std::string& out) {
+        out.clear();
+        const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0)
+            return NofollowRead::OpenFailed;
+        struct stat st{};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            ::close(fd);
+            return NofollowRead::OpenFailed;
+        }
+        char buf[4096];
+        while (true) {
+            const auto n = ::read(fd, buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                ::close(fd);
+                return NofollowRead::ReadFailed;
+            }
+            if (n == 0)
+                break;
+            out.append(buf, static_cast<std::size_t>(n));
+        }
+        ::close(fd);
+        return NofollowRead::Ok;
+    }
+
+} // namespace
+
 // ── Load module file, return module object ────────────────
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Issue #3266: validate before lock (string predicate; no shared
@@ -378,29 +417,31 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         loading_stack_.insert(resolved);
     }
     // Issue #3266: lock released for file I/O on purpose (do not hold
-    // workspace_mtx_ across stat/ifstream). Concurrent load of the same
+    // workspace_mtx_ across the module open). Concurrent load of the same
     // path may see loading_stack_ and report circular-dep while this
     // thread is in I/O; module_cache_ is populated before erase below
     // so a late arriver can hit cache after we finish.
 
-    // 4. Read file
-    struct stat st;
-    if (::stat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+    // 4. Read file. Issue #4414: O_NOFOLLOW on the checked path. A
+    // final-component symlink fails the open (zero read of the target).
+    // Issue #4264: open, read, and empty each adopt the held exclusive
+    // before erasing loading_stack_ (the three pre-merge failure returns).
+    std::string content;
+    const auto opened = read_regular_nofollow(resolved, content);
+    if (opened == NofollowRead::OpenFailed) {
         {
             WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         return types::make_void();
     }
-    std::ifstream f(resolved);
-    if (!f) {
+    if (opened == NofollowRead::ReadFailed) {
         {
             WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
         return types::make_void();
     }
-    std::string content((std::istreambuf_iterator<char>(f)), {});
     if (content.empty()) {
         {
             WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
@@ -645,16 +686,19 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
 
     // 10c. 自动加载 .aura-type 类型签名文件
     // 检查 {module}.aura 同目录下是否有 {module}.aura-type 文件
+    // Issue #4414: this sibling is a second host open. The .aura fence
+    // does not cover it. Deny → zero read; do not ingest the target.
     auto type_sig_path = resolved;
     if (type_sig_path.size() > 5) {
         auto dot = type_sig_path.rfind('.');
         if (dot != std::string::npos)
             type_sig_path = type_sig_path.substr(0, dot) + ".aura-type";
     }
-    struct stat st2;
-    if (::stat(type_sig_path.c_str(), &st2) == 0 && S_ISREG(st2.st_mode)) {
-        std::ifstream tf(type_sig_path);
-        if (tf) {
+    std::string type_gated;
+    if (check_tenant_host_path(type_sig_path, type_gated, "load-module")) {
+        std::string sig_text;
+        if (read_regular_nofollow(type_gated, sig_text) == NofollowRead::Ok) {
+            std::istringstream tf(sig_text);
             std::string line;
             while (std::getline(tf, line)) {
                 // Format: "name: param1 param2 -> rettype"
