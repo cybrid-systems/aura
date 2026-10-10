@@ -2465,13 +2465,16 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // decremented), so bindings inside it gensym and refs resolve via
     // name_map. Cache the Call-head qq form name for the per-child depth
     // assignment at the recursion site.
-    std::string_view qq_head_name;
+    // Issue #4420: resolve() is a view into buf_. pre_scan intern on a
+    // same-flat pool can realloc it before the child-depth compare.
+    // Own the name here; #3606 depth rules are unchanged.
+    std::string qq_head_name;
     if (!local_in_quote && v.tag == NodeTag::Call && !v.children.empty()) {
         auto callee_n = source.get(v.children[0]);
         if (callee_n.tag == NodeTag::Variable) {
             auto cname = std::string(source_pool.resolve(callee_n.sym_id));
             if (cname == "quasiquote" || cname == "unquote" || cname == "unquote-splicing")
-                qq_head_name = source_pool.resolve(callee_n.sym_id);
+                qq_head_name = std::move(cname);
         }
     }
     const aura::ast::NodeId qq_arg_id =

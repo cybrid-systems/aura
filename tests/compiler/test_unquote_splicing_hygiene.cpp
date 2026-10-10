@@ -313,6 +313,147 @@ static void collect_var_names_3606(const FlatAST& t, NodeId n, const StringPool&
         collect_var_names_3606(t, ch, sp, out);
 }
 
+// Issue #4420: same-pool clone. pre_scan intern can realloc buf_ while
+// qq_head_name still aliases resolve(). Fill buf_ to slack 0 (measured
+// from the pmr block that holds the chars) so the gensym intern moves
+// buf_.data(). Nested unquote at depth > 1 must still rename the operand
+// with the binding (#3606), not caller-scope.
+static void ac4420_same_pool_qq_head_survives_realloc() {
+    std::println("\n--- #4420: same-pool qq head survives buf_ realloc ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("Issue #4420") != std::string::npos, "4420: cites #4420");
+    CHECK(me.find("std::string qq_head_name;") != std::string::npos, "4420: owned head name");
+    CHECK(me.find("qq_head_name = std::move(cname);") != std::string::npos,
+          "4420: copy before intern, not a second resolve view");
+    CHECK(me.find("query:4420") == std::string::npos, "4420: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4420.cpp").empty(), "4420: no test_issue");
+    CHECK(read_file("docs/design/4420-qq-head-name.md").empty(), "4420: no docs/design");
+
+    // Requested byte count of the live block containing ptr. For
+    // vector<char> that is capacity. Hash rehash is a different block.
+    struct BufTrack final : std::pmr::memory_resource {
+        struct Block {
+            void* p = nullptr;
+            std::size_t n = 0;
+        };
+        std::pmr::memory_resource* upstream = std::pmr::new_delete_resource();
+        std::vector<Block> live;
+
+        void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+            void* p = upstream->allocate(bytes, alignment);
+            live.push_back(Block{p, bytes});
+            return p;
+        }
+        void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
+            for (auto it = live.begin(); it != live.end(); ++it) {
+                if (it->p == p) {
+                    live.erase(it);
+                    break;
+                }
+            }
+            upstream->deallocate(p, bytes, alignment);
+        }
+        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+            return this == &other;
+        }
+        [[nodiscard]] std::size_t cap_holding(const void* ptr) const {
+            if (ptr == nullptr)
+                return 0;
+            const auto addr = reinterpret_cast<std::uintptr_t>(ptr);
+            for (const auto& b : live) {
+                const auto base = reinterpret_cast<std::uintptr_t>(b.p);
+                if (addr >= base && addr < base + b.n)
+                    return b.n;
+            }
+            return 0;
+        }
+    };
+
+    auto run_one = [](auto build, const char* binding_name, const char* label) {
+        BufTrack track;
+        StringPool pool{std::pmr::polymorphic_allocator<std::byte>{&track}};
+        FlatAST src;
+        auto root = build(src, pool);
+        // intern appends s.size()+1 (trailing NUL). slack >= 2 fits in
+        // the current block; slack == 1 cannot (min append is 2), so grow
+        // and remeasure. Stop at slack 0 before clone — a marker intern
+        // here would grow again and hide the gensym realloc.
+        bool exact = false;
+        for (int i = 0; i < 8 && !exact; ++i) {
+            const auto q = pool.intern("quasiquote");
+            const auto cap = track.cap_holding(pool.resolve(q).data());
+            const auto sz = pool.data_size();
+            if (cap == 0 || cap < sz)
+                break;
+            const auto slack = cap - sz;
+            if (slack == 0) {
+                exact = true;
+                break;
+            }
+            if (slack == 1) {
+                pool.intern(std::string("4420grow-") + label + "-" + std::to_string(i));
+                continue;
+            }
+            std::string fill(slack - 1, 'q');
+            const auto tag = std::to_string(i);
+            if (fill.size() >= tag.size())
+                fill.replace(0, tag.size(), tag);
+            else
+                fill.back() = static_cast<char>('A' + (i % 26));
+            pool.intern(fill);
+        }
+        const auto anchor = pool.intern("quasiquote");
+        const auto before = reinterpret_cast<std::uintptr_t>(pool.resolve(anchor).data());
+
+        FlatAST target;
+        NameMap nm;
+        auto c = clone_macro_body(target, pool, src, pool, root, nullptr, &nm,
+                                  SyntaxMarker::MacroIntroduced);
+        const auto after = reinterpret_cast<std::uintptr_t>(pool.resolve(anchor).data());
+        CHECK(c != NULL_NODE, std::string(label) + ": clone ok");
+        CHECK(exact, std::string(label) + ": buf_ filled to slack 0 before clone");
+        CHECK(before != after, std::string(label) + ": clone intern reallocated buf_");
+        auto mit = nm.find(binding_name);
+        CHECK(mit != nm.end() && mit->second.rfind("__", 0) == 0,
+              std::string(label) + ": binding gensym'd");
+
+        NodeId let_id = NULL_NODE;
+        std::function<void(NodeId)> find_let = [&](NodeId n) {
+            if (n == NULL_NODE || let_id != NULL_NODE)
+                return;
+            auto v = target.get(n);
+            if (v.tag == NodeTag::Let)
+                let_id = n;
+            for (auto ch : v.children)
+                find_let(ch);
+        };
+        find_let(c);
+        CHECK(let_id != NULL_NODE, std::string(label) + ": let present");
+        if (let_id == NULL_NODE || mit == nm.end())
+            return;
+        auto lv = target.get(let_id);
+        CHECK(std::string(pool.resolve(lv.sym_id)) == mit->second,
+              std::string(label) + ": let binding is the gensym");
+        CHECK(lv.children.size() >= 2, std::string(label) + ": let body");
+        if (lv.children.size() < 2)
+            return;
+        auto uq = target.get(lv.children[1]);
+        CHECK(uq.tag == NodeTag::Call && uq.children.size() >= 2,
+              std::string(label) + ": unquote/splice call");
+        if (uq.tag != NodeTag::Call || uq.children.size() < 2)
+            return;
+        auto op = target.get(uq.children[1]);
+        CHECK(op.tag == NodeTag::Variable, std::string(label) + ": operand variable");
+        CHECK(std::string(pool.resolve(op.sym_id)) == mit->second,
+              std::string(label) + ": operand matches binding (not caller-scope x)");
+        CHECK(std::string(pool.resolve(op.sym_id)) != binding_name,
+              std::string(label) + ": operand is not the raw source name");
+    };
+
+    run_one(build_nested_qq_let_unquote, "x", "4420-unquote");
+    run_one(build_nested_qq_let_splicing, "xs", "4420-splice");
+}
+
 // ── Issue #3606: nested quasiquote depth — unquote / unquote-splicing
 // at depth > 1 is outer-template scope (qq_depth decrements); at
 // depth ≤ 1 caller-scope (#2807 preserved).
@@ -756,6 +897,7 @@ int run_test_unquote_splicing_hygiene() {
     // at depth > 1 is outer-template scope (qq_depth decrements); at
     // depth ≤ 1 caller-scope (#2807 preserved).
     ac3606_nested_qq_depth();
+    ac4420_same_pool_qq_head_survives_realloc();
 
     std::println("\n=== Issue #3754: nested pre_scan inherits qq_depth / quote Call stop ===");
     {
