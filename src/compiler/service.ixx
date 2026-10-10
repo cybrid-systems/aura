@@ -7332,7 +7332,7 @@ public:
 
     bool relower_define_blocks(const std::string& name, std::string_view source,
                                aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                               aura::ast::NodeId expanded_root) {
+                               aura::ast::NodeId expanded_root, bool commit_per_fn_partial = true) {
         // Issue #4341: sample BEFORE any per-fn / full re-lower in this
         // call — both the per-fn partial restamp and the full-fallback
         // store_define_v2 stamp the IR with this sampled epoch (#4338
@@ -7505,7 +7505,10 @@ public:
         // Previously required irs.size()>=2 which forced full re-lower
         // for every set-body on a real-lowered define.
         // Issue #2181: only when gate_partial_soa_dirty_sync_ allowed peel.
-        if (allow_partial_peel && !it->second.irs.empty()) {
+        // Issue #4422: a caller that already refused impact must not
+        // commit this per-fn arm (no content store, no live restamp).
+        // Fall through to store_define_v2. Direct callers keep the default.
+        if (commit_per_fn_partial && allow_partial_peel && !it->second.irs.empty()) {
             std::size_t dirty_func_idx = static_cast<std::size_t>(-1);
             std::size_t dirty_func_count = 0;
             for (std::size_t fi = 0; fi < it->second.block_dirty_per_func_.size(); ++fi) {
@@ -9008,6 +9011,9 @@ public:
             // threshold consult. A stale or incomplete map must not
             // under-estimate (silent partial peel). Recovered maps
             // keep partial when the bound is still ≤ dirty_n (#2206).
+            // Issue #4422: helper false must not let the else branch's
+            // per-fn arm return success. Soft ub==0 never sets this.
+            bool impact_refused_partial = false;
             if (want_partial && dirty_n > 0) {
                 // Issue #3349: re-union DeadCoercion persist into type∪IR
                 // before impact_ub / partial commit (decision-time cone
@@ -9043,6 +9049,7 @@ public:
                     if (!should_partial_relower_impact_checked_prod(dirty_n, impact_ub,
                                                                     production_consult)) {
                         want_partial = false;
+                        impact_refused_partial = true;
                         it->second.mark_all_blocks_dirty();
                         it->second.dirty = true;
                         metrics_.partial_forced_full_by_impact_total.fetch_add(
@@ -9182,6 +9189,7 @@ public:
                     if (!should_partial_relower_impact_checked_prod(
                             it->second.dirty_block_count(), impact_ub, production_consult)) {
                         want_partial = false;
+                        impact_refused_partial = true;
                         it->second.mark_all_blocks_dirty();
                         it->second.dirty = true;
                         metrics_.partial_forced_full_by_impact_total.fetch_add(
@@ -9334,9 +9342,11 @@ public:
                 }
             } else {
                 // Over threshold / storm → full re-lower; record reason (#2193).
+                // Issue #4422: impact already refused — do not commit per-fn.
                 note_relower_fallback(metrics_, RelowerFallbackReason::Threshold);
                 metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
-                if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
+                if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded,
+                                          /*commit_per_fn_partial=*/!impact_refused_partial)) {
                     ++ok;
                     // Issue #4172: post-peel residual verification before
                     // JIT lower. Full peel re-runs the DeadCoercion fold
@@ -10669,7 +10679,22 @@ public:
             // Prefer partial whenever dirty bitmasks fire — including when
             // source_hash changed (mutate:set-body). dirty_n>0 is required so
             // we never take the clean-bitmask early-return with stale IR.
-            const bool try_partial = has_ir && dirty_n > 0;
+            bool try_partial = has_ir && dirty_n > 0;
+            // Issue #4422: production must consult impact before a per-fn
+            // peel, including unknown ub==0. Helper false falls through to
+            // cache_define (invalidate_function + record_dependency).
+            // Soft/Off keeps ub==0 threshold partial and does not load impact.
+            if (try_partial && (aura::compiler::typed_audit::production_defaults_active() ||
+                                aura::compiler::typed_audit::get_strategy() ==
+                                    aura::compiler::typed_audit::AuditStrategy::Full)) {
+                const std::size_t impact_ub = impact_upper_bound_for_entry_(name_str, it->second);
+                if (!should_partial_relower_impact_checked_prod(dirty_n, impact_ub,
+                                                                /*production=*/true)) {
+                    metrics_.partial_forced_full_by_impact_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    try_partial = false;
+                }
+            }
             if (try_partial) {
                 // Prefer Lambda body node for per-function re-lower.
                 aura::ast::NodeId expanded = expanded_root;
