@@ -1010,6 +1010,28 @@ static std::vector<std::uint64_t> g_closure_binding_recycle_serial;
 // aura_get_closure_must_deopt_before_next_call as consume.
 // Parallel to func_ids (0 = clear, 1 = must deopt before next native call).
 static std::vector<std::uint8_t> g_closure_must_deopt;
+// Issue #4417: remount-fail MustDeopt is not the #2128 one-shot belt.
+// aura_closure_call leaves the flag set until a remount returns success.
+// Cleared on that success, on heal / reuse / free, and by the explicit
+// setter (one-shot). Not a closure table and not a query key.
+static std::vector<std::uint8_t> g_closure_remount_fail_sticky;
+
+static void closure_remount_fail_sticky_note_unlocked(std::size_t cid) noexcept {
+    if (g_closure_remount_fail_sticky.size() <= cid) {
+        const auto n = g_closure_func_ids.size();
+        g_closure_remount_fail_sticky.resize(n > cid + 1 ? n : cid + 1, 0);
+    }
+    g_closure_remount_fail_sticky[cid] = 1;
+}
+
+static void closure_remount_fail_sticky_clear_unlocked(std::size_t cid) noexcept {
+    if (cid < g_closure_remount_fail_sticky.size())
+        g_closure_remount_fail_sticky[cid] = 0;
+}
+
+static bool closure_remount_fail_sticky_unlocked(std::size_t cid) noexcept {
+    return cid < g_closure_remount_fail_sticky.size() && g_closure_remount_fail_sticky[cid] != 0;
+}
 // Issue #3323 (CI follow-up): sticky pure-anon overflow fence. The overflow
 // stamps MustDeopt + bridge_epoch=0, but in processes with inactive epoch
 // clocks bridge=0 equals the closure's unstamped birth state, and the first
@@ -1075,6 +1097,8 @@ extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v) {
     if (g_closure_must_deopt.size() <= cid)
         g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
     g_closure_must_deopt[cid] = v != 0 ? 1 : 0;
+    // Explicit setter is the one-shot belt. Remount-fail sticky is not.
+    closure_remount_fail_sticky_clear_unlocked(cid);
 }
 
 // Issue #2501 / #3540: post-bump epoch invariant — walk JIT live-closure
@@ -1163,6 +1187,7 @@ extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t clo
     if (g_closure_must_deopt.size() <= cid)
         g_closure_must_deopt.resize(cid + 1, 0);
     g_closure_must_deopt[cid] = 0;
+    closure_remount_fail_sticky_clear_unlocked(cid);
 }
 
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id) {
@@ -1364,6 +1389,7 @@ static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
     if (aura_is_jit_closure_fresh(cap_bridge, cap_defuse, cap_table)) {
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0;
+        closure_remount_fail_sticky_clear_unlocked(cid);
         // Issue #3323: remount heal with dual-fresh green disarms the
         // sticky overflow fence (same heal as MustDeopt above).
         if (cid < g_closure_pure_anon_overflow_armed.size())
@@ -1752,6 +1778,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena,
             g_closure_stable_func_ids[cid] = 0;
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0; // Issue #2128
+        closure_remount_fail_sticky_clear_unlocked(cid);
         if (cid < g_closure_pure_anon_overflow_armed.size())
             g_closure_pure_anon_overflow_armed[cid] = 0; // #3323: fence not inherited
         if (cid < g_closure_linear_state.size())
@@ -1897,6 +1924,7 @@ int aura_free_closure_checked(int64_t closure_id, std::uint64_t caller_tenant, i
         g_closure_defuse_versions[cid] = 0;
     if (cid < g_closure_must_deopt.size())
         g_closure_must_deopt[cid] = 0; // Issue #2128
+    closure_remount_fail_sticky_clear_unlocked(cid);
     if (cid < g_closure_pure_anon_overflow_armed.size())
         g_closure_pure_anon_overflow_armed[cid] = 0; // #3323: fence dies with slot
     if (cid < g_closure_linear_state.size())
@@ -2304,6 +2332,12 @@ static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
         aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::DensifyCell));
         return 0;
     }
+    // Issue #4417: a later success is the only heal for a remount-fail belt.
+    if (closure_remount_fail_sticky_unlocked(cid)) {
+        closure_remount_fail_sticky_clear_unlocked(cid);
+        if (cid < g_closure_must_deopt.size())
+            g_closure_must_deopt[cid] = 0;
+    }
     return 1;
 }
 
@@ -2345,6 +2379,7 @@ static int remount_or_force_deopt_unlocked(std::int64_t closure_id, std::uint64_
     if (g_closure_must_deopt.size() <= cid)
         g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
     g_closure_must_deopt[cid] = 1;
+    closure_remount_fail_sticky_note_unlocked(cid); // Issue #4417
     if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
         aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), batch_deopt_epoch);
     }
@@ -2378,6 +2413,8 @@ static int remount_or_force_deopt_unlocked_no_call_time_counter(
     if (g_closure_must_deopt.size() <= cid)
         g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
     g_closure_must_deopt[cid] = 1; // Issue #3060: residual / drain fail-closed
+    // Issue #4417: remount-fail stays until a later success.
+    closure_remount_fail_sticky_note_unlocked(cid);
     if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
         aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), batch_deopt_epoch);
     // NOTE: NO call-time counter bumps here (sync path has its own).
@@ -4155,6 +4192,15 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         g_closure_binding_recycle_serial[cid] =
             (named && cname != nullptr) ? aura_lookup_stable_func_id_recycle_serial(cname)
                                         : std::uint64_t{0}; // #4339
+        // Issue #4417: keep the pre-remap stamps so a remount failure can
+        // roll the fresh keys back. Saved above the jit-id store so the
+        // #3503 cite window still reaches the MustDeopt clear.
+        const auto pre_bridge = g_closure_bridge_epochs[cid];
+        const auto pre_env = g_closure_env_gen[cid];
+        const auto pre_cow =
+            cid < g_closure_cow_gens.size() ? g_closure_cow_gens[cid] : std::uint64_t{0};
+        const auto pre_table =
+            cid < g_closure_table_epochs.size() ? g_closure_table_epochs[cid] : std::uint64_t{0};
         const std::int64_t jit_id = (named && cname != nullptr) ? jit_id_for_registered_name(cname)
                                                                 : static_cast<std::int64_t>(-1);
         if (jit_id >= 0)
@@ -4170,6 +4216,7 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         if (cid < g_closure_cow_gens.size())
             g_closure_cow_gens[cid] = aura_get_live_workspace_cow_gen();
         g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
+        closure_remount_fail_sticky_clear_unlocked(cid);
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
         // Issue #2233 / #2542: post-reemit stamp metric — hit path.
@@ -4179,12 +4226,25 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // defuse == live; miss: stamped defuse behind live). Fail path
         // shares remount_or_force_deopt_unlocked (MustDeopt + batch_deopt).
         // Unlocked: exclusive g_closure_table_mtx already held.
+        int remount_ok = 1;
         if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid))) {
             const auto live_linear_fp = aura_get_aot_live_linear_state_fingerprint();
-            (void)remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), live_env,
-                                                  live_linear_fp, new_bridge_epoch);
+            remount_ok = remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), live_env,
+                                                         live_linear_fp, new_bridge_epoch);
         }
-        g_closure_defuse_versions[cid] = host_defuse;
+        // Issue #4417: do not publish host_defuse after a remount failure,
+        // and roll the fresh stamps back. MustDeopt stays sticky across
+        // the #2128 consume until a later remount returns success.
+        if (remount_ok != 0) {
+            g_closure_defuse_versions[cid] = host_defuse;
+        } else {
+            g_closure_bridge_epochs[cid] = pre_bridge;
+            g_closure_env_gen[cid] = pre_env;
+            if (cid < g_closure_cow_gens.size())
+                g_closure_cow_gens[cid] = pre_cow;
+            if (cid < g_closure_table_epochs.size())
+                g_closure_table_epochs[cid] = pre_table;
+        }
         if (via_name_fallback)
             ++name_fallback_count;
     }
@@ -5259,10 +5319,13 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                     return 0;
                 }
                 if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
-                    g_closure_must_deopt[cid] = 0;
+                    // Issue #4417: remount-fail stays set. One-shot belts still clear.
+                    if (!closure_remount_fail_sticky_unlocked(cid))
+                        g_closure_must_deopt[cid] = 0;
                     // Poison bridge_epoch so dual-freshness also fails if
                     // another path re-enters before host rebuild.
-                    if (cid < g_closure_bridge_epochs.size())
+                    if (!closure_remount_fail_sticky_unlocked(cid) &&
+                        cid < g_closure_bridge_epochs.size())
                         g_closure_bridge_epochs[cid] = 0;
                     invalidate_closure_cache_for(closure_id);
                     aura_bump_must_deopt_force_deopt_success_total(1);
@@ -7073,14 +7136,15 @@ void aura_reset_runtime() {
     // Parallel columns added after #1361 must be cleared too or the
     // next alloc's assert_closure_vectors_consistent sees a desync
     // (func_ids empty while these still hold stale rows).
-    g_closure_bridge_epochs.clear();   // Issue #1508
-    g_closure_table_epochs.clear();    // Issue #3471
-    g_closure_defuse_versions.clear(); // Issue #1508
-    g_closure_stable_func_ids.clear(); // Issue #2092
-    g_closure_must_deopt.clear();      // Issue #2128
-    g_closure_linear_state.clear();    // Issue #2129
-    g_closure_cow_gens.clear();        // Issue #2547
-    g_closure_env_gen.clear();         // Issue #2272
+    g_closure_bridge_epochs.clear();       // Issue #1508
+    g_closure_table_epochs.clear();        // Issue #3471
+    g_closure_defuse_versions.clear();     // Issue #1508
+    g_closure_stable_func_ids.clear();     // Issue #2092
+    g_closure_must_deopt.clear();          // Issue #2128
+    g_closure_remount_fail_sticky.clear(); // Issue #4417
+    g_closure_linear_state.clear();        // Issue #2129
+    g_closure_cow_gens.clear();            // Issue #2547
+    g_closure_env_gen.clear();             // Issue #2272
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
         clear_closure_cache_entry(g_closure_cache[i]);
     g_jit_fns_overflow.clear(); // Issue #1304

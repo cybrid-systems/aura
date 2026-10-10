@@ -1460,6 +1460,159 @@ static void ac3812_4_soak_no_amplify() {
 } // namespace
 
 
+// Issue #4417: remount-fail MustDeopt is not one-shot once the fresh keys
+// already match. Owner-scoped multi-eval leaves C-bridge / defuse / table
+// unbumped; the test freezes those clocks the same way. A densify candidate
+// that is not in object_remap fails remount. The next two calls stay off
+// native, and host_defuse is not published. A later successful remount
+// clears the belt. The explicit setter stays one-shot (#2128).
+static int g_ac4417_native_hits = 0;
+static std::int64_t ac4417_native(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    ++g_ac4417_native_hits;
+    return 4417;
+}
+
+static void ac4417_remount_fail_stays_off_native() {
+    std::println("\n--- #4417: remount-fail MustDeopt stays across the consume ---");
+    using namespace aura::compiler::typed_audit;
+    struct Restore {
+        std::uint64_t defuse;
+        std::uint64_t env;
+        unsigned prod;
+        ~Restore() {
+            aura_set_aot_defuse_version(defuse);
+            aura_set_aot_live_env_frame_version(env);
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(prod, std::memory_order_relaxed);
+            aura_clear_densify_object_remap();
+            aura_clear_densify_candidates();
+            aura_test_reset_last_remount_fail_reason();
+        }
+    } restore{
+        aura_get_aot_defuse_version(), aura_get_aot_live_env_frame_version(),
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed)};
+    // Reach the #2128 consume. A red densify window returns before it.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    {
+        const auto once = aura_alloc_closure(0);
+        CHECK(once >= 0, "4417: one-shot alloc");
+        aura_closure_set_must_deopt(once, 1);
+        std::int64_t arg = 0;
+        CHECK(aura_closure_call(once, &arg, 0) == 0, "4417: one-shot call returns 0");
+        CHECK(aura_closure_get_must_deopt(once) == 0, "4417: setter belt is still one-shot");
+        aura_free_closure(once);
+    }
+
+    if (aura_get_aot_live_env_frame_version() == 0)
+        aura_set_aot_live_env_frame_version(4);
+    const auto live_env = aura_get_aot_live_env_frame_version();
+    const auto host_defuse = aura_get_aot_defuse_version();
+
+    g_ac4417_native_hits = 0;
+    aura_register_fn(/*func_id=*/441, ac4417_native, /*local_count=*/4, /*arg_count=*/0,
+                     /*env_count=*/0);
+    const auto cid = aura_alloc_closure(/*func_id=*/441);
+    CHECK(cid >= 0, "4417: alloc");
+    aura_test_force_closure_stable_func_id(cid, 4417u);
+    aura_closure_set_env_gen(cid, live_env);
+    aura_closure_set_must_deopt(cid, 0);
+    void* dangling = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4417));
+    aura_closure_capture(cid, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(dangling)));
+    void* other_old = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1));
+    void* other_neu = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2));
+    const void* olds[] = {other_old};
+    const void* news[] = {other_neu};
+    aura_clear_densify_object_remap();
+    aura_clear_densify_candidates();
+    aura_set_densify_object_remap(olds, news, 1);
+    const void* cands[] = {dangling};
+    aura_set_densify_candidates(cands, 1);
+    aura_test_reset_last_remount_fail_reason();
+
+    const std::uint32_t ids[] = {4417u};
+    (void)aura_remap_live_closures_after_reemit(ids, 1, /*new_bridge_epoch=*/4417);
+    CHECK(aura_last_remount_fail_reason() ==
+              static_cast<std::uint8_t>(RemountFailReason::DensifyCell),
+          "4417: remount fail reason is DensifyCell");
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "4417: MustDeopt set on remount fail");
+    CHECK(aura_get_closure_defuse_version(cid) == host_defuse,
+          "4417: frozen defuse is not rewritten on the fail path");
+
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "4417: first call stays off native");
+    CHECK(g_ac4417_native_hits == 0, "4417: first call does not enter the ScalarFn");
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "4417: consume does not clear remount-fail");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "4417: second call stays off native");
+    CHECK(g_ac4417_native_hits == 0, "4417: second call does not enter the ScalarFn");
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "4417: belt still set after the second call");
+
+    aura_closure_capture(cid, 0, 0);
+    aura_clear_densify_object_remap();
+    aura_clear_densify_candidates();
+    const auto lin = aura_get_aot_live_linear_state_fingerprint();
+    CHECK(aura_remount_or_force_deopt(cid, live_env, lin) == 1, "4417: later remount succeeds");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "4417: success clears the belt");
+    aura_closure_set_name(cid, "ac4417_heal");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 4417,
+          "4417: success lets the next call enter native");
+    CHECK(g_ac4417_native_hits == 1, "4417: ScalarFn ran once after success");
+    aura_free_closure(cid);
+
+    // host_defuse must not be stored when the closure's stamp was 0.
+    aura_set_aot_defuse_version(0);
+    const auto cid_b = aura_alloc_closure(/*func_id=*/442);
+    CHECK(cid_b >= 0, "4417: alloc unstamped defuse");
+    CHECK(aura_get_closure_defuse_version(cid_b) == 0, "4417: closure defuse starts at 0");
+    aura_test_force_closure_stable_func_id(cid_b, 4418u);
+    aura_closure_set_env_gen(cid_b, live_env);
+    aura_set_aot_defuse_version(host_defuse == 0 ? 9 : host_defuse);
+    aura_closure_capture(cid_b, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(dangling)));
+    aura_set_densify_object_remap(olds, news, 1);
+    aura_set_densify_candidates(cands, 1);
+    aura_test_reset_last_remount_fail_reason();
+    const std::uint32_t ids_b[] = {4418u};
+    (void)aura_remap_live_closures_after_reemit(ids_b, 1, /*new_bridge_epoch=*/4418);
+    CHECK(aura_get_closure_defuse_version(cid_b) == 0,
+          "4417: remount fail does not publish host_defuse");
+    CHECK(aura_closure_get_must_deopt(cid_b) == 1, "4417: unstamped defuse still MustDeopt");
+    CHECK(aura_last_remount_fail_reason() ==
+              static_cast<std::uint8_t>(RemountFailReason::DensifyCell),
+          "4417: unstamped defuse still DensifyCell");
+    aura_closure_capture(cid_b, 0, 0);
+    aura_free_closure(cid_b);
+
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto remap = rt.find("extern \"C\" std::uint64_t aura_remap_live_closures_after_reemit");
+    CHECK(remap != std::string::npos, "4417: remap definition present");
+    if (remap != std::string::npos) {
+        const auto body = rt.substr(remap, 20000);
+        const auto store = body.find("g_closure_defuse_versions[cid] = host_defuse");
+        const auto gate =
+            store == std::string::npos ? std::string::npos : body.rfind("remount_ok", store);
+        CHECK(store != std::string::npos && gate != std::string::npos && store > gate &&
+                  store - gate < 500,
+              "4417: host_defuse store follows the remount success check");
+        CHECK(body.find("Issue #4417") != std::string::npos, "4417: remap cites the issue");
+    }
+    const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    CHECK(call != std::string::npos, "4417: dispatch present");
+    if (call != std::string::npos) {
+        const auto body = rt.substr(call, 8000);
+        CHECK(body.find("closure_remount_fail_sticky_unlocked") != std::string::npos,
+              "4417: consume consults the remount-fail belt");
+        CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
+              "4417: one-shot clear remains on the call path");
+    }
+    CHECK(rt.find("query:4417") == std::string::npos, "4417: no new query key");
+    CHECK(rt.find("g_4417_") == std::string::npos, "4417: no g_4417_ global");
+    CHECK(read_file("tests/compiler/test_issue_4417.cpp").empty(), "4417: no invent test");
+    CHECK(read_file("docs/design/4417-remount-fail-sticky.md").empty(), "4417: no docs/design");
+    CHECK(rt.find("g_closure_must_deopt[cid] = 1;") != std::string::npos,
+          "4417: #2503 fail path still sets MustDeopt");
+}
+
 // Issue #4246: production bare remount wraps remount_or_force_deopt.
 static void ac4246_bare_remount_production_wraps() {
     std::println("\n--- #4246 AC: production bare remount → MustDeopt path ---");
@@ -1529,6 +1682,8 @@ int run_test_remount_force_deopt() {
     ac3887_call_time_dual_fresh_covers_post_steal_defuse();
     std::println("\n=== Issue #4246: bare remount production MustDeopt wrap ===");
     ac4246_bare_remount_production_wraps();
+    std::println("\n=== Issue #4417: remount-fail MustDeopt stays off native ===");
+    ac4417_remount_fail_stays_off_native();
     if (g_failed)
         return 1;
     std::println(
