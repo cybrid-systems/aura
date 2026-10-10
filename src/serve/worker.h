@@ -217,6 +217,11 @@ public:
 
     // Accessors
     int id() const { return id_; }
+    // Issue #4424: true when the calling OS thread is this worker.
+    // A fiber running here that joins a peer must not enqueue that
+    // peer onto this deque: the joiner is requeued LIFO and a
+    // never-started fiber is not stealable, so the peer never runs.
+    bool runs_on_this_thread() const noexcept { return g_worker_ctx == &ctx_; }
     int wake_evfd() const { return wake_evfd_; }
     bool is_running() const { return running_.load(std::memory_order_acquire); }
     size_t queue_size() const { return local_queue_.size_approx(); }

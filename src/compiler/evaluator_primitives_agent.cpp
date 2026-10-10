@@ -3127,14 +3127,30 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             iso_decision.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
             prod && ev.workspace_region_concurrency_enabled() && ev.scoped_parallel_enabled();
 
-        const int workers = static_cast<int>(
-            std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
-        aura::serve::Scheduler sched(workers);
-        std::thread runner([&sched] { sched.run(); });
-        auto batch = aura::serve::parallel_orch::parallel_intend(sched, tasks, policy);
-        sched.stop();
-        if (runner.joinable())
-            runner.join();
+        // Issue #4424: submit to the scheduler that already owns the caller
+        // fiber. A stack Scheduler::run replaces g_scheduler and then stores
+        // nullptr, so the outer serve loop loses the pointer while its
+        // workers still load it (non-yielding join, GC misses nested heaps).
+        // A local scheduler is only for the no-scheduler case; its run
+        // installs the pointer and restores null on exit.
+        aura::serve::Scheduler* live = nullptr;
+        if (auto* cur = aura::serve::g_current_fiber)
+            live = cur->owner_sched();
+        if (live == nullptr)
+            live = aura::serve::g_scheduler;
+        aura::serve::parallel_orch::BatchResult batch;
+        if (live != nullptr) {
+            batch = aura::serve::parallel_orch::parallel_intend(*live, tasks, policy);
+        } else {
+            const int workers = static_cast<int>(
+                std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
+            aura::serve::Scheduler sched(workers);
+            std::thread runner([&sched] { sched.run(); });
+            batch = aura::serve::parallel_orch::parallel_intend(sched, tasks, policy);
+            sched.stop();
+            if (runner.joinable())
+                runner.join();
+        }
 
         using aura::serve::parallel_orch::BatchStatus;
         const char* status_str = "invalid";

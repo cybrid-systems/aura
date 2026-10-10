@@ -896,6 +896,19 @@ bool Scheduler::has_waiting_fibers() const {
     return false;
 }
 
+// ── caller_worker_index — OS thread → worker ─────────
+// Issue #4424: parallel-intend joins from the caller fiber. A task
+// pushed onto that worker sits under the LIFO joiner and is not
+// stealable until it has yielded, so it never starts.
+
+int Scheduler::caller_worker_index() const noexcept {
+    for (int i = 0; i < num_workers_; ++i) {
+        if (workers_[i] && workers_[i]->runs_on_this_thread())
+            return i;
+    }
+    return -1;
+}
+
 // ── worker — access worker by index ──────────────────
 
 WorkerThread* Scheduler::worker(int idx) {
@@ -954,10 +967,21 @@ int Scheduler::next_worker_id_load_aware() {
 //     enqueues it to a worker.
 
 void Scheduler::run() {
-    g_scheduler = this;
+    // Issue #4424: do not replace a live g_scheduler. parallel-intend used
+    // to run a stack Scheduler on a helper thread while serve was already
+    // in this loop. That store raced with workers loading the pointer, and
+    // the nested exit wrote nullptr so the outer loop never published
+    // itself again (join spins, GC safepoints miss the live workers).
+    // Install only when the pointer is null, and restore that null on
+    // exit. A live pointer is not written. Not a second steal protocol.
+    const bool installed_g_scheduler = (g_scheduler == nullptr);
+    if (installed_g_scheduler)
+        g_scheduler = this;
     // Issue #1633: wire MutationBoundaryGuard long-hold → on_long_mutation_held
     // so nested/long mutation always triggers starvation mitigation.
-    aura_set_long_mutation_scheduler_hook(&long_mutation_hook_trampoline);
+    // A nested run leaves the outer hook in place (#4424).
+    if (installed_g_scheduler)
+        aura_set_long_mutation_scheduler_hook(&long_mutation_hook_trampoline);
 
     // Issue #743: wire arena fiber-context probes for tests and
     // serve paths that construct Scheduler without serve_async.
@@ -1248,8 +1272,12 @@ void Scheduler::run() {
         w->join();
     }
 
-    aura_set_long_mutation_scheduler_hook(nullptr); // #1633: unwire long-hold hook
-    g_scheduler = nullptr;
+    // Issue #4424: only the run that installed g_scheduler unwires and
+    // restores nullptr. A nested run must leave the live pointer alone.
+    if (installed_g_scheduler)
+        aura_set_long_mutation_scheduler_hook(nullptr); // #1633: unwire long-hold hook
+    if (installed_g_scheduler)
+        g_scheduler = nullptr;
 }
 
 // ── GC safepoint support (P2) ─────────────────────────

@@ -499,9 +499,9 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
     for (std::size_t i = 0; i < tasks.size(); ++i) {
         auto body = tasks[i].body;
         const std::string name = tasks[i].name;
-        Fiber* f = sched.spawn([sh, i, body = std::move(body), name, max_c, use_fail_fast,
-                                use_retry, use_circuit, max_retries, consecutive_fail_limit,
-                                retry_backoff_ms, mb]() mutable {
+        Fiber::Func task([sh, i, body = std::move(body), name, max_c, use_fail_fast, use_retry,
+                          use_circuit, max_retries, consecutive_fail_limit, retry_backoff_ms,
+                          mb]() mutable {
             // Concurrency gate: yield until a permit is free (steal-friendly).
             for (;;) {
                 if (sh->abort_admit.load(std::memory_order_acquire) ||
@@ -642,6 +642,24 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
 
             sh->active.fetch_sub(1, std::memory_order_acq_rel);
         });
+        // Issue #4424: the caller fiber joins these tasks on this same
+        // scheduler. The deadline join requeues that joiner LIFO, and a
+        // never-started peer is not stealable, so a task left on the
+        // joiner's worker never runs. Place it on another worker. Host
+        // and nested-scheduler callers are not on this scheduler and
+        // keep round-robin spawn.
+        Fiber* f = nullptr;
+        const int caller_w = sched.caller_worker_index();
+        const int nworkers = sched.num_workers();
+        if (caller_w >= 0 && nworkers > 1) {
+            const int slot = static_cast<int>(i % static_cast<std::size_t>(nworkers - 1));
+            int wid = caller_w + 1 + slot;
+            if (wid >= nworkers)
+                wid -= nworkers;
+            f = sched.spawn_with_affinity(std::move(task), wid);
+        } else {
+            f = sched.spawn(std::move(task));
+        }
         // Issue #1600: spawn returns nullptr when fiber ResourceQuota is exhausted.
         if (!f) {
             hit_quota = true;
