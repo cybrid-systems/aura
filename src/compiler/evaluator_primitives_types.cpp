@@ -3,7 +3,10 @@
 
 module;
 
+#include <cerrno>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "runtime_shared.h"
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
@@ -17,6 +20,73 @@ import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
 import aura.diag;
+
+namespace {
+
+// Issue #4414: open of a path that already passed check_tenant_host_path.
+// O_NOFOLLOW fails the final component (ELOOP) so a swapped symlink is
+// not read. Missing files fail the same way the old ifstream did.
+[[nodiscard]] bool read_regular_nofollow(const std::string& path, std::string& out) {
+    out.clear();
+    const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    struct stat st{};
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        return false;
+    }
+    char buf[4096];
+    while (true) {
+        const auto n = ::read(fd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            ::close(fd);
+            return false;
+        }
+        if (n == 0)
+            break;
+        out.append(buf, static_cast<std::size_t>(n));
+    }
+    ::close(fd);
+    return true;
+}
+
+// Issue #4414: create/trunc of a checked .aura-type sibling. O_NOFOLLOW
+// refuses a final symlink, so the target is not truncated.
+[[nodiscard]] bool write_regular_nofollow(const std::string& path, std::string_view data) {
+    const int fd =
+        ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd < 0)
+        return false;
+    struct stat st{};
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        return false;
+    }
+    const char* p = data.data();
+    std::size_t left = data.size();
+    while (left > 0) {
+        const auto n = ::write(fd, p, left);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            ::close(fd);
+            return false;
+        }
+        if (n == 0) {
+            ::close(fd);
+            return false;
+        }
+        p += n;
+        left -= static_cast<std::size_t>(n);
+    }
+    ::close(fd);
+    return true;
+}
+
+} // namespace
 
 namespace aura::compiler::primitives_detail {
 
@@ -107,13 +177,12 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         }
 
-        // 读取并解析模块文件
-        std::ifstream f(path);
-        if (!f) {
+        // 读取并解析模块文件. Issue #4414: O_NOFOLLOW on the checked path.
+        std::string content;
+        if (!read_regular_nofollow(path, content)) {
             std::println(std::cerr, "generate-type-sigs: cannot open '{}'", path);
             return make_bool(false);
         }
-        std::string content((std::istreambuf_iterator<char>(f)), {});
         if (content.empty())
             return make_bool(false);
 
@@ -170,12 +239,6 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
                 type_sig_path = type_sig_path.substr(0, dot_pos) + ".aura-type";
         }
 
-        std::ofstream of(type_sig_path);
-        if (!of) {
-            std::println(std::cerr, "generate-type-sigs: cannot write '{}'", type_sig_path);
-            return make_bool(false);
-        }
-
         std::function<std::string(std::uint32_t)> type_name_for =
             [&](std::uint32_t tid) -> std::string {
             auto t = aura::core::TypeId{tid, 1};
@@ -209,6 +272,7 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         };
 
+        std::string body;
         std::size_t written = 0;
         for (auto& name : fn_names) {
             auto it = define_map.find(name);
@@ -221,10 +285,24 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
                 // 使用 tc 在同一个 TypeRegistry 中推断类型
                 auto val_type = tc.infer_flat(flat, pool, val_id, diag);
                 if (val_type.valid() && val_type.index != 0) {
-                    of << name << ": " << type_name_for(val_type.index) << "\n";
+                    body += name;
+                    body += ": ";
+                    body += type_name_for(val_type.index);
+                    body += "\n";
                     ++written;
                 }
             }
+        }
+
+        // Issue #4414: fence the derived sibling before create. A pre-placed
+        // .aura-type symlink is tenant-path-escape and is not truncated.
+        // The create itself is O_NOFOLLOW (write_regular_nofollow).
+        std::string type_gated;
+        if (!ev.check_tenant_host_path(type_sig_path, type_gated, "generate-type-sigs"))
+            return make_bool(false);
+        if (!write_regular_nofollow(type_gated, body)) {
+            std::println(std::cerr, "generate-type-sigs: cannot write '{}'", type_gated);
+            return make_bool(false);
         }
 
         // 写入成功后，失效模块缓存强制下次 require 重新加载
@@ -235,8 +313,7 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.module_cache_.erase(cache_it);
         }
 
-        std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'", written,
-                     type_sig_path);
+        std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'", written, type_gated);
         return make_bool(written > 0);
     });
 
@@ -250,20 +327,26 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto path = ev.resolve_module_path(ev.string_heap_[idx]);
+        const std::string caller = ev.string_heap_[idx];
+        // Issue #4414: same fence as generate-type-sigs. Active policy uses
+        // the gated absolute only — resolve_module_path would search CWD /
+        // AURA_PATH / ../lib. Deny → #f, zero read of both files.
+        std::string gated;
+        if (!ev.check_tenant_host_path(caller, gated, "check-module-signature"))
+            return make_bool(false);
+        std::string path =
+            ev.host_path_policy_active() ? std::move(gated) : ev.resolve_module_path(gated);
         if (path.empty()) {
-            std::println(std::cerr, "check-module-signature: cannot resolve '{}'",
-                         ev.string_heap_[idx]);
+            std::println(std::cerr, "check-module-signature: cannot resolve '{}'", caller);
             return make_bool(false);
         }
 
-        // 读取并解析模块文件
-        std::ifstream f(path);
-        if (!f) {
+        // 读取并解析模块文件. Issue #4414: O_NOFOLLOW on the checked path.
+        std::string content;
+        if (!read_regular_nofollow(path, content)) {
             std::println(std::cerr, "check-module-signature: cannot open '{}'", path);
             return make_bool(false);
         }
-        std::string content((std::istreambuf_iterator<char>(f)), {});
         if (content.empty())
             return make_bool(false);
 
@@ -318,30 +401,34 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         std::vector<SigDecl> sig_decls;
 
-        struct stat st;
-        if (::stat(sig_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-            std::ifstream tf(sig_path);
-            if (tf) {
-                std::string line;
-                while (std::getline(tf, line)) {
-                    // Issue #2578: namespaced names (orch:parallel) contain
-                    // ':'. Split on last ':' before "->" (not first ':').
-                    auto arrow = line.find("->");
-                    if (arrow == std::string::npos)
-                        continue;
-                    auto colon = line.rfind(':', arrow);
-                    if (colon == std::string::npos)
-                        continue;
-                    auto name = line.substr(0, colon);
-                    name.erase(name.find_last_not_of(" \t\r") + 1);
-                    auto params_str = line.substr(colon + 1, arrow - colon - 1);
-                    params_str.erase(0, params_str.find_first_not_of(" \t\r"));
-                    params_str.erase(params_str.find_last_not_of(" \t\r") + 1);
-                    auto ret_str = line.substr(arrow + 2);
-                    ret_str.erase(0, ret_str.find_first_not_of(" \t\r"));
-                    ret_str.erase(ret_str.find_last_not_of(" \t\r\n") + 1);
-                    sig_decls.push_back({name, params_str + " -> " + ret_str});
-                }
+        // Issue #4414: the derived .aura-type is its own host open. A
+        // pre-placed symlink is tenant-path-escape (zero read). A missing
+        // sig file stays zero decls — not a deny.
+        std::string sig_gated;
+        if (!ev.check_tenant_host_path(sig_path, sig_gated, "check-module-signature"))
+            return make_bool(false);
+        std::string sig_text;
+        if (read_regular_nofollow(sig_gated, sig_text)) {
+            std::istringstream tf(sig_text);
+            std::string line;
+            while (std::getline(tf, line)) {
+                // Issue #2578: namespaced names (orch:parallel) contain
+                // ':'. Split on last ':' before "->" (not first ':').
+                auto arrow = line.find("->");
+                if (arrow == std::string::npos)
+                    continue;
+                auto colon = line.rfind(':', arrow);
+                if (colon == std::string::npos)
+                    continue;
+                auto name = line.substr(0, colon);
+                name.erase(name.find_last_not_of(" \t\r") + 1);
+                auto params_str = line.substr(colon + 1, arrow - colon - 1);
+                params_str.erase(0, params_str.find_first_not_of(" \t\r"));
+                params_str.erase(params_str.find_last_not_of(" \t\r") + 1);
+                auto ret_str = line.substr(arrow + 2);
+                ret_str.erase(0, ret_str.find_first_not_of(" \t\r"));
+                ret_str.erase(ret_str.find_last_not_of(" \t\r\n") + 1);
+                sig_decls.push_back({name, params_str + " -> " + ret_str});
             }
         }
 
