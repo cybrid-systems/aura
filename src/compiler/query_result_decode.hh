@@ -74,8 +74,8 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                 aura::core::note_query_result_full_provenance_fiber_mismatch();
                 return aura::core::QueryResultFreshness::InvalidFiber;
             }
-            if (live_cow != 0 && m.cow_epoch_at_capture != 0 &&
-                m.cow_epoch_at_capture != live_cow) {
+            // Issue #4425: cow 0 is birth; later layer mismatches.
+            if (live_cow != 0 && m.cow_epoch_at_capture != live_cow) {
                 aura::core::note_query_result_full_provenance_cow_mismatch();
                 return aura::core::QueryResultFreshness::InvalidCowLayer;
             }
