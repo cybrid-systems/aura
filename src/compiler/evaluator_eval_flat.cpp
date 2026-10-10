@@ -2325,6 +2325,13 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto fn_args_data = pairs_[fn_pair].cdr;
 
                     if (types::is_string(fn_name_data)) {
+                        // Issue #4421: shorthand define add_lambda's a
+                        // closure with no mark_dirty and no proof update.
+                        // Refuse before the node is installed; a depth==0
+                        // pending window has nothing to roll back.
+                        if (production_eval_flat_commit_readiness_refuse(
+                                static_cast<CompilerMetrics*>(compiler_metrics_)))
+                            return eval_flat_commit_readiness_refused();
                         auto ni = types::as_string_idx(fn_name_data);
                         auto fn_str = ni < string_heap_.size() ? string_heap_[ni] : "";
 
@@ -2574,6 +2581,12 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                             Diagnostic{ErrorKind::InvalidClosure,
                                        "eval_data_as_code: freed/tombstoned closure"});
                     auto& cl = it->second;
+                    // Issue #4421: this arm eval_flats the body without
+                    // apply_closure. The value-fallback below already
+                    // refuses; a named re-entry must too, before the body.
+                    if (production_eval_flat_commit_readiness_refuse(
+                            static_cast<CompilerMetrics*>(compiler_metrics_)))
+                        return eval_flat_commit_readiness_refused();
                     // Evaluate args and apply
                     std::vector<EvalValue> cargs;
                     auto current = cdr_val;

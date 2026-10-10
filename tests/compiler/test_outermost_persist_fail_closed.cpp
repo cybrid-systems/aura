@@ -890,6 +890,33 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(contains(efl, "commit-readiness-refused"), "3688: same TypeError as IR");
         CHECK(efl.find("schema-3688") == std::string::npos, "3688 AC5: no new query key");
         CHECK(read_file("tests/compiler/test_issue_3688.cpp").empty(), "3688: no invent");
+        CHECK(contains(efl, "Issue #4421"), "4421: eval_data_as_code cites #4421");
+        {
+            const auto named = efl.find("eval_data_as_code: freed/tombstoned closure");
+            const auto body = efl.find("return eval_flat(*cl.flat", named);
+            CHECK(named != std::string::npos && body != std::string::npos && named < body,
+                  "4421: named arm body eval located");
+            if (named != std::string::npos && body != std::string::npos && named < body) {
+                const auto mid = efl.substr(named, body - named);
+                CHECK(mid.find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+                      "4421: named arm consults the existing refuse helper");
+                CHECK(mid.find("eval_flat_commit_readiness_refused()") != std::string::npos,
+                      "4421: named arm returns commit-readiness-refused");
+            }
+            const auto defn = efl.find("(define (name args...) body)");
+            const auto addl = efl.find("flat->add_lambda", defn);
+            CHECK(defn != std::string::npos && addl != std::string::npos && defn < addl,
+                  "4421: shorthand define add_lambda located");
+            if (defn != std::string::npos && addl != std::string::npos && defn < addl) {
+                const auto mid = efl.substr(defn, addl - defn);
+                CHECK(mid.find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+                      "4421: shorthand define refuses before add_lambda");
+            }
+        }
+        CHECK(efl.find("query:4421") == std::string::npos, "4421: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_4421.cpp").empty(), "4421: no test_issue");
+        CHECK(read_file("docs/design/4421-eval-data-commit-readiness.md").empty(),
+              "4421: no docs/design");
 
         reset_for_test();
         apply_dev_audit_defaults();
@@ -912,6 +939,37 @@ int run_test_outermost_persist_fail_closed() {
         const auto cid = clo && is_closure(*clo) ? as_closure_id(*clo) : 0;
         CHECK(cs.evaluator().apply_closure(cid, {}).has_value(),
               "3688 soak: apply_closure before reject");
+        auto& ev4421 = cs.evaluator();
+        // Legacy defmacro re-enters eval_data_as_code (private). Quote the
+        // forms so the template is data: (f4421) and (define (g4421) 9).
+        aura::ast::NodeId mcall4421 = aura::ast::NULL_NODE;
+        aura::ast::NodeId dcall4421 = aura::ast::NULL_NODE;
+        if (ws && pool && clo && is_closure(*clo)) {
+            ev4421.top_env().bind("f4421", *clo);
+            auto quoted_call = ws->add_quote(ws->add_call(ws->add_variable(pool->intern("f4421")),
+                                                          std::span<const aura::ast::NodeId>{}));
+            auto msym = pool->intern("m4421");
+            auto mdef = ws->add_macrodef(msym, {}, quoted_call);
+            CHECK(ev4421.eval_flat(*ws, *pool, mdef, ev4421.top_env()).has_value(),
+                  "4421: call macro registered");
+            mcall4421 = ws->add_call(ws->add_variable(msym), std::span<const aura::ast::NodeId>{});
+
+            auto dvar = ws->add_variable(pool->intern("define"));
+            auto gcall = ws->add_call(ws->add_variable(pool->intern("g4421")),
+                                      std::span<const aura::ast::NodeId>{});
+            const aura::ast::NodeId def_args[] = {gcall, ws->add_literal(9)};
+            auto quoted_def = ws->add_quote(ws->add_call(dvar, def_args));
+            auto dsym = pool->intern("d4421");
+            auto ddef = ws->add_macrodef(dsym, {}, quoted_def);
+            CHECK(ev4421.eval_flat(*ws, *pool, ddef, ev4421.top_env()).has_value(),
+                  "4421: define macro registered");
+            dcall4421 = ws->add_call(ws->add_variable(dsym), std::span<const aura::ast::NodeId>{});
+        }
+        if (mcall4421 != aura::ast::NULL_NODE) {
+            auto named_ok = ev4421.eval_flat(*ws, *pool, mcall4421, ev4421.top_env());
+            CHECK(named_ok && is_int(*named_ok) && as_int(*named_ok) == 42,
+                  "4421: named re-entry eval_flats the body when readiness allows");
+        }
         apply_production_audit_defaults();
         typed_audit::clear_type_linear_proof_outcome_for_test();
         typed_audit::clear_type_linear_commit_proof_for_test();
@@ -930,6 +988,28 @@ int run_test_outermost_persist_fail_closed() {
             if (!er)
                 CHECK(er.error().message.find("commit-readiness-refused") != std::string::npos,
                       "3688 AC2: same TypeError as IR execute");
+            if (mcall4421 != aura::ast::NULL_NODE) {
+                auto named_no = ev4421.eval_flat(*ws, *pool, mcall4421, ev4421.top_env());
+                CHECK(!named_no.has_value(), "4421: named re-entry refuses");
+                if (!named_no)
+                    CHECK(named_no.error().message.find("commit-readiness-refused") !=
+                              std::string::npos,
+                          "4421: named re-entry is commit-readiness-refused");
+                CHECK(!(named_no && is_int(*named_no) && as_int(*named_no) == 42),
+                      "4421: named re-entry does not run the body");
+            }
+            if (ws && dcall4421 != aura::ast::NULL_NODE) {
+                const auto nodes_before = ws->size();
+                auto def_no = ev4421.eval_flat(*ws, *pool, dcall4421, ev4421.top_env());
+                CHECK(!def_no.has_value(), "4421: shorthand define refuses");
+                if (!def_no)
+                    CHECK(def_no.error().message.find("commit-readiness-refused") !=
+                              std::string::npos,
+                          "4421: shorthand define is commit-readiness-refused");
+                CHECK(ws->size() == nodes_before, "4421: shorthand define does not add_lambda");
+                CHECK(!ev4421.top_env().lookup("g4421").has_value(),
+                      "4421: shorthand define does not bind");
+            }
             CHECK(jit_execute_commit_readiness_blocked(),
                   "3758 AC1: execute catalog blocked after persist-reject");
             CHECK(cs.public_try_jit_execute_counting_scalar_for_test() == 0,
@@ -952,6 +1032,13 @@ int run_test_outermost_persist_fail_closed() {
               "3758 AC3: Soft execute catalog not blocked");
         CHECK(cs.public_try_jit_execute_counting_scalar_for_test() == 1,
               "3758 AC3: Soft try_jit_execute still invokes ScalarFn");
+        if (dcall4421 != aura::ast::NULL_NODE) {
+            auto def_ok = ev4421.eval_flat(*ws, *pool, dcall4421, ev4421.top_env());
+            CHECK(def_ok && is_closure(*def_ok),
+                  "4421: Soft shorthand define still binds a closure");
+            CHECK(ev4421.top_env().lookup("g4421").has_value(),
+                  "4421: Soft shorthand define binds the name");
+        }
         reset_for_test();
     }
 
