@@ -4403,6 +4403,196 @@ void test_ac4392_source_cite() {
                 !std::ifstream("docs/design/4392-atomic-batch-node-id.md").good());
 }
 
+// Issue #4425: production schema-2 stamps cow 0 on a root that has
+// never cloned. A child layer's first mutate clones and paints a
+// non-zero workspace_cow_epoch without moving node_gen_. The hard
+// compare must treat that captured 0 as the birth epoch (same face
+// as FlatAST::is_valid). Soft still skips captured 0. Live cow 0
+// against a non-zero capture stays Fresh.
+
+void test_ac4425_captured_cow_zero_later_layer() {
+    std::print("AC4425 -- schema-2 captured cow 0 is stale on a later layer\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    apply_dev_audit_defaults();
+    CompilerService cs_unit;
+    expect_true("4425 unit: set-code",
+                cs_unit.eval("(set-code \"(define u4425 (lambda () 1))\")").has_value());
+    expect_true("4425 unit: eval", cs_unit.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* uflat = cs_unit.evaluator().workspace_flat();
+    expect_true("4425 unit: workspace", uflat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < uflat->size(); ++id) {
+        if (uflat->is_live_node(id) && !uflat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("4425 unit: live node", live != aura::ast::NULL_NODE);
+    aura::core::QueryResult qr{};
+    expect_true("4425 unit: push",
+                qr.push_match_full(static_cast<std::uint32_t>(live), uflat->node_gen_for(live),
+                                   /*wrap_epoch=*/0, /*cow_epoch_at_capture=*/0, 0, 0, 0, 0));
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+    auto fresh_of = [&](const aura::core::QueryResult& held) {
+        return aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+            held, *uflat, /*tenant=*/0, /*fiber=*/0);
+    };
+    expect_true("4425 unit: captured 0 vs live 0 is Fresh",
+                fresh_of(qr) == QueryResultFreshness::Fresh);
+    uflat->set_workspace_cow_epoch(1);
+    expect_true("4425 unit: captured 0 vs live 1 is InvalidCowLayer",
+                fresh_of(qr) == QueryResultFreshness::InvalidCowLayer);
+    qr.matches[0].cow_epoch_at_capture = 1;
+    expect_true("4425 unit: captured 1 vs live 1 is Fresh",
+                fresh_of(qr) == QueryResultFreshness::Fresh);
+    uflat->set_workspace_cow_epoch(0);
+    expect_true("4425 unit: live 0 vs captured non-zero stays Fresh",
+                fresh_of(qr) == QueryResultFreshness::Fresh);
+    qr.matches[0].cow_epoch_at_capture = 0;
+    apply_dev_audit_defaults();
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2;
+    uflat->set_workspace_cow_epoch(1);
+    const auto soft0 = fresh_of(qr);
+    expect_true("4425 unit: soft captured 0 stays Fresh",
+                soft0 == QueryResultFreshness::Fresh ||
+                    soft0 == QueryResultFreshness::SoftOnlyNoProvenance);
+    qr.matches[0].cow_epoch_at_capture = 7;
+    expect_true("4425 unit: soft non-zero mismatch is InvalidCowLayer",
+                fresh_of(qr) == QueryResultFreshness::InvalidCowLayer);
+    uflat->set_workspace_cow_epoch(0);
+    apply_dev_audit_defaults();
+
+    apply_dev_audit_defaults();
+    admit_clean_mutate_for_test();
+    CompilerService cs;
+    expect_true("4425: set-code", cs.eval("(set-code \"(define x4425 1)\")").has_value());
+    expect_true("4425: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* root = cs.evaluator().workspace_flat();
+    expect_true("4425: root flat", root != nullptr);
+    expect_eq_i64("4425: root cow is 0", 0, static_cast<std::int64_t>(root->workspace_cow_epoch()));
+    expect_true("4425: bind find", cs.eval("(define qr4425 (query :find \"x4425\"))").has_value());
+    auto nfind = cs.eval("(length (hash-ref qr4425 \"matches\"))");
+    expect_true("4425: find is one match", nfind && is_int(*nfind) && as_int(*nfind) == 1);
+    expect_true("4425: bind children",
+                cs.eval("(define lit4425 (query :children qr4425))").has_value());
+    auto kids = cs.eval("lit4425");
+    expect_true("4425: children hash is schema-2", kids && is_hash(*kids));
+    auto nkids = cs.eval("(length (hash-ref lit4425 \"matches\"))");
+    expect_true("4425: literal is one match", nkids && is_int(*nkids) && as_int(*nkids) == 1);
+    auto cow = cs.eval("(hash-ref lit4425 \"cow-epoch-at-capture\")");
+    expect_true("4425: captured cow is 0", cow && is_int(*cow) && as_int(*cow) == 0);
+
+    auto is_stale_ref_pair = [](const auto& v, auto& ev) {
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::as_string_idx;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::is_string;
+        if (!v || !is_pair(*v))
+            return false;
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return false;
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        return si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+    };
+    auto list_value = [](const auto& v, auto& ev) -> std::optional<std::int64_t> {
+        using aura::compiler::types::as_int;
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::is_int;
+        using aura::compiler::types::is_pair;
+        if (!v || !is_pair(*v))
+            return std::nullopt;
+        const auto p0 = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p0 >= ev.pairs().size())
+            return std::nullopt;
+        const auto mid = ev.pairs()[p0].cdr;
+        if (!is_pair(mid))
+            return std::nullopt;
+        const auto p1 = static_cast<std::size_t>(as_pair_idx(mid));
+        if (p1 >= ev.pairs().size() || !is_int(ev.pairs()[p1].car))
+            return std::nullopt;
+        return as_int(ev.pairs()[p1].car);
+    };
+    auto error_kind = [](const auto& v, auto& ev) -> std::string {
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::as_string_idx;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::is_string;
+        if (!v || !is_pair(*v))
+            return {};
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return {};
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        if (si >= ev.string_heap().size())
+            return {};
+        return ev.string_heap()[si];
+    };
+
+    auto root_node = cs.eval("(query :node lit4425)");
+    expect_true("4425: root query:node returns", root_node.has_value());
+    expect_true("4425: root query:node is not stale-ref",
+                !is_stale_ref_pair(root_node, cs.evaluator()));
+    const auto root_val = list_value(root_node, cs.evaluator());
+    expect_true("4425: root literal is 1", root_val.has_value() && *root_val == 1);
+
+    auto wid = cs.eval("(workspace :create \"c4425\")");
+    expect_true("4425: child id", wid && is_int(*wid) && as_int(*wid) > 0);
+    const std::string sw = "(workspace :switch " + std::to_string(as_int(*wid)) + ")";
+    expect_true("4425: switch child", cs.eval(sw).has_value());
+    auto shared = cs.eval("(query :node lit4425)");
+    expect_true("4425: shared child still reads 1",
+                shared.has_value() && !is_stale_ref_pair(shared, cs.evaluator()) &&
+                    list_value(shared, cs.evaluator()) == 1);
+    auto mu = cs.eval("(mutate:replace-value lit4425 2 \"t\")");
+    const auto mu_kind = error_kind(mu, cs.evaluator());
+    expect_true("4425: replace-value refuses the birth hash",
+                mu_kind == "stale-ref" || mu_kind == "persist-reject");
+    auto* child = cs.evaluator().workspace_flat();
+    expect_true("4425: child flat", child != nullptr);
+    expect_true("4425: child cow advanced", child->workspace_cow_epoch() != 0);
+    auto child_node = cs.eval("(query :node lit4425)");
+    expect_true("4425: child query:node is stale-ref",
+                is_stale_ref_pair(child_node, cs.evaluator()));
+    expect_true("4425: child query:node is not literal 2",
+                list_value(child_node, cs.evaluator()) != 2);
+
+    expect_true("4425: switch root", cs.eval("(workspace :switch 0)").has_value());
+    auto* back = cs.evaluator().workspace_flat();
+    expect_true("4425: root flat again", back != nullptr);
+    expect_eq_i64("4425: root cow still 0", 0,
+                  static_cast<std::int64_t>(back->workspace_cow_epoch()));
+    auto again = cs.eval("(query :node lit4425)");
+    expect_true("4425: root query:node still returns", again.has_value());
+    expect_true("4425: root query:node still fresh", !is_stale_ref_pair(again, cs.evaluator()));
+    const auto again_val = list_value(again, cs.evaluator());
+    expect_true("4425: root literal still 1", again_val.has_value() && *again_val == 1);
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    expect_true("4425 cite: Issue #4425", dec.find("Issue #4425") != std::string::npos);
+    expect_true("4425 cite: hard compare includes captured 0",
+                dec.find("if (live_cow != 0 && m.cow_epoch_at_capture != live_cow)") !=
+                    std::string::npos);
+    expect_eq_i64("4425 cite: captured-0 skip remains only on soft", 1,
+                  static_cast<std::int64_t>([&] {
+                      std::size_t n = 0;
+                      const std::string tok = "m.cow_epoch_at_capture != 0";
+                      for (std::size_t at = 0; (at = dec.find(tok, at)) != std::string::npos;
+                           at += tok.size())
+                          ++n;
+                      return n;
+                  }()));
+    expect_true("4425 cite: no test_issue_4425.cpp",
+                !std::ifstream("tests/compiler/test_issue_4425.cpp").good());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -4565,6 +4755,7 @@ int main() {
     test_ac4315_1_set_code_rebirth_stales_prior_install();
     test_ac4315_2_soft_rebirth_has_no_install_fence();
     test_ac4315_3_source_cite();
+    test_ac4425_captured_cow_zero_later_layer();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
@@ -4572,5 +4763,6 @@ int main() {
     std::print("All #4164 ref-layout gen-paint AC tests PASSED\n");
     std::print("All #4314 captured-zero stamp AC tests PASSED\n");
     std::print("All #4315 set-code install AC tests PASSED\n");
+    std::print("All #4425 captured-cow-zero AC tests PASSED\n");
     return 0;
 }
