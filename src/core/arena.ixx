@@ -308,6 +308,38 @@ export struct ArenaStats {
     }
 };
 
+// Issue #4415: production Moving freelist exclusion. Declared here so
+// SmallObjectPool can admit before the predicate is defined below.
+[[nodiscard]] inline bool production_moving_freelist_exclusive_active() noexcept;
+
+// Test seam: when > 0 the next production-Moving admit fails closed
+// (no recycle, no freelist handoff) and the counter decrements.
+// Uninjected production: one relaxed load. Not a query key.
+export inline std::atomic<std::uint32_t> g_moving_freelist_lock_fail_inject_remaining{0};
+// Bumped on every production-Moving admit that is not a same-thread
+// nest: a real try_lock, or an injected failure that does not lock.
+// Soft / Off never bump.
+export inline std::atomic<std::uint64_t> g_moving_freelist_lock_attempts{0};
+// Invoked on the densify thread after recycle and before the new
+// slots are taken, while the freelist mutex is still held. Production
+// hook is nullptr (one relaxed load).
+using MovingFreelistHeldHook = void (*)(void*) noexcept;
+export inline std::atomic<MovingFreelistHeldHook> g_moving_freelist_held_hook{nullptr};
+export inline std::atomic<void*> g_moving_freelist_held_hook_ctx{nullptr};
+
+export inline void reset_moving_freelist_exclusion_for_test() noexcept {
+    g_moving_freelist_lock_fail_inject_remaining.store(0, std::memory_order_relaxed);
+    g_moving_freelist_lock_attempts.store(0, std::memory_order_relaxed);
+    g_moving_freelist_held_hook.store(nullptr, std::memory_order_relaxed);
+    g_moving_freelist_held_hook_ctx.store(nullptr, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t moving_freelist_thread_tag() noexcept {
+    static std::atomic<std::uint64_t> next{1};
+    thread_local const std::uint64_t tag = next.fetch_add(1, std::memory_order_relaxed);
+    return tag;
+}
+
 // ── SmallObjectPool — fixed-size class allocator ─────────────────
 //
 // Three tiers for frequently allocated small objects:
@@ -350,6 +382,11 @@ public:
     // stale tier.end after shrink/rebind cannot yield an out-of-buffer pointer.
     // Issue #1518: prefer freelist recycle (live-relocate protocol) before bump.
     void* try_allocate(std::size_t size) pre(size > 0) pre(size <= kMaxSmallSize) {
+        // Issue #4415: peer allocate_raw must not pop a slot this pool is
+        // recycling. Soft / Off: guard is a predicate load, no mutex.
+        MovingFreelistGuard freelist_guard(*this);
+        if (freelist_guard.denied())
+            return nullptr;
         const auto* buf_end = buffer_.data() + buffer_.size();
         for (std::size_t ti = 0; ti < kNumTiers; ++ti) {
             auto& c = classes_[ti];
@@ -415,6 +452,10 @@ public:
     // without moving still-live pointers). Safe: only called after dtor.
     // Returns true if the pointer was owned by this pool and recycled.
     bool recycle(void* p, std::size_t size) noexcept {
+        // Issue #4415: a missed exclusion does not link the slot.
+        MovingFreelistGuard freelist_guard(*this);
+        if (freelist_guard.denied())
+            return false;
         if (!p || size == 0 || size > kMaxSmallSize)
             return false;
         auto* bp = static_cast<std::byte*>(p);
@@ -555,6 +596,64 @@ private:
     QuarantinePred quarantine_pred_ = nullptr;
     void* quarantine_ctx_ = nullptr;
     std::vector<void*> quarantined_;
+
+    // Issue #4415: per-pool exclusion for production Moving. Soft / Off
+    // never lock these. depth_ is touched only by the owning thread.
+    enum class FreelistAdmit : std::uint8_t { Open, Nested, Locked, Denied };
+
+    [[nodiscard]] FreelistAdmit admit_moving_freelist_() noexcept {
+        if (!production_moving_freelist_exclusive_active())
+            return FreelistAdmit::Open;
+        const auto me = moving_freelist_thread_tag();
+        if (moving_freelist_owner_.load(std::memory_order_acquire) == me) {
+            ++moving_freelist_depth_;
+            return FreelistAdmit::Nested;
+        }
+        g_moving_freelist_lock_attempts.fetch_add(1, std::memory_order_relaxed);
+        if (g_moving_freelist_lock_fail_inject_remaining.load(std::memory_order_relaxed) > 0) {
+            g_moving_freelist_lock_fail_inject_remaining.fetch_sub(1, std::memory_order_relaxed);
+            return FreelistAdmit::Denied;
+        }
+        if (!moving_freelist_mu_.try_lock())
+            return FreelistAdmit::Denied;
+        moving_freelist_owner_.store(me, std::memory_order_release);
+        moving_freelist_depth_ = 1;
+        return FreelistAdmit::Locked;
+    }
+
+    void release_moving_freelist_(FreelistAdmit kind) noexcept {
+        if (kind != FreelistAdmit::Nested && kind != FreelistAdmit::Locked)
+            return;
+        if (--moving_freelist_depth_ == 0) {
+            moving_freelist_owner_.store(0, std::memory_order_release);
+            moving_freelist_mu_.unlock();
+        }
+    }
+
+    std::mutex moving_freelist_mu_;
+    std::atomic<std::uint64_t> moving_freelist_owner_{0};
+    int moving_freelist_depth_ = 0;
+
+public:
+    // RAII admit. Denied: caller must not recycle and must not hand a
+    // freelist slot to a second object.
+    class MovingFreelistGuard {
+    public:
+        explicit MovingFreelistGuard(SmallObjectPool& pool) noexcept
+            : pool_(&pool)
+            , kind_(pool.admit_moving_freelist_()) {}
+        ~MovingFreelistGuard() { pool_->release_moving_freelist_(kind_); }
+        MovingFreelistGuard(const MovingFreelistGuard&) = delete;
+        MovingFreelistGuard& operator=(const MovingFreelistGuard&) = delete;
+        [[nodiscard]] bool denied() const noexcept { return kind_ == FreelistAdmit::Denied; }
+        [[nodiscard]] bool exclusive() const noexcept {
+            return kind_ == FreelistAdmit::Locked || kind_ == FreelistAdmit::Nested;
+        }
+
+    private:
+        SmallObjectPool* pool_;
+        FreelistAdmit kind_;
+    };
 };
 
 // ── ASTArena — tiered pmr bump allocator ─────────────────────────
@@ -1247,6 +1346,17 @@ export [[nodiscard]] inline bool production_auto_arm_pack_active() noexcept {
     if (aura_production_defaults_active_probe == nullptr)
         return false;
     return aura_production_defaults_active_probe() != 0;
+}
+
+// Issue #4415: freelist recycle / try_allocate exclude peer allocate_raw
+// only on the production Moving face. Soft / Off / feature-off: the pin
+// load is false and callers take no mutex.
+[[nodiscard]] inline bool production_moving_freelist_exclusive_active() noexcept {
+    if (!aura::core::lifetime::general_object_pin_required_active())
+        return false;
+    if (moving_compact_feature_enabled() == 0)
+        return false;
+    return production_auto_arm_pack_active();
 }
 
 // Once per quiet window: production pack + frag ≥ threshold + Moving on
@@ -3636,6 +3746,13 @@ private:
             last_object_remap_ = std::move(prev_remap);
             return 0;
         }
+        // Issue #4415: one exclusion across every recycle and the later
+        // try_allocate. Missed lock → recycle nothing; old addresses stay.
+        SmallObjectPool::MovingFreelistGuard freelist_guard(small_pool_);
+        if (freelist_guard.denied()) {
+            last_object_remap_ = std::move(prev_remap);
+            return 0;
+        }
 
         struct Pending {
             void* old = nullptr;
@@ -3690,6 +3807,13 @@ private:
         std::stable_sort(
             pending.begin(), pending.end(),
             [](const Pending& a, const Pending& b) noexcept { return a.size < b.size; });
+
+        // Issue #4415: slots are on the freelist and not yet reused.
+        // The hook runs while this thread still holds the exclusion.
+        if (freelist_guard.exclusive()) {
+            if (auto* hook = g_moving_freelist_held_hook.load(std::memory_order_relaxed))
+                hook(g_moving_freelist_held_hook_ctx.load(std::memory_order_relaxed));
+        }
 
         std::size_t moved = 0;
         std::size_t pending_index = 0; // Issue #4329: index-targeted inject

@@ -7866,6 +7866,201 @@ static void ac4396_source_cite() {
     CHECK(mut.find("PinRegistry") == std::string::npos, "4396: rewrite has no pin registry");
 }
 
+// Issue #4415: production Moving recycle / try_allocate exclude peer
+// allocate_raw. A missed lock does not recycle and does not hand the
+// slot out. Soft / Off take no mutex. No new pin registry, and
+// moving-window-green is untouched.
+struct ProdFace4415 {
+    int prev_pin = -1;
+    int prev_arm = -1;
+    int prev_moving = -1;
+    int prev_hard = -1;
+    std::uint64_t prev_value_only = 0;
+    explicit ProdFace4415(bool arm) {
+        prev_pin = aura::core::lifetime::g_general_object_pin_required_pref.load(
+            std::memory_order_relaxed);
+        prev_arm = aura::ast::g_production_auto_arm_moving_pref.load(std::memory_order_relaxed);
+        prev_moving = aura::ast::g_moving_compact_enabled_pref.load(std::memory_order_relaxed);
+        prev_hard = aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+        prev_value_only =
+            aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::core::lifetime::clear_general_object_pin_required_breach();
+        aura::ast::g_intermediate_create_value_only_total.store(0, std::memory_order_relaxed);
+        aura::ast::reset_moving_freelist_exclusion_for_test();
+        aura::core::lifetime::g_general_object_pin_required_pref.store(arm ? 1 : 0,
+                                                                       std::memory_order_release);
+        aura::ast::g_production_auto_arm_moving_pref.store(arm ? 1 : 0, std::memory_order_release);
+        aura::ast::set_moving_compact_enabled(arm ? 1 : 0);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    }
+    ~ProdFace4415() {
+        aura::ast::reset_moving_freelist_exclusion_for_test();
+        aura::core::lifetime::g_general_object_pin_required_pref.store(prev_pin,
+                                                                       std::memory_order_release);
+        aura::ast::g_production_auto_arm_moving_pref.store(prev_arm, std::memory_order_release);
+        aura::ast::g_moving_compact_enabled_pref.store(prev_moving, std::memory_order_relaxed);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(prev_hard, std::memory_order_relaxed);
+        aura::ast::g_intermediate_create_value_only_total.store(prev_value_only,
+                                                                std::memory_order_relaxed);
+        aura::core::lifetime::clear_general_object_pin_required_breach();
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    }
+};
+
+static void ac4415_held_hook(void* raw) noexcept {
+    auto* phase = static_cast<std::atomic<int>*>(raw);
+    phase->store(1, std::memory_order_release);
+    for (int i = 0; i < 50000000 && phase->load(std::memory_order_acquire) == 1; ++i)
+        std::this_thread::yield();
+}
+
+static void ac4415_peer_misses_recycled_slot() {
+    std::println("\n--- #4415: peer allocate_raw does not take a slot under recycle ---");
+    ProdFace4415 face(true);
+    ASTArena arena(64 * 1024);
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 5, 6, 7, 8);
+    CHECK(p0 && p1, "4415: covered creates");
+    std::atomic<int> phase{0};
+    void* peer_ptr = nullptr;
+    bool peer_painted = false;
+    std::thread peer([&] {
+        while (phase.load(std::memory_order_acquire) == 0)
+            std::this_thread::yield();
+        if (phase.load(std::memory_order_acquire) != 1)
+            return;
+        // Render hotpath: maybe_auto_compact returns before the canary
+        // mutex. The compact thread holds that mutex across this hook.
+        // exit before phase=2 so the process defer bit drops before
+        // relocate continues.
+        aura::core::arena_policy::enter_render_hotpath();
+        void* got = arena.allocate_raw(sizeof(Pod16), alignof(Pod16));
+        // Recycle already wrote the freelist link into the old slot.
+        // The payload lives in the relocator side buffer until memcpy.
+        // Paint only a distinct address so a handed-out recycled slot
+        // stays observable as peer_ptr == p0 or p1.
+        if (got != nullptr && got != p0 && got != p1) {
+            std::memset(got, 0xA5, sizeof(Pod16));
+            peer_painted = true;
+        }
+        peer_ptr = got;
+        aura::core::arena_policy::exit_render_hotpath();
+        phase.store(2, std::memory_order_release);
+    });
+    aura::ast::g_moving_freelist_held_hook.store(&ac4415_held_hook, std::memory_order_relaxed);
+    aura::ast::g_moving_freelist_held_hook_ctx.store(&phase, std::memory_order_relaxed);
+    const auto attempts_before =
+        aura::ast::g_moving_freelist_lock_attempts.load(std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (phase.load(std::memory_order_acquire) == 0)
+        phase.store(3, std::memory_order_release);
+    peer.join();
+    aura::ast::g_moving_freelist_held_hook.store(nullptr, std::memory_order_relaxed);
+    CHECK(phase.load(std::memory_order_acquire) == 2,
+          "4415: peer ran while the exclusion was held");
+    CHECK(peer_ptr != nullptr && peer_ptr != p0 && peer_ptr != p1,
+          "4415: peer allocation is not a recycled slot");
+    CHECK(peer_painted, "4415: peer wrote a distinct allocation, not a recycled slot");
+    CHECK(r.objects_moved > 0, "4415: relocator still moved under the exclusion");
+    CHECK(r.pin_contract_held, "4415: covered window stays pin-held");
+    CHECK(aura::ast::g_moving_freelist_lock_attempts.load(std::memory_order_relaxed) >
+              attempts_before,
+          "4415: production Moving try_locks the freelist");
+    void* n0 = arena.resolve_object_remap(p0);
+    void* n1 = arena.resolve_object_remap(p1);
+    CHECK(n0 && n1, "4415: remap published for both objects");
+    if (n0 && n1) {
+        auto* a0 = static_cast<Pod16*>(n0);
+        auto* a1 = static_cast<Pod16*>(n1);
+        CHECK(a0->a == 1 && a0->d == 4 && a1->a == 5 && a1->d == 8,
+              "4415: payloads survive at the relocated addresses");
+    }
+}
+
+static void ac4415_missed_lock_does_not_recycle() {
+    std::println("\n--- #4415: missed exclusion recycles nothing ---");
+    ProdFace4415 face(true);
+    ASTArena arena(64 * 1024);
+    void* s0 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    CHECK(p0 != nullptr, "4415: create before inject");
+    aura::ast::g_moving_freelist_lock_fail_inject_remaining.store(1, std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "4415: missed lock moves nothing");
+    CHECK(p0->a == 1 && p0->b == 2 && p0->c == 3 && p0->d == 4,
+          "4415: object stays at the old address");
+    CHECK(arena.resolve_object_remap(p0) == nullptr, "4415: no remap after a refused recycle");
+    // The slot was not linked. A later allocate must not be handed p0.
+    aura::core::arena_policy::enter_render_hotpath();
+    void* got = arena.allocate_raw(sizeof(Pod16), alignof(Pod16));
+    aura::core::arena_policy::exit_render_hotpath();
+    CHECK(got != p0, "4415: refused recycle is not handed to a second object");
+    CHECK(p0->a == 1, "4415: live object bytes survive the later allocate");
+}
+
+static void ac4415_soft_off_takes_no_lock() {
+    std::println("\n--- #4415: Soft / Off take no freelist lock ---");
+    {
+        ProdFace4415 off(false);
+        aura::ast::g_moving_freelist_lock_attempts.store(0, std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        CHECK(p0 != nullptr, "4415: Soft create");
+        (void)arena.live_compact(LiveCompactMode::Moving);
+        (void)arena.try_allocate(16);
+        CHECK(aura::ast::g_moving_freelist_lock_attempts.load(std::memory_order_relaxed) == 0,
+              "4415: feature-off Moving takes no freelist lock");
+    }
+    {
+        ProdFace4415 pin_off(false);
+        aura::ast::set_moving_compact_enabled(1);
+        aura::ast::g_production_auto_arm_moving_pref.store(1, std::memory_order_release);
+        aura::ast::g_moving_freelist_lock_attempts.store(0, std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        CHECK(p0 != nullptr, "4415: pin-off create");
+        (void)arena.live_compact(LiveCompactMode::Moving);
+        CHECK(aura::ast::g_moving_freelist_lock_attempts.load(std::memory_order_relaxed) == 0,
+              "4415: pin-not-required takes no freelist lock");
+    }
+}
+
+static void ac4415_source_cite() {
+    std::println("\n--- #4415: source cite, no new registry, green predicate untouched ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto health = read_file("src/core/moving_densify_health.hh");
+    CHECK(arena.find("Issue #4415") != std::string::npos, "4415: arena.ixx cites #4415");
+    CHECK(arena.find("production_moving_freelist_exclusive_active") != std::string::npos,
+          "4415: exclusion is gated on the production Moving face");
+    CHECK(arena.find("moving_freelist_mu_.try_lock()") != std::string::npos,
+          "4415: exclusion is a try_lock");
+    CHECK(arena.find("SmallObjectPool::MovingFreelistGuard freelist_guard(small_pool_);") !=
+              std::string::npos,
+          "4415: relocate holds one exclusion across recycle and allocate");
+    const auto recycle_at = arena.find("if (!small_pool_.recycle(e.ptr, e.size))");
+    const auto hook_at = arena.find("g_moving_freelist_held_hook.load");
+    const auto alloc_at = arena.find("neu = small_pool_.try_allocate(p.size)");
+    CHECK(recycle_at != std::string::npos && hook_at != std::string::npos &&
+              alloc_at != std::string::npos && recycle_at < hook_at && hook_at < alloc_at,
+          "4415: hook sits after recycle and before the new slot is taken");
+    const auto green = health.find("window_would_allow_mutate");
+    CHECK(green != std::string::npos, "4415: moving-window-green predicate still present");
+    if (green != std::string::npos) {
+        const auto body = health.substr(green, 600);
+        CHECK(body.find("4415") == std::string::npos,
+              "4415: moving-window-green predicate was not rewritten");
+    }
+    CHECK(arena.find("query:4415") == std::string::npos, "4415: no new query key");
+    std::ifstream invent("tests/core/test_issue_4415.cpp");
+    if (!invent.good())
+        invent.open("../tests/core/test_issue_4415.cpp");
+    CHECK(!invent.good(), "4415: no tests/core/test_issue_4415.cpp");
+    CHECK(read_file("docs/design/4415-freelist.md").empty(), "4415: no docs/design/4415-*");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -8742,6 +8937,12 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Issue #4386: unstable densify slots remap under the writer locks ===");
     ac4386_sibling_realloc_rewrites_moved();
+
+    std::println("\n=== Issue #4415: Moving freelist excludes peer allocate_raw ===");
+    ac4415_peer_misses_recycled_slot();
+    ac4415_missed_lock_does_not_recycle();
+    ac4415_soft_off_takes_no_lock();
+    ac4415_source_cite();
 
     std::println("\n=== Issue #4396: c-struct refuses densify-old during Moving recycle ===");
     ac4396_c_struct_refuses_inflight_and_red_window();
