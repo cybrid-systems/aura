@@ -13,6 +13,7 @@ module;
 #include "security_capabilities.h"
 #include "security_side_effect.hh" // #2057
 #include "tenant_host_path.hh"     // #3802 tenant FS path-prefix
+#include "tenant_exec_fs_jail.hh"  // #4413 landlock + stat emulation
 
 module aura.compiler.evaluator;
 
@@ -414,21 +415,41 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // but `sh` was unusable for exit-code arithmetic. Mirror the
         // fork+execvp pattern from evaluator_primitives_io.cpp:381-413
         // (git-commit, #473) for proper exit-code extraction.
+        int jail_sv[2] = {-1, -1};
+        if (!jail_root.empty() &&
+            ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, jail_sv) != 0)
+            return make_int(-1);
         pid_t pid = ::fork();
         if (pid == 0) {
+            if (jail_sv[0] >= 0)
+                ::close(jail_sv[0]);
             // Issue #4233: jail cwd before exec — surviving relative-only
             // commands resolve inside the tenant root.
             if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
+                ::_exit(127);
+            // Issue #4413: Landlock + stat emulation after cwd, before exec.
+            if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
+                                          jail_root.c_str(), jail_sv[1]))
                 ::_exit(127);
             ::execl("/bin/sh", "sh", "-c", ev.string_heap_[idx].c_str(),
                     static_cast<char*>(nullptr));
             ::_exit(127);
         }
+        if (jail_sv[1] >= 0)
+            ::close(jail_sv[1]);
         if (pid > 0) {
+            if (!jail_root.empty()) {
+                const int code = ::aura::compiler::security::tenant_exec_jail_reap(
+                    pid, jail_sv[0], /*stdout_fd=*/-1, nullptr, jail_root.c_str());
+                return make_int(code >= 0 ? static_cast<std::int64_t>(code)
+                                          : static_cast<std::int64_t>(-1));
+            }
             int status = 0;
             if (::waitpid(pid, &status, 0) != -1 && WIFEXITED(status))
                 return make_int(static_cast<std::int64_t>(WEXITSTATUS(status)));
         }
+        if (jail_sv[0] >= 0)
+            ::close(jail_sv[0]);
         return make_int(-1);
     });
 
@@ -465,14 +486,27 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             int pfd[2];
             if (::pipe(pfd) != 0)
                 return make_void();
+            int jail_sv[2] = {-1, -1};
+            if (!jail_root.empty() &&
+                ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, jail_sv) != 0) {
+                ::close(pfd[0]);
+                ::close(pfd[1]);
+                return make_void();
+            }
             std::string result;
             pid_t pid = ::fork();
             if (pid < 0) {
                 ::close(pfd[0]);
                 ::close(pfd[1]);
+                if (jail_sv[0] >= 0)
+                    ::close(jail_sv[0]);
+                if (jail_sv[1] >= 0)
+                    ::close(jail_sv[1]);
                 return make_void();
             }
             if (pid == 0) {
+                if (jail_sv[0] >= 0)
+                    ::close(jail_sv[0]);
                 // Issue #4233: jail cwd before exec — surviving relative-only
                 // commands resolve inside the tenant root.
                 if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
@@ -480,16 +514,27 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 ::close(pfd[0]);
                 ::dup2(pfd[1], STDOUT_FILENO);
                 ::close(pfd[1]);
+                // Issue #4413: Landlock + stat emulation after the stdout pipe.
+                if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
+                                              jail_root.c_str(), jail_sv[1]))
+                    ::_exit(127);
                 ::execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
                 ::_exit(127);
             }
             ::close(pfd[1]);
-            std::array<char, 4096> buf;
-            for (ssize_t n; (n = ::read(pfd[0], buf.data(), buf.size())) > 0;)
-                result.append(buf.data(), static_cast<std::size_t>(n));
-            ::close(pfd[0]);
-            int status = 0;
-            ::waitpid(pid, &status, 0);
+            if (jail_sv[1] >= 0)
+                ::close(jail_sv[1]);
+            if (!jail_root.empty()) {
+                (void)::aura::compiler::security::tenant_exec_jail_reap(pid, jail_sv[0], pfd[0],
+                                                                        &result, jail_root.c_str());
+            } else {
+                std::array<char, 4096> buf;
+                for (ssize_t n; (n = ::read(pfd[0], buf.data(), buf.size())) > 0;)
+                    result.append(buf.data(), static_cast<std::size_t>(n));
+                ::close(pfd[0]);
+                int status = 0;
+                ::waitpid(pid, &status, 0);
+            }
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
             auto sid = ev.string_heap_.size();

@@ -9,8 +9,9 @@ module;
 #include <cstring>
 
 #include "security_capabilities.h"
-#include "tenant_host_path.hh"  // #3802 tenant FS path-prefix
-#include "security_defaults.hh" // #2076/#2053 production defaults (header-inline)
+#include "tenant_host_path.hh"    // #3802 tenant FS path-prefix
+#include "tenant_exec_fs_jail.hh" // #4413 landlock + stat emulation
+#include "security_defaults.hh"   // #2076/#2053 production defaults (header-inline)
 #include "typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/resource_quota.hh" // #2384: host provenance_mutation_id for require_effect
@@ -2428,6 +2429,17 @@ bool Evaluator::check_tenant_exec_jail(std::string_view cmd, std::string& out_ja
         return false;
     }
     if (tenant_exec_cmd_escapes_root(cmd)) {
+        deny();
+        return false;
+    }
+    // Issue #4413: chdir is not a filesystem jail. A scanner-clean command
+    // can build a host path after exec. Refuse the exec on this same
+    // IsolationDeny row when Landlock or the stat notifier is unavailable,
+    // or the tenant root's final component is a symlink / not a directory.
+    // ENOENT stays an allow — the child chdir fails before exec (#4233 AC3).
+    using ::aura::compiler::security::tenant_exec_fs_jail_preflight;
+    using ::aura::compiler::security::TenantExecFsJailPreflight;
+    if (tenant_exec_fs_jail_preflight(root.resolved.c_str()) == TenantExecFsJailPreflight::Deny) {
         deny();
         return false;
     }

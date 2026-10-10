@@ -32,6 +32,7 @@ module;
 #include "primitives_meta.h"
 #include "security_capabilities.h"
 #include "tenant_host_path.hh"        // #3802 tenant FS path-prefix
+#include "tenant_exec_fs_jail.hh"     // #4413 landlock + stat emulation
 #include "core/provenance_tracker.hh" // #3802 MT active
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
@@ -196,6 +197,15 @@ namespace {
         int pfd[2] = {-1, -1};
         if (capture && ::pipe(pfd) != 0)
             return -1;
+        int jail_sv[2] = {-1, -1};
+        if (!jail_root.empty() &&
+            ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, jail_sv) != 0) {
+            if (capture) {
+                ::close(pfd[0]);
+                ::close(pfd[1]);
+            }
+            return -1;
+        }
         std::vector<std::string> buf = args; // owned NUL-terminated storage
         pid_t pid = ::fork();
         if (pid < 0) {
@@ -203,9 +213,15 @@ namespace {
                 ::close(pfd[0]);
                 ::close(pfd[1]);
             }
+            if (jail_sv[0] >= 0)
+                ::close(jail_sv[0]);
+            if (jail_sv[1] >= 0)
+                ::close(jail_sv[1]);
             return -1;
         }
         if (pid == 0) {
+            if (jail_sv[0] >= 0)
+                ::close(jail_sv[0]);
             if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
                 ::_exit(127);
             if (capture) {
@@ -218,6 +234,10 @@ namespace {
                 ::dup2(devnull, STDERR_FILENO);
                 ::close(devnull);
             }
+            // Issue #4413: Landlock after /dev/null is wired, before exec.
+            if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
+                                          jail_root.c_str(), jail_sv[1]))
+                ::_exit(127);
             std::vector<char*> argv;
             argv.reserve(buf.size() + 2);
             argv.push_back(const_cast<char*>("git"));
@@ -226,6 +246,14 @@ namespace {
             argv.push_back(nullptr);
             ::execvp("git", argv.data());
             ::_exit(127);
+        }
+        if (jail_sv[1] >= 0)
+            ::close(jail_sv[1]);
+        if (!jail_root.empty()) {
+            if (capture)
+                ::close(pfd[1]);
+            return ::aura::compiler::security::tenant_exec_jail_reap(
+                pid, jail_sv[0], capture ? pfd[0] : -1, capture ? out : nullptr, jail_root.c_str());
         }
         if (capture) {
             ::close(pfd[1]);

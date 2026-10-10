@@ -7,6 +7,7 @@
 
 #include "compiler/security_capabilities.h"
 #include "compiler/tenant_host_path.hh"
+#include "compiler/tenant_exec_fs_jail.hh"
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
@@ -25,6 +26,12 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.evaluator;
@@ -727,6 +734,274 @@ static void ac4165_agent_fiber_isolation() {
         }
     }
     aura::core::capability::set_effect_fiber_id_override(0);
+    reset_all();
+}
+
+// Issue #4413: chdir + the byte scanner is not a filesystem jail. A command
+// the scanner allows must still be unable to open, stat, or write outside
+// the caller tenant root.
+static void ac4413_exec_fs_jail() {
+    std::println("\n--- #4413: runtime-built host paths stay inside the tenant root ---");
+    reset_all();
+    const bool jail_ok = aura::compiler::security::tenant_exec_fs_jail_available();
+    const std::string base = std::string("/tmp/aura-4413-") + std::to_string(::getpid());
+    const std::string link_base = base + "-link";
+    ::mkdir(base.c_str(), 0700);
+    const auto rm_tree = [](const std::string& root) {
+        const char* files[] = {
+            "/t-9/inside.txt", "/t-9/pwlink", "/t-9/wrote.txt", "/other/secret", "/other/new-4413",
+            "/real/x",         "/t-3"};
+        for (const char* rel : files)
+            ::unlink((root + rel).c_str());
+        ::rmdir((root + "/t-9").c_str());
+        ::rmdir((root + "/other").c_str());
+        ::rmdir((root + "/real").c_str());
+        ::unlink((root + "/t-3").c_str());
+        ::rmdir(root.c_str());
+    };
+
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+    using aura::compiler::security::tenant_host_root_for;
+    const auto root = tenant_host_root_for(9);
+    ::mkdir(root.c_str(), 0700);
+    const std::string sibling = base + "/other";
+    ::mkdir(sibling.c_str(), 0700);
+    const std::string secret = sibling + "/secret";
+    {
+        const int fd = ::open((root + "/inside.txt").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        const char marker[] = "aura-4413-inside\n";
+        if (fd >= 0) {
+            const ssize_t wr = ::write(fd, marker, sizeof marker - 1);
+            CHECK(wr == static_cast<ssize_t>(sizeof marker - 1), "4413: seed inside.txt");
+            ::close(fd);
+        }
+        const int sd = ::open(secret.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (sd >= 0) {
+            const ssize_t wr = ::write(sd, "sib\n", 4);
+            CHECK(wr == 4, "4413: seed sibling secret");
+            ::close(sd);
+        }
+    }
+    ::unlink((root + "/pwlink").c_str());
+    CHECK(::symlink("/etc/passwd", (root + "/pwlink").c_str()) == 0, "4413: plant inside symlink");
+
+    const char* py = "python3 -c 'open(chr(47)+\"etc\"+chr(47)+\"passwd\").read()'";
+    CHECK(!aura::compiler::security::tenant_exec_cmd_escapes_root(py),
+          "4413: chr(47) command still scans clean");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(9);
+    const auto& ring = g_security_event_ring();
+    std::string out_root;
+    if (jail_ok) {
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CHECK(ev.check_tenant_exec_jail(py, out_root, "command-output"),
+              "4413: scanner-clean command is allowed when the fs jail exists");
+        CHECK(out_root == root, "4413: allow carries the caller tenant root");
+        CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+              "4413: allow emits no IsolationDeny");
+    } else {
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CHECK(!ev.check_tenant_exec_jail(py, out_root, "command-output"),
+              "4413: no fs jail denies the scanner-clean command");
+        CHECK(ev.last_mutate_error().find("command-output: tenant-path-escape") !=
+                  std::string::npos,
+              "4413: deny reason is tenant-path-escape");
+        bool saw = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                continue;
+            saw = true;
+            CHECK(e.effect_bits ==
+                      static_cast<std::uint16_t>(aura::compiler::security::kEffectExec),
+                  "4413: deny stamps kEffectExec");
+            CHECK(e.tenant_id == 9, "4413: deny tenant is the caller");
+        }
+        CHECK(saw, "4413: IsolationDeny row when the fs jail is unavailable");
+    }
+
+    ::mkdir(link_base.c_str(), 0700);
+    ::mkdir((link_base + "/real").c_str(), 0700);
+    ::symlink((link_base + "/real").c_str(), (link_base + "/t-3").c_str());
+    ::setenv("AURA_TENANT_FS_ROOT", link_base.c_str(), 1);
+    ev.set_capability_tenant_id(3);
+    if (jail_ok) {
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        std::string link_out;
+        CHECK(!ev.check_tenant_exec_jail("echo hi", link_out, "shell"),
+              "4413: symlink tenant root denies before exec");
+        CHECK(ev.last_mutate_error().find("shell: tenant-path-escape") != std::string::npos,
+              "4413: symlink root uses tenant-path-escape");
+        bool saw = false;
+        const auto fib = static_cast<std::int64_t>(aura_fiber_current_id());
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.op) != "shell")
+                continue;
+            saw = true;
+            CHECK(e.effect_bits ==
+                      static_cast<std::uint16_t>(aura::compiler::security::kEffectExec),
+                  "4413: symlink deny stamps kEffectExec");
+            CHECK(e.tenant_id == 3, "4413: symlink deny tenant is the caller");
+            CHECK(e.fiber_id == fib, "4413: symlink deny joins the caller fiber");
+        }
+        CHECK(saw, "4413: symlink root emits IsolationDeny");
+    }
+
+    if (jail_ok) {
+        CHECK(::access("/usr/bin/python3", X_OK) == 0, "4413: python3 is on the interpreter path");
+        const std::string cmd = std::string("python3 -c '") +
+                                "import os,sys\n"
+                                "def chk(l,p,follow=True):\n"
+                                " t=os.stat if follow else os.lstat\n"
+                                " try:\n"
+                                "  t(p); sys.stdout.write(l+\" ok\\n\")\n"
+                                " except OSError as e:\n"
+                                "  sys.stdout.write(l+\" err %d\\n\"%e.errno)\n"
+                                "chk(\"inside\",\"inside.txt\")\n"
+                                "chk(\"passwd\",\"/etc/passwd\")\n"
+                                "chk(\"link\",\"pwlink\")\n"
+                                "chk(\"lstat\",\"pwlink\",False)\n"
+                                "chk(\"sib\",\"" +
+                                secret +
+                                "\")\n"
+                                "chk(\"dot\",\"../other/secret\")\n"
+                                "try:\n"
+                                " open(\"/etc/passwd\").read(); sys.stdout.write(\"read ok\\n\")\n"
+                                "except OSError as e:\n"
+                                " sys.stdout.write(\"read err %d\\n\"%e.errno)\n"
+                                "sys.stdout.write(open(\"inside.txt\").read())\n"
+                                "try:\n"
+                                " open(\"" +
+                                sibling +
+                                "/new-4413\",\"w\").write(\"x\")\n"
+                                " sys.stdout.write(\"sibwrite ok\\n\")\n"
+                                "except OSError as e:\n"
+                                " sys.stdout.write(\"sibwrite err %d\\n\"%e.errno)\n"
+                                "open(\"wrote.txt\",\"w\").write(\"aura-4413-wrote\")\n"
+                                "sys.stdout.write(\"inwrite ok\\n\")\n"
+                                "'";
+        int sv[2] = {-1, -1};
+        int sp[2] = {-1, -1};
+        CHECK(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) == 0, "4413: socketpair");
+        CHECK(::pipe(sp) == 0, "4413: stdout pipe");
+        const pid_t pid = ::fork();
+        CHECK(pid >= 0, "4413: fork");
+        if (pid == 0) {
+            ::close(sv[0]);
+            ::close(sp[0]);
+            if (::chdir(root.c_str()) != 0)
+                ::_exit(127);
+            if (::dup2(sp[1], STDOUT_FILENO) < 0)
+                ::_exit(127);
+            ::close(sp[1]);
+            if (!aura::compiler::security::apply_tenant_exec_fs_jail(root.c_str(), sv[1]))
+                ::_exit(127);
+            ::execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
+            ::_exit(127);
+        }
+        if (pid > 0) {
+            ::close(sv[1]);
+            ::close(sp[1]);
+            std::string captured;
+            const int code = aura::compiler::security::tenant_exec_jail_reap(
+                pid, sv[0], sp[0], &captured, root.c_str());
+            CHECK(code == 0, "4413: jailed python exits 0");
+            CHECK(captured.find("aura-4413-inside") != std::string::npos,
+                  "4413: relative read inside the tenant root succeeds");
+            CHECK(captured.find("root:") == std::string::npos,
+                  "4413: /etc/passwd contents do not cross the jail");
+            CHECK(captured.find("inside ok") != std::string::npos, "4413: stat inside succeeds");
+            CHECK(captured.find("passwd err") != std::string::npos, "4413: stat /etc/passwd fails");
+            CHECK(captured.find("link err") != std::string::npos,
+                  "4413: stat of a symlink to /etc/passwd fails");
+            CHECK(captured.find("lstat ok") != std::string::npos,
+                  "4413: lstat of the symlink itself stays inside the root");
+            CHECK(captured.find("sib err") != std::string::npos, "4413: stat of a sibling fails");
+            CHECK(captured.find("dot err") != std::string::npos, "4413: stat of ../ sibling fails");
+            CHECK(captured.find("read err") != std::string::npos, "4413: open /etc/passwd fails");
+            CHECK(captured.find("sibwrite err") != std::string::npos,
+                  "4413: write into a sibling tenant tree fails");
+            CHECK(captured.find("inwrite ok") != std::string::npos,
+                  "4413: write inside the tenant root succeeds");
+            std::ifstream wrote(root + "/wrote.txt");
+            std::string body;
+            std::getline(wrote, body);
+            CHECK(body == "aura-4413-wrote", "4413: inside write is visible to the parent");
+            CHECK(::access((sibling + "/new-4413").c_str(), F_OK) != 0,
+                  "4413: sibling write did not create a file");
+        }
+    }
+
+    const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+    const auto io = read_file("src/compiler/evaluator_primitives_io.cpp");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto shell_at = filep.find("defer_std_host_prim(\"shell\"");
+    const auto co_at = filep.find("\"command-output\"");
+    CHECK(shell_at != std::string::npos && co_at != std::string::npos && shell_at < co_at,
+          "4413: shell and command-output bodies located");
+    if (shell_at != std::string::npos && co_at > shell_at) {
+        const auto shell = filep.substr(shell_at, co_at - shell_at);
+        const auto chdir_at = shell.find("::chdir(jail_root.c_str())");
+        const auto apply_at = shell.find("apply_tenant_exec_fs_jail");
+        const auto exec_at = shell.find("::execl(");
+        CHECK(chdir_at != std::string::npos && apply_at != std::string::npos &&
+                  exec_at != std::string::npos && chdir_at < apply_at && apply_at < exec_at,
+              "4413: shell applies the fs jail after chdir and before execl");
+    }
+    const auto dl_at = filep.find("\"directory-list\"");
+    if (co_at != std::string::npos && dl_at != std::string::npos && dl_at > co_at) {
+        const auto body = filep.substr(co_at, dl_at - co_at);
+        const auto chdir_at = body.find("::chdir(jail_root.c_str())");
+        const auto apply_at = body.find("apply_tenant_exec_fs_jail");
+        const auto exec_at = body.find("::execl(");
+        CHECK(chdir_at != std::string::npos && apply_at != std::string::npos &&
+                  exec_at != std::string::npos && chdir_at < apply_at && apply_at < exec_at,
+              "4413: command-output applies the fs jail after chdir and before execl");
+    }
+    const auto git_at = io.find("int run_git_jailed(");
+    CHECK(git_at != std::string::npos, "4413: run_git_jailed located");
+    if (git_at != std::string::npos) {
+        const auto body = io.substr(git_at, 4000);
+        const auto chdir_at = body.find("::chdir(jail_root.c_str())");
+        const auto apply_at = body.find("apply_tenant_exec_fs_jail");
+        const auto exec_at = body.find("::execvp(");
+        CHECK(chdir_at != std::string::npos && apply_at != std::string::npos &&
+                  exec_at != std::string::npos && chdir_at < apply_at && apply_at < exec_at,
+              "4413: git child applies the fs jail after chdir and before execvp");
+    }
+    CHECK(sec.find("tenant_exec_fs_jail_preflight") != std::string::npos,
+          "4413: exec jail preflight lives on check_tenant_exec_jail");
+    CHECK(sec.find("kEffectExec") != std::string::npos &&
+              sec.find("kTenantPathEscapeReason") != std::string::npos,
+          "4413: deny still uses kEffectExec and tenant-path-escape");
+    CHECK(filep.find("query:4413") == std::string::npos &&
+              io.find("query:4413") == std::string::npos &&
+              sec.find("query:4413") == std::string::npos,
+          "4413: no new query key");
+    std::ifstream invent("tests/core/test_issue_4413.cpp");
+    if (!invent.good())
+        invent.open("../tests/core/test_issue_4413.cpp");
+    CHECK(!invent.good(), "4413: no tests/core/test_issue_4413.cpp");
+
+    ::unsetenv("AURA_TENANT_FS_ROOT");
+    ::unsetenv("AURA_MULTI_TENANT");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    rm_tree(base);
+    rm_tree(link_base);
     reset_all();
 }
 
@@ -5806,9 +6081,18 @@ int main() {
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(7);
         std::string out;
-        CHECK(ev.check_tenant_exec_jail("logs/run.txt", out, "shell"),
-              "4233 AC3: relative-only allow under active policy");
-        CHECK(out == root_a, "4233 AC3: jail root is the caller's tenant root");
+        // Issue #4413: a kernel that cannot install the filesystem jail
+        // denies the exec instead of handing out a chdir-only root.
+        if (aura::compiler::security::tenant_exec_fs_jail_available()) {
+            CHECK(ev.check_tenant_exec_jail("logs/run.txt", out, "shell"),
+                  "4233 AC3: relative-only allow under active policy");
+            CHECK(out == root_a, "4233 AC3: jail root is the caller's tenant root");
+        } else {
+            CHECK(!ev.check_tenant_exec_jail("logs/run.txt", out, "shell"),
+                  "4233 AC3: no filesystem jail denies instead of exec");
+            CHECK(ev.last_mutate_error().find("tenant-path-escape") != std::string::npos,
+                  "4233 AC3: missing jail mechanism is tenant-path-escape");
+        }
         const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
         CHECK(filep.find("check_tenant_exec_jail(ev.string_heap_[idx], jail_root, \"shell\")") !=
                   std::string::npos,
@@ -5848,10 +6132,17 @@ int main() {
               "4233 AC4 chaos: A denied on B prefix");
         CHECK(!ev_b.check_tenant_exec_jail(root_a + "/f.txt", out, "command-output"),
               "4233 AC4 chaos: B denied on A prefix");
-        CHECK(ev_a.check_tenant_exec_jail("work.txt", out, "shell") && out == root_a,
-              "4233 AC4 chaos: A allows relative under own root");
-        CHECK(ev_b.check_tenant_exec_jail("work.txt", out, "command-output") && out == root_b,
-              "4233 AC4 chaos: B allows relative under own root");
+        if (aura::compiler::security::tenant_exec_fs_jail_available()) {
+            CHECK(ev_a.check_tenant_exec_jail("work.txt", out, "shell") && out == root_a,
+                  "4233 AC4 chaos: A allows relative under own root");
+            CHECK(ev_b.check_tenant_exec_jail("work.txt", out, "command-output") && out == root_b,
+                  "4233 AC4 chaos: B allows relative under own root");
+        } else {
+            CHECK(!ev_a.check_tenant_exec_jail("work.txt", out, "shell"),
+                  "4233 AC4: no filesystem jail denies A's relative exec");
+            CHECK(!ev_b.check_tenant_exec_jail("work.txt", out, "command-output"),
+                  "4233 AC4: no filesystem jail denies B's relative exec");
+        }
         ::unsetenv("AURA_TENANT_FS_ROOT");
         ::unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
@@ -7181,6 +7472,7 @@ int main() {
     ac3904_4_soft_off_zero_cost_unchanged();
     ac3904_5_source_cite();
     ac4165_agent_fiber_isolation();
+    ac4413_exec_fs_jail();
 
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
