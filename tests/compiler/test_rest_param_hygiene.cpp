@@ -334,6 +334,110 @@ int run_test_rest_param_hygiene() {
               "3215: no docs/design/3215-* per #1655");
     }
 
+    // Issue #4419: hyg_ctr restarts at 0, so a later clone on the same
+    // StringPool re-interns __name_0 and the inner let captures the outer
+    // reference. A process serial (after the ceiling deny) keeps the names
+    // apart. Nested same-name lets in one clone still share name_map.
+    {
+        std::println("\n--- #4419: later clone does not recapture the outer gensym ---");
+        StringPool pool;
+        FlatAST target;
+        StringPool sp1;
+        FlatAST src1;
+        auto x1 = sp1.intern("x");
+        auto body1 = src1.add_let(x1, src1.add_literal(1), src1.add_variable(x1));
+        NameMap map1;
+        auto c1 = clone_macro_body(target, pool, src1, sp1, body1, nullptr, &map1,
+                                   SyntaxMarker::MacroIntroduced);
+        CHECK(c1 != NULL_NODE, "4419: first clone");
+        CHECK(map1.count("x") == 1 && map1["x"].rfind("__x_", 0) == 0, "4419: __x_ form");
+        const auto outer_let = target.get(c1);
+        const auto outer_sym = outer_let.sym_id;
+        CHECK(outer_let.children.size() >= 2, "4419: outer let body");
+        const auto outer_ref = outer_let.children[1];
+        CHECK(target.get(outer_ref).sym_id == outer_sym, "4419: first binding matches its ref");
+
+        StringPool sp2;
+        FlatAST src2;
+        auto x2 = sp2.intern("x");
+        auto v = sp2.intern("v");
+        auto body2 = src2.add_let(x2, src2.add_literal(0), src2.add_variable(v));
+        using Subst = std::unordered_map<std::string, aura::ast::NodeId,
+                                         aura::core::TransparentStringHash, std::equal_to<>>;
+        Subst subst;
+        subst.emplace("v", outer_ref);
+        NameMap map2;
+        auto c2 = clone_macro_body(target, pool, src2, sp2, body2, &subst, &map2,
+                                   SyntaxMarker::MacroIntroduced);
+        CHECK(c2 != NULL_NODE, "4419: second clone");
+        CHECK(map2.count("x") == 1, "4419: second name_map");
+        CHECK(map1["x"] != map2["x"], "4419: fresh names differ across clones");
+        CHECK(map2["x"].rfind("__x_", 0) == 0, "4419: second still __x_");
+        const auto inner_let = target.get(c2);
+        CHECK(inner_let.sym_id != outer_sym, "4419: inner binding is a different SymId");
+        CHECK(inner_let.children.size() >= 2, "4419: inner let body");
+        CHECK(inner_let.children[1] == outer_ref, "4419: param subst keeps the caller node");
+        CHECK(target.get(inner_let.children[1]).sym_id != inner_let.sym_id,
+              "4419: substituted ref is not the inner binding");
+
+        StringPool sp3;
+        FlatAST src3;
+        auto x3 = sp3.intern("x");
+        auto nested = src3.add_let(x3, src3.add_literal(2), src3.add_variable(x3));
+        auto outer3 = src3.add_let(x3, src3.add_literal(1), nested);
+        NameMap map3;
+        FlatAST t3;
+        StringPool p3;
+        auto c3 = clone_macro_body(t3, p3, src3, sp3, outer3, nullptr, &map3,
+                                   SyntaxMarker::MacroIntroduced);
+        CHECK(c3 != NULL_NODE, "4419: nested same-name clone");
+        CHECK(map3.size() == 1, "4419: one mapping for the nested source name");
+        const auto nlet = t3.get(c3);
+        CHECK(nlet.children.size() >= 2, "4419: nested body");
+        CHECK(nlet.sym_id == t3.get(nlet.children[1]).sym_id, "4419: nested lets share the gensym");
+
+        CompilerService cs;
+        auto setup = cs.eval("(set-code \""
+                             "(define-hygienic-macro (outer arg) (let ((x arg)) (inner x))) "
+                             "(define-hygienic-macro (inner v) (let ((x 0)) v)) "
+                             "(outer 1)"
+                             "\")");
+        CHECK(setup.has_value(), "4419: set-code");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 1,
+              "4419: (outer 1) is 1, inner let does not capture x");
+
+        const auto mx = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(mx.find("Issue #4419") != std::string::npos, "4419: cite");
+        CHECK(mx.find("query:4419") == std::string::npos, "4419: no new query key");
+        auto pre = mx.find("auto rename_binding_pre");
+        CHECK(pre != std::string::npos, "4419: rename_binding_pre");
+        if (pre != std::string::npos) {
+            auto win = mx.substr(pre, 2500);
+            auto ret = win.find("return aura::ast::NULL_NODE");
+            auto call = win.find("bind_gensym_serial()");
+            auto hyg = win.find("std::to_string(hyg_ctr++)");
+            CHECK(ret != std::string::npos && call != std::string::npos &&
+                      hyg != std::string::npos && ret < call && call < hyg,
+                  "4419: ceiling deny returns before the process serial and hyg_ctr++");
+            CHECK(win.find("Issue #2811") != std::string::npos, "4419: #2811 cite stays");
+        }
+        auto rb = mx.find("auto rename_binding =");
+        CHECK(rb != std::string::npos, "4419: rename_binding");
+        if (rb != std::string::npos) {
+            auto win = mx.substr(rb, 2800);
+            auto ceil = win.find("gensym_cap");
+            auto deny = win.find("return aura::ast::NULL_NODE", ceil);
+            auto call = win.find("bind_gensym_serial()", ceil);
+            auto hyg = win.find("hyg_ctr++", ceil);
+            CHECK(deny != std::string::npos && call != std::string::npos &&
+                      hyg != std::string::npos && deny < call && call < hyg,
+                  "4419: rename_binding fetch_add stays after the deny return");
+        }
+        CHECK(read_file("tests/compiler/test_issue_4419.cpp").empty(), "4419: no test_issue");
+        CHECK(read_file("docs/design/4419-binding-gensym.md").empty(), "4419: no docs/design");
+    }
+
     std::println("\n=== #2169 rest-param hygiene: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

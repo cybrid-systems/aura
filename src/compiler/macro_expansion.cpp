@@ -1021,6 +1021,16 @@ std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total{0};
 std::atomic<std::uint64_t> g_macro_rest_param_hygiene_incomplete_total{0};
 // Process-wide serial for concurrent fiber uniqueness of rest gensyms.
 std::atomic<std::uint64_t> g_macro_rest_gensym_serial{0};
+// Issue #4419: ordinary binding gensyms. hyg_ctr restarts at 0 on every
+// clone, so two clones on one StringPool re-intern __name_0 and a later
+// let captures the earlier reference. This serial does not reset. Call
+// only after the ceiling deny returns (#2811 — no fetch_add on deny).
+// Not a query key. Rest gensyms stay on g_macro_rest_gensym_serial.
+static std::atomic<std::uint64_t> g_macro_binding_gensym_serial{0};
+
+static std::uint64_t bind_gensym_serial() noexcept {
+    return g_macro_binding_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+}
 // Issue #2019: post-expand MacroIntroduced generation restamp calls.
 std::atomic<std::uint64_t> g_macro_restamp_after_flat_total{0};
 // Issue #2096: per-cloned-subtree restamp counter (subtree-local coherence
@@ -2545,17 +2555,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         auto it = name_map->find(name);
         if (it != name_map->end())
             return target_pool.intern(it->second);
-        // Issue #2243: gensym-map-size ceiling enforcement. If the granted
-        // policy sets a non-zero max_gensym_map_size, deny the expansion here
-        // (bump counter + sentinel) instead of letting name_map balloon under
-        // adversarial macros. Empty name_map (pre-scan not run yet) is
-        // allowed.
-        // Issue #2804: use effective_max_gensym_map_size (TLS or test override).
-        // Issue #2811: check ceiling BEFORE consuming a gensym serial.
-        // Pre-#2811 built `fresh` with a post-increment first, so a ceiling
-        // deny still advanced the serial while leaving name_map empty →
-        // serial drift + clone-walk Variable resolve to NULL_NODE for the
-        // unmapped binding.
+        // Issue #2811: ceiling before a gensym serial (#2243 / #2804).
         const auto gensym_cap = effective_max_gensym_map_size(session);
         if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
             note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
@@ -2565,13 +2565,14 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // Serial-safe deny: hyg_ctr untouched → no drift vs name_map.size().
             g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
             bump_fiber_hygiene_on_violation(aura_fiber_current_id());
-            // Issue #3183: roll back target FlatAST partial additions via
-            // expand_ckpt.try_restore() (mirror steal / pass-limit L2253 / L2768 / L2789).
+            // Issue #3183: roll back partial target nodes.
             expand_ckpt.try_restore();
             return aura::ast::NULL_NODE;
         }
         // Only consume a serial after the ceiling check passes.
-        auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
+        // Issue #4419: process serial, then the per-call hyg_ctr suffix.
+        auto fresh = std::string("__") + name + "_" + std::to_string(bind_gensym_serial()) + "_" +
+                     std::to_string(hyg_ctr++);
         (*name_map)[name] = fresh;
         return target_pool.intern(fresh);
     };
@@ -2814,8 +2815,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             expand_ckpt.try_restore();
             return aura::ast::NULL_NODE;
         }
-        // Gensym! Create fresh name and track in name_map
-        auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
+        // Issue #4419: same process serial as rename_binding_pre, after the
+        // ceiling return so a deny does not fetch_add (#2811).
+        auto fresh = std::string("__") + name + "_" + std::to_string(bind_gensym_serial()) + "_" +
+                     std::to_string(hyg_ctr++);
         (*name_map)[name] = fresh;
         return target_pool.intern(fresh);
     };
