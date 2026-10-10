@@ -326,6 +326,107 @@ static void ac7_children_columnar_single_flight() {
 
 } // namespace
 
+#include "core/cpp26_contract_stats.h"
+
+import aura.core.arena;
+
+namespace {
+
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+
+// Issue #4427: assemble / type-column / small-alloc probes share the
+// 1/256 thread-local sampler. A fresh thread's first 255 calls must
+// not touch the process-wide counter; call 256 bumps it once.
+static void ac8_sampled_hotpath_hits() {
+    std::println("\n--- #4427: sampled hotpath hits on get, type, alloc ---");
+    FlatAST flat;
+    const auto id = flat.add_node(NodeTag::LiteralInt);
+    flat.set_type(id, 7);
+    CHECK(flat.type_id(id) == 7, "#4427: type column live");
+
+    auto hits = [] {
+        return aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+    };
+
+    std::uint64_t d256 = 0;
+    bool ok256 = false;
+    std::thread t256([&] {
+        const auto h0 = hits();
+        ok256 = true;
+        for (int i = 0; i < 256; ++i) {
+            if (flat.get(id).tag != NodeTag::LiteralInt)
+                ok256 = false;
+        }
+        d256 = hits() - h0;
+    });
+    t256.join();
+    CHECK(ok256, "#4427: 256 get() calls read the node");
+    CHECK(d256 == 1, "#4427: 256 get() calls bump hotpath hits once");
+
+    constexpr int kThreads = 4;
+    constexpr int kPerThread = 128;
+    std::atomic<int> bad{0};
+    const auto hmt = hits();
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&] {
+            for (int i = 0; i < kPerThread; ++i) {
+                if (flat.get(id).tag != NodeTag::LiteralInt)
+                    bad.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto& th : threads)
+        th.join();
+    const auto dmt = hits() - hmt;
+    CHECK(bad.load() == 0, "#4427: multi-thread get() stays coherent");
+    // 4 * 128 = 512 calls. Each thread stays under the sample period, so
+    // the counter must not scale with call count (pre-#4427 delta was 512).
+    CHECK(dmt == 0, "#4427: multi-thread get() does not scale hotpath hits");
+
+    std::uint64_t dtype = 0;
+    std::thread ttype([&] {
+        const auto h0 = hits();
+        for (int i = 0; i < 64; ++i)
+            (void)flat.type_id(id);
+        for (int i = 0; i < 64; ++i)
+            flat.set_type(id, static_cast<std::uint32_t>(i + 1));
+        dtype = hits() - h0;
+    });
+    ttype.join();
+    CHECK(flat.type_id(id) == 64, "#4427: set_type still stores");
+    CHECK(dtype == 0, "#4427: 64 type_id + 64 set_type stay under the sample");
+
+    // compact() and the pool's enforce-mode RECORD stay unsampled (not
+    // #4427 sites). Those per-alloc bumps cancel when a 256-call window
+    // is compared with four times a 64-call window; the leftover +1 is
+    // the sampled alloc probe.
+    auto alloc_delta = [&](int n) {
+        std::uint64_t d = 0;
+        int ok = 0;
+        std::thread th([&] {
+            aura::ast::ASTArena arena;
+            const auto h0 = hits();
+            for (int i = 0; i < n; ++i) {
+                if (arena.try_allocate(16) != nullptr)
+                    ++ok;
+            }
+            d = hits() - h0;
+        });
+        th.join();
+        return std::pair{d, ok};
+    };
+    const auto a64 = alloc_delta(64);
+    const auto a256 = alloc_delta(256);
+    CHECK(a64.second == 64 && a256.second == 256, "#4427: small-pool allocs succeed");
+    CHECK(a256.first == 4 * a64.first + 1,
+          std::format("#4427: alloc probe is sampled (d64={} d256={})", a64.first, a256.first));
+}
+
+} // namespace
+
 int run_test_flatast_soa_read_guard() {
     std::println("=== Issue #2488: FlatAST SoAReadGuard / get_soa_safe ===");
     ac1_public_api();
@@ -335,6 +436,7 @@ int run_test_flatast_soa_read_guard() {
     ac5_gate();
     ac6_lagging_column_fail_closed();
     ac7_children_columnar_single_flight();
+    ac8_sampled_hotpath_hits();
     std::println("\n=== #2488 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

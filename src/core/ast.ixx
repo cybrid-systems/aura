@@ -4602,10 +4602,10 @@ public:
                 .marker = SyntaxMarker::User,
             };
         }
-        // Issue #1620: hot-path SoA column access invariant probe
-        // (zero cost under release observe; Agents track hits). Reached
-        // only when every primary column above covers id.
-        aura::core::cpp26::record_hotpath_invariant_hit();
+        // Issue #1620 / #4427: SoA assemble probe is a 1/256 thread-local
+        // sample. A per-hit RMW ping-pongs one cache line across fibers.
+        // Reached only when every primary column above covers id.
+        aura::core::cpp26::record_hotpath_invariant_hit_sampled();
         return NodeView{
             .id = id,
             .tag = tag_[id],
@@ -9772,7 +9772,8 @@ public:
     // records invariant hit when column is live (mutation reval path).
     std::uint32_t type_id(NodeId id) const {
         if (id < type_id_.size()) {
-            aura::core::cpp26::record_hotpath_invariant_hit();
+            // Issue #4427: type-column read is sampled (period 256).
+            aura::core::cpp26::record_hotpath_invariant_hit_sampled();
             contract_assert(id < tag_.size() || tag_.empty());
             return type_id_[id];
         }
@@ -9781,8 +9782,8 @@ public:
 
     void set_type(NodeId id, std::uint32_t tid) {
         if (id < type_id_.size()) {
-            // Issue #1620: type stamp hot path (typed mutation reval).
-            aura::core::cpp26::record_hotpath_invariant_hit();
+            // Issue #1620 / #4427: type stamp probe is sampled (period 256).
+            aura::core::cpp26::record_hotpath_invariant_hit_sampled();
             contract_assert(id < tag_.size());
             type_id_[id] = tid;
         }
