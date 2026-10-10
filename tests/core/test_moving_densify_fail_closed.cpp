@@ -8061,6 +8061,379 @@ static void ac4415_source_cite() {
     CHECK(read_file("docs/design/4415-freelist.md").empty(), "4415: no docs/design/4415-*");
 }
 
+// Issue #4416: after the #4396 refuse returns, c-struct must not memcpy a
+// local opaque base. Production notes that address on the #3210 canary
+// until memcpy returns, or fail-closes when the note cannot be taken.
+std::atomic<int> g_ac4416_stage{0};
+std::atomic<int> g_ac4416_saw_waiter{0};
+std::atomic<const void*> g_ac4416_eval{nullptr};
+
+void ac4416_before_recycle_hook() noexcept {
+    g_ac4416_stage.store(1, std::memory_order_release);
+    for (int i = 0; i < 8000000; ++i) {
+        if (aura::ast::g_moving_canary_lock_waiters.load(std::memory_order_acquire) > 0) {
+            g_ac4416_saw_waiter.store(1, std::memory_order_release);
+            break;
+        }
+        std::this_thread::yield();
+    }
+    for (int i = 0; i < 64; ++i)
+        std::this_thread::yield();
+    if (g_ac4416_saw_waiter.load(std::memory_order_acquire) != 0) {
+        if (const void* id = g_ac4416_eval.load(std::memory_order_acquire))
+            aura::core::densify_consistency::arm_densify_in_flight(id);
+    }
+}
+
+struct Ac4416HookGuard {
+    ~Ac4416HookGuard() {
+        aura::ast::g_moving_canary_before_recycle_hook.store(nullptr, std::memory_order_release);
+        aura::ast::g_moving_canary_lock_waiters.store(0, std::memory_order_relaxed);
+        g_ac4416_eval.store(nullptr, std::memory_order_release);
+    }
+};
+
+static bool ac4416_install_ffi(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    auto inst = ev.ensure_std_host_prims("std/ffi");
+    if (aura::compiler::types::is_error(inst)) {
+        ev.set_sandbox_mode(false);
+        inst = ev.ensure_std_host_prims("std/ffi");
+    }
+    return !aura::compiler::types::is_error(inst);
+}
+
+static void ac4416_green_notes_then_releases() {
+    std::println("\n--- #4416: production c-struct notes across memcpy, then drops the canary ---");
+    Ac4396Face face;
+    face.latch_production();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    CompilerService cs;
+    CHECK(ac4416_install_ffi(cs), "4416: std/ffi installed");
+    if (!ac4416_install_ffi(cs))
+        return;
+    CHECK(aura::compiler::typed_audit::production_defaults_active(), "4416: production latched");
+    CHECK(aura::ast::moving_compact_enabled() != 0, "4416: canary note is enabled");
+    auto& ev = cs.evaluator();
+    auto alloc = ev.primitives().lookup("c-alloc");
+    auto set = ev.primitives().lookup("c-struct-set!");
+    auto ref = ev.primitives().lookup("c-struct-ref");
+    CHECK(alloc && set && ref, "4416: c-alloc / set / ref installed");
+    if (!alloc || !set || !ref)
+        return;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_opaque;
+    using aura::compiler::types::make_int;
+    auto block = (*alloc)({make_int(16)});
+    CHECK(is_opaque(block), "4416: c-alloc returned an opaque");
+    if (!is_opaque(block))
+        return;
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    (void)(*set)({block, make_int(0), make_int(42)});
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    auto got = (*ref)({block, make_int(0), make_int(0)});
+    CHECK(is_int(got) && as_int(got) == 42, "4416: green production ref is 42");
+    const auto noted1 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    CHECK(noted1 >= noted0 + 2, "4416: set and ref each noted the loaded base");
+    std::vector<void*> live;
+    CHECK(aura::ast::snapshot_temporary_moving_live_ptrs(live) == 0,
+          "4416: canary is unnoted before the primitive returns");
+    aura::core::lifetime::g_general_object_pin_required_pref.store(0, std::memory_order_release);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    ASTArena arena(64 * 1024);
+    auto* a = arena.create<Pod16>(1, 2, 3, 4);
+    auto* b = arena.create<Pod16>(5, 6, 7, 8);
+    CHECK(a && b, "4416: pods for the post-release compact");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "4416: Moving still relocates after c-struct returns");
+}
+
+static void ac4416_soft_does_not_note() {
+    std::println("\n--- #4416: Soft/Off c-struct does not take the canary ---");
+    Ac4396Face face;
+    face.latch_production();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    CompilerService cs;
+    CHECK(ac4416_install_ffi(cs), "4416: std/ffi installed for Soft");
+    if (!ac4416_install_ffi(cs))
+        return;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+          "4416: Soft drops production");
+    CHECK(aura::ast::moving_compact_enabled() != 0, "4416: Moving stays on for the Soft face");
+    auto& ev = cs.evaluator();
+    auto alloc = ev.primitives().lookup("c-alloc");
+    auto set = ev.primitives().lookup("c-struct-set!");
+    auto ref = ev.primitives().lookup("c-struct-ref");
+    if (!alloc || !set || !ref) {
+        CHECK(false, "4416: Soft prims installed");
+        return;
+    }
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::make_int;
+    auto block = (*alloc)({make_int(16)});
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    (void)(*set)({block, make_int(0), make_int(42)});
+    auto got = (*ref)({block, make_int(0), make_int(0)});
+    CHECK(is_int(got) && as_int(got) == 42, "4416: Soft ref still returns 42");
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == noted0,
+          "4416: Soft set/ref does not note");
+}
+
+static void ac4416_sticky_without_note_does_not_memcpy() {
+    std::println("\n--- #4416: sticky Moving cannot note, so c-struct does not memcpy ---");
+    Ac4396Face face;
+    face.latch_production();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    CompilerService cs;
+    CHECK(ac4416_install_ffi(cs), "4416: std/ffi installed for sticky");
+    if (!ac4416_install_ffi(cs))
+        return;
+    auto& ev = cs.evaluator();
+    auto alloc = ev.primitives().lookup("c-alloc");
+    auto set = ev.primitives().lookup("c-struct-set!");
+    auto ref = ev.primitives().lookup("c-struct-ref");
+    if (!alloc || !set || !ref) {
+        CHECK(false, "4416: sticky prims installed");
+        return;
+    }
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::make_int;
+    auto block = (*alloc)({make_int(16)});
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    (void)(*set)({block, make_int(0), make_int(42)});
+    aura::ast::arm_moving_incomplete_remap_sticky();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    CHECK(aura::ast::moving_compact_enabled() == 0, "4416: sticky hides moving_compact_enabled");
+    CHECK(aura::ast::moving_compact_feature_enabled() != 0, "4416: feature flag stays on");
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    (void)(*set)({block, make_int(0), make_int(99)});
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == noted0,
+          "4416: sticky set does not note");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    auto got = (*ref)({block, make_int(0), make_int(0)});
+    CHECK(is_int(got) && as_int(got) == 42, "4416: sticky set did not memcpy");
+}
+
+static void ac4416_bind_during_recycle_does_not_memcpy(bool as_ref) {
+    std::println("{}", as_ref ? "\n--- #4416: c-struct-ref blocked in bind does not read the "
+                                "recycled base ---"
+                              : "\n--- #4416: c-struct-set! blocked in bind does not memcpy the "
+                                "recycled base ---");
+    Ac4396Face face;
+    face.latch_production();
+    const int prev_arm =
+        aura::ast::g_production_auto_arm_moving_pref.load(std::memory_order_relaxed);
+    const auto prev_value_only =
+        aura::ast::g_intermediate_create_value_only_total.load(std::memory_order_relaxed);
+    aura::ast::g_production_auto_arm_moving_pref.store(1, std::memory_order_release);
+    aura::ast::g_intermediate_create_value_only_total.store(0, std::memory_order_relaxed);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::core::lifetime::g_general_object_pin_required_pref.store(1, std::memory_order_release);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::ast::reset_moving_freelist_exclusion_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    Ac4416HookGuard hook_guard;
+    CompilerService cs;
+    if (!ac4416_install_ffi(cs)) {
+        CHECK(false, "4416: std/ffi installed for the recycle race");
+        aura::ast::g_production_auto_arm_moving_pref.store(prev_arm, std::memory_order_release);
+        aura::ast::g_intermediate_create_value_only_total.store(prev_value_only,
+                                                                std::memory_order_relaxed);
+        return;
+    }
+    auto& ev = cs.evaluator();
+    struct ClearFlight {
+        const void* id;
+        ~ClearFlight() { aura::core::densify_consistency::clear_densify_in_flight(id); }
+    } clear_flight{&ev};
+    aura::core::densify_consistency::clear_densify_in_flight(&ev);
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(&ev),
+          "4416: evaluator is not in-flight before the race");
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "4416: production stays latched for the race");
+    auto looked = ev.primitives().lookup(as_ref ? "c-struct-ref" : "c-struct-set!");
+    if (!looked) {
+        CHECK(false, "4416: race prim installed");
+        aura::ast::g_production_auto_arm_moving_pref.store(prev_arm, std::memory_order_release);
+        aura::ast::g_intermediate_create_value_only_total.store(prev_value_only,
+                                                                std::memory_order_relaxed);
+        return;
+    }
+    aura::compiler::PrimFn prim = *looked;
+    ASTArena arena(64 * 1024);
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    void* s2 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 11, 22, 33, 44);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 1, 2, 3, 4);
+    auto* p2 = arena.create_with_cover<Pod16>(&s2, nullptr, 5, 6, 7, 8);
+    CHECK(p0 && p1 && p2, "4416: covered pods");
+    if (!p0) {
+        aura::ast::g_production_auto_arm_moving_pref.store(prev_arm, std::memory_order_release);
+        aura::ast::g_intermediate_create_value_only_total.store(prev_value_only,
+                                                                std::memory_order_relaxed);
+        return;
+    }
+    const auto oi = static_cast<std::uint64_t>(ev.copy_opaque_heap_for_test().size());
+    ev.push_opaque_heap_for_test(p0);
+    aura::ast::g_intermediate_create_value_only_total.store(0, std::memory_order_relaxed);
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::clear_densify_in_flight(&ev);
+    g_ac4416_stage.store(0, std::memory_order_relaxed);
+    g_ac4416_saw_waiter.store(0, std::memory_order_relaxed);
+    g_ac4416_eval.store(&ev, std::memory_order_release);
+    std::atomic<std::int64_t> ref_got{-1};
+    const auto noted0 =
+        aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read();
+    std::thread peer([&] {
+        for (int i = 0; i < 8000000 && g_ac4416_stage.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::yield();
+        if (g_ac4416_stage.load(std::memory_order_acquire) != 1) {
+            g_ac4416_stage.store(9, std::memory_order_release);
+            return;
+        }
+        using aura::compiler::types::as_int;
+        using aura::compiler::types::is_int;
+        using aura::compiler::types::make_int;
+        using aura::compiler::types::make_opaque;
+        if (as_ref) {
+            auto got = prim({make_opaque(oi), make_int(0), make_int(0)});
+            ref_got.store(is_int(got) ? as_int(got) : static_cast<std::int64_t>(-2),
+                          std::memory_order_release);
+        } else {
+            (void)prim({make_opaque(oi), make_int(0), make_int(0x4416)});
+        }
+        g_ac4416_stage.store(2, std::memory_order_release);
+    });
+    aura::ast::g_moving_canary_before_recycle_hook.store(&ac4416_before_recycle_hook,
+                                                         std::memory_order_release);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (g_ac4416_stage.load(std::memory_order_acquire) == 0)
+        g_ac4416_stage.store(3, std::memory_order_release);
+    peer.join();
+    aura::ast::g_moving_canary_before_recycle_hook.store(nullptr, std::memory_order_release);
+    aura::core::densify_consistency::clear_densify_in_flight(&ev);
+    CHECK(g_ac4416_saw_waiter.load(std::memory_order_acquire) == 1,
+          "4416: c-struct reached bind while Moving held the canary mutex");
+    CHECK(g_ac4416_stage.load(std::memory_order_acquire) == 2, "4416: peer finished the primitive");
+    CHECK(r.objects_moved > 0, "4416: Moving recycled while c-struct was inside bind");
+    void* neu = arena.resolve_object_remap(p0);
+    CHECK(neu != nullptr && neu != p0, "4416: pod moved off the recycled address");
+    if (neu != nullptr && neu != p0) {
+        auto* pod = static_cast<Pod16*>(neu);
+        CHECK(pod->a == 11 && pod->b == 22, "4416: relocated payload was not overwritten");
+        if (!as_ref) {
+            std::int64_t old_word = 0;
+            std::memcpy(&old_word, p0, sizeof(old_word));
+            CHECK(old_word != static_cast<std::int64_t>(0x4416),
+                  "4416: recycled slot was not the memcpy destination");
+        }
+    }
+    if (as_ref)
+        CHECK(ref_got.load(std::memory_order_acquire) == 0,
+              "4416: in-flight after bind fail-closes ref to 0");
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() > noted0,
+          "4416: bind noted the base before the post-bind refuse");
+    std::vector<void*> live;
+    CHECK(aura::ast::snapshot_temporary_moving_live_ptrs(live) == 0,
+          "4416: race canary is unnoted after the primitive returns");
+    aura::ast::g_production_auto_arm_moving_pref.store(prev_arm, std::memory_order_release);
+    aura::ast::g_intermediate_create_value_only_total.store(prev_value_only,
+                                                            std::memory_order_relaxed);
+    aura::ast::reset_moving_freelist_exclusion_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac4416_source_cite() {
+    std::println("\n--- #4416: source cite, no new query, green predicate untouched ---");
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto health = read_file("src/core/moving_densify_health.hh");
+    const auto hold_cmt = ffi.find("Issue #4416: the #4396 refuse");
+    const auto hold = ffi.find("bool production_c_struct_hold_base");
+    const auto hold_end = ffi.find("void FFIRuntime::register_primitives", hold);
+    CHECK(hold_cmt != std::string::npos && hold != std::string::npos && hold_cmt < hold,
+          "4416: hold cites the issue");
+    CHECK(hold != std::string::npos && hold_end != std::string::npos && hold < hold_end,
+          "4416: hold helper is bounded");
+    if (hold != std::string::npos && hold_end != std::string::npos && hold < hold_end) {
+        const auto body = ffi.substr(hold, hold_end - hold);
+        CHECK(body.find("bind_temporary_moving_live_ptr_any_arena") != std::string::npos,
+              "4416: hold binds the loaded base");
+        CHECK(body.find("own_noted") != std::string::npos, "4416: hold adopts the canary note");
+        CHECK(body.find("moving_compact_feature_enabled") != std::string::npos,
+              "4416: unnoted Moving feature fail-closes");
+        const auto lock_at = body.find("std::lock_guard<std::recursive_mutex>");
+        const auto bind_at = body.find("bind_temporary_moving_live_ptr_any_arena");
+        const auto own_at = body.find("own_noted");
+        CHECK(lock_at != std::string::npos && bind_at != std::string::npos && lock_at < bind_at,
+              "4416: alloc lock is dropped before the canary bind");
+        CHECK(own_at != std::string::npos && bind_at < own_at, "4416: own_noted follows bind");
+        const auto refuse_after = body.find("production_c_struct_densify_old_refuse", own_at);
+        const auto store_at = body.find("base_out =", own_at);
+        CHECK(refuse_after != std::string::npos && store_at != std::string::npos &&
+                  refuse_after < store_at,
+              "4416: post-bind refuse runs before the memcpy address is published");
+        CHECK(body.find("arm_observe(") == std::string::npos, "4416: hold does not arm_observe");
+        CHECK(body.find("note_ffi_opaque_create_exempt") == std::string::npos,
+              "4416: creation-point observe is not this cover");
+    }
+    const auto set_at = ffi.find("add(\"c-struct-set!\"");
+    const auto ref_at = ffi.find("add(\"c-struct-ref\"");
+    const auto ref_end = ffi.find("add(\"", ref_at + 8);
+    CHECK(set_at != std::string::npos && ref_at != std::string::npos && set_at < ref_at,
+          "4416: both c-struct prims present");
+    if (set_at != std::string::npos && ref_at != std::string::npos) {
+        const auto set_body = ffi.substr(set_at, ref_at - set_at);
+        const auto ref_body =
+            ffi.substr(ref_at, ref_end == std::string::npos ? 2500 : ref_end - ref_at);
+        for (const auto* body : {&set_body, &ref_body}) {
+            const auto hold_call = body->find("production_c_struct_hold_base");
+            const auto canary = body->find("TemporaryMovingLivePtrCanary");
+            const auto copy = body->find("std::memcpy");
+            const auto early = body->find("production_c_struct_densify_old_refuse");
+            CHECK(body->find("Issue #4416") != std::string::npos,
+                  "4416: prim body cites the issue");
+            CHECK(body->find("Issue #4396") != std::string::npos, "4416: #4396 refuse text stays");
+            CHECK(early != std::string::npos && copy != std::string::npos && early < copy,
+                  "4416: #4396 refuse still precedes memcpy");
+            CHECK(hold_call != std::string::npos && canary != std::string::npos &&
+                      copy != std::string::npos && canary < hold_call && hold_call < copy,
+                  "4416: canary hold wraps the memcpy");
+        }
+    }
+    const auto green = health.find("window_would_allow_mutate");
+    CHECK(green != std::string::npos, "4416: moving-window-green predicate still present");
+    if (green != std::string::npos) {
+        const auto pred = health.substr(green, 600);
+        CHECK(pred.find("4416") == std::string::npos,
+              "4416: moving-window-green predicate was not rewritten");
+    }
+    CHECK(ffi.find("query:4416") == std::string::npos, "4416: no new query key");
+    CHECK(ffi.find("g_4416_") == std::string::npos, "4416: no g_4416_ symbol");
+    CHECK(read_file("tests/core/test_issue_4416.cpp").empty(),
+          "4416: no tests/core/test_issue_4416.cpp");
+    CHECK(read_file("docs/design/4416-c-struct-canary.md").empty(), "4416: no docs/design/4416-*");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -8943,6 +9316,14 @@ int run_test_moving_densify_fail_closed() {
     ac4415_missed_lock_does_not_recycle();
     ac4415_soft_off_takes_no_lock();
     ac4415_source_cite();
+
+    std::println("\n=== Issue #4416: c-struct holds its base across Moving memcpy ===");
+    ac4416_green_notes_then_releases();
+    ac4416_soft_does_not_note();
+    ac4416_sticky_without_note_does_not_memcpy();
+    ac4416_bind_during_recycle_does_not_memcpy(false);
+    ac4416_bind_during_recycle_does_not_memcpy(true);
+    ac4416_source_cite();
 
     std::println("\n=== Issue #4396: c-struct refuses densify-old during Moving recycle ===");
     ac4396_c_struct_refuses_inflight_and_red_window();
