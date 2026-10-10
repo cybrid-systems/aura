@@ -61,6 +61,54 @@ struct FfiRenderHotpathGuard {
         g_last_root_remap_fail_total.load(std::memory_order_relaxed));
 }
 
+// Issue #4416: the #4396 refuse is a check-then-act. After it returns, the
+// opaque_heap_ element is only a local. Production copies that element
+// under alloc_storage_lock_ (the mutex densify rewrite holds) and drops
+// the lock before any #3210 canary acquire — live_compact holds the canary
+// mutex and then takes alloc. bind_temporary_moving_live_ptr_any_arena
+// either notes the address so Moving entry soft-gates, or blocks until
+// recycle publishes the chased address and notes that. own_noted keeps the
+// note until the caller finishes memcpy and interior registration.
+// A refuse after the bind, or a Moving feature that could not note
+// (sticky densify-off: bind is a no-op, #3123 can still recycle),
+// fail-closes: do not memcpy. Creation-point observe / arm_observe is not
+// this cover. Soft/Off: production_defaults_active is false — unlocked
+// load, no canary, no alloc lock.
+[[nodiscard]] bool production_c_struct_hold_base(std::vector<void*>* oh, std::uint64_t oi,
+                                                 std::recursive_mutex* alloc_mu,
+                                                 const void* eval_id, char*& base_out,
+                                                 aura::ast::TemporaryMovingLivePtrCanary& canary) {
+    if (!aura::compiler::typed_audit::production_defaults_active()) {
+        if (oi >= oh->size() || !(*oh)[oi])
+            return false;
+        base_out = static_cast<char*>((*oh)[oi]);
+        return true;
+    }
+    void* raw = nullptr;
+    if (alloc_mu != nullptr) {
+        std::lock_guard<std::recursive_mutex> alloc(*alloc_mu);
+        if (oi >= oh->size() || !(*oh)[oi])
+            return false;
+        raw = (*oh)[oi];
+    } else {
+        if (oi >= oh->size() || !(*oh)[oi])
+            return false;
+        raw = (*oh)[oi];
+    }
+    if (production_c_struct_densify_old_refuse(eval_id))
+        return false;
+    bool noted = false;
+    void* bound = aura::ast::bind_temporary_moving_live_ptr_any_arena(raw, &noted);
+    if (noted)
+        canary.own_noted(bound);
+    else if (aura::ast::moving_compact_feature_enabled() != 0)
+        return false;
+    if (production_c_struct_densify_old_refuse(eval_id))
+        return false;
+    base_out = static_cast<char*>(bound);
+    return true;
+}
+
 void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
                                      std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
@@ -261,8 +309,6 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
             return make_void();
         auto oi = types::as_opaque_idx(a[0]);
-        if (oi >= oh->size() || !(*oh)[oi])
-            return make_void();
         if (types::as_int(a[1]) < 0)
             return make_void();
         // Issue #4396: production_defaults_active and
@@ -271,7 +317,14 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (production_c_struct_densify_old_refuse(densify_eval_id_))
             return make_void();
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
-        auto* base = static_cast<char*>((*oh)[oi]);
+        // Issue #4416: copy (*oh)[oi] under opaque_alloc_mu_, drop it, then
+        // bind_temporary_moving_live_ptr_any_arena + own_noted across memcpy.
+        // A later production_c_struct_densify_old_refuse fail-closes.
+        aura::ast::TemporaryMovingLivePtrCanary base_canary;
+        char* base = nullptr;
+        if (!production_c_struct_hold_base(oh, oi, opaque_alloc_mu_, densify_eval_id_, base,
+                                           base_canary))
+            return make_void();
         auto& val = a[2];
         // Issue #980: bounds check against c-alloc tracked size.
         auto need = [&](std::size_t nbytes) -> bool {
@@ -344,8 +397,6 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) || !types::is_int(a[2]))
             return make_int(0);
         auto oi = types::as_opaque_idx(a[0]);
-        if (oi >= oh->size() || !(*oh)[oi])
-            return make_int(0);
         if (types::as_int(a[1]) < 0)
             return make_int(0);
         // Issue #4396: production_defaults_active and
@@ -355,9 +406,16 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             return make_int(0);
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto type = static_cast<int>(types::as_int(a[2]));
-        auto* base = static_cast<const char*>((*oh)[oi]);
+        // Issue #4416: copy (*oh)[oi] under opaque_alloc_mu_, drop it, then
+        // bind_temporary_moving_live_ptr_any_arena + own_noted across memcpy.
+        // A later production_c_struct_densify_old_refuse fail-closes.
+        aura::ast::TemporaryMovingLivePtrCanary base_canary;
+        char* base = nullptr;
+        if (!production_c_struct_hold_base(oh, oi, opaque_alloc_mu_, densify_eval_id_, base,
+                                           base_canary))
+            return make_int(0);
         auto need = [&](std::size_t nbytes) -> bool {
-            auto it = opaque_sizes_.find(const_cast<char*>(base));
+            auto it = opaque_sizes_.find(base);
             if (it == opaque_sizes_.end())
                 return true;
             return offset <= it->second && nbytes <= it->second - offset;
