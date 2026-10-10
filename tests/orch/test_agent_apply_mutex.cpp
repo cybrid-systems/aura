@@ -880,6 +880,190 @@ int run_test_agent_apply_mutex() {
         reset_for_test();
     }
 
+    // Issue #4424: parallel-intend must not replace a live g_scheduler.
+    // The caller fiber submits to its owner. A local Scheduler::run is
+    // only for the no-scheduler case and restores nullptr on exit.
+    {
+        std::println("\n--- #4424: parallel-intend keeps the live scheduler ---");
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto sched_src = read_file("src/serve/scheduler.cpp");
+        CHECK(agent_src.find("Issue #4424") != std::string::npos, "4424: prim cites the issue");
+        CHECK(agent_src.find("owner_sched()") != std::string::npos,
+              "4424: prim uses the caller fiber's owner scheduler");
+        CHECK(sched_src.find("Issue #4424") != std::string::npos, "4424: Scheduler::run cites");
+        CHECK(sched_src.find("installed_g_scheduler") != std::string::npos,
+              "4424: run installs g_scheduler only when null");
+        CHECK(sched_src.find("g_scheduler = nullptr") != std::string::npos,
+              "4424: the installing run still restores null");
+        CHECK(agent_src.find("schema-4424") == std::string::npos, "4424: no new query key");
+
+        apply_production_audit_defaults();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        constexpr const char* kBatch = R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 11 22)
+                                    :collect-errors #t
+                                    :timeout-ms 8000)))
+              (hash-ref h "ok-count")))";
+        auto ok_count_of = [&](CompilerService& svc) -> int {
+            auto r = svc.eval(kBatch);
+            if (!r || !is_int(*r))
+                return -1;
+            return static_cast<int>(as_int(*r));
+        };
+
+        // orch_sched from earlier spawn-agent may still be in run(). Wait
+        // for its idle-stop so this block owns the only scheduler.
+        for (int i = 0; i < 50 && aura::serve::g_scheduler != nullptr; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        struct OwnedRun {
+            Scheduler sched;
+            std::thread io;
+            explicit OwnedRun(int n)
+                : sched(n) {}
+            void start() {
+                io = std::thread([this] { sched.run(); });
+            }
+            ~OwnedRun() {
+                sched.stop();
+                if (io.joinable())
+                    io.join();
+            }
+            OwnedRun(const OwnedRun&) = delete;
+            OwnedRun& operator=(const OwnedRun&) = delete;
+        };
+
+        const bool already = aura::serve::g_scheduler != nullptr;
+        OwnedRun owned(2);
+        Scheduler* live = aura::serve::g_scheduler;
+        if (!already) {
+            owned.start();
+            live = &owned.sched;
+            for (int i = 0; i < 100 && aura::serve::g_scheduler != live; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(live != nullptr && aura::serve::g_scheduler == live,
+              "4424: one scheduler is published");
+
+        if (live != nullptr && aura::serve::g_scheduler == live) {
+            Scheduler nested(1);
+            std::thread nested_io([&nested] { nested.run(); });
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            CHECK(aura::serve::g_scheduler == live,
+                  "4424: nested Scheduler::run does not replace g_scheduler");
+            nested.stop();
+            nested_io.join();
+            CHECK(aura::serve::g_scheduler == live, "4424: nested exit leaves the live pointer");
+
+            std::atomic<int> phase{0};
+            std::atomic<int> fiber_ok{-1};
+            std::atomic<int> owner_ok{0};
+            std::atomic<int> still_live{0};
+            // Packed: ok + 100*err + 1000*status + 10000*join.
+            // status: 1 ok, 2 partial, 3 timeout, 4 fail-fast, 5 invalid,
+            // 6 quota, 7 other. join: 1 ok, 2 invalid, 3 timeout,
+            // 4 reclaimed, 5 cancelled, 6 other. -3 means the result
+            // was not a hash. fiber_note is the eval diagnostic when
+            // the call itself fails (written before phase 2).
+            std::string fiber_note;
+            constexpr const char* kFiberBatch = R"(
+                (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                        :max-concurrency 2
+                                        :region-keys (vector 41 42)
+                                        :collect-errors #t
+                                        :timeout-ms 8000)))
+                  (cond
+                    ((hash? h)
+                     (+ (hash-ref h "ok-count")
+                        (* 100 (hash-ref h "err-count"))
+                        (* 1000 (cond
+                                 ((string=? (hash-ref h "status") "ok") 1)
+                                 ((string=? (hash-ref h "status") "partial") 2)
+                                 ((string=? (hash-ref h "status") "timeout") 3)
+                                 ((string=? (hash-ref h "status") "fail-fast") 4)
+                                 ((string=? (hash-ref h "status") "invalid") 5)
+                                 ((string=? (hash-ref h "status") "quota-exceeded") 6)
+                                 (else 7)))
+                        (* 10000 (cond
+                                  ((string=? (hash-ref h "join-status") "ok") 1)
+                                  ((string=? (hash-ref h "join-status") "invalid") 2)
+                                  ((string=? (hash-ref h "join-status") "timeout") 3)
+                                  ((string=? (hash-ref h "join-status") "reclaimed") 4)
+                                  ((string=? (hash-ref h "join-status") "cancelled") 5)
+                                  (else 6)))))
+                    (else -3))))";
+            Fiber* agent = live->spawn([&] {
+                auto* cur = aura::serve::g_current_fiber;
+                owner_ok.store(cur != nullptr && cur->owner_sched() == live ? 1 : 0,
+                               std::memory_order_relaxed);
+                phase.store(1, std::memory_order_release);
+                auto r = cs.eval(kFiberBatch);
+                int packed = -1;
+                if (!r) {
+                    packed = -2;
+                    fiber_note = r.error().message;
+                } else if (is_int(*r))
+                    packed = static_cast<int>(as_int(*r));
+                else if (aura::compiler::types::is_error(*r))
+                    packed = -4;
+                fiber_ok.store(packed, std::memory_order_relaxed);
+                still_live.store(aura::serve::g_scheduler == live ? 1 : 0,
+                                 std::memory_order_relaxed);
+                phase.store(2, std::memory_order_release);
+            });
+            CHECK(agent != nullptr, "4424: spawn on the live scheduler");
+            std::atomic<int> swapped{0};
+            std::thread sampler([&] {
+                while (phase.load(std::memory_order_acquire) == 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                while (phase.load(std::memory_order_acquire) == 1) {
+                    if (aura::serve::g_scheduler != live)
+                        swapped.store(1, std::memory_order_relaxed);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            });
+            const auto jr = Fiber::join(agent, std::optional<std::uint64_t>{15000});
+            if (phase.load(std::memory_order_acquire) != 2)
+                phase.store(3, std::memory_order_release);
+            sampler.join();
+            if (jr.status != JoinStatus::Ok)
+                std::println("  4424 join status {}", static_cast<int>(jr.status));
+            const int packed = fiber_ok.load();
+            std::println("  4424 in-fiber packed={} (ok={} err={} status={} join={}) {}", packed,
+                         packed >= 0 ? packed % 100 : packed,
+                         packed >= 0 ? (packed / 100) % 10 : -1,
+                         packed >= 0 ? (packed / 1000) % 10 : -1, packed >= 0 ? packed / 10000 : -1,
+                         fiber_note);
+            CHECK(jr.status == JoinStatus::Ok, "4424: agent fiber finished");
+            CHECK(owner_ok.load() == 1, "4424: fiber owner is the live scheduler");
+            CHECK(packed >= 0 && packed % 100 == 2 && (packed / 1000) % 10 == 1 &&
+                      packed / 10000 == 1,
+                  "4424: in-fiber parallel-intend ok-count");
+            CHECK(still_live.load() == 1, "4424: g_scheduler unchanged after the batch");
+            CHECK(swapped.load() == 0, "4424: batch did not publish another scheduler");
+            CHECK(aura::serve::g_scheduler == live, "4424: live scheduler still published");
+            CHECK(ok_count_of(cs) == 2, "4424: host batch uses the live scheduler");
+            CHECK(aura::serve::g_scheduler == live, "4424: host batch does not clear g_scheduler");
+        }
+
+        if (!already) {
+            owned.sched.stop();
+            if (owned.io.joinable())
+                owned.io.join();
+            CHECK(aura::serve::g_scheduler == nullptr, "4424: owning run restores null");
+            CHECK(ok_count_of(cs) == 2, "4424: host batch with no scheduler still runs");
+            CHECK(aura::serve::g_scheduler == nullptr,
+                  "4424: local run restores null after the host batch");
+        }
+        reset_for_test();
+    }
+
     std::println("\n=== #2158/#3728 agent apply per-eval mutex: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;

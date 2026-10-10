@@ -153,6 +153,9 @@ public:
 
     // ── Worker management ───────────────────────────
     int num_workers() const { return num_workers_; }
+    // Issue #4424: worker index whose OS thread is running the caller,
+    // or -1 when the caller is not a fiber on this scheduler.
+    int caller_worker_index() const noexcept;
     WorkerThread* worker(int idx);
     int next_worker_id(); // round-robin assignment
 
