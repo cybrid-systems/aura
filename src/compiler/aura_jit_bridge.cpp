@@ -4742,6 +4742,9 @@ static bool register_stable_id_in_func_table(const char* name, std::uint32_t sid
     if (!name || sid == 0 || !jit_fn_is_new_install(pre_fn, post_fn))
         return false;
     aura_register_fn_tracked(static_cast<std::int64_t>(sid), post_fn);
+    // Issue #4418: sid may already be a live closure's jit index. Flag
+    // those closures; the define's own name is not a victim.
+    aura_note_jit_slot_installed_for_define(static_cast<std::int64_t>(sid), name);
     return true;
 }
 

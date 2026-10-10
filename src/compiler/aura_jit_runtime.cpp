@@ -1032,6 +1032,30 @@ static void closure_remount_fail_sticky_clear_unlocked(std::size_t cid) noexcept
 static bool closure_remount_fail_sticky_unlocked(std::size_t cid) noexcept {
     return cid < g_closure_remount_fail_sticky.size() && g_closure_remount_fail_sticky[cid] != 0;
 }
+
+// Issue #4418: a define installed a ScalarFn at a jit slot a live closure
+// still dispatches, and that closure's name is not the define. Residual
+// remount success and the #2128 one-shot consume must not clear MustDeopt
+// until remap stores this closure's own jit id. Not the #4417 remount-fail
+// belt (that one clears on success) and not a query key.
+static std::vector<std::uint8_t> g_closure_slot_foreign;
+
+static void closure_slot_foreign_note_unlocked(std::size_t cid) noexcept {
+    if (g_closure_slot_foreign.size() <= cid) {
+        const auto n = g_closure_func_ids.size();
+        g_closure_slot_foreign.resize(n > cid + 1 ? n : cid + 1, 0);
+    }
+    g_closure_slot_foreign[cid] = 1;
+}
+
+static void closure_slot_foreign_clear_unlocked(std::size_t cid) noexcept {
+    if (cid < g_closure_slot_foreign.size())
+        g_closure_slot_foreign[cid] = 0;
+}
+
+static bool closure_slot_foreign_unlocked(std::size_t cid) noexcept {
+    return cid < g_closure_slot_foreign.size() && g_closure_slot_foreign[cid] != 0;
+}
 // Issue #3323 (CI follow-up): sticky pure-anon overflow fence. The overflow
 // stamps MustDeopt + bridge_epoch=0, but in processes with inactive epoch
 // clocks bridge=0 equals the closure's unstamped birth state, and the first
@@ -1098,6 +1122,7 @@ extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v) {
         g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
     g_closure_must_deopt[cid] = v != 0 ? 1 : 0;
     // Explicit setter is the one-shot belt. Remount-fail sticky is not.
+    // Issue #4418: foreign-slot stays even when this zeros MustDeopt.
     closure_remount_fail_sticky_clear_unlocked(cid);
 }
 
@@ -1188,6 +1213,7 @@ extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t clo
         g_closure_must_deopt.resize(cid + 1, 0);
     g_closure_must_deopt[cid] = 0;
     closure_remount_fail_sticky_clear_unlocked(cid);
+    closure_slot_foreign_clear_unlocked(cid);
 }
 
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id) {
@@ -1387,13 +1413,17 @@ static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
         return;
     }
     if (aura_is_jit_closure_fresh(cap_bridge, cap_defuse, cap_table)) {
-        if (cid < g_closure_must_deopt.size())
-            g_closure_must_deopt[cid] = 0;
+        // Issue #4417: a fresh remount heals remount-fail. Issue #4418: a
+        // foreign jit slot stays MustDeopt and keeps the overflow fence.
         closure_remount_fail_sticky_clear_unlocked(cid);
-        // Issue #3323: remount heal with dual-fresh green disarms the
-        // sticky overflow fence (same heal as MustDeopt above).
-        if (cid < g_closure_pure_anon_overflow_armed.size())
-            g_closure_pure_anon_overflow_armed[cid] = 0;
+        if (!closure_slot_foreign_unlocked(cid)) {
+            if (cid < g_closure_must_deopt.size())
+                g_closure_must_deopt[cid] = 0;
+            // Issue #3323: remount heal with dual-fresh green disarms the
+            // sticky overflow fence (same heal as MustDeopt above).
+            if (cid < g_closure_pure_anon_overflow_armed.size())
+                g_closure_pure_anon_overflow_armed[cid] = 0;
+        }
     }
     invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
 }
@@ -1779,6 +1809,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena,
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0; // Issue #2128
         closure_remount_fail_sticky_clear_unlocked(cid);
+        closure_slot_foreign_clear_unlocked(cid);
         if (cid < g_closure_pure_anon_overflow_armed.size())
             g_closure_pure_anon_overflow_armed[cid] = 0; // #3323: fence not inherited
         if (cid < g_closure_linear_state.size())
@@ -1925,6 +1956,7 @@ int aura_free_closure_checked(int64_t closure_id, std::uint64_t caller_tenant, i
     if (cid < g_closure_must_deopt.size())
         g_closure_must_deopt[cid] = 0; // Issue #2128
     closure_remount_fail_sticky_clear_unlocked(cid);
+    closure_slot_foreign_clear_unlocked(cid);
     if (cid < g_closure_pure_anon_overflow_armed.size())
         g_closure_pure_anon_overflow_armed[cid] = 0; // #3323: fence dies with slot
     if (cid < g_closure_linear_state.size())
@@ -2333,9 +2365,10 @@ static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
         return 0;
     }
     // Issue #4417: a later success is the only heal for a remount-fail belt.
+    // Issue #4418: that success must not clear a foreign jit slot.
     if (closure_remount_fail_sticky_unlocked(cid)) {
         closure_remount_fail_sticky_clear_unlocked(cid);
-        if (cid < g_closure_must_deopt.size())
+        if (!closure_slot_foreign_unlocked(cid) && cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0;
     }
     return 1;
@@ -4216,6 +4249,12 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         if (cid < g_closure_cow_gens.size())
             g_closure_cow_gens[cid] = aura_get_live_workspace_cow_gen();
         g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
+        // Issue #4418: retarget (jit_id >= 0) drops the foreign-slot belt.
+        // A name-map miss or unnamed hit leaves it, so MustDeopt stays.
+        if (jit_id < 0 && closure_slot_foreign_unlocked(cid))
+            g_closure_must_deopt[cid] = 1;
+        else
+            closure_slot_foreign_clear_unlocked(cid);
         closure_remount_fail_sticky_clear_unlocked(cid);
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
@@ -4672,6 +4711,30 @@ void aura_note_ir_func_define(int64_t func_id, const char* name) {
     aura_unlock_workspace_write();
 }
 
+// Issue #4418: slot is the jit index (or stable id) just installed for
+// `name`. Every live closure whose g_closure_func_ids is that slot, and
+// whose own name is not `name`, MustDeopts. Name equality is the owner
+// exclusion — a recycled stable id is not ownership (#3549). Takes the
+// table lock only. Caller must not hold the workspace write lock.
+void aura_note_jit_slot_installed_for_define(int64_t slot, const char* name) {
+    if (slot < 0 || name == nullptr || name[0] == '\0')
+        return;
+    std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto n = g_closure_func_ids.size();
+    if (g_closure_must_deopt.size() < n)
+        g_closure_must_deopt.resize(n, 0);
+    for (std::size_t cid = 0; cid < n; ++cid) {
+        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+            continue;
+        if (g_closure_func_ids[cid] != slot)
+            continue;
+        if (cid < g_closure_names.size() && g_closure_names[cid] == name)
+            continue;
+        g_closure_must_deopt[cid] = 1;
+        closure_slot_foreign_note_unlocked(cid);
+    }
+}
+
 // Issue #660 Option 1: register a function by both id AND name.
 // The name is stable across modules (assigned by cache_define),
 // so when the closure's func_id is invalid at runtime, the name
@@ -4705,6 +4768,11 @@ void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int
         aura_aot_clear_peer_jit_name_soft_stale(name);
     }
     aura_unlock_workspace_write();
+    // Issue #4418: flag after the write lock drops. A refused republish
+    // and a staged reload return above without publishing, so they do
+    // not flag. The table lock is not taken under the workspace lock.
+    if (name && *name)
+        aura_note_jit_slot_installed_for_define(func_id, name);
 }
 
 // Issue #4405: caller holds the workspace write lock. Fill define_name on
@@ -5327,6 +5395,9 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                     if (!closure_remount_fail_sticky_unlocked(cid) &&
                         cid < g_closure_bridge_epochs.size())
                         g_closure_bridge_epochs[cid] = 0;
+                    // Issue #4418: clobbered slot is not the one-shot belt.
+                    if (closure_slot_foreign_unlocked(cid))
+                        g_closure_must_deopt[cid] = 1;
                     invalidate_closure_cache_for(closure_id);
                     aura_bump_must_deopt_force_deopt_success_total(1);
                     aura_jit_closure_record_stale_deopt();
@@ -5340,6 +5411,20 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 aura_unlock_workspace_write();
             }
             // Safe fallback: never run pre-reemit native for this entry.
+            return 0;
+        }
+    }
+
+    // Issue #4418: foreign slot stays off native after the one-shot belt
+    // is cleared (explicit setter). The bit clears only on retarget.
+    {
+        const size_t foreign_cid = static_cast<size_t>(closure_id);
+        if (closure_slot_foreign_unlocked(foreign_cid)) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
             return 0;
         }
     }
@@ -7142,6 +7227,7 @@ void aura_reset_runtime() {
     g_closure_stable_func_ids.clear();     // Issue #2092
     g_closure_must_deopt.clear();          // Issue #2128
     g_closure_remount_fail_sticky.clear(); // Issue #4417
+    g_closure_slot_foreign.clear();        // Issue #4418
     g_closure_linear_state.clear();        // Issue #2129
     g_closure_cow_gens.clear();            // Issue #2547
     g_closure_env_gen.clear();             // Issue #2272
