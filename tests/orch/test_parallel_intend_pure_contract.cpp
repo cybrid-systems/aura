@@ -1932,10 +1932,11 @@ int run_test_parallel_intend_pure_contract() {
         reset_for_test();
     }
 
-    // ── Issue #3840: RegionConcurrent skips eval_mu under production ──
-    // Twin of spawn #3728 — advertised region-concurrent must unlock
-    // ash->eval_mu for non-zero region_key tasks when production +
-    // workspace region concurrency are on. Soft / zero-key stay locked.
+    // ── Issue #3840: RegionConcurrent skips eval_mu under ScopedParallel ──
+    // Twin of spawn #3728. Issue #4423: production SingleWriter keeps
+    // eval_mu even when region keys differ. ScopedParallel still unlocks
+    // non-zero keys. Soft / zero-key stay locked. isolation-level still
+    // comes from decide_isolation.
     {
         using aura::compiler::typed_audit::apply_production_audit_defaults;
         using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
@@ -1948,7 +1949,7 @@ int run_test_parallel_intend_pure_contract() {
                 .store(on ? 1u : 0u, std::memory_order_relaxed);
         };
 
-        std::println("\n--- #3840 AC1: production + region-keys → eval-serialized=#f ---");
+        std::println("\n--- #3840 AC1: SingleWriter + region-keys stays eval-serialized=#t ---");
         reset_for_test();
         clear_partial_cone_truncate_for_test();
         clear_cone_outside_goal_drop_for_test();
@@ -1979,8 +1980,20 @@ int run_test_parallel_intend_pure_contract() {
                                     :timeout-ms 2000)))
               (if (hash-ref h "eval-serialized") 1 0))
         )");
-        CHECK(es.has_value() && as_int(*es) == 0,
-              "ac3840_1_prod_keys: eval-serialized=#f under RegionConcurrent + region concurrency");
+        CHECK(es.has_value() && as_int(*es) == 1,
+              "ac3840_1_prod_keys: SingleWriter stays eval-serialized=#t");
+        CHECK(pcs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+              "3840 AC1: opt-in ScopedParallel");
+        auto sp_es = pcs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 10) (lambda () 20))
+                                    :max-concurrency 2
+                                    :region-keys (vector 31 32)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "eval-serialized") 1 0))
+        )");
+        CHECK(sp_es.has_value() && as_int(*sp_es) == 0,
+              "3840 AC1: ScopedParallel eval-serialized=#f when the region lock is held");
         auto iso = pcs.eval(R"(
             (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
                                     :max-concurrency 2

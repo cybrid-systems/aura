@@ -3555,6 +3555,14 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                                          std::uint64_t pending_count,
                                                          bool* success_flag,
                                                          bool fine_rollback) noexcept {
+    // Issue #4423: production SingleWriter must not keep a region key.
+    // try_acquire already drops a non-zero TLS key to GlobalExclusive
+    // (unique_lock) and bumps single_writer_serialize once. It does not
+    // call back while ScopedParallel is off. Soft still keeps the key.
+    // ScopedParallel continues below, including AdmissionRejected:
+    // region-overlap. Do not bump the serialize counter here.
+    if (typed_audit::production_defaults_active() && !ev.scoped_parallel_enabled())
+        return try_acquire(ev, pending_count, success_flag, fine_rollback);
     // Issue #2686 / #2738: same nested-under-eval-current gate as try_acquire
     // (TLS depth slot only — not process-wide mutation_boundary_held_).
     if (Evaluator::eval_current_holds_shared_pin() && !ev.any_active_mutation_boundary()) {
