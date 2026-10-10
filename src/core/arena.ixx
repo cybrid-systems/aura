@@ -4333,7 +4333,7 @@ public:
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);
             if (ptr) {
-                aura::core::cpp26::record_hotpath_invariant_hit();
+                aura::core::cpp26::record_hotpath_invariant_hit_sampled();
                 contract_assert(ptr != nullptr);
                 // Issue #3053: required-regime allocate paths join the
                 // same intermediate inventory as create<T> (AC1). Soft /
@@ -4346,7 +4346,7 @@ public:
             arena_small_tier_fallback_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #743: tier pressure → defer live defrag at next safe point.
             (void)request_defrag();
-            aura::core::cpp26::record_hotpath_invariant_hit();
+            aura::core::cpp26::record_hotpath_invariant_hit_sampled();
         }
 
         // Allocate from main pmr buffer
