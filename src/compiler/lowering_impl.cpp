@@ -145,8 +145,8 @@ static bool can_elide_coercion_cast(std::uint32_t target_type_id, std::uint32_t 
     // Identity (ground==ground or same Dynamic index).
     if (target_type_id != 0 && inner_type_id != 0 && target_type_id == inner_type_id)
         return true;
-    // Dynamic / pass-through target — CastOp default is identity.
-    if (type_tag >= 3)
+    // Dynamic passthrough is tag 3 only. Float is tag 4 (#4426).
+    if (type_tag == 3)
         return true;
     if (type_reg && target_type_id != 0) {
         auto tid = aura::core::TypeId{target_type_id, 1};
@@ -162,6 +162,23 @@ static bool can_elide_coercion_cast(std::uint32_t target_type_id, std::uint32_t 
     // Leave for IR DeadCoercionElimination after TypePropagation.
     (void)narrow_ev;
     return false;
+}
+
+// Issue #4426: TypeAnnotation name "Float". synthesize stamps the node
+// with the inner type, so Int and Float ids match and no CastOp is
+// emitted. Tag 4 is the conversion; tag 3 stays the Dynamic passthrough.
+static std::optional<aura::core::TypeId>
+float_annotation_type(const aura::ast::StringPool& pool, aura::ast::NodeView ann,
+                      const aura::core::TypeRegistry* reg) {
+    if (!reg || ann.tag != NodeTag::TypeAnnotation || ann.sym_id == INVALID_SYM)
+        return std::nullopt;
+    auto tname = pool.resolve(ann.sym_id);
+    if (tname.empty() || tname == ":?" || tname == "_")
+        return std::nullopt;
+    auto named = reg->lookup_type(std::string(tname));
+    if (!named.valid() || reg->tag_of(named) != aura::core::TypeTag::FLOAT)
+        return std::nullopt;
+    return named;
 }
 
 // ── Internal: native FlatAST lowering helpers ──────────────────
@@ -1380,6 +1397,25 @@ static std::uint32_t lower_flat_expr(
                 auto slot = state.alloc_local();
                 state.emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(free_vars.size() + i));
                 state.scopes.back()[param_names[i]] = Binding{BindingKind::Local, slot};
+                // Issue #4426: a Float parameter converts at entry. The
+                // call's FlatAST does not carry the callee param type, so
+                // the call-arg CastOp is skipped. Tag 4 is not Dynamic.
+                if (i < v.param_annotations.size() && v.param_annotations[i] != NULL_NODE &&
+                    state.type_reg) {
+                    auto ann = flat.get(v.param_annotations[i]);
+                    if (auto named = float_annotation_type(pool, ann, state.type_reg)) {
+                        const auto cast_tag = type_tag_for_coercion(*named, state.type_reg);
+                        if (cast_tag == 4) {
+                            auto cast_slot = state.alloc_local();
+                            state.emit_with_type(IROpcode::CastOp, named->index, cast_slot, slot,
+                                                 cast_tag, 0);
+                            stamp_last_castop_typed_meta(state, /*src=*/0, named->index, 0,
+                                                         cast_tag);
+                            state.scopes.back()[param_names[i]] =
+                                Binding{BindingKind::Local, cast_slot};
+                        }
+                    }
+                }
             }
 
             // Lower body via native FlatAST path
@@ -1712,31 +1748,46 @@ static std::uint32_t lower_flat_expr(
             // Check if coercion is needed: compare annotation type_id with inner type_id
             auto ann_type_id = flat.type_id(id);
             auto inner_type_id = flat.type_id(v.child(0));
+            // Issue #4426: Int checked as Float keeps equal stamps (synthesize
+            // returns the inner type). The name is the tag-4 target. Evidence
+            // stays 0 so Rule 6c cannot treat the conversion as Dynamic.
+            aura::core::TypeId named_float{};
+            bool force_float = false;
+            if (state.type_reg && inner_type_id != 0 &&
+                inner_type_id == state.type_reg->int_type().index &&
+                (ann_type_id == 0 || ann_type_id == inner_type_id)) {
+                if (auto named = float_annotation_type(pool, v, state.type_reg)) {
+                    named_float = *named;
+                    force_float = true;
+                }
+            }
+            const std::uint32_t target_id = force_float ? named_float.index : ann_type_id;
             // Emit CastOp for type boundary when:
             // 1. Both types are known and differ (static → static coercion)
             // 2. Annotation is static but inner is dynamic (runtime type check)
-            if ((ann_type_id != 0 && inner_type_id != 0 && ann_type_id != inner_type_id) ||
-                (ann_type_id != 0 && inner_type_id == 0)) {
-                auto ann_tid = aura::core::TypeId{ann_type_id, 1};
+            // 3. Int→Float name whose stamps matched (#4426)
+            if (force_float ||
+                (target_id != 0 && inner_type_id != 0 && target_id != inner_type_id) ||
+                (target_id != 0 && inner_type_id == 0)) {
+                auto ann_tid = force_float ? named_float : aura::core::TypeId{target_id, 1};
                 std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
-                const auto narrow_ev = state.current_narrowing_evidence;
+                const auto narrow_ev = force_float ? 0u : state.current_narrowing_evidence;
                 // Issue #1925: elide identity / Dynamic / narrow-proved at lower.
-                if (can_elide_coercion_cast(ann_type_id, inner_type_id, type_tag, narrow_ev,
+                if (can_elide_coercion_cast(target_id, inner_type_id, type_tag, narrow_ev,
                                             state.type_reg)) {
                     return inner_slot;
                 }
                 auto slot = state.alloc_local();
                 std::uint32_t blame_loc = 0;
                 if (narrow_ev != 0) {
-                    state.emit_with_metadata(IROpcode::CastOp, ann_type_id, 0, 0, narrow_ev, slot,
+                    state.emit_with_metadata(IROpcode::CastOp, target_id, 0, 0, narrow_ev, slot,
                                              inner_slot, type_tag, blame_loc);
                 } else {
-                    state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag,
+                    state.emit_with_type(IROpcode::CastOp, target_id, slot, inner_slot, type_tag,
                                          blame_loc);
                 }
                 // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
-                stamp_last_castop_typed_meta(state, inner_type_id, ann_type_id, narrow_ev,
-                                             type_tag);
+                stamp_last_castop_typed_meta(state, inner_type_id, target_id, narrow_ev, type_tag);
                 return slot;
             }
             return inner_slot;

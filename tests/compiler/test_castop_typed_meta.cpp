@@ -260,6 +260,114 @@ static void ac6_schema_source() {
           "AC6: query stamped key");
 }
 
+// Issue #4426: Int annotated as Float keeps a tag-4 CastOp through DCE,
+// and the interpreter returns a float (Dynamic passthrough is tag 3 only).
+extern "C" int setenv(const char* name, const char* value, int overwrite);
+extern "C" int unsetenv(const char* name);
+
+static void ac4426_int_to_float_keeps_cast() {
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_float;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_float;
+    std::println("\n--- #4426: Int→Float CastOp tag 4 survives lower + DCE ---");
+    reset_2624();
+
+    auto cast_fn = [](std::uint32_t tag, std::uint32_t cast_tid) {
+        IRFunction fn;
+        fn.name = "f4426";
+        fn.local_count = 3;
+        fn.blocks.push_back({});
+        fn.blocks[0].id = 0;
+        IRInstruction cast{};
+        cast.opcode = IROpcode::CastOp;
+        cast.operands = {1, 0, tag, 0};
+        cast.type_id = cast_tid;
+        fn.blocks[0].instructions = {
+            IRInstruction{IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+            cast,
+            IRInstruction{IROpcode::Return, {1, 0, 0, 0}},
+        };
+        fn.blocks[0].instructions[0].type_id = 1;
+        return fn;
+    };
+
+    {
+        DeadCoercionPass dce;
+        auto fn = cast_fn(/*tag=*/4, /*cast_tid=*/7);
+        dce.run(fn);
+        const auto& kept = fn.blocks[0].instructions[1];
+        CHECK(kept.opcode == IROpcode::CastOp, "4426: tag-4 CastOp survives DCE");
+        CHECK(kept.operands[2] == 4, "4426: DCE leaves type_tag 4");
+    }
+    {
+        DeadCoercionPass dce;
+        auto fn = cast_fn(/*tag=*/3, /*cast_tid=*/0);
+        dce.run(fn);
+        CHECK(fn.blocks[0].instructions[1].opcode == IROpcode::Local,
+              "4426: tag-3 Dynamic passthrough still elides");
+    }
+
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    const auto exe = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto pass = read_file("src/compiler/pass_impls.ixx");
+    CHECK(low.find("if (type_tag == 3)") != std::string::npos, "4426: lower elides tag 3 only");
+    CHECK(low.find("float_annotation_type") != std::string::npos,
+          "4426: Float annotation name emits the cast");
+    CHECK(exe.find("if (ops[2] == 3)") != std::string::npos,
+          "4426: interpreter passthrough is tag 3");
+    CHECK(pass.find("if (target_tag == 3)") != std::string::npos, "4426: DCE Rule 3 is tag 3");
+
+    const char* prev = std::getenv("AURA_FORCE_IR");
+    const std::string saved = prev ? prev : "";
+    const bool had = prev != nullptr;
+    const char* sb = std::getenv("AURA_SANDBOX");
+    const std::string sb_saved = sb ? sb : "";
+    const bool sb_had = sb != nullptr;
+    setenv("AURA_FORCE_IR", "1", 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    auto face = [](const char* name) {
+        const std::string prefix = std::string("4426 ") + name + ": ";
+        CompilerService cs;
+        auto annotated = cs.eval("(check 1 : Float)");
+        if (!annotated || !is_float(*annotated)) {
+            std::println(std::cerr, "{}annotated={}", prefix,
+                         annotated ? aura::compiler::types::format_value(*annotated)
+                                   : std::string("<none>"));
+        }
+        CHECK(annotated && is_float(*annotated), prefix + "(check 1 : Float) is a float");
+        if (annotated && is_float(*annotated))
+            CHECK(as_float(*annotated) == 1.0, prefix + "annotated value is 1.0");
+        auto pred = cs.eval("(float? (check 1 : Float))");
+        CHECK(pred && is_bool(*pred) && as_bool(*pred), prefix + "float? on annotated Int");
+        auto defined = cs.eval("(define f (lambda ((: x Float)) x))");
+        if (!defined)
+            std::println(std::cerr, "{}define err={}", prefix, defined.error().message);
+        CHECK(defined.has_value(), prefix + "Float parameter defines");
+        auto applied = cs.eval("(f 1)");
+        if (!applied || !is_float(*applied)) {
+            std::println(std::cerr, "{}applied={}", prefix,
+                         applied ? aura::compiler::types::format_value(*applied)
+                                 : applied.error().message);
+        }
+        CHECK(applied && is_float(*applied), prefix + "Float parameter applied to Int is a float");
+        if (applied && is_float(*applied))
+            CHECK(as_float(*applied) == 1.0, prefix + "applied value is 1.0");
+    };
+    face("soft");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    face("production");
+    apply_dev_audit_defaults();
+    if (had)
+        setenv("AURA_FORCE_IR", saved.c_str(), 1);
+    else
+        unsetenv("AURA_FORCE_IR");
+    if (sb_had)
+        setenv("AURA_SANDBOX", sb_saved.c_str(), 1);
+    else
+        unsetenv("AURA_SANDBOX");
+}
+
 } // namespace
 
 int run_test_castop_typed_meta() {
@@ -270,6 +378,7 @@ int run_test_castop_typed_meta() {
     ac4_side_table_not_soa();
     ac5_dce_with_meta();
     ac6_schema_source();
+    ac4426_int_to_float_keeps_cast();
     reset_2624();
     std::println("\n=== #2624: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
