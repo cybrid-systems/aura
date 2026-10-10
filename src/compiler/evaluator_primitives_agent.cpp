@@ -269,13 +269,14 @@ namespace {
     };
 
     // Issue #3728: Aura spawn apply. Serialized default (region_key==0 /
-    // Soft/Off / region concurrency off) still takes per-Evaluator
-    // agent_apply_mu_. Production + region concurrency + non-zero key
-    // skips that mutex only when this Evaluator has no live body on the
-    // same key (#4062). Does not call decide_isolation (spawn is not a
-    // batch). Production non-pure parallel-intend uses this gate too
-    // (#4383); RegionConcurrent still skips eval_mu. Quota
-    // try_acquire reject never reaches here (#2158 AC5).
+    // Soft/Off / region concurrency off / SingleWriter) still takes
+    // per-Evaluator agent_apply_mu_. Production + region concurrency +
+    // ScopedParallel + non-zero key skips that mutex only when this
+    // Evaluator has no live body on the same key (#4062). Issue #4423:
+    // SingleWriter must not skip from a non-zero key alone. Does not
+    // call decide_isolation (spawn is not a batch). Production non-pure
+    // parallel-intend uses this gate too (#4383). Quota try_acquire
+    // reject never reaches here (#2158 AC5).
     // Placed after WorkspaceSwapGuard so #3442 AC3 (resolve_aura_agent
     // window has no extra atomic) stays a pointer walk.
     void apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
@@ -290,8 +291,11 @@ namespace {
             Evaluator::note_parallel_task_region_key(region_key);
         // Issue #4062: Soft/Off passes region_fast=false and does not
         // touch the inflight set. Same key collides into agent_apply_mu_.
+        // Issue #4423: SingleWriter also passes region_fast=false.
+        // RegionExclusive skip stays only while ScopedParallel is on.
         const bool region_fast = aura::compiler::typed_audit::production_defaults_active() &&
-                                 ev.workspace_region_concurrency_enabled() && region_key != 0;
+                                 ev.workspace_region_concurrency_enabled() &&
+                                 ev.scoped_parallel_enabled() && region_key != 0;
         auto run = [&ev, cid]() {
             if (!agent_cid_live(ev, cid)) {
                 agent_note_closure_freed_call(ev);
@@ -316,12 +320,14 @@ namespace {
     // Issue #4394: orch:supervise-batch apply. Same gate as spawn-agent
     // (#4062) and production parallel-intend (#4383). region_fast is the
     // batch skip_mu predicate (RegionConcurrent + production + workspace
-    // region concurrency) and a non-zero key — not a second isolation
-    // model. Same key joins spawn_region_inflight_ and does not overlap.
-    // Distinct keys skip ev.agent_apply_mu_. Missing keys and Soft / Off
-    // take that shared mutex (region_fast false). :watch-scope #f must
-    // not allocate a private mutex. A caller already inside the gate
-    // does not lock ev.agent_apply_mu_ again (#4383).
+    // region concurrency + ScopedParallel) and a non-zero key — not a
+    // second isolation model. Same key joins spawn_region_inflight_ and
+    // does not overlap. Distinct keys skip ev.agent_apply_mu_ only when
+    // that predicate is true (#4423: SingleWriter stays on the mutex).
+    // Missing keys and Soft / Off take that shared mutex (region_fast
+    // false). :watch-scope #f must not allocate a private mutex. A
+    // caller already inside the gate does not lock ev.agent_apply_mu_
+    // again (#4383).
     template <class Body>
     void run_supervised_apply(Evaluator& ev, bool skip_mu, bool use_eval_gate,
                               int caller_apply_hold, std::uint64_t rkey, Body&& body) {
@@ -2915,8 +2921,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         // is set (production + opt-in flag, post a pure-contract
                         // violation in the same batch — see wire-up below).
                         // Issue #3840: RegionConcurrent + production + workspace
-                        // region concurrency + non-zero region_key skips eval_mu
-                        // (spawn #3728 discipline). Soft / Serialized / BestEffortPure / zero-key
+                        // region concurrency + ScopedParallel + non-zero
+                        // region_key skips eval_mu (spawn #3728 discipline).
+                        // Issue #4423: SingleWriter stays on the mutex.
+                        // Soft / Serialized / BestEffortPure / zero-key
                         // stay locked.
                         // Issue #4383: production :pure #f also takes the spawn
                         // gate (agent_apply_mu_, or the region-fast claim when
@@ -3111,11 +3119,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
 
         // Issue #3840: after decide_isolation, unlock eval_mu for RegionConcurrent
-        // tasks under production + workspace region concurrency (non-zero key
-        // checked per-task). Soft / Off / Serialized / BestEffortPure keep mu.
+        // tasks under production + workspace region concurrency + ScopedParallel
+        // (non-zero key checked per-task). Issue #4423: SingleWriter keeps mu.
+        // Soft / Off / Serialized / BestEffortPure keep mu. decide_isolation
+        // is unchanged — isolation-level may still say region-concurrent.
         ash->region_concurrent_skip_eval_mu =
             iso_decision.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
-            prod && ev.workspace_region_concurrency_enabled();
+            prod && ev.workspace_region_concurrency_enabled() && ev.scoped_parallel_enabled();
 
         const int workers = static_cast<int>(
             std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
@@ -3822,9 +3832,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // try_acquire reject path never reaches this body (agent_spawn.h
                     // wraps body after aura_orch_agent_body_try_acquire_ex succeeds),
                     // so we never hold agent_apply_mu_ on quota-reject (AC5).
-                    // Issue #3728: skip the mutex when a non-zero region key
-                    // is already the isolation token (production region
-                    // concurrency). Soft/Off / key==0 keep the lock.
+                    // Issue #3728: skip the mutex when ScopedParallel and a
+                    // non-zero region key are the isolation token
+                    // (production region concurrency). Issue #4423:
+                    // SingleWriter / Soft/Off / key==0 keep the lock.
                     apply_spawn_closure_maybe_locked(ev, *cid, region_key);
                 } catch (...) {
                     // [SILENCE-PRIM-#615] swallow: agent body errors surface
@@ -4484,7 +4495,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     return;
                 try {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
-                    // Issue #3728: skip agent_apply_mu_ for disjoint region keys.
+                    // Issue #3728 / #4423: skip agent_apply_mu_ for disjoint
+                    // region keys only while ScopedParallel is on.
                     apply_spawn_closure_maybe_locked(ev, *cid, region_key);
                 } catch (...) {
                     // [SILENCE-PRIM-#615]: agent body errors surface via
@@ -6413,9 +6425,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto iso_dec = aura::serve::parallel_orch::decide_isolation(
                 aura::serve::parallel_orch::ParallelPolicy{}, iso_probe, /*pure_mode=*/false);
             const bool prod = aura::compiler::typed_audit::production_defaults_active();
+            // Issue #4423: SingleWriter does not skip agent_apply_mu_ from a
+            // non-zero key. RegionExclusive skip requires ScopedParallel.
             const bool skip_mu =
                 iso_dec.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
-                prod && ev.workspace_region_concurrency_enabled();
+                prod && ev.workspace_region_concurrency_enabled() && ev.scoped_parallel_enabled();
             const int caller_apply_hold = Evaluator::agent_apply_hold_depth();
             // Issue #4394: production, and not already inside the spawn
             // gate. Soft / Off and nested re-entry use the helper's
@@ -6596,8 +6610,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 std::memory_order_relaxed);
             // Issue #3926 / #4000: never advertise region-concurrent while
             // apply is 1-wide (watch empty Phase A / unkeyed / Soft).
-            // Production + RegionConcurrent + workspace skip_mu keeps the
-            // decide_isolation level (same face as parallel-intend #3840).
+            // Production + RegionConcurrent + workspace + ScopedParallel
+            // skip_mu keeps the decide_isolation level (same face as
+            // parallel-intend #3840). SingleWriter leaves skip_mu false
+            // (#4423), so this hash collapses to Serialized.
             if (!skip_mu)
                 wf_iso.decision.level = aura::serve::parallel_orch::IsolationLevel::Serialized;
             const char* iso_cstr =

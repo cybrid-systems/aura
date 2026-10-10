@@ -350,35 +350,58 @@ int run_test_agent_apply_mutex() {
     };
 
     {
-        std::println("\n--- #3728 AC1: distinct region keys skip apply mu ---");
+        std::println("\n--- #3728 AC1: SingleWriter distinct keys take apply mu ---");
         set_prod_3728(true);
         CompilerService cs;
         cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(!cs.evaluator().scoped_parallel_enabled(), "3728 AC1: default SingleWriter");
         CHECK(cs.eval("(+ 1 1)").has_value(), "3728 AC1: warm");
         const auto acq0 =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        const auto t0 = std::chrono::steady_clock::now();
         auto r = cs.eval(R"(
             (begin
-              (orch:spawn-agent "a-3728"
-                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
-                :region-key 11)
-              (orch:spawn-agent "b-3728"
-                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
-                :region-key 22)
+              (orch:spawn-agent "a-3728" (lambda () 1) :region-key 11)
+              (orch:spawn-agent "b-3728" (lambda () 1) :region-key 22)
               (let ((ja (orch:agent-join "a-3728" :timeout-ms 2000))
                     (jb (orch:agent-join "b-3728" :timeout-ms 2000)))
+                (if (and (hash-ref ja "ok") (hash-ref jb "ok")) 1 0)))
+        )");
+        CHECK(r && is_int(*r) && as_int(*r) == 1, "3728 AC1: both region-key agents joined");
+        const auto acq1 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(acq1 >= acq0 + 2, "3728 AC1: SingleWriter distinct keys take agent_apply_mu_");
+        std::println("  3728 AC1 acq {}→{}", acq0, acq1);
+
+        using Ev3728 = std::decay_t<decltype(cs.evaluator())>;
+        cs.evaluator().set_concurrent_mutation_policy(
+            Ev3728::ConcurrentMutationPolicy::ScopedParallel);
+        const auto acq_sp0 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        const auto t0 = std::chrono::steady_clock::now();
+        auto sp = cs.eval(R"(
+            (begin
+              (orch:spawn-agent "a-3728-sp"
+                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
+                :region-key 31)
+              (orch:spawn-agent "b-3728-sp"
+                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
+                :region-key 32)
+              (let ((ja (orch:agent-join "a-3728-sp" :timeout-ms 2000))
+                    (jb (orch:agent-join "b-3728-sp" :timeout-ms 2000)))
                 (if (and (hash-ref ja "ok") (hash-ref jb "ok")) 1 0)))
         )");
         const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - t0)
                                  .count();
-        CHECK(r && is_int(*r) && as_int(*r) == 1, "3728 AC1: both region-key agents joined");
-        const auto acq1 =
+        CHECK(sp && is_int(*sp) && as_int(*sp) == 1, "3728 AC1: ScopedParallel agents joined");
+        const auto acq_sp1 =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        CHECK(acq1 == acq0, "3728 AC1: distinct non-zero region keys did not take agent_apply_mu_");
-        CHECK(wall_ms < 1800, "3728 AC1: wall is not a serialized join timeout");
-        std::println("  3728 AC1 wall={}ms acq {}→{}", wall_ms, acq0, acq1);
+        CHECK(acq_sp1 == acq_sp0,
+              "3728 AC1: ScopedParallel distinct keys did not take agent_apply_mu_");
+        CHECK(wall_ms < 1800, "3728 AC1: ScopedParallel wall is not a serialized join timeout");
+        std::println("  3728 AC1 scoped wall={}ms acq {}→{}", wall_ms, acq_sp0, acq_sp1);
+        cs.evaluator().set_concurrent_mutation_policy(
+            Ev3728::ConcurrentMutationPolicy::SingleWriter);
         set_prod_3728(false);
     }
 
@@ -460,10 +483,11 @@ int run_test_agent_apply_mutex() {
     // holds agent_apply_mu_ for several seconds with no orch spawn, and
     // the holder idle-stops after ~3s. ensure() does not restart it, so
     // a later supervise-batch queues fibers that never run.
-    // A live region-fast claim on the same key blocks the supervise
-    // closure. Distinct keys still skip agent_apply_mu_. :watch-scope #f
-    // uses that gate, not a private mutex. Missing keys and Soft take
-    // the shared mutex.
+    // ScopedParallel: a live region-fast claim on the same key blocks
+    // the supervise closure, and distinct keys skip agent_apply_mu_.
+    // SingleWriter same and distinct keys take that mutex (#4423).
+    // :watch-scope #f uses that gate, not a private mutex. Missing keys
+    // and Soft take the shared mutex.
     {
         std::println("\n--- #4394: supervise-batch shares the spawn region gate ---");
         using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -514,12 +538,12 @@ int run_test_agent_apply_mutex() {
         const auto collide_before =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
         std::atomic<int> watch_ok{-1};
-        const bool watch_overlapped = finished_while_region_held(ev, 1, kHoldMs, [&] {
+        const bool watch_overlapped = finished_while_mutex_held(mu, kHoldMs, [&] {
             watch_ok.store(supervise_ok(cs, true, "1 2"), std::memory_order_relaxed);
         });
         const auto collide_after =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        CHECK(!watch_overlapped, "4394: watch same key waits for the inflight claim");
+        CHECK(!watch_overlapped, "4394: SingleWriter same key takes agent_apply_mu_");
         CHECK(watch_ok.load() == 1, "4394: watch same-key batch ok after the claim drops");
         CHECK(collide_after > collide_before, "4394: same-key waiter took agent_apply_mu_");
         CHECK(ev.spawn_region_inflight_size_for_test() == 0, "4394: watch inflight drained");
@@ -528,12 +552,12 @@ int run_test_agent_apply_mutex() {
         const auto nowatch_before =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
         std::atomic<int> nowatch_ok{-1};
-        const bool nowatch_overlapped = finished_while_region_held(ev, 1, kHoldMs, [&] {
+        const bool nowatch_overlapped = finished_while_mutex_held(mu, kHoldMs, [&] {
             nowatch_ok.store(supervise_ok(cs, false, "1 2"), std::memory_order_relaxed);
         });
         const auto nowatch_after =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        CHECK(!nowatch_overlapped, "4394: watch-scope #f same key waits for the inflight claim");
+        CHECK(!nowatch_overlapped, "4394: watch-scope #f SingleWriter same key takes the mutex");
         CHECK(nowatch_ok.load() == 1, "4394: watch-scope #f same-key batch ok");
         CHECK(nowatch_after > nowatch_before, "4394: #f same-key waiter took agent_apply_mu_");
         CHECK(ev.spawn_region_inflight_size_for_test() == 0, "4394: #f inflight drained");
@@ -547,17 +571,50 @@ int run_test_agent_apply_mutex() {
         });
         const auto distinct_after =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        CHECK(distinct_finished, "4394: distinct keys skip agent_apply_mu_");
+        CHECK(!distinct_finished, "4394: SingleWriter distinct keys take agent_apply_mu_");
         CHECK(distinct_ok.load() == 1, "4394: distinct-key watch batch ok");
-        CHECK(distinct_after == distinct_before, "4394: distinct keys did not take the mutex");
+        CHECK(distinct_after > distinct_before,
+              "4394: SingleWriter distinct keys acquired the mutex");
         reset_all_agent_scopes_for_test();
 
         std::atomic<int> distinct_f_ok{-1};
         const bool distinct_f_finished = finished_while_mutex_held(mu, kHoldMs, [&] {
             distinct_f_ok.store(supervise_ok(cs, false, "11 22"), std::memory_order_relaxed);
         });
-        CHECK(distinct_f_finished, "4394: watch-scope #f distinct keys skip agent_apply_mu_");
+        CHECK(!distinct_f_finished,
+              "4394: watch-scope #f SingleWriter distinct keys take the mutex");
         CHECK(distinct_f_ok.load() == 1, "4394: distinct-key #f batch ok");
+        reset_all_agent_scopes_for_test();
+
+        using Ev4394 = std::decay_t<decltype(ev)>;
+        ev.set_concurrent_mutation_policy(Ev4394::ConcurrentMutationPolicy::ScopedParallel);
+        const auto sp_same_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> sp_same_ok{-1};
+        const bool sp_same_overlapped = finished_while_region_held(ev, 1, kHoldMs, [&] {
+            sp_same_ok.store(supervise_ok(cs, true, "1 2"), std::memory_order_relaxed);
+        });
+        const auto sp_same_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(!sp_same_overlapped, "4394: ScopedParallel same key waits for the inflight claim");
+        CHECK(sp_same_ok.load() == 1, "4394: ScopedParallel same-key batch ok");
+        CHECK(sp_same_after > sp_same_before,
+              "4394: ScopedParallel same-key waiter took the mutex");
+        CHECK(ev.spawn_region_inflight_size_for_test() == 0,
+              "4394: ScopedParallel inflight drained");
+        reset_all_agent_scopes_for_test();
+        const auto sp_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> sp_ok{-1};
+        const bool sp_finished = finished_while_mutex_held(mu, kHoldMs, [&] {
+            sp_ok.store(supervise_ok(cs, true, "31 32"), std::memory_order_relaxed);
+        });
+        const auto sp_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(sp_finished, "4423: ScopedParallel distinct keys skip agent_apply_mu_");
+        CHECK(sp_ok.load() == 1, "4423: ScopedParallel distinct-key watch batch ok");
+        CHECK(sp_after == sp_before, "4423: ScopedParallel distinct keys did not take the mutex");
+        ev.set_concurrent_mutation_policy(Ev4394::ConcurrentMutationPolicy::SingleWriter);
         reset_all_agent_scopes_for_test();
 
         const auto missing_before =
@@ -669,9 +726,9 @@ int run_test_agent_apply_mutex() {
     }
 
     // Issue #4383: production non-pure parallel-intend apply waits on the
-    // same per-Evaluator mutex as spawn. Region-fast distinct keys and
-    // Soft do not take it. One eval at a time — setup outside apply_closure
-    // is not the gate.
+    // same per-Evaluator mutex as spawn. SingleWriter distinct keys take
+    // it (#4423). ScopedParallel distinct keys and Soft do not. One eval
+    // at a time — setup outside apply_closure is not the gate.
     {
         std::println("\n--- #4383: parallel-intend shares agent_apply_mu_ ---");
         using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -730,9 +787,49 @@ int run_test_agent_apply_mutex() {
             mu, 1500, [&] { region_ok.store(run_intend(cs, kRegion), std::memory_order_relaxed); });
         const auto region_after =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
-        CHECK(region_finished, "4383: distinct region keys skip agent_apply_mu_");
+        CHECK(!region_finished, "4383: SingleWriter distinct keys take agent_apply_mu_");
         CHECK(region_ok.load() == 2, "4383: region-concurrent batch ok-count");
-        CHECK(region_after == region_before, "4383: region-fast did not take the mutex");
+        CHECK(region_after > region_before, "4383: SingleWriter region keys acquired the mutex");
+        auto sw_flag = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 11 22)
+                                    :collect-errors #t
+                                    :timeout-ms 10000)))
+              (if (hash-ref h "eval-serialized") 1 0))");
+        CHECK(sw_flag && is_int(*sw_flag) && as_int(*sw_flag) == 1,
+              "4423: SingleWriter distinct keys stay eval-serialized=#t");
+        auto sw_iso = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 11 22)
+                                    :collect-errors #t
+                                    :timeout-ms 10000)))
+              (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0))");
+        CHECK(sw_iso && is_int(*sw_iso) && as_int(*sw_iso) == 1,
+              "4423: decide_isolation still advertises region-concurrent");
+
+        cs.evaluator().set_concurrent_mutation_policy(
+            std::decay_t<decltype(cs.evaluator())>::ConcurrentMutationPolicy::ScopedParallel);
+        const auto sp_before =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        std::atomic<int> sp_ok{-1};
+        const bool sp_finished = finished_while_mutex_held(
+            mu, 1500, [&] { sp_ok.store(run_intend(cs, kRegion), std::memory_order_relaxed); });
+        const auto sp_after =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(sp_finished, "4423: ScopedParallel distinct keys skip agent_apply_mu_");
+        CHECK(sp_ok.load() == 2, "4423: ScopedParallel region batch ok-count");
+        CHECK(sp_after == sp_before, "4423: ScopedParallel did not take the mutex");
+        auto sp_flag = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 31 32)
+                                    :collect-errors #t
+                                    :timeout-ms 10000)))
+              (if (hash-ref h "eval-serialized") 1 0))");
+        CHECK(sp_flag && is_int(*sp_flag) && as_int(*sp_flag) == 0,
+              "4423: ScopedParallel eval-serialized=#f when the region lock is held");
 
         reset_for_test();
         CompilerService soft;
@@ -750,6 +847,36 @@ int run_test_agent_apply_mutex() {
         CHECK(soft_finished, "4383: Soft intend does not wait on agent_apply_mu_");
         CHECK(soft_ok.load() == 1, "4383: Soft one-task batch completed");
         CHECK(soft_after == soft_before, "4383: Soft did not acquire agent_apply_mu_");
+        reset_for_test();
+
+        std::println("\n--- #4423: production SingleWriter region acquire is GlobalExclusive ---");
+        apply_production_audit_defaults();
+        CompilerService sw;
+        auto& swev = sw.evaluator();
+        swev.set_effect_sandbox_mode(0);
+        swev.set_workspace_region_concurrency_enabled(true);
+        CHECK(!swev.scoped_parallel_enabled(), "4423: default policy is SingleWriter");
+        using Ev4423 = std::decay_t<decltype(swev)>;
+        Ev4423::note_parallel_task_region_key(11);
+        bool ok4423 = true;
+        auto gr = Ev4423::MutationBoundaryGuard::try_acquire_for_region(swev, 11, 1, &ok4423);
+        if (!gr)
+            std::println("  4423 SingleWriter acquire error: {}", gr.error().message);
+        CHECK(gr.has_value() && *gr, "4423: SingleWriter try_acquire_for_region admits");
+        if (gr && *gr) {
+            CHECK(!(*gr)->is_region_mode(), "4423: SingleWriter drops the key to GlobalExclusive");
+            gr->reset();
+        }
+        swev.set_concurrent_mutation_policy(Ev4423::ConcurrentMutationPolicy::ScopedParallel);
+        bool ok4423b = true;
+        auto gr2 = Ev4423::MutationBoundaryGuard::try_acquire_for_region(swev, 22, 1, &ok4423b);
+        if (!gr2)
+            std::println("  4423 ScopedParallel acquire error: {}", gr2.error().message);
+        CHECK(gr2.has_value() && *gr2 && (*gr2)->is_region_mode(),
+              "4423: ScopedParallel try_acquire_for_region stays RegionExclusive");
+        if (gr2 && *gr2)
+            gr2->reset();
+        Ev4423::clear_parallel_task_region_key();
         reset_for_test();
     }
 
