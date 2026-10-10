@@ -709,13 +709,15 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(emb.find("schema-3472") == std::string::npos, "3472: no new query key");
 
         reset_for_test();
-        apply_production_audit_defaults();
-        typed_audit::clear_type_linear_proof_outcome_for_test();
-        typed_audit::clear_type_linear_commit_proof_for_test();
+        apply_dev_audit_defaults();
         CompilerService cs;
         CHECK(cs.eval("(+ 1 1)").has_value(), "3472 live: warm");
         (void)cs.eval("(set-code \"(define f 1)\")");
         (void)cs.eval("(eval-current)");
+        // Full face after the install. set-code is not the linear deny.
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
         (void)cs.eval("(typecheck-current)");
         bool ok = true;
         {

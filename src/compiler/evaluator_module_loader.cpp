@@ -315,11 +315,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             std::println(std::cerr, "load_module_file: refuse non-module path '{}'", shown);
         return types::make_void();
     }
-    // Issue #4399: import / use / load-module and source-level require
-    // (eval_flat expands require to import) all enter here. Fence before
-    // any read or eval. Deny → void, no resolve, no stat, no ifstream,
-    // no binding. An active allow is the tenant-rooted absolute; only
-    // the passthrough face may search CWD / AURA_PATH / ../lib.
+    // Issue #4399: tenant host-path before any read or eval. Deny is void.
     std::string gated;
     if (!check_tenant_host_path(path, gated, "load-module"))
         return types::make_void();

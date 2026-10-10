@@ -2000,14 +2000,16 @@ static void ac3641_6_source_cite_and_no_invent() {
 static void ac3724_1_query_root_deny_does_not_occupy() {
     std::println("\n--- #3724 AC1: query:root int → denied mutate → occupancy not A ---");
     reset_all();
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    aura::core::provenance::set_multi_tenant_env_active(true);
+    // Install under Off. The deny under test is the later bare-int mutate,
+    // not the workspace install (Issue #4400).
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
           "3724 AC1: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3724 AC1: eval-current");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(7);
     auto root = cs.eval("(query:root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root),
@@ -2076,14 +2078,14 @@ static void ac3724_2_owner_not_isolation_denied_after_a_deny() {
 static void ac3724_3_export_ref_still_occupies() {
     std::println("\n--- #3724 AC3: export_ref / query:as-stable-ref still occupy ---");
     reset_all();
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    aura::core::provenance::set_multi_tenant_env_active(true);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
           "3724 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3724 AC3: eval-current");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(99);
     auto root = cs.eval("(query:root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3724 AC3: query:root");
@@ -2705,12 +2707,13 @@ static void ac4039_3_true_miss_caller_stamp_allows() {
 static void ac4039_4_principal_zero_gate_denies() {
     std::println("\n--- #4039 AC4: compile gate denies principal-0 bare NodeId ---");
     reset_all();
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     CompilerService cs;
     auto& ev = cs.evaluator();
+    // Workspace install is not the deny under test (Issue #4400).
+    CHECK(cs.eval("(set-code \"(define z4039 1)\")").has_value(), "4039 AC4: set-code");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(0); // unset principal (unit default posture)
-    CHECK(cs.eval("(set-code \"(define z4039 1)\")").has_value(), "4039 AC4: set-code");
     auto r = cs.eval("(car (query :find \"z4039\"))");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r), "4039 AC4: find probe node");
     const auto id = aura::compiler::types::as_int(*r);
@@ -2809,16 +2812,18 @@ static std::uint32_t occupant_node_4051(std::uint32_t node_id) {
 static void ac4051_1_torn_read_denies_before_stamp() {
     std::println("\n--- #4051 AC1: odd-seq torn read denies (no caller-stamp) ---");
     reset_all();
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    aura::core::provenance::set_multi_tenant_env_active(true);
+    // Install under Off. The deny under test is the torn-read NodeId
+    // write, not the workspace install (Issue #4400).
     CompilerService cs;
     auto& ev = cs.evaluator();
+    CHECK(cs.eval("(set-code \"(define z4051 1)\")").has_value(), "4051 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4051 AC1: eval-current");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
     ev.set_effect_sandbox_mode(1);
     const auto me = current_mutation_epoch();
     ev.grant_effect_capability(99, "mut-4051-b", kEffectMutate, me == 0 ? 1 : me);
     ev.grant_effect_capability(7, "mut-4051-a", kEffectMutate, me == 0 ? 1 : me);
-    CHECK(cs.eval("(set-code \"(define z4051 1)\")").has_value(), "4051 AC1: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "4051 AC1: eval-current");
     auto* ws = ev.workspace_flat();
     CHECK(ws != nullptr, "4051 AC1: workspace");
     auto r = cs.eval("(car (query :find \"z4051\"))");

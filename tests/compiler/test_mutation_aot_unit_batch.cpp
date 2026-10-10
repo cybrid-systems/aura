@@ -1051,6 +1051,8 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 int run_1418_dead_coercion_smoke() {
     std::println("\n=== #1418: DeadCoercionElimination surface smoke ===");
+    // Earlier members may leave Full / production. The install is not a deny.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (id x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");

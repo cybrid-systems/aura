@@ -260,14 +260,17 @@ static void ac5_metrics_and_stress() {
 static void ac6_tenant_isolation() {
     std::println("\n--- AC6: pin does not bypass #2056 cross-tenant ---");
     reset_tenant_isolation_for_test();
-    set_mode(SandboxMode::Strict);
     CompilerService cs;
     CHECK(setup_ws(cs), "workspace");
+    // Arm after the install. Strict set-code is not the pin deny (Issue #4400).
+    set_mode(SandboxMode::Strict);
     auto& ev = cs.evaluator();
     // Set principal tenant
     // capability_tenant_id_ may have a setter — use stamped mismatch.
     auto* ws = ev.workspace_flat();
     CHECK(ws != nullptr, "flat");
+    if (!ws)
+        return;
     const auto nid = first_live(*ws);
     CHECK(nid != NULL_NODE, "live");
 

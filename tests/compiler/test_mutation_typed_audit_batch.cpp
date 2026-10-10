@@ -546,9 +546,10 @@ namespace {
     static void ac6_multi_round() {
         std::println("\n--- AC6: multi-round mutate under Full ---");
         reset_for_test();
-        set_strategy(AuditStrategy::Full);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         CompilerService cs;
         seed(cs);
+        set_strategy(AuditStrategy::Full);
         for (int i = 0; i < 20; ++i) {
             (void)cs.eval(std::format("(mutate:rebind \"x\" \"{}\")", i));
             (void)cs.eval("(eval-current)");
