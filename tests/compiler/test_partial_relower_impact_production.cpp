@@ -241,6 +241,109 @@ static void ac3691_quote_lambda_impact_uses_prod_helper() {
     CHECK(cs.eval("(f)").has_value(), "3691 AC3: Soft still evals");
 }
 
+// Issue #4422: production cache_define_prefer_partial and the sweep's
+// impact-refused else branch must not commit a per-fn peel. Soft ub==0
+// still enters the partial relower.
+static void ac4422_unknown_impact_skips_per_fn_commit() {
+    std::println("\n--- #4422: prefer-partial and sweep consult impact ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto pref = svc.find("EvalResult cache_define_prefer_partial(");
+    const auto peel = svc.find("relower_only_dirty_blocks(name_str", pref);
+    CHECK(pref != std::string::npos && peel != std::string::npos && pref < peel,
+          "4422: prefer-partial peel call located");
+    if (pref != std::string::npos && peel != std::string::npos && pref < peel) {
+        const auto mid = svc.substr(pref, peel - pref);
+        CHECK(mid.find("Issue #4422") != std::string::npos, "4422: prefer-partial cites #4422");
+        CHECK(mid.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+              "4422: prefer-partial consults the existing helper");
+        CHECK(mid.find("partial_forced_full_by_impact_total") != std::string::npos,
+              "4422: prefer-partial reuses the impact counter");
+    }
+    CHECK(svc.find("commit_per_fn_partial && allow_partial_peel") != std::string::npos,
+          "4422: per-fn arm is gated after impact refused");
+    CHECK(svc.find("commit_per_fn_partial=*/!impact_refused_partial") != std::string::npos,
+          "4422: sweep else does not commit per-fn after the helper refuses");
+    CHECK(svc.find("query:4422") == std::string::npos, "4422: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4422.cpp").empty(), "4422: no test_issue");
+    CHECK(read_file("docs/design/4422-prefer-partial-impact.md").empty(), "4422: no docs/design");
+
+    auto metrics = [](CompilerService& cs) -> aura::compiler::CompilerMetrics* {
+        return static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    };
+
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(cs.eval("(set-code \"(define (f4422 x) (+ x 1))\")").has_value(), "4422: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4422: eval");
+        CHECK(cs.get_define_v2("f4422") != nullptr && !cs.get_define_v2("f4422")->irs.empty(),
+              "4422: v2 entry");
+        cs.evaluator().set_workspace_flat(nullptr);
+        cs.evaluator().set_workspace_pool(nullptr);
+        CHECK(cs.plant_body_only_dirty_for_test("f4422", false, false) >= 1, "4422: body dirty");
+        auto* m = metrics(cs);
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+        const auto path0 = m->eval_path_relower_total.load(std::memory_order_relaxed);
+        auto def = cs.define_function("(define (f4422 x) (+ x 9))");
+        CHECK(def.has_value(), "4422: define_function under unknown impact");
+        CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > impact0,
+              "4422: unknown impact bumps partial_forced_full_by_impact_total");
+        CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) == per0,
+              "4422: unknown impact does not commit per-fn");
+        CHECK(m->eval_path_relower_total.load(std::memory_order_relaxed) == path0,
+              "4422: unknown impact does not enter the peel");
+        const auto* after = cs.get_define_v2("f4422");
+        if (after) {
+            const int look = cs.lookup_define_v2("f4422", after->source_hash);
+            CHECK(look != 0, "4422: unknown impact does not clean-hit the partial peel");
+        }
+    }
+
+    apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(cs.eval("(set-code \"(define (s4422 x) (+ x 1))\")").has_value(),
+              "4422: Soft set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4422: Soft eval");
+        CHECK(cs.get_define_v2("s4422") != nullptr, "4422: Soft v2 entry");
+        cs.evaluator().set_workspace_flat(nullptr);
+        cs.evaluator().set_workspace_pool(nullptr);
+        CHECK(cs.plant_body_only_dirty_for_test("s4422", false, false) >= 1,
+              "4422: Soft body dirty");
+        auto* m = metrics(cs);
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto path0 = m->eval_path_relower_total.load(std::memory_order_relaxed);
+        auto def = cs.define_function("(define (s4422 x) (+ x 3))");
+        CHECK(def.has_value(), "4422: Soft define_function");
+        CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) == impact0,
+              "4422: Soft ub==0 does not force-full");
+        CHECK(m->eval_path_relower_total.load(std::memory_order_relaxed) > path0,
+              "4422: Soft still enters the partial relower");
+    }
+
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(cs.eval("(set-code \"(define (w4422 x) (+ x 1))\")").has_value(),
+              "4422: sweep set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4422: sweep eval");
+        CHECK(cs.plant_body_only_dirty_for_test("w4422", false, false) >= 1, "4422: sweep dirty");
+        auto* m = metrics(cs);
+        const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+        const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) == per0,
+              "4422: sweep does not commit per-fn after impact refuses");
+        CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
+              "4422: sweep reaches the full store_define_v2 closeout");
+    }
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_issue_3310() {
@@ -253,6 +356,7 @@ int run_test_issue_3310() {
     ac4_clean_window_zero_cost();
     ac5_production_consult_reflects_strategy();
     ac3691_quote_lambda_impact_uses_prod_helper();
+    ac4422_unknown_impact_skips_per_fn_commit();
 
     std::print("[test_issue_3310] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
