@@ -237,7 +237,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // and ref_tenant is the caller: no NodeId, so this is the #2942
             // no-target shape (same as load, #4059).
             const std::string_view set_code_op = "set-code";
-            if (!ev.require_effect(aura::compiler::security::kEffectMutate, set_code_op, 0,
+            // Checkpoint reinstall is the saved workspace, not a caller
+            // install. Every other entry, including lookup(), still pays.
+            if (aura::compiler::security::panic_checkpoint_reinstall_depth() == 0 &&
+                !ev.require_effect(aura::compiler::security::kEffectMutate, set_code_op, 0,
                                    ev.capability_tenant_id())) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             aura::compiler::security::format_deny_reason(

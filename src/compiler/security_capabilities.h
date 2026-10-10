@@ -181,6 +181,15 @@ inline constexpr int kSideEffectInheritIssue = 2057;
 // Issue #2487: sys-open path TOCTOU + sensitive-path hardening stamp.
 inline constexpr int kSysOpenPathHardenIssue = 2487;
 
+// Panic-checkpoint restore reinstalls the runtime's saved workspace
+// through set-code. That stack is the undo, not a caller install.
+// Non-zero only on that call. User set-code, deserialize, gc, and
+// ast:restore stay on the Mutate choke (Issue #4400).
+inline int& panic_checkpoint_reinstall_depth() noexcept {
+    static thread_local int depth = 0;
+    return depth;
+}
+
 } // namespace aura::compiler::security
 
 #endif // AURA_COMPILER_SECURITY_CAPABILITIES_H

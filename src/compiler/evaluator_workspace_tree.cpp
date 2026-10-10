@@ -334,6 +334,19 @@ bool Evaluator::restore_panic_checkpoint() {
     auto set_fn = primitives_.lookup("set-code");
     if (!set_fn)
         return false;
+    // Issue #4400: this set-code reinstalls panic_safe_source_, the
+    // workspace the runtime already saved. It is not a caller install.
+    // The Mutate choke stays for every other entry.
+    struct PanicReinstallScope {
+        PanicReinstallScope() noexcept {
+            ++aura::compiler::security::panic_checkpoint_reinstall_depth();
+        }
+        ~PanicReinstallScope() {
+            auto& depth = aura::compiler::security::panic_checkpoint_reinstall_depth();
+            if (depth > 0)
+                --depth;
+        }
+    } panic_reinstall_scope;
     // Issue #1583: high-resolution recovery latency (stall budget SLO).
     const auto t0 = std::chrono::steady_clock::now();
     auto idx = string_heap_.size();

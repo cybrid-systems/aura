@@ -266,13 +266,15 @@ int run_test_linear_enforce_production_defaults() {
     {
         std::println("\n--- #3472 AC1: persist wrote + Phase-1 pending → abort_restore ---");
         reset_process();
-        apply_production_audit_defaults();
-        typed_audit::clear_type_linear_proof_outcome_for_test();
-        typed_audit::clear_type_linear_commit_proof_for_test();
+        typed_audit::apply_dev_audit_defaults();
         CompilerService cs;
         CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC1: warm");
         (void)cs.eval("(set-code \"(define f 1)\")");
         (void)cs.eval("(eval-current)");
+        // Full face after the install. set-code is not the linear deny.
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
         (void)cs.eval("(typecheck-current)");
         bool ok = true;
         {
