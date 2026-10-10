@@ -1249,7 +1249,7 @@ export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
 // Operates on IRModule after lowering + TypeSpecializationWrap.
 // CastOp semantics in IR: operands = {result_slot, source_slot, type_tag, blame}
 // The type_tag field encodes the target runtime type
-// (0=Int, 1=String, 2=Bool, 3=Dynamic, 4=Float; default ≥3 is Dynamic passthrough).
+// (0=Int, 1=String, 2=Bool, 3=Dynamic passthrough, 4=Float).
 //
 // Issue #508: extended with keep_for_debug (disable pass for blame
 // tracking during diagnosis), elapsed_us (per-call timing), and
@@ -1520,7 +1520,7 @@ public:
                 }
 
                 // Issue #508 / #1925 Rule 3: safe Dynamic passthrough.
-                // When the target type_tag is Dynamic (≥3,
+                // When the target type_tag is Dynamic (==3,
                 // the default case in the IR interpreter
                 // is `locals[ops[0]] = val`), the CastOp
                 // does no work at runtime — it's a pure
@@ -1535,7 +1535,7 @@ public:
                 // arg with no type info yet).
                 // #1925: also elide when source carries narrow_evidence
                 // (occurrence-proved value is always Dynamic-safe).
-                if (target_tag >= 3) {
+                if (target_tag == 3) {
                     if (auto* src = find_source(ops[1])) {
                         auto src_tid = src->type_id;
                         bool src_is_ground_known = false;
@@ -1878,8 +1878,8 @@ private:
                     }
                 }
 
-                // Rule 3: safe Dynamic passthrough (target_tag ≥ 3)
-                if (target_tag >= 3) {
+                // Rule 3: safe Dynamic passthrough (target_tag == 3)
+                if (target_tag == 3) {
                     if (auto src_opt = find_source_idx(value_slot)) {
                         const auto si = *src_opt;
                         auto src_tid = func.type_ids_[si];
