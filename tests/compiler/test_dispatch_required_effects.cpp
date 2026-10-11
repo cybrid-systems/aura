@@ -31,6 +31,7 @@
 #include "compiler/ffi_hot_path.hh"
 #include "compiler/runtime_shared.h" // #4036: aura_alloc_closure / aura_closure_is_freed / aura_free_closure_checked
 #include "compiler/observability_metrics.h"
+#include "compiler/mutation_hold_budget.h"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_side_effect.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -57,6 +58,10 @@ import aura.compiler.ir;
 import aura.compiler.ir_executor;
 import aura.compiler.service;
 import aura.compiler.value;
+
+namespace aura::serve {
+void clear_current_fiber_session_mid() noexcept;
+}
 
 namespace {
 
@@ -2103,6 +2108,155 @@ static void ac4429_hash_enumerator_gate() {
     ev.set_effect_sandbox_mode(0);
 }
 
+// Issue #4430: granted_capabilities_ is one vector on the Evaluator.
+// TenantScope rebinds the principal and used to leave string-only caps
+// (compile / sandbox) visible to the next tenant. Production compares the
+// stamp. Scope release retires that principal's write-side rows only.
+static void ac4430_string_cap_tenant_mirror() {
+    std::println("\n--- #4430: string-only caps follow the tenant principal ---");
+    using aura::compiler::security::kCapCompile;
+    using aura::compiler::security::kCapCompileDirty;
+    using aura::compiler::security::kCapSandbox;
+    using aura::compiler::types::make_string;
+
+    auto heap_has = [](aura::compiler::Evaluator& ev, std::string_view needle) {
+        for (const auto& s : ev.string_heap()) {
+            if (s.find(needle) != std::string::npos)
+                return true;
+        }
+        return false;
+    };
+
+    reset_all();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::serve::clear_current_fiber_session_mid();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        const auto mid = aura::core::current_mutation_epoch();
+        CHECK(mid != 0, "4430: epoch published for the host session mid");
+        aura::compiler::g_mutation_hold_live_session_mid.store(mid, std::memory_order_release);
+        int marks = 0;
+        ev.set_mark_block_dirty_fn([&](const char*, std::size_t, std::uint32_t) {
+            ++marks;
+            return true;
+        });
+        auto dirty = ev.primitives().lookup("compile:mark-block-dirty!");
+        auto compact = ev.primitives().lookup("mutation-log-compact");
+        CHECK(compact.has_value(), "4430: mutation-log-compact present");
+        if (compact) {
+            {
+                aura::compiler::Evaluator::TenantScope t1(ev, 443001);
+                ev.grant_capability(kCapCompile);
+                ev.grant_capability(kCapSandbox);
+                CHECK(ev.has_capability(kCapCompile), "4430: T1 holds compile");
+                CHECK(ev.has_capability(kCapSandbox), "4430: T1 holds sandbox");
+                const auto n = ev.granted_capability_count();
+                {
+                    aura::compiler::Evaluator::TenantScope t2(ev, 443002);
+                    CHECK(!ev.has_capability(kCapCompile), "4430: T2 does not see T1 compile");
+                    CHECK(!ev.has_capability(kCapCompileDirty), "4430: T2 has no compile-dirty");
+                    CHECK(!ev.has_capability(kCapSandbox), "4430: T2 does not see T1 sandbox");
+                    const auto marks_before = marks;
+                    if (dirty) {
+                        const auto ni = ev.push_string_heap("blk");
+                        auto r = (*dirty)({make_string(static_cast<std::uint64_t>(ni)), make_int(0),
+                                           make_int(0)});
+                        CHECK(is_error(r), "4430: foreign mark-block-dirty denied");
+                        const bool named =
+                            heap_has(ev, "capability denied: compile-dirty required");
+                        CHECK(named, "4430: deny names compile-dirty");
+                    }
+                    CHECK(marks == marks_before, "4430: foreign principal did not mark IR dirty");
+                    auto denied = ev.invoke_prim_with_telemetry("mutation-log-compact",
+                                                                [&]() { return (*compact)({}); });
+                    CHECK(is_error(denied), "4430: foreign mutation-log-compact denied");
+                    const bool sand = heap_has(ev, "kCapSandbox");
+                    CHECK(sand, "4430: deny names kCapSandbox");
+                    ev.grant_capability(kCapCompile);
+                    CHECK(ev.has_capability(kCapCompile), "4430: T2 own compile lands");
+                    const auto n2 = ev.granted_capability_count();
+                    CHECK(n2 == n + 1, "4430: T2 compile is a second row");
+                }
+                CHECK(ev.capability_tenant_id() == 443001, "4430: principal restored to T1");
+                CHECK(ev.has_capability(kCapCompile), "4430: nested release keeps T1 compile");
+                CHECK(ev.has_capability(kCapSandbox), "4430: nested release keeps T1 sandbox");
+                CHECK(ev.granted_capability_count() == n, "4430: T2 write-side row retired");
+                auto opened = ev.invoke_prim_with_telemetry("mutation-log-compact",
+                                                            [&]() { return (*compact)({}); });
+                CHECK(!is_error(opened), "4430: T1 sandbox opens mutation-log-compact");
+                if (dirty) {
+                    const auto ni = ev.push_string_heap("blk");
+                    const auto before = marks;
+                    auto r = (*dirty)(
+                        {make_string(static_cast<std::uint64_t>(ni)), make_int(0), make_int(0)});
+                    CHECK(!is_error(r), "4430: T1 mark-block-dirty runs");
+                    CHECK(marks == before + 1, "4430: T1 dirty hook fired");
+                }
+            }
+            CHECK(!ev.has_capability(kCapCompile), "4430: scope release retires T1 compile");
+            ev.set_capability_tenant_id(443001);
+            CHECK(!ev.has_capability(kCapCompile), "4430: compile stays retired for T1");
+            CHECK(ev.has_capability(kCapSandbox), "4430: sandbox stays sticky for T1");
+            ev.set_capability_tenant_id(443002);
+            CHECK(!ev.has_capability(kCapSandbox), "4430: sticky sandbox does not authorize T2");
+            CHECK(!ev.has_capability(kCapCompile), "4430: T2 compile died with its scope");
+        }
+        ev.set_effect_sandbox_mode(0);
+    }
+
+    reset_all();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::serve::clear_current_fiber_session_mid();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        set_mode(SandboxMode::Off);
+        {
+            aura::compiler::Evaluator::TenantScope t1(ev, 443001);
+            ev.grant_capability(kCapCompile);
+            {
+                aura::compiler::Evaluator::TenantScope t2(ev, 443002);
+                CHECK(ev.has_capability(kCapCompile), "4430: Soft/Off string caps stay allow-all");
+            }
+            CHECK(ev.has_capability(kCapCompile),
+                  "4430: Soft scope release does not erase compile");
+        }
+    }
+
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto rel = sec.find("void Evaluator::TenantScope::release()");
+    CHECK(rel != std::string::npos, "4430: TenantScope::release located");
+    if (rel != std::string::npos) {
+        const auto win = sec.substr(rel, 2400);
+        CHECK(win.find("retire_session_string_caps_for_principal") != std::string::npos,
+              "4430: release retires this principal's string caps");
+    }
+    const auto has = sec.find("bool Evaluator::has_capability");
+    CHECK(has != std::string::npos, "4430: has_capability located");
+    if (has != std::string::npos) {
+        const auto win = sec.substr(has, 4500);
+        CHECK(win.find("granted_capability_tenants_") != std::string::npos,
+              "4430: string path reads the tenant stamp");
+        CHECK(win.find("capability_tenant_id_") != std::string::npos,
+              "4430: string path compares the current principal");
+    }
+    const auto caps = read_file("src/compiler/security_capabilities.h");
+    CHECK(caps.find("kEffectCompile") == std::string::npos, "4430: no new compile effect bit");
+    CHECK(read_file("tests/issues/test_issue_4430.cpp").empty(), "4430: no tests/issues file");
+    CHECK(read_file("docs/design/4430-string-capability-mirror.md").empty(),
+          "4430: no docs/design");
+
+    aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -3781,6 +3935,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4429: hash enumerator tenant gate ──
     ac4429_hash_enumerator_gate();
+
+    // ── Issue #4430: string-only caps keyed by the tenant principal ──
+    ac4430_string_cap_tenant_mirror();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

@@ -155,10 +155,18 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
     // (the capability_stack_ scan that used to live here let a zero-grant
     // Agent read host files, clear process exception stacks, and open the
     // kPrimSecSandboxed dispatch gate with no EffectDeny).
-    const auto matches = [&](const std::string& held) { return held == needed; };
-    for (const auto& cap : granted_capabilities_) {
-        if (matches(cap))
-            return true;
+    // Issue #4430: production string-only authorization uses the same
+    // principal as the effect matrix. A missing stamp fail-closes.
+    // Soft/Off already returned above. The "*" scan above stays global;
+    // holds_live_wildcard is the tenant check for that short-circuit.
+    for (std::size_t i = 0; i < granted_capabilities_.size(); ++i) {
+        if (granted_capabilities_[i] != needed)
+            continue;
+        if (i >= granted_capability_tenants_.size())
+            continue;
+        if (granted_capability_tenants_[i] != capability_tenant_id_)
+            continue;
+        return true;
     }
     return false;
 }
@@ -271,22 +279,34 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
             const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
             if (!force_bind)
                 return;
-            if (effect_for_cap_name(cap) == Effect::None)
-                return;
-            auto& reg = g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
-            bool live = false;
-            if (auto git = reg.by_tenant.find(capability_tenant_id_); git != reg.by_tenant.end()) {
-                for (const auto& g : git->second) {
-                    if (g.name == cap && !g.revoked && !g.stolen) {
-                        live = true;
-                        break;
+            if (effect_for_cap_name(cap) == Effect::None) {
+                // Issue #4430: production dedup is this principal only.
+                for (std::size_t i = 0; i < granted_capabilities_.size(); ++i) {
+                    if (granted_capabilities_[i] == cap && i < granted_capability_tenants_.size() &&
+                        granted_capability_tenants_[i] == capability_tenant_id_)
+                        return;
+                }
+            } else {
+                auto& reg = g_capability_registry();
+                std::lock_guard<std::mutex> lock(reg.mtx);
+                bool live = false;
+                if (auto git = reg.by_tenant.find(capability_tenant_id_);
+                    git != reg.by_tenant.end()) {
+                    for (const auto& g : git->second) {
+                        if (g.name == cap && !g.revoked && !g.stolen) {
+                            live = true;
+                            break;
+                        }
                     }
                 }
+                if (live)
+                    return;
+                const auto idx = static_cast<std::size_t>(it - granted_capabilities_.begin());
+                granted_capabilities_.erase(it);
+                if (idx < granted_capability_tenants_.size())
+                    granted_capability_tenants_.erase(granted_capability_tenants_.begin() +
+                                                      static_cast<std::ptrdiff_t>(idx));
             }
-            if (live)
-                return;
-            granted_capabilities_.erase(it);
         }
     }
     const auto eff = effect_for_cap_name(cap);
@@ -309,6 +329,9 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
     }
 
     granted_capabilities_.push_back(std::move(cap));
+    // Issue #4430: stamp the granting principal in every mode. The
+    // production compare is in has_capability; Soft/Off returns first.
+    granted_capability_tenants_.push_back(capability_tenant_id_);
     // #1565 / #2055: mirror named grant into effect matrix for current tenant.
     // Stamp WorkspaceEpoch Mutation + fiber (not Bridge) so grant_epoch matches
     // the mutation epoch at grant time and long-running blame stays consistent.
@@ -334,6 +357,7 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
                                            prov, single_use, session_bound,
                                            capability_tenant_id_)) {
             granted_capabilities_.pop_back();
+            granted_capability_tenants_.pop_back();
             return;
         }
         // Issue #2136: count Render effect grants for Agent dashboards.
@@ -358,10 +382,29 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
             const auto mid = published_session_mid_for_string_cap();
             if (mid == 0) {
                 granted_capabilities_.pop_back();
+                granted_capability_tenants_.pop_back();
                 return;
             }
-            session_string_caps_.push_back(SessionStringCap{granted_capabilities_.back(), mid});
+            session_string_caps_.push_back(
+                SessionStringCap{granted_capabilities_.back(), mid, capability_tenant_id_});
         }
+    }
+}
+
+void Evaluator::drop_granted_string_for_tenant(std::string_view name,
+                                               std::uint64_t tenant) noexcept {
+    std::size_t i = 0;
+    while (i < granted_capabilities_.size()) {
+        const bool name_hit = granted_capabilities_[i] == name;
+        const bool tenant_hit =
+            i < granted_capability_tenants_.size() && granted_capability_tenants_[i] == tenant;
+        if (!name_hit || !tenant_hit) {
+            ++i;
+            continue;
+        }
+        granted_capabilities_.erase(granted_capabilities_.begin() + static_cast<std::ptrdiff_t>(i));
+        granted_capability_tenants_.erase(granted_capability_tenants_.begin() +
+                                          static_cast<std::ptrdiff_t>(i));
     }
 }
 
@@ -371,14 +414,31 @@ void Evaluator::retire_session_string_caps(std::uint64_t mid) noexcept {
     for (const auto& row : session_string_caps_) {
         if (row.mid != mid)
             continue;
-        granted_capabilities_.erase(
-            std::remove(granted_capabilities_.begin(), granted_capabilities_.end(), row.name),
-            granted_capabilities_.end());
+        // Issue #4430: drop this mid's rows per granting principal.
+        // A name match alone would erase another tenant's copy.
+        drop_granted_string_for_tenant(row.name, row.tenant);
     }
     session_string_caps_.erase(
         std::remove_if(session_string_caps_.begin(), session_string_caps_.end(),
                        [mid](const SessionStringCap& row) noexcept { return row.mid == mid; }),
         session_string_caps_.end());
+}
+
+void Evaluator::retire_session_string_caps_for_principal(std::uint64_t mid,
+                                                         std::uint64_t tenant) noexcept {
+    if (mid == 0 || session_string_caps_.empty())
+        return;
+    for (const auto& row : session_string_caps_) {
+        if (row.mid != mid || row.tenant != tenant)
+            continue;
+        drop_granted_string_for_tenant(row.name, row.tenant);
+    }
+    session_string_caps_.erase(std::remove_if(session_string_caps_.begin(),
+                                              session_string_caps_.end(),
+                                              [mid, tenant](const SessionStringCap& row) noexcept {
+                                                  return row.mid == mid && row.tenant == tenant;
+                                              }),
+                               session_string_caps_.end());
 }
 
 bool Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
@@ -1902,12 +1962,10 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
     } else {
         reg_revoke.revoke(tenant_id, name, ep);
     }
-    // Drop matching string grant so has_capability stays consistent.
-    if (!name.empty()) {
-        granted_capabilities_.erase(std::remove(granted_capabilities_.begin(),
-                                                granted_capabilities_.end(), std::string(name)),
-                                    granted_capabilities_.end());
-    }
+    // Drop this principal's string mirror so has_capability stays consistent.
+    // Issue #4430: a same-name grant for another tenant stays.
+    if (!name.empty())
+        drop_granted_string_for_tenant(name, tenant_id);
 }
 
 void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
@@ -2169,6 +2227,11 @@ void Evaluator::TenantScope::release() noexcept {
         std::lock_guard<std::mutex> lock(reg.mtx);
         (void)reg.revoke_session_grants_for_locked(scope_tenant_, scope_mid_, fiber_id_,
                                                    "scope-dtor-cascade");
+        // Issue #4430: retire this principal's write-side strings for the
+        // same mid. Unfiltered retire stays on outermost exit and fiber
+        // join. Soft/Off records no session rows, so this is a no-op there.
+        // Does not take the registry mutex.
+        ev_->retire_session_string_caps_for_principal(scope_mid_, scope_tenant_);
         // Restore prior principal under the same lock (#3207 happens-before).
         ev_->set_capability_tenant_id(prev_tenant_);
         ev_->allow_cross_tenant_ = prev_allow_cross_;
