@@ -52,6 +52,7 @@
 
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/aura_jit.h"
 
 #include <atomic>
 #include <fstream>
@@ -935,6 +936,213 @@ static void ac4084_3_prologue_zero_is_not_success() {
     CHECK(read_file("docs/design/4084-abort-jit-cache.md").empty(), "4084 AC3: no docs/design");
 }
 
+// Issue #4451: OpCall / OpApply must not publish a callee refuse (fixnum 0)
+// as success. Encoded fixnum is n<<1, so (inner 5)+100 is raw 212 and the
+// swallowed refuse is raw 200. Compile on the dev face so typed-entry is
+// omitted. Named prologues still call linear_post_mutate_enforce; a safe
+// host callback and a live env let that probe pass. Calls run on production.
+static int ac4451_linear_safe(void*, std::uint32_t) {
+    return 0;
+}
+struct Ac4451LinearHost {
+    Ac4451LinearHost() {
+        aura_set_linear_post_mutate_enforce_fn(&ac4451_linear_safe, nullptr);
+        aura_jit_set_linear_env_context(1, ~0ull);
+    }
+    ~Ac4451LinearHost() {
+        aura_set_linear_post_mutate_enforce_fn(nullptr, nullptr);
+        aura_jit_clear_linear_env_context();
+    }
+    Ac4451LinearHost(const Ac4451LinearHost&) = delete;
+    Ac4451LinearHost& operator=(const Ac4451LinearHost&) = delete;
+};
+extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
+extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
+extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
+                                          std::int64_t argc);
+extern "C" std::uint64_t aura_deopt_count(void);
+
+static aura::jit::ScalarFn compile_ac4451(aura::jit::AuraJIT& jit, const char* name,
+                                          aura::jit::FlatInstruction* insts, std::uint32_t ninst,
+                                          std::uint32_t nlocals, std::uint32_t nargs) {
+    aura::jit::FlatBlock blk{0, insts, ninst};
+    aura::jit::FlatFunction fn{};
+    fn.name = name;
+    fn.entry_block = 0;
+    fn.local_count = nlocals;
+    fn.arg_count = nargs;
+    fn.blocks = &blk;
+    fn.num_blocks = 1;
+    fn.source_marker = 0;
+    return jit.compile(fn);
+}
+
+static void ac4451_opcall_does_not_publish_callee_refuse() {
+    std::println("\n--- #4451: OpCall/OpApply leave native on callee refuse ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    const auto jit_src = read_file("src/compiler/aura_jit.cpp");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit_src.find("call_callee_deopt") != std::string::npos, "4451: caller peeks sentinel");
+    CHECK(rt.find("closure_dispatch_leave_native") != std::string::npos,
+          "4451: refuse notes the sentinel");
+    CHECK(rt.find("schema-4451") == std::string::npos, "4451: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4451.cpp").empty(), "4451: no invent");
+
+    aura::jit::AuraJIT jit;
+    aura::jit::FlatInstruction inner[4]{};
+    inner[0].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Arg);
+    inner[0].ops[0] = 0;
+    inner[0].ops[1] = 0;
+    inner[1].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+    inner[1].ops[0] = 1;
+    inner[1].ops[1] = 1;
+    inner[2].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Add);
+    inner[2].ops[0] = 2;
+    inner[2].ops[1] = 0;
+    inner[2].ops[2] = 1;
+    inner[2].shape_id = aura::jit::SHAPE_INT;
+    inner[3].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
+    inner[3].ops[0] = 2;
+    auto* inner_fn = compile_ac4451(jit, "ac4451_inner", inner, 4, 3, 1);
+
+    aura::jit::FlatInstruction zero[2]{};
+    zero[0].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+    zero[0].ops[0] = 0;
+    zero[0].ops[1] = 0;
+    zero[1].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
+    zero[1].ops[0] = 0;
+    auto* zero_fn = compile_ac4451(jit, "ac4451_zero", zero, 2, 1, 0);
+
+    aura::jit::FlatInstruction ocall[6]{};
+    ocall[0].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Arg);
+    ocall[0].ops[0] = 0;
+    ocall[0].ops[1] = 0;
+    ocall[1].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+    ocall[1].ops[0] = 1;
+    ocall[1].ops[1] = 5;
+    ocall[2].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+    ocall[2].ops[0] = 2;
+    ocall[2].ops[1] = 100;
+    ocall[3].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Call);
+    ocall[3].ops[0] = 0;
+    ocall[3].ops[1] = 1;
+    ocall[3].ops[2] = 1;
+    ocall[3].ops[3] = 3;
+    ocall[4].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Add);
+    ocall[4].ops[0] = 4;
+    ocall[4].ops[1] = 3;
+    ocall[4].ops[2] = 2;
+    ocall[4].shape_id = aura::jit::SHAPE_INT;
+    ocall[5].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
+    ocall[5].ops[0] = 4;
+    auto* call_fn = compile_ac4451(jit, "ac4451_outer_call", ocall, 6, 5, 1);
+
+    aura::jit::FlatInstruction oapply[6]{};
+    oapply[0].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Arg);
+    oapply[0].ops[0] = 0;
+    oapply[0].ops[1] = 0;
+    oapply[1].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+    oapply[1].ops[0] = 1;
+    oapply[1].ops[1] = 5;
+    oapply[2].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Apply);
+    oapply[2].ops[0] = 0;
+    oapply[2].ops[1] = 1;
+    oapply[2].ops[2] = 2;
+    oapply[3].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+    oapply[3].ops[0] = 3;
+    oapply[3].ops[1] = 100;
+    oapply[4].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Add);
+    oapply[4].ops[0] = 4;
+    oapply[4].ops[1] = 2;
+    oapply[4].ops[2] = 3;
+    oapply[4].shape_id = aura::jit::SHAPE_INT;
+    oapply[5].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
+    oapply[5].ops[0] = 4;
+    auto* apply_fn = compile_ac4451(jit, "ac4451_outer_apply", oapply, 6, 5, 1);
+
+    CHECK(inner_fn != nullptr && zero_fn != nullptr, "4451: inner compiles");
+    CHECK(call_fn != nullptr && apply_fn != nullptr, "4451: outers compile");
+    if (!inner_fn || !zero_fn || !call_fn || !apply_fn) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    jit.register_function(451, inner_fn, 3, 1, 0, "ac4451_inner");
+    jit.register_function(452, zero_fn, 1, 0, 0, "ac4451_zero");
+
+    apply_production_audit_defaults();
+    // Named prologue: unset callback / null env is unsafe on this face.
+    Ac4451LinearHost linear_host;
+    (void)linear_host;
+    CHECK(production_defaults_active(), "4451: production face armed");
+    const auto live_env = aura_get_aot_live_env_frame_version();
+    const auto cid = aura_alloc_closure(451);
+    const auto zid = aura_alloc_closure(452);
+    CHECK(cid >= 0 && zid >= 0, "4451: closures allocated");
+    if (live_env != 0) {
+        aura_closure_set_env_gen(cid, live_env);
+        aura_closure_set_env_gen(zid, live_env);
+    }
+    (void)aura_jit_take_prologue_deopt_sentinel();
+
+    std::int64_t five[1] = {10};
+    const auto d_direct0 = aura_deopt_count();
+    const auto direct = aura_closure_call(cid, five, 1);
+    const auto direct_sent = aura_jit_peek_prologue_deopt_sentinel();
+    const auto d_direct1 = aura_deopt_count();
+    std::println("4451 direct inner raw={} sentinel={} deopt_delta={}", direct, direct_sent,
+                 d_direct1 - d_direct0);
+    CHECK(direct == 12, "4451: inner(5) is encoded 12");
+    CHECK(direct_sent == 0, "4451: success leaves sentinel clear");
+
+    std::int64_t carg[1] = {cid};
+    const auto fresh_call = call_fn(carg, 1);
+    const auto fresh_sent = aura_jit_peek_prologue_deopt_sentinel();
+    std::println("4451 fresh OpCall raw={} sentinel={}", fresh_call, fresh_sent);
+    CHECK(fresh_call == 212, "4451: fresh OpCall is encoded 106");
+    CHECK(fresh_sent == 0, "4451: fresh OpCall sentinel clear");
+
+    std::int64_t aarg[1] = {cid};
+    const auto fresh_apply = apply_fn(aarg, 1);
+    const auto apply_sent = aura_jit_peek_prologue_deopt_sentinel();
+    std::println("4451 fresh OpApply raw={} sentinel={}", fresh_apply, apply_sent);
+    CHECK(fresh_apply == 212, "4451: fresh OpApply is encoded 106");
+    CHECK(apply_sent == 0, "4451: fresh OpApply sentinel clear");
+
+    const auto zero_ret = aura_closure_call(zid, nullptr, 0);
+    const auto zero_sent = aura_jit_peek_prologue_deopt_sentinel();
+    std::println("4451 real zero raw={} sentinel={}", zero_ret, zero_sent);
+    CHECK(zero_ret == 0, "4451: native 0 is a real result");
+    CHECK(zero_sent == 0, "4451: real 0 does not stamp the sentinel");
+
+    aura_closure_set_must_deopt(cid, 1);
+    const auto d0 = aura_deopt_count();
+    const auto refused_call = call_fn(carg, 1);
+    const auto refused_sent = aura_jit_peek_prologue_deopt_sentinel();
+    const auto d1 = aura_deopt_count();
+    std::println("4451 refused OpCall raw={} sentinel={} deopt_delta={}", refused_call,
+                 refused_sent, d1 - d0);
+    CHECK(refused_call != 200, "4451: OpCall does not publish (0+100)");
+    CHECK(refused_call == 0, "4451: OpCall leaves native");
+    CHECK(refused_sent == 1, "4451: OpCall leaves the sentinel set");
+    CHECK(d1 - d0 == 1, "4451: caller is not batch-deopted");
+    CHECK(aura_jit_take_prologue_deopt_sentinel() == 1, "4451: take sees the OpCall refuse");
+
+    aura_closure_set_must_deopt(cid, 1);
+    const auto d2 = aura_deopt_count();
+    const auto refused_apply = apply_fn(aarg, 1);
+    const auto refused_apply_sent = aura_jit_peek_prologue_deopt_sentinel();
+    const auto d3 = aura_deopt_count();
+    std::println("4451 refused OpApply raw={} sentinel={} deopt_delta={}", refused_apply,
+                 refused_apply_sent, d3 - d2);
+    CHECK(refused_apply != 200, "4451: OpApply does not publish (0+100)");
+    CHECK(refused_apply == 0, "4451: OpApply leaves native");
+    CHECK(refused_apply_sent == 1, "4451: OpApply leaves the sentinel set");
+    CHECK(d3 - d2 == 1, "4451: OpApply caller is not batch-deopted");
+    (void)aura_jit_take_prologue_deopt_sentinel();
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 static void ac3864_prod_bypass_source_cite();
@@ -986,6 +1194,7 @@ int run_test_abort_ir_cache_fence_first() {
     ac4084_1_production_abort_erases_jit_cache();
     ac4084_2_soft_abort_keeps_jit_cache();
     ac4084_3_prologue_zero_is_not_success();
+    ac4451_opcall_does_not_publish_callee_refuse();
 
     std::println("\n=== #3159+#3258+#3324+#3551+#3821+#3852+#4084 result: passed={} failed={} ===",
                  aura::test::g_passed, aura::test::g_failed);

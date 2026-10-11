@@ -998,6 +998,12 @@ std::uint64_t aura_jit_walk_active_closures_stale_found(void);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+// Issue #4451: same TLS as the prologue sentinel. note sets it, clear
+// drops it, peek reads it without taking. OpCall / OpApply peek so a
+// callee refuse is not published as success. Not a query key.
+void aura_jit_note_prologue_deopt_sentinel(void) noexcept;
+void aura_jit_clear_prologue_deopt_sentinel(void) noexcept;
+int aura_jit_peek_prologue_deopt_sentinel(void) noexcept;
 
 // Issue #1534: GuardShape dual-epoch fence — runtime helper called from
 // JIT-compiled OpGuardShape before narrow_evidence / shape fast-path.

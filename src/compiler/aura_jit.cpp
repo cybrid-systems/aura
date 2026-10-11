@@ -423,6 +423,9 @@ struct LLVMBuilder {
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
     llvm::Function* fn_deopt_to_interpreter = nullptr;
+    // Issue #4451: peek the #4084 sentinel after OpCall / OpApply.
+    // Does not clear it. The host take-after still sees a callee refuse.
+    llvm::Function* fn_peek_prologue_deopt_sentinel = nullptr;
     // When set, entry-block instructions lower into this BB (after prologue).
     llvm::BasicBlock* entry_body_bb = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
@@ -562,6 +565,10 @@ struct LLVMBuilder {
         fn_deopt_to_interpreter = llvm::Function::Create(
             llvm::FunctionType::get(i64, {ptr_i8}, false), llvm::Function::ExternalLinkage,
             "aura_jit_deopt_to_interpreter", mod);
+        // Issue #4451: i32 aura_jit_peek_prologue_deopt_sentinel(void)
+        fn_peek_prologue_deopt_sentinel = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
+            "aura_jit_peek_prologue_deopt_sentinel", mod);
 
         // Issue #2576: (slot, args*, count) — full N-arg PrimCall
         fn_prim_call = llvm::Function::Create(
@@ -904,6 +911,23 @@ struct LLVMBuilder {
         auto end_linear_epoch_fence = [&](const LinearEpochFence& fb) {
             irb->CreateBr(fb.bb_merge);
             irb->SetInsertPoint(fb.bb_merge);
+        };
+        // Issue #4451: aura_closure_call refuse is fixnum 0 plus the
+        // #4084 sentinel. Peek (do not take) and return so the caller
+        // tail cannot publish (0+100). Do not batch-deopt this function.
+        auto leave_if_callee_refused = [&]() {
+            if (!fn_peek_prologue_deopt_sentinel)
+                return;
+            auto* sent = irb->CreateCall(llvm::FunctionCallee(fn_peek_prologue_deopt_sentinel), {});
+            auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            auto* refused = irb->CreateICmpNE(sent, zero32);
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto* bb_deopt = llvm::BasicBlock::Create(ctx, "call_callee_deopt", parent);
+            auto* bb_cont = llvm::BasicBlock::Create(ctx, "call_callee_cont", parent);
+            irb->CreateCondBr(refused, bb_deopt, bb_cont);
+            irb->SetInsertPoint(bb_deopt);
+            irb->CreateRet(c64(0));
+            irb->SetInsertPoint(bb_cont);
         };
         switch (inst.opcode) {
             case OpNop:
@@ -1477,6 +1501,7 @@ struct LLVMBuilder {
                     {closure, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
                      c64(arg_count)});
                 store(inst.ops[2], call);
+                leave_if_callee_refused();
                 if (lin)
                     end_linear_epoch_fence(fb);
                 return true;
@@ -1500,6 +1525,7 @@ struct LLVMBuilder {
                     {callee, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
                      c64(arg_count)});
                 store(inst.ops[3], call);
+                leave_if_callee_refused();
                 return true;
             }
 
@@ -2685,6 +2711,7 @@ int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+int aura_jit_peek_prologue_deopt_sentinel(void) noexcept;
 int64_t aura_prim_call(int64_t, int64_t*, int64_t); // Issue #2576 N-arg
 uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
@@ -3106,6 +3133,7 @@ struct AuraJIT::Impl {
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
         reg("aura_jit_deopt_to_interpreter", (void*)aura_jit_deopt_to_interpreter);
+        reg("aura_jit_peek_prologue_deopt_sentinel", (void*)aura_jit_peek_prologue_deopt_sentinel);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
         // Issue #3988: Jump back-edge poll (strong in evaluator_fiber_mutation).
         reg("aura_jit_poll_hold_budget_safepoint", (void*)aura_jit_poll_hold_budget_safepoint);
