@@ -1206,8 +1206,16 @@ bool Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const 
 std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id) {
     {
         std::lock_guard<std::mutex> lock(cap_snap_mtx_);
-        if (auto it = cap_snap_cache_.find(frame_id); it != cap_snap_cache_.end())
-            return it->second;
+        if (auto it = cap_snap_cache_.find(frame_id); it != cap_snap_cache_.end()) {
+            // Issue #4448: EnvIds are not immutable identity — compact
+            // renumbers frames and truncate reuses their ids, so a cached
+            // snapshot from an older env generation describes a DIFFERENT
+            // frame's captures. Validate the build-time generation; a
+            // stale entry is dropped and rebuilt from the live frame.
+            if (it->second->env_gen == env_generation_)
+                return it->second;
+            cap_snap_cache_.erase(it);
+        }
     }
     if (frame_id == NULL_ENV_ID || frame_id >= env_frames_.size())
         return nullptr;
@@ -1234,6 +1242,9 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
                 ns->name_index_[ns->bindings_[i].first] = i;
             ns->parent_id = cfr.parent_id;
             ns->source_frame = frame_id;
+            // Issue #4448: stamp the build-time generation so cache hits
+            // can detect pre-compact / pre-truncate entries (see above).
+            ns->env_gen = env_generation_;
             snap = std::move(ns);
         }
     }
@@ -2511,6 +2522,16 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
+    // Issue #4448: doomed frames' snapshots die with them, and the
+    // truncated tail's EnvIds are immediately reusable — a stale cached
+    // snapshot would hand the reused id's next occupant the old frame's
+    // captures (bypassing the #2251/#4109 env_gen fence entirely, since
+    // the fast path returns before it). Clear in the same critical
+    // section as the generation bump; cap_snap_mtx_ is a leaf lock.
+    {
+        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        cap_snap_cache_.clear();
+    }
     // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
     // section as the env_generation_ bump — the materialize env_gen fence
     // (always-empty on mismatch now that body_live is gone) must not strand
@@ -2694,6 +2715,12 @@ EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noe
 //   5. unique_lock(closures_shards_[closures_shard_index(id)].mu) — rewrite Closure::env_id
 //   6. swap env_frames_, defuse_version_.fetch_add(1)
 //
+// Issue #4448: the #4350 cap_snap_cache_ is cleared in the same critical
+// section as the env_generation_ bump (EnvIds are renumbered here, so
+// every cached snapshot is keyed by — and describes — a pre-compact
+// frame). The ctor-allocated root frame (top_'s parent) is pinned into
+// the referenced set and top_.parent_id remapped, so the live top
+// parent chain never dangles across a reclaim.
 // Locking order: env_frames_mtx_ -> closures_mtx_ (consistent
 // with apply_closure path which takes closures_mtx_ first then
 // materializes from env_frames_ under no env_frames_mtx_ hold —
@@ -2774,6 +2801,13 @@ std::size_t Evaluator::compact_env_frames() {
             m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
             m->env_compact_epoch_notify_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #4448: hygienic clear — no frames, so no cached snapshot
+        // can be valid; drop any residue so later frame growth starts
+        // from a clean cache (idempotent with the gen-validated hits).
+        {
+            std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+            cap_snap_cache_.clear();
+        }
         // Issue #2131: empty compact still closes PostAudit (no roots).
         (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
         compact_gc_coord.after_cascade();
@@ -2781,9 +2815,21 @@ std::size_t Evaluator::compact_env_frames() {
     }
     const auto current_defuse = defuse_version_.load(std::memory_order_acquire);
 
+    // Issue #4448: the ctor-allocated root frame (top_'s parent) is a live
+    // root even when no Closure references it. Without this pin, a compact
+    // sweep reclaims it and top_'s parent chain dangles (top_env() lookups
+    // resolve through a moved-from / reused slot).
+    const EnvId top_parent_frame = top_.parent_id();
+    const bool top_parent_in_range =
+        top_parent_frame != NULL_ENV_ID && static_cast<std::size_t>(top_parent_frame) < orig_size;
+
     // Step 2: build referenced set from closures_ (shared lock).
     // A frame is referenced if any live Closure's env_id == i.
     std::vector<bool> referenced(orig_size, false);
+    // Issue #4448: pin the root frame into the live set BEFORE the
+    // closure scan so the sweep below can never reclaim it.
+    if (top_parent_in_range)
+        referenced[top_parent_frame] = true;
     {
         std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
         for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
@@ -2874,9 +2920,14 @@ std::size_t Evaluator::compact_env_frames() {
     if (compact_env_remap_fn_)
         compact_env_remap_fn_(compact_env_remap_ctx_, remap.data(), remap.size());
 
-    // Issue #2087: publish env_id_remap_ for post-compact resolve_env()
+    // Issue #2017: publish env_id_remap_ for post-compact resolve_env()
     // callers (test, JIT, FFI). Empty until next compact. Mirrors the
     // pair_remap_ / string_remap_ lifecycle in #2001.
+    // Issue #4448 (before the move): keep top_'s parent pointer on the
+    // frame it was built from — the pinned frame just moved to its
+    // post-compact index.
+    if (top_parent_in_range && remap[top_parent_frame] >= 0)
+        top_.set_parent_id(static_cast<EnvId>(remap[top_parent_frame]));
     env_id_remap_ = std::move(remap);
 
     // Issue #2087: bump process-wide remap counters for Agent-visible
@@ -2916,6 +2967,17 @@ std::size_t Evaluator::compact_env_frames() {
     // (JIT will not see "fresh epoch + dangling env_id" race).
     defuse_version_.fetch_add(1, std::memory_order_release);
     ++env_generation_;
+    // Issue #4448: clear the #4350 capture-snapshot cache in the same
+    // critical section as the env_generation_ bump — EnvIds were just
+    // renumbered, so every cached snapshot is keyed by (and describes)
+    // a pre-compact frame. cap_snap_for_frame rebuilds from the
+    // remapped survivor frames on demand; cap_snap_mtx_ is a leaf lock
+    // (no path takes env locks under it), so clearing under
+    // env_frames_mtx_ cannot invert.
+    {
+        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        cap_snap_cache_.clear();
+    }
     // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
     // section as the env_generation_ bump. The materialize env_gen fence
     // takes the empty fallback on EVERY stamp mismatch now (body_live is
