@@ -1876,6 +1876,233 @@ static void ac4428_string_fill_and_closure_value() {
     set_mode(SandboxMode::Off);
 }
 
+// Issue #4429: hash-keys / hash-values / hash->alist / hash-length skipped
+// aura_hash_gate_checked. Direct prim calls (same as #4296): the production
+// face must return an empty result and copy no pairs. IsolationDeny is
+// recorded only when the strong owner hook is the one ELF resolved; the
+// light-link stub returns 0 and writes no ring event (#4296).
+static void ac4429_hash_enumerator_gate() {
+    std::println("\n--- #4429: hash enumerators use the hash tenant gate ---");
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::EvalValue;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    using aura::compiler::types::make_string;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+    cs.register_jit_primitives();
+    auto keys_fn = ev.primitives().lookup("hash-keys");
+    auto vals_fn = ev.primitives().lookup("hash-values");
+    auto alist_fn = ev.primitives().lookup("hash->alist");
+    auto len_fn = ev.primitives().lookup("hash-length");
+    CHECK(keys_fn && vals_fn && alist_fn && len_fn, "4429: enumerator prims present");
+    if (!(keys_fn && vals_fn && alist_fn && len_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    auto read_str = [&](const EvalValue& v) -> std::string {
+        if (!is_string(v))
+            return {};
+        const auto si = static_cast<std::size_t>(as_string_idx(v));
+        if (si >= ev.string_heap_size())
+            return {};
+        return ev.copy_string_heap_at(si);
+    };
+    auto list_car_str = [&](const EvalValue& v) -> std::string {
+        if (!is_pair(v))
+            return {};
+        auto& ps = ev.pairs();
+        const auto idx = as_pair_idx(v);
+        if (idx >= ps.size())
+            return {};
+        return read_str(ps[idx].car);
+    };
+    auto alist_key = [&](const EvalValue& v) -> std::string {
+        if (!is_pair(v))
+            return {};
+        auto& ps = ev.pairs();
+        const auto idx = as_pair_idx(v);
+        if (idx >= ps.size() || !is_pair(ps[idx].car))
+            return {};
+        const auto kv = as_pair_idx(ps[idx].car);
+        if (kv >= ps.size())
+            return {};
+        return read_str(ps[kv].car);
+    };
+    auto alist_val = [&](const EvalValue& v) -> std::string {
+        if (!is_pair(v))
+            return {};
+        auto& ps = ev.pairs();
+        const auto idx = as_pair_idx(v);
+        if (idx >= ps.size() || !is_pair(ps[idx].car))
+            return {};
+        const auto kv = as_pair_idx(ps[idx].car);
+        if (kv >= ps.size())
+            return {};
+        return read_str(ps[kv].cdr);
+    };
+    auto table_has = [&](std::uint64_t hidx, const EvalValue& want) -> bool {
+        if (hidx >= g_hash_tables.size() || g_hash_tables[hidx] == nullptr)
+            return false;
+        auto* ht = g_hash_tables[hidx];
+        const auto meta = ht->metadata();
+        const auto vals = ht->values();
+        for (std::uint64_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            if (vals[i] == want.val)
+                return true;
+        }
+        return false;
+    };
+
+    EvalValue key;
+    EvalValue secret;
+    EvalValue hv;
+    bool strong_owner = false;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        strong_owner = aura_jit_owner_capability_tenant() == 7;
+        const auto kidx = ev.push_string_heap("k");
+        const auto vidx = ev.push_string_heap("secret");
+        key = make_string(static_cast<std::uint64_t>(kidx));
+        secret = make_string(static_cast<std::uint64_t>(vidx));
+        hv = call_hash_op(ev, "hash", {key, secret});
+    }
+    CHECK(is_hash(hv), "4429: tenant 7 mints the hash");
+    if (!is_hash(hv)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+    const auto hidx = as_hash_idx(hv);
+    CHECK(hidx < g_hash_tenants.size() && g_hash_tenants[hidx] == 7, "4429: stamp is tenant 7");
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        const auto own_ref = call_hash_op(ev, "hash-ref", {hv, key});
+        const auto own_keys = call_hash_op(ev, "hash-keys", {hv});
+        const auto own_vals = call_hash_op(ev, "hash-values", {hv});
+        const auto own_al = call_hash_op(ev, "hash->alist", {hv});
+        const auto own_len = call_hash_op(ev, "hash-length", {hv});
+        CHECK(read_str(own_ref) == "secret", "4429: owner hash-ref reads secret");
+        CHECK(list_car_str(own_keys) == "k", "4429: owner hash-keys returns k");
+        CHECK(list_car_str(own_vals) == "secret", "4429: owner hash-values returns secret");
+        CHECK(alist_key(own_al) == "k" && alist_val(own_al) == "secret",
+              "4429: owner hash->alist returns k and secret");
+        CHECK(is_int(own_len) && as_int(own_len) == 1, "4429: owner hash-length is 1");
+    }
+
+    const auto pairs_before = ev.pairs_size();
+    reset_security_event_ring_for_test();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        const auto ref9 = call_hash_op(ev, "hash-ref", {hv, key});
+        const auto keys9 = call_hash_op(ev, "hash-keys", {hv});
+        const auto vals9 = call_hash_op(ev, "hash-values", {hv});
+        const auto al9 = call_hash_op(ev, "hash->alist", {hv});
+        const auto len9 = call_hash_op(ev, "hash-length", {hv});
+        CHECK(is_void(ref9), "4429: tenant 9 hash-ref returns no value");
+        CHECK(is_void(keys9), "4429: tenant 9 hash-keys is empty");
+        CHECK(is_void(vals9), "4429: tenant 9 hash-values is empty");
+        CHECK(is_void(al9), "4429: tenant 9 hash->alist is empty");
+        CHECK(is_int(len9) && as_int(len9) == 0, "4429: tenant 9 hash-length is 0");
+    }
+    CHECK(ev.pairs_size() == pairs_before, "4429: foreign enumerate copies no pairs");
+    CHECK(table_has(hidx, secret), "4429: secret stays in the table");
+    const auto sz_after = (hidx < g_hash_tables.size() && g_hash_tables[hidx] != nullptr)
+                              ? static_cast<std::int64_t>(g_hash_tables[hidx]->size)
+                              : static_cast<std::int64_t>(-1);
+    CHECK(sz_after == 1, "4429: table size unchanged");
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        const auto still = call_hash_op(ev, "hash-ref", {hv, key});
+        CHECK(read_str(still) == "secret", "4429: owner still reads secret");
+    }
+    if (strong_owner) {
+        CHECK(ring_has_isolation_deny("hash-keys"), "4429: IsolationDeny hash-keys");
+        CHECK(ring_has_isolation_deny("hash-values"), "4429: IsolationDeny hash-values");
+        CHECK(ring_has_isolation_deny("hash->alist"), "4429: IsolationDeny hash->alist");
+        CHECK(ring_has_isolation_deny("hash-length"), "4429: IsolationDeny hash-length");
+    } else {
+        CHECK(!ring_has_isolation_deny("hash-keys"),
+              "4429: light-link stub records no IsolationDeny on hash-keys");
+        CHECK(!ring_has_isolation_deny("hash-length"),
+              "4429: light-link stub records no IsolationDeny on hash-length");
+    }
+
+    // Unstamped (record 0) under the armed face denies a non-zero caller.
+    CHECK(hidx < g_hash_tenants.size(), "4429: stamp slot exists");
+    if (hidx < g_hash_tenants.size())
+        g_hash_tenants[hidx] = 0;
+    const auto pairs_unstamped = ev.pairs_size();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        const auto keys_u = call_hash_op(ev, "hash-keys", {hv});
+        const auto len_u = call_hash_op(ev, "hash-length", {hv});
+        CHECK(is_void(keys_u), "4429: unstamped hash-keys is empty");
+        CHECK(is_int(len_u) && as_int(len_u) == 0, "4429: unstamped hash-length is 0");
+    }
+    CHECK(ev.pairs_size() == pairs_unstamped, "4429: unstamped enumerate copies no pairs");
+    CHECK(table_has(hidx, secret), "4429: unstamped deny leaves the secret");
+
+    // Face 0: stamp 0 versus caller 9 would deny if the stamp were loaded.
+    reset_security_event_ring_for_test();
+    ev.set_effect_sandbox_mode(0);
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        const auto keys_off = call_hash_op(ev, "hash-keys", {hv});
+        const auto vals_off = call_hash_op(ev, "hash-values", {hv});
+        const auto al_off = call_hash_op(ev, "hash->alist", {hv});
+        const auto len_off = call_hash_op(ev, "hash-length", {hv});
+        CHECK(list_car_str(keys_off) == "k", "4429: Off hash-keys returns k");
+        CHECK(list_car_str(vals_off) == "secret", "4429: Off hash-values returns secret");
+        CHECK(alist_key(al_off) == "k" && alist_val(al_off) == "secret",
+              "4429: Off hash->alist returns k and secret");
+        CHECK(is_int(len_off) && as_int(len_off) == 1, "4429: Off hash-length is 1");
+        CHECK(!ring_has_isolation_deny("hash-keys"),
+              "4429: Off records no hash-keys IsolationDeny");
+        CHECK(!ring_has_isolation_deny("hash-length"),
+              "4429: Off records no hash-length IsolationDeny");
+    }
+
+    const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    auto gate_before = [&](const char* op, const char* read_at) {
+        const auto at = vec.find(std::format("add, ev, \"{}\"", op));
+        if (at == std::string::npos)
+            return false;
+        const auto win = vec.substr(at, 1200);
+        const auto gate = win.find("aura_hash_gate_checked");
+        if (gate == std::string::npos)
+            return false;
+        const auto read = win.find(read_at);
+        const auto lit = win.find(std::format("\"{}\"", op), gate);
+        return read != std::string::npos && lit != std::string::npos && gate < read && lit < read;
+    };
+    CHECK(gate_before("hash-length", "->size"), "4429: hash-length gates before the size read");
+    CHECK(gate_before("hash-keys", "auto* ht"), "4429: hash-keys gates before the copy");
+    CHECK(gate_before("hash-values", "auto* ht"), "4429: hash-values gates before the copy");
+    CHECK(gate_before("hash->alist", "auto* ht"), "4429: hash->alist gates before the copy");
+    CHECK(vec.find("\"hash-ref\"))") != std::string::npos, "4429: hash-ref gate remains");
+    CHECK(vec.find("\"hash-remove!\"))") != std::string::npos, "4429: hash-remove! gate remains");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto seam = rt.find("extern \"C\" bool aura_hash_gate_checked(");
+    CHECK(seam != std::string::npos &&
+              rt.substr(seam, 500).find("jit_tenant_gate(slot_tenant, caller_tenant, op)") !=
+                  std::string::npos,
+          "4429: deny still uses the existing isolation gate");
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -3551,6 +3778,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4428: string-fill! and closure:free! value owner ──
     ac4428_string_fill_and_closure_value();
+
+    // ── Issue #4429: hash enumerator tenant gate ──
+    ac4429_hash_enumerator_gate();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
