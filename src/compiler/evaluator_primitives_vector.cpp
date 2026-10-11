@@ -233,6 +233,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return make_primitive_error(string_heap, error_values, "vector-ref: not a vector",
                                             primitive_error_counter);
             }
+            // Issue #4456: a float index must error, not abort in as_int.
+            // 1.0 stays an error. make-vector's exact-float length (#2965)
+            // does not apply to an index.
+            if (!is_int(a[1])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-ref: index must be an integer",
+                                            primitive_error_counter);
+            }
             auto idx = as_vector_idx(a[0]);
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {

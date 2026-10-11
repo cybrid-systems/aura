@@ -6076,7 +6076,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Note: is_string check prevents accidental collision
                                 // where make_string(idx) with odd idx matches is_ref/RefError
                                 // encoding
-                                if (is_error(*ar) && !is_string(*ar))
+                                // Issue #4456: display must print a primitive error
+                                // (float vector-ref index) and return void, so a
+                                // later form in the same begin still runs.
+                                if (is_error(*ar) && !is_string(*ar) && cname != "display")
                                     return ar;
                                 args.push_back(*ar);
                             }
