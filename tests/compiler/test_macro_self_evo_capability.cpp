@@ -25,6 +25,11 @@
 #include <thread>
 #include <vector>
 
+#include "compiler/typed_mutation_audit.h"
+#include "core/security_event.hh"
+
+extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept;
+
 import std;
 import aura.core.ast;
 import aura.compiler.macro_expansion;
@@ -555,6 +560,209 @@ static void ac4133_2_source_cite_stable_surface() {
     CHECK(read_file("tests/core/test_issue_4133.cpp").empty(), "AC3: no invented test file");
 }
 
+static const aura::core::security_event::SecurityEvent* newest_se() {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_relaxed);
+    if (head == 0)
+        return nullptr;
+    return &ring.ring[(head - 1) % kSecurityEventRingSize];
+}
+
+static void expect_mse_deny(std::string_view token, std::uint64_t mid, const char* label) {
+    const auto* e = newest_se();
+    CHECK(e != nullptr, std::string(label) + " row");
+    if (e == nullptr)
+        return;
+    CHECK(std::string_view(e->reason) == token, std::string(label) + " reason");
+    CHECK(std::string_view(e->op) == "macro-self-evo", std::string(label) + " op");
+    CHECK(e->denied, std::string(label) + " denied");
+    CHECK(e->mutation_id == mid, std::string(label) + " mid");
+}
+
+// Live Mutation epoch + TenantAdmin, then Strict. Grants that must pass the
+// provenance fence use the returned mid (#3594: epoch 0 fences first).
+static std::uint64_t arm_strict_with_ta() {
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::bump_mutation_epoch();
+    const auto live = aura::core::current_mutation_epoch();
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(live, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    return live;
+}
+
+static std::uint64_t miss_total() {
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    return g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+        std::memory_order_relaxed);
+}
+
+static void ac4447_deny_reason_and_quiet_probes() {
+    std::println("\n--- #4447: MacroSelfEvo deny tokens; probes skip SE ---");
+    using aura::compiler::macro_exp::effective_hygiene_depth_limit;
+    using aura::compiler::macro_exp::effective_hygiene_pass_cap;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::kAuditMidSsotMissReason;
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+
+    reset_all();
+    apply_production_audit_defaults();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    reset_security_event_ring_for_test();
+    g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.store(0, std::memory_order_relaxed);
+
+    const auto denied0 =
+        g_capability_effect_metrics().macro_self_evo_denied_total.load(std::memory_order_relaxed);
+    const auto expand_denied0 = g_macro_self_evo_denied_total.load(std::memory_order_relaxed);
+    const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    const auto miss0 = miss_total();
+    const int depth = effective_hygiene_depth_limit();
+    const int passes = effective_hygiene_pass_cap();
+    (void)passes;
+    CHECK(depth >= 1, "4447: depth probe still returns a limit");
+    CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq0,
+          "4447: probes emit no SE");
+    CHECK(miss_total() == miss0, "4447: probes do not bump audit-mid-ssot-miss");
+    CHECK(g_capability_effect_metrics().macro_self_evo_denied_total.load(
+              std::memory_order_relaxed) == denied0 + 2,
+          "4447: probes still count two denials");
+    CHECK(g_macro_self_evo_denied_total.load(std::memory_order_relaxed) == expand_denied0,
+          "4447: probes are not the expand deny counter");
+
+    auto chk = check_macro_self_evo(0, true, false, 0, 0, true);
+    CHECK(!chk.allowed, "4447: record=true deny without grant");
+    CHECK(chk.deny_reason != nullptr &&
+              std::string_view(chk.deny_reason) == "MacroSelfEvo capability not granted",
+          "4447: English deny_reason stays");
+    expect_mse_deny("macro-self-evo-not-granted", 0, "4447: not-granted");
+    CHECK(miss_total() == miss0, "4447: not-granted token is canonical at mid=0");
+
+    const auto live = arm_strict_with_ta();
+    MacroSelfEvoPolicy pol;
+    g_capability_registry().grant_macro_self_evo(0, pol, make_grant_provenance(live, true, 0, 0));
+    aura::core::reset_mutation_epoch_for_test();
+    chk = check_macro_self_evo(0, true, false, 0, 0, true);
+    CHECK(!chk.allowed, "4447: mid=0 with a grant is the provenance fence");
+    CHECK(chk.deny_reason != nullptr &&
+              std::string_view(chk.deny_reason).find("provenance fence") != std::string_view::npos,
+          "4447: English provenance fence stays");
+    expect_mse_deny("macro-self-evo-provenance-fence", 0, "4447: provenance-fence");
+    CHECK(miss_total() == miss0, "4447: provenance-fence token is canonical at mid=0");
+
+    const auto live_pol = arm_strict_with_ta();
+    const auto denied_pol =
+        g_capability_effect_metrics().macro_self_evo_denied_total.load(std::memory_order_relaxed);
+    CHECK(g_capability_registry().grant(0, "mse-bit-only", Effect::MacroSelfEvo,
+                                        make_grant_provenance(live_pol, true, 0, 0)),
+          "4447: bit grant without a policy map");
+    chk = check_macro_self_evo(0, true, false, 0, live_pol, true);
+    CHECK(!chk.allowed, "4447: policy missing denies");
+    CHECK(chk.deny_reason != nullptr &&
+              std::string_view(chk.deny_reason).find("policy missing") != std::string_view::npos,
+          "4447: English policy missing stays");
+    expect_mse_deny("macro-self-evo-policy-missing", live_pol, "4447: policy-missing");
+    CHECK(g_capability_effect_metrics().macro_self_evo_denied_total.load(
+              std::memory_order_relaxed) == denied_pol + 1,
+          "4447: policy-missing bumps the deny counter");
+    CHECK(miss_total() == miss0, "4447: policy-missing does not bump the miss counter");
+
+    const auto live_z = arm_strict_with_ta();
+    MacroSelfEvoPolicy zero;
+    zero.max_expansion_passes = 0;
+    zero.max_depth = 0;
+    CHECK(g_capability_registry().grant_macro_self_evo(0, zero,
+                                                       make_grant_provenance(live_z, true, 0, 0)),
+          "4447: zero-limit grant lands");
+    chk = check_macro_self_evo(0, true, false, 0, live_z, true);
+    CHECK(!chk.allowed, "4447: zero limits deny");
+    CHECK(chk.deny_reason != nullptr &&
+              std::string_view(chk.deny_reason).find("zero") != std::string_view::npos,
+          "4447: English limits-zero stays");
+    expect_mse_deny("macro-self-evo-limits-zero", live_z, "4447: limits-zero");
+    CHECK(miss_total() == miss0, "4447: limits-zero does not bump the miss counter");
+
+    const char* tokens[] = {"macro-self-evo-not-granted", "macro-self-evo-provenance-fence",
+                            "macro-self-evo-policy-missing", "macro-self-evo-limits-zero"};
+    for (const char* t : tokens) {
+        const auto before = miss_total();
+        const char* kept = aura_classify_mid0_se_reason(t);
+        CHECK(kept != nullptr && std::string_view(kept) == t, "4447: classifier keeps token");
+        CHECK(miss_total() == before, "4447: canonical token does not bump miss");
+    }
+    const auto before_prefix = miss_total();
+    const char* grant_tok = aura_classify_mid0_se_reason("macro-self-evo-grant-needs-tenant-admin");
+    CHECK(grant_tok != nullptr && std::string_view(grant_tok) == kAuditMidSsotMissReason,
+          "4447: grant token is not canonical via a prefix");
+    CHECK(miss_total() == before_prefix + 1, "4447: non-canonical grant token bumps miss");
+
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto hooks = read_file("src/compiler/typed_mutation_audit_hooks.cpp");
+    const auto mx = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cap.find("\"macro-self-evo-not-granted\"") != std::string::npos,
+          "4447: not-granted cite");
+    CHECK(cap.find("\"macro-self-evo-provenance-fence\"") != std::string::npos,
+          "4447: provenance-fence cite");
+    CHECK(cap.find("\"macro-self-evo-policy-missing\"") != std::string::npos,
+          "4447: policy-missing cite");
+    CHECK(cap.find("\"macro-self-evo-limits-zero\"") != std::string::npos,
+          "4447: limits-zero cite");
+    CHECK(cap.find("MacroSelfEvo capability not granted") != std::string::npos,
+          "4447: English not-granted stays in source");
+    CHECK(cap.find("MacroSelfEvo provenance fence (epoch/fiber/mid)") != std::string::npos,
+          "4447: English provenance stays in source");
+    CHECK(cap.find("MacroSelfEvo policy missing") != std::string::npos,
+          "4447: English policy stays in source");
+    CHECK(cap.find("MacroSelfEvo limits are zero") != std::string::npos,
+          "4447: English limits stay in source");
+    CHECK(cap.find("note_capability_deny_last_reason(kCapabilityDenyReasonNotGranted)") !=
+              std::string::npos,
+          "4447: #3304 not-granted code stays");
+    CHECK(cap.find("note_capability_deny_last_reason(kCapabilityDenyReasonProvenanceFence)") !=
+              std::string::npos,
+          "4447: #3304 provenance code stays");
+    CHECK(cap.find("note_capability_deny_last_reason(kCapabilityDenyReasonPolicyMissing)") !=
+              std::string::npos,
+          "4447: #3304 policy code stays");
+    CHECK(cap.find("note_capability_deny_last_reason(kCapabilityDenyReasonLimitsZero)") !=
+              std::string::npos,
+          "4447: #3304 limits code stays");
+    CHECK(hooks.find("macro-self-evo-not-granted") != std::string::npos, "4447: classifier token");
+    CHECK(hooks.find("macro-self-evo-provenance-fence") != std::string::npos,
+          "4447: classifier fence token");
+    CHECK(hooks.find("macro-self-evo-policy-missing") != std::string::npos,
+          "4447: classifier policy token");
+    CHECK(hooks.find("macro-self-evo-limits-zero") != std::string::npos,
+          "4447: classifier limits token");
+    CHECK(hooks.find("starts_with(\"macro-self-evo") == std::string::npos,
+          "4447: classifier does not prefix-match macro-self-evo");
+    int quiet = 0;
+    constexpr std::string_view kQuiet = "/*record=*/false";
+    for (std::size_t p = 0; (p = mx.find(kQuiet, p)) != std::string::npos; p += kQuiet.size())
+        ++quiet;
+    CHECK(quiet == 2, "4447: only the two hygiene probes skip record");
+    CHECK(read_file("tests/compiler/test_issue_4447.cpp").empty(), "4447: no test_issue_4447.cpp");
+    CHECK(read_file("docs/design/4447-macro-self-evo-deny.md").empty(),
+          "4447: no docs/design/4447-*");
+
+    apply_dev_audit_defaults();
+    const auto miss_soft = miss_total();
+    const char* soft = aura_classify_mid0_se_reason("capability-effect-deny");
+    CHECK(soft != nullptr && std::string_view(soft) == "capability-effect-deny",
+          "4447: Soft/Off keeps the caller reason");
+    CHECK(miss_total() == miss_soft, "4447: Soft/Off does not bump miss");
+    reset_all();
+}
+
 } // namespace
 
 int main() {
@@ -572,6 +780,7 @@ int main() {
     ac3459_5_source_cite_no_new_key();
     ac4133_1_registry_caller_only_fence();
     ac4133_2_source_cite_stable_surface();
+    ac4447_deny_reason_and_quiet_probes();
     reset_all();
     if (g_failed)
         return 1;

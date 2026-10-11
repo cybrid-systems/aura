@@ -326,6 +326,12 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
     // (not caller-misuse rewrite). Prefix covers the #3029/#3215 family.
     if (r.starts_with("hygiene-"))
         return reason ? reason : "";
+    // Issue #4447: MacroSelfEvo deny causes stay canonical at mid=0
+    // (same class as the hygiene- prefix, #3735). Exact tokens only —
+    // a prefix would also keep macro-self-evo-grant-needs-tenant-admin.
+    if (r == "macro-self-evo-not-granted" || r == "macro-self-evo-provenance-fence" ||
+        r == "macro-self-evo-policy-missing" || r == "macro-self-evo-limits-zero")
+        return reason ? reason : "";
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return reason ? reason : "";
     g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.fetch_add(1,
