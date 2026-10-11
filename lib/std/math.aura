@@ -141,9 +141,19 @@
   (if (< n 2) 1
     (* n (factorial (- n 1)))))
 
+; Issue #4458: a non-integer or negative exponent never terminated, and a
+; large integer was not a tail call. Non-integers delegate to pow.
+; Non-negative integers use exponentiation by squaring.
 (define (expt b n)
-  (if (= n 0) 1
-    (* b (expt b (- n 1)))))
+  (if (not (integer? n))
+    (pow b n)
+    (if (< n 0)
+      (/ 1.0 (expt b (- n)))
+      (let loop ((e n) (acc 1) (base b))
+        (if (= e 0) acc
+          (if (= (modulo e 2) 0)
+            (loop (quotient e 2) acc (* base base))
+            (loop (quotient e 2) (* acc base) (* base base))))))))
 
 (define (nPr n r)
   (/ (factorial n) (factorial (- n r))))

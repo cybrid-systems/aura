@@ -1,5 +1,5 @@
 ; random.aura — Simple pseudo-random number generator
-; Import with: (import "std/random")
+; Import with: (require "std/random" all:)
 ;
 ; Linear Congruential Generator (LCG).
 ; Uses integer arithmetic only — no external deps.
@@ -57,7 +57,7 @@
              (picked (list-ref lst idx))
              (rest (remove-at lst idx)))
         (let ((shuffled (shuffle rest g2)))
-          (list (cons (car shuffled) (car shuffled)) (cadr shuffled)))))))
+          (list (cons picked (car shuffled)) (cadr shuffled)))))))
 
 ; remove-at: remove element at index from list
 (define (remove-at lst i)
