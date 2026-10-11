@@ -3314,6 +3314,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
             note_boundary_macro_allow_latch();
         }
     }
+    // Issue #4434: a User target can still unlink a MacroIntroduced child.
+    if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+        aura::ast::NodeId hit = aura::ast::NULL_NODE;
+        flat.walk_subtree(target, [&](aura::ast::NodeId id) {
+            if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                hit = id;
+        });
+        if (hit != aura::ast::NULL_NODE) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :remove-node: cannot unlink MacroIntroduced child without "
+                "public mutate:remove-node :allow-macro? #t"});
+        }
+    }
     auto result = aura::ast::mutators::remove_node_from_all_parents(
         flat, target, [&](aura::ast::NodeId parent, std::uint32_t ci) {
             flat.add_structural_mutation_log_entry(parent, ci, target, aura::ast::NULL_NODE,
@@ -3805,6 +3821,30 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         flat.begin_atomic_batch();
     // Issue #3066: lockless replace-pattern batch shares one join mid.
     (void)aura::compiler::typed_audit::pin_composite_batch_join_mid();
+    // Issue #4434: a User match can unlink a MacroIntroduced child.
+    // Refuse before any set_child when :allow-macro? is false.
+    if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+        for (const auto& match_ref : matches) {
+            if (!match_ref.is_valid_in(flat))
+                continue;
+            aura::ast::NodeId hit = aura::ast::NULL_NODE;
+            flat.walk_subtree(match_ref.id, [&](aura::ast::NodeId id) {
+                if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                    hit = id;
+            });
+            if (hit == aura::ast::NULL_NODE)
+                continue;
+            flat.note_replace_pattern_hygiene_reject();
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            if (!nested_outer_batch)
+                flat.rollback_atomic_batch();
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :replace-pattern: cannot unlink MacroIntroduced child without "
+                ":allow-macro? #t"});
+        }
+    }
     for (auto& match_ref : matches) {
         // Issue #2800: gen-stale or free-slot → skip (no set_child on raw id).
         if (!match_ref.is_valid_in(flat)) {
@@ -4012,6 +4052,26 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
                     "batch :replace-subtree: MacroIntroduced body requires "
                     "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
             }
+        }
+    }
+    // Issue #4434: set_child unlinks target. A User parent can still hold a
+    // MacroIntroduced child. Walk that subtree before the unlink.
+    if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+        aura::ast::NodeId old_hit = aura::ast::NULL_NODE;
+        flat.walk_subtree(target, [&](aura::ast::NodeId id) {
+            if (old_hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                old_hit = id;
+        });
+        if (old_hit != aura::ast::NULL_NODE) {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :replace-subtree: cannot unlink MacroIntroduced child without "
+                ":allow-macro? #t"});
         }
     }
     auto parent_slot_ok = [&]() -> bool {
