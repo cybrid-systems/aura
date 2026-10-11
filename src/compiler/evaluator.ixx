@@ -7392,8 +7392,13 @@ public:
                           std::uint64_t provenance_mutation_id);
     // Issue #4278: drop write-side SECURITY_EXEMPT strings bound to `mid`.
     // Called from outermost Guard exit and fiber-join revoke. mid==0 or an
-    // empty table is a no-op (Soft/Off never records).
+    // empty table is a no-op (Soft/Off never records). Every tenant that
+    // bound a write-side name to this mid is dropped.
     void retire_session_string_caps(std::uint64_t mid) noexcept;
+    // Issue #4430: same retire, one principal. TenantScope::release uses
+    // this so a nested scope on a shared host mid cannot drop another
+    // tenant's write-side strings. mid==0 is a no-op.
+    void retire_session_string_caps_for_principal(std::uint64_t mid, std::uint64_t tenant) noexcept;
     void bump_capability_denial() noexcept {
         capability_denial_count_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -16797,6 +16802,8 @@ private:
     struct SessionStringCap {
         std::string name;
         std::uint64_t mid = 0;
+        // Issue #4430: granting principal. 0 is tenant 0, not every tenant.
+        std::uint64_t tenant = 0;
     };
     std::vector<SessionStringCap> session_string_caps_;
     // Issue #4302: last outermost action mid. Append-only at struct end.
@@ -16823,6 +16830,14 @@ private:
     // dereferenced: a second switch onto this same object skips re-eval.
     // Append-only at struct end.
     aura::ast::FlatAST* defines_bound_flat_ = nullptr;
+    // Issue #4430: principal parallel to granted_capabilities_.
+    // Stamp is capability_tenant_id_ at every push, including Soft/Off.
+    // 0 is tenant 0. A short vector fail-closes the production string
+    // scan (skip that slot). Append-only at struct end.
+    std::vector<std::uint64_t> granted_capability_tenants_;
+    // Drop one (name, principal) pair from the string mirror. Keeps the
+    // parallel tenant vector aligned. Missing stamp is not a match.
+    void drop_granted_string_for_tenant(std::string_view name, std::uint64_t tenant) noexcept;
 };
 
 
