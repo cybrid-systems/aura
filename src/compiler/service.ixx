@@ -10669,11 +10669,40 @@ public:
     dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                                std::span<const types::EvalValue> args) {
         auto owner_it = ir_define_closure_owner_.find(cid);
-        if (owner_it == ir_define_closure_owner_.end())
+        if (owner_it == ir_define_closure_owner_.end()) {
+            // Issue #4450: a closure minted at RUNTIME by a define's body
+            // (an escaping lambda) carries a fresh id that is in no owner
+            // map — it lives in the minting interpreter's runtime_closures_.
+            // Route the call there (cursor synced from the global monotonic
+            // source, same as the owner path), consulting the strict
+            // runtime-mint set: bind-time execute() mints must NOT resurrect
+            // here after a workspace restore / rebind (#4349 stale call
+            // denies). If no binding owns the mint, deny: the caller's
+            // typed "invalid closure" face — never an unrelated define's
+            // body.
+            for (auto& kv : ir_define_env_bindings_) {
+                auto* interp = kv.second->interpreter.get();
+                if (!interp || !interp->owns_runtime_mint(static_cast<std::uint64_t>(cid)))
+                    continue;
+                interp->set_next_closure_id(next_ir_define_closure_id_);
+                auto r = interp->call_closure(static_cast<std::uint64_t>(cid), args);
+                next_ir_define_closure_id_ = interp->next_closure_id();
+                if (!r)
+                    return std::nullopt;
+                return *r;
+            }
             return std::nullopt;
+        }
         const auto& name = owner_it->second;
         auto bind_it = ir_define_env_bindings_.find(name);
         if (bind_it == ir_define_env_bindings_.end() || !bind_it->second->interpreter)
+            return std::nullopt;
+        // Issue #4450: only the define that MINTED the id may run it — the
+        // bound id itself, or a runtime closure this interpreter still
+        // holds. Anything else is a stale alias: typed deny, never an
+        // unrelated define's body.
+        if (bind_it->second->closure_id != cid &&
+            !bind_it->second->interpreter->owns_runtime_closure(static_cast<std::uint64_t>(cid)))
             return std::nullopt;
         // Note: the stale-entry detection that lived here previously
         // (binding->interpreter->flat.get() compare against current
@@ -10716,7 +10745,19 @@ public:
             }
         }
 
-        auto r = bind_it->second->interpreter->call_closure(static_cast<std::uint64_t>(cid), args);
+        // Issue #4450: the interpreter's cursor was left where its binding
+        // execute() stopped — inside the id range already handed to the
+        // NEXT define. A body that mints a closure at call time (an
+        // escaping lambda) therefore minted ids owned by another define,
+        // and the call silently re-entered it (or hit "invalid closure"
+        // when the aliased define was absent). Sync the cursor from the
+        // global monotonic source around every runtime execution so
+        // runtime mints never collide with any binding's reserved range;
+        // drain the advanced cursor back afterwards.
+        auto* owner_interp = bind_it->second->interpreter.get();
+        owner_interp->set_next_closure_id(next_ir_define_closure_id_);
+        auto r = owner_interp->call_closure(static_cast<std::uint64_t>(cid), args);
+        next_ir_define_closure_id_ = owner_interp->next_closure_id();
         if (!r)
             return std::nullopt;
         return *r;

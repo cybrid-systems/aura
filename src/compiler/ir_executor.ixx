@@ -235,6 +235,22 @@ public:
     // Counters
     std::size_t closure_count() const { return runtime_closures_.size(); }
     std::size_t cell_count() const { return cell_heap_.size(); }
+    // Issue #4450: ownership probe — true iff this interpreter minted (and
+    // still holds) the closure id. dispatch_ir_define_closure consults it
+    // so runtime-minted (escaping) closures route to their defining
+    // interpreter, and unknown cids deny instead of aliasing another define.
+    [[nodiscard]] bool owns_runtime_closure(std::uint64_t closure_id) const {
+        return runtime_closures_.count(closure_id) != 0;
+    }
+    // Issue #4450: strict runtime-mint probe — true iff the id was minted
+    // by MakeClosure while executing a CALL of a bound define (an escaping
+    // lambda). Bind-time execute() mints belong to their binding's own
+    // lifetime and must NOT be routed by the service's dispatch fallback:
+    // after a workspace restore / rebind a bind-mint is stale, and the
+    // stale call must deny (#4349), not resurrect through runtime_closures_.
+    [[nodiscard]] bool owns_runtime_mint(std::uint64_t closure_id) const {
+        return runtime_minted_ids_.count(closure_id) != 0;
+    }
 
     // Issue #682: active-frame probe + GC root export for compiler
     // IRClosure coordination during invalidate / hot-swap.
@@ -304,6 +320,11 @@ private:
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = aura::compiler::types::kClosureIdHighBit; // #907
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
+    // Issue #4450: subset of runtime_closures_ minted while executing a
+    // call (see owns_runtime_mint). in_runtime_call_ is RAII-set by
+    // call_closure; execute() (define binding) leaves it false.
+    std::unordered_set<std::uint64_t> runtime_minted_ids_;
+    bool in_runtime_call_ = false;
     // Issue #4357: a cached-define reference lowers to MakeClosure on every
     // evaluation. A 3000-step loop therefore kept 3000 empty-env closures,
     // and the next rebind paid to destroy them. Same function, no captures:
