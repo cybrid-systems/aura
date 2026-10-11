@@ -964,22 +964,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
 
                 case IROpcode::Arg:
-                    if (ops[1] < args.size()) {
-                        auto& val = args[ops[1]];
-                        // Check if this is a cell reference (negative encoding in IR)
-                        // Only treat as cell ref if the index is within the heap
-                        if (is_int(val) && as_int(val) < 0) {
-                            auto cell_slot = static_cast<std::size_t>(-as_int(val) - 1);
-                            if (cell_slot < cell_heap_.size()) {
-                                locals[ops[0]] = locals[cell_slot];
-                            } else {
-                                // Not a cell reference — actual negative int
-                                locals[ops[0]] = val;
-                            }
-                        } else {
-                            locals[ops[0]] = val;
-                        }
-                    } else
+                    // Issue #4439: bind the caller value unchanged. A negative
+                    // fixnum is that integer. Define and let emit NewCell, and
+                    // next_cell_id_ starts at 1, so one cell makes
+                    // cell_heap_.size()==2. Treating make_int(-(slot+1)) as a
+                    // cell loaded locals[slot], still void, and bound logical
+                    // -1 and -2 as (). Cell captures arrive via Capture.
+                    if (ops[1] < args.size())
+                        locals[ops[0]] = args[ops[1]];
+                    else
                         locals[ops[0]] = make_void();
                     break;
 
