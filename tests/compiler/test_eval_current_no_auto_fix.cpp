@@ -9,6 +9,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
+
 #include <cstdio>
 #include <fstream>
 #include <print>
@@ -480,6 +482,106 @@ static void ac4374_eval_let_keeps_primitives() {
     CHECK(flat.find("Issue #4374") != std::string::npos, "4374: cites Issue #4374");
 }
 
+// Issue #4439: IR Arg must bind caller fixnums -1 and -2. One NewCell
+// grows cell_heap_ to size 2, and the old decoder loaded a void local.
+static void ac4439_fixnum_arg_binds() {
+    std::println("\n--- #4439: closure args -1 and -2 stay fixnums ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) x))\")").has_value(), "4439: set-code id");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current id");
+    auto m3 = cs.eval("(f -3)");
+    CHECK(m3 && is_int(*m3) && as_int(*m3) == -3, "4439: (f -3) is -3");
+    auto m2 = cs.eval("(f -2)");
+    CHECK(m2 && is_int(*m2) && as_int(*m2) == -2, "4439: (f -2) is -2");
+    auto m1 = cs.eval("(f -1)");
+    CHECK(m1 && is_int(*m1) && as_int(*m1) == -1, "4439: (f -1) is -1");
+    auto z = cs.eval("(f 0)");
+    CHECK(z && is_int(*z) && as_int(*z) == 0, "4439: (f 0) is 0");
+    auto p1 = cs.eval("(f 1)");
+    CHECK(p1 && is_int(*p1) && as_int(*p1) == 1, "4439: (f 1) is 1");
+    auto m8 = cs.eval("(f -8)");
+    CHECK(m8 && is_int(*m8) && as_int(*m8) == -8, "4439: (f -8) is -8");
+    auto nul = cs.eval("(null? (f -1))");
+    CHECK(nul && is_bool(*nul) && !as_bool(*nul), "4439: (null? (f -1)) is #f");
+    auto num = cs.eval("(number? (f -1))");
+    CHECK(num && is_bool(*num) && as_bool(*num), "4439: (number? (f -1)) is #t");
+    auto sub = cs.eval("(f (- 0 1))");
+    CHECK(sub && is_int(*sub) && as_int(*sub) == -1, "4439: (f (- 0 1)) is -1");
+
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (if (number? x) x (quote dropped))))\")")
+              .has_value(),
+          "4439: set-code number?");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current number?");
+    auto ncheck = cs.eval("(f -1)");
+    CHECK(ncheck && is_int(*ncheck) && as_int(*ncheck) == -1, "4439: number? on param -1 is #t");
+    auto n2 = cs.eval("(f -2)");
+    CHECK(n2 && is_int(*n2) && as_int(*n2) == -2, "4439: number? on param -2 is #t");
+
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (* x -1)))\")").has_value(),
+          "4439: set-code mul");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current mul");
+    auto mul1 = cs.eval("(f 1)");
+    CHECK(mul1 && is_int(*mul1) && as_int(*mul1) == -1, "4439: (f 1) returns -1");
+    auto mul2 = cs.eval("(f 2)");
+    CHECK(mul2 && is_int(*mul2) && as_int(*mul2) == -2, "4439: (f 2) returns -2");
+    auto mulm = cs.eval("(f -1)");
+    CHECK(mulm && is_int(*mulm) && as_int(*mulm) == 1, "4439: (f -1) times -1 is 1");
+
+    CHECK(cs.eval("(set-code \"(define k (lambda (x) 1))\")").has_value(), "4439: set-code ignore");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current ignore");
+    auto ign = cs.eval("(k -1)");
+    CHECK(ign && is_int(*ign) && as_int(*ign) == 1, "4439: call with -1 still runs");
+
+    CHECK(cs.eval("(set-code \"(define r (lambda (x) -1))\")").has_value(), "4439: set-code ret");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current ret");
+    auto ret = cs.eval("(r 0)");
+    CHECK(ret && is_int(*ret) && as_int(*ret) == -1, "4439: returning -1 stays -1");
+
+    CHECK(cs.eval("(set-code \"(define box (lambda (n) (let ((x 0)) (begin (set! x n) x))))\")")
+              .has_value(),
+          "4439: set-code cell");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current cell");
+    auto b1 = cs.eval("(box -1)");
+    CHECK(b1 && is_int(*b1) && as_int(*b1) == -1, "4439: set! of a let cell to -1");
+    auto b2 = cs.eval("(box -2)");
+    CHECK(b2 && is_int(*b2) && as_int(*b2) == -2, "4439: set! of a let cell to -2");
+    auto b7 = cs.eval("(box 7)");
+    CHECK(b7 && is_int(*b7) && as_int(*b7) == 7, "4439: set! of a let cell to 7");
+
+    CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "4439: require mutate");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) x))\")").has_value(), "4439: reseed f");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current reseed");
+    auto rb = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) x (quote dropped)))\" "
+                      "\"probe\")");
+    CHECK(rb && is_bool(*rb) && as_bool(*rb), "4439: mutate:rebind returns #t");
+    CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current after rebind");
+    auto rb1 = cs.eval("(f -1)");
+    CHECK(rb1 && is_int(*rb1) && as_int(*rb1) == -1, "4439: rebound (f -1) is -1");
+    auto rb2 = cs.eval("(f -2)");
+    CHECK(rb2 && is_int(*rb2) && as_int(*rb2) == -2, "4439: rebound (f -2) is -2");
+    auto rb3 = cs.eval("(f -3)");
+    CHECK(rb3 && is_int(*rb3) && as_int(*rb3) == -3, "4439: rebound (f -3) is -3");
+
+    const auto saved = aura::compiler::tree_walker_fallback_policy();
+    aura::compiler::set_tree_walker_fallback_policy(
+        aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
+    CompilerService ir;
+    auto whole = ir.eval("(begin (define id (lambda (x) x)) (id -1))");
+    CHECK(whole && is_int(*whole) && as_int(*whole) == -1, "4439: IR begin (id -1) is -1");
+    auto whole2 = ir.eval("(id -2)");
+    CHECK(whole2 && is_int(*whole2) && as_int(*whole2) == -2, "4439: IR begin (id -2) is -2");
+    aura::compiler::set_tree_walker_fallback_policy(saved);
+
+    CompilerService tw;
+    auto tw1 = tw.eval("(begin (define tw (lambda (x) x)) (tw -1))");
+    CHECK(tw1 && is_int(*tw1) && as_int(*tw1) == -1, "4439: tree-walker (tw -1) is -1");
+    auto tw2 = tw.eval("(tw -2)");
+    CHECK(tw2 && is_int(*tw2) && as_int(*tw2) == -2, "4439: tree-walker (tw -2) is -2");
+
+    const auto src = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(src.find("Issue #4439") != std::string::npos, "4439: Arg cites the fixnum bind");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -496,8 +598,9 @@ int run_test_eval_current_no_auto_fix() {
     ac4095_status_carries_display();
     ac4373_define_of_eval_binds();
     ac4374_eval_let_keeps_primitives();
+    ac4439_fixnum_arg_binds();
     std::println(
-        "\n=== #2484/#3915/#3917/#3918/#3927/#4373/#4374 results: {} passed, {} failed ===",
+        "\n=== #2484/#3915/#3917/#3918/#3927/#4373/#4374/#4439 results: {} passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

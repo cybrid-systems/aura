@@ -1378,11 +1378,9 @@ static std::uint32_t lower_flat_expr(
                     }
                 }
                 if (is_cell) {
-                    // Cell capture: keep the binding as Cell so that:
-                    // - read access uses CellGet (dereferences via cell_heap_)
-                    // - write access uses CellSet (updates shared cell)
-                    // CaptureRef stores the cell_index in closure env; Arg
-                    // decodes it back to cell_index; CellGet/CellSet use it.
+                    // Cell capture stays a Cell. Capture copies the cell
+                    // value into the closure env. Arg copies that value
+                    // through (#4439). CellGet and CellSet use cell_heap_.
                     state.scopes.back()[fv] = Binding{BindingKind::Cell, slot};
                     state.free_var_map[fv] = static_cast<std::uint32_t>(i);
                     state.cell_free_vars.insert(fv);

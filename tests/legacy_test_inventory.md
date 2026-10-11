@@ -2031,7 +2031,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
 - `tests/compiler/test_cross_cow_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cross_cow_batch.cpp — thematic multi-TU batch
 - `tests/core/test_cross_tenant_grant_toctou.cpp` (—) [domain_suite, theme_core] — tests/core/test_cross_tenant_grant_toctou.cpp — Issue #3597
-- `tests/compiler/test_eval_current_no_auto_fix.cpp` (—) [domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
+- `tests/compiler/test_eval_current_no_auto_fix.cpp` (—) [large, domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
 - `tests/core/test_general_object_pin_coverage_gate.cpp` (—) [large, domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
 - `tests/core/test_grant_effect_wildcard_write_fence.cpp` (—) [domain_suite, theme_core] — tests/core/test_grant_effect_wildcard_write_fence.cpp
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
