@@ -168,6 +168,45 @@ std::string build_registering_so(std::uint64_t version, std::uint64_t region, in
     return sopath;
 }
 
+// Issue #4433: registering .so with optional env / linear symbols.
+// env_version < 0 omits aot_env_frame_version. linear < 0 omits aot_linear_state.
+// tag must be a C identifier (it is spliced into the sentinel name).
+std::string build_registering_so_stamps(std::uint64_t version, int func_id, const char* tag,
+                                        std::int64_t env_version, std::int64_t linear) {
+    const char* dir = "/tmp";
+    std::string cpath = std::format("{}/aura_aot_reg_{}_{}.c", dir, tag, version);
+    std::string sopath = std::format("{}/aura_aot_reg_{}_{}.so", dir, tag, version);
+    {
+        std::ofstream f(cpath);
+        if (!f)
+            return {};
+        f << "#include <stdint.h>\n";
+        f << "#include <stddef.h>\n";
+        f << "#include <dlfcn.h>\n";
+        f << "uint64_t aot_emit_version = " << version << "ULL;\n";
+        f << "uint64_t aot_region_mask = 0ULL;\n";
+        if (env_version >= 0)
+            f << "uint64_t aot_env_frame_version = " << env_version << "ULL;\n";
+        if (linear >= 0)
+            f << "uint64_t aot_linear_state = " << static_cast<unsigned long long>(linear)
+              << "ULL;\n";
+        f << "typedef void (*reg_fn_t)(int64_t, int64_t);\n";
+        f << "static int64_t aura_aot_reg_sentinel_" << tag
+          << "(int64_t* a, uint32_t n) { (void)a; (void)n; return " << version << "; }\n";
+        f << "__attribute__((constructor)) static void reg(void) {\n";
+        f << "  void* self = dlopen(NULL, RTLD_LAZY);\n";
+        f << "  reg_fn_t fn = self ? (reg_fn_t)dlsym(self, \"aura_register_fn_tracked\") : 0;\n";
+        f << "  if (!fn) fn = (reg_fn_t)dlsym(RTLD_DEFAULT, \"aura_register_fn_tracked\");\n";
+        f << "  if (fn) fn(" << func_id << ", (int64_t)(void*)aura_aot_reg_sentinel_" << tag
+          << ");\n";
+        f << "}\n";
+    }
+    std::string cmd = std::format("cc -shared -fPIC -o {} {} -ldl 2>/dev/null", sopath, cpath);
+    if (std::system(cmd.c_str()) != 0)
+        return {};
+    return sopath;
+}
+
 } // namespace
 
 // Issue #2178: cross-workspace / cross-COW hot-update reject. Foreign
@@ -1159,6 +1198,161 @@ static void ac4387_owner_scoped_success_drops_old_cache() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+// Issue #4433: reload must sample the live env / linear mirror before
+// apply_aot_staging_to_live. A non-zero explicit AotState env word still
+// wins (present-symbol `<` only). Host sample 0 stays inactive.
+static void ac4433_live_mirror_refuses_stale_reload() {
+    std::println("\n--- #4433: live env/linear mirror refuses a stale reload ---");
+    CompilerMetrics metrics;
+    aura_set_aot_metrics(&metrics);
+    const int saved_retry = aura_aot_reload_auto_retry_enabled();
+    struct Restore {
+        int retry;
+        ~Restore() {
+            aura_set_aot_reload_auto_retry(retry);
+            aura_set_aot_default_env_frame_version(0);
+            aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+            aura_set_aot_live_env_frame_version(0);
+            aura_set_aot_live_linear_state_fingerprint(0);
+            aura_set_aot_defuse_version(0);
+            aura_set_aot_defuse_version_for_eval(nullptr, 0);
+            aura_set_aot_region_mask(0);
+            aura_set_module_version(0);
+            aura_set_aot_metrics(nullptr);
+        }
+    } restore{saved_retry};
+
+    aura_set_aot_reload_auto_retry(0);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_defuse_version_for_eval(nullptr, 0);
+    aura_set_module_version(0);
+    aura_set_aot_default_env_frame_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    aura_set_aot_live_env_frame_version(0);
+    aura_set_aot_live_linear_state_fingerprint(0);
+
+    constexpr std::uint64_t kEmit = 1;
+    constexpr int kGood = 470;
+    constexpr int kBehind = 471;
+    constexpr int kMissEnv = 472;
+    constexpr int kLinDiff = 473;
+    constexpr int kMissLin = 474;
+
+    const auto so_good = build_registering_so_stamps(kEmit, kGood, "g4433", -1, -1);
+    const auto so_behind = build_registering_so_stamps(kEmit, kBehind, "b4433", 5, 0);
+    const auto so_miss_env = build_registering_so_stamps(kEmit, kMissEnv, "e4433", -1, -1);
+    const auto so_lin = build_registering_so_stamps(kEmit, kLinDiff, "l4433", -1, 1);
+    const auto so_miss_lin = build_registering_so_stamps(kEmit, kMissLin, "n4433", -1, -1);
+    const auto so_ahead = build_test_so_with_env(/*version=*/50, /*env_version=*/50);
+    if (so_good.empty() || so_behind.empty() || so_miss_env.empty() || so_lin.empty() ||
+        so_miss_lin.empty() || so_ahead.empty()) {
+        CHECK(false, "4433: cc produced the env/linear reload fixtures");
+        return;
+    }
+
+    auto reload = [](const std::string& path, std::uint64_t version) {
+        return aura_reload_aot_module_for_eval(nullptr, path.c_str(), version);
+    };
+
+    CHECK(reload(so_good, kEmit) == true, "4433: symbol-free .so commits while the mirror is 0");
+    const auto epoch_good = aura_aot_func_table_epoch();
+    const auto ptr_good = aura_aot_probe_fn_ptr(kGood);
+    CHECK(ptr_good != 0, "4433: good registration is live");
+
+    aura_set_aot_live_env_frame_version(20);
+    const auto env0 = metrics.aot_reload_fail_env_total.load();
+    CHECK(reload(so_behind, kEmit) == false, "4433: binary env behind the live mirror is refused");
+    CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) == AotReloadFail::Env,
+          "4433: last-reason = Env for a behind env symbol");
+    CHECK(metrics.aot_reload_fail_env_total.load() == env0 + 1, "4433: reload_fail_env_total +1");
+    CHECK(aura_aot_func_table_epoch() == epoch_good, "4433: behind env does not commit");
+    CHECK(aura_aot_probe_fn_ptr(kGood) == ptr_good, "4433: previous registration stays");
+    CHECK(aura_aot_probe_fn_ptr(kBehind) == 0, "4433: behind func id was discarded");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "4433: env rollback stamps would_allow_native false");
+
+    const auto env1 = metrics.aot_reload_fail_env_total.load();
+    CHECK(reload(so_miss_env, kEmit) == false, "4433: missing env symbol with live env is refused");
+    CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) == AotReloadFail::Env,
+          "4433: last-reason = Env for a missing env symbol");
+    CHECK(metrics.aot_reload_fail_env_total.load() == env1 + 1,
+          "4433: missing env symbol bumps reload_fail_env_total");
+    CHECK(aura_aot_func_table_epoch() == epoch_good, "4433: missing env symbol does not commit");
+    CHECK(aura_aot_probe_fn_ptr(kMissEnv) == 0, "4433: missing-env func id was discarded");
+
+    aura_set_aot_live_env_frame_version(0);
+    aura_set_aot_live_linear_state_fingerprint(4);
+    const auto lin0 = metrics.aot_reload_fail_linear_total.load();
+    CHECK(reload(so_lin, kEmit) == false, "4433: linear fingerprint that differs is refused");
+    CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) == AotReloadFail::Linear,
+          "4433: last-reason = Linear for a different fingerprint");
+    CHECK(metrics.aot_reload_fail_linear_total.load() == lin0 + 1,
+          "4433: reload_fail_linear_total +1");
+    CHECK(aura_aot_func_table_epoch() == epoch_good, "4433: linear mismatch does not commit");
+    CHECK(aura_aot_probe_fn_ptr(kLinDiff) == 0, "4433: mismatched linear func id was discarded");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "4433: linear rollback stamps would_allow_native false");
+
+    const auto lin1 = metrics.aot_reload_fail_linear_total.load();
+    CHECK(reload(so_miss_lin, kEmit) == false,
+          "4433: missing linear symbol with live linear is refused");
+    CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) == AotReloadFail::Linear,
+          "4433: last-reason = Linear for a missing linear symbol");
+    CHECK(metrics.aot_reload_fail_linear_total.load() == lin1 + 1,
+          "4433: missing linear symbol bumps reload_fail_linear_total");
+    CHECK(aura_aot_func_table_epoch() == epoch_good, "4433: missing linear symbol does not commit");
+    CHECK(aura_aot_probe_fn_ptr(kMissLin) == 0, "4433: missing-linear func id was discarded");
+
+    aura_set_aot_live_linear_state_fingerprint(0);
+    CHECK(reload(so_miss_lin, kEmit) == true,
+          "4433: host linear 0 leaves a missing symbol inactive");
+    CHECK(aura_aot_probe_fn_ptr(kMissLin) != 0,
+          "4433: inactive linear host commits the registration");
+    const auto epoch_after_inactive = aura_aot_func_table_epoch();
+
+    aura_set_aot_default_env_frame_version(20);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 20);
+    aura_set_aot_live_env_frame_version(100);
+    CHECK(reload(so_ahead, 50) == true, "4433: explicit env 20 allows binary env 50 over live 100");
+    const auto epoch_override = aura_aot_func_table_epoch();
+    CHECK(epoch_override != epoch_after_inactive, "4433: explicit-wins reload commits");
+    aura_set_aot_default_env_frame_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    const auto env2 = metrics.aot_reload_fail_env_total.load();
+    CHECK(reload(so_ahead, 50) == false, "4433: clearing the explicit word samples live env 100");
+    CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) == AotReloadFail::Env,
+          "4433: last-reason = Env once the live mirror is the host sample");
+    CHECK(metrics.aot_reload_fail_env_total.load() == env2 + 1,
+          "4433: live-mirror env refuse bumps reload_fail_env_total once");
+    CHECK(aura_aot_func_table_epoch() == epoch_override, "4433: live env refuse does not commit");
+
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto once = br.find("static bool aura_reload_aot_module_for_eval_once");
+    const auto apply = once == std::string::npos ? std::string::npos
+                                                 : br.find("apply_aot_staging_to_live();", once);
+    CHECK(once != std::string::npos && apply != std::string::npos,
+          "4433: once-function contains the staging commit");
+    if (once != std::string::npos && apply != std::string::npos) {
+        const auto head = br.substr(once, apply - once);
+        CHECK(head.find("Issue #4433") != std::string::npos,
+              "4433: Issue #4433 is cited before the staging commit");
+        CHECK(head.find("aura_get_aot_live_env_frame_version") != std::string::npos,
+              "4433: reload samples the live env mirror");
+        CHECK(head.find("aura_get_aot_live_linear_state_fingerprint") != std::string::npos,
+              "4433: reload samples the live linear fingerprint");
+        CHECK(head.find("st.env_frame_version.load") != std::string::npos,
+              "4433: explicit AotState word is still loaded");
+        CHECK(head.find("*binary_env_ver < host_env_ver") != std::string::npos,
+              "4433: present-symbol env compare stays less-than");
+        CHECK(head.find("aot-hotupdate-linear-drift") != std::string::npos,
+              "4433: linear rollback uses an audit reason");
+        CHECK(head.find("aura_aot_fn_version_is_stale_ex") == std::string::npos,
+              "4433: commit path does not call the defuse stale probe");
+        CHECK(head.find("schema-4433") == std::string::npos, "4433: no new query key");
+    }
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -2054,6 +2248,7 @@ int main() {
 
     ac4387_rollback_restores_previous_jit_fn();
     ac4387_owner_scoped_success_drops_old_cache();
+    ac4433_live_mirror_refuses_stale_reload();
 
     if (::aura::test::g_failed)
         return 1;
