@@ -255,6 +255,9 @@ struct SecurityEventWal {
     std::uint32_t segment_index = 0;
     std::uint64_t last_seq_persisted = 0;
     std::uint32_t unflushed = 0;
+    // Issue #4446: last rotate could not open the next segment. fp is
+    // null while enabled stays true. Not a metric and not a query key.
+    bool rotate_open_fail_ = false;
     static constexpr std::uint32_t kFlushEvery = 32;
 
     ~SecurityEventWal() { close_unlocked(); }
@@ -331,9 +334,32 @@ struct SecurityEventWal {
         ++segment_index;
         g_security_event_wal_metrics().security_event_wal_rotate_total.fetch_add(
             1, std::memory_order_relaxed);
-        (void)open_segment_unlocked(segment_index);
+        // Issue #4446: keep the open result. A null fp with enabled still
+        // true used to drop later appends with no fail accounting.
+        rotate_open_fail_ = !open_segment_unlocked(segment_index);
         // Issue #3338: opt-in retention. Unset AURA_WAL_MAX_SEGMENTS → no-op.
         prune_old_segments_unlocked();
+    }
+
+    // Issue #4446: enabled but no segment file. Same counters and
+    // fail-closed overflow capture as fwrite-miss. WAL-off never calls
+    // this (`!enabled` returns first). Reason stays off the query surface.
+    [[nodiscard]] bool note_rotate_open_fail_unlocked(const SecurityEventWalRecord& rec) noexcept {
+        rotate_open_fail_ = true;
+        g_security_event_wal_metrics().security_event_wal_append_fail_total.fetch_add(
+            1, std::memory_order_relaxed);
+        ::aura::core::wal_slo::note_wal_append_fail();
+        if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
+            WalOverflowRecord ovr{};
+            ovr.mid = rec.mutation_id;
+            ovr.tenant_id = static_cast<std::uint32_t>(rec.tenant_id);
+            ovr.fiber_id = static_cast<std::uint64_t>(rec.fiber_id);
+            ovr.epoch = rec.epoch;
+            ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
+            ovr.reason = std::string("wal-rotate-open-fail");
+            (void)wal_overflow_ring_push(ovr);
+        }
+        return false;
     }
 
     // Enable persist under `persist_dir`. Replays existing WAL into
@@ -398,6 +424,7 @@ struct SecurityEventWal {
             return false;
         }
         enabled = true;
+        rotate_open_fail_ = false;
         g_security_event_wal_metrics().security_event_wal_enabled.store(1,
                                                                         std::memory_order_relaxed);
         return true;
@@ -407,6 +434,7 @@ struct SecurityEventWal {
         std::lock_guard<std::mutex> lock(mtx);
         close_unlocked();
         enabled = false;
+        rotate_open_fail_ = false;
         dir.clear();
         g_security_event_wal_metrics().security_event_wal_enabled.store(0,
                                                                         std::memory_order_relaxed);
@@ -471,13 +499,20 @@ struct SecurityEventWal {
     // mirror). Batched flush mirrors mutation_audit_wal.
     bool append(const SecurityEventWalRecord& rec) noexcept {
         std::lock_guard<std::mutex> lock(mtx);
+        // Issue #3056 AC1: WAL-off (`!enabled`) stays silent. Issue #4446:
+        // enabled + null fp retries the segment once, then fail-closes
+        // like fwrite-miss (append_fail, SLO, overflow).
         if (!enabled || !fp) {
-            return false;
+            if (!enabled)
+                return false;
+            if (!open_segment_unlocked(segment_index))
+                return note_rotate_open_fail_unlocked(rec);
+            rotate_open_fail_ = false;
         }
         if (current_bytes >= rotate_bytes)
             rotate_unlocked();
         if (!fp)
-            return false;
+            return note_rotate_open_fail_unlocked(rec);
         // Issue #3056: inject + fwrite miss share one fail path. WAL-off
         // never reaches here (AC1: `!enabled || !fp` above).
         if (::aura::core::wal_slo::consume_wal_inject_append_fail()) {
@@ -589,6 +624,7 @@ struct SecurityEventWal {
         last_seq_persisted = 0;
         segment_index = 0;
         current_bytes = 0;
+        rotate_open_fail_ = false;
     }
 };
 

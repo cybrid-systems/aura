@@ -140,6 +140,9 @@ struct MutationAuditWal {
     std::uint32_t segment_index = 0;
     std::uint64_t last_seq_persisted = 0;
     std::uint32_t unflushed = 0;
+    // Issue #4446: last rotate could not open the next segment. fp is
+    // null while enabled stays true. Not a metric and not a query key.
+    bool rotate_open_fail_ = false;
     // Issue #3242: typed-summary sidecar (paired segment index; own FILE*).
     std::FILE* typed_fp = nullptr;
     std::string typed_path;
@@ -292,10 +295,23 @@ struct MutationAuditWal {
     void rotate_unlocked() noexcept {
         ++segment_index;
         g_audit_wal_metrics().audit_wal_rotate_total.fetch_add(1, std::memory_order_relaxed);
-        (void)open_segment_unlocked(segment_index);
+        // Issue #4446: keep the open result. A null fp with enabled still
+        // true used to drop later appends with no fail accounting.
+        rotate_open_fail_ = !open_segment_unlocked(segment_index);
         (void)open_typed_segment_unlocked(segment_index);
         // Issue #3338: opt-in retention. Unset AURA_WAL_MAX_SEGMENTS → no-op.
         prune_old_segments_unlocked();
+    }
+
+    // Issue #4446: enabled but no segment file. Same counters as this
+    // WAL's fwrite-miss path (append_fail + SLO). The overflow ring lives
+    // on the SE WAL; mutation fwrite-miss does not push it. WAL-off
+    // (`!enabled`) never calls this.
+    [[nodiscard]] bool note_rotate_open_fail_unlocked() noexcept {
+        rotate_open_fail_ = true;
+        g_audit_wal_metrics().audit_wal_append_fail_total.fetch_add(1, std::memory_order_relaxed);
+        ::aura::core::wal_slo::note_wal_append_fail();
+        return false;
     }
 
     // Enable persist under `persist_dir`. Replays existing WAL into `out_records`
@@ -359,6 +375,7 @@ struct MutationAuditWal {
         }
         (void)open_typed_segment_unlocked(any ? max_seg : 0);
         enabled = true;
+        rotate_open_fail_ = false;
         g_audit_wal_metrics().audit_wal_enabled.store(1, std::memory_order_relaxed);
         return true;
     }
@@ -367,6 +384,7 @@ struct MutationAuditWal {
         std::lock_guard<std::mutex> lock(mtx);
         close_unlocked();
         enabled = false;
+        rotate_open_fail_ = false;
         dir.clear();
         g_audit_wal_metrics().audit_wal_enabled.store(0, std::memory_order_relaxed);
     }
@@ -388,13 +406,20 @@ struct MutationAuditWal {
 
     bool append(const AuditWalRecord& rec) noexcept {
         std::lock_guard<std::mutex> lock(mtx);
+        // Issue #3056 AC1: WAL-off (`!enabled`) stays silent. Issue #4446:
+        // enabled + null fp retries the segment once, then the same
+        // append_fail + SLO accounting as fwrite-miss.
         if (!enabled || !fp) {
-            return false;
+            if (!enabled)
+                return false;
+            if (!open_segment_unlocked(segment_index))
+                return note_rotate_open_fail_unlocked();
+            rotate_open_fail_ = false;
         }
         if (current_bytes >= rotate_bytes)
             rotate_unlocked();
         if (!fp)
-            return false;
+            return note_rotate_open_fail_unlocked();
         // Issue #3056: inject + fwrite miss share one fail path. WAL-off
         // never reaches here (AC1: `!enabled || !fp` above).
         if (::aura::core::wal_slo::consume_wal_inject_append_fail()) {
@@ -615,6 +640,7 @@ struct MutationAuditWal {
         last_seq_persisted = 0;
         segment_index = 0;
         current_bytes = 0;
+        rotate_open_fail_ = false;
     }
 };
 

@@ -122,6 +122,175 @@ void write_v1_audit_segment(const fs::path& dir, const std::vector<AuditWalRecor
     std::fclose(f);
 }
 
+std::string read_repo_file(const char* rel) {
+    std::ifstream in(rel);
+    if (!in)
+        return {};
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// Issue #4446: a rotate that cannot open the next segment must account
+// like fwrite-miss. WAL-off stays silent. No new query key.
+void ac4446_rotate_open_fail_accounts() {
+    using aura::core::audit_wal::g_mutation_audit_wal;
+    using aura::core::audit_wal::snapshot_audit_wal_stats;
+    using aura::core::security_event::SecurityEvent;
+    using aura::core::security_event_wal::g_security_event_wal;
+    using aura::core::security_event_wal::make_record;
+    using aura::core::security_event_wal::persist_security_event;
+    using aura::core::security_event_wal::snapshot_security_event_wal_stats;
+    using aura::core::security_event_wal::wal_overflow_find_by_mid;
+    using aura::core::security_event_wal::wal_overflow_ring_clear_for_test;
+    using aura::core::security_event_wal::wal_overflow_ring_depth;
+    namespace slo = aura::core::wal_slo;
+
+    std::println("\n--- #4446: rotate-open-fail accounts like fwrite-miss ---");
+    reset_all();
+    wal_overflow_ring_clear_for_test();
+    apply_production_audit_defaults();
+    slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+
+    const auto dir = fs::temp_directory_path() / "aura-audit-wal-4446";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    const auto restore = [&] {
+        fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace, ec);
+    };
+
+    CHECK(g_security_event_wal().enable(dir.string()), "4446: enable SE WAL");
+    CHECK(g_mutation_audit_wal().enable(dir.string()), "4446: enable mutation WAL");
+    const bool closed = slo::wal_append_fail_closed_active();
+    CHECK(closed, "4446: fail-closed armed");
+    g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    g_mutation_audit_wal().set_rotate_bytes(sizeof(AuditWalRecord) * 4);
+
+    int healthy_se = 0;
+    int healthy_mut = 0;
+    for (int i = 0; i < 3; ++i) {
+        SecurityEvent ev{};
+        ev.kind = SecurityEventKind::EffectDeny;
+        ev.mutation_id = 4446000 + static_cast<std::uint64_t>(i);
+        ev.tenant_id = 7;
+        ev.epoch = 1;
+        ev.fiber_id = 1;
+        ev.denied = true;
+        std::memcpy(ev.op, "test:4446", 9);
+        if (persist_security_event(ev.kind, ev.tenant_id, ev.mutation_id, ev.epoch, kEffectMutate,
+                                   "test:4446", "healthy", true, ev.fiber_id, /*timestamp_ms=*/1))
+            ++healthy_se;
+        AuditWalRecord rec{};
+        rec.seq = static_cast<std::uint64_t>(i + 1);
+        rec.provenance_mutation_id = 4446200 + static_cast<std::uint64_t>(i);
+        rec.tenant_id = 7;
+        rec.fiber_id = 1;
+        rec.epoch = 1;
+        std::memcpy(rec.op, "mut:4446", 8);
+        if (g_mutation_audit_wal().append(rec))
+            ++healthy_mut;
+    }
+    CHECK(healthy_se == 3, "4446: three healthy SE rows");
+    CHECK(healthy_mut == 3, "4446: three healthy mutation rows");
+
+    fs::permissions(dir,
+                    fs::perms::owner_read | fs::perms::owner_exec | fs::perms::group_read |
+                        fs::perms::group_exec | fs::perms::others_read | fs::perms::others_exec,
+                    fs::perm_options::replace, ec);
+
+    int se_false = 0;
+    int mut_false = 0;
+    int raw_false = 0;
+    for (int i = 0; i < 50; ++i) {
+        const auto mid = (i == 10) ? 44461010ull : 4446300ull + static_cast<std::uint64_t>(i);
+        if (!persist_security_event(SecurityEventKind::EffectDeny, 7, mid, 1, kEffectMutate,
+                                    "test:4446", "deny", true, 1, /*timestamp_ms=*/2))
+            ++se_false;
+        AuditWalRecord rec{};
+        rec.seq = 100 + static_cast<std::uint64_t>(i);
+        rec.provenance_mutation_id = 4446400 + static_cast<std::uint64_t>(i);
+        rec.tenant_id = 7;
+        rec.fiber_id = 1;
+        rec.epoch = 1;
+        std::memcpy(rec.op, "mut:4446", 8);
+        if (!g_mutation_audit_wal().append(rec))
+            ++mut_false;
+    }
+    for (int i = 0; i < 50; ++i) {
+        SecurityEvent ev{};
+        ev.kind = SecurityEventKind::EffectDeny;
+        ev.mutation_id = 4446500 + static_cast<std::uint64_t>(i);
+        ev.tenant_id = 7;
+        ev.denied = true;
+        std::memcpy(ev.op, "raw:4446", 8);
+        if (!g_security_event_wal().append(make_record(ev, /*timestamp_ms=*/3)))
+            ++raw_false;
+    }
+
+    const auto se = snapshot_security_event_wal_stats();
+    const auto mut = snapshot_audit_wal_stats();
+    const auto consecutive =
+        slo::g_wal_append_fail_slo_counters.consecutive.load(std::memory_order_relaxed);
+    const bool se_on = g_security_event_wal().is_enabled();
+    const bool mut_on = g_mutation_audit_wal().is_enabled();
+    auto slo_in = slo::make_wal_append_fail_slo_input(
+        mut.append_fail, se.append_fail, mut.persisted, se.persisted, se_on || mut_on, true, false);
+    const auto decision = slo::decide_wal_append_fail_slo(slo_in);
+    const auto* lost = wal_overflow_find_by_mid(44461010ull);
+
+    CHECK(se.append_fail > 0, "4446: SE append_fail bumps");
+    CHECK(mut.append_fail > 0, "4446: mutation append_fail bumps");
+    CHECK(consecutive >= 3, "4446: consecutive fails reach the SLO");
+    CHECK(decision.force_reason == "wal-append-fail-breach", "4446: slo is wal-append-fail-breach");
+    CHECK(wal_overflow_ring_depth() > 0, "4446: overflow keeps the lost SE");
+    CHECK(lost != nullptr && lost->reason == "wal-rotate-open-fail",
+          "4446: overflow reason is wal-rotate-open-fail");
+    CHECK(se_on && mut_on, "4446: rotate-open-fail leaves WAL enabled");
+    CHECK(g_security_event_wal().rotate_open_fail_, "4446: SE rotate_open_fail set");
+    CHECK(g_mutation_audit_wal().rotate_open_fail_, "4446: mutation rotate_open_fail set");
+    CHECK(se_false >= 49, "4446: SE denies fail once the segment will not open");
+    CHECK(mut_false >= 49, "4446: mutation appends fail once the segment will not open");
+    CHECK(raw_false == 50, "4446: later raw SE appends all fail");
+
+    const auto se_fail_at_disable = se.append_fail;
+    const auto mut_fail_at_disable = mut.append_fail;
+    const auto depth_at_disable = wal_overflow_ring_depth();
+    g_security_event_wal().disable();
+    g_mutation_audit_wal().disable();
+    SecurityEvent off{};
+    off.mutation_id = 4446999;
+    off.denied = true;
+    const bool off_se = g_security_event_wal().append(make_record(off, 4));
+    AuditWalRecord off_mut{};
+    off_mut.provenance_mutation_id = 4446998;
+    const bool off_mut_ok = g_mutation_audit_wal().append(off_mut);
+    const auto se_after = snapshot_security_event_wal_stats().append_fail;
+    const auto mut_after = snapshot_audit_wal_stats().append_fail;
+    CHECK(!off_se && !off_mut_ok, "4446: WAL-off append still returns false");
+    CHECK(se_after == se_fail_at_disable, "4446: WAL-off does not bump SE append_fail");
+    CHECK(mut_after == mut_fail_at_disable, "4446: WAL-off does not bump mutation append_fail");
+    CHECK(wal_overflow_ring_depth() == depth_at_disable, "4446: WAL-off does not push overflow");
+
+    const auto se_src = read_repo_file("src/core/security_event_wal.hh");
+    const auto mut_src = read_repo_file("src/core/mutation_audit_wal.hh");
+    CHECK(se_src.find("wal-rotate-open-fail") != std::string::npos, "4446: SE reason cite");
+    CHECK(se_src.find("if (!enabled || !fp)") != std::string::npos,
+          "4446: SE WAL-off short-circuit");
+    CHECK(mut_src.find("if (!enabled || !fp)") != std::string::npos,
+          "4446: mutation WAL-off short-circuit");
+    CHECK(mut_src.find("note_rotate_open_fail_unlocked") != std::string::npos,
+          "4446: mutation accounts the null-fp path");
+    CHECK(se_src.find("query:4446") == std::string::npos, "4446: no new query key");
+    CHECK(read_repo_file("tests/compiler/test_issue_4446.cpp").empty(), "4446: no test_issue file");
+    CHECK(read_repo_file("docs/design/4446-wal-rotate-open-fail.md").empty(),
+          "4446: no design doc");
+
+    restore();
+    fs::remove_all(dir, ec);
+    apply_dev_audit_defaults();
+    reset_all();
+}
+
 } // namespace
 
 int main() {
@@ -535,6 +704,8 @@ int main() {
         fs::remove_all(dir4042);
         apply_dev_audit_defaults();
     }
+
+    ac4446_rotate_open_fail_accounts();
 
     // Cleanup temp
     std::error_code ec;
