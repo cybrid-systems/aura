@@ -7775,6 +7775,37 @@ public:
             metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
                                                           std::memory_order_relaxed);
         }
+        // Issue #4436: full lower copies ir_cache_[callee] without reading v2.
+        // Dirty, unstored, or abort-invalid: leave the caller dirty and skip
+        // the store. Production / Full only. Soft / Off keeps the copy.
+        // embed_safe_callees_4436_ was clean and content-stored; the
+        // precompute mark does not rewrite irs.
+        if (aura::compiler::typed_audit::production_defaults_active() ||
+            aura::compiler::typed_audit::get_strategy() ==
+                aura::compiler::typed_audit::AuditStrategy::Full) {
+            it = ir_cache_v2_.find(name);
+            if (it == ir_cache_v2_.end())
+                return false;
+            for (const auto& hit : cache_hits) {
+                if (hit == name)
+                    continue;
+                const auto cit = ir_cache_v2_.find(hit);
+                if (cit == ir_cache_v2_.end())
+                    continue;
+                const auto& ce = cit->second;
+                if (ce.dirty || ce.dirty_block_count() > 0 || ce.abort_map_invalid ||
+                    !ce.content_stored_this_epoch) {
+                    const bool embed_safe =
+                        std::find(embed_safe_callees_4436_.begin(), embed_safe_callees_4436_.end(),
+                                  hit) != embed_safe_callees_4436_.end();
+                    if (embed_safe)
+                        continue;
+                    it->second.dirty = true;
+                    it->second.content_stored_this_epoch = false;
+                    return false;
+                }
+            }
+        }
         // Run per-function passes on the new bundle.
         // Issue #1574 / #2044 / #2907: shared incremental dirty suite + SoA hot pack.
         {
@@ -9360,6 +9391,9 @@ public:
                                     vit->second.irs, /*want_partial=*/false, &type_registry_,
                                     epoch_4172);
                     }
+                } else {
+                    // Issue #4436: full arm refused a dirty-callee embed.
+                    embed_refused_4436_.push_back(name);
                 }
             }
         }
@@ -9377,6 +9411,36 @@ public:
         }
         // Issue #3255: clean-cache relower still closes a post-peel fork.
         restore_soft_dual_graph_parity_after_relower_();
+        // Issue #4436: one retry after earlier names in this snapshot have
+        // stored. Mutual recursion stays dirty. Not a sort of dirty_names.
+        if (!embed_refused_4436_.empty() &&
+            (aura::compiler::typed_audit::production_defaults_active() ||
+             aura::compiler::typed_audit::get_strategy() ==
+                 aura::compiler::typed_audit::AuditStrategy::Full)) {
+            const auto refused = std::move(embed_refused_4436_);
+            embed_refused_4436_.clear();
+            for (const auto& retry_name : refused) {
+                auto eit = ir_cache_v2_.find(retry_name);
+                if (eit == ir_cache_v2_.end())
+                    continue;
+                if (!eit->second.dirty && eit->second.dirty_block_count() == 0 &&
+                    eit->second.content_stored_this_epoch && !eit->second.abort_map_invalid)
+                    continue;
+                const bool retry_ok = relower_current_define_full_for_test(retry_name);
+                if (retry_ok) {
+                    ++ok;
+                    if (residual_undermark_face_4172) {
+                        auto vit = ir_cache_v2_.find(retry_name);
+                        if (vit != ir_cache_v2_.end())
+                            (void)aura::compiler::opt_registry::
+                                verify_residual_undermark_post_peel_4172(
+                                    vit->second.irs, /*want_partial=*/false, &type_registry_,
+                                    epoch_4172);
+                    }
+                }
+            }
+        }
+        embed_refused_4436_.clear();
         return ok;
     }
 
@@ -9513,6 +9577,45 @@ public:
             return false;
         return relower_define_blocks(name, source, *flat, *pool, lambda);
     }
+
+    // Issue #4436: full-arm relower of the live workspace body.
+    // commit_per_fn_partial=false so a body-only dirty bundle cannot
+    // return from the per-fn arm. Live unparse, not the cached source.
+    // relower_define_from_workspace_for_test keeps its default.
+    bool relower_current_define_full_for_test(const std::string& name) {
+        auto* flat = evaluator_.workspace_flat();
+        auto* pool = evaluator_.workspace_pool();
+        if (!flat || !pool)
+            return false;
+        if (ir_cache_v2_.find(name) == ir_cache_v2_.end())
+            return false;
+        aura::ast::NodeId lambda = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (flat->is_free_slot(id))
+                continue;
+            auto v = flat->get(id);
+            if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            if (std::string(pool->resolve(v.sym_id)) != name || v.children.empty())
+                continue;
+            auto body = v.child(0);
+            if (body < flat->size() && flat->get(body).tag == aura::ast::NodeTag::Lambda)
+                lambda = body;
+            break;
+        }
+        if (lambda == aura::ast::NULL_NODE)
+            return false;
+        const std::string body_src = unparse_node(*flat, *pool, lambda, 0);
+        const std::string canonical = "(define " + name + " " + body_src + ")";
+        return relower_define_blocks(name, canonical, *flat, *pool, lambda,
+                                     /*commit_per_fn_partial=*/false);
+    }
+
+    // Issue #4436: #4228 registers a non-high-bit lambda closure as a
+    // value cell, so a later lower emits TopCellLoad and never copies
+    // ir_cache_. The embed hole is the function-cache copy. Tests drop
+    // the cells to reach that copy.
+    void clear_ir_value_cells_for_test() { ir_value_cell_bindings_.clear(); }
 
     // Issue #3484 test: persist-empty / body-only mark missed. Keep the
     // cache entry so #3381 still unions the caller into dirty_names, but
@@ -13105,6 +13208,13 @@ private:
         std::uint32_t provenance = 0;
     };
     std::vector<MacroIrAttrEntry> macro_ir_attr_cache_;
+    // Issue #4436: callers a full relower refused because the bundle copied
+    // a callee whose v2 row is still dirty. One retry at the end of the peel.
+    // Not a metric and not a query key.
+    std::vector<std::string> embed_refused_4436_;
+    // Callees precompute marked that were already clean and content-stored.
+    // The scheduling mark does not rewrite irs. Not a metric or a query key.
+    std::vector<std::string> embed_safe_callees_4436_;
 
     void note_macro_ir_attrs_from_module(const aura::ir::IRModule& mod) {
         for (const auto& fn : mod.functions) {

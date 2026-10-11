@@ -2003,6 +2003,8 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
 }
 
 std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::string& name) {
+    // Cleared on every entry so a prior caller's safe set cannot leak.
+    embed_safe_callees_4436_.clear();
     using aura::compiler::kUnknownCalleeConeBlocks;
     using aura::compiler::dirty::cascade_mark_dirty;
     using aura::compiler::dirty::DirtySet;
@@ -2060,6 +2062,11 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
             if (already) {
                 callee_dirty_blocks += cit->second.dirty_block_count();
             } else {
+                // Issue #4436: a clean content-stored callee is marked so the
+                // cone is scheduled. The mark does not rewrite irs. The full
+                // arm may still embed that copy.
+                if (cit->second.content_stored_this_epoch && !cit->second.abort_map_invalid)
+                    embed_safe_callees_4436_.push_back(callee);
                 cit->second.dirty = true;
                 const auto n = cit->second.mark_body_only_dirty();
                 if (n == 0)
