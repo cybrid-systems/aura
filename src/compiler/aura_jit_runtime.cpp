@@ -6204,27 +6204,20 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
-    // Issue #157 Phase 1: read lock — g_pair_slots[id]->car is a
-    // read; shared_lock lets multiple concurrent readers proceed
-    // but blocks while a writer holds the lock.
-    aura_lock_workspace_read();
-    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    int64_t result = 0;
-    if (id < g_pair_slots.size() && g_pair_slots[id])
-        result = g_pair_slots[id]->car;
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #157 Phase 1: the read lock lives in the checked seam so
+    // concurrent readers still share it and writers still exclude them.
+    // Issue #4441: OpCar's slow path and the non-L2 arm call this symbol.
+    // Same owner-stamp compare as pair_field_locked (#4093). Soft/Off
+    // stays inside jit_tenant_gate_armed and does not read the stamp array.
+    return aura_pair_car_checked(pair_val, aura_jit_owner_capability_tenant(),
+                                 aura_jit_owner_sandbox_mode());
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
     // Issue #157 Phase 1: read lock, same as aura_pair_car.
-    aura_lock_workspace_read();
-    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    int64_t result = 0;
-    if (id < g_pair_slots.size() && g_pair_slots[id])
-        result = g_pair_slots[id]->cdr;
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #4441: OpCdr slow path and the non-L2 arm.
+    return aura_pair_cdr_checked(pair_val, aura_jit_owner_capability_tenant(),
+                                 aura_jit_owner_sandbox_mode());
 }
 
 // Arena-based pair allocation (for NON_ESCAPING pairs, Phase 2)
@@ -6289,12 +6282,13 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
         g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return 0;
     }
-    // Issue #4093: the unchecked JIT field read consults the same
-    // g_pair_slot_tenants stamp set-car!/set-cdr! compare (#4057) — the
-    // production face refuses a foreign / Strict-MT-unstamped slot with
-    // the OOB default (0) and the deny fired through
-    // check_workspace_isolation. Face probe precedes the stamp load
-    // (Soft/Off zero-cost contract — the array is never read).
+    // Issue #4093: the JIT field read consults the same g_pair_slot_tenants
+    // stamp set-car!/set-cdr! compare (#4057) — the production face refuses
+    // a foreign / Strict-MT-unstamped slot with the OOB default (0) and the
+    // deny fired through check_workspace_isolation. Issue #4441: the slow
+    // path and the non-L2 arm (aura_pair_car / aura_pair_cdr) use this
+    // helper too. Face probe precedes the stamp load (Soft/Off zero-cost
+    // contract — the array is never read).
     if (jit_tenant_gate_armed(sandbox_mode)) {
         const std::uint64_t slot_tenant =
             (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
@@ -6302,6 +6296,28 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
             return 0;
     }
     return want_car ? g_pair_slots[id]->car : g_pair_slots[id]->cdr;
+}
+
+// Issue #4441: explicit-context slow-path pair field read (#4036 seam
+// shape — light-link binaries shadow the owner hooks; tests pass
+// caller/face). aura_pair_car / aura_pair_cdr delegate here with the
+// owner hooks. Same pair_field_locked body as the L2 fast path.
+extern "C" int64_t aura_pair_car_checked(int64_t pair_val, std::uint64_t caller_tenant,
+                                         int sandbox_mode) {
+    aura_lock_workspace_read();
+    const int64_t result =
+        pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
+    aura_unlock_workspace_read();
+    return result;
+}
+
+extern "C" int64_t aura_pair_cdr_checked(int64_t pair_val, std::uint64_t caller_tenant,
+                                         int sandbox_mode) {
+    aura_lock_workspace_read();
+    const int64_t result =
+        pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr", caller_tenant, sandbox_mode);
+    aura_unlock_workspace_read();
+    return result;
 }
 
 // Issue #4093: explicit-context unchecked pair field read (#4036 seam shape

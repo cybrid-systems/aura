@@ -795,6 +795,144 @@ static void ac4093_3_soft_shares() {
     CHECK(aura_hash_ref_checked(hash_a, 7, 4094, 0) == 8, "4093 AC3: B reads it back (shared)");
 }
 
+// ── Issue #4441: JIT car/cdr slow + non-L2 path (aura_pair_car /
+// aura_pair_cdr) share the #4093 pair-slot tenant gate. Light-link
+// binaries shadow the owner hooks, so the behavior arms drive
+// aura_pair_car_checked / aura_pair_cdr_checked (the body those symbols
+// delegate to). OpCar/OpCdr still CreateCall the production symbols.
+static void ac4441_source_cite() {
+    std::println("\n--- #4441 cite: slow and non-L2 car/cdr share the pair gate ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto car = rt.find("int64_t aura_pair_car(int64_t pair_val)");
+    CHECK(car != std::string::npos, "4441 cite: aura_pair_car");
+    if (car != std::string::npos) {
+        const auto win = rt.substr(car, 600);
+        CHECK(win.find("aura_pair_car_checked(") != std::string::npos &&
+                  win.find("aura_jit_owner_capability_tenant()") != std::string::npos &&
+                  win.find("aura_jit_owner_sandbox_mode()") != std::string::npos,
+              "4441 cite: aura_pair_car delegates with owner-hook values");
+    }
+    const auto cdr = rt.find("int64_t aura_pair_cdr(int64_t pair_val)");
+    CHECK(cdr != std::string::npos, "4441 cite: aura_pair_cdr");
+    if (cdr != std::string::npos) {
+        const auto win = rt.substr(cdr, 500);
+        CHECK(win.find("aura_pair_cdr_checked(") != std::string::npos &&
+                  win.find("aura_jit_owner_capability_tenant()") != std::string::npos &&
+                  win.find("aura_jit_owner_sandbox_mode()") != std::string::npos,
+              "4441 cite: aura_pair_cdr delegates with owner-hook values");
+    }
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("ExternalLinkage, \"aura_pair_car\", mod)") != std::string::npos,
+          "4441 cite: fn_pair_car bound to aura_pair_car");
+    CHECK(jit.find("ExternalLinkage, \"aura_pair_cdr\", mod)") != std::string::npos,
+          "4441 cite: fn_pair_cdr bound to aura_pair_cdr");
+    const auto opcar = jit.find("case OpCar:");
+    const auto opcdr = jit.find("case OpCdr:");
+    CHECK(opcar != std::string::npos && opcdr != std::string::npos && opcdr > opcar,
+          "4441 cite: OpCar then OpCdr");
+    if (opcar != std::string::npos && opcdr > opcar) {
+        const auto win = jit.substr(opcar, opcdr - opcar);
+        const std::string needle = "CreateCall(llvm::FunctionCallee(fn_pair_car),";
+        std::size_t n = 0;
+        for (std::size_t pos = 0; (pos = win.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++n;
+        CHECK(n >= 2, "4441 cite: OpCar slow and non-L2 both call fn_pair_car");
+        CHECK(win.find("fn_pair_car_unchecked") != std::string::npos,
+              "4441 cite: OpCar L2 fast path stays unchecked");
+    }
+    const auto opcast = jit.find("case OpCastOp:");
+    if (opcdr != std::string::npos && opcast != std::string::npos && opcast > opcdr) {
+        const auto win = jit.substr(opcdr, opcast - opcdr);
+        const std::string needle = "CreateCall(llvm::FunctionCallee(fn_pair_cdr),";
+        std::size_t n = 0;
+        for (std::size_t pos = 0; (pos = win.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++n;
+        CHECK(n >= 2, "4441 cite: OpCdr slow and non-L2 both call fn_pair_cdr");
+    }
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    CHECK(sh.find("aura_pair_car_checked") != std::string::npos &&
+              sh.find("aura_pair_cdr_checked") != std::string::npos,
+          "4441 cite: runtime_shared.h declares the slow-path seams");
+}
+
+static void ac4441_slow_path_gate() {
+    std::println("\n--- #4441: slow-path car/cdr fail closed on the production pair face ---");
+    reset_all();
+    constexpr std::uint64_t tenant_a = 7;
+    constexpr std::uint64_t tenant_b = 9;
+    constexpr int kRestricted = 1;
+    constexpr int kStrictFace = 2;
+    constexpr int kSoft = 0;
+
+    const auto pair_a = aura_alloc_pair_tenant(222, 444, static_cast<std::int64_t>(tenant_a));
+    CHECK(pair_a != 0, "4441: A alloc pair");
+    const auto legacy = aura_alloc_pair_tenant(11, 22, 0);
+    CHECK(legacy != 0, "4441: unstamped pair allocated");
+
+    // Restricted+MT. The checked seams take caller/face explicitly
+    // (light-link binaries shadow the strong owner hooks).
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CHECK(aura_pair_car_checked(pair_a, tenant_b, kRestricted) == 0,
+          "4441: Restricted+MT foreign car is 0");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_b, kRestricted) == 0,
+          "4441: Restricted+MT foreign cdr is 0");
+    CHECK(aura_pair_car_unchecked_checked(pair_a, tenant_b, kRestricted) == 0,
+          "4441: L2 fast path foreign car agrees");
+    CHECK(aura_pair_car_checked(pair_a, tenant_a, kRestricted) == 222,
+          "4441: Restricted+MT owner car is 222");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_a, kRestricted) == 444,
+          "4441: Restricted+MT owner cdr is 444");
+    CHECK(aura_pair_car_checked(legacy, tenant_b, kRestricted) == 0,
+          "4441: Restricted+MT unstamped car is 0");
+    CHECK(aura_pair_cdr_checked(legacy, tenant_b, kRestricted) == 0,
+          "4441: Restricted+MT unstamped cdr is 0");
+
+    // Strict arms without MT. Foreign and unstamped stay 0; the owner reads.
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    CHECK(aura_pair_car_checked(pair_a, tenant_b, kStrictFace) == 0,
+          "4441: Strict foreign car is 0");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_b, kStrictFace) == 0,
+          "4441: Strict foreign cdr is 0");
+    CHECK(aura_pair_car_checked(legacy, tenant_a, kStrictFace) == 0,
+          "4441: Strict unstamped car is 0");
+    CHECK(aura_pair_cdr_checked(legacy, tenant_a, kStrictFace) == 0,
+          "4441: Strict unstamped cdr is 0");
+    CHECK(aura_pair_car_checked(pair_a, tenant_a, kStrictFace) == 222,
+          "4441: Strict owner car is 222");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_a, kStrictFace) == 444,
+          "4441: Strict owner cdr is 444");
+
+    // Soft/Off (mode 0) returns the foreign slot even while MT is active.
+    // The face probe precedes any stamp load.
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CHECK(aura_pair_car_checked(pair_a, tenant_b, kSoft) == 222,
+          "4441: Soft foreign car stays 222");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_b, kSoft) == 444,
+          "4441: Soft foreign cdr stays 444");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+
+    // Single-tenant Restricted (mode 1, MT off) stays permissive.
+    CHECK(aura_pair_car_checked(pair_a, tenant_b, kRestricted) == 222,
+          "4441: single-tenant Restricted car stays 222");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_b, kRestricted) == 444,
+          "4441: single-tenant Restricted cdr stays 444");
+
+    // A denied read does not write. Owner and Soft re-reads see the payload.
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CHECK(aura_pair_car_checked(pair_a, tenant_b, kRestricted) == 0, "4441: foreign car still 0");
+    CHECK(aura_pair_car_checked(pair_a, tenant_a, kRestricted) == 222,
+          "4441: owner car unchanged after foreign read");
+    CHECK(aura_pair_cdr_checked(pair_a, tenant_a, kRestricted) == 444,
+          "4441: owner cdr unchanged after foreign read");
+    CHECK(aura_pair_car_checked(legacy, tenant_b, kSoft) == 11,
+          "4441: unstamped car payload unchanged");
+    CHECK(aura_pair_cdr_checked(legacy, tenant_b, kSoft) == 22,
+          "4441: unstamped cdr payload unchanged");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
 // ── Issue #4094: JIT closure-capture tenant gate — a foreign-stamped env
 // cell is refused and an unstamped (0) slot fails closed under Strict / MT
 // (free's #4036 arms), the deny routed through check_workspace_isolation;
@@ -4097,6 +4235,10 @@ int run_test_dispatch_required_effects() {
     ac4093_1_foreign_deny();
     ac4093_2_unstamped_and_single_tenant();
     ac4093_3_soft_shares();
+
+    // ── Issue #4441: JIT slow-path and non-L2 pair car/cdr tenant gate ──
+    ac4441_source_cite();
+    ac4441_slow_path_gate();
     ac4094_source_cite();
     ac4094_1_foreign_deny();
     ac4094_2_unstamped_fail_closed();
