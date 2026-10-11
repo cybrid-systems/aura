@@ -31,6 +31,9 @@ extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept __attribute__((we
 // core-only links still compile; null → treat as hard (never invent epoch).
 extern "C" int aura_production_hard_face_active_probe() noexcept __attribute__((weak));
 
+// Issue #4440: write-fence fiber join. Same declaration as workspace_isolation.
+extern "C" std::uint64_t aura_fiber_current_id();
+
 namespace aura::core::capability {
 
 inline constexpr int kCapabilityModelPhase = 2; // #1565 enforcement
@@ -53,6 +56,10 @@ inline constexpr int kGrantEpochRetainRestrictedIssue = 2529;
 // ORs !revoked&&!stolen; retain lives in provenance_ok. effects_effective_for
 // skips retain-expired grants so has_capability matches require_effect.
 inline constexpr int kEffectsEffectiveRetainIssue = 3876;
+// Issue #4440: TenantAdmin write fences use the two-arg locked view
+// (retain, epoch-0 hard face, session mid, hard fiber). effects_for_locked
+// stays the retain-blind OR for require_effect and lost-TA notify.
+inline constexpr int kTenantAdminWriteFenceRetainIssue = 4440;
 // Issue #3207: dual-Evaluator cascade + consume linearizability on the
 // process-global CapabilityRegistry (no per-Evaluator shard).
 inline constexpr int kCapabilityDualEvaluatorCascadeIssue = 3207;
@@ -775,7 +782,10 @@ struct CapabilityRegistry {
                 // same-tenant high-bits session row still needs TA.
                 const bool authorized_session_mint = session_bound && caller_principal == 0;
                 if (foreign_tenant || (high_bits && !authorized_session_mint)) {
-                    if (!has_effect(effects_for_locked(caller), Effect::TenantAdmin)) {
+                    // Issue #4440: prov.mutation_id is the caller session mid
+                    // when the grant was joined; 0 leaves the session filter off.
+                    if (!has_effect(effects_effective_for_locked(caller, prov.mutation_id),
+                                    Effect::TenantAdmin)) {
                         auto& met = g_capability_effect_metrics();
                         met.capability_macro_self_evo_grant_deny_total.fetch_add(
                             1, std::memory_order_relaxed);
@@ -1506,8 +1516,66 @@ struct CapabilityRegistry {
     }
 
     // Issue #3876: locked variant — caller MUST hold `mtx`.
+    // Non-zero-epoch retain only. Write fences use the two-arg overload.
     [[nodiscard]] Effect effects_effective_for_locked(TenantId tenant) const {
         return effects_effective_for(tenant);
+    }
+
+    // Issue #4440: TenantAdmin write-fence view. Caller MUST hold `mtx`.
+    // Restricted/Strict skips a row that must not contribute: revoked,
+    // stolen, retain-expired (`grant_epoch < min_valid`), epoch-0 on the
+    // hard face, a session row whose bound mid is not `caller_mid`, or a
+    // hard-fiber mismatch. `caller_mid == 0` leaves the session join off
+    // and does not fail the read. A skipped row does not poison a fresh
+    // sibling. Soft/Off delegates to `effects_for_locked` (zero extra).
+    // Provenance counters stay on provenance_ok; the fence deny counter
+    // is the write-path signal. Wildcard-only strip matches the locked OR.
+    [[nodiscard]] Effect effects_effective_for_locked(TenantId tenant,
+                                                      std::uint64_t caller_mid) const {
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const bool production =
+            mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict;
+        if (!production)
+            return effects_for_locked(tenant, caller_mid);
+
+        Effect acc = Effect::None;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return acc;
+        const auto min_valid = grant_min_valid_epoch_.load(std::memory_order_acquire);
+        const bool hard_fiber = hard_fiber_isolation_.load(std::memory_order_acquire);
+        const auto live_fiber =
+            effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+        bool has_wildcard = false;
+        bool has_explicit_TenantAdmin = false;
+        for (const auto& g : it->second) {
+            if (g.revoked || g.stolen)
+                continue;
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid)
+                continue;
+            // Issue #4038: epoch-0 cannot cycle the retain window on the hard face.
+            if (min_valid != 0 && hard_fiber && g.grant_epoch == 0)
+                continue;
+            if (caller_mid != 0 && g.session_bound && g.bound_mutation_id != caller_mid)
+                continue;
+            if (hard_fiber && g.grant_fiber_id != 0 && live_fiber != 0 &&
+                g.grant_fiber_id != live_fiber)
+                continue;
+            acc = acc | g.effects;
+            if (g.name == "*")
+                has_wildcard = true;
+            else if ((static_cast<std::uint16_t>(g.effects) &
+                      static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0)
+                has_explicit_TenantAdmin = true;
+        }
+        if (has_wildcard && !has_explicit_TenantAdmin) {
+            constexpr std::uint16_t kStrip = static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                                             static_cast<std::uint16_t>(Effect::MacroSelfEvo);
+            acc = static_cast<Effect>(static_cast<std::uint16_t>(acc) & ~kStrip);
+            g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        return acc;
     }
 
     // Issue #4277: live `"*"` under the same skip rules as
@@ -1929,7 +1997,8 @@ struct CapabilityRegistry {
                     // / try_grant_cross_tenant_privileged (all use the same
                     // effects_for_locked face). Caller holds mtx so the
                     // _locked variant is safe.
-                    return has_effect(effects_for_locked(t), Effect::TenantAdmin);
+                    return has_effect(effects_effective_for_locked(t, prov.mutation_id),
+                                      Effect::TenantAdmin);
                 };
                 const auto caller = caller_principal != 0
                                         ? caller_principal
@@ -2858,7 +2927,9 @@ inline bool try_grant_capability_string_path_privileged_locked(
     // check applies: explicit TenantAdmin (via any non-wildcard string grant)
     // passes; no explicit TenantAdmin fails the standard check.
     if (!reg.holds_wildcard_only_locked(caller)) {
-        const Effect held = reg.effects_for_locked(caller);
+        // Issue #4440: no session mid on the string fence; retain / epoch-0 /
+        // hard fiber still apply. caller_mid 0 does not fail a fresh admin.
+        const Effect held = reg.effects_effective_for_locked(caller, /*caller_mid=*/0);
         return (static_cast<std::uint16_t>(held) &
                 static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0;
     }

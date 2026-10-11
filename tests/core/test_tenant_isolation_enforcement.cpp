@@ -229,8 +229,8 @@ static void ac3126_admin_fence_locked() {
         const auto window_start = (fn_pos == std::string::npos) ? 0 : fn_pos;
         const auto window_end = (fence_pos + 1200 < es.size()) ? fence_pos + 1200 : es.size();
         const std::string fence_window = es.substr(window_start, window_end - window_start);
-        CHECK(fence_window.find("effects_for_locked(self_tenant)") != std::string::npos,
-              "AC2: grant_effect_capability fence uses effects_for_locked");
+        CHECK(fence_window.find("effects_effective_for_locked(self_tenant") != std::string::npos,
+              "AC2: grant_effect_capability fence uses the retain-aware locked read");
         CHECK(fence_window.find("has_effect(held, Effect::TenantAdmin)") != std::string::npos,
               "AC2: grant_effect_capability fence checks Effect::TenantAdmin bit");
         CHECK(fence_window.find("reg.grant_locked(") != std::string::npos,
@@ -251,8 +251,8 @@ static void ac3126_admin_fence_locked() {
         CHECK(durable_block.find("std::lock_guard<std::mutex> lock(reg_durable.mtx)") !=
                   std::string::npos,
               "AC3: grant_effect_durable takes registry mtx");
-        CHECK(durable_block.find("effects_for_locked(self_tenant)") != std::string::npos,
-              "AC3: grant_effect_durable uses effects_for_locked");
+        CHECK(durable_block.find("effects_effective_for_locked(self_tenant") != std::string::npos,
+              "AC3: grant_effect_durable uses the retain-aware locked read");
         CHECK(durable_block.find("has_effect(held_durable, Effect::TenantAdmin)") !=
                   std::string::npos,
               "AC3: grant_effect_durable precomputes is_admin from locked bit");
@@ -277,8 +277,8 @@ static void ac3126_admin_fence_locked() {
         CHECK(session_block.find("std::lock_guard<std::mutex> lock(reg_session.mtx)") !=
                   std::string::npos,
               "AC4: grant_effect_session takes registry mtx");
-        CHECK(session_block.find("effects_for_locked(self_tenant)") != std::string::npos,
-              "AC4: grant_effect_session uses effects_for_locked");
+        CHECK(session_block.find("effects_effective_for_locked(self_tenant") != std::string::npos,
+              "AC4: grant_effect_session uses the retain-aware locked read");
         CHECK(session_block.find("reg_session.grant_locked(") != std::string::npos,
               "AC4: grant_effect_session acts via grant_locked");
         CHECK(session_block.find(
@@ -300,8 +300,8 @@ static void ac3126_admin_fence_locked() {
         CHECK(revoke_block.find("std::lock_guard<std::mutex> lock(reg_revoke.mtx)") !=
                   std::string::npos,
               "AC5: revoke_effect_capability takes registry mtx");
-        CHECK(revoke_block.find("effects_for_locked(self_tenant)") != std::string::npos,
-              "AC5: revoke_effect_capability uses effects_for_locked");
+        CHECK(revoke_block.find("effects_effective_for_locked(self_tenant") != std::string::npos,
+              "AC5: revoke_effect_capability uses the retain-aware locked read");
         CHECK(revoke_block.find("reg_revoke.revoke_locked(") != std::string::npos,
               "AC5: revoke_effect_capability acts via revoke_locked");
         CHECK(revoke_block.find(
@@ -352,8 +352,8 @@ static void ac3126_admin_fence_locked() {
               "AC7: grant_locked TA fence includes Syscall in high bits");
         CHECK(contains(gl_body, "foreign_tenant"),
               "AC7: grant_locked TA fence computes foreign_tenant condition");
-        CHECK(contains(gl_body, "effects_for_locked(caller)"),
-              "AC7: grant_locked TA fence uses effects_for_locked (TOCTOU-safe)");
+        CHECK(contains(gl_body, "effects_effective_for_locked(caller"),
+              "AC7: grant_locked TA fence uses the retain-aware locked read");
         CHECK(contains(gl_body, "grant-ssot-needs-tenant-admin"),
               "AC7: grant_locked TA fence emits new stable SE reason");
         // AC7.3: reuse existing deny counter (no new metrics fields per issue).
@@ -4656,9 +4656,9 @@ int main() {
         const auto set_tp = sec.find("set_tenant_principal(std::uint64_t tenant_id");
         CHECK(set_tp != std::string::npos, "3411 AC2: set_tenant_principal present");
         const auto priv_block = sec.substr(set_tp, 2800);
-        CHECK(priv_block.find("effects_for_locked") != std::string::npos &&
+        CHECK(priv_block.find("effects_effective_for_locked") != std::string::npos &&
                   priv_block.find("lock_guard") != std::string::npos,
-              "3411 AC2: privileged = locked effects_for_locked TenantAdmin (#3995)");
+              "3411 AC2: privileged = retain-aware locked TenantAdmin (#3995)");
         CHECK(priv_block.find("has_capability(kCapTenantAdmin)") == std::string::npos &&
                   priv_block.find("has_capability(kCapCapability)") == std::string::npos,
               "3411 AC2: unlocked has_capability TA/Capability fence removed");

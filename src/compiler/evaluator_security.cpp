@@ -1463,7 +1463,7 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         // that allowed a momentarily-held TenantAdmin to land a foreign
         // grant before revocation.
         std::lock_guard<std::mutex> lock(reg.mtx);
-        const auto held = reg.effects_for_locked(self_tenant);
+        const auto held = reg.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held, Effect::TenantAdmin);
         if (!is_admin) {
             using ::aura::core::security_event::SecurityEventKind;
@@ -1496,7 +1496,7 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         // residual privilege-escalation path this issue closes.
         if (force_bind && is_high_risk) {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            const auto held = reg.effects_for_locked(self_tenant);
+            const auto held = reg.effects_effective_for_locked(self_tenant, mid);
             if (!has_effect(held, Effect::TenantAdmin)) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
@@ -1627,7 +1627,7 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     {
         auto& reg_durable = g_capability_registry();
         std::lock_guard<std::mutex> lock(reg_durable.mtx);
-        const auto held_durable = reg_durable.effects_for_locked(self_tenant);
+        const auto held_durable = reg_durable.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held_durable, Effect::TenantAdmin);
         if (force_bind && foreign_target && !is_admin) {
             using ::aura::core::security_event::SecurityEventKind;
@@ -1756,7 +1756,7 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
     {
         auto& reg_sticky = g_capability_registry();
         std::lock_guard<std::mutex> lock(reg_sticky.mtx);
-        const auto held_sticky = reg_sticky.effects_for_locked(self_tenant);
+        const auto held_sticky = reg_sticky.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held_sticky, Effect::TenantAdmin);
         // Issue #2969 AC1: foreign-tenant write-fence — same as #2967.
         if (force_bind && foreign_target && !is_admin) {
@@ -1898,7 +1898,7 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     auto& reg_session = g_capability_registry();
     if (force_bind && (foreign_target || is_high_risk)) {
         std::lock_guard<std::mutex> lock(reg_session.mtx);
-        const auto held = reg_session.effects_for_locked(self_tenant);
+        const auto held = reg_session.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held, Effect::TenantAdmin);
         if (foreign_target && !is_admin) {
             using ::aura::core::security_event::SecurityEventKind;
@@ -1975,7 +1975,8 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
     if (force_bind && foreign_target) {
         {
             std::lock_guard<std::mutex> lock(reg_revoke.mtx);
-            const auto held = reg_revoke.effects_for_locked(self_tenant);
+            const auto caller_mid = typed_audit::join_audit_and_se_mid(0);
+            const auto held = reg_revoke.effects_effective_for_locked(self_tenant, caller_mid);
             const bool is_admin = has_effect(held, Effect::TenantAdmin);
             if (!is_admin) {
                 using ::aura::core::security_event::SecurityEventKind;
@@ -2132,10 +2133,12 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
             // concurrent revoke). kCapCapability maps to TenantAdmin bits.
             auto& reg = ::aura::core::capability::g_capability_registry();
             std::lock_guard<std::mutex> lock(reg.mtx);
+            const auto caller_mid = typed_audit::join_audit_and_se_mid(0);
             const bool privileged =
                 !reg.holds_wildcard_only_locked(capability_tenant_id_) &&
-                ::aura::core::capability::has_effect(reg.effects_for_locked(capability_tenant_id_),
-                                                     ::aura::core::capability::Effect::TenantAdmin);
+                ::aura::core::capability::has_effect(
+                    reg.effects_effective_for_locked(capability_tenant_id_, caller_mid),
+                    ::aura::core::capability::Effect::TenantAdmin);
             if (!privileged) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;

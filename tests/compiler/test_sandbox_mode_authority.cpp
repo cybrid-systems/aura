@@ -596,7 +596,7 @@ int run_test_sandbox_mode_authority_2657() {
         CHECK(p_eff != std::string::npos, "3995 AC3: effect-mode prim present");
         auto win = prim.substr(p_eff, 2200);
         CHECK(win.find("lock_guard") != std::string::npos &&
-                  win.find("effects_for_locked") != std::string::npos,
+                  win.find("effects_effective_for_locked") != std::string::npos,
               "3995 AC3: effect-mode prim locked TA");
         CHECK(win.find("!ev.has_capability") == std::string::npos,
               "3995 AC3: effect-mode prim no unlocked has_capability gate");
@@ -604,7 +604,7 @@ int run_test_sandbox_mode_authority_2657() {
         CHECK(p_sb != std::string::npos, "3995 AC3: bool-mode prim present");
         auto win_sb = prim.substr(p_sb, 1800);
         CHECK(win_sb.find("lock_guard") != std::string::npos &&
-                  win_sb.find("effects_for_locked") != std::string::npos,
+                  win_sb.find("effects_effective_for_locked") != std::string::npos,
               "3995 AC3: bool-mode prim locked TA");
         CHECK(sec.find("allow_cross_tenant_ = true") != std::string::npos,
               "3995 AC3: allow_cross store under lock");
@@ -734,7 +734,9 @@ int run_test_sandbox_mode_authority_2657() {
               "4012 AC4: prim emits sandbox-downgrade SE reason");
         auto p_eff = prim.find("security:set-effect-sandbox-mode!");
         CHECK(p_eff != std::string::npos, "4012 AC4: effect-mode prim present");
-        auto win = prim.substr(p_eff, 2400);
+        // #4440 lengthened the locked TenantAdmin read. 2500 still ends
+        // before the grant-effect reason in the next primitive.
+        auto win = prim.substr(p_eff, 2500);
         CHECK(win.find("sandbox-downgrade-needs-explicit-tenant-admin") != std::string::npos,
               "4012 AC4: effect-mode prim uses sandbox-downgrade reason");
         CHECK(win.find("grant-effect-needs-explicit-tenant-admin") == std::string::npos,

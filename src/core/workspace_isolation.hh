@@ -319,7 +319,9 @@ struct WorkspaceIsolationPolicy {
         const TenantId caller = caller_principal != 0
                                     ? caller_principal
                                     : reg.default_tenant.load(std::memory_order_acquire);
-        const auto caller_eff = reg.effects_for_locked(caller);
+        // Issue #4440: no session mid in this core fence. caller_mid 0 keeps
+        // the session join off; retain, epoch-0, and hard fiber still apply.
+        const auto caller_eff = reg.effects_effective_for_locked(caller, /*caller_mid=*/0);
         using ::aura::core::capability::Effect;
         using ::aura::core::capability::has_effect;
         // Issue #3800: caller-only TenantAdmin. Target-only TA must not mint
@@ -422,7 +424,10 @@ struct WorkspaceIsolationPolicy {
         using ::aura::core::capability::has_effect;
         auto& reg = g_capability_registry();
         std::lock_guard<std::mutex> registry_lock(reg.mtx);
-        if (has_effect(reg.effects_for_locked(mint), Effect::TenantAdmin))
+        // Issue #4440: a retain-expired minter no longer holds TenantAdmin.
+        // Same predicate as the mint fence. Erase on a miss (existing path).
+        if (has_effect(reg.effects_effective_for_locked(mint, /*caller_mid=*/0),
+                       Effect::TenantAdmin))
             return true;
         // Sticky post-TA-revoke grant — erase under isolation lock we hold.
         cross_grants.erase(it);

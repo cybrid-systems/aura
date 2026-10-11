@@ -91,9 +91,15 @@ void ac1_deterministic_revoke_inside_grant() {
         [&]() { iso.grant_cross_tenant(7, 42, kEffectMutate, /*caller_principal=*/7); });
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     // Granter is blocked on isolation mtx (#3597 order) — strip TA now.
+    // The #3797 hook takes isolation after the registry unlock. This thread
+    // already holds it, and no cross_grants row exists yet, so the wipe is
+    // vacuous. Park the hook across the revoke and restore it afterwards.
+    auto* saved_hook = aura::core::capability::g_tenant_admin_lost_hook().exchange(
+        nullptr, std::memory_order_acq_rel);
     aura::core::capability::g_capability_registry().revoke(7, "tenant-admin");
     iso.mtx.unlock();
     granter.join();
+    aura::core::capability::set_tenant_admin_lost_hook(saved_hook);
     CHECK(iso.cross_grant_bits(7, 42) == 0,
           "AC1: table unchanged — grant refused after concurrent TA revoke");
     CHECK(deny_total() == deny0 + 1, "AC1: deny counter bumped (#2968 stable counter)");
@@ -196,6 +202,207 @@ void ac5_concurrent_stress() {
     CHECK(deny_total() == deny_tail + 2, "AC5: fully-stripped world → deny after stress");
 }
 
+// Issue #4440: a retain-expired TenantAdmin must not mint. The retain-blind
+// OR still sees the row. The write-fence view does not. Soft/Off stays the
+// retain-blind OR. A fresh sibling still authorizes (skip, not poison).
+void ac4440_retain_expired_ta_cannot_mint() {
+    std::println("\n--- #4440: retain-expired TenantAdmin cannot mint ---");
+    using aura::core::bump_mutation_epoch;
+    using aura::core::current_mutation_epoch;
+    using aura::core::capability::Effect;
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::has_effect;
+    using aura::core::capability::make_grant_provenance;
+    using aura::core::capability::set_effect_fiber_id_override;
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    using aura::core::workspace_isolation::g_workspace_isolation;
+
+    auto& reg = g_capability_registry();
+    auto& iso = g_workspace_isolation();
+
+    {
+        reset_all();
+        while (current_mutation_epoch() < 2)
+            bump_mutation_epoch(1);
+        const auto e0 = current_mutation_epoch();
+        CHECK(reg.grant(7, "tenant-admin", Effect::TenantAdmin,
+                        make_grant_provenance(e0, true, 0, 0)),
+              "4440: Off seed of TenantAdmin lands");
+        set_mode(SandboxMode::Restricted);
+        reg.set_hard_fiber_isolation(true);
+        reg.set_grant_epoch_retain_window(4);
+        bump_mutation_epoch(20);
+        reg.set_grant_epoch_retain_window(4);
+        const auto now = current_mutation_epoch();
+        CHECK(reg.grant_min_valid_epoch() > e0, "4440: retain window is past the seed epoch");
+        bool blind = false;
+        bool fence = false;
+        {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            blind = has_effect(reg.effects_for_locked(7), Effect::TenantAdmin);
+            fence = has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
+                               Effect::TenantAdmin);
+        }
+        CHECK(blind, "4440: retain-blind OR still sees the expired row");
+        CHECK(!fence, "4440: write-fence view drops the expired row");
+        const auto deny0 = deny_total();
+        iso.grant_cross_tenant(7, 42, kEffectMutate, /*caller_principal=*/7);
+        CHECK(iso.cross_grant_bits(7, 42) == 0, "4440: cross grant bits stay 0");
+        CHECK(deny_total() == deny0 + 1, "4440: cross grant deny counter bumps");
+        const auto ssot0 =
+            g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load(
+                std::memory_order_relaxed);
+        const bool landed =
+            reg.grant(9, "foreign-mutate", Effect::Mutate, make_grant_provenance(now, true, 0, 0),
+                      false, false, /*caller_principal=*/7);
+        CHECK(!landed, "4440: foreign Mutate does not land");
+        const auto ssot1 =
+            g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load(
+                std::memory_order_relaxed);
+        CHECK(ssot1 == ssot0 + 1, "4440: SSOT deny counter bumps");
+        {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(!has_effect(reg.effects_for_locked(9), Effect::Mutate),
+                  "4440: tenant 9 has no Mutate row");
+        }
+    }
+
+    // Fresh sibling still authorizes. The expired row must not poison it.
+    {
+        reset_all();
+        while (current_mutation_epoch() < 2)
+            bump_mutation_epoch(1);
+        const auto e0 = current_mutation_epoch();
+        CHECK(reg.grant(7, "tenant-admin-old", Effect::TenantAdmin,
+                        make_grant_provenance(e0, true, 0, 0)),
+              "4440: old TenantAdmin seed lands");
+        bump_mutation_epoch(20);
+        const auto fresh = current_mutation_epoch();
+        CHECK(reg.grant(7, "tenant-admin-live", Effect::TenantAdmin,
+                        make_grant_provenance(fresh, true, 0, 0)),
+              "4440: in-window TenantAdmin seed lands");
+        set_mode(SandboxMode::Restricted);
+        reg.set_hard_fiber_isolation(true);
+        reg.set_grant_epoch_retain_window(4);
+        {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
+                             Effect::TenantAdmin),
+                  "4440: fresh sibling still contributes TenantAdmin");
+        }
+        iso.grant_cross_tenant(7, 42, kEffectMutate, /*caller_principal=*/7);
+        CHECK(iso.cross_grant_bits(7, 42) == kEffectMutate,
+              "4440: fresh sibling still mints a cross grant");
+    }
+
+    // Minted row is erased once the minter slides out of the window.
+    {
+        reset_all();
+        while (current_mutation_epoch() < 2)
+            bump_mutation_epoch(1);
+        const auto e0 = current_mutation_epoch();
+        CHECK(reg.grant(7, "tenant-admin", Effect::TenantAdmin,
+                        make_grant_provenance(e0, true, 0, 0)),
+              "4440: minter seed lands");
+        set_mode(SandboxMode::Restricted);
+        iso.grant_cross_tenant(7, 42, kEffectMutate, /*caller_principal=*/7);
+        CHECK(iso.cross_grant_bits(7, 42) == kEffectMutate, "4440: in-window mint lands");
+        reg.set_hard_fiber_isolation(true);
+        reg.set_grant_epoch_retain_window(4);
+        bump_mutation_epoch(20);
+        reg.set_grant_epoch_retain_window(4);
+        bool allowed = true;
+        {
+            std::lock_guard<std::mutex> lock(iso.mtx);
+            allowed = iso.cross_grant_allows_locked(7, 42, kEffectMutate, /*production=*/true);
+        }
+        CHECK(!allowed, "4440: expired minter cross grant is refused");
+        CHECK(iso.cross_grant_bits(7, 42) == 0, "4440: expired minter row is erased");
+    }
+
+    // Epoch-0 on the hard face does not contribute. The one-arg view still
+    // keeps it (#3876 skips only non-zero epochs behind min_valid).
+    {
+        reset_all();
+        aura::core::capability::EffectProvenance z{};
+        z.mutation_id = 4;
+        z.epoch = 0;
+        CHECK(reg.grant(8, "tenant-admin", Effect::TenantAdmin, z), "4440: epoch-0 seed lands");
+        set_mode(SandboxMode::Restricted);
+        reg.set_hard_fiber_isolation(true);
+        reg.set_grant_min_valid_epoch(1);
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        CHECK(has_effect(reg.effects_for_locked(8), Effect::TenantAdmin),
+              "4440: retain-blind OR still sees epoch-0");
+        CHECK(has_effect(reg.effects_effective_for_locked(8), Effect::TenantAdmin),
+              "4440: one-arg effective view still sees epoch-0");
+        CHECK(
+            !has_effect(reg.effects_effective_for_locked(8, /*caller_mid=*/0), Effect::TenantAdmin),
+            "4440: hard-face epoch-0 does not contribute");
+    }
+
+    // Stale session row does not contribute. caller_mid 0 leaves that join off.
+    {
+        reset_all();
+        CHECK(reg.grant(7, "tenant-admin", Effect::TenantAdmin,
+                        make_grant_provenance(5, true, 0, 0), false, /*session_bound=*/true),
+              "4440: session TenantAdmin seed lands");
+        set_mode(SandboxMode::Restricted);
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        CHECK(
+            has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/5), Effect::TenantAdmin),
+            "4440: matching session mid still contributes");
+        CHECK(
+            !has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/9), Effect::TenantAdmin),
+            "4440: stale session mid does not contribute");
+        CHECK(
+            has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0), Effect::TenantAdmin),
+            "4440: caller_mid 0 does not drop a session row");
+    }
+
+    // Hard-fiber mismatch does not contribute. Soft fiber share still does.
+    {
+        reset_all();
+        set_effect_fiber_id_override(11);
+        CHECK(reg.grant(7, "tenant-admin", Effect::TenantAdmin,
+                        make_grant_provenance(1, true, 0, /*fiber_id=*/11)),
+              "4440: fiber-stamped TenantAdmin seed lands");
+        set_mode(SandboxMode::Restricted);
+        reg.set_hard_fiber_isolation(true);
+        set_effect_fiber_id_override(22);
+        {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(!has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
+                              Effect::TenantAdmin),
+                  "4440: hard-fiber mismatch does not contribute");
+        }
+        reg.set_hard_fiber_isolation(false);
+        {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
+                             Effect::TenantAdmin),
+                  "4440: soft fiber share still contributes");
+        }
+        set_effect_fiber_id_override(0);
+    }
+
+    // Soft/Off: min_valid does not change the two-arg view.
+    {
+        reset_all();
+        CHECK(
+            reg.grant(7, "tenant-admin", Effect::TenantAdmin, make_grant_provenance(1, true, 0, 0)),
+            "4440: Off TenantAdmin seed lands");
+        reg.set_grant_min_valid_epoch(current_mutation_epoch() + 1000);
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        const auto blind = reg.effects_for_locked(7);
+        const auto fence = reg.effects_effective_for_locked(7, /*caller_mid=*/0);
+        CHECK(has_effect(blind, Effect::TenantAdmin) && has_effect(fence, Effect::TenantAdmin),
+              "4440: Off write-fence view matches the retain-blind OR");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -206,6 +413,7 @@ int main() {
     ac3_off_short_circuit();
     ac4_deny_without_ta();
     ac5_concurrent_stress();
+    ac4440_retain_expired_ta_cannot_mint();
     reset_all();
     std::println("\n=== test_cross_tenant_grant_toctou: {} passed, {} failed ===",
                  aura::test::g_passed, aura::test::g_failed);
