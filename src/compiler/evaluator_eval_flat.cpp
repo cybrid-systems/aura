@@ -4874,8 +4874,45 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
 }
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
+// Issue #4454: trip the C-stack guard before the fat frame exists.
+// The body prologue is ~12KB (aarch64 `sub sp, #0x3060` plus the
+// saved-register window). The default 8MB stack holds about 600 of
+// those frames and SIGSEGV's in the prologue (eval_flat+36) of the
+// next one, so a check inside the body never returns
+// "recursion depth exceeded". This wrapper is the check. eval_flat_body
+// is noinline so the fat frame is not merged back into this prologue.
+// 512 leaves headroom for these thin frames and the host stack under
+// ulimit -s 8192.
+//
+// #109: the counter is not per-Evaluator (threads would share it).
+// #2650 / #2649: not pure thread_local either — stackful ucontext
+// fibers share one OS thread, and a TLS depth sums them. The slot is
+// fiber-local (aura_eval_c_stack_depth_slot); host TLS only when no
+// fiber is current.
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                 aura::ast::NodeId id, const Env& env) {
+    static constexpr std::size_t MAX_C_STACK_DEPTH = 512;
+    std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
+    if (c_stack_depth >= MAX_C_STACK_DEPTH) {
+        const auto fid = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id()
+                                                      : static_cast<std::uint64_t>(0);
+        return std::unexpected(Diagnostic{
+            ErrorKind::InternalError,
+            std::format("recursion depth exceeded (>{}) fiber={}", MAX_C_STACK_DEPTH, fid)});
+    }
+    ++c_stack_depth;
+    struct DepthGuard {
+        std::size_t& d;
+        ~DepthGuard() { --d; }
+    } guard{c_stack_depth};
+    return eval_flat_body(flat, pool, id, env);
+}
+
+// Issue #4454: noinline so this ~12KB frame stays out of eval_flat.
+__attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAST& flat,
+                                                               aura::ast::StringPool& pool,
+                                                               aura::ast::NodeId id,
+                                                               const Env& env) {
     if (compiler_metrics_) {
         static_cast<CompilerMetrics*>(compiler_metrics_)
             ->hotpath_eval_flat_calls.fetch_add(1, std::memory_order_relaxed);
@@ -4912,39 +4949,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             }
         };
 
-        // Recursion depth guard: friendly error vs segfault
-        // Each eval_flat frame is large (~7–8KB of C stack on aarch64/x86_64),
-        // so the default 8MB process stack only holds ~1000 frames. A guard of
-        // 2000 allowed SIGSEGV before the limit tripped. Keep headroom under
-        // the OS stack (~700 frames ≈ 5.5MB of eval_flat alone).
-        //
-        // ── Recursion depth guard ownership ─────────────────────────────
-        // #109 (P0): counter must NOT be per-Evaluator (multi-thread share).
-        // #2650 / #2649 (P1 overnight multi-agent): counter must NOT be pure
-        // thread_local either — stackful ucontext fibers share one OS thread;
-        // a TLS depth sums concurrent fibers on the same worker and trips
-        // MAX_C_STACK_DEPTH even when each fiber is shallow (sequential-yield /
-        // parallel-yield fanout under agents=60). Depth lives on Fiber when
-        // g_current_fiber is set (aura_eval_c_stack_depth_slot); host TLS only
-        // for non-fiber CompilerService paths.
-        //
-        // The shared eval_depth_ member is still used below for auto-gc-temp
-        // sampling and auto-gc cooldown, where "global eval activity" is the
-        // intended signal (one thread's deep call can still be enough work
-        // to warrant a periodic gc-temp). The two are now decoupled.
-        static constexpr std::size_t MAX_C_STACK_DEPTH = 700;
-        std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
-        struct DepthGuard {
-            std::size_t& d;
-            ~DepthGuard() { --d; }
-        } _dg{c_stack_depth};
-        if (++c_stack_depth > MAX_C_STACK_DEPTH) {
-            const auto fid = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id()
-                                                          : static_cast<std::uint64_t>(0);
-            return std::unexpected(Diagnostic{
-                ErrorKind::InternalError,
-                std::format("recursion depth exceeded (>{}) fiber={}", MAX_C_STACK_DEPTH, fid)});
-        }
+        // Issue #4454: C-stack depth is checked in the eval_flat wrapper
+        // before this frame is allocated. Do not count again here.
+        // eval_depth_ below is a different signal (auto-gc sampling).
 
         // ── Memory pressure auto-governance sampling (P1) ─────────
         // Every sample_every_ calls to eval_flat, recompute pressure
@@ -5704,34 +5711,35 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
                             if (!cond_result)
                                 return cond_result;
-                            if (is_truthy(*cond_result)) {
-                                // Evaluate all remaining children as body
-                                EvalResult last = make_void();
-                                for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
-                                    last = eval_flat(*f, *p, v.child(ci), eval_env);
-                                    if (!last)
-                                        return last;
-                                }
-                                return last;
+                            // (when cond) and a falsy cond are void. Issue #4454:
+                            // non-tail body forms stay recursive; the last form
+                            // is tail position (same continue as IfExpr).
+                            if (!is_truthy(*cond_result) || v.children.size() < 3)
+                                return make_void();
+                            for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
+                                auto step = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!step)
+                                    return step;
                             }
-                            return make_void();
+                            current_id = v.child(v.children.size() - 1);
+                            continue;
                         }
-                        // unless: (unless cond body...) — evaluate body only if cond is falsy
+                        // unless: (unless cond body...) — body only if cond is falsy
                         if (cname == "unless" && v.children.size() >= 2) {
                             auto cond_id = v.child(1);
                             auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
                             if (!cond_result)
                                 return cond_result;
-                            if (!is_truthy(*cond_result)) {
-                                EvalResult last = make_void();
-                                for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
-                                    last = eval_flat(*f, *p, v.child(ci), eval_env);
-                                    if (!last)
-                                        return last;
-                                }
-                                return last;
+                            // Issue #4454: tail-call the last body form.
+                            if (is_truthy(*cond_result) || v.children.size() < 3)
+                                return make_void();
+                            for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
+                                auto step = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!step)
+                                    return step;
                             }
-                            return make_void();
+                            current_id = v.child(v.children.size() - 1);
+                            continue;
                         }
                         // with-arena: (with-arena (size) body...)
                         if (cname == "with-arena" && v.children.size() >= 1) {
@@ -5995,28 +6003,30 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (callee.tag == aura::ast::NodeTag::Variable) {
                         auto cname = std::string(p->resolve(callee.sym_id));
                         if (cname == "and" && v.children.size() >= 2) {
-                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                            // Issue #4454: short-circuit the prefix, tail-call
+                            // the last clause. (and) with no args does not
+                            // enter (children.size() < 2).
+                            for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
                                 auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!ar)
                                     return ar;
                                 if (!is_truthy(*ar))
-                                    return *ar; // short-circuit: return falsy value
-                                if (ci + 1 == v.children.size())
-                                    return *ar; // last arg: return its value
+                                    return *ar;
                             }
-                            return make_int(1); // (and) with no args → #t
+                            current_id = v.child(v.children.size() - 1);
+                            continue;
                         }
                         if (cname == "or" && v.children.size() >= 2) {
-                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                            // Issue #4454: same tail-call for the last clause.
+                            for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
                                 auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!ar)
                                     return ar;
                                 if (is_truthy(*ar))
-                                    return *ar; // short-circuit: return first truthy value
-                                if (ci + 1 == v.children.size())
-                                    return *ar; // last arg: return last value (falsy)
+                                    return *ar;
                             }
-                            return make_int(0); // (or) with no args → #f
+                            current_id = v.child(v.children.size() - 1);
+                            continue;
                         }
                     }
 
