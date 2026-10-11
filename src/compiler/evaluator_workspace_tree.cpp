@@ -382,6 +382,9 @@ bool Evaluator::restore_panic_checkpoint() {
         std::size_t new_string_heap_size = idx + 1;
         if (new_string_heap_size <= string_heap_.size()) {
             string_heap_.resize(new_string_heap_size);
+            // Issue #4428: a reused index must not keep the truncated slot's owner.
+            if (string_slot_tenants_.size() > string_heap_.size())
+                string_slot_tenants_.resize(string_heap_.size());
         }
         if (panic_safe_cells_size_ > 0 && panic_safe_cells_size_ <= cells_.size()) {
             cells_.resize(panic_safe_cells_size_);

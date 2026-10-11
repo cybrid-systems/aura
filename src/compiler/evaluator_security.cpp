@@ -2296,6 +2296,58 @@ bool Evaluator::inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
     return false;
 }
 
+bool Evaluator::inrange_string_tenant_allows(std::size_t idx, std::uint16_t required_effects,
+                                             std::string_view op) noexcept {
+    // Issue #4428: same production face and encoding as the #4298 pair mint.
+    // Soft/Off returns before string_slot_tenants_ is read. A short array or
+    // a 0 record is a slot that never went through push_string_heap / the
+    // user string constructors; those stay on the historical fill path.
+    // A real intern stores tenant+1, so a tenant-0 string refuses a non-zero
+    // caller. Mismatch audits and leaves the bytes to the caller.
+    const auto mode = effect_sandbox_mode();
+    const bool prod = mode != 0 && (mode == 2 || ::aura::core::sandbox::is_strict() ||
+                                    ::aura::core::provenance::multi_tenant_env_active());
+    if (!prod)
+        return true;
+    if (idx >= string_slot_tenants_.size())
+        return true;
+    const auto rec = string_slot_tenants_[idx];
+    if (rec == 0)
+        return true;
+    const auto owner = rec - 1;
+    if (owner == capability_tenant_id_)
+        return true;
+    (void)check_workspace_isolation(capability_tenant_id_, owner, required_effects, op);
+    return false;
+}
+
+bool Evaluator::tw_closure_tenant_allows(ClosureId id, std::uint16_t required_effects,
+                                         std::string_view op) noexcept {
+    // Issue #4428: closure:free! on a closure value. Same face as the string
+    // mint. The int-id path stays in aura_free_closure_checked. Soft/Off
+    // returns before the stamp vector is read. 0 = never stamped (allow).
+    // The mutex is dropped before the audit so record_audit cannot re-enter
+    // a closures shard under it.
+    const auto mode = effect_sandbox_mode();
+    const bool prod = mode != 0 && (mode == 2 || ::aura::core::sandbox::is_strict() ||
+                                    ::aura::core::provenance::multi_tenant_env_active());
+    if (!prod)
+        return true;
+    std::uint64_t rec = 0;
+    {
+        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        if (id < closure_slot_tenants_.size())
+            rec = closure_slot_tenants_[id];
+    }
+    if (rec == 0)
+        return true;
+    const auto owner = rec - 1;
+    if (owner == capability_tenant_id_)
+        return true;
+    (void)check_workspace_isolation(capability_tenant_id_, owner, required_effects, op);
+    return false;
+}
+
 // Issue #3802 / #4399: arm predicate shared with check_tenant_host_path.
 // Strict, or Restricted + (hard-capture or AURA_MULTI_TENANT). Soft/Off
 // and single-tenant Restricted stay false. Mode ladder is the one the

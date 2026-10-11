@@ -182,6 +182,8 @@ std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
     string_remap_.reserve(n_old);
     std::pmr::vector<std::string> new_strings{&runtime_resource_};
     new_strings.reserve(n_old);
+    std::vector<std::uint64_t> new_string_tenants;
+    new_string_tenants.reserve(n_old);
     std::int64_t new_idx = 0;
     for (std::size_t i = 0; i < n_old; ++i) {
         const bool is_live =
@@ -189,12 +191,18 @@ std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
         if (is_live) {
             string_remap_.push_back(new_idx);
             new_strings.push_back(std::move(string_heap_[i]));
+            // Issue #4428: the owner record is index-parallel. Move it with
+            // the live slot (missing tail stays never-stamped).
+            const std::uint64_t stamp =
+                (i < string_slot_tenants_.size()) ? string_slot_tenants_[i] : 0;
+            new_string_tenants.push_back(stamp);
             ++new_idx;
         } else {
             string_remap_.push_back(-1);
         }
     }
     string_heap_ = std::move(new_strings);
+    string_slot_tenants_ = std::move(new_string_tenants);
     return string_heap_.size();
 }
 // ── GC root registration (Issue #113) ──────────────────────────

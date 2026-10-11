@@ -5593,6 +5593,13 @@ private:
         return static_cast<std::size_t>((cid * 0x9E3779B97F4A7C15ULL) >> 60);
     }
     std::array<ClosuresShard, kClosuresShardCount> closures_shards_;
+    // Issue #4428: owner record parallel to a tree-walker ClosureId.
+    // 0 = never stamped. register stores tenant+1 so tenant 0 is distinct
+    // from that hole. Not a Closure field — the move ctor lists every
+    // member. Shard locks do not cover this vector; this mutex is the
+    // only one, and it is never taken while a closures shard is held.
+    std::mutex closure_slot_tenants_mu_;
+    std::vector<std::uint64_t> closure_slot_tenants_;
     // Issue #3832: epoch-local TLS cache of last-N Closure copies for
     // apply_closure happy path. Bumped on erase/unique-write so cached
     // copies cannot outlive map mutations; a densify publish re-stamps the
@@ -6867,6 +6874,10 @@ private:
     // (Phase 2.4.1 / Phase 2.5 will inline string contents
     // into the arena).
     std::pmr::vector<std::string> string_heap_{&runtime_resource_};
+    // Issue #4428: owner record parallel to string_heap_. Same encoding as
+    // pair_slot_tenants_ (0 = never stamped, else tenant+1). Writers hold
+    // alloc_storage_lock_ (push_string_heap and the user string constructors).
+    std::vector<std::uint64_t> string_slot_tenants_;
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
@@ -7667,12 +7678,37 @@ public:
             vector_slot_tenants_.resize(idx + 1, 0);
         vector_slot_tenants_[idx] = capability_tenant_id_ + 1;
     }
+    // Issue #4428: record the executing tenant on a string intern.
+    // Caller holds alloc_storage_lock_. Encoding matches the pair mint.
+    void note_inrange_string_mint(std::size_t idx) noexcept {
+        if (string_slot_tenants_.size() <= idx)
+            string_slot_tenants_.resize(idx + 1, 0);
+        string_slot_tenants_[idx] = capability_tenant_id_ + 1;
+    }
+    // Issue #4428: stamp a tree-walker ClosureId before the map insert.
+    // Do not call while holding a closures shard lock.
+    void note_tw_closure_owner(ClosureId id) noexcept {
+        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        if (closure_slot_tenants_.size() <= id)
+            closure_slot_tenants_.resize(static_cast<std::size_t>(id) + 1, 0);
+        closure_slot_tenants_[id] = capability_tenant_id_ + 1;
+    }
     // Prod face only. true = caller may read or write the slot. false = mismatch
     // already audited; caller must leave the slot unchanged and not return it.
     // Soft/Off returns before either stamp array is touched.
     [[nodiscard]] bool inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
                                                   std::uint16_t required_effects,
                                                   std::string_view op) noexcept;
+    // Issue #4428: prod face only. true = caller may fill the string.
+    // false = mismatch already audited; caller leaves the bytes unchanged.
+    // Soft/Off returns before the stamp array is touched.
+    [[nodiscard]] bool inrange_string_tenant_allows(std::size_t idx, std::uint16_t required_effects,
+                                                    std::string_view op) noexcept;
+    // Issue #4428: prod face only. true = caller may erase the TW closure.
+    // false = mismatch already audited; caller must not erase.
+    // Soft/Off returns before the stamp vector is touched.
+    [[nodiscard]] bool tw_closure_tenant_allows(ClosureId id, std::uint16_t required_effects,
+                                                std::string_view op) noexcept;
     // Issue #3802: Restricted+MT / Strict host-path isolation for
     // EXEMPT_2ARG write-file / sys-* (path-prefix under tenant root).
     // Soft/Off / single-tenant Restricted → passthrough (out unchanged).
@@ -9011,12 +9047,14 @@ public:
         std::lock_guard lock(alloc_storage_lock_);
         const auto idx = static_cast<std::int32_t>(string_heap_.size());
         string_heap_.push_back(s);
+        note_inrange_string_mint(static_cast<std::size_t>(idx)); // Issue #4428
         return idx;
     }
     std::int32_t push_string_heap(std::string&& s) {
         std::lock_guard lock(alloc_storage_lock_);
         const auto idx = static_cast<std::int32_t>(string_heap_.size());
         string_heap_.push_back(std::move(s));
+        note_inrange_string_mint(static_cast<std::size_t>(idx)); // Issue #4428
         return idx;
     }
     // Issue #2652: snapshot string under alloc_storage_lock_ so concurrent

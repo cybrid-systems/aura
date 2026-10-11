@@ -411,6 +411,7 @@ Evaluator::~Evaluator() {
     error_values_.clear();
     opaque_heap_.clear();
     string_heap_.clear();
+    string_slot_tenants_.clear(); // Issue #4428: drop owner records with the slots
     clear_sym_intern();
     {
         // Issue #1720: strategies_ guarded for concurrent fiber access.
