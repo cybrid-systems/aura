@@ -156,11 +156,14 @@ static void ac5_orig() {
     const auto r1 = ev.get_mutation_log_rollback_count();
     std::println("  mutation_log_rollback: {} -> {}", r0, r1);
     CHECK(r1 >= r0, "mutation_log_rollback_count observable + non-decreasing");
+    // enter without exit leaves the readiness TLS on this Evaluator.
+    aura_typed_audit_clear_readiness_evaluator();
 }
 
 // ── ORIG AC6: generation_wrap_count observable ──
 static void ac6_orig() {
     std::println("\n--- ORIG #549 AC6: generation_wrap_count observable ---");
+    aura_typed_audit_clear_readiness_evaluator();
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
@@ -1144,10 +1147,22 @@ static std::string kind4106(CompilerService& cs, const aura::compiler::types::Ev
     return std::string(heap[cidx]);
 }
 
+// Production require_effect refuses a session-less peek (epoch 0) even when
+// the effect sandbox is Off (#3691 / #4241). A soft set-code bumps the epoch
+// the module reads. The production arm then installs the fixture workspace.
+static void open_4106_production_session(CompilerService& cs) {
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+    (void)cs.eval("(set-code \"(define session4106 0)\")");
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    apply_production_audit_defaults();
+}
+
 static void ac4106_1_prod_mint_bare_int_refuses() {
     std::println("\n=== #4106 AC1: production mint prims refuse bare int ===");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
-    using aura::compiler::typed_audit::apply_production_audit_defaults;
     using aura::compiler::types::as_bool;
     using aura::compiler::types::as_int;
     using aura::compiler::types::is_bool;
@@ -1159,10 +1174,12 @@ static void ac4106_1_prod_mint_bare_int_refuses() {
     // resource-quota-exceeded before the #4106 faces run. Reset the whole
     // process quota (orthogonal DoS guard; default is unlimited).
     aura::core::resource_quota::reset_process_resource_quota_for_test();
-    apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define t4106 (lambda (x) 1))\")").has_value(),
-          "4106 AC1: set-code");
+    open_4106_production_session(cs);
+    auto sc4106 = cs.eval("(set-code \"(define t4106 (lambda (x) 1))\")");
+    if (sc4106 && aura::compiler::types::is_error(*sc4106))
+        std::println(stderr, "4106 sc {}", cs.evaluator().soft_error_message(*sc4106));
+    CHECK(sc4106 && is_bool(*sc4106) && as_bool(*sc4106), "4106 AC1: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "4106 AC1: eval");
     // stable-ref: the #3395 stale-ref face — never a schema-2 hash minted
     // from the current occupant of the int's slot.
@@ -1181,13 +1198,14 @@ static void ac4106_1_prod_mint_bare_int_refuses() {
     // never is-live=1 of the occupant.
     auto pr4106 = cs.eval("(query:stable-ref-provenance 1)");
     CHECK(pr4106 && is_bool(*pr4106) && !as_bool(*pr4106), "4106 AC1: provenance bare int → #f");
+    aura_typed_audit_clear_readiness_evaluator();
+    cs.evaluator().disarm_production_audit_defaults_for_test();
     apply_dev_audit_defaults();
 }
 
 static void ac4106_2_prod_packed_and_hash_still_resolve() {
     std::println("\n=== #4106 AC2: packed v2 / schema-2 whose gen matches still resolve ===");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
-    using aura::compiler::typed_audit::apply_production_audit_defaults;
     using aura::compiler::types::as_int;
     using aura::compiler::types::is_hash;
     using aura::compiler::types::is_int;
@@ -1201,8 +1219,8 @@ static void ac4106_2_prod_packed_and_hash_still_resolve() {
         rq4106.reset_usage();
     }
     aura::core::resource_quota::reset_process_resource_quota_for_test();
-    apply_production_audit_defaults();
     CompilerService cs;
+    open_4106_production_session(cs);
     CHECK(cs.eval("(set-code \"(define u4106 (lambda (x) 2))\")").has_value(),
           "4106 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "4106 AC2: eval");
@@ -1230,13 +1248,14 @@ static void ac4106_2_prod_packed_and_hash_still_resolve() {
     // schema-2 hash operand resolves on stable-ref too.
     auto sh4106 = cs.eval("(query:stable-ref qr4106)");
     CHECK(sh4106 && is_hash(*sh4106), "4106 AC2: live hash → schema-2 hash out");
+    aura_typed_audit_clear_readiness_evaluator();
+    cs.evaluator().disarm_production_audit_defaults_for_test();
     apply_dev_audit_defaults();
 }
 
 static void ac4106_3_recycled_slot_never_rebound() {
     std::println("\n=== #4106 AC3: recycled slot — stale packed gen fails closed ===");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
-    using aura::compiler::typed_audit::apply_production_audit_defaults;
     using aura::compiler::types::as_bool;
     using aura::compiler::types::as_int;
     using aura::compiler::types::is_bool;
@@ -1251,8 +1270,8 @@ static void ac4106_3_recycled_slot_never_rebound() {
         rq4106.reset_usage();
     }
     aura::core::resource_quota::reset_process_resource_quota_for_test();
-    apply_production_audit_defaults();
     CompilerService cs;
+    open_4106_production_session(cs);
     CHECK(cs.eval("(set-code \"(define w4106 (lambda (x) 3))\")").has_value(),
           "4106 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "4106 AC3: eval");
@@ -1282,6 +1301,8 @@ static void ac4106_3_recycled_slot_never_rebound() {
           "4106 AC3: stale v2 ensure-ref valid=0 (no wrap-0 refresh)");
     auto er0 = cs.eval("(hash-ref (query:ensure-ref p4106w) \"refreshed\")");
     CHECK(er0 && is_int(*er0) && as_int(*er0) == 0, "4106 AC3: stale v2 ensure-ref refreshed=0");
+    aura_typed_audit_clear_readiness_evaluator();
+    cs.evaluator().disarm_production_audit_defaults_for_test();
     apply_dev_audit_defaults();
 }
 
@@ -1607,6 +1628,9 @@ static void ac4165_3_cross_agent_same_tenant_deny() {
         CHECK(qrX.push_match_full(nid, genB, wrapB, cowB, /*tenant=*/7, /*fiber=*/mintA, 0, 0),
               "4165 AC3: foreign-stamped match pushed");
         qrX.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        // Issue #4315: a hand-built result must name this install or the
+        // fence returns StaleByEpoch before the fiber predicate.
+        qrX.epoch.workspace_id = flatB->install_id();
         CHECK(query_result_is_fresh_with_refs(qrX, *flatB, /*tenant=*/7, mintB) ==
                   QueryResultFreshness::InvalidFiber,
               "4165 AC3: Agent A's held QueryResult denies InvalidFiber under Agent B");
@@ -1615,6 +1639,7 @@ static void ac4165_3_cross_agent_same_tenant_deny() {
         CHECK(qrOwn.push_match_full(nid, genB, wrapB, cowB, /*tenant=*/7, /*fiber=*/mintB, 0, 0),
               "4165 AC3: own-stamped match pushed");
         qrOwn.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        qrOwn.epoch.workspace_id = flatB->install_id();
         CHECK(query_result_is_fresh_with_refs(qrOwn, *flatB, /*tenant=*/7, mintB) ==
                   QueryResultFreshness::Fresh,
               "4165 AC3: Agent B's own mint stays fresh");
@@ -1624,6 +1649,7 @@ static void ac4165_3_cross_agent_same_tenant_deny() {
         CHECK(qrZero.push_match_full(nid, genB, wrapB, cowB, /*tenant=*/7, /*fiber=*/0, 0, 0),
               "4165 AC3: zero-stamped match pushed");
         qrZero.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        qrZero.epoch.workspace_id = flatB->install_id();
         CHECK(query_result_is_fresh_with_refs(qrZero, *flatB, /*tenant=*/7, mintB) ==
                   QueryResultFreshness::InvalidFiber,
               "4165 AC3: fiber-0 stamp no longer skips the Agent-scoped check");
@@ -1861,6 +1887,360 @@ static void ac4235_5_source_cite() {
     aura::core::resource_quota::reset_process_resource_quota_for_test();
 }
 
+// Issue #4438: fiberless production query resolve passed aura_fiber_current_id()
+// (0) into query_result_is_fresh_with_refs, so another Agent's schema-2 hash
+// was Fresh and query:node returned the node. Packed ensure compared only the
+// TLS fiber. A tenant-0 unpacked v2 under Restricted+MT was stamped to the
+// caller with no occupancy consult.
+static bool list_has_string_4438(CompilerService& cs, aura::compiler::types::EvalValue v,
+                                 std::string_view needle) {
+    using namespace aura::compiler::types;
+    auto& prs = cs.evaluator().pairs();
+    const auto& heap = cs.evaluator().string_heap();
+    for (int n = 0; n < 8 && is_pair(v); ++n) {
+        const auto pidx = as_pair_idx(v);
+        if (pidx >= prs.size())
+            return false;
+        if (is_string(prs[pidx].car)) {
+            const auto sidx = as_string_idx(prs[pidx].car);
+            if (sidx < heap.size() && heap[sidx] == needle)
+                return true;
+        }
+        v = prs[pidx].cdr;
+    }
+    return false;
+}
+
+static bool car_is_int_4438(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    using namespace aura::compiler::types;
+    if (!is_pair(v))
+        return false;
+    auto& prs = cs.evaluator().pairs();
+    const auto pidx = as_pair_idx(v);
+    return pidx < prs.size() && is_int(prs[pidx].car);
+}
+
+static std::int64_t literal_int_4438(CompilerService& cs, const char* name) {
+    auto* flat = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    if (!flat || !pool)
+        return -1;
+    auto def = flat->find_define_by_name(*pool, name);
+    if (!def)
+        return -1;
+    auto dv = flat->get(*def);
+    for (std::uint32_t i = 0; i < dv.children.size(); ++i) {
+        const auto c = dv.child(i);
+        if (c == aura::ast::NULL_NODE || c >= flat->size() || flat->is_free_slot(c))
+            continue;
+        auto cv = flat->get(c);
+        if (cv.tag == aura::ast::NodeTag::LiteralInt)
+            return cv.int_value;
+    }
+    return -1;
+}
+
+static void ac4438_fiberless_cross_agent_query_stale() {
+    std::println("\n=== #4438: fiberless cross-Agent query resolve is stale-ref ===");
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_pair;
+    struct ProdFace4438 {
+        bool restored = false;
+        void restore(CompilerService& cs) {
+            ::setenv("AURA_SANDBOX", "off", 1);
+            ::unsetenv("AURA_MULTI_TENANT");
+            ::unsetenv("AURA_PIPELINE_STRICT");
+            ::unsetenv("AURA_GENERAL_OBJECT_PIN");
+            cs.evaluator().apply_production_security_defaults_for_test();
+            aura_typed_audit_clear_readiness_evaluator();
+            cs.evaluator().disarm_production_audit_defaults_for_test();
+            cs.evaluator().set_effect_sandbox_mode(0);
+            cs.evaluator().set_capability_tenant_id(0);
+            cs.evaluator().set_current_agent_fingerprint(0);
+            ::unsetenv("AURA_SANDBOX");
+            aura::core::provenance::reset_multi_tenant_env_for_test();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+            aura::core::resource_quota::reset_process_resource_quota_for_test();
+            restored = true;
+        }
+        ~ProdFace4438() {
+            if (restored)
+                return;
+            CompilerService sink;
+            restore(sink);
+        }
+    } face;
+    auto arm = [&face](CompilerService& cs, bool mt) {
+        face.restored = false;
+        aura::core::resource_quota::reset_process_resource_quota_for_test();
+        ::unsetenv("AURA_SANDBOX");
+        if (mt)
+            ::setenv("AURA_MULTI_TENANT", "1", 1);
+        else
+            ::unsetenv("AURA_MULTI_TENANT");
+        // The unit eval path is the tree walker. The production bundle
+        // forbids that fallback (#2213). The env override is the
+        // documented escape and does not change the sandbox or audit face.
+        ::setenv("AURA_PIPELINE_STRICT", "allow", 1);
+        // query:pattern parses into a temp FlatAST. Production pin-required
+        // refuses that both-null create (#3420) and the prim returns void.
+        // off is the documented operator override; sandbox and audit stay.
+        ::setenv("AURA_GENERAL_OBJECT_PIN", "off", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        cs.evaluator().apply_production_security_defaults_for_test();
+        cs.evaluator().arm_production_audit_defaults_for_test();
+        cs.evaluator().set_effect_sandbox_mode(1);
+    };
+    auto show_eval = [](CompilerService& cs, const char* label, const auto& r) {
+        if (!r) {
+            std::println(stderr, "4438 {} empty: {}", label, r.error().message);
+            return;
+        }
+        if (aura::compiler::types::is_error(*r))
+            std::println(stderr, "4438 {} {}", label, cs.evaluator().soft_error_message(*r));
+    };
+    {
+        CompilerService cs;
+        // set-code is not a mutate:* op, so kernel_self does not exempt it.
+        // Restricted denies the unset principal (#2385). Install first.
+        aura::core::resource_quota::reset_process_resource_quota_for_test();
+        cs.evaluator().disarm_production_audit_defaults_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        auto sc = cs.eval("(set-code \"(define a4438 443801) (define use4438 a4438)\")");
+        show_eval(cs, "set-code", sc);
+        CHECK(sc && is_bool(*sc) && as_bool(*sc), "4438: set-code");
+        auto evc = cs.eval("(eval-current)");
+        show_eval(cs, "eval", evc);
+        CHECK(evc.has_value(), "4438: eval");
+        CHECK(literal_int_4438(cs, "a4438") == 443801, "4438: literal is 443801");
+        arm(cs, false);
+        CHECK(cs.evaluator().probe_production_active_for_test(),
+              "4438: evaluator production defaults are active");
+        CHECK(cs.evaluator().effect_sandbox_mode() == 1, "4438: sandbox mode is Restricted");
+        CHECK(!cs.evaluator().probe_multi_tenant_env_active_for_test(),
+              "4438: fiber face leaves multi-tenant off");
+
+        cs.evaluator().set_current_agent_fingerprint(0x4438'0001ull);
+        auto rawp = cs.eval("(query:pattern \"a4438\" :as-query-result #t)");
+        if (!rawp)
+            std::println(stderr, "4438 raw empty {}", rawp.error().message);
+        else if (aura::compiler::types::is_error(*rawp))
+            std::println(stderr, "4438 raw err {}", cs.evaluator().soft_error_message(*rawp));
+        else if (!is_hash(*rawp))
+            std::println(stderr, "4438 raw h=0 b={} p={} v={} kind={}", is_bool(*rawp) ? 1 : 0,
+                         is_pair(*rawp) ? 1 : 0, aura::compiler::types::is_void(*rawp) ? 1 : 0,
+                         kind4106(cs, *rawp));
+        CHECK(cs.eval("(define q4438 (query:pattern \"a4438\" :as-query-result #t))").has_value(),
+              "4438: A query:pattern binds");
+        auto qa = cs.eval("q4438");
+        CHECK(qa && is_hash(*qa), "4438: A pattern is a schema-2 hash");
+        auto fid = cs.eval("(hash-ref q4438 \"fiber-id\")");
+        const auto fid_v = fid && is_int(*fid) ? as_int(*fid) : -1;
+        CHECK(fid_v >= 0x41650000LL, "4438: A hash fiber is the Agent-band mint");
+
+        auto node_a = cs.eval("(query :node q4438 :index 0)");
+        CHECK(node_a && car_is_int_4438(cs, *node_a), "4438: A query:node returns the node");
+        CHECK(node_a && list_has_string_4438(cs, *node_a, "a4438"),
+              "4438: A query:node returns the symbol");
+        CHECK(node_a && kind4106(cs, *node_a) != "stale-ref", "4438: A query:node is fresh");
+        auto rv_a = cs.eval("(query:ref-valid? q4438 :index 0)");
+        CHECK(rv_a && is_bool(*rv_a) && as_bool(*rv_a), "4438: A query:ref-valid? is true");
+        CHECK(cs.eval("(define p4438 (query:as-stable-ref q4438 :index 0))").has_value(),
+              "4438: A packs a v2 spine");
+        auto pk = cs.eval("p4438");
+        CHECK(pk && is_pair(*pk) && kind4106(cs, *pk) != "stale-ref",
+              "4438: A packed v2 is a pair");
+        // The pattern hash is the Variable use of a4438. tweak-literal on
+        // that node is a type error and the guard densify abort masks it
+        // as persist-reject. The literal is the write the fiber gate must
+        // admit for the owner. Delta 0 keeps 443801.
+        CHECK(
+            cs.eval("(define lit4438 (query:pattern \"443801\" :as-query-result #t))").has_value(),
+            "4438: A literal pattern binds");
+        auto litq = cs.eval("lit4438");
+        CHECK(litq && is_hash(*litq), "4438: A literal pattern is a schema-2 hash");
+        CHECK(cs.eval("(define plit4438 (query:as-stable-ref lit4438 :index 0))").has_value(),
+              "4438: A packs the literal");
+        auto mu_a = cs.eval("(mutate:tweak-literal plit4438 0)");
+        const auto ka = mu_a ? kind4106(cs, *mu_a) : std::string("missing");
+        CHECK(
+            mu_a && is_int(*mu_a) && as_int(*mu_a) == 443801,
+            std::format("4438: A mutate of own packed literal passes the fiber gate (got {})", ka));
+
+        cs.evaluator().set_current_agent_fingerprint(0x4438'0002ull);
+        auto node_b = cs.eval("(query :node q4438 :index 0)");
+        const auto kb = node_b ? kind4106(cs, *node_b) : std::string("missing");
+        CHECK(node_b && kb == "stale-ref",
+              std::format("4438: B query:node is stale-ref (got {})", kb));
+        CHECK(node_b && !list_has_string_4438(cs, *node_b, "a4438"),
+              "4438: B query:node does not return A's symbol");
+        auto rv_b = cs.eval("(query:ref-valid? q4438 :index 0)");
+        CHECK(rv_b && is_bool(*rv_b) && !as_bool(*rv_b), "4438: B query:ref-valid? is false");
+        auto as_b = cs.eval("(query:as-stable-ref q4438 :index 0)");
+        CHECK(as_b && kind4106(cs, *as_b) == "stale-ref",
+              "4438: B query:as-stable-ref is stale-ref");
+        auto re_b = cs.eval("(query:reaches q4438 :index 0)");
+        CHECK(re_b && kind4106(cs, *re_b) == "stale-ref", "4438: B query:reaches is stale-ref");
+        auto ch_b = cs.eval("(query :children q4438 :index 0)");
+        CHECK(ch_b && kind4106(cs, *ch_b) == "stale-ref", "4438: B query:children is stale-ref");
+        auto ps_b = cs.eval("(query :parent-stable q4438 :index 0)");
+        CHECK(ps_b && kind4106(cs, *ps_b) == "stale-ref",
+              "4438: B query:parent-stable is stale-ref");
+        auto cstab = cs.eval("(query :children-stable q4438 :index 0)");
+        CHECK(cstab && kind4106(cs, *cstab) == "stale-ref",
+              "4438: B query:children-stable is stale-ref");
+        auto mu_b = cs.eval("(mutate:tweak-literal plit4438 0)");
+        const auto kmb = mu_b ? kind4106(cs, *mu_b) : std::string("missing");
+        CHECK(mu_b && kmb == "stale-ref",
+              std::format("4438: B mutate of A's packed v2 is stale-ref (got {})", kmb));
+        CHECK(literal_int_4438(cs, "a4438") == 443801, "4438: literal 443801 is unchanged");
+
+        CHECK(cs.eval("(define q4438b (query:pattern \"a4438\" :as-query-result #t))").has_value(),
+              "4438: B re-queries the pattern");
+        auto node_bb = cs.eval("(query :node q4438b :index 0)");
+        CHECK(node_bb && kind4106(cs, *node_bb) != "stale-ref" && car_is_int_4438(cs, *node_bb),
+              "4438: B's own pattern node is fresh");
+
+        cs.evaluator().set_capability_tenant_id(7);
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "4438: workspace for layout stamp");
+        if (ws) {
+            NodeId live = aura::ast::NULL_NODE;
+            for (NodeId id = 1; id < ws->size(); ++id) {
+                if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+                    live = id;
+                    break;
+                }
+            }
+            CHECK(live != aura::ast::NULL_NODE, "4438: live node for layout stamp");
+            auto layout = ws->make_ref_layout(live);
+            CHECK(layout.tenant_id == 0, "4438: layout tenant starts at 0");
+            CHECK(layout.mutation_id_at_capture != 0, "4438: layout carries a mutation id");
+            cs.evaluator().stamp_query_stable_ref_export(layout);
+            CHECK(layout.id == live, "4438: layout stamp keeps the node");
+            CHECK(layout.tenant_id == 7, "4438: layout stamp fills tenant when MT is off");
+        }
+        face.restore(cs);
+    }
+
+    {
+        CompilerService cs2;
+        aura::core::resource_quota::reset_process_resource_quota_for_test();
+        cs2.evaluator().disarm_production_audit_defaults_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        auto sc2 = cs2.eval("(set-code \"(define a4438b (lambda (x) (+ x 443802)))\")");
+        show_eval(cs2, "MT set-code", sc2);
+        CHECK(sc2 && is_bool(*sc2) && as_bool(*sc2), "4438: MT set-code");
+        auto ev2 = cs2.eval("(eval-current)");
+        show_eval(cs2, "MT eval", ev2);
+        CHECK(ev2.has_value(), "4438: MT eval");
+        arm(cs2, true);
+        CHECK(cs2.evaluator().probe_multi_tenant_env_active_for_test(), "4438: MT face is active");
+        CHECK(cs2.evaluator().probe_production_active_for_test(),
+              "4438: MT production defaults are active");
+        CHECK(cs2.evaluator().effect_sandbox_mode() == 1, "4438: MT sandbox mode is Restricted");
+        cs2.evaluator().set_capability_tenant_id(7);
+        auto* ws2 = cs2.evaluator().workspace_flat();
+        CHECK(ws2 != nullptr, "4438: MT workspace");
+        std::vector<NodeId> live;
+        if (ws2) {
+            for (NodeId id = 1; id < ws2->size() && live.size() < 4; ++id) {
+                if (ws2->is_live_node(id) && !ws2->is_free_slot(id))
+                    live.push_back(id);
+            }
+        }
+        CHECK(live.size() >= 4, "4438: four live nodes");
+        if (ws2 && live.size() >= 4) {
+            auto brace_of = [&](NodeId id) {
+                aura::ast::FlatAST::StableNodeRef ref{};
+                ref.id = id;
+                ref.gen = ws2->generation();
+                ref.wrap_epoch = ws2->wrap_epoch();
+                ref.cow_epoch_at_capture = ws2->workspace_cow_epoch();
+                ref.tenant_id = 0;
+                ref.mutation_id_at_capture = 0;
+                return ref;
+            };
+            auto layout = ws2->make_ref_layout(live[0]);
+            cs2.evaluator().stamp_query_stable_ref_export(layout);
+            CHECK(layout.id == live[0] && layout.tenant_id == 7,
+                  "4438: MT layout stamp still fills the caller tenant");
+
+            auto unstamped = brace_of(live[1]);
+            cs2.evaluator().clear_last_mutate_error();
+            cs2.evaluator().stamp_query_stable_ref_export(unstamped);
+            CHECK(unstamped.id == aura::ast::NULL_NODE, "4438: unstamped tenant-0 stamp refuses");
+            CHECK(cs2.evaluator().last_mutate_error().find("isolation-deny") != std::string::npos,
+                  "4438: unstamped refuse is isolation-deny");
+            CHECK(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(live[1])) != 7,
+                  "4438: unstamped node was not noted as the caller");
+
+            aura::core::provenance::note_stamped_node(static_cast<std::uint32_t>(live[2]), 9);
+            auto foreign = brace_of(live[2]);
+            cs2.evaluator().clear_last_mutate_error();
+            cs2.evaluator().stamp_query_stable_ref_export(foreign);
+            CHECK(foreign.id == aura::ast::NULL_NODE, "4438: foreign tenant-0 stamp refuses");
+            CHECK(aura::core::provenance::existing_stamp_for_node(
+                      static_cast<std::uint32_t>(live[2])) == 9,
+                  "4438: foreign occupancy was not washed to the caller");
+
+            aura::core::provenance::note_stamped_node(static_cast<std::uint32_t>(live[3]), 7);
+            auto own = brace_of(live[3]);
+            cs2.evaluator().stamp_query_stable_ref_export(own);
+            CHECK(own.id == live[3], "4438: own occupancy tenant-0 stamp keeps the node");
+            CHECK(own.tenant_id == 7, "4438: own occupancy stamp fills the caller tenant");
+
+            const auto expr = std::format(
+                "(query :node (cons {} (cons {} (cons {} (cons 0 (cons {} 0))))))",
+                static_cast<std::uint32_t>(live[1]), static_cast<std::uint32_t>(ws2->generation()),
+                static_cast<std::uint32_t>(ws2->wrap_epoch()),
+                static_cast<unsigned long long>(ws2->workspace_cow_epoch()));
+            auto qn = cs2.eval(expr);
+            const auto kq = qn ? kind4106(cs2, *qn) : std::string("missing");
+            CHECK(qn && kq == "stale-ref",
+                  std::format("4438: query:node of tenant-0 packed v2 is stale-ref (got {})", kq));
+        }
+        face.restore(cs2);
+    }
+
+    auto read_src = [](const char* rel) {
+        std::ifstream f(rel);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    CHECK(read_src("src/compiler/evaluator_primitives_query_workspace.cpp").find("Issue #4438") !=
+              std::string::npos,
+          "4438: query workspace cites the fiberless resolve");
+    CHECK(read_src("src/compiler/evaluator_primitives_mutate.cpp").find("Issue #4438") !=
+              std::string::npos,
+          "4438: as-stable-ref cites the fiberless resolve");
+    CHECK(read_src("src/compiler/evaluator_primitives_query_defuse.cpp").find("Issue #4438") !=
+              std::string::npos,
+          "4438: query:reaches cites the fiberless resolve");
+    CHECK(read_src("src/compiler/evaluator_fiber_mutation.cpp").find("Issue #4438") !=
+              std::string::npos,
+          "4438: ensure compares the per-Agent mint");
+    CHECK(read_src("src/compiler/evaluator_security.cpp").find("Issue #4438") != std::string::npos,
+          "4438: stamp consults occupancy before the wash");
+    CHECK(read_src("src/compiler/query_result_decode.hh")
+                  .find("if (current_fiber_id != 0 && m.fiber_id != current_fiber_id)") !=
+              std::string::npos,
+          "4438: InvalidFiber predicate stays");
+    {
+        std::ifstream f("tests/core/test_issue_4438.cpp");
+        CHECK(!f.good(), "4438: no tests/core/test_issue_4438.cpp");
+    }
+    {
+        std::ifstream f("docs/design/4438-fiberless-query-resolve.md");
+        CHECK(!f.good(), "4438: no docs/design/4438-*");
+    }
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -1887,6 +2267,7 @@ int main() {
     ac4235_3_unidentified_agent_keeps_per_evaluator_mint();
     ac4235_4_override_beats_agent_mint();
     ac4235_5_source_cite();
+    ac4438_fiberless_cross_agent_query_stale();
     // ORIG ACs (9)
     ac1_orig();
     ac2_orig();

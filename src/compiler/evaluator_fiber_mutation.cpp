@@ -781,6 +781,10 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
         current_fiber = static_cast<std::uint32_t>(
             static_cast<aura::serve::Fiber*>(g_current_fiber_void)->id());
     }
+    // Issue #4438: fiberless production compares the per-Agent mint.
+    // A live TLS fiber stays the boundary_pinned restamp source.
+    if (current_fiber == 0 && aura::compiler::typed_audit::production_defaults_active())
+        current_fiber = agent_scoped_fiber_id();
     if (ref.fiber_id != 0 && current_fiber != 0 && ref.fiber_id != current_fiber) {
         if (ref.boundary_pinned && auto_refresh) {
             // Pinned refs survive steal: restamp fiber provenance + gen/cow.

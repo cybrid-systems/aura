@@ -136,7 +136,8 @@ void register_defuse_query_primitives(
                     auto hr = resolve_query_result_match(
                         a[0], qev->string_heap_mut(), qev->pairs(), flat,
                         qev->capability_tenant_id(),
-                        static_cast<std::uint64_t>(aura_fiber_current_id()), "query:reaches",
+                        // Issue #4438: fiberless production uses the per-Agent mint.
+                        static_cast<std::uint64_t>(qev->agent_scoped_fiber_id()), "query:reaches",
                         parse_query_result_match_index(a, qev->keyword_table()));
                     if (hr.kind != HashNodeKind::Ok)
                         return make_merr(hr.err_kind, hr.err_msg);
@@ -145,11 +146,17 @@ void register_defuse_query_primitives(
                                aura::compiler::query_result_decode::unpack_query_stable_ref_v2(
                                    qev->pairs(), a[0])) {
                     auto ref = *packed;
+                    qev->clear_last_mutate_error();
                     qev->stamp_query_stable_ref_export(ref);
-                    if (ref.id == aura::ast::NULL_NODE)
+                    if (ref.id == aura::ast::NULL_NODE) {
+                        // Issue #4438: occupancy refuse is stale-ref. Torn stays restamp-lag.
+                        if (qev->last_mutate_error().find("isolation-deny") != std::string::npos)
+                            return make_merr("stale-ref", "query:reaches: stable-ref is stale or "
+                                                          "provenance ensure failed");
                         return make_merr("restamp-lag",
                                          "budget-exceeded: query:reaches: restamp budget "
                                          "exceeded; generation torn for export (Issue #3230)");
+                    }
                     if (!qev->ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
                         return make_merr("stale-ref", "query:reaches: stable-ref is stale or "
                                                       "provenance ensure failed");
