@@ -113,6 +113,14 @@ infer_required_effects_from_name(std::string_view name) noexcept {
         return kEffectExec;
     if (name == "file-copy" || name == "file-delete" || name == "file-write")
         return static_cast<std::uint16_t>(kEffectWrite | kEffectExec);
+    // Issue #4452: (aot:reload path) dlopens a caller path. Sibling
+    // aot:set/get-region-mask and aot:set/get-module-version do not, so
+    // the aot: prefix stays kEffectNone. Exact name stamps kEffectFfi at
+    // add() (same choke as c-load). Dispatch require_effect is the gate.
+    // Do not also body-check (single-use double-consume). Soft/Off:
+    // require_effect is a no-op. The C reload API stays host-callable.
+    if (name == "aot:reload")
+        return kEffectFfi;
     return kEffectNone;
 }
 

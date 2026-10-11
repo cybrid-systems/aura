@@ -165,6 +165,16 @@ int run_test_side_effect_inherit() {
         CHECK(infer_required_effects_from_name("c-opaque?") == kEffectFfi,
               "3725: c-* family infers Ffi");
         CHECK(infer_required_effects_from_name("shell") == kEffectExec, "3725: shell infers Exec");
+        CHECK(infer_required_effects_from_name("aot:reload") == kEffectFfi,
+              "4452: aot:reload infers Ffi");
+        CHECK(infer_required_effects_from_name("aot:set-region-mask") == kEffectNone,
+              "4452: set-region-mask stays None");
+        CHECK(infer_required_effects_from_name("aot:get-region-mask") == kEffectNone,
+              "4452: get-region-mask stays None");
+        CHECK(infer_required_effects_from_name("aot:set-module-version") == kEffectNone,
+              "4452: set-module-version stays None");
+        CHECK(infer_required_effects_from_name("aot:get-module-version") == kEffectNone,
+              "4452: get-module-version stays None");
         CHECK(std::string_view(kSideEffectPrimPatternToken) == "AURA_SIDE_EFFECT_PRIM",
               "pattern token");
     }
