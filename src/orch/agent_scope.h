@@ -677,6 +677,29 @@ public:
         return *children_.at(i);
     }
 
+    // Issue #4444: supervise-batch / run-workflow mark the child they
+    // just spawned. orch:scope-child does not. Production retires a
+    // marked child once it has no handle left. Soft/Off stays
+    // append-only (#3776). A hard-deny stub is *this — do not mark it.
+    void mark_ephemeral_batch_child() noexcept {
+        ScopeEnterGuard g(this, "mark_ephemeral_batch_child");
+        if (g.denied_hard() || g.soft_collision)
+            return;
+        ephemeral_batch_child_ = true;
+    }
+
+    // Drop one direct child when it is a marked batch scope and idle.
+    // Caller is the parent. The child guard is released before erase so
+    // ~AgentScope can take its own enter. Does not destroy *this.
+    void retire_idle_ephemeral_child(AgentScope* child) {
+        if (!child || child == this)
+            return;
+        ScopeEnterGuard g(this, "retire_idle_ephemeral_child");
+        if (g.denied_hard() || g.soft_collision)
+            return;
+        retire_one_idle_ephemeral_unlocked_(child);
+    }
+
     // Issue #3496: this layer + descendants have no live body and no
     // Reclaimed-pending flags. Aura orch:scope-join-all uses this before
     // drop_agent_scope on the root. join_all itself stays local (join the
@@ -1277,6 +1300,11 @@ public:
         // Retire Done-path husks so name / slot pressure drops without
         // waiting for the next spawn / join_all (#3776).
         compact_done_husks_unlocked_();
+        // Issue #4444: an idle supervise-batch / run-workflow child is
+        // dropped here, after compact. This scope stays alive — join_all
+        // still stores last_sweep_reclaimed_pending_ on *this. Soft/Off
+        // already returned above.
+        retire_idle_ephemeral_children_unlocked_();
         return out;
     }
 
@@ -2065,6 +2093,63 @@ private:
             consecutive_stall_counts_.resize(w);
     }
 
+    // Issue #4444: marked batch child with no nested child and no handle
+    // left (must_wait / deferred / live survive compact). Caller holds
+    // this scope's enter and has gated on production.
+    [[nodiscard]] bool ephemeral_batch_idle_unlocked_() noexcept {
+        if (!ephemeral_batch_child_ || !children_.empty())
+            return false;
+        compact_done_husks_unlocked_();
+        for (const auto& h : handles_) {
+            // Spawn never committed a body. #3776 still keeps this
+            // slot on a long-lived scope (#3366). It must not pin a
+            // batch child. must_wait / deferred / live fiber stay.
+            if (h.ok || !aura::orch::slot_is_reclaimable_clean(h))
+                return false;
+        }
+        return true;
+    }
+
+    void retire_one_idle_ephemeral_unlocked_(AgentScope* child) {
+        if (!child || !aura::compiler::typed_audit::production_defaults_active())
+            return;
+        bool idle = false;
+        {
+            ScopeEnterGuard cg(child, "retire_idle_ephemeral_child");
+            if (cg.denied_hard() || cg.soft_collision)
+                return;
+            idle = child->ephemeral_batch_idle_unlocked_();
+        }
+        if (!idle)
+            return;
+        for (auto it = children_.begin(); it != children_.end(); ++it) {
+            if (it->get() != child)
+                continue;
+            children_.erase(it);
+            return;
+        }
+    }
+
+    void retire_idle_ephemeral_children_unlocked_() {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        std::size_t i = 0;
+        while (i < children_.size()) {
+            AgentScope* c = children_[i].get();
+            bool idle = false;
+            if (c) {
+                ScopeEnterGuard cg(c, "retire_idle_ephemeral_child");
+                if (!cg.denied_hard() && !cg.soft_collision)
+                    idle = c->ephemeral_batch_idle_unlocked_();
+            }
+            if (!idle) {
+                ++i;
+                continue;
+            }
+            children_.erase(children_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+
     // Issue #2782: nullable; nulled by Scheduler observer before fiber teardown.
     serve::Scheduler* sched_ = nullptr;
     std::vector<AgentHandle> handles_;
@@ -2108,6 +2193,9 @@ private:
     // Unused on the MutexGuarded path (lock serializes instead).
     mutable std::atomic<std::thread::id> owner_tid_{};
     mutable std::atomic<std::uint32_t> enter_depth_{0};
+    // Issue #4444: set only by supervise-batch / run-workflow. Appended
+    // so earlier AgentScope offsets stay put.
+    bool ephemeral_batch_child_ = false;
 };
 
 // Issue #2588: per-Evaluator scope map (Session-local, NOT process-static).

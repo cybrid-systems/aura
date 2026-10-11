@@ -108,6 +108,8 @@ static void ac4236_run_added_tests();
 static void ac4237_run_added_tests();
 // Issue #4401: orch:run-workflow outer ok + child scope for watch/residual.
 static void ac4401_run_added_tests();
+// Issue #4444: retire idle supervise-batch / run-workflow children.
+static void ac4444_run_added_tests();
 // #3206 production-face toggle (defined mid-file; the #2539 AC2 dev-face
 // pin and the #3052 AC4 both-face fixture below call it before its
 // definition point).
@@ -457,6 +459,8 @@ int run_test_failure_policy_bridge() {
     ac4237_run_added_tests();
     // Issue #4401: run-workflow outer ok + child watch/residual.
     ac4401_run_added_tests();
+    // Issue #4444: idle batch / workflow children do not accumulate.
+    ac4444_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -1338,8 +1342,18 @@ static void ac3726_1_s_not_cancelled_on_batch_residual() {
     CHECK(r2 && is_int(*r2), "3726 AC1: watch-scope=#t batch returned");
     CHECK(s.fiber && !s.fiber->is_cancel_requested(),
           "3726 AC1: watch_scope batch did not cancel S");
-    CHECK(s.root && s.root->child_count() >= 1,
-          "3726 AC1: supervise-batch used a child scope (session root untouched)");
+    bool batch_on_root = false;
+    if (s.root) {
+        for (const auto& h : s.root->handles()) {
+            if (h.name.find("supervise-batch-") == 0)
+                batch_on_root = true;
+        }
+    }
+    CHECK(!batch_on_root, "3726 AC1: batch row is not on the session root");
+    // Issue #4444: the dedicated child is still spawned (#3726). An empty
+    // production child is retired before return, so it does not stay.
+    CHECK(s.root && s.root->child_count() == 0,
+          "3726 AC1: empty batch child retired; S stays on the session root");
     ac3726_disarm(s);
     ac3206_set_prod(false);
 }
@@ -1362,7 +1376,8 @@ static void ac3726_2_restartn_has_batch_specs_not_s() {
     )");
     CHECK(r.has_value(), "3726 AC2: retry-n watch-scope batch ran");
     CHECK(s.fiber && !s.fiber->is_cancel_requested(), "3726 AC2: RestartN did not cancel S");
-    CHECK(s.root && s.root->child_count() >= 1, "3726 AC2: child population exists");
+    CHECK(s.root && s.root->child_count() == 0,
+          "3726 AC2: empty batch child retired after the watch join");
     bool s_on_root = false;
     bool batch_row_live_after_return = false;
     if (s.root) {
@@ -1993,7 +2008,7 @@ static void ac4050_1_watch_path_joins_child() {
     std::uint64_t reserved = 0;
     std::size_t rows = 0;
     ac4050_child_rows(child, row_present, reserved, rows);
-    CHECK(child != nullptr, "4050 AC1: supervise-batch used a child scope (#3726)");
+    CHECK(child == nullptr, "4050 AC1: empty supervise child retired after watch join");
     CHECK(!row_present, "4050 AC1: no live/done supervise-batch-0 row after return");
     CHECK(reserved == 0, "4050 AC1: child reservation released (reserved_memory_bytes 0)");
     CHECK(s.fiber && !s.fiber->is_cancel_requested(), "4050 AC1: session-root S untouched (#3726)");
@@ -2822,8 +2837,8 @@ static void ac4401_2_residual_cancel_spares_session_s() {
     CHECK(s.raw && !s.raw->is_cancel_requested(),
           "4401 AC2: session-root S was not request_cancel'd");
     CHECK(ac4401_s_on_root(s), "4401 AC2: S handle remains on the session root");
-    CHECK(s.root && s.root->child_count() == children0 + 1,
-          "4401 AC2: run-workflow used one child scope");
+    CHECK(s.root && s.root->child_count() == children0,
+          "4401 AC2: empty workflow child retired; S stays on the root");
     ac4401_disarm(s);
 }
 
@@ -2859,8 +2874,8 @@ static void ac4401_3_watch_does_not_restart_s() {
           "4401 AC3: RestartN did not see session-root S");
     CHECK(s.raw && !s.raw->is_cancel_requested(), "4401 AC3: watch did not cancel S");
     CHECK(ac4401_s_on_root(s), "4401 AC3: S stays on the session root");
-    CHECK(s.root && s.root->child_count() == children0 + 1,
-          "4401 AC3: watch ran against this run's child");
+    CHECK(s.root && s.root->child_count() == children0,
+          "4401 AC3: empty watch child retired; S stays on the root");
     ac4401_disarm(s);
 }
 
@@ -2975,6 +2990,139 @@ static void ac4401_run_added_tests() {
     ac4401_3_watch_does_not_restart_s();
     ac4401_4_join_drain_report_defer_soft();
     ac4401_5_source_cite_no_invent();
+}
+
+// Issue #4444: production retires an idle supervise-batch / run-workflow
+// child. A must_wait handle keeps it. An explicit scope-child stays.
+// Soft/Off stays append-only.
+static void ac4444_pending_child_stays_until_idle() {
+    std::println("\n--- #4444: must_wait child stays; idle batch child retires ---");
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Scheduler;
+    ac3206_set_prod(true);
+    Scheduler sched(1);
+    Ac3969SchedRunner runner(sched);
+    AgentScope root(sched);
+    auto& plain = root.spawn_child();
+    root.retire_idle_ephemeral_child(&plain);
+    (void)root.sweep_reclaimed_pending();
+    CHECK(root.child_count() == 1, "4444: unmarked child is not retired");
+    CHECK(root.is_root(), "4444: sweep does not destroy the swept scope");
+
+    auto& batch = root.spawn_child();
+    batch.mark_ephemeral_batch_child();
+    AgentHandle pending;
+    pending.ok = true;
+    pending.name = "pending-4444";
+    pending.must_wait_reclaimed = true;
+    (void)batch.adopt_handle_without_spec_for_test(std::move(pending));
+    root.retire_idle_ephemeral_child(&batch);
+    CHECK(root.child_count() == 2, "4444: must_wait batch child stays");
+    {
+        auto hs = batch.handles_mut();
+        CHECK(!hs.empty(), "4444: pending handle stored");
+        if (!hs.empty())
+            hs[0].must_wait_reclaimed = false;
+    }
+    batch.compact_after_single_join();
+    root.retire_idle_ephemeral_child(&batch);
+    CHECK(root.child_count() == 1, "4444: batch child retires once pending clears");
+
+    auto& deferred = root.spawn_child();
+    deferred.mark_ephemeral_batch_child();
+    AgentHandle owed;
+    owed.ok = true;
+    owed.name = "deferred-4444";
+    owed.reclaimed_deferred_cleanup = true;
+    (void)deferred.adopt_handle_without_spec_for_test(std::move(owed));
+    (void)root.sweep_reclaimed_pending();
+    CHECK(root.child_count() == 2, "4444: deferred batch child stays across sweep");
+    {
+        auto hs = deferred.handles_mut();
+        if (!hs.empty())
+            hs[0].reclaimed_deferred_cleanup = false;
+    }
+    (void)deferred.sweep_reclaimed_pending();
+    CHECK(root.child_count() == 2, "4444: child sweep does not destroy itself");
+    root.retire_idle_ephemeral_child(&deferred);
+    CHECK(root.child_count() == 1, "4444: deferred child retires after sweep");
+
+    auto& swept = root.spawn_child();
+    swept.mark_ephemeral_batch_child();
+    CHECK(root.child_count() == 2, "4444: idle batch child exists before sweep");
+    (void)root.sweep_reclaimed_pending();
+    CHECK(root.child_count() == 1, "4444: root sweep retires the idle batch child");
+    CHECK(&root.child_at(0) == &plain, "4444: explicit child still linked");
+
+    auto& failed = root.spawn_child();
+    failed.mark_ephemeral_batch_child();
+    AgentHandle denied;
+    denied.ok = false;
+    denied.name = "denied-4444";
+    denied.error = "AdmissionRejected: security-schedule:commit-not-ready";
+    (void)failed.adopt_handle_without_spec_for_test(std::move(denied));
+    root.retire_idle_ephemeral_child(&failed);
+    CHECK(root.child_count() == 1, "4444: spawn-failed batch child retires");
+
+    ac3206_set_prod(false);
+    auto& soft = root.spawn_child();
+    soft.mark_ephemeral_batch_child();
+    const auto soft_n = root.child_count();
+    root.retire_idle_ephemeral_child(&soft);
+    (void)root.sweep_reclaimed_pending();
+    CHECK(root.child_count() == soft_n, "4444: Soft/Off keeps an empty batch child");
+    ac3206_set_prod(false);
+}
+
+static void ac4444_source_cite() {
+    std::println("\n--- #4444: cite retire; no new query key ---");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto scope = read_file("src/orch/agent_scope.h");
+    const auto stats = read_file("src/orch/agent_spawn.h");
+    CHECK(agent.find("child.mark_ephemeral_batch_child()") != std::string::npos,
+          "4444: supervise-batch marks its child");
+    CHECK(agent.find("wf_scope.mark_ephemeral_batch_child()") != std::string::npos,
+          "4444: run-workflow marks its child");
+    CHECK(agent.find("root.retire_idle_ephemeral_child(&child)") != std::string::npos,
+          "4444: supervise-batch retires from the parent");
+    CHECK(agent.find("wf_root.retire_idle_ephemeral_child(&wf_scope)") != std::string::npos,
+          "4444: run-workflow retires from the parent");
+    CHECK(agent.find("auto& wf_scope = wf_root.spawn_child();") != std::string::npos,
+          "4444: run-workflow still spawns one child");
+    CHECK(scope.find("last_sweep_reclaimed_pending_ = sweep_reclaimed_pending();") !=
+              std::string::npos,
+          "4444: join_all sweep assignment stays");
+    CHECK(scope.find("retire_idle_ephemeral_children_unlocked_()") != std::string::npos,
+          "4444: sweep retires idle ephemeral children after compact");
+    CHECK(scope.find("children_.clear()") != std::string::npos,
+          "4444: destructor still clears children_");
+    const auto child_at = agent.find("add(\"orch:scope-child\"");
+    const auto child_end =
+        agent.find("\n    add(", child_at == std::string::npos ? 0 : child_at + 8);
+    CHECK(child_at != std::string::npos && child_end != std::string::npos,
+          "4444: scope-child prim");
+    if (child_at != std::string::npos && child_end != std::string::npos) {
+        const auto slice = agent.substr(child_at, child_end - child_at);
+        CHECK(slice.find("spawn_child()") != std::string::npos, "4444: scope-child still spawns");
+        CHECK(slice.find("mark_ephemeral_batch_child") == std::string::npos,
+              "4444: scope-child is not marked ephemeral");
+    }
+    CHECK(agent.find("query:4444") == std::string::npos, "4444: no query:4444");
+    CHECK(stats.find("scope_child_retired_total") == std::string::npos,
+          "4444: no new orch-module-stats field");
+    CHECK(stats.find("security-schedule:commit-not-ready") != std::string::npos,
+          "4444: commit-not-ready does not fail the spawn");
+    CHECK(scope.find("h.ok || !aura::orch::slot_is_reclaimable_clean(h)") != std::string::npos,
+          "4444: spawn-failed clean slot does not pin a batch child");
+    CHECK(read_file("tests/orch/test_issue_4444.cpp").empty(), "4444: no test_issue_4444.cpp");
+    CHECK(read_file("docs/design/4444-scope-child-retire.md").empty(),
+          "4444: no docs/design/4444-*");
+}
+
+static void ac4444_run_added_tests() {
+    ac4444_pending_child_stays_until_idle();
+    ac4444_source_cite();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

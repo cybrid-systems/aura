@@ -2820,15 +2820,25 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
             make_security_schedule_input_live(sb_mode, /*production_defaults=*/true,
                                               /*soft_mode=*/false, h.bp_scope_id);
         if (auto sched_reason = admit_security_schedule(sched_in); sched_reason.has_value()) {
-            g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
-            h.quota_exceeded = true; // structured admit-reject hash face (#2079/#3251)
-            h.deny_class = AgentDenyClass::ScheduleGate;
-            h.quota_dimension = "security-schedule";
-            h.retry_after_ms = 50;
-            h.error = *sched_reason;
-            rollback_spawn_reservation(h);
-            finalize_spawn_quota_reject(h);
-            return h;
+            // Issue #4444: commit-not-ready denies a new mutate at
+            // dispatch, and the #3251 body path still runs the agent.
+            // Failing the spawn stores an ok=false handle. Production
+            // compact keeps that slot (#3366), so a supervise-batch
+            // child never goes idle. deny_storm and the other hard
+            // reasons still fail closed before fiber commit.
+            const bool commit_not_ready =
+                sched_reason->find("security-schedule:commit-not-ready") != std::string::npos;
+            if (!commit_not_ready) {
+                g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+                h.quota_exceeded = true; // structured admit-reject hash face (#2079/#3251)
+                h.deny_class = AgentDenyClass::ScheduleGate;
+                h.quota_dimension = "security-schedule";
+                h.retry_after_ms = 50;
+                h.error = *sched_reason;
+                rollback_spawn_reservation(h);
+                finalize_spawn_quota_reject(h);
+                return h;
+            }
         }
     }
 
