@@ -531,6 +531,18 @@ static void restamp_ir_call_closure_4349(IRClosure& closure, Evaluator* ev,
 }
 
 EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
+    // Issue #4450: mints made while executing a CALL are runtime escapes
+    // (register in runtime_minted_ids_); mints made during define-binding
+    // execute() stay out of that set so the service's dispatch fallback
+    // never resurrects a bind-time closure after a restore / rebind.
+    struct RuntimeCallScope {
+        bool& flag;
+        explicit RuntimeCallScope(bool& f)
+            : flag(f) {
+            flag = true;
+        }
+        ~RuntimeCallScope() { flag = false; }
+    } runtime_call_scope(in_runtime_call_);
     if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
         return *blocked;
     auto it = runtime_closures_.find(closure_id);
@@ -1748,6 +1760,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 1, std::memory_order_relaxed);
                     }
                     runtime_closures_[id] = std::move(ircl);
+                    // Issue #4450: register call-time mints for the service's
+                    // runtime-mint dispatch fallback (see owns_runtime_mint).
+                    if (in_runtime_call_)
+                        runtime_minted_ids_.insert(id);
                     if (ops[2] == 0)
                         empty_env_closure_by_func_[ops[1]] = id;
                     locals[ops[0]] = make_closure(id);

@@ -827,6 +827,60 @@ static void ac4357_workspace_bools() {
           "4357: unparse keeps bool literals for the IR reparse");
 }
 
+// Issue #4450: runtime MakeClosure inside an IR define mints ids from the
+// interpreter's stale cursor — a range already handed to the NEXT define —
+// so an escaping closure ((let ((a n)) (lambda () a)) shape) silently ran
+// another define, or hit "invalid closure" when the aliased define was
+// absent. Runtime mints now come from the global monotonic cursor, and
+// dispatch routes them to the minting interpreter via runtime_closures_.
+static void run_4450_runtime_mint_ids() {
+    std::println("\n--- #4450: escaped define closures run their own body ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "1", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    // AC1/AC2: the issue repro — both escaped closures run THEIR OWN mk.
+    // Pre-fix both printed f1's string (g2's mint collided with f1's bound
+    // id, and dispatch ran that define's body).
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define (mk n) (let ((a n)) (lambda () a)))\n"
+                           "(define (f1 x) (string-append \"F1-called:\" (if (null? x) \"nil\" "
+                           "\"arg\")))\n"
+                           "(define (f2 x) (string-append \"F2-called:\" (if (null? x) \"nil\" "
+                           "\"arg\")))\n"
+                           "(define g1 (mk 7))\n"
+                           "(define g2 (mk 8))\n"
+                           "#t"),
+              "4450: set-code mk/f1/f2/g1/g2");
+        CHECK(cs.eval("(eval-current)").has_value(), "4450: eval-current");
+        auto v1 = cs.eval("(g1)");
+        CHECK(v1 && is_int(*v1) && as_int(*v1) == 7,
+              "4450 AC1: (g1) runs its own body (7, never f1's string)");
+        auto v2 = cs.eval("(g2)");
+        CHECK(v2 && is_int(*v2) && as_int(*v2) == 8,
+              "4450 AC2: (g2) runs its own body (8, never f1's string)");
+    }
+    // AC3: single-define face — the escaped closure must be callable at all
+    // (pre-fix: "eval_flat: invalid closure" because the minted id had no
+    // owner entry).
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define (mk n) (let ((a n)) (lambda () a)))\n"
+                           "(define g (mk 7))\n"
+                           "#t"),
+              "4450: set-code mk/g");
+        CHECK(cs.eval("(eval-current)").has_value(), "4450: eval-current single");
+        auto v = cs.eval("(g)");
+        CHECK(v && is_int(*v) && as_int(*v) == 7,
+              "4450 AC3: single escaped closure calls through (7)");
+    }
+}
+
 // Issue #4360: adding a define must not drop sibling IR closures, and a
 // hard rebind must reinstall the caller after the drain. The light path
 // stays armed only for Soft; hard still typechecks and still drains.
@@ -1024,6 +1078,7 @@ int run_test_current_source_roundtrip() {
     ac4349_restore_over_rebind();
     ac4349_snapshot_keeps_caller();
     ac4357_workspace_bools();
+    run_4450_runtime_mint_ids();
     ac4360_sibling_and_hard_caller();
     ac4362_soft_caller_arity();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
