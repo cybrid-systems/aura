@@ -3067,10 +3067,20 @@ public:
                     auto& [n_reg, b_reg] = *def_reg;
                     auto bnode_reg =
                         b_reg < flat_ptr->size() ? flat_ptr->get(b_reg) : aura::ast::NodeView{};
-                    if (bnode_reg.tag == aura::ast::NodeTag::Lambda)
+                    if (bnode_reg.tag == aura::ast::NodeTag::Lambda) {
+                        // Issue #4457: lower_to_ir starts at flat.root. The
+                        // begin root would make bind-time execute() run every
+                        // sibling form (display) before the real eval.
+                        struct RestoreRoot {
+                            aura::ast::FlatAST* flat;
+                            aura::ast::NodeId root;
+                            ~RestoreRoot() { flat->root = root; }
+                        } restore{flat_ptr, flat_ptr->root};
+                        flat_ptr->root = cid_reg;
                         (void)cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, cid_reg,
                                                           std::string(n_reg), /*bind_in_env=*/true,
                                                           "__repl__", /*from_eval_ir=*/false);
+                    }
                 }
             }
         }
