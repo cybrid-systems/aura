@@ -61,6 +61,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <print>
@@ -2081,6 +2082,119 @@ static void ac4303_last_se_op_survives_reason_cap() {
           "4303: the decision query emits no SE");
 }
 
+// Issue #4445: hydrate must keep WAL seq on the slot it indexes.
+// A window past the 1024 ring used to land at slots [0, n) while
+// ring.seq became max(wal seq)+1, so newest-first flipped Deny to Allow.
+static void ac4445_hydrate_keeps_wal_seq() {
+    std::println("\n--- #4445: hydrate places rows at their WAL seq ---");
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::forensic_effect_verdict_for_mid;
+    using aura::core::security_event::ForensicEffectVerdict;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::hydrate_security_event_ring_from_wal_replay;
+    using aura::core::security_event_wal::SecurityEventWalRecord;
+
+    reset_all();
+    constexpr std::uint64_t kTotal = 1500;
+    constexpr std::uint64_t kKeep = 1024;
+    std::vector<SecurityEventWalRecord> all;
+    all.reserve(static_cast<std::size_t>(kTotal));
+    for (std::uint64_t i = 0; i < kTotal; ++i) {
+        SecurityEventWalRecord rec{};
+        rec.seq = i;
+        rec.tenant_id = 7;
+        rec.epoch = 1;
+        const bool deny_row = i == 1076;
+        rec.kind = static_cast<std::uint8_t>(deny_row ? SecurityEventKind::EffectDeny
+                                                      : SecurityEventKind::EffectAllow);
+        rec.denied = deny_row ? 1 : 0;
+        if (deny_row || i == 776)
+            rec.mutation_id = 42;
+        else
+            rec.mutation_id = 800000 + i;
+        std::memcpy(rec.op, "test:4445", 9);
+        std::memcpy(rec.reason, "4445", 4);
+        all.push_back(rec);
+    }
+    std::vector<SecurityEventWalRecord> window(all.end() - static_cast<std::ptrdiff_t>(kKeep),
+                                               all.end());
+    CHECK(window.front().seq == 476, "4445: replay window starts at wal seq 476");
+    hydrate_security_event_ring_from_wal_replay(window);
+
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_relaxed);
+    const auto total = ring.total.load(std::memory_order_relaxed);
+    CHECK(head == 1500, "4445: head is max wal seq + 1");
+    CHECK(total == kKeep, "4445: total is the replayed count");
+    CHECK(ring.ring[0].seq == 1024, "4445: slot 0 keeps wal seq 1024");
+    CHECK(ring.ring[476].seq == 476, "4445: oldest replay sits at slot 476");
+    CHECK(ring.ring[475].seq == 1499, "4445: newest replay sits at slot 475");
+    const bool deny = forensic_effect_verdict_for_mid(42) == ForensicEffectVerdict::Deny;
+    CHECK(deny, "4445: newest EffectDeny wins after hydrate");
+
+    std::uint64_t since = 0;
+    const auto max_i = head < kSecurityEventRingSize ? head : kSecurityEventRingSize;
+    for (std::uint64_t i = 0; i < max_i; ++i) {
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.seq >= 1400)
+            ++since;
+    }
+    CHECK(since == 100, "4445: since-seq 1400 keeps 100 hydrated rows");
+
+    const auto oldest_mid = ring.ring[476].mutation_id;
+    CHECK(oldest_mid == 800000 + 476, "4445: slot 476 still holds the oldest row");
+    append_security_event(ring, SecurityEventKind::EffectAllow, 7, 4445999, 1, 0, "test:4445",
+                          "append", false, 0);
+    CHECK(ring.ring[476].seq == 1500, "4445: first append lands on the oldest slot");
+    CHECK(ring.ring[476].mutation_id == 4445999, "4445: first append evicts the oldest row");
+    CHECK(ring.seq.load(std::memory_order_relaxed) == 1501, "4445: append continues at head");
+
+    // pre-#4027: every seq is 0. Rows stay distinct and head matches count.
+    std::vector<SecurityEventWalRecord> legacy;
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        SecurityEventWalRecord rec{};
+        rec.seq = 0;
+        rec.mutation_id = 444510 + i;
+        rec.kind = static_cast<std::uint8_t>(SecurityEventKind::EffectDeny);
+        rec.denied = 1;
+        std::memcpy(rec.op, "test:4445", 9);
+        legacy.push_back(rec);
+    }
+    hydrate_security_event_ring_from_wal_replay(legacy);
+    CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 3,
+          "4445: seq 0 window head matches the row count");
+    CHECK(g_security_event_ring().ring[0].mutation_id == 444510, "4445: legacy row 0 stays");
+    CHECK(g_security_event_ring().ring[2].mutation_id == 444512, "4445: legacy row 2 stays");
+    CHECK(g_security_event_ring().ring[2].seq == 2, "4445: legacy rows are renumbered");
+
+    // One real seq 0 (the first stamped event) is not a legacy segment.
+    std::vector<SecurityEventWalRecord> stamped;
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        SecurityEventWalRecord rec{};
+        rec.seq = i;
+        rec.mutation_id = 444520 + i;
+        rec.kind = static_cast<std::uint8_t>(SecurityEventKind::EffectAllow);
+        rec.denied = 0;
+        stamped.push_back(rec);
+    }
+    hydrate_security_event_ring_from_wal_replay(stamped);
+    CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 3,
+          "4445: stamped 0..2 head is 3");
+    CHECK(g_security_event_ring().ring[2].seq == 2, "4445: stamped slot keeps wal seq");
+
+    const auto wal = read_file("src/core/security_event_wal.hh");
+    CHECK(wal.find("rec.seq % kSecurityEventRingSize") != std::string::npos,
+          "4445: hydrated row is stored at its WAL seq");
+    CHECK(wal.find("n_total - n") != std::string::npos, "4445: seq 0 rows renumber from base");
+    CHECK(wal.find("ring.total.store(n_total") != std::string::npos,
+          "4445: total is the replayed count");
+    CHECK(wal.find("query:4445") == std::string::npos, "4445: no new query key");
+    CHECK(read_file("tests/core/test_issue_4445.cpp").empty(), "4445: no test_issue_4445.cpp");
+    CHECK(read_file("docs/design/4445-se-hydrate-seq.md").empty(), "4445: no design doc");
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -2112,6 +2226,7 @@ int run_test_audit_replay_join() {
     ac23_wal_miss_refuse_next_4142();
     ac4302_completed_mid0_refuse_join();
     ac4303_last_se_op_survives_reason_cap();
+    ac4445_hydrate_keeps_wal_seq();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

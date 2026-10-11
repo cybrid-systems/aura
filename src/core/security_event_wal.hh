@@ -636,44 +636,106 @@ inline SecurityEventWalRecord make_record(const SecurityEvent& ev,
     return r;
 }
 
+// Copy one WAL row onto a ring slot and keep `seq` (the WAL seq, or the
+// synthetic seq assigned to a pre-#4027 row). Does not advance ring.seq.
+inline void fill_hydrated_security_event(SecurityEvent& slot, const SecurityEventWalRecord& rec,
+                                         std::uint64_t seq) noexcept {
+    slot = SecurityEvent{};
+    slot.kind = static_cast<SecurityEventKind>(rec.kind);
+    slot.seq = seq;
+    slot.tenant_id = rec.tenant_id;
+    slot.mutation_id = rec.mutation_id;
+    slot.epoch = rec.epoch;
+    slot.fiber_id = rec.fiber_id;
+    slot.effect_bits = rec.effect_bits;
+    slot.denied = rec.denied != 0;
+    const auto n_op = strnlen(rec.op, sizeof(rec.op));
+    if (n_op > 0) {
+        const auto n = std::min(n_op, sizeof(slot.op) - 1);
+        std::memcpy(slot.op, rec.op, n);
+        slot.op[n] = '\0';
+    }
+    const auto n_reason = strnlen(rec.reason, sizeof(rec.reason));
+    if (n_reason > 0) {
+        const auto n = std::min(n_reason, sizeof(slot.reason) - 1);
+        std::memcpy(slot.reason, rec.reason, n);
+        slot.reason[n] = '\0';
+    }
+}
+
 // Issue #3500: replay WAL records into the live SE ring. Shared by
 // Evaluator::enable_security_event_wal and force_wal process-wide
 // enable (security_defaults / apply_production_audit_defaults). Empty
 // replay is a no-op (live ring stays as caller left it). Soft / WAL-off
-// never calls this. Resets the ring then appends oldest→newest.
-// Issue #4027: new persists stamp real ring_seq; pre-#4027 WAL segments
-// may still carry rec.seq=0. max(rec.seq)+1 alone would be 1 and must
-// not clobber the append-advanced seq — that made find-by-mid scan one
-// slot. Take max(WAL seq+1, append count) so joinable mids survive
-// restart and later appends still do not collide with a real WAL seq
-// range (no migration — old seq=0 rows keep #3500 continuation).
+// never calls this.
+// Issue #4027: new persists stamp real ring_seq. A single rec.seq==0 is
+// that first stamped event. More than one zero is a pre-#4027 segment.
+// Issue #4445: stamped rows go to rec.seq % ring size with slot.seq kept,
+// and ring.seq becomes max(rec.seq)+1. Newest-first and :since-seq then
+// match the WAL, and the next append evicts the oldest replayed row.
+// pre-#4027 rows renumber from base = max(0, n_total - n) so head and
+// slot order still agree. No new query key. WAL format unchanged.
 inline void hydrate_security_event_ring_from_wal_replay(
     const std::vector<SecurityEventWalRecord>& replayed) noexcept {
     if (replayed.empty())
         return;
-    using ::aura::core::security_event::append_security_event;
     using ::aura::core::security_event::g_security_event_ring;
+    using ::aura::core::security_event::kSecurityEventRingSize;
     using ::aura::core::security_event::reset_security_event_ring_for_test;
     reset_security_event_ring_for_test();
-    std::uint64_t max_wal_seq = 0;
+
+    const auto n_total = static_cast<std::uint64_t>(replayed.size());
+    const auto ring_cap = static_cast<std::uint64_t>(kSecurityEventRingSize);
+    std::uint64_t zero_count = 0;
+    std::uint64_t max_plus = 0;
+    std::uint64_t first_stamped = 0;
+    bool any_stamped = false;
     for (const auto& rec : replayed) {
-        const auto kind = static_cast<SecurityEventKind>(rec.kind);
-        const bool denied = rec.denied != 0;
-        const std::string_view op_sv(rec.op, strnlen(rec.op, sizeof(rec.op)));
-        const std::string_view reason_sv(rec.reason, strnlen(rec.reason, sizeof(rec.reason)));
-        append_security_event(g_security_event_ring(), kind, rec.tenant_id, rec.mutation_id,
-                              rec.epoch, rec.effect_bits, op_sv, reason_sv, denied, rec.fiber_id);
-        if (rec.seq + 1 > max_wal_seq)
-            max_wal_seq = rec.seq + 1;
+        if (rec.seq == 0) {
+            ++zero_count;
+            continue;
+        }
+        if (!any_stamped || rec.seq < first_stamped)
+            first_stamped = rec.seq;
+        any_stamped = true;
+        if (rec.seq + 1 > max_plus)
+            max_plus = rec.seq + 1;
     }
+
     auto& ring = g_security_event_ring();
-    const auto appended = ring.seq.load(std::memory_order_relaxed);
-    std::uint64_t next_seq = appended;
-    if (max_wal_seq > next_seq)
-        next_seq = max_wal_seq;
+    std::uint64_t next_seq = 0;
+    if (!any_stamped) {
+        // Every rec.seq is 0. Keep the newest ring-sized suffix.
+        const auto n = n_total > ring_cap ? ring_cap : n_total;
+        const auto base = n_total - n; // max(0, n_total - n)
+        for (std::uint64_t i = 0; i < n; ++i) {
+            const auto seq = base + i;
+            auto& slot = ring.ring[seq % kSecurityEventRingSize];
+            fill_hydrated_security_event(slot, replayed[static_cast<std::size_t>(seq)], seq);
+        }
+        next_seq = n_total;
+    } else if (zero_count > 1) {
+        const auto base = first_stamped >= zero_count ? first_stamped - zero_count : 0;
+        std::uint64_t zi = 0;
+        for (const auto& rec : replayed) {
+            const auto seq = rec.seq == 0 ? base + zi++ : rec.seq;
+            auto& slot = ring.ring[seq % kSecurityEventRingSize];
+            fill_hydrated_security_event(slot, rec, seq);
+            if (seq + 1 > max_plus)
+                max_plus = seq + 1;
+        }
+        next_seq = max_plus;
+    } else {
+        for (const auto& rec : replayed) {
+            auto& slot = ring.ring[rec.seq % kSecurityEventRingSize];
+            fill_hydrated_security_event(slot, rec, rec.seq);
+        }
+        next_seq = max_plus;
+    }
     if (next_seq == 0)
-        next_seq = static_cast<std::uint64_t>(replayed.size());
+        next_seq = n_total;
     ring.seq.store(next_seq, std::memory_order_relaxed);
+    ring.total.store(n_total, std::memory_order_relaxed);
 }
 
 // Issue #4027: wall-clock ms for SE WAL forensic timeline. Soft/WAL-off
