@@ -1,0 +1,49 @@
+;; expect: 4458 shuffle-ok 1.41421 0.5 1024 big-ok
+; Issue #4458: shuffle is a permutation of its input, and expt accepts
+; a fractional exponent, a negative exponent, and a large integer.
+(require "std/list" all:)
+(require "std/random" all:)
+(require "std/math" all:)
+
+(define (count-eq x lst)
+  (let loop ((xs lst) (n 0))
+    (if (null? xs) n
+      (loop (cdr xs) (if (= (car xs) x) (+ n 1) n)))))
+
+(define (perm4? lst)
+  (and (list? lst)
+       (= (length lst) 4)
+       (= (count-eq 1 lst) 1)
+       (= (count-eq 2 lst) 1)
+       (= (count-eq 3 lst) 1)
+       (= (count-eq 4 lst) 1)))
+
+(define sh (shuffle (list 1 2 3 4) (make-random 42)))
+(define perm (car sh))
+(define half (expt 2 0.5))
+(define neg (expt 2 -1))
+(define ten (expt 2 10))
+(define big (expt 2 10000))
+
+(display perm) (newline)
+(display half) (newline)
+
+(if (and (perm4? perm)
+         (pair? (cadr sh))
+         (= half (pow 2 0.5))
+         (= neg 0.5)
+         (= ten 1024)
+         (= (expt 2 0) 1)
+         (number? big))
+  (begin
+    (display "4458 shuffle-ok ")
+    (display half)
+    (display " ")
+    (display neg)
+    (display " ")
+    (display ten)
+    (display " big-ok")
+    (newline))
+  (begin
+    (display "4458 FAIL")
+    (newline)))
