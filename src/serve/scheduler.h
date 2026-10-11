@@ -10,6 +10,7 @@
 #include <chrono>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -259,11 +260,9 @@ private:
     bool owned_fibers_end_contains(const Fiber* fiber) const {
         ::aura::compiler::lock_order::AuditedMutexLock lock(
             owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
-        for (const auto& f : owned_fibers_) {
-            if (f.get() == fiber)
-                return true;
-        }
-        return false;
+        // Issue #4443: membership is the set, not a scan of every
+        // historical Fiber header. The vector still owns the objects.
+        return owned_fiber_set_.find(fiber) != owned_fiber_set_.end();
     }
 
     // Issue #119: joiner map — target fiber ID → set of joiner
@@ -326,6 +325,10 @@ private:
     // Issue #707: per-scheduler fiber ownership so ~Fiber returns
     // per-fiber stack storage to the bounded pool on teardown.
     std::vector<std::unique_ptr<Fiber>> owned_fibers_;
+    // Issue #4443: O(1) owned_fibers_end_contains. Inserted with the
+    // vector under owned_fibers_mutex_. Cleared with the swap in
+    // ~Scheduler. Does not own the Fiber.
+    std::unordered_set<const Fiber*> owned_fiber_set_;
     // mutable: owned_fibers_end_contains() runs from the const
     // has_waiting_fibers() / const event-dispatch paths (#63723).
     mutable std::mutex owned_fibers_mutex_;
