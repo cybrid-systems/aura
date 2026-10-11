@@ -4644,13 +4644,32 @@ static int64_t aura_aot_reemit_sentinel_fn(int64_t* /*args*/, uint32_t /*n*/) {
 
 // Issue #4065: production last-reemit face. Soft/Off returns before any
 // boundary TLS read. mid 0 stays 0; reason is still stored.
-static void note_aot_reemit_audit_face(std::uint8_t reason) noexcept {
+// Issue #4432: caller_mid is the session audit mid captured before
+// clear_boundary_audit_mid. After that clear, join(0) would resolve to
+// the process Mutation epoch. A non-zero caller wins. A cleared note
+// with no caller stores 0 and does not resolve. Storm-skip with no
+// known mid leaves the previous face.
+extern "C" void aura_note_aot_reemit_audit_face(std::uint8_t reason,
+                                                std::uint64_t caller_mid) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return;
     auto* m = aot_metrics();
     if (!m)
         return;
-    const auto mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
+    using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
+    using aura::compiler::typed_audit::g_tls_composite_batch_join_mid;
+    using aura::compiler::typed_audit::join_audit_and_se_mid;
+    using aura::compiler::typed_audit::reemit_captured_session_mid;
+    if (caller_mid == 0)
+        caller_mid = reemit_captured_session_mid();
+    const bool pinned = g_tls_composite_batch_join_mid != 0 ||
+                        (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0);
+    std::uint64_t mid = 0;
+    if (caller_mid != 0 || pinned)
+        mid = join_audit_and_se_mid(caller_mid);
+    else if (reason == aura::compiler::CompilerMetrics::kAotLastReemitReasonStormSkip)
+        return;
     m->aot_last_reemit_mid.store(mid, std::memory_order_relaxed);
     if (mid != 0) {
         m->aot_last_reemit_tenant.store(aura::compiler::typed_audit::audit_se_join_tenant_id(),
@@ -4662,6 +4681,10 @@ static void note_aot_reemit_audit_face(std::uint8_t reason) noexcept {
         m->aot_last_reemit_fiber.store(0, std::memory_order_relaxed);
     }
     m->aot_last_reemit_reason.store(reason, std::memory_order_relaxed);
+}
+
+static void note_aot_reemit_audit_face(std::uint8_t reason) noexcept {
+    aura_note_aot_reemit_audit_face(reason, 0);
 }
 
 // Issue #2016: default LLVM incremental reemit when host did not wire
@@ -4858,10 +4881,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 if (hard || region_or_prio == 0) {
                     // Hard ceiling always throttles everyone (#2132);
                     // without a dirty mask there is nothing to attribute.
+                    // Issue #4432: stamp reemit-storm-skip with the captured
+                    // session mid. No known mid leaves the previous face.
                     g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
                     g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
                     g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
                     g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+                    note_aot_reemit_audit_face(
+                        aura::compiler::CompilerMetrics::kAotLastReemitReasonStormSkip);
                     return 0;
                 }
                 // Issue #3636: region-scoped soft storm — candidates in the
@@ -4922,6 +4949,12 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
             g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
             g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+            // Issue #4432: a deferred skip with a captured session mid
+            // stamps reemit-storm-skip. Soft/Off and a zero capture do not.
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                aura::compiler::typed_audit::reemit_captured_session_mid() != 0)
+                note_aot_reemit_audit_face(
+                    aura::compiler::CompilerMetrics::kAotLastReemitReasonStormSkip);
             return 0;
         }
     }

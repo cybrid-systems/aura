@@ -1495,6 +1495,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 aura::ast::pcv_checkpoint_live_exit();
         }
     } pcv_ckpt_exit{!cp.lightweight && !cp.heap_slot_only};
+    // Issue #4432: BoundaryExit and phase-4 reemit run after this clear.
+    // Capture the session audit mid first. join(0) would publish the
+    // process Mutation epoch.
+    std::uint64_t session_audit_mid = cp.audit_mid;
+    if (session_audit_mid == 0 && typed_audit::g_tls_boundary_audit_noted)
+        session_audit_mid = typed_audit::current_boundary_audit_mid();
     if (stack.empty())
         typed_audit::clear_boundary_audit_mid();
     // Issue #3379: outermost exit — drop the TLS evaluator slot so a
@@ -2970,11 +2976,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // Issue #3481 / #3445: last_reemit_success_region_mask is
                 // coverage-only — not content promotion. IR cache restamp
                 // stays on store_define_v2 / true per-fn, not this drain.
+                typed_audit::ReemitCapturedSessionMidGuard cap4432(session_audit_mid);
                 const auto n =
                     reg.decide_and_reemit(v, HotUpdateRegistry::ReemitReason::BoundaryExit);
                 if (n > 0)
                     aura_bump_reemit_auto_drain_success_total();
             }
+            // Issue #4432: throttle skip stamps the captured session mid.
+            if (reg.should_throttle_reemit())
+                aura_note_aot_reemit_audit_face(
+                    aura::compiler::CompilerMetrics::kAotLastReemitReasonStormSkip,
+                    session_audit_mid);
         }
     }
     // Issue #3312: re-seed thin cone before return so cascade / wrap
@@ -5863,9 +5875,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         } else {
             // Issue #4357: a one-line Soft rebind does not reemit. The
             // recovery walk is the phase-4 cost on that path.
-            if (!rebind_light_skip_heavy_exit(*ev_) && !heap_slot_quiet)
+            if (!rebind_light_skip_heavy_exit(*ev_) && !heap_slot_quiet) {
+                // Issue #4432: phase 4 runs after the note is cleared.
+                const std::uint64_t session_audit_mid =
+                    exited_cp.audit_mid != 0 ? exited_cp.audit_mid : session_mid_at_enter_;
                 ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
-                                                       dirty_upward_at_enter_);
+                                                       dirty_upward_at_enter_, session_audit_mid);
+            }
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                 m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
         }
@@ -7589,7 +7605,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
 // Idempotent: same defuse_version after a successful run is a no-op (AC3).
 void Evaluator::run_hot_update_recovery_if_needed(bool success,
                                                   std::uint64_t defuse_version_at_enter,
-                                                  std::uint64_t dirty_upward_at_enter) noexcept {
+                                                  std::uint64_t dirty_upward_at_enter,
+                                                  std::uint64_t session_audit_mid) noexcept {
     const std::uint64_t cur_defuse = defuse_version_.load(std::memory_order_acquire);
     const std::uint64_t dirty_calls =
         workspace_flat_ ? workspace_flat_->mark_dirty_upward_call_count() : 0;
@@ -7615,7 +7632,11 @@ void Evaluator::run_hot_update_recovery_if_needed(bool success,
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->boundary_reemit_throttled_total.fetch_add(1, std::memory_order_relaxed);
         // Epoch notify always on dirty (even when throttled) — AC1 step 3.
+        // The notify key is the func-table epoch. It is not the reemit face.
         aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        // Issue #4432: stamp the captured session mid with reemit-storm-skip.
+        aura_note_aot_reemit_audit_face(
+            aura::compiler::CompilerMetrics::kAotLastReemitReasonStormSkip, session_audit_mid);
         hot_update_recovery_done_defuse_ = cur_defuse;
         return;
     }
@@ -7638,8 +7659,13 @@ void Evaluator::run_hot_update_recovery_if_needed(bool success,
     } owner_guard(static_cast<void*>(this));
     // Issue #3059: recovery reemit uses the Registry facade
     // (decide_and_reemit → aura_reemit_aot_for_dirty).
-    const std::size_t n_reemit = hot_update_registry().decide_and_reemit(
-        cur_defuse, HotUpdateRegistry::ReemitReason::ResidualPipeline);
+    // Issue #4432: pass the session mid captured before the note clear.
+    std::size_t n_reemit = 0;
+    {
+        typed_audit::ReemitCapturedSessionMidGuard cap4432(session_audit_mid);
+        n_reemit = hot_update_registry().decide_and_reemit(
+            cur_defuse, HotUpdateRegistry::ReemitReason::ResidualPipeline);
+    }
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
                                                    std::memory_order_relaxed);
