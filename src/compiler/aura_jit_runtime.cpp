@@ -4274,10 +4274,17 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // Issue #4417: do not publish host_defuse after a remount failure,
         // and roll the fresh stamps back. MustDeopt stays sticky across
         // the #2128 consume until a later remount returns success.
+        // Issue #2092: defuse lag is this remap's pre-restamp window
+        // (host moved, the closure stamp has not). Keep the bridge epoch
+        // so name-fallback still observes the new table generation.
+        // Other fail reasons roll that epoch back too.
         if (remount_ok != 0) {
             g_closure_defuse_versions[cid] = host_defuse;
         } else {
-            g_closure_bridge_epochs[cid] = pre_bridge;
+            const bool defuse_lag = aura_last_remount_fail_reason() ==
+                                    static_cast<std::uint8_t>(RemountFailReason::Defuse);
+            if (!defuse_lag)
+                g_closure_bridge_epochs[cid] = pre_bridge;
             g_closure_env_gen[cid] = pre_env;
             if (cid < g_closure_cow_gens.size())
                 g_closure_cow_gens[cid] = pre_cow;
@@ -4465,9 +4472,17 @@ struct JitFnEntry {
     int32_t arg_count;
     int32_t env_count;
 };
-static JitFnEntry g_jit_fns[512] = {{nullptr, 0, 0, 0}};
-// Issue #1304: registrations with func_id >= 512 (no silent drop).
+// Issue #1304: primary table. func_id >= kJitPrimaryFnSlots is stored in
+// the overflow map (no silent drop) and stays callable by id and by name.
+static constexpr int kJitPrimaryFnSlots = 512;
+static JitFnEntry g_jit_fns[kJitPrimaryFnSlots] = {{nullptr, 0, 0, 0}};
 static std::unordered_map<int64_t, JitFnEntry> g_jit_fns_overflow;
+
+// True when func_id indexes g_jit_fns. Overflow ids are not primary.
+[[nodiscard]] static constexpr bool jit_id_in_primary(const std::int64_t func_id) noexcept
+    post(r : r == (func_id >= 0 && func_id < kJitPrimaryFnSlots)) {
+    return func_id >= 0 && func_id < kJitPrimaryFnSlots;
+}
 static std::atomic<std::uint64_t> g_jit_fns_overflow_registers{0};
 static std::atomic<std::uint64_t> g_jit_fns_limit_warnings{0};
 
@@ -4505,6 +4520,10 @@ static std::vector<JitReloadStage> g_jit_reload_staging;
 using JitScalarFn = int64_t (*)(int64_t*, uint32_t);
 static std::vector<JitScalarFn> g_jit_reload_replaced;
 
+// Defined below. Register's post calls it, including for overflow ids.
+static JitScalarFn jit_live_fn_for_id(const int64_t func_id) noexcept
+    post(r : !jit_id_in_primary(func_id) || r == g_jit_fns[func_id].fn);
+
 // Defined in aura_jit_bridge.cpp (strong) or the light-link stub (weak 0).
 int aura_aot_jit_reload_staging_active(void);
 
@@ -4519,19 +4538,34 @@ static std::int64_t jit_id_for_registered_name(const char* name) noexcept {
     if (nit == g_jit_fns_by_name.end() || nit->second.fn == nullptr)
         return -1;
     const auto want = nit->second.fn;
-    for (int slot = 0; slot < 512; ++slot) {
-        if (g_jit_fns[slot].fn == want)
-            return slot;
+    std::int64_t found = -1;
+    for (int slot = 0; slot < kJitPrimaryFnSlots; ++slot) {
+        if (g_jit_fns[slot].fn == want) {
+            found = slot;
+            break;
+        }
     }
-    for (const auto& ov : g_jit_fns_overflow) {
-        if (ov.second.fn == want)
-            return ov.first;
+    if (found < 0) {
+        for (const auto& ov : g_jit_fns_overflow) {
+            if (ov.second.fn == want) {
+                found = ov.first;
+                break;
+            }
+        }
     }
-    return -1;
+    // Overflow ids stay resolvable (#1304). The first declaration of this
+    // function is above the jit tables, so the post lives here.
+    contract_assert(found < 0 || jit_live_fn_for_id(found) != nullptr);
+    return found;
 }
 
-static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
-                              int32_t local_count, int32_t arg_count, int32_t env_count) {
+// pre: a live publish is either a primary slot or an overflow id (#1304).
+// post: that id resolves to the same ScalarFn, including past the cap.
+static void register_fn_entry(const int64_t func_id, int64_t (*const fn)(int64_t*, uint32_t),
+                              int32_t local_count, int32_t arg_count, int32_t env_count)
+    pre(fn == nullptr || func_id < 0 || jit_id_in_primary(func_id) ||
+        func_id >= static_cast<std::int64_t>(kJitPrimaryFnSlots))
+        post(func_id < 0 || fn == nullptr || jit_live_fn_for_id(func_id) == fn) {
     if (func_id < 0 || !fn)
         return;
     // Issue #4405: a fresh slot publish drops a stale func_id→define
@@ -4539,18 +4573,20 @@ static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t)
     // the define name (after this erase). A named publish leaves the
     // name map as the authority for the pointer scan.
     g_ir_func_define_names.erase(func_id);
-    if (func_id < 512) {
+    if (jit_id_in_primary(func_id)) {
+        contract_assert(func_id >= 0 && func_id < kJitPrimaryFnSlots);
         g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
         return;
     }
     // Issue #1304: overflow path — keep callable via overflow map / name.
+    contract_assert(func_id >= kJitPrimaryFnSlots);
     g_jit_fns_overflow[func_id] = {fn, local_count, arg_count, env_count};
     g_jit_fns_overflow_registers.fetch_add(1, std::memory_order_relaxed);
     if (g_jit_fns_limit_warnings.fetch_add(1, std::memory_order_relaxed) == 0) {
         std::fprintf(stderr,
-                     "aura_register_fn: func_id=%lld exceeds 512 primary table; "
+                     "aura_register_fn: func_id=%lld exceeds %d primary table; "
                      "stored in overflow map (Issue #1304)\n",
-                     static_cast<long long>(func_id));
+                     static_cast<long long>(func_id), kJitPrimaryFnSlots);
     }
 }
 
@@ -4598,10 +4634,10 @@ static void stage_jit_reload_locked(int64_t func_id, int64_t (*fn)(int64_t*, uin
     g_jit_reload_staging.push_back(std::move(rec));
 }
 
-static JitScalarFn jit_live_fn_for_id(int64_t func_id) {
-    if (func_id >= 0 && func_id < 512)
+static JitScalarFn jit_live_fn_for_id(const int64_t func_id) noexcept {
+    if (jit_id_in_primary(func_id))
         return g_jit_fns[func_id].fn;
-    if (func_id >= 512) {
+    if (func_id >= kJitPrimaryFnSlots) {
         auto it = g_jit_fns_overflow.find(func_id);
         if (it != g_jit_fns_overflow.end())
             return it->second.fn;
@@ -4881,7 +4917,7 @@ void aura_jit_drop_so_before_dlclose_unlocked(void* handle) {
         if (drop_fn(g_closure_cache[i].fn))
             clear_closure_cache_entry(g_closure_cache[i]);
     }
-    for (int slot_i = 0; slot_i < 512; ++slot_i) {
+    for (int slot_i = 0; slot_i < kJitPrimaryFnSlots; ++slot_i) {
         if (!drop_fn(g_jit_fns[slot_i].fn))
             continue;
         g_jit_fns[slot_i] = {nullptr, 0, 0, 0};
@@ -4992,10 +5028,10 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
             continue;
         if (cid < g_closure_func_ids.size()) {
             const auto fid = g_closure_func_ids[cid];
-            if (fid >= 0 && fid < 512) {
+            if (jit_id_in_primary(fid)) {
                 note(g_jit_fns[fid].fn);
                 g_jit_fns[fid] = {nullptr, 0, 0, 0};
-            } else if (fid >= 512) {
+            } else if (fid >= kJitPrimaryFnSlots) {
                 auto oit = g_jit_fns_overflow.find(fid);
                 if (oit != g_jit_fns_overflow.end()) {
                     note(oit->second.fn);
@@ -5036,9 +5072,9 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
     }
     for (int64_t fid : func_only_ids) {
         note(jit_live_fn_for_id(fid));
-        if (fid >= 0 && fid < 512)
+        if (jit_id_in_primary(fid))
             g_jit_fns[fid] = {nullptr, 0, 0, 0};
-        else if (fid >= 512)
+        else if (fid >= kJitPrimaryFnSlots)
             g_jit_fns_overflow.erase(fid);
         g_ir_func_define_names.erase(fid);
     }
@@ -5715,10 +5751,10 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // Already hold read lock — do NOT call aura_lookup_fn_by_name (would re-lock).
     JitFnEntry entry{};
     bool have_entry = false;
-    if (func_id >= 0 && func_id < 512 && g_jit_fns[func_id].fn) {
+    if (jit_id_in_primary(func_id) && g_jit_fns[func_id].fn) {
         entry = g_jit_fns[func_id];
         have_entry = true;
-    } else if (func_id >= 512) {
+    } else if (func_id >= kJitPrimaryFnSlots) {
         auto oit = g_jit_fns_overflow.find(func_id);
         if (oit != g_jit_fns_overflow.end() && oit->second.fn) {
             entry = oit->second;
@@ -7285,7 +7321,7 @@ void aura_reset_runtime() {
         clear_closure_cache_entry(g_closure_cache[i]);
     // Keep prim table (registered once)
     // Clear JIT function entries but NOT prim table
-    for (int i = 0; i < 512; ++i)
+    for (int i = 0; i < kJitPrimaryFnSlots; ++i)
         g_jit_fns[i] = {nullptr, 0, 0, 0};
 }
 
