@@ -3648,8 +3648,11 @@ public:
     // success=false + panic_auto_rollback_ → full-rollback skip.
     // dirty_upward_at_enter: mark_dirty_upward_call_count() snapshot at
     // boundary enter (not lifetime-only — count is cumulative).
+    // session_audit_mid (#4432): captured before clear_boundary_audit_mid.
+    // 0 keeps a live boundary note or stores 0. Never the process epoch.
     void run_hot_update_recovery_if_needed(bool success, std::uint64_t defuse_version_at_enter,
-                                           std::uint64_t dirty_upward_at_enter = 0) noexcept;
+                                           std::uint64_t dirty_upward_at_enter = 0,
+                                           std::uint64_t session_audit_mid = 0) noexcept;
     // Issue #2162: cascade path marks recovery done so Guard dtor is no-op.
     void note_hot_update_recovery_done(std::uint64_t defuse) noexcept {
         hot_update_recovery_done_defuse_ = defuse;

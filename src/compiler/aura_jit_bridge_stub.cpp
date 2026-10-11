@@ -459,6 +459,8 @@ extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) 
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) void
+aura_note_aot_reemit_audit_face(std::uint8_t /*reason*/, std::uint64_t /*caller_mid*/) noexcept {}
 // Issue #2299 / #2606: register + reemit owner TLS (weak stubs —
 // production aura_jit_bridge.cpp owns real TLS). Light-linked tests
 // (chaos #2352, etc.) need these for ReemitEvalOwnerGuard.

@@ -4886,6 +4886,32 @@ inline void clear_boundary_audit_mid() noexcept {
     return resolve_audit_mutation_id(0);
 }
 
+// Issue #4432: session audit mid captured before clear_boundary_audit_mid.
+// BoundaryExit and phase-4 recovery publish it onto the reemit face.
+// aura_reemit_aot_for_dirty stays a one-argument C ABI. 0 means the face
+// may use a live boundary note, or store 0. It must not resolve the
+// process Mutation epoch after the note is cleared.
+inline thread_local std::uint64_t g_tls_reemit_captured_session_mid = 0;
+
+inline void set_reemit_captured_session_mid(std::uint64_t mid) noexcept {
+    g_tls_reemit_captured_session_mid = mid;
+}
+
+[[nodiscard]] inline std::uint64_t reemit_captured_session_mid() noexcept {
+    return g_tls_reemit_captured_session_mid;
+}
+
+struct ReemitCapturedSessionMidGuard {
+    std::uint64_t prev_;
+    explicit ReemitCapturedSessionMidGuard(std::uint64_t mid) noexcept
+        : prev_(g_tls_reemit_captured_session_mid) {
+        g_tls_reemit_captured_session_mid = mid;
+    }
+    ~ReemitCapturedSessionMidGuard() noexcept { g_tls_reemit_captured_session_mid = prev_; }
+    ReemitCapturedSessionMidGuard(const ReemitCapturedSessionMidGuard&) = delete;
+    ReemitCapturedSessionMidGuard& operator=(const ReemitCapturedSessionMidGuard&) = delete;
+};
+
 // Issue #3532: named join for SE emit callers. join_audit_and_se_mid
 // remains the mid SSOT — this does not invent a second resolver.
 // Production/Full join-0 is the refuse path (mid-fallback-refused SE

@@ -22,6 +22,16 @@ namespace aura::compiler::primitives_detail {
     return v;
 }
 
+// Issue #4432: #3964 session mids set bit 63. make_int aborts on that
+// pattern (kFixnumShift == 1). The metric atomic keeps the full mid.
+// This publishes the low 62 bits so two sessions stay distinct, 0 stays
+// 0, and an in-range mid is unchanged.
+[[nodiscard]] inline std::int64_t query_fixnum_mid(std::uint64_t mid) noexcept {
+    constexpr auto kMask =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() >> 1);
+    return static_cast<std::int64_t>(mid & kMask);
+}
+
 struct ReflectRuntimeValidateResult {
     bool ok = false;
     bool hygiene_held = true;

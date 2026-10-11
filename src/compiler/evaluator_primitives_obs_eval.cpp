@@ -138,6 +138,14 @@ template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
     (void)name;
 }
 
+// Issue #4432: matches primitives_detail::query_fixnum_mid. This TU
+// cannot include evaluator_primitives_query_shared.hh (sink_query_prim).
+[[nodiscard]] inline std::int64_t query_fixnum_mid(std::uint64_t mid) noexcept {
+    constexpr auto kMask =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() >> 1);
+    return static_cast<std::int64_t>(mid & kMask);
+}
+
 using types::as_bool;
 using types::as_cell_id;
 using types::as_closure_id;
@@ -15843,12 +15851,14 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"capture-cell-remap-wired", make_int(1)},
                 // Issue #4065: last reemit face at the end of the hash.
                 // Soft/Off publishes 0 / empty and does not read boundary TLS.
+                // Issue #4432: the atomic holds the full session mid. The
+                // query publishes the low 62 bits so make_int does not abort.
                 {"last-reemit-mid",
                  make_int(aura::compiler::typed_audit::production_defaults_active() &&
                                   ev.compiler_metrics_
-                              ? static_cast<std::int64_t>(
-                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
-                                        ->aot_last_reemit_mid.load(std::memory_order_relaxed))
+                              ? query_fixnum_mid(static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                                     ->aot_last_reemit_mid.load(
+                                                         std::memory_order_relaxed))
                               : 0)},
                 {"last-reemit-tenant",
                  make_int(aura::compiler::typed_audit::production_defaults_active() &&

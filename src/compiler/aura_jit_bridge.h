@@ -1159,6 +1159,13 @@ void aura_event_driven_epoch_invariant_walk_if_due(void);
 extern "C" void aura_set_epoch_invariant_soft_fuse_k(int k);
 extern "C" int aura_get_epoch_invariant_soft_fuse_k(void);
 
+// Issue #4432: #4065 last-reemit face. reason is
+// CompilerMetrics::kAotLastReemitReason*. caller_mid 0 uses the captured
+// session TLS or a live boundary note. A cleared note with no caller
+// stores 0 for ok/fail and does not resolve the process Mutation epoch.
+// Storm-skip with no known mid leaves the previous face.
+void aura_note_aot_reemit_audit_face(std::uint8_t reason, std::uint64_t caller_mid) noexcept;
+
 } // extern "C"
 
 #endif // AURA_COMPILER_AURA_JIT_BRIDGE_H

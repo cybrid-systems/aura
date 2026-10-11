@@ -22,6 +22,7 @@
 //   AC14: #2172 SpecJIT conservative gate + counter + StormLevel facade
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/evaluator_primitives_query_shared.hh"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h" // aura_set_aot_metrics + closures
@@ -2395,6 +2396,170 @@ static void ac4065_reemit_last_mid() {
     aura_hot_update_set_reemit_boundary_policy(0);
 }
 
+// Issue #4432: BoundaryExit / phase-4 reemit must publish the session
+// audit mid captured before clear_boundary_audit_mid. join(0) after that
+// clear is the process Mutation epoch. A hard skip stamps the same mid
+// with reemit-storm-skip. A cleared note and no caller stores 0.
+static void ac4432_boundary_exit_reemit_session_mid() {
+    std::println("\n--- #4432: BoundaryExit reemit uses the session mid ---");
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::hot_update_registry().reset_reemit_boundary_handshake_for_test();
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(0);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::set_reemit_captured_session_mid(0);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::bump_mutation_epoch(50);
+
+    CompilerService cs;
+    auto* sm = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    aura_set_aot_metrics(sm);
+    aura_aot_set_reemit_owner_eval(&cs.evaluator());
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    ReemitFixture rf;
+    rf.candidates = {{"ac4432", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    std::uint64_t session = 0;
+    std::uint64_t epoch = 0;
+    {
+        bool ok = true;
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(gr.has_value(), "4432: phase4 guard entered");
+        if (gr.has_value()) {
+            epoch = aura::core::current_mutation_epoch();
+            session = aura::compiler::typed_audit::current_boundary_audit_mid();
+            rf.cursor = 0;
+            aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+            aura_set_aot_emit_fn(&emit_fn, &ef);
+            cs.evaluator().bump_defuse_version_for_test();
+        }
+    }
+    const auto stored = sm->aot_last_reemit_mid.load(std::memory_order_relaxed);
+    const auto last = href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid");
+    const auto table_epoch = static_cast<std::int64_t>(aura_aot_func_table_epoch());
+    std::println("4432 phase4 session {} epoch {} stored {} last {} table {}", session, epoch,
+                 stored, last, table_epoch);
+    CHECK(epoch != 0, "4432: process epoch is non-zero");
+    CHECK(session != 0, "4432: session mid minted");
+    const bool session_not_epoch = session != epoch;
+    CHECK(session_not_epoch, "4432: session mid is not the process epoch");
+    CHECK(stored == session, "4432: phase4 atomic mid is the session mid");
+    const auto published = aura::compiler::primitives_detail::query_fixnum_mid(session);
+    CHECK(last == published, "4432: phase4 last-reemit-mid is the session mid");
+    const bool last_not_epoch = last != static_cast<std::int64_t>(epoch);
+    CHECK(last_not_epoch, "4432: phase4 last-reemit-mid is not the process epoch");
+    const bool last_not_table = last != table_epoch;
+    CHECK(last_not_table, "4432: phase4 last-reemit-mid is not the func table epoch");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason") == "reemit-ok",
+          "4432: phase4 reason reemit-ok");
+
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(1ULL << 1);
+    aura_hot_update_set_deopt_storm_threshold(2, 100000);
+    for (int i = 0; i < 8; ++i)
+        aura_hot_update_note_deopt();
+    CHECK(aura_hot_update_should_throttle_reemit() == 1, "4432: exit throttle armed");
+    const auto drained_before = href(cs, "query:aot-stats", "reemit-auto-drain-throttled-total");
+    std::uint64_t storm_session = 0;
+    {
+        bool ok = true;
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(gr.has_value(), "4432: storm guard entered");
+        if (gr.has_value())
+            storm_session = aura::compiler::typed_audit::current_boundary_audit_mid();
+    }
+    const auto storm_stored = sm->aot_last_reemit_mid.load(std::memory_order_relaxed);
+    const auto storm_last = href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid");
+    const auto drained_after = href(cs, "query:aot-stats", "reemit-auto-drain-throttled-total");
+    std::println("4432 storm session {} stored {} last {} drained {} -> {}", storm_session,
+                 storm_stored, storm_last, drained_before, drained_after);
+    CHECK(storm_session != 0, "4432: storm session mid minted");
+    CHECK(storm_stored == storm_session, "4432: storm atomic mid is the session mid");
+    const auto storm_published = aura::compiler::primitives_detail::query_fixnum_mid(storm_session);
+    CHECK(storm_last == storm_published, "4432: storm last-reemit-mid stays on the session mid");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason") ==
+              "reemit-storm-skip",
+          "4432: storm reason reemit-storm-skip");
+    CHECK(drained_after > drained_before, "4432: auto-drain throttle counter moved");
+
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(0);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::set_reemit_captured_session_mid(0);
+    rf.cursor = 0;
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "4432: cleared note still reemits");
+    const auto cleared = href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid");
+    const auto epoch_now = aura::core::current_mutation_epoch();
+    CHECK(epoch_now != 0, "4432: epoch still non-zero after the clear");
+    CHECK(cleared == 0, "4432: cleared note with no caller stores mid 0");
+    const bool cleared_not_epoch = cleared != static_cast<std::int64_t>(epoch_now);
+    CHECK(cleared_not_epoch, "4432: cleared note does not store the process epoch");
+
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::set_reemit_captured_session_mid(4432001);
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_deopt_storm_threshold(2, 100000);
+    aura_hot_update_set_hard_deopt_storm_threshold(3);
+    for (int i = 0; i < 8; ++i)
+        aura_hot_update_note_deopt();
+    CHECK(aura_hot_update_hard_storm_active() == 1, "4432: hard ceiling armed");
+    const auto skips_before =
+        href(cs, "query:hot-update-registry-stats", "reemit-throttle-skips-total");
+    rf.cursor = 0;
+    CHECK(aura_reemit_aot_for_dirty(0) == 0, "4432: hard ceiling skips the body");
+    const auto hard_last = href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid");
+    const auto skips_after =
+        href(cs, "query:hot-update-registry-stats", "reemit-throttle-skips-total");
+    CHECK(hard_last == 4432001, "4432: hard skip stamps the captured session mid");
+    CHECK(href_str(cs, "query:aot-incremental-reemit-stats", "last-reemit-reason") ==
+              "reemit-storm-skip",
+          "4432: hard skip reason reemit-storm-skip");
+    CHECK(skips_after > skips_before, "4432: registry throttle counter moved");
+    const bool hard_not_epoch = hard_last != static_cast<std::int64_t>(epoch_now);
+    CHECK(hard_not_epoch, "4432: hard skip does not store the process epoch");
+    const bool hard_not_table = hard_last != table_epoch;
+    CHECK(hard_not_table, "4432: hard skip does not store the func table epoch");
+
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto face = bridge.find("void aura_note_aot_reemit_audit_face");
+    const auto face_end = bridge.find("default_llvm_incremental_emit", face);
+    CHECK(face != std::string::npos && face_end != std::string::npos && face < face_end,
+          "4432: reemit face is in the bridge");
+    const auto face_body = bridge.substr(face, face_end - face);
+    CHECK(face_body.find("join_audit_and_se_mid(caller_mid)") != std::string::npos,
+          "4432: face joins the caller mid");
+    CHECK(face_body.find("join_audit_and_se_mid(0)") == std::string::npos,
+          "4432: face does not join zero");
+    CHECK(face_body.find("current_mutation_epoch") == std::string::npos,
+          "4432: face does not read the process epoch");
+    CHECK(face_body.find("aura_aot_func_table_epoch") == std::string::npos,
+          "4432: face does not read the func table epoch");
+    const auto cap = mb.find("Issue #4432");
+    const auto clear = mb.find("clear_boundary_audit_mid()");
+    CHECK(cap != std::string::npos && clear != std::string::npos && cap < clear,
+          "4432: session mid is captured before the note is cleared");
+    CHECK(mb.find("ReemitCapturedSessionMidGuard") != std::string::npos,
+          "4432: boundary passes the captured mid into reemit");
+
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_clear_stable_func_id_map();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::set_reemit_captured_session_mid(0);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+    aura::core::reset_mutation_epoch_for_test();
+}
+
 // Issue #4339: owner-scoped frozen table epoch washes the recycled-sid
 // generation check. A retired sid re-preserved under the same display name
 // stamps an EQUAL nonzero mangle epoch (#4337 inequality never fires), so
@@ -3265,6 +3430,7 @@ int main() {
     }
 
     ac4065_reemit_last_mid();
+    ac4432_boundary_exit_reemit_session_mid();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
