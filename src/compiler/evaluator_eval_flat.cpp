@@ -5116,12 +5116,23 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     if (const auto* e = string_intern_by_sym_.get(v.sym_id))
                         return *e;
                     std::string_view raw_sv = p->resolve(v.sym_id);
+                    // Issue #4455: quoted symbols (≤6) live in short_str_cache_.
+                    // Assigning a fresh heap index here moved the next
+                    // (quote sym) off the slot bound earlier, so eq? became #f
+                    // after a same-text string literal. Reuse the quote slot.
+                    // emplace does not replace a key a quote already owns.
+                    if (raw_sv.size() <= 6) {
+                        if (auto it = short_str_cache_.find(raw_sv); it != short_str_cache_.end()) {
+                            string_intern_by_sym_.set(v.sym_id, it->second);
+                            return it->second;
+                        }
+                    }
                     std::string raw(raw_sv);
                     auto sid = push_string_heap(std::move(raw));
                     auto val = make_string(sid);
                     string_intern_by_sym_.set(v.sym_id, val);
                     if (raw_sv.size() <= 6)
-                        short_str_cache_[std::string(raw_sv)] = val;
+                        short_str_cache_.emplace(std::string(raw_sv), val);
                     return val;
                 }
                 case aura::ast::NodeTag::Variable: {
