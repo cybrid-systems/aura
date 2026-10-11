@@ -7635,9 +7635,14 @@ public:
     // The target_node here is the NEW subtree's root. The old_subtree_source is
     // kept verbatim so rollback can re-parse and re-attach without needing
     // a generation-aware node lookup.
+    // Issue #4435: displaced_root / displaced_macro ride in old_value /
+    // new_value (already on the wire). Rollback recopies MacroIntroduced
+    // from the still-live displaced id instead of publishing User nodes.
     std::uint64_t add_mutation_subtree(NodeId target_node, NodeId parent_id,
                                        std::uint32_t child_idx, std::string_view old_subtree_source,
-                                       std::string_view op_name, std::string_view summary) {
+                                       std::string_view op_name, std::string_view summary,
+                                       NodeId displaced_root = NULL_NODE,
+                                       std::uint64_t displaced_macro = 0) {
         const std::uint64_t mid = next_mutation_id_++;
         mutation_log_.push_back(mutation::create_subtree_mutation_record({
             .mutation_id = mid,
@@ -7650,6 +7655,8 @@ public:
             .author_fingerprint = mutation_author_fingerprint_,
             .parent_mutation_id = mutation_parent_mutation_id_,
             .composite_transaction_id = mutation_composite_transaction_id_,
+            .old_value = static_cast<std::uint64_t>(displaced_root),
+            .new_value = displaced_macro,
         }));
         if (target_node != NULL_NODE)
             mark_dirty_upward(target_node);

@@ -7886,6 +7886,181 @@ static void ac4434_unlink_macro_child_default_reject() {
     aura_test_reset_macro_hygiene_last_limit_reason_for_test();
 }
 
+// Issue #4435: workspace:rollback-latest reparses subtree text. On the
+// production face the displaced MacroIntroduced marker must come back
+// with the node. Soft/Off keeps the text reparse.
+static void ac4435_rollback_restores_macro_marker() {
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::core::capability::reset_capability_effects_for_test;
+    auto set_prod = [](bool on) {
+        g_typed_mutation_audit_counters.production_defaults_active.store(on ? 1 : 0,
+                                                                         std::memory_order_relaxed);
+    };
+    auto lit_of = [](aura::ast::FlatAST* ws, aura::ast::NodeId def) -> std::int64_t {
+        if (!ws || def >= ws->size())
+            return -1;
+        auto v = ws->get(def);
+        if (v.children.empty())
+            return -1;
+        return static_cast<std::int64_t>(ws->get(v.child(0)).int_value);
+    };
+
+    std::println("\n--- 4435: production rollback recopies MacroIntroduced ---");
+    set_prod(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define a 10) (define hold 0)\")").has_value(),
+              "4435: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4435: eval");
+        auto adef = define_named_4406(cs.evaluator(), "a");
+        CHECK(adef != aura::ast::NULL_NODE, "4435: define a");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", static_cast<unsigned>(adef)))
+                  .has_value(),
+              "4435: stamp define");
+        CHECK(cs.evaluator().workspace_flat()->is_macro_introduced(adef), "4435: marked");
+        grant_3301_production_mutate(cs);
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        const auto tenant = cs.evaluator().capability_tenant_id();
+        g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                     aura_test_grant_prov(), tenant);
+        auto rep =
+            cs.eval(std::format("(mutate:replace-subtree {} \"(define a 11)\" :allow-macro? #t)",
+                                static_cast<unsigned>(adef)));
+        CHECK(rep.has_value(), "4435: allowed replace returns");
+        if (rep)
+            CHECK(merr_kind_3027(cs, *rep) != "hygiene-protected", "4435: allowed replace lands");
+        auto replaced = define_named_4406(cs.evaluator(), "a");
+        CHECK(replaced != adef, "4435: define slot moved");
+        CHECK(lit_of(cs.evaluator().workspace_flat(), replaced) == 11, "4435: installed 11");
+        set_prod(true);
+        CHECK(cs.evaluator().effect_sandbox_mode() != 0, "4435: sandbox on");
+        auto rb = cs.eval("(workspace:rollback-latest)");
+        CHECK(rb && is_int(*rb) && as_int(*rb) != 0, "4435: rollback id");
+        auto restored = define_named_4406(cs.evaluator(), "a");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(restored != replaced && restored != aura::ast::NULL_NODE, "4435: restored id");
+        CHECK(ws->is_macro_introduced(restored), "4435: restored marker");
+        CHECK(lit_of(ws, restored) == 10, "4435: restored literal 10");
+        // The replace bumps the mutation epoch, so the pre-replace grant
+        // no longer matches require_effect. Re-grant with the production
+        // atomic off: Restricted stays on, and the body result is visible.
+        set_prod(false);
+        grant_3301_production_mutate(cs);
+        CHECK(cs.evaluator().effect_sandbox_mode() != 0, "4435: rename sandbox stays on");
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        auto ren = cs.eval("(mutate:rename-symbol \"a\" \"zz\")");
+        CHECK(ren.has_value(), "4435: rename returns");
+        if (ren)
+            CHECK(merr_kind_3027(cs, *ren) == "hygiene-protected", "4435: rename denied");
+        const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+              "4435: rename reason");
+        CHECK(define_named_4406(cs.evaluator(), "a") == restored, "4435: name stayed a");
+        reset_capability_effects_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+
+    std::println("\n--- 4435: production rollback of a User define stays User ---");
+    set_prod(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define b 20) (define hold 0)\")").has_value(),
+              "4435: user set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4435: user eval");
+        auto bdef = define_named_4406(cs.evaluator(), "b");
+        CHECK(bdef != aura::ast::NULL_NODE, "4435: define b");
+        CHECK(!cs.evaluator().workspace_flat()->is_macro_introduced(bdef), "4435: b user");
+        grant_3301_production_mutate(cs);
+        auto rep = cs.eval(std::format("(mutate:replace-subtree {} \"(define b 21)\")",
+                                       static_cast<unsigned>(bdef)));
+        CHECK(rep.has_value(), "4435: user replace returns");
+        if (rep)
+            CHECK(merr_kind_3027(cs, *rep) != "hygiene-protected", "4435: user replace lands");
+        set_prod(true);
+        auto rb = cs.eval("(workspace:rollback-latest)");
+        CHECK(rb && is_int(*rb) && as_int(*rb) != 0, "4435: user rollback id");
+        auto restored = define_named_4406(cs.evaluator(), "b");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(restored != bdef, "4435: user define replaced back");
+        CHECK(!ws->is_macro_introduced(restored), "4435: user stays unmarked");
+        CHECK(lit_of(ws, restored) == 20, "4435: user literal 20");
+        set_prod(false);
+        grant_3301_production_mutate(cs);
+        CHECK(cs.evaluator().effect_sandbox_mode() != 0, "4435: user rename sandbox stays on");
+        auto ren = cs.eval("(mutate:rename-symbol \"b\" \"bb\")");
+        CHECK(ren.has_value(), "4435: user rename returns");
+        if (ren) {
+            CHECK(merr_kind_3027(cs, *ren) != "hygiene-protected", "4435: user rename lands");
+            CHECK(is_bool(*ren) && as_bool(*ren), "4435: user rename is bool");
+        }
+        CHECK(define_named_4406(cs.evaluator(), "bb") != aura::ast::NULL_NODE,
+              "4435: renamed to bb");
+        reset_capability_effects_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+
+    std::println("\n--- 4435: Soft/Off text rollback stays User ---");
+    set_prod(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(cs.evaluator().effect_sandbox_mode() == 0, "4435: soft sandbox");
+        CHECK(cs.eval("(set-code \"(define a 10) (define hold 0)\")").has_value(),
+              "4435: soft set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4435: soft eval");
+        auto adef = define_named_4406(cs.evaluator(), "a");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", static_cast<unsigned>(adef)))
+                  .has_value(),
+              "4435: soft stamp");
+        auto rep =
+            cs.eval(std::format("(mutate:replace-subtree {} \"(define a 11)\" :allow-macro? #t)",
+                                static_cast<unsigned>(adef)));
+        CHECK(rep.has_value(), "4435: soft replace returns");
+        if (rep)
+            CHECK(merr_kind_3027(cs, *rep) != "hygiene-protected", "4435: soft replace lands");
+        auto rb = cs.eval("(workspace:rollback-latest)");
+        CHECK(rb && is_int(*rb) && as_int(*rb) != 0, "4435: soft rollback id");
+        auto restored = define_named_4406(cs.evaluator(), "a");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(!ws->is_macro_introduced(restored), "4435: soft restored stays User");
+        CHECK(lit_of(ws, restored) == 10, "4435: soft literal 10");
+    }
+
+    const auto ws_src = read_file("src/compiler/evaluator_primitives_workspace.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    auto wpos = ws_src.find("workspace:rollback-latest");
+    auto wend = ws_src.find("workspace:mutation-count", wpos);
+    const auto wwin = wpos == std::string::npos
+                          ? std::string()
+                          : ws_src.substr(wpos, wend > wpos ? wend - wpos : std::string::npos);
+    CHECK(wwin.find("Issue #4435") != std::string::npos, "4435: rollback cites the issue");
+    CHECK(wwin.find("copy_displaced_macro_markers") != std::string::npos,
+          "4435: rollback copies markers");
+    CHECK(wwin.find("copy_displaced_macro_markers") <
+              wwin.find("set_child(parent_id, child_idx, pr.root)"),
+          "4435: copy before set_child");
+    CHECK(wwin.find("hygiene-macro-introduced") == std::string::npos ||
+              wwin.find("kHygieneLimitReasonMacroIntroduced") != std::string::npos,
+          "4435: refuse uses the stable reason code");
+    CHECK(wwin.find("kHygieneLimitReasonMacroIntroduced") <
+              wwin.find("set_child(parent_id, child_idx, pr.root)"),
+          "4435: refuse returns before set_child");
+    CHECK(mut.find("displaced_macro") != std::string::npos, "4435: replace records the bit");
+    CHECK(mut.find("Issue #4435") != std::string::npos, "4435: replace cites the issue");
+    CHECK(read_file("tests/compiler/test_issue_4435.cpp").empty(), "4435: no new test file");
+    CHECK(read_file("tests/issues/test_issue_4435.cpp").empty(), "4435: no issues test file");
+    CHECK(mut.find("schema-4435") == std::string::npos, "4435: no query key");
+
+    set_prod(false);
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -8154,6 +8329,8 @@ int main() {
     ac4406_displaced_child_default_reject();
     std::println("\n=== Issue #4434: unlink of a macro-introduced child ===");
     ac4434_unlink_macro_child_default_reject();
+    std::println("\n=== Issue #4435: rollback-latest keeps MacroIntroduced ===");
+    ac4435_rollback_restores_macro_marker();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
