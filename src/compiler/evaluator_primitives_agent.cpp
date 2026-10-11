@@ -5277,6 +5277,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             "orch:scope-sweep-reclaimed-pending: unknown :path");
             }
             const auto sw = scope->sweep_reclaimed_pending();
+            // Issue #4444: sweep compacted this scope. A marked batch
+            // child that is now idle is dropped by its parent. parent()
+            // releases the child guard before the erase. Root has no
+            // parent; its sweep already retired idle ephemeral children.
+            // Do not use `scope` after the retire.
+            if (auto* parent = scope->parent())
+                parent->retire_idle_ephemeral_child(scope);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(true)},
                 {"cleaned", make_int(static_cast<std::int64_t>(sw.cleaned))},
@@ -6431,6 +6438,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // join/workflow observe; Phase A TaskSpec still defaults 0
             // (Serialized) unless the host supplies :region-keys.
             auto& child = root.spawn_child();
+            // Issue #4444: batch child only. Hard-deny returns *this;
+            // do not mark the session root. Explicit orch:scope-child
+            // stays unmarked.
+            if (&child != &root)
+                child.mark_ephemeral_batch_child();
             std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
             auto rkey_at = [&region_keys](std::size_t i) -> std::uint64_t {
                 return i < region_keys.size() ? region_keys[i] : 0;
@@ -6585,6 +6597,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 join_observe.max_restarts = 0;
                 (void)child.join_all(join_policy, join_observe);
             }
+
+            // Issue #4444: production drops this batch child once it has
+            // no live / must_wait / deferred handle. ~AgentScope
+            // unregisters the scheduler observer and frees the bp gauge.
+            // A pending child stays until sweep. Soft/Off is a no-op.
+            // Do not use `child` after this call.
+            root.retire_idle_ephemeral_child(&child);
 
             using aura::serve::parallel_orch::BatchStatus;
             // Issue #4050: ok is false when production RestartN cancelled or
@@ -6803,6 +6822,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // recompute isolation or bypass region-key deny. Session-root
             // agents are not cancelled, joined, or RestartN'd.
             auto& wf_scope = wf_root.spawn_child();
+            // Issue #4444: this run's child only. Do not mark a
+            // hard-deny stub (*this) or an orch:scope-child.
+            if (&wf_scope != &wf_root)
+                wf_scope.mark_ephemeral_batch_child();
 
             auto push_str = [&ev](const char* s) -> EvalValue {
                 auto idx = ev.push_string_heap(s);
@@ -6934,6 +6957,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     break;
                 }
             }
+
+            // Issue #4444: same retire as supervise-batch. Outer ok stays
+            // stages_failed == 0. Do not use wf_scope after this call.
+            wf_root.retire_idle_ephemeral_child(&wf_scope);
 
             auto svidx = ev.vector_heap_.size();
             ev.vector_heap_.push_back(std::move(stage_out));
