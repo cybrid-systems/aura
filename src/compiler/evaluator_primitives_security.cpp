@@ -135,7 +135,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
-                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                     ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
                  static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
                 ev.bump_capability_denial();
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -186,7 +187,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
-                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                     ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
                  static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
                 ev.bump_capability_denial();
                 using ::aura::core::security_event::SecurityEventKind;
@@ -228,7 +230,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
-                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                     ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
                  static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
                 ev.bump_capability_denial();
                 using ::aura::core::security_event::SecurityEventKind;
@@ -332,7 +335,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
-                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                     ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
                  static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
                 ev.bump_capability_denial();
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -1331,7 +1335,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::compiler::security::kEffectTenantAdmin;
             const bool wildcard_only = reg.holds_wildcard_only_locked(ev.capability_tenant_id());
             const bool has_ta =
-                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                     ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
                  static_cast<std::uint16_t>(kEffectTenantAdmin)) != 0;
             const bool elevate = tid != ev.capability_tenant_id();
             if ((elevate || allow_cross) && (wildcard_only || !has_ta)) {
@@ -1378,7 +1383,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
-                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                     ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
                  static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
                 ev.bump_capability_denial();
                 using ::aura::core::security_event::SecurityEventKind;

@@ -2503,7 +2503,10 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     std::lock_guard<std::mutex> lock(reg.mtx);
     using ::aura::core::capability::Effect;
     using ::aura::core::capability::has_effect;
-    return has_effect(reg.effects_for_locked(caller), Effect::TenantAdmin);
+    // Issue #4440: session mid is the audit join (boundary mid, else epoch).
+    // A non-session admin is unaffected. A stale session row does not count.
+    const auto caller_mid = ::aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    return has_effect(reg.effects_effective_for_locked(caller, caller_mid), Effect::TenantAdmin);
 }
 
 inline void emit_spawn_tenant_spoof_se(std::uint64_t requested, std::uint64_t caller) noexcept {

@@ -70,7 +70,7 @@ def main() -> int:
     if not prim_body:
         fails.append("AC1: security:set-tenant-principal! prim body not found")
     else:
-        priv_p = prim_body.find("effects_for_locked")
+        priv_p = prim_body.find("effects_effective_for_locked")
         wild_p = prim_body.find("holds_wildcard_only_locked")
         set_p = prim_body.find("ev.set_tenant_principal(")
         deny_p = prim_body.find("allow-cross-needs-tenant-admin")
