@@ -244,7 +244,7 @@ int run_test_cascade_relower_silent_skip() {
 (set-code "
 (define f (lambda () 1))
 (define g (lambda () (f)))
-")")
+"))")
                   .has_value(),
               "3484 AC5: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3484 AC5: eval");
@@ -295,7 +295,7 @@ int run_test_cascade_relower_silent_skip() {
 (set-code "
 (define f (lambda () 1))
 (define g (lambda () (f)))
-")")
+"))")
                   .has_value(),
               "3484 AC5: type-change set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3484 AC5: type-change eval");
@@ -332,7 +332,7 @@ int run_test_cascade_relower_silent_skip() {
 (set-code "
 (define f (lambda () 1))
 (define g (lambda () (f)))
-")")
+"))")
                   .has_value(),
               "3986 AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3986 AC4: eval");
@@ -368,7 +368,7 @@ int run_test_cascade_relower_silent_skip() {
 (set-code "
 (define f (lambda () 1))
 (define g (lambda () (f)))
-")")
+"))")
                   .has_value(),
               "3484 AC3: Soft set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3484 AC3: Soft eval");
@@ -419,7 +419,8 @@ int run_test_cascade_relower_silent_skip() {
             for (const auto& fn : e.irs) {
                 if (fn.name == "__top__")
                     continue;
-                s += fn.name;
+                // cache_define renames __lambda__ to name#n. The full arm
+                // does not. Compare instructions only.
                 s += "{";
                 for (const auto& b : fn.blocks) {
                     for (const auto& ins : b.instructions) {
@@ -453,7 +454,8 @@ int run_test_cascade_relower_silent_skip() {
             CHECK(cs.eval("(eval-current)").has_value(), std::format("4103 eval {}", name));
             if (!cs.get_define_v2(name) || cs.get_define_v2(name)->irs.empty())
                 (void)cs.eval(std::format("(compile:cache-define \"{}\")", name));
-            return cs.get_define_v2(name) != nullptr && !cs.get_define_v2(name)->irs.empty();
+            const auto* e = cs.get_define_v2(name);
+            return e != nullptr && !e->irs.empty();
         };
 
         // Production / Full: nested siblings fall through to a full store.
@@ -483,6 +485,9 @@ int run_test_cascade_relower_silent_skip() {
                 m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
             const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
             const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            // Issue #3760: an empty source_to_ir_map is an unknown cone.
+            // Production mark_all_blocks_dirty then skips the per-fn arm.
+            const bool map_empty = before->source_to_ir_map.empty();
             CHECK(cs.relower_define_from_workspace_for_test("outer4103"), "4103 nested relower");
             const auto* after = cs.get_define_v2("outer4103");
             CHECK(after != nullptr, "4103 entry after relower");
@@ -495,8 +500,9 @@ int run_test_cascade_relower_silent_skip() {
                   "4103 reuses partial_forced_full_by_impact_total");
             CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
                   "4103 fell through to full re-lower");
-            CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) > per0,
-                  "4103 still entered the single-function peel before refusing the restamp");
+            const auto per1 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            CHECK(map_empty ? per1 == per0 : per1 > per0,
+                  "4103 empty source map force-fulls before per-fn");
         }
 
         // __top__ + body (irs.size()==2) may still peel and clean-hit.
@@ -548,14 +554,16 @@ int run_test_cascade_relower_silent_skip() {
         }
 
         // Soft / Off keeps the single-function return, nested sentinel included.
+        // Cache while production is off. A service built with the atomic
+        // still 1 stores a source-only shell and irs stays empty.
         {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            set_strategy(AuditStrategy::Sampled);
             CompilerService cs;
             CHECK(cache_define(cs, nested_src, "outer4103"), "4103 soft nested cache");
             const auto planted = cs.plant_body_only_dirty_for_test("outer4103", true);
             CHECK(planted >= 3, std::format("4103 soft irs.size={} >= 3", planted));
-            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-                .store(0, std::memory_order_relaxed);
-            set_strategy(AuditStrategy::Sampled);
             set_partial_relower_threshold(1);
             auto* m = metrics_of(cs);
             const auto impact0 =
@@ -637,6 +645,7 @@ int run_test_cascade_relower_silent_skip() {
                 m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
             const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
             const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            const bool map_empty = before->source_to_ir_map.empty();
             CHECK(cs.relower_define_from_workspace_for_test("outer4103"), "4311 nested relower");
             const auto* after = cs.get_define_v2("outer4103");
             CHECK(after != nullptr, "4311 entry after relower");
@@ -649,8 +658,9 @@ int run_test_cascade_relower_silent_skip() {
                   "4311 reuses partial_forced_full_by_impact_total");
             CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
                   "4311 fell through to full re-lower");
-            CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) > per0,
-                  "4311 still entered the single-function peel before refusing the restamp");
+            const auto per1 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+            CHECK(map_empty ? per1 == per0 : per1 > per0,
+                  "4311 empty source map force-fulls before per-fn");
         }
 
         // Size == 1 dropped-__top__ still peels (no nested sibling). The
@@ -691,14 +701,15 @@ int run_test_cascade_relower_silent_skip() {
 
         // Soft / Off on the production shape: zero-extra peel stays.
         // Dirties index 0 and leaves the nested sentinel in place.
+        // Cache while production is off (same shell as the #4103 soft block).
         {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            set_strategy(AuditStrategy::Sampled);
             CompilerService cs;
             CHECK(cache_define(cs, nested_src, "outer4103"), "4311 soft nested cache");
             const auto planted = cs.plant_body_only_dirty_for_test("outer4103", true, false);
             CHECK(planted == 2, std::format("4311 soft irs.size={} == 2", planted));
-            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-                .store(0, std::memory_order_relaxed);
-            set_strategy(AuditStrategy::Sampled);
             set_partial_relower_threshold(1);
             auto* m = metrics_of(cs);
             const auto impact0 =
@@ -725,49 +736,53 @@ int run_test_cascade_relower_silent_skip() {
         // mutate abort-clears irs before the sweep.
         {
             reset_partial_relower_threshold_for_test();
-            const auto thr_now = get_partial_relower_threshold();
+            const char* fat_src =
+                R"src((set-code "(define (fat4311 x) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) 8)))"))src";
+            // Cache on the dev face. Production=1 at construct stores a
+            // source-only shell (irs empty) and the nested index aborts.
+            CompilerService cs;
+            CHECK(cache_define(cs, fat_src, "fat4311"), "4311 fat cache");
             set_strategy(AuditStrategy::Full);
             aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
                 .store(1, std::memory_order_relaxed);
-            const char* fat_src =
-                R"src((set-code "(define (fat4311 x) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) 8)))"))src";
-            CompilerService cs;
-            CHECK(cache_define(cs, fat_src, "fat4311"), "4311 fat cache");
+            const auto thr_now = get_partial_relower_threshold();
             const auto* pre = cs.get_define_v2("fat4311");
             CHECK(pre != nullptr && pre->irs.size() == 2, "4311 fat shape [body, nested]");
-            CHECK(pre->irs[0].name != "__top__", "4311 fat dropped __top__");
-            std::size_t nested_instrs = 0;
-            for (const auto& b : pre->irs[1].blocks)
-                nested_instrs += b.instructions.size();
-            const auto nested_blocks = pre->irs[1].blocks.size();
-            CHECK(nested_instrs >= thr_now,
-                  std::format("4311 nested instrs {} >= threshold {}", nested_instrs, thr_now));
-            CHECK(nested_blocks > 0 && nested_blocks < thr_now,
-                  std::format("4311 nested blocks {} < threshold {}", nested_blocks, thr_now));
-            CHECK(!has_const_i64(pre->irs[0], 41), "4311 pre-mutate body has no 41");
-            auto* m = metrics_of(cs);
-            const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
-            const auto ran0 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
-            auto setb = cs.eval(
-                R"ev((mutate:set-body "fat4311" "(let ((z (+ x 41))) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) z)))" "#4311"))ev");
-            CHECK(setb && aura::compiler::types::is_bool(*setb) &&
-                      aura::compiler::types::as_bool(*setb),
-                  "4311 body-expression set-body");
-            const auto* after = cs.get_define_v2("fat4311");
-            CHECK(after != nullptr && !after->irs.empty(), "4311 entry after set-body has IR");
-            if (after != nullptr && !after->irs.empty()) {
-                CHECK(after->irs[0].name != "__top__",
-                      "4311 post-mutate cache still dropped __top__");
-                const bool body_rewritten = has_const_i64(after->irs[0], 41);
-                const int look = cs.lookup_define_v2("fat4311", after->source_hash);
-                CHECK(body_rewritten, "4311 sweep rewrote irs[0] to the new body");
-                CHECK(look != 0 || body_rewritten,
-                      "4311 lookup must not clean-hit a pre-mutate body");
+            if (pre != nullptr && pre->irs.size() >= 2) {
+                CHECK(pre->irs[0].name != "__top__", "4311 fat dropped __top__");
+                std::size_t nested_instrs = 0;
+                for (const auto& b : pre->irs[1].blocks)
+                    nested_instrs += b.instructions.size();
+                const auto nested_blocks = pre->irs[1].blocks.size();
+                CHECK(nested_instrs >= thr_now,
+                      std::format("4311 nested instrs {} >= threshold {}", nested_instrs, thr_now));
+                CHECK(nested_blocks > 0 && nested_blocks < thr_now,
+                      std::format("4311 nested blocks {} < threshold {}", nested_blocks, thr_now));
+                CHECK(!has_const_i64(pre->irs[0], 41), "4311 pre-mutate body has no 41");
+                auto* m = metrics_of(cs);
+                const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+                const auto ran0 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
+                auto setb = cs.eval(
+                    R"ev((mutate:set-body "fat4311" "(let ((z (+ x 41))) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) z)))" "#4311"))ev");
+                CHECK(setb && aura::compiler::types::is_bool(*setb) &&
+                          aura::compiler::types::as_bool(*setb),
+                      "4311 body-expression set-body");
+                const auto* after = cs.get_define_v2("fat4311");
+                CHECK(after != nullptr && !after->irs.empty(), "4311 entry after set-body has IR");
+                if (after != nullptr && !after->irs.empty()) {
+                    CHECK(after->irs[0].name != "__top__",
+                          "4311 post-mutate cache still dropped __top__");
+                    const bool body_rewritten = has_const_i64(after->irs[0], 41);
+                    const int look = cs.lookup_define_v2("fat4311", after->source_hash);
+                    CHECK(body_rewritten, "4311 sweep rewrote irs[0] to the new body");
+                    CHECK(look != 0 || body_rewritten,
+                          "4311 lookup must not clean-hit a pre-mutate body");
+                }
+                CHECK(m->cascade_relower_ran_total.load(std::memory_order_relaxed) > ran0,
+                      "4311 cascade relower ran");
+                CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
+                      "4311 sweep took full re-lower");
             }
-            CHECK(m->cascade_relower_ran_total.load(std::memory_order_relaxed) > ran0,
-                  "4311 cascade relower ran");
-            CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
-                  "4311 sweep took full re-lower");
         }
 
         // Source cite: new gate, plus unknown-callee and abort-stale still force full.
@@ -822,6 +837,86 @@ int run_test_cascade_relower_silent_skip() {
                   "4311 no test_issue_4311.cpp");
             CHECK(read_file("docs/design/4311-dropped-top-body.md").empty(), "4311 no design note");
         }
+    }
+
+    // Issue #4436: production full relower must not publish a caller that
+    // copied a still-dirty callee. The direct full-arm call refuses. The
+    // sweep retries once and stores the post-mutate constant.
+    {
+        std::println("\n--- #4436: full relower refuses a dirty callee embed ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+"))")
+                  .has_value(),
+              "4436: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4436: eval");
+        if (!cs.get_define_v2("f"))
+            (void)cs.eval("(compile:cache-define \"f\")");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        CHECK(cs.get_define_v2("f") != nullptr, "4436: f cached");
+        CHECK(cs.get_define_v2("g") != nullptr, "4436: g cached");
+        cs.public_record_dependency("g", "f");
+        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#4436\")");
+        CHECK(mut && aura::compiler::types::is_bool(*mut) && aura::compiler::types::as_bool(*mut),
+              "4436: set-body");
+        cs.public_mark_define_dirty("f");
+        // #4228 leaves f as a value cell, so g lowers to TopCellLoad and
+        // never copies ir_cache_[f]. The hole is that copy.
+        cs.clear_ir_value_cells_for_test();
+        const auto* f_dirty = cs.get_define_v2("f");
+        const auto* g_dirty = cs.get_define_v2("g");
+        CHECK(f_dirty != nullptr && (f_dirty->dirty || f_dirty->dirty_block_count() > 0),
+              "4436: f stays body-dirty before the direct full relower");
+        CHECK(g_dirty != nullptr, "4436: g still cached");
+        const bool direct = cs.relower_current_define_full_for_test("g");
+        CHECK(!direct, "4436: direct full relower refuses the dirty callee");
+        const auto* g_mid = cs.get_define_v2("g");
+        CHECK(g_mid != nullptr, "4436: g still cached after refuse");
+        if (g_mid != nullptr) {
+            const int look_mid = cs.lookup_define_v2("g", g_mid->source_hash);
+            CHECK(look_mid != 0, "4436: lookup stays needs-relower after refuse");
+            CHECK(g_mid->dirty || !g_mid->content_stored_this_epoch,
+                  "4436: refuse does not store g");
+        }
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto* g_after = cs.get_define_v2("g");
+        CHECK(g_after != nullptr, "4436: g after sweep");
+        if (g_after != nullptr) {
+            const int look_after = cs.lookup_define_v2("g", g_after->source_hash);
+            auto bundle_has = [](const CompilerService::IRCacheEntry& e, std::uint32_t imm) {
+                for (const auto& fn : e.irs) {
+                    for (const auto& b : fn.blocks) {
+                        for (const auto& ins : b.instructions) {
+                            if (ins.opcode == aura::ir::IROpcode::ConstI64 &&
+                                ins.operands[1] == imm)
+                                return true;
+                        }
+                    }
+                }
+                return false;
+            };
+            CHECK(look_after == 0, "4436: sweep stores g as a clean hit");
+            CHECK(bundle_has(*g_after, 2), "4436: stored g embeds the post-mutate callee");
+        }
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto at = svc.find("Issue #4436");
+        CHECK(at != std::string::npos, "4436 cite present");
+        if (at != std::string::npos) {
+            const auto win = svc.substr(at, 1100);
+            CHECK(win.find("production_defaults_active()") != std::string::npos,
+                  "4436 cite: production gate");
+            CHECK(win.find("content_stored_this_epoch") != std::string::npos,
+                  "4436 cite: content latch");
+            CHECK(win.find("abort_map_invalid") != std::string::npos, "4436 cite: abort latch");
+        }
+        CHECK(svc.find("relower_current_define_full_for_test") != std::string::npos,
+              "4436 cite: full-arm test hook");
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== #2813/#3484 cascade relower silent skip: {} passed, {} failed ===",
