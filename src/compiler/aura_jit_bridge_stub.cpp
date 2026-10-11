@@ -394,6 +394,11 @@ extern "C" __attribute__((weak)) std::int64_t aura_jit_deopt_to_interpreter(cons
 extern "C" __attribute__((weak)) int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
     return 0;
 }
+extern "C" __attribute__((weak)) void aura_jit_note_prologue_deopt_sentinel(void) noexcept {}
+extern "C" __attribute__((weak)) void aura_jit_clear_prologue_deopt_sentinel(void) noexcept {}
+extern "C" __attribute__((weak)) int aura_jit_peek_prologue_deopt_sentinel(void) noexcept {
+    return 0;
+}
 extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
     return 0;
 }

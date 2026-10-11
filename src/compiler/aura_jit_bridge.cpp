@@ -3612,6 +3612,22 @@ extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
     return v;
 }
 
+// Issue #4451: closure-dispatch refuses share this TLS. note does not
+// batch-deopt a caller. clear runs at dispatch entry so a prior direct
+// refuse cannot poison the next call. peek does not clear — the host
+// take-after (and the JIT caller) must still see the refuse.
+extern "C" void aura_jit_note_prologue_deopt_sentinel(void) noexcept {
+    g_jit_prologue_deopt_sentinel = 1;
+}
+
+extern "C" void aura_jit_clear_prologue_deopt_sentinel(void) noexcept {
+    g_jit_prologue_deopt_sentinel = 0;
+}
+
+extern "C" int aura_jit_peek_prologue_deopt_sentinel(void) noexcept {
+    return g_jit_prologue_deopt_sentinel;
+}
+
 extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
     // Stale Apply entry: record dual-reader metrics + soft-deopt the tracker
     // so subsequent get_function_ptr refuses native. Return fixnum 0 sentinel.

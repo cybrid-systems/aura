@@ -5308,8 +5308,19 @@ namespace {
 // this entry: direct g_closure_func_ids reads / native fn-ptr invocation
 // outside this table TU fail scripts/check_closure_dispatch_entry_3635.py
 // (gate; per-line "#3635-allow-direct" annotation opt-out).
+// Issue #4451: leave-native refuses return fixnum 0. Stamp the #4084
+// sentinel first so a JIT caller can leave native too. A real native
+// result of 0 does not come through here. Defined above the entry so
+// source-cite windows that start at the function stay on the prologue.
+static int64_t closure_dispatch_leave_native() noexcept {
+    aura_jit_note_prologue_deopt_sentinel();
+    return 0;
+}
+
 extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int64_t* args,
                                                         int64_t argc) {
+    // Issue #4451: a prior direct refuse must not poison the next call.
+    aura_jit_clear_prologue_deopt_sentinel();
     // Issue #157 Phase 2 + #1361: shared table lock (always) + workspace read.
     std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_read();
@@ -5326,7 +5337,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0)
                 aura_bump_must_deopt_force_deopt_fail_total(1);
             aura_unlock_workspace_read();
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
 
@@ -5349,7 +5360,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_jit_closure_record_stale_deopt();
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
-            return 0;
+            return closure_dispatch_leave_native();
         }
         // Issue #3972: surface the this-window remap arm at the JIT refuse
         // entry — #3948's helper covers window + LCP, and the remap half
@@ -5368,7 +5379,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_jit_closure_record_stale_deopt();
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
-            return 0;
+            return closure_dispatch_leave_native();
         }
         const size_t armed_cid = static_cast<size_t>(closure_id);
         if (armed_cid < g_closure_pure_anon_overflow_armed.size() &&
@@ -5378,7 +5389,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_jit_closure_record_stale_deopt();
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
 
@@ -5412,7 +5423,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                     aura_bump_must_deopt_force_deopt_fail_total(1);
                     aura_deopt_inc();
                     aura_unlock_workspace_write();
-                    return 0;
+                    return closure_dispatch_leave_native();
                 }
                 // Issue #2472: slot freed+realloced with a different func_id —
                 // leave the new closure's flags alone (stale force-deopt).
@@ -5420,7 +5431,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                     aura_bump_must_deopt_force_deopt_fail_total(1);
                     aura_deopt_inc();
                     aura_unlock_workspace_write();
-                    return 0;
+                    return closure_dispatch_leave_native();
                 }
                 if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
                     // Issue #4417: remount-fail stays set. One-shot belts still clear.
@@ -5447,7 +5458,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 aura_unlock_workspace_write();
             }
             // Safe fallback: never run pre-reemit native for this entry.
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
 
@@ -5461,7 +5472,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_jit_closure_record_stale_deopt();
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
 
@@ -5485,7 +5496,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
             invalidate_closure_cache_for(closure_id);
-            return 0;
+            return closure_dispatch_leave_native();
         }
         // Issue #3323: acquire fence BEFORE sampling per-closure epoch so
         // overflow's release fence + overflow-epoch bump is visible. Soft
@@ -5508,7 +5519,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 aura_jit_closure_record_safe_fallback();
                 aura_deopt_inc();
                 invalidate_closure_cache_for(closure_id);
-                return 0;
+                return closure_dispatch_leave_native();
             }
             cap_bridge = cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
             cap_defuse =
@@ -5540,7 +5551,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                     aura_jit_closure_record_safe_fallback();
                     aura_deopt_inc();
                     invalidate_closure_cache_for(closure_id);
-                    return 0;
+                    return closure_dispatch_leave_native();
                 }
             } else {
                 aura_bump_cross_cow_hard_reject_total();
@@ -5550,7 +5561,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 aura_deopt_inc();
                 invalidate_closure_cache_for(closure_id);
                 // Safe fallback: refuse native JIT call (no shared lock held).
-                return 0;
+                return closure_dispatch_leave_native();
             }
         }
         // Issue #3504: remount PRIMARY env_gen is not in dual-fresh.
@@ -5567,7 +5578,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                     aura_jit_closure_record_safe_fallback();
                     aura_deopt_inc();
                     invalidate_closure_cache_for(closure_id);
-                    return 0;
+                    return closure_dispatch_leave_native();
                 }
             }
         }
@@ -5583,7 +5594,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 aura_deopt_inc();
                 invalidate_closure_cache_for(closure_id);
                 aura_unlock_workspace_read();
-                return 0;
+                return closure_dispatch_leave_native();
             }
         }
         // Issue #3300: name-level peer pure-JIT soft-stale complement.
@@ -5621,7 +5632,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_deopt_inc();
             aura_aot_note_peer_jit_name_soft_stale_deopt();
             invalidate_closure_cache_for(closure_id);
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
 
@@ -5638,7 +5649,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
             invalidate_closure_cache_for(closure_id);
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
 
@@ -5663,7 +5674,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // JIT Jump / IR opcode stride poll in-loop. Soft: helper 0.
     const int safepoint_released = aura_jit_poll_hold_budget_safepoint();
     if (hold_budget_released != 0 || safepoint_released != 0)
-        return 0;
+        return closure_dispatch_leave_native();
 
     // ── Inline cache check (Issue #1707: generation double-check) ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
@@ -5697,7 +5708,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                         }
                         aura_unlock_workspace_read();
                         invalidate_closure_cache_for(closure_id);
-                        return 0;
+                        return closure_dispatch_leave_native();
                     }
                 }
                 // Fast path: use snapshot (not live ce fields after gen check).
@@ -5776,7 +5787,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     }
     if (!have_entry || !entry.fn) {
         aura_unlock_workspace_read();
-        return 0;
+        return closure_dispatch_leave_native();
     }
 
     size_t slow_cid = static_cast<size_t>(closure_id);
@@ -5801,7 +5812,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             }
             aura_unlock_workspace_read();
             invalidate_closure_cache_for(closure_id);
-            return 0;
+            return closure_dispatch_leave_native();
         }
     }
     // Issue #3441: unnamed / sid==0 never took the #3412 named gate
@@ -5816,7 +5827,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         }
         aura_unlock_workspace_read();
         invalidate_closure_cache_for(closure_id);
-        return 0;
+        return closure_dispatch_leave_native();
     }
 
     // Stack buffer for small locals, fallback to heap for large
