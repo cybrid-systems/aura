@@ -720,6 +720,14 @@ public:
     // in fiber.cpp (unistd.h is not included here). Idempotent; ~Fiber's
     // `if (eventfd_ >= 0) ::close` stays as the backstop.
     void close_eventfd() noexcept;
+    // Issue #4443: the body has returned and the worker is back from
+    // resume(). Unmap the guard page and the stack and drop func_ so a
+    // process-static Scheduler does not keep two VMAs and the closure
+    // until process exit. The Fiber object stays in owned_fibers_
+    // (#3905). A live body, including Reclaimed-pending, is kept.
+    // Idempotent.
+    void release_done_resources() noexcept;
+    [[nodiscard]] bool done_resources_released() const noexcept;
     // Issue #2467: is_done() now strictly requires state_==Done.
     // Previously returned true for force-reclaimed fibers too
     // (Issue #2227 conflated semantics) — but that let joiners
@@ -1292,6 +1300,9 @@ private:
     ucontext_t ctx_;
     void* stack_ = nullptr;
     size_t stack_size_ = 0;
+    // Issue #4443: 0 idle, 1 unmap in progress, 2 stack and func_ dropped.
+    std::atomic<std::uint8_t> done_release_state_{0};
+    void unmap_stack() noexcept;
     int eventfd_ = -1;
     Func func_;
 

@@ -238,6 +238,7 @@ Scheduler::~Scheduler() {
             release_owned_fiber_quota(f);
         }
         dying_fibers.swap(owned_fibers_);
+        owned_fiber_set_.clear();
     }
     dying_fibers.clear();
     if (epoll_fd_ >= 0)
@@ -324,6 +325,7 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
         ::aura::compiler::lock_order::AuditedMutexLock lock(
             owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
         owned_fibers_.push_back(std::move(fb));
+        owned_fiber_set_.insert(ptr);
     }
 
     // Assign to a worker (load-aware when enabled, fallback to round-robin)
@@ -392,6 +394,7 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
         ::aura::compiler::lock_order::AuditedMutexLock lock(
             owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
         owned_fibers_.push_back(std::move(fb));
+        owned_fiber_set_.insert(ptr);
     }
 
     workers_[worker_id]->enqueue(ptr);
@@ -517,6 +520,11 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
     if (metrics_on_) {
         metrics_.fibers_completed.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #4443: resume() has returned on the worker, so the stack
+    // is not live. Drop the VMAs and func_ here. The Fiber* stays in
+    // owned_fibers_ (#3905). No OwnedFibers lock is held, so a mailbox
+    // close inside func_ does not invert with that rank (#4442).
+    fiber->release_done_resources();
 }
 
 // Issue #119: add a joiner fiber to a target's wait list.

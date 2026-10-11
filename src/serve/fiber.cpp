@@ -1434,6 +1434,36 @@ void Fiber::close_eventfd() noexcept {
     }
 }
 
+void Fiber::unmap_stack() noexcept {
+    if (!stack_)
+        return;
+    // stack_ is the usable start. The mmap base is the guard page before it.
+    auto* base = static_cast<char*>(stack_) - 4096;
+    ::munmap(base, 4096 + stack_size_);
+    stack_ = nullptr;
+    ctx_.uc_stack.ss_sp = nullptr;
+    ctx_.uc_stack.ss_size = 0;
+}
+
+void Fiber::release_done_resources() noexcept {
+    // Issue #4443: only after the body has returned. The caller is the
+    // worker that just came back from resume(), so this stack is not
+    // under swapcontext. A second caller loses the CAS.
+    if (!is_done())
+        return;
+    std::uint8_t expected = 0;
+    if (!done_release_state_.compare_exchange_strong(expected, 1, std::memory_order_acq_rel,
+                                                     std::memory_order_acquire))
+        return;
+    unmap_stack();
+    func_ = nullptr;
+    done_release_state_.store(2, std::memory_order_release);
+}
+
+bool Fiber::done_resources_released() const noexcept {
+    return done_release_state_.load(std::memory_order_acquire) == 2;
+}
+
 Fiber::~Fiber() {
     // Issue #2726: unregister Fiber* from the process-wide registry
     // first (before any teardown that might race an in-flight
@@ -1486,11 +1516,8 @@ Fiber::~Fiber() {
     // fiber's wake fd is never used again); this guards every other
     // teardown path. close_eventfd() is idempotent (stores -1).
     close_eventfd();
-    if (stack_) {
-        // stack_ = usable start; the mmap base is one guard page before
-        auto* base = static_cast<char*>(stack_) - 4096;
-        ::munmap(base, 4096 + stack_size_);
-    }
+    // Issue #4443: on_fiber_done may already have unmapped the stack.
+    unmap_stack();
     // Issue #213 Cycle 3: free the per-fiber mutation stack
     // storage. The pointer was lazily allocated by
     // Evaluator::active_mutation_stack() on first use. We

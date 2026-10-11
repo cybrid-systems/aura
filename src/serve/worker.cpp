@@ -676,6 +676,12 @@ void WorkerThread::run() {
             if (fiber->is_reclaimed()) {
                 fiber->clear_queued();
                 pending_.fetch_sub(1, std::memory_order_release);
+                // Issue #4443: a reclaimed fiber never reaches
+                // on_fiber_done. Once the body has returned, resume()
+                // is back on this worker and the stack can be unmapped.
+                // A still-live reclaimed body keeps the stack (#3905).
+                if (fiber->is_done())
+                    fiber->release_done_resources();
                 continue;
             }
 

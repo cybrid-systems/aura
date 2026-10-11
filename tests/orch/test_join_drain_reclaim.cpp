@@ -4274,6 +4274,190 @@ static void ac4442_dtor_mailbox_close_outside_owned_fibers() {
     force_audit_mode_for_test(prev_mode < 1 ? 1 : prev_mode);
 }
 
+// Issue #4443: a Done fiber unmaps its stack and drops func_ after the
+// worker returns from resume(). The Fiber object stays in owned_fibers_
+// (#3905). A second spawn+join wave must not keep two VMAs and a 2MB
+// stack per agent on a process-static Scheduler.
+static void ac4443_done_fiber_releases_stack() {
+    std::println("\n--- #4443: Done fiber releases stack and closure ---");
+
+    const auto sched_src = read_file("src/serve/scheduler.cpp");
+    const auto done_at = sched_src.find("void Scheduler::on_fiber_done");
+    const auto joiner_at = sched_src.find("// Issue #119: add a joiner fiber", done_at);
+    CHECK(done_at != std::string::npos && joiner_at != std::string::npos && joiner_at > done_at,
+          "4443: on_fiber_done window");
+    if (done_at != std::string::npos && joiner_at > done_at) {
+        const auto win = sched_src.substr(done_at, joiner_at - done_at);
+        CHECK(win.find("fiber->release_done_resources()") != std::string::npos,
+              "4443: on_fiber_done releases the stack");
+        CHECK(win.find("Issue #4443") != std::string::npos, "4443: on_fiber_done cites the issue");
+        CHECK(win.find("fiber->close_eventfd();") != std::string::npos,
+              "4443: eventfd close stays on the done path");
+    }
+
+    const auto reap = sched_src.find("std::size_t Scheduler::reap_orphans_now()");
+    const auto orphan_at = sched_src.find("std::size_t Scheduler::orphan_count()", reap);
+    CHECK(reap != std::string::npos && orphan_at != std::string::npos && orphan_at > reap,
+          "4443: reap window");
+    if (reap != std::string::npos && orphan_at > reap) {
+        const auto body = sched_src.substr(reap, orphan_at - reap);
+        CHECK(body.find("release_done_resources") == std::string::npos,
+              "4443: reap does not unmap a live body");
+        CHECK(body.find("owned_fibers_.erase") == std::string::npos,
+              "4443: reap still does not erase owned fibers");
+    }
+
+    const auto sh = read_file("src/serve/scheduler.h");
+    CHECK(sh.find("owned_fiber_set_") != std::string::npos, "4443: ownership set");
+    CHECK(sh.find("owned_fiber_set_.find") != std::string::npos, "4443: O(1) membership");
+    CHECK(sched_src.find("owned_fiber_set_.clear()") != std::string::npos,
+          "4443: ownership set clears with the dtor swap");
+    CHECK(sched_src.find("query:4443") == std::string::npos, "4443: no new query key");
+    CHECK(read_file("src/serve/fiber.cpp").find("Issue #4443") != std::string::npos,
+          "4443: fiber.cpp cites the issue");
+
+    const auto worker = read_file("src/serve/worker.cpp");
+    const auto pre = worker.find("if (fiber->is_done() || fiber->is_reclaimed())");
+    const auto resume_at = worker.find("fiber->resume();", pre);
+    CHECK(pre != std::string::npos && resume_at != std::string::npos && resume_at > pre,
+          "4443: pre-resume window");
+    if (pre != std::string::npos && resume_at > pre) {
+        const auto pre_win = worker.substr(pre, resume_at - pre);
+        CHECK(pre_win.find("release_done_resources") == std::string::npos,
+              "4443: pre-resume drop does not unmap");
+    }
+    CHECK(worker.find("if (fiber->is_reclaimed())") != std::string::npos,
+          "4443: post-resume reclaimed drop stays");
+    const auto rec = worker.find("if (fiber->is_reclaimed())");
+    if (rec != std::string::npos) {
+        const auto arm = worker.substr(rec, 700);
+        CHECK(arm.find("if (fiber->is_done())") != std::string::npos,
+              "4443: release is gated on Done");
+        CHECK(arm.find("fiber->release_done_resources()") != std::string::npos,
+              "4443: reclaimed Done arm releases");
+    }
+
+    auto count_maps = []() -> int {
+        std::ifstream in("/proc/self/maps");
+        int n = 0;
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty())
+                ++n;
+        }
+        return n;
+    };
+    auto vm_size_kb = []() -> long {
+        std::ifstream in("/proc/self/status");
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.starts_with("VmSize:"))
+                continue;
+            long v = 0;
+            for (char c : line) {
+                if (c >= '0' && c <= '9')
+                    v = v * 10 + (c - '0');
+            }
+            return v;
+        }
+        return 0;
+    };
+    auto wait_released = [](Fiber* f) -> bool {
+        if (!f)
+            return false;
+        for (int i = 0; i < 200; ++i) {
+            if (f->done_resources_released())
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return f->done_resources_released();
+    };
+
+    using aura::compiler::lock_order::force_audit_mode_for_test;
+    using aura::compiler::lock_order::lock_order_mode;
+    using aura::orch::AgentSpec;
+    const int prev_mode = lock_order_mode();
+    force_audit_mode_for_test(3);
+
+    constexpr int kWave = 32;
+    {
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+
+        auto run_wave = [&](int wave) -> bool {
+            bool all_ok = true;
+            for (int i = 0; i < kWave; ++i) {
+                AgentSpec spec;
+                spec.name = "4443-w" + std::to_string(wave) + "-" + std::to_string(i);
+                spec.attach_mailbox = true;
+                spec.keepalive_interval_ms = 0;
+                spec.body = [] {};
+                AgentHandle h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+                if (!h.ok || h.fiber == nullptr) {
+                    all_ok = false;
+                    continue;
+                }
+                JoinPolicy policy;
+                policy.primary_ms = 2000;
+                policy.drain_ms = 0;
+                const auto jr = join_agent(h, policy);
+                if (jr.status != JoinStatus::Ok)
+                    all_ok = false;
+                if (!wait_released(h.fiber) || !h.fiber->is_done())
+                    all_ok = false;
+            }
+            return all_ok;
+        };
+
+        CHECK(run_wave(0), "4443: first wave joined and released");
+        const int maps_after_first = count_maps();
+        const long vm_after_first = vm_size_kb();
+        CHECK(maps_after_first > 0, "4443: maps baseline parsed");
+        CHECK(vm_after_first > 0, "4443: VmSize baseline parsed");
+        CHECK(run_wave(1), "4443: second wave joined and released");
+        const int maps_after = count_maps();
+        const long vm_after = vm_size_kb();
+        const int maps_delta = maps_after - maps_after_first;
+        const long vm_delta = vm_after - vm_after_first;
+        std::println("4443 maps {} -> {} delta {} VmSize {} -> {} delta {}", maps_after_first,
+                     maps_after, maps_delta, vm_after_first, vm_after, vm_delta);
+        CHECK(maps_delta <= 16, "4443: second wave does not add a VMA per spawn");
+        CHECK(vm_delta < 16384, "4443: second wave VmSize stays under 16MB");
+
+        std::atomic<bool> go{false};
+        std::atomic<int> spins{0};
+        AgentSpec live;
+        live.name = "4443-live";
+        live.attach_mailbox = true;
+        live.keepalive_interval_ms = 0;
+        live.mutation_boundary = false;
+        live.body = [&] {
+            while (!go.load(std::memory_order_acquire)) {
+                spins.fetch_add(1, std::memory_order_relaxed);
+                Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+        };
+        AgentHandle lh = aura::orch::spawn_agent_with_mailbox(sched, std::move(live));
+        CHECK(lh.ok && lh.fiber != nullptr, "4443: live spawn ok");
+        for (int i = 0; i < 200 && spins.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK(spins.load(std::memory_order_acquire) > 0, "4443: live body is running");
+        CHECK(lh.fiber && !lh.fiber->is_done(), "4443: yielding body is not Done");
+        CHECK(lh.fiber && !lh.fiber->done_resources_released(),
+              "4443: yielding body keeps its stack");
+        go.store(true, std::memory_order_release);
+        CHECK(lh.fiber && wait_released(lh.fiber), "4443: Done live body releases the stack");
+        CHECK(lh.fiber && lh.fiber->is_done(), "4443: Fiber object stays after release");
+        JoinPolicy live_pol;
+        live_pol.primary_ms = 2000;
+        live_pol.drain_ms = 0;
+        const auto live_jr = join_agent(lh, live_pol);
+        CHECK(live_jr.status == JoinStatus::Ok, "4443: live join ok after release");
+    }
+    CHECK(lock_order_mode() == 3, "4443: scheduler dtor returned under hard lock order");
+    force_audit_mode_for_test(prev_mode < 1 ? 1 : prev_mode);
+}
+
 // Issue #3953: repeated join_agent on a stuck Reclaimed name must not
 // re-burn drain×8; 2nd+ join uses the 50ms ensure budget.
 static void ac3953_1_repeat_join_short_budget() {
@@ -10042,6 +10226,9 @@ int run_test_join_drain_reclaim() {
 
     std::println("\n=== Issue #4442: ~Scheduler destroys fibers outside OwnedFibers ===");
     ac4442_dtor_mailbox_close_outside_owned_fibers();
+
+    std::println("\n=== Issue #4443: Done fiber releases stack and closure ===");
+    ac4443_done_fiber_releases_stack();
 
     std::println("\n=== Issue #3953: reclaim wait yields on fiber; repeat join short ===");
     ac3953_1_repeat_join_short_budget();
