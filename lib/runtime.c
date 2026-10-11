@@ -1431,6 +1431,15 @@ __attribute__((weak)) long long aura_jit_deopt_to_interpreter(const char* fn_nam
     return 0;
 }
 
+// Issue #4451: OpCall / OpApply peek the prologue-deopt sentinel after
+// aura_closure_call and return 0 when the callee refused. Standalone
+// --emit-binary links only this file, so the symbol must exist here.
+// No host TLS in standalone AOT: peek stays 0 and the call result is
+// published. aura_jit_bridge.cpp's strong def overrides this in-process.
+__attribute__((weak)) int aura_jit_peek_prologue_deopt_sentinel(void) {
+    return 0;
+}
+
 // Issue #3988: OpJump back-edge hold-budget / force-safepoint poll —
 // return 0 (no safepoint requested, keep running). Standalone AOT is
 // single-threaded with no Fiber scheduler / hold budget to yield to;
