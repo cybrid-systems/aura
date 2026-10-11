@@ -24673,12 +24673,15 @@ def cmd_chaos_soak_hard_gate_2722():
     bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox"
     if not bin_path.exists():
         if not (BUILD / "CMakeCache.txt").exists():
-            # Static-only gate (CI release job / fresh clone without build/).
-            ok(
-                "chaos SOAK hard gate runtime skipped (no CMakeCache; static "
-                "coverage only) — run after ./build.py build or via build-test"
+            # Issue #4437: a missing soak binary is a release failure.
+            # Static coverage already ran; "no CMakeCache; static coverage
+            # only" must not return success.
+            fail(
+                "chaos SOAK hard gate missing test_chaos_mutate_steal_gc_mailbox "
+                "(no CMakeCache; static coverage only does not pass the release "
+                "hard gate)"
             )
-            return 0
+            return 1
         info("building test_chaos_mutate_steal_gc_mailbox…")
         nproc = os.cpu_count() or 4
         r = run(
