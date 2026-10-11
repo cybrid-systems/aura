@@ -1001,6 +1001,73 @@ static void run_3173_surface() {
           "3173: no invent test_issue_3173");
 }
 
+// ── Issue #4449 — production-face fail-closed for (gc) / (gc-heap) ──
+// The direct-clear reset prims dangle every live binding on the
+// production face (bulk heap clear / arena reset with no root,
+// boundary, pin, or defer consultation). Typed deny there; Soft /
+// sandbox=off keeps the benchmark reset unchanged.
+static void run_4449_production_gc_deny() {
+    std::println("\n=== Issue #4449: production face denies (gc) / (gc-heap) ===");
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+
+    // AC1: (gc-heap) typed-denies on the production face, zero side
+    // effects — live top-level bindings stay reachable after the deny.
+    // Observable is the C++ binding table, not eval: bare-symbol eval on
+    // the strict pipeline has a pre-existing face here (err="keep") that
+    // is orthogonal to this gate.
+    {
+        CompilerService cs;
+        cs.evaluator().set_sandbox_mode(true); // Restricted production face
+        (void)cs.eval("(set-code \"(define keep 42)\")");
+        (void)cs.eval("(eval-current)");
+        const auto heap_before = cs.evaluator().string_heap_size();
+        const auto pairs_before = cs.evaluator().pairs_size();
+        auto r = cs.eval("(gc-heap)");
+        CHECK(r.has_value() && is_error(*r),
+              "4449 AC1: (gc-heap) typed-denies under production face");
+        // Zero side effects: the direct clear never ran — the denied call
+        // only appends (symbol interning + the typed-deny error entry);
+        // the destructive path would have CLEARED + shrunk these vectors
+        // to ~0. (Binding-table probes are unusable here: the synthetic
+        // half-armed face never binds symbols into top_env — pre-existing
+        // strict-pipeline face.)
+        CHECK(cs.evaluator().string_heap_size() >= heap_before &&
+                  cs.evaluator().pairs_size() == pairs_before,
+              "4449 AC1: deny has zero side effects (heap clear never ran)");
+    }
+
+    // AC2: (gc) denies the same way — arena reset + workspace null is
+    // equally destructive on the production face.
+    {
+        CompilerService cs;
+        cs.evaluator().set_sandbox_mode(true);
+        (void)cs.eval("(set-code \"(define keep 43)\")");
+        (void)cs.eval("(eval-current)");
+        const auto heap_before = cs.evaluator().string_heap_size();
+        const auto pairs_before = cs.evaluator().pairs_size();
+        auto r = cs.eval("(gc)");
+        CHECK(r.has_value() && is_error(*r), "4449 AC2: (gc) typed-denies under production face");
+        CHECK(cs.evaluator().string_heap_size() >= heap_before &&
+                  cs.evaluator().pairs_size() == pairs_before,
+              "4449 AC2: deny has zero side effects (arena reset never ran)");
+    }
+
+    // AC3: Soft / sandbox=off keeps the reset behavior (benchmark use).
+    // Disarm the #2657 SSOT process effect mode + reset any production
+    // audit state leaked by earlier batch members so this face is the
+    // cold-start Soft one (hermetic against batch-member leaks).
+    {
+        aura::compiler::typed_audit::reset_production_audit_defaults_for_test();
+        CompilerService cs;
+        cs.evaluator().set_sandbox_mode(false); // effect mode Off (process SSOT)
+        auto g = cs.eval("(gc-heap)");
+        CHECK(g.has_value() && !is_error(*g), "4449 AC3: Soft face keeps (gc-heap) reset");
+        auto g2 = cs.eval("(gc)");
+        CHECK(g2.has_value() && !is_error(*g2), "4449 AC3: Soft face keeps (gc) reset");
+    }
+}
+
 } // namespace aura_arena_batch
 
 int main() {
@@ -1049,6 +1116,7 @@ int main() {
     run_173_types_distinct();
     run_219_gap_buffer_child_data();
     run_3173_surface();
+    run_4449_production_gc_deny();
     std::println("\n=== Arena batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

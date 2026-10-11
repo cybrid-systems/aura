@@ -11,6 +11,7 @@ module;
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2935 recovery counters
+#include "compiler/typed_mutation_audit.h"   // Issue #4449: production_defaults_active gate
 #include <limits>
 #include <vector>
 
@@ -78,6 +79,33 @@ template <typename F> void sink_arena_prim(std::string_view name, F&& fn) {
     (void)fn;
 }
 
+// Issue #4449: production-face gate for the destructive reset prims.
+// (gc) resets the arena and nulls workspace/current flat; (gc-heap)'s
+// direct-clear fallback bulk-clears string/pairs/cells/errors/vector/
+// opaque heaps, destroys every FlatHashTable, and nulls workspace —
+// with no root / MutationBoundary / PanicCheckpoint / pin / defer
+// consultation. On the production face (Restricted + production
+// defaults) every live binding (top-level defines, closure captures,
+// FFI opaque slots) dangles: silent wrong reads or pmr OOB + SIGABRT
+// (repro 3/3). Fail-closed: typed deny, zero side effects. Soft /
+// sandbox=off keeps the benchmark-reset behavior unchanged. Free
+// function (not a capture) so prim bodies hold no stack lambda
+// reference past register_memory_primitives returns.
+static std::optional<types::EvalValue> production_gc_reset_deny(Evaluator& ev,
+                                                                std::string_view prim) {
+    const bool sandboxed = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
+    if (!(sandboxed || aura::compiler::typed_audit::production_defaults_active()))
+        return std::nullopt;
+    const std::string msg =
+        std::string(prim) +
+        ": denied on the production face — destructive heap reset is unavailable "
+        "(Issue #4449; Soft / sandbox=off keeps it)";
+    const auto cidx = ev.push_string_heap(msg);
+    const auto eidx = ev.error_values_.size();
+    ev.error_values_.push_back(types::make_string(cidx));
+    return types::make_error(eidx);
+}
+
 void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                                 std::function<void()> destroy_defuse_index) {
 
@@ -132,6 +160,11 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (gc) — Reset arena to reclaim memory between benchmark tasks
     // Saves current source, resets arena, re-parses source into fresh arena.
     add("gc", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        // Issue #4449: fail-closed on the production face — arena reset +
+        // workspace null dangle every live binding there. Typed deny,
+        // zero side effects; Soft / sandbox=off unchanged.
+        if (auto deny = production_gc_reset_deny(ev, "gc"))
+            return *deny;
         // Save current source
         std::string saved_src;
         if (ev.workspace_flat_ && ev.workspace_flat_->root != aura::ast::NULL_NODE) {
@@ -197,6 +230,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // thread-safe GC), triggers a full GC cycle instead of
     // blindly clearing. Falls back to direct clear for stdin mode.
     add("gc-heap", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        // Issue #4449: the direct-clear fallback is fail-closed on the
+        // production face (bulk heap clear dangles live bindings). A
+        // live collector (serve-async) is NOT gated — it is a real GC
+        // cycle, not the destructive reset.
+        if (!aura::messaging::g_gc_collect) {
+            if (auto deny = production_gc_reset_deny(ev, "gc-heap"))
+                return *deny;
+        }
         // If GC collector is available, use it
         if (aura::messaging::g_gc_collect) {
             std::lock_guard<std::mutex> lock(ev.heap_mutex());
