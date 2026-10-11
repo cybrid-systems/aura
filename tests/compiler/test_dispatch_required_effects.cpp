@@ -2257,6 +2257,198 @@ static void ac4430_string_cap_tenant_mirror() {
     set_mode(SandboxMode::Off);
 }
 
+// Issue #4431: hash-keys / hash-values / hash->alist and the query-result
+// spines pushed pairs without note_inrange_pair_mint. Record 0 stays the
+// documented allow. The production face stamps those user-visible cells so
+// a foreign set-car! / set-cdr! / car hits the existing mismatch arm.
+static void ac4431_user_visible_pair_mint() {
+    std::println("\n--- #4431: user-visible pair lists carry the mint stamp ---");
+    using aura::compiler::types::EvalValue;
+    using aura::compiler::types::is_pair;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    cs.register_jit_primitives();
+    auto set_car_fn = ev.primitives().lookup("set-car!");
+    auto set_cdr_fn = ev.primitives().lookup("set-cdr!");
+    auto car_fn = ev.primitives().lookup("car");
+    auto cdr_fn = ev.primitives().lookup("cdr");
+    CHECK(set_car_fn && set_cdr_fn && car_fn && cdr_fn, "4431: pair prims present");
+    if (!(set_car_fn && set_cdr_fn && car_fn && cdr_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        ev.set_effect_sandbox_mode(0);
+        return;
+    }
+
+    EvalValue hv;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        hv = call_hash_op(ev, "hash", {make_int(1), make_int(42)});
+    }
+    CHECK(is_hash(hv), "4431: tenant 7 mints the hash");
+    if (!is_hash(hv)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        ev.set_effect_sandbox_mode(0);
+        return;
+    }
+
+    EvalValue keys;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        keys = call_hash_op(ev, "hash-keys", {hv});
+    }
+    CHECK(is_pair(keys), "4431: owner hash-keys is a list cell");
+    reset_security_event_ring_for_test();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({keys, make_int(99)});
+        auto sd = (*set_cdr_fn)({keys, make_int(0)});
+        auto rc = (*car_fn)({keys});
+        CHECK(is_error(sc), "4431: foreign set-car! on hash-keys denied");
+        CHECK(is_error(sd), "4431: foreign set-cdr! on hash-keys denied");
+        CHECK(is_error(rc), "4431: foreign car on hash-keys denied");
+        CHECK(ring_has_isolation_deny("set-car!"), "4431: IsolationDeny set-car!");
+        CHECK(ring_has_isolation_deny("set-cdr!"), "4431: IsolationDeny set-cdr!");
+        CHECK(ring_has_isolation_deny("car"), "4431: IsolationDeny car");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto rc = (*car_fn)({keys});
+        CHECK(is_int(rc) && as_int(rc) == 1, "4431: hash-keys car unchanged");
+        auto sc = (*set_car_fn)({keys, make_int(3)});
+        CHECK(!is_error(sc), "4431: owner set-car! on hash-keys lands");
+        auto rc2 = (*car_fn)({keys});
+        CHECK(is_int(rc2) && as_int(rc2) == 3, "4431: owner hash-keys car is 3");
+    }
+
+    EvalValue vals;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        vals = call_hash_op(ev, "hash-values", {hv});
+    }
+    CHECK(is_pair(vals), "4431: owner hash-values is a list cell");
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({vals, make_int(7)});
+        CHECK(is_error(sc), "4431: foreign set-car! on hash-values denied");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto rc = (*car_fn)({vals});
+        CHECK(is_int(rc) && as_int(rc) == 42, "4431: hash-values car unchanged");
+    }
+
+    EvalValue al;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        al = call_hash_op(ev, "hash->alist", {hv});
+    }
+    CHECK(is_pair(al), "4431: owner hash->alist is a list cell");
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({al, make_int(0)});
+        CHECK(is_error(sc), "4431: foreign set-car! on alist spine denied");
+    }
+    EvalValue kv;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        kv = (*car_fn)({al});
+    }
+    CHECK(is_pair(kv), "4431: alist car is the kv pair");
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({kv, make_int(8)});
+        auto sd = (*set_cdr_fn)({kv, make_int(9)});
+        CHECK(is_error(sc), "4431: foreign set-car! on alist kv denied");
+        CHECK(is_error(sd), "4431: foreign set-cdr! on alist kv denied");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto rc = (*car_fn)({kv});
+        auto rd = (*cdr_fn)({kv});
+        CHECK(is_int(rc) && as_int(rc) == 1, "4431: alist key unchanged");
+        CHECK(is_int(rd) && as_int(rd) == 42, "4431: alist value unchanged");
+    }
+
+    reset_security_event_ring_for_test();
+    ev.set_effect_sandbox_mode(0);
+    EvalValue soft_keys;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        soft_keys = call_hash_op(ev, "hash-keys", {hv});
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto sc = (*set_car_fn)({soft_keys, make_int(11)});
+        auto rc = (*car_fn)({soft_keys});
+        CHECK(!is_error(sc), "4431: Off set-car! on hash-keys kept");
+        CHECK(is_int(rc) && as_int(rc) == 11, "4431: Off write visible and stamp not loaded");
+        CHECK(!ring_has_isolation_deny("set-car!"), "4431: Off records no IsolationDeny");
+    }
+
+    const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    auto body_of = [&](const char* op) -> std::string {
+        const auto at = vec.find(std::format("add, ev, \"{}\"", op));
+        if (at == std::string::npos)
+            return {};
+        const auto end = vec.find("register_prim", at + 10);
+        if (end == std::string::npos)
+            return vec.substr(at);
+        return vec.substr(at, end - at);
+    };
+    const auto keys_body = body_of("hash-keys");
+    const auto kpush = keys_body.find("pairs.push_back");
+    const auto kstamp = keys_body.find("note_inrange_pair_mint");
+    const auto kgate = keys_body.find("aura_hash_gate_checked");
+    CHECK(kgate != std::string::npos && kpush != std::string::npos && kgate < kpush,
+          "4431: hash-keys gate stays before the copy");
+    CHECK(kpush != std::string::npos && kstamp != std::string::npos && kpush < kstamp,
+          "4431: hash-keys stamps the minted list cell");
+    const auto vals_body = body_of("hash-values");
+    const auto vpush = vals_body.find("pairs.push_back");
+    const auto vstamp = vals_body.find("note_inrange_pair_mint");
+    CHECK(vpush != std::string::npos && vstamp != std::string::npos && vpush < vstamp,
+          "4431: hash-values stamps the minted list cell");
+    const auto al_body = body_of("hash->alist");
+    std::size_t al_stamps = 0;
+    for (std::size_t at = 0;
+         (at = al_body.find("note_inrange_pair_mint", at)) != std::string::npos;) {
+        ++al_stamps;
+        at += 1;
+    }
+    CHECK(al_stamps == 2, "4431: hash->alist stamps the kv cell and the spine");
+
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(qws.find("ws.pairs.push_back") == std::string::npos,
+          "4431: query builders stamp every push");
+    CHECK(qws.find("note_inrange_pair_mint") != std::string::npos,
+          "4431: query stamp uses the mint helper");
+    const auto pre = qws.find("Pre-allocate 3*N");
+    CHECK(pre != std::string::npos, "4431: children-stable prealloc located");
+    if (pre != std::string::npos) {
+        const auto win = qws.substr(pre, 500);
+        CHECK(win.find("push_stamped_pair") != std::string::npos,
+              "4431: placeholder cells are stamped");
+    }
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto allow = sec.find("bool Evaluator::inrange_slot_tenant_allows");
+    CHECK(allow != std::string::npos, "4431: in-range allow located");
+    if (allow != std::string::npos) {
+        const auto win = sec.substr(allow, 1800);
+        CHECK(win.find("rec == 0") != std::string::npos,
+              "4431: record 0 stays the documented allow");
+    }
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -3938,6 +4130,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4430: string-only caps keyed by the tenant principal ──
     ac4430_string_cap_tenant_mirror();
+
+    // ── Issue #4431: stamp user-visible pair lists at the mint ──
+    ac4431_user_visible_pair_mint();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

@@ -88,6 +88,16 @@ struct WorkspaceQueryState {
     std::shared_mutex& tag_arity_index_mtx;
     std::function<aura::ast::StringPool*()> canonical_pool;
     std::function<void()> build_tag_arity_index;
+    // Issue #4431: query-result spines share the evaluator pair heap.
+    Evaluator& ev;
+
+    // Stamp at the push so a foreign set-car! hits the #4298 mismatch arm.
+    // Cells this helper never sees may stay record 0.
+    void push_stamped_pair(Pair cell) const {
+        const auto pid = pairs.size();
+        pairs.push_back(std::move(cell));
+        ev.note_inrange_pair_mint(pid);
+    }
 };
 
 // Issue #3354: shared query skip face with mutate default-reject
@@ -194,10 +204,19 @@ void register_workspace_query_primitives(
     // Issue #2628: private PrimFn table for op-dispatch (not public names).
     auto q_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
 
-    WorkspaceQueryState ws{workspace_mtx,       workspace_flat, workspace_pool,
-                           type_registry,       keyword_table,  pairs,
-                           string_heap,         temp_arena,     tag_arity_index,
-                           tag_arity_index_mtx, canonical_pool, build_tag_arity_index};
+    WorkspaceQueryState ws{workspace_mtx,
+                           workspace_flat,
+                           workspace_pool,
+                           type_registry,
+                           keyword_table,
+                           pairs,
+                           string_heap,
+                           temp_arena,
+                           tag_arity_index,
+                           tag_arity_index_mtx,
+                           canonical_pool,
+                           build_tag_arity_index,
+                           ev};
 
     // Issue #2192: QueryEpoch helpers for primary workspace queries.
     // Capture under shared_lock (caller holds); finish re-checks before return.
@@ -400,15 +419,15 @@ void register_workspace_query_primitives(
                     EvalValue packed = make_void();
                     for (int mi = static_cast<int>(qr.match_count) - 1; mi >= 0; --mi) {
                         const auto gidx = ws.pairs.size();
-                        ws.pairs.push_back(
+                        ws.push_stamped_pair(
                             {make_int(static_cast<std::int64_t>(qr.matches[mi].generation)),
                              make_void()});
                         const auto pidx = ws.pairs.size();
-                        ws.pairs.push_back(
+                        ws.push_stamped_pair(
                             {make_int(static_cast<std::int64_t>(qr.matches[mi].node_id)),
                              make_pair(static_cast<int>(gidx))});
                         const auto lidx = ws.pairs.size();
-                        ws.pairs.push_back({make_pair(static_cast<int>(pidx)), packed});
+                        ws.push_stamped_pair({make_pair(static_cast<int>(pidx)), packed});
                         packed = make_pair(static_cast<int>(lidx));
                     }
                     matches_out = packed;
@@ -739,7 +758,7 @@ void register_workspace_query_primitives(
                 return;
             }
             auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
             result = make_pair(pid);
         };
         // Issue #3390 (I3): try the existing find_define_by_name index
@@ -824,7 +843,7 @@ void register_workspace_query_primitives(
         EvalValue result = make_void();
         for (std::size_t i = kids.size(); i > 0; --i) {
             auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(kids[i - 1])), result});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(kids[i - 1])), result});
             result = make_pair(pid);
         }
         // Issue #3827: schema-2 under Production via maybe_result.
@@ -932,7 +951,7 @@ void register_workspace_query_primitives(
         // exact car / cdr values are filled in below; the
         // placeholders keep the indices stable.
         for (std::size_t i = 0; i < 3 * n; ++i) {
-            ws.pairs.push_back({make_void(), make_void()});
+            ws.push_stamped_pair({make_void(), make_void()});
         }
         // Fill (gen, nil) and (id, ^gen-pair) for each child.
         // The list-node cdr is filled in the second loop.
@@ -1017,9 +1036,10 @@ void register_workspace_query_primitives(
         // bare pair (AC Soft exception).
         const auto qe = begin_query_epoch(&flat);
         auto gen_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.gen)), make_void()});
+        ws.push_stamped_pair({make_int(static_cast<std::int64_t>(exported.gen)), make_void()});
         auto pair_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
+        ws.push_stamped_pair(
+            {make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
         EvalValue packed = make_pair(pair_pid);
         // Issue #3895 / #3259: production auto-upgrade walks a match LIST
         // (car = NodeId int or (id . gen) pair). A bare (id . gen) pair is
@@ -1029,7 +1049,7 @@ void register_workspace_query_primitives(
         // parent. Soft keeps the historical bare pair.
         if (aura::compiler::typed_audit::production_defaults_active()) {
             auto list_pid = ws.pairs.size();
-            ws.pairs.push_back({packed, make_void()});
+            ws.push_stamped_pair({packed, make_void()});
             packed = make_pair(list_pid);
         }
         return end_query_epoch_maybe_result(qe, &flat, packed, /*as_query_result=*/false);
@@ -1055,7 +1075,7 @@ void register_workspace_query_primitives(
                 // zero matches (not a pair list). Wrap so match_count==1 and
                 // matches[0] is root.
                 auto list_pid = ws.pairs.size();
-                ws.pairs.push_back({out, make_void()});
+                ws.push_stamped_pair({out, make_void()});
                 out = make_pair(static_cast<int>(list_pid));
                 return end_query_epoch_maybe_result(qe, ws.workspace_flat, out,
                                                     /*as_query_result=*/false);
@@ -1095,26 +1115,26 @@ void register_workspace_query_primitives(
 
             // children-count
             auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.children.size())), result});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.children.size())), result});
             result = make_pair(pid);
 
             // value (int or string content for string literals)
             if (v.has_int() && v.tag != aura::ast::NodeTag::LiteralString) {
                 pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(v.int_value), result});
+                ws.push_stamped_pair({make_int(v.int_value), result});
                 result = make_pair(pid);
             } else if (v.sym_id != aura::ast::INVALID_SYM) {
                 auto sym_name = std::string(ws.workspace_pool->resolve(v.sym_id));
                 auto sid = ws.string_heap.size();
                 ws.string_heap.push_back(sym_name);
                 pid = ws.pairs.size();
-                ws.pairs.push_back({make_string(sid), result});
+                ws.push_stamped_pair({make_string(sid), result});
                 result = make_pair(pid);
             }
 
             // tag-id (integer tag == NodeTag enum value)
             pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.tag)), result});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.tag)), result});
             result = make_pair(pid);
 
             return result;
@@ -1223,9 +1243,9 @@ void register_workspace_query_primitives(
             // memory never receives the layout-only pair. Soft keeps the
             // historical bare pair (AC Soft exception).
             auto gen_pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
             auto pair_pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
             EvalValue packed = make_pair(pair_pid);
             // Issue #3895 / #3259: production auto-upgrade walks a match LIST
             // (car = NodeId int or (id . gen) pair). A bare (id . gen) pair is
@@ -1235,7 +1255,7 @@ void register_workspace_query_primitives(
             // target. Soft keeps the historical bare pair.
             if (aura::compiler::typed_audit::production_defaults_active()) {
                 auto list_pid = ws.pairs.size();
-                ws.pairs.push_back({packed, make_void()});
+                ws.push_stamped_pair({packed, make_void()});
                 packed = make_pair(list_pid);
             }
             return end_query_epoch_maybe_result(qe, &flat, packed, /*as_query_result=*/false);
@@ -1603,7 +1623,7 @@ void register_workspace_query_primitives(
                         continue;
                 }
                 auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
             }
             // Issue #4088: Production auto-upgrades to the schema-2 stamped
@@ -1646,7 +1666,7 @@ void register_workspace_query_primitives(
                 if (sym != aura::ast::INVALID_SYM && v.sym_id != sym)
                     continue;
                 auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
             }
             // Issue #4088: Production auto-upgrade inside end_query_epoch_maybe_result
@@ -1686,16 +1706,16 @@ void register_workspace_query_primitives(
                 // arena, same list shape as the query:defines results.
                 EvalValue rec = make_void();
                 auto p1 = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.col)), rec});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.col)), rec});
                 rec = make_pair(p1);
                 auto p2 = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.line)), rec});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.line)), rec});
                 rec = make_pair(p2);
                 auto p3 = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), rec});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), rec});
                 rec = make_pair(p3);
                 auto p4 = ws.pairs.size();
-                ws.pairs.push_back({rec, result});
+                ws.push_stamped_pair({rec, result});
                 result = make_pair(p4);
             }
             // Issue #4088: Production auto-upgrade inside
@@ -1754,10 +1774,10 @@ void register_workspace_query_primitives(
                 const auto namev =
                     make_string(static_cast<std::uint64_t>(ws.string_heap.size() - 1));
                 const auto p1 = ws.pairs.size();
-                ws.pairs.push_back({namev, make_int(count)});
+                ws.push_stamped_pair({namev, make_int(count)});
                 const auto rec = make_pair(p1);
                 const auto p2 = ws.pairs.size();
-                ws.pairs.push_back({rec, result});
+                ws.push_stamped_pair({rec, result});
                 result = make_pair(p2);
             }
             // Issue #4088: Production auto-upgrade inside
@@ -1816,7 +1836,7 @@ void register_workspace_query_primitives(
             for (std::size_t ci = 0; ci < kids.size(); ++ci) {
                 if (kids[ci] == target) {
                     auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                     result = make_pair(pid);
                     break;
                 }
@@ -1875,7 +1895,7 @@ void register_workspace_query_primitives(
         ws.string_heap.push_back(value);
 
         auto val_pair = ws.pairs.size();
-        ws.pairs.push_back({make_keyword(field_idx), make_string(val_string_idx)});
+        ws.push_stamped_pair({make_keyword(field_idx), make_string(val_string_idx)});
         return make_pair(val_pair);
     });
 
@@ -2285,7 +2305,7 @@ void register_workspace_query_primitives(
 
                     if (match) {
                         auto pid = ws.pairs.size();
-                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                        ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                         result = make_pair(pid);
                     }
                 }
@@ -2368,7 +2388,7 @@ void register_workspace_query_primitives(
                     continue;
                 if (flat.get(id).tag == target_tag) {
                     auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                     result = make_pair(pid);
                 }
             }
@@ -2455,9 +2475,9 @@ void register_workspace_query_primitives(
                 auto nidx = ws.string_heap.size();
                 ws.string_heap.push_back(fname);
                 auto entry = ws.pairs.size();
-                ws.pairs.push_back({make_string(nidx), val});
+                ws.push_stamped_pair({make_string(nidx), val});
                 auto cons = ws.pairs.size();
-                ws.pairs.push_back({make_pair(entry), result});
+                ws.push_stamped_pair({make_pair(entry), result});
                 result = make_pair(cons);
             };
             // Issue #4088: body-node / init-node members are Agent memory —
@@ -2481,37 +2501,37 @@ void register_workspace_query_primitives(
                 if (!aura::compiler::typed_audit::production_defaults_active()) {
                     // Soft: historical v1 (id . gen) pair (as-stable-ref parity).
                     const auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)),
-                                        make_int(static_cast<std::int64_t>(ref.gen))});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(ref.id)),
+                                          make_int(static_cast<std::int64_t>(ref.gen))});
                     return make_pair(pid);
                 }
                 // Production: v2 spine, same shape as query:as-stable-ref.
                 const auto p_id = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_void()});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(ref.id)), make_void()});
                 const auto p_gen = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
                 const auto p_wrap = ws.pairs.size();
-                ws.pairs.push_back(
+                ws.push_stamped_pair(
                     {make_int(static_cast<std::int64_t>(ref.wrap_epoch)), make_void()});
                 const auto p_tenant = ws.pairs.size();
-                ws.pairs.push_back(
+                ws.push_stamped_pair(
                     {make_int(static_cast<std::int64_t>(ref.tenant_id)), make_void()});
                 const auto p_cow = ws.pairs.size();
-                ws.pairs.push_back(
+                ws.push_stamped_pair(
                     {make_int(static_cast<std::int64_t>(ref.cow_epoch_at_capture)), make_void()});
                 if (ref.fiber_id != 0) {
                     const auto p_fiber = ws.pairs.size();
-                    ws.pairs.push_back(
+                    ws.push_stamped_pair(
                         {make_int(static_cast<std::int64_t>(ref.fiber_id)), make_void()});
                     if (ref.boundary_pinned) {
                         const auto p_boundary = ws.pairs.size();
-                        ws.pairs.push_back({make_bool(ref.boundary_pinned), make_void()});
+                        ws.push_stamped_pair({make_bool(ref.boundary_pinned), make_void()});
                         ws.pairs[p_fiber].cdr = make_pair(p_boundary);
                     }
                     ws.pairs[p_cow].cdr = make_pair(p_fiber);
                 } else if (ref.boundary_pinned) {
                     const auto p_boundary = ws.pairs.size();
-                    ws.pairs.push_back({make_bool(ref.boundary_pinned), make_void()});
+                    ws.push_stamped_pair({make_bool(ref.boundary_pinned), make_void()});
                     ws.pairs[p_cow].cdr = make_pair(p_boundary);
                 }
                 ws.pairs[p_tenant].cdr = make_pair(p_cow);
@@ -2745,7 +2765,7 @@ void register_workspace_query_primitives(
                 auto v = flat.get(id);
                 if (v.tag == aura::ast::NodeTag::Define && v.marker == target) {
                     auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                     result = make_pair(pid);
                 }
             }
@@ -2790,7 +2810,7 @@ void register_workspace_query_primitives(
                 auto v = flat.get(id);
                 if (v.tag == aura::ast::NodeTag::Call && v.marker == target) {
                     auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                     result = make_pair(pid);
                 }
             }
@@ -2982,7 +3002,7 @@ void register_workspace_query_primitives(
                         continue;
                     ++where_hits;
                     auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                     result = make_pair(pid);
                     ++emitted;
                 }
@@ -3001,7 +3021,7 @@ void register_workspace_query_primitives(
                 if (flat.marker(id) != target)
                     continue;
                 auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
                 ++emitted;
             }
@@ -3259,7 +3279,7 @@ void register_workspace_query_primitives(
                         break;
                     if (flat.is_macro_introduced(id)) {
                         auto pid = ws.pairs.size();
-                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                        ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                         result = make_pair(pid);
                         ++emitted;
                     }
@@ -3273,7 +3293,7 @@ void register_workspace_query_primitives(
                     break;
                 if (flat.is_macro_introduced(id)) {
                     auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), result});
                     result = make_pair(pid);
                     ++emitted;
                 }
@@ -3330,7 +3350,7 @@ void register_workspace_query_primitives(
             EvalValue result = make_void();
             auto append = [&](std::int64_t v) {
                 auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(v), result});
+                ws.push_stamped_pair({make_int(v), result});
                 result = make_pair(pid);
             };
             append(static_cast<std::int64_t>(user));
@@ -3435,11 +3455,11 @@ void register_workspace_query_primitives(
             ws.string_heap.push_back(type_name);
             auto name_ev = make_string(name_idx);
             auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), name_ev});
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), name_ev});
             auto pair_ev = make_pair(pid);
             // Prepend to result
             auto list_pid = ws.pairs.size();
-            ws.pairs.push_back({pair_ev, result});
+            ws.push_stamped_pair({pair_ev, result});
             result = make_pair(list_pid);
             ++emitted;
         }
@@ -3931,13 +3951,13 @@ void register_workspace_query_primitives(
                             auto nid_int = make_int(static_cast<std::int64_t>(id));
                             auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
                             auto pair_pid = ws.pairs.size();
-                            ws.pairs.push_back({nid_int, marker_int});
+                            ws.push_stamped_pair({nid_int, marker_int});
                             item = make_pair(pair_pid);
                         } else {
                             item = make_int(static_cast<std::int64_t>(id));
                         }
                         auto pid = ws.pairs.size();
-                        ws.pairs.push_back({item, result});
+                        ws.push_stamped_pair({item, result});
                         result = make_pair(pid);
                     }
                 }
@@ -4013,13 +4033,13 @@ void register_workspace_query_primitives(
                             auto nid_int = make_int(static_cast<std::int64_t>(id));
                             auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
                             auto pair_pid = ws.pairs.size();
-                            ws.pairs.push_back({nid_int, marker_int});
+                            ws.push_stamped_pair({nid_int, marker_int});
                             item = make_pair(pair_pid);
                         } else {
                             item = make_int(static_cast<std::int64_t>(id));
                         }
                         auto pid = ws.pairs.size();
-                        ws.pairs.push_back({item, result});
+                        ws.push_stamped_pair({item, result});
                         result = make_pair(pid);
                     }
                 }
@@ -4170,7 +4190,7 @@ void register_workspace_query_primitives(
             // contract).
             aura_hash_stamp_new_table_owner();
             auto cons_pair = ws.pairs.size();
-            ws.pairs.push_back({make_hash(hidx), result});
+            ws.push_stamped_pair({make_hash(hidx), result});
             result = make_pair(cons_pair);
         }
         return result;
@@ -4208,7 +4228,7 @@ void register_workspace_query_primitives(
             std::size_t sidx = ws.string_heap.size();
             ws.string_heap.push_back(*it);
             auto cons_pair = ws.pairs.size();
-            ws.pairs.push_back({make_string(sidx), result});
+            ws.push_stamped_pair({make_string(sidx), result});
             result = make_pair(cons_pair);
         }
         return result;
@@ -4314,7 +4334,7 @@ void register_workspace_query_primitives(
             }
             for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
                 auto cons_pair = ws.pairs.size();
-                ws.pairs.push_back({*it, result});
+                ws.push_stamped_pair({*it, result});
                 result = make_pair(cons_pair);
             }
             return result;
