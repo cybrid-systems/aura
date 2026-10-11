@@ -213,6 +213,12 @@ Scheduler::~Scheduler() {
     // orphan hard deadline — parallel_intend timeout) still holds a Fibers
     // reservation. Release that once. Done fibers were released in
     // on_fiber_done; reaped fibers were released in reap_orphans_now.
+    // Issue #4442: a spawn body keeps the last MultiFiberMailbox in func_.
+    // ~Fiber then close() acquires Level::Mailbox. That must not run while
+    // OwnedFibers is held (Hard lock-order canary). Under the lock only
+    // consume quota and the agents_active one-shot, then swap the vector
+    // out. Destructors run after the lock drops.
+    std::vector<std::unique_ptr<Fiber>> dying_fibers;
     {
         ::aura::compiler::lock_order::AuditedMutexLock lock(
             owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
@@ -231,8 +237,9 @@ Scheduler::~Scheduler() {
             consume_agents_active_oneshot(f);
             release_owned_fiber_quota(f);
         }
-        owned_fibers_.clear();
+        dying_fibers.swap(owned_fibers_);
     }
+    dying_fibers.clear();
     if (epoll_fd_ >= 0)
         ::close(epoll_fd_);
 }

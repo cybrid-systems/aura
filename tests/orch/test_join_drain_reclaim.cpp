@@ -4192,6 +4192,88 @@ static void ac4334_teardown_consumes_transferred_agents_active() {
         ::unsetenv("AURA_SANDBOX");
 }
 
+// Issue #4442: ~Scheduler must not run Fiber destructors while
+// owned_fibers_mutex_ is held. A Done spawn body keeps the last
+// MultiFiberMailbox in func_; ~Fiber close() acquires Level::Mailbox.
+// Hard lock order aborts that inversion. Quota and the agents_active
+// one-shot stay inside the lock (#4041 / #4334).
+static void ac4442_dtor_mailbox_close_outside_owned_fibers() {
+    std::println("\n--- #4442: ~Scheduler destroys fibers outside OwnedFibers ---");
+    const auto sched_src = read_file("src/serve/scheduler.cpp");
+    const auto dtor = sched_src.find("Scheduler::~Scheduler()");
+    CHECK(dtor != std::string::npos, "4442: ~Scheduler present");
+    if (dtor != std::string::npos) {
+        const auto next = sched_src.find("void Scheduler::register_agent_scope_observer", dtor);
+        const auto win_end = next == std::string::npos ? sched_src.size() : next;
+        const auto win = sched_src.substr(dtor, win_end - dtor);
+        CHECK(win.find("Issue #4442") != std::string::npos, "4442: dtor cites the issue");
+        const auto lock_at = win.find("Level::OwnedFibers");
+        const auto swap_at = win.find("dying_fibers.swap(owned_fibers_)");
+        const auto clear_at = win.find("dying_fibers.clear()");
+        CHECK(lock_at != std::string::npos, "4442: dtor takes OwnedFibers");
+        CHECK(swap_at != std::string::npos, "4442: dtor swaps owned fibers out");
+        CHECK(clear_at != std::string::npos, "4442: dtor destroys the swapped vector");
+        CHECK(lock_at < swap_at && swap_at < clear_at,
+              "4442: swap under OwnedFibers and destroy after the lock");
+        if (swap_at != std::string::npos && clear_at > swap_at) {
+            const auto between = win.substr(swap_at, clear_at - swap_at);
+            CHECK(between.find('}') != std::string::npos,
+                  "4442: fiber destructors run after OwnedFibers is released");
+        }
+        CHECK(win.find("owned_fibers_.clear(") == std::string::npos,
+              "4442: dtor does not destroy fibers while the lock is held");
+        CHECK(win.find("consume_agents_active_oneshot") != std::string::npos,
+              "4442: one-shot consume stays inside the lock");
+        CHECK(win.find("release_owned_fiber_quota") != std::string::npos,
+              "4442: quota release stays inside the lock");
+    }
+
+    using aura::compiler::lock_order::force_audit_mode_for_test;
+    using aura::compiler::lock_order::lock_order_mode;
+    using aura::orch::AgentSpec;
+    const int prev_mode = lock_order_mode();
+    force_audit_mode_for_test(3);
+
+    {
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4442-done";
+        spec.attach_mailbox = true;
+        spec.keepalive_interval_ms = 0;
+        spec.body = [] {};
+        AgentHandle h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber != nullptr, "4442: spawn ok");
+        for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(h.fiber && h.fiber->is_done(), "4442: body reached Done");
+        JoinPolicy policy;
+        policy.primary_ms = 2000;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Ok, "4442: join ok");
+    }
+    CHECK(lock_order_mode() == 3, "4442: joined scheduler dtor returned under hard lock order");
+
+    {
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4442-nojoin";
+        spec.attach_mailbox = true;
+        spec.keepalive_interval_ms = 0;
+        spec.body = [] {};
+        AgentHandle h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber != nullptr, "4442: spawn without join ok");
+        for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(h.fiber && h.fiber->is_done(), "4442: body reached Done without join");
+    }
+    CHECK(lock_order_mode() == 3, "4442: no-join scheduler dtor returned under hard lock order");
+
+    force_audit_mode_for_test(prev_mode < 1 ? 1 : prev_mode);
+}
+
 // Issue #3953: repeated join_agent on a stuck Reclaimed name must not
 // re-burn drain×8; 2nd+ join uses the 50ms ensure budget.
 static void ac3953_1_repeat_join_short_budget() {
@@ -9957,6 +10039,9 @@ int run_test_join_drain_reclaim() {
 
     std::println("\n=== Issue #4334: teardown consumes transferred agents_active one-shot ===");
     ac4334_teardown_consumes_transferred_agents_active();
+
+    std::println("\n=== Issue #4442: ~Scheduler destroys fibers outside OwnedFibers ===");
+    ac4442_dtor_mailbox_close_outside_owned_fibers();
 
     std::println("\n=== Issue #3953: reclaim wait yields on fiber; repeat join short ===");
     ac3953_1_repeat_join_short_budget();
