@@ -2712,9 +2712,11 @@ struct CapabilityEffectStatsSnapshot {
 // wildcard_ok: kCapWildcard holders inherit default permissive MacroSelfEvo
 // with default policy (32 passes / 256 depth) when no explicit grant.
 // call_fiber_id: live fiber for hard isolation / audit (0 → effect override only).
+// record: false skips the effect-audit row (#4447). Counters still update.
 [[nodiscard]] inline MacroSelfEvoCheck
 check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard_ok = false,
-                     std::uint32_t call_fiber_id = 0, std::uint64_t caller_mid = 0) noexcept {
+                     std::uint32_t call_fiber_id = 0, std::uint64_t caller_mid = 0,
+                     bool record = true) noexcept {
     auto& reg = g_capability_registry();
     auto& met = g_capability_effect_metrics();
     met.macro_self_evo_check_total.fetch_add(1, std::memory_order_relaxed);
@@ -2771,7 +2773,10 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         // Issue #3304: stamp parallel capability-deny code so Agent tooling
         // can key on it via capability_deny_last_reason_string().
         note_capability_deny_last_reason(kCapabilityDenyReasonNotGranted);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
+        if (record) {
+            reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo",
+                             "macro-self-evo-not-granted");
+        }
         return out;
     }
 
@@ -2783,7 +2788,10 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #3304: stamp parallel capability-deny code (epoch / fiber / mid).
         note_capability_deny_last_reason(kCapabilityDenyReasonProvenanceFence);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
+        if (record) {
+            reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo",
+                             "macro-self-evo-provenance-fence");
+        }
         return out;
     }
 
@@ -2799,7 +2807,10 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #3304: stamp parallel capability-deny code (policy missing).
         note_capability_deny_last_reason(kCapabilityDenyReasonPolicyMissing);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
+        if (record) {
+            reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo",
+                             "macro-self-evo-policy-missing");
+        }
         return out;
     }
 
@@ -2810,15 +2821,20 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #3304: stamp parallel capability-deny code (limits zero).
         note_capability_deny_last_reason(kCapabilityDenyReasonLimitsZero);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
+        if (record) {
+            reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo",
+                             "macro-self-evo-limits-zero");
+        }
         return out;
     }
 
     out.allowed = true;
     out.effective = pol;
     met.macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
-    reg.record_audit(Effect::MacroSelfEvo, held | Effect::MacroSelfEvo, tenant, call_prov, false,
-                     "macro-self-evo");
+    if (record) {
+        reg.record_audit(Effect::MacroSelfEvo, held | Effect::MacroSelfEvo, tenant, call_prov,
+                         false, "macro-self-evo");
+    }
     return out;
 }
 

@@ -636,7 +636,10 @@ int effective_hygiene_depth_limit() noexcept {
     using aura::core::capability::check_macro_self_evo;
     const auto tenant = tenant_for_macro_self_evo_check();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
-    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+    // Issue #4447: read-only limit probe. Deny still counts; no audit row.
+    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false,
+                                          /*call_fiber_id=*/0, /*caller_mid=*/0,
+                                          /*record=*/false);
     int cap_depth = 0;
     if (chk.allowed && chk.effective.max_depth > 0)
         cap_depth = static_cast<int>(chk.effective.max_depth);
@@ -650,7 +653,10 @@ int effective_hygiene_pass_cap() noexcept {
     using aura::core::capability::check_macro_self_evo;
     const auto tenant = tenant_for_macro_self_evo_check();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
-    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+    // Issue #4447: read-only limit probe. Deny still counts; no audit row.
+    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false,
+                                          /*call_fiber_id=*/0, /*caller_mid=*/0,
+                                          /*record=*/false);
     int lim = 0; // 0 = no extra clamp
     const int rt = g_runtime_hygiene_pass_cap.load(std::memory_order_acquire);
     if (rt > 0)
