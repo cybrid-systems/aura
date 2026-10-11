@@ -92,6 +92,36 @@ static void ac4_equal_and_tags() {
     CHECK(eval_bool(cs, "(eq? e 'commit)"), "AC4: (quote commit) same as 'commit");
 }
 
+// Issue #4455: a same-text string literal must not move a quote's slot.
+static void ac4455_string_keeps_quote() {
+    std::println("\n--- #4455: string literal between quote bind and eq? ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #4455") != std::string::npos, "4455: eval_flat cites issue");
+
+    CompilerService cs;
+    CHECK(cs.eval("(define s (quote ucb))").has_value(), "4455: bind quote");
+    CHECK(cs.eval("(define t \"ucb\")").has_value(), "4455: same-text string");
+    CHECK(eval_bool(cs, "(eq? s (quote ucb))"), "4455: eq? after string literal");
+    CHECK(eval_bool(cs, "(equal? s (quote ucb))"), "4455: equal? after string literal");
+    CHECK(eval_bool(cs, "(let ((s 'ucb) (t \"ucb\")) (eq? s 'ucb))"),
+          "4455: eq? inside a procedure");
+
+    CompilerService first;
+    CHECK(first.eval("(define t \"ucb\")").has_value(), "4455: string first");
+    CHECK(first.eval("(define s (quote ucb))").has_value(), "4455: quote after string");
+    CHECK(eval_bool(first, "(eq? s (quote ucb))"), "4455: string-first still eq?");
+
+    {
+        std::ofstream out("/tmp/aura-4455-mod-a.aura");
+        out << "(define s (quote ucb))\n";
+    }
+    CompilerService mod;
+    CHECK(mod.eval("(require \"/tmp/aura-4455-mod-a.aura\" all:)").has_value(),
+          "4455: require module");
+    CHECK(mod.eval("(define t \"ucb\")").has_value(), "4455: string after require");
+    CHECK(eval_bool(mod, "(eq? s (quote ucb))"), "4455: eq? across required module");
+}
+
 // ── AC5: source + gate ──
 static void ac5_source_gate() {
     std::println("\n--- #2568 AC5: source-cite + gate ---");
@@ -123,6 +153,7 @@ int run_test_symbol_eq() {
     ac2_let_eq();
     ac3_define_quote();
     ac4_equal_and_tags();
+    ac4455_string_keeps_quote();
     ac5_source_gate();
     std::println("\n=== #2568: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
