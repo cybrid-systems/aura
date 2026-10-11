@@ -13,6 +13,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/prim_heap_quota.hh"
 
 #include <array>
 #include <atomic>
@@ -244,6 +245,95 @@ static void ac7_single_fiber_hotpath() {
     CHECK(hh.find("2997") != std::string::npos, "AC1: quota header notes #2997");
 }
 
+static long vm_rss_kb() {
+    std::ifstream in("/proc/self/status");
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.starts_with("VmRSS:"))
+            continue;
+        long v = 0;
+        for (char c : line) {
+            if (c >= '0' && c <= '9')
+                v = v * 10 + (c - '0');
+        }
+        return v;
+    }
+    return 0;
+}
+
+// Issue #4453: N calls of list must stay O(N) on the monotonic pairs
+// arena. reserve(size + n) abandoned every block (10k calls → ~1.6GB).
+static void ac4453_list_growth_linear() {
+    std::println("\n--- #4453: list growth stays linear ---");
+    std::size_t size = 0;
+    std::size_t capacity = 0;
+    std::uint64_t committed = 0;
+    constexpr int kSteps = 100000;
+    for (int i = 0; i < kSteps; ++i) {
+        const auto next = aura::compiler::monotonic_pairs_reserve_cap(size, capacity, 2);
+        if (next > capacity)
+            committed += next;
+        capacity = next;
+        size += 2;
+    }
+    CHECK(size == static_cast<std::size_t>(kSteps) * 2, "4453: sim size");
+    CHECK(capacity >= size, "4453: sim capacity covers");
+    CHECK(committed <= static_cast<std::uint64_t>(size) * 3, "4453: sim commit linear");
+
+    const auto list_src = read_file("src/compiler/evaluator_primitives_list.cpp");
+    const auto json_src = read_file("src/compiler/evaluator_primitives_json.cpp");
+    CHECK(list_src.find("pairs.reserve(pairs.size() + n)") == std::string::npos,
+          "4453: list dropped exact size+n reserve");
+    CHECK(json_src.find("pairs.reserve(pairs.size() + n)") == std::string::npos,
+          "4453: json dropped exact size+n reserve");
+    int sites = 0;
+    for (std::size_t p = 0;;) {
+        p = list_src.find("monotonic_pairs_reserve_cap", p);
+        if (p == std::string::npos)
+            break;
+        ++sites;
+        p += 28;
+    }
+    CHECK(sites >= 6, "4453: list/append/reverse/map/filter/list-sort");
+    CHECK(json_src.find("monotonic_pairs_reserve_cap") != std::string::npos,
+          "4453: json array uses the same policy");
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto slot = ev.primitives().slot_for_name("list");
+    CHECK(slot < ev.primitives().slot_count(), "4453: list slot");
+    auto fnopt = ev.primitives().slot_lookup_fast(slot);
+    CHECK(fnopt.has_value(), "4453: list fn");
+    if (!fnopt)
+        return;
+    const auto list_fn = *fnopt;
+    const std::array<EvalValue, 2> args{make_int(1), make_int(2)};
+    constexpr int kCalls = 10000;
+    const auto before = ev.pairs_size();
+    const auto rss0 = vm_rss_kb();
+    bool ok = true;
+    for (int i = 0; i < kCalls; ++i) {
+        auto r = list_fn(std::span<const EvalValue>(args));
+        if (is_error(r) || !is_pair(r)) {
+            ok = false;
+            break;
+        }
+    }
+    const auto rss1 = vm_rss_kb();
+    const auto after = ev.pairs_size();
+    CHECK(ok, "4453: 10000 list calls succeed");
+    CHECK(after >= before + static_cast<std::size_t>(kCalls) * 2, "4453: two pairs per call");
+    CHECK(rss0 > 0 && rss1 >= rss0, "4453: VmRSS readable");
+    const auto delta = rss1 - rss0;
+    std::println("4453: list x{} rss_delta_kb={} pairs={}", kCalls, delta, after - before);
+    // size+n reserve peaked near 1.6GB at this N. A linear heap fits in
+    // already-resident pages (delta may be 0) and must stay under 64MB.
+    CHECK(delta < 64L * 1024L, "4453: RSS delta stays linear");
+
+    auto sample = cs.eval("(car (cdr (list 7 8 9)))");
+    CHECK(sample && is_int(*sample) && as_int(*sample) == 8, "4453: list order");
+}
+
 } // namespace
 
 int run_test_pmr_alloc_fiber_safe() {
@@ -255,6 +345,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac5_concurrent_eval_append();
     ac6_concurrent_list_ctor();
     ac7_single_fiber_hotpath();
+    ac4453_list_growth_linear();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

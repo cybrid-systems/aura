@@ -11,8 +11,9 @@
 // of unbounded growth / silent corruption under concurrent fibers.
 //
 // #2997 hot-path notes (no docs/design/ — #1655):
-//   - list / append / reverse / map / json-array: reserve + one allow,
-//     timed alloc_storage_lock_ (list_constructor_lock_hold_ns).
+//   - list / append / reverse / map / filter / list-sort / json-array:
+//     geometric reserve (#4453) + one allow, timed alloc_storage_lock_
+//     (list_constructor_lock_hold_ns).
 //   - unlimited + n <= kPrimHeapUnlimitedSmall: skip allow() (bypass).
 //   - limit set: allow() still fail-closed; soft-hit when hw >= 70% limit.
 //   - 4–8 fiber concurrent (list …) is measured in test_pmr_alloc_fiber_safe.
@@ -38,6 +39,27 @@ inline constexpr int kPrimHeapQuotaSchema = 2916;
 // Issue #2997: lock-hold SLO + unlimited constructor fast-path.
 inline constexpr int kPrimHeapQuotaHotPathIssue = 2997;
 inline constexpr std::size_t kPrimHeapUnlimitedSmall = 8;
+
+// Issue #4453: pairs_ is a pmr::vector on a monotonic_buffer_resource.
+// reserve(size + n) on every call copies the heap and abandons the old
+// block, so N list calls cost O(N²) bytes. Return a geometric capacity.
+// reserve(current capacity) does not reallocate.
+[[nodiscard]] inline std::size_t monotonic_pairs_reserve_cap(std::size_t size, std::size_t capacity,
+                                                             std::size_t extra) noexcept {
+    if (extra > static_cast<std::size_t>(-1) - size)
+        return static_cast<std::size_t>(-1);
+    const std::size_t need = size + extra;
+    if (capacity >= need)
+        return capacity;
+    std::size_t cap = capacity < 8 ? std::size_t{8} : capacity;
+    while (cap < need) {
+        if (cap > (static_cast<std::size_t>(-1) / 2))
+            return need;
+        cap *= 2;
+    }
+    return cap;
+}
+
 inline constexpr std::uint64_t kPrimHeapQuotaSoftHitBp = 7000; // 70% of limit
 // Agent recommend codes on query:prim-heap-quota-stats.
 inline constexpr std::int64_t kPrimHeapRecommendOk = 0;

@@ -435,6 +435,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (pos < json_str.size() && json_str[pos] == ']')
                     pos++;
                 // Issue #2916 / #2997: lock only materialization; one allow + reserve.
+                // Issue #4453: geometric pairs reserve (monotonic arena; not size+n).
                 Evaluator::ListCtorLockHold hold(ev);
                 const auto n = elems.size();
                 if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) ||
@@ -445,7 +446,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                         primitive_error_counter);
                 }
-                pairs.reserve(pairs.size() + n);
+                pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
                 EvalValue result = make_void();
                 for (std::size_t i = n; i > 0; --i) {
                     auto pid = pairs.size();

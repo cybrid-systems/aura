@@ -191,7 +191,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Build proper list (pair chain ending with void)
             // Issue #2651: lock pairs_ growth under multi-fiber fanout.
             // Issue #2916: soft pairs quota before bulk grow (Agent-visible error).
-            // Issue #2997: reserve + one allow (skip when unlimited + small) + timed lock.
+            // Issue #2997: one allow (skip when unlimited + small) + timed lock.
+            // Issue #4453: geometric pairs reserve (monotonic arena; not size+n).
             if (a.empty())
                 return make_void();
             const auto n = a.size();
@@ -203,7 +204,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
-            pairs.reserve(pairs.size() + n);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = a.rbegin(); it != a.rend(); ++it) {
                 auto id = pairs.size();
@@ -392,7 +393,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
-            pairs.reserve(pairs.size() + n);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = a.back();
             for (auto it = cars.rbegin(); it != cars.rend(); ++it) {
                 auto id = pairs.size();
@@ -446,7 +447,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
-            pairs.reserve(pairs.size() + n);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (const auto& car : cars) {
                 auto new_id = pairs.size();
@@ -504,7 +505,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
-            pairs.reserve(pairs.size() + n);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
                 auto id = pairs.size();
@@ -568,7 +569,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
-            pairs.reserve(pairs.size() + n);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
                 auto id = pairs.size();
@@ -768,7 +769,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
-            pairs.reserve(pairs.size() + n);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
                 auto new_id = pairs.size();
