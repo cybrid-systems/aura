@@ -4209,6 +4209,50 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
             rollback_close("aot-hotupdate-env-frame-drift", AotReloadFail::Env);
             return false;
         }
+        // Issue #4433: a non-zero AotState word is the override (the `<`
+        // arm above, present symbol only — #2232 AC4 reloads a .so that
+        // never exported the symbol). Word 0 falls back to the live env
+        // mirror publish_live_env_linear_to_bridge already stores. An
+        // unwritten 0 is not "domain inactive" once that mirror is set.
+        // Missing symbol counts as behind. Host sample 0 stays inactive.
+        // Do not max() the two: binary 50 / explicit 20 / live 100 loads.
+        if (host_env_ver == 0) {
+            const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+            if (live_env != 0 && (!binary_env_ver || *binary_env_ver < live_env)) {
+                const auto bin_v = binary_env_ver ? *binary_env_ver : 0;
+                aot_log("aura_reload_aot_module: stale live env_frame_version "
+                        "(binary=%llu, live=%llu) for %s — incremental re-emit "
+                        "triggered, graceful fallback to JIT\n",
+                        static_cast<unsigned long long>(bin_v),
+                        static_cast<unsigned long long>(live_env), path);
+                if (aot_metrics()) {
+                    aot_metrics()->aot_env_frame_version_drift_prevented.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aot_metrics()->aot_incremental_reemit_triggered.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                rollback_close("aot-hotupdate-env-frame-drift", AotReloadFail::Env);
+                return false;
+            }
+        }
+        // Issue #4433: linear fingerprint has no AotState override.
+        // Sample the live mirror. Host 0 does not refuse. A missing
+        // symbol or a decoded fingerprint that differs (not merely `<`)
+        // rolls back before commit. Not a query key.
+        const std::uint8_t live_lin = aura_get_aot_live_linear_state_fingerprint();
+        if (live_lin != 0) {
+            auto* bin_lin64 = static_cast<std::uint64_t*>(::dlsym(handle, "aot_linear_state"));
+            const std::uint8_t got_lin =
+                bin_lin64 ? static_cast<std::uint8_t>(*bin_lin64 > 255ull ? 255ull : *bin_lin64)
+                          : static_cast<std::uint8_t>(0);
+            if (!bin_lin64 || got_lin != live_lin) {
+                aot_log("aura_reload_aot_module: linear fingerprint drift "
+                        "(binary=%u, live=%u) for %s\n",
+                        static_cast<unsigned>(got_lin), static_cast<unsigned>(live_lin), path);
+                rollback_close("aot-hotupdate-linear-drift", AotReloadFail::Linear);
+                return false;
+            }
+        }
     }
     // Issue #2012: apply staged constructor registrations into live
     // slots, then atomically bump g_aot_table_epoch so concurrent
