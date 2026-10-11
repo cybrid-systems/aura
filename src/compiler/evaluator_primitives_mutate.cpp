@@ -4929,6 +4929,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ok = false;
                     return *err;
                 }
+                // Issue #4434: removing a User node still unlinks a
+                // MacroIntroduced child. Walk before remove_node_from_all_parents.
+                if (!allow_macro_rm) {
+                    const auto hit = first_macro_introduced_in_subtree(flat, target);
+                    if (hit != aura::ast::NULL_NODE) {
+                        aura::ast::NodeId probe[1] = {hit};
+                        if (auto err =
+                                hygiene_protected_error(ev, flat, probe, false, false, mev)) {
+                            ok = false;
+                            return *err;
+                        }
+                    }
+                }
             }
 
             // Issue #1688: remove from ALL parents (not just the first).
@@ -5736,6 +5749,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
 
+            // Issue #4434: a User match can unlink a MacroIntroduced child.
+            // Refuse the whole op before set_child when :allow-macro? is false.
+            if (!allow_macro_all) {
+                const auto hit = first_macro_introduced_in_subtree(flat, match_id);
+                if (hit != NULL_NODE) {
+                    free_repl_parse_orphans();
+                    flat.note_replace_pattern_hygiene_reject();
+                    aura::ast::NodeId probe[1] = {hit};
+                    if (auto err = hygiene_protected_error(ev, flat, probe, false, false, mev)) {
+                        flat.rollback_atomic_batch();
+                        if (static_cast<std::size_t>(end_id) < flat.size())
+                            (void)flat.free_orphan_nodes_from(
+                                static_cast<aura::ast::NodeId>(end_id));
+                        ok = false;
+                        return *err;
+                    }
+                }
+            }
+
             // Replace the matched node
             flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
             dirty_parents.push_back(parent_id);
@@ -6018,6 +6050,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             ok = false;
                             return *err;
                         }
+                    }
+                }
+            }
+
+            // Issue #4434: set_child unlinks target. A User Define or Lambda
+            // can still hold a MacroIntroduced child. Walk before the unlink.
+            if (!allow_macro_rs) {
+                const auto hit = first_macro_introduced_in_subtree(flat, target);
+                if (hit != NULL_NODE) {
+                    aura::ast::NodeId probe[1] = {hit};
+                    if (auto err = hygiene_protected_error(ev, flat, probe, false, false, mev)) {
+                        free_replace_parse_orphans();
+                        ok = false;
+                        return *err;
                     }
                 }
             }

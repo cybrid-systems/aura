@@ -7706,6 +7706,186 @@ static void ac4406_displaced_child_default_reject() {
     aura_test_reset_macro_hygiene_last_limit_reason_for_test();
 }
 
+// Issue #4434: replace-subtree / remove-node / replace-pattern (public and
+// lockless) must refuse to unlink a MacroIntroduced child of a User node.
+static void ac4434_unlink_macro_child_default_reject() {
+    std::println("\n=== Issue #4434: unlink of a macro-introduced child ===");
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (define (g x) (+ x 1)) (define base 10)\")")
+              .has_value(),
+          "4434: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4434: eval-current");
+    auto& ev = cs.evaluator();
+    const auto def = define_named_4406(ev, "f");
+    const auto gdef = define_named_4406(ev, "g");
+    const auto bdef = define_named_4406(ev, "base");
+    CHECK(def != aura::ast::NULL_NODE && gdef != aura::ast::NULL_NODE &&
+              bdef != aura::ast::NULL_NODE,
+          "4434: defines present");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "4434: workspace");
+    const auto lam = ws->get(def).child(0);
+    const auto body = ws->get(lam).child(0);
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", static_cast<unsigned>(body))).has_value(),
+          "4434: forge MacroIntroduced on the call");
+    CHECK(body_still_4406(ev, def, lam, body), "4434: only the call is marked");
+    const auto glam = ws->get(gdef).child(0);
+    const auto gbody = ws->get(glam).child(0);
+
+    auto deny = [&](const char* expr, const char* label) {
+        grant_3301_production_mutate(cs);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        reset_security_event_ring_for_test();
+        const auto epoch_before = aura::core::current_mutation_epoch();
+        auto r = cs.eval(expr);
+        CHECK(r.has_value(), label);
+        if (r)
+            CHECK(merr_kind_3027(cs, *r) == "hygiene-protected", label);
+        const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced", label);
+        CHECK(body_still_4406(cs.evaluator(), def, lam, body), label);
+        CHECK(ring_hygiene_epoch_4406(epoch_before), label);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    };
+    {
+        auto expr =
+            std::format("(mutate:replace-subtree {} \"(+ x 2)\")", static_cast<unsigned>(def));
+        deny(expr.c_str(), "4434: public replace-subtree define");
+    }
+    {
+        auto expr =
+            std::format("(mutate:replace-subtree {} \"(+ x 2)\")", static_cast<unsigned>(lam));
+        deny(expr.c_str(), "4434: public replace-subtree lambda");
+    }
+    {
+        auto expr = std::format("(mutate:remove-node {})", static_cast<unsigned>(def));
+        deny(expr.c_str(), "4434: public remove-node");
+    }
+    deny("(mutate:replace-pattern \"(lambda (x) ...)\" \"(+ x 2)\")",
+         "4434: public replace-pattern");
+    {
+        auto expr = std::format("(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} "
+                                "\"(+ x 2)\" \"4434\")) \"4434\")",
+                                static_cast<unsigned>(def));
+        deny(expr.c_str(), "4434: lockless replace-subtree");
+    }
+    {
+        auto expr =
+            std::format("(mutate:atomic-batch (list (list \"mutate:remove-node\" {})) \"4434\")",
+                        static_cast<unsigned>(lam));
+        deny(expr.c_str(), "4434: lockless remove-node");
+    }
+    deny("(mutate:atomic-batch (list (list \"mutate:replace-pattern\" \"(lambda (x) ...)\" "
+         "\"(+ x 2)\")) \"4434\")",
+         "4434: lockless replace-pattern");
+
+    {
+        auto* live = cs.evaluator().workspace_flat();
+        CHECK(live != nullptr && gdef < live->size() && glam < live->size(), "4434: g live");
+        CHECK(!live->get(gdef).children.empty() && live->get(gdef).child(0) == glam,
+              "4434: g lambda unchanged");
+        CHECK(!live->get(glam).children.empty() && live->get(glam).child(0) == gbody,
+              "4434: g body unchanged");
+    }
+
+    grant_3301_production_mutate(cs);
+    auto gok = cs.eval(std::format("(mutate:replace-subtree {} \"(lambda (x) (+ x 3))\")",
+                                   static_cast<unsigned>(glam)));
+    CHECK(gok.has_value(), "4434: user sibling replace-subtree returns");
+    if (gok)
+        CHECK(merr_kind_3027(cs, *gok) != "hygiene-protected",
+              "4434: user sibling not hygiene-protected");
+    {
+        auto* live = cs.evaluator().workspace_flat();
+        CHECK(live != nullptr && !live->get(gdef).children.empty() &&
+                  live->get(gdef).child(0) != glam,
+              "4434: g lambda replaced");
+        CHECK(body_still_4406(cs.evaluator(), def, lam, body), "4434: f unchanged after g");
+    }
+    grant_3301_production_mutate(cs);
+    auto bok =
+        cs.eval(std::format("(mutate:replace-subtree {} \"12\")", static_cast<unsigned>(bdef)));
+    CHECK(bok.has_value(), "4434: user define replace-subtree returns");
+    if (bok)
+        CHECK(merr_kind_3027(cs, *bok) != "hygiene-protected",
+              "4434: user define not hygiene-protected");
+    CHECK(body_still_4406(cs.evaluator(), def, lam, body), "4434: f unchanged after base");
+
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    auto prim_win = [&](const std::string& name) {
+        auto pos = mut.find("add_mutate(\n        \"" + name + "\"");
+        if (pos == std::string::npos)
+            pos = mut.find("add_mutate(\"" + name + "\"");
+        const auto nxt = mut.find("add_mutate(", pos == std::string::npos ? 0 : pos + 20);
+        if (pos == std::string::npos)
+            return std::string();
+        return mut.substr(pos, nxt > pos ? nxt - pos : std::string::npos);
+    };
+    auto flat_win = [&](const std::string& fn) {
+        const auto pos = efl.find("Evaluator::" + fn + "(");
+        const auto nxt = efl.find("EvalResult Evaluator::eval_flat_apply_mutate_",
+                                  pos == std::string::npos ? 0 : pos + 20);
+        if (pos == std::string::npos)
+            return std::string();
+        return efl.substr(pos, nxt > pos ? nxt - pos : std::string::npos);
+    };
+    auto before = [](const std::string& w, const char* a, const char* b) {
+        const auto ia = w.find(a);
+        if (ia == std::string::npos)
+            return false;
+        const auto ib = w.find(b, ia);
+        return ib != std::string::npos && ia < ib;
+    };
+    const auto prm = prim_win("mutate:remove-node");
+    const auto prp = prim_win("mutate:replace-pattern");
+    const auto prs = prim_win("mutate:replace-subtree");
+    CHECK(before(prm, "Issue #4434", "remove_node_from_all_parents"),
+          "4434: public remove-node cites before unlink");
+    CHECK(before(prm, "first_macro_introduced_in_subtree(flat, target)",
+                 "remove_node_from_all_parents"),
+          "4434: public remove-node walks the target before unlink");
+    CHECK(before(prp, "Issue #4434", "flat.set_child(parent_id, *child_idx_opt, repl_pr.root)"),
+          "4434: public replace-pattern cites before set_child");
+    CHECK(before(prp, "first_macro_introduced_in_subtree(flat, match_id)",
+                 "flat.set_child(parent_id, *child_idx_opt, repl_pr.root)"),
+          "4434: public replace-pattern walks the match before set_child");
+    CHECK(before(prs, "Issue #4434", "flat.set_child(parent_id, child_idx, pr.root)"),
+          "4434: public replace-subtree cites before set_child");
+    CHECK(before(prs, "first_macro_introduced_in_subtree(flat, target)",
+                 "flat.set_child(parent_id, child_idx, pr.root)"),
+          "4434: public replace-subtree walks the target before set_child");
+    const auto lrm = flat_win("eval_flat_apply_mutate_remove_node");
+    const auto lrp = flat_win("eval_flat_apply_mutate_replace_pattern");
+    const auto lrs = flat_win("eval_flat_apply_mutate_replace_subtree");
+    CHECK(before(lrm, "Issue #4434", "remove_node_from_all_parents"),
+          "4434: lockless remove-node cites before unlink");
+    CHECK(before(lrm, "walk_subtree(target", "remove_node_from_all_parents"),
+          "4434: lockless remove-node walks the target before unlink");
+    CHECK(before(lrp, "Issue #4434", "flat.set_child(parent_id, *child_idx_opt, repl_pr.root)"),
+          "4434: lockless replace-pattern cites before set_child");
+    CHECK(before(lrp, "walk_subtree(match_ref.id",
+                 "flat.set_child(parent_id, *child_idx_opt, repl_pr.root)"),
+          "4434: lockless replace-pattern walks the match before set_child");
+    CHECK(before(lrs, "Issue #4434", "flat.set_child(parent_id, child_idx, pr.root)"),
+          "4434: lockless replace-subtree cites before set_child");
+    CHECK(before(lrs, "walk_subtree(target", "flat.set_child(parent_id, child_idx, pr.root)"),
+          "4434: lockless replace-subtree walks the target before set_child");
+    CHECK(read_file("tests/compiler/test_issue_4434.cpp").empty(), "4434: no new test file");
+    CHECK(read_file("tests/issues/test_issue_4434.cpp").empty(), "4434: no issues test file");
+
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -7972,6 +8152,8 @@ int main() {
     ac4150_3_source_cite_no_artifacts();
     std::println("\n=== Issue #4406: displaced MacroIntroduced child ===");
     ac4406_displaced_child_default_reject();
+    std::println("\n=== Issue #4434: unlink of a macro-introduced child ===");
+    ac4434_unlink_macro_child_default_reject();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
