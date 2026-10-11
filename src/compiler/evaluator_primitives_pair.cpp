@@ -91,6 +91,15 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             auto idx = as_string_idx(a[0]);
             if (idx >= string_heap.size())
                 return make_void();
+            // Issue #4428: dispatch Mutate is not an owner check. Prod face
+            // compares the intern stamp and leaves the bytes unchanged on
+            // mismatch. Soft/Off does not read the stamp.
+            if (!ev.inrange_string_tenant_allows(idx, aura::compiler::security::kEffectMutate,
+                                                 "string-fill!")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "string-fill!: cross-tenant string slot write "
+                                            "denied (#4428)");
+            }
             auto fill_char = static_cast<char>(as_int(a[1]));
             std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
             return make_void();
@@ -159,6 +168,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 }
                 auto sidx = string_heap.size();
                 string_heap.push_back(std::move(result));
+                ev.note_inrange_string_mint(sidx); // Issue #4428
                 return make_string(sidx);
             }
         },
@@ -202,6 +212,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             }
             auto sidx = string_heap.size();
             string_heap.push_back(std::move(result));
+            ev.note_inrange_string_mint(sidx); // Issue #4428
             return make_string(sidx);
         },
         pure_general(2, "(list string) -> string", "Join string list with a separator."));
@@ -756,6 +767,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             }
             auto id = string_heap.size();
             string_heap.push_back(std::move(result));
+            ev.note_inrange_string_mint(id); // Issue #4428
             return make_string(id);
         },
         pure_general(255, "(...strings) -> string", "Concatenate strings."));

@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "security_capabilities.h" // Issue #4428: kEffectMutate on the value-path consult
 #include "messaging_bridge.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
@@ -232,6 +233,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.clear_sym_intern(); // Issue #3457: heap indices die with string_heap_
             ev.string_heap_.clear();
             ev.string_heap_.shrink_to_fit();
+            ev.string_slot_tenants_.clear(); // Issue #4428
+            ev.string_slot_tenants_.shrink_to_fit();
             ev.pairs_.clear();
             ev.pairs_.shrink_to_fit();
             ev.pair_slot_tenants_.clear(); // Issue #4298
@@ -1736,8 +1739,15 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(rc == 0);
         }
         // Issue #1665: erase TW map entry (was no-op; left dead slots in scan).
+        // Issue #4428: a closure value skipped the owner compare the int path
+        // already does through aura_free_closure_checked. Prod face refuses a
+        // foreign mint and leaves the map entry in place. Soft/Off does not
+        // read the stamp. Dispatch remains the only Mutate choke.
         if (is_closure(a[0])) {
             const auto cid = static_cast<ClosureId>(as_closure_id(a[0]));
+            if (!ev.tw_closure_tenant_allows(cid, aura::compiler::security::kEffectMutate,
+                                             "closure:free!"))
+                return make_bool(false);
             (void)ev.erase_active_closure(cid);
             return make_bool(true);
         }

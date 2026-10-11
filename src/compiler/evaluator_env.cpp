@@ -1887,6 +1887,7 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
 ClosureId Evaluator::register_active_closure(Closure cl) {
     stamp_closure_bridge_epoch(cl);
     const ClosureId id = next_id();
+    note_tw_closure_owner(id); // Issue #4428: before the map insert is visible
     std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
     // Issue #4386: shard lock, then the published old→new map, then insert.
     if (aura::ast::moving_compact_feature_enabled()) {

@@ -2245,6 +2245,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 cl_flat->root = cloned_body;
                 // P0: register captured for SoA, no legacy env pointer in Closure.
                 EnvId cap_id = alloc_env_frame_from_env(env);
+                note_tw_closure_owner(cid); // Issue #4428
                 {
                     std::unique_lock<std::shared_mutex> wlock(
                         closures_shards_[closures_shard_index(cid)].mu);
@@ -2378,6 +2379,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         // for SoA (GC-safe, no pointer). env_id is now the only handle.
                         cl.env_id = alloc_env_frame_from_env(*copied_env);
                         cl.owner_arena = target;
+                        note_tw_closure_owner(cid); // Issue #4428
                         {
                             std::unique_lock<std::shared_mutex> wlock(
                                 closures_shards_[closures_shard_index(cid)].mu);
@@ -6575,6 +6577,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     // P0: legacy env pointer removed. Register captured env in SoA for this
                     // closure.
                     EnvId cap_id = alloc_env_frame_from_env(*current_env);
+                    note_tw_closure_owner(cid); // Issue #4428
                     {
                         std::unique_lock<std::shared_mutex> wlock(
                             closures_shards_[closures_shard_index(cid)].mu);

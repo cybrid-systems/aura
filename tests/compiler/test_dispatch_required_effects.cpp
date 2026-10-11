@@ -1713,6 +1713,169 @@ static void ac4298_inrange_pair_vector_tenant() {
     set_mode(SandboxMode::Off);
 }
 
+// Issue #4428: string_heap_ and the tree-walker closure map are one
+// Evaluator. TenantScope only rebinds the principal. string-fill! and
+// closure:free! on a closure value must refuse a foreign mint on the
+// production face and leave the slot in place. Soft/Off does not read
+// the stamp. Direct prim calls (same as #4298): dispatch under MT would
+// deny an unstamped ref before the body, which would make this gate vacuous.
+static void ac4428_string_fill_and_closure_value() {
+    std::println("\n--- #4428: string-fill! and closure:free! value owner ---");
+    using aura::compiler::types::make_closure;
+    using aura::compiler::types::make_string;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+    auto fill_fn = ev.primitives().lookup("string-fill!");
+    auto free_fn = ev.primitives().lookup("closure:free!");
+    CHECK(fill_fn && free_fn, "4428: string-fill! and closure:free! present");
+    if (!(fill_fn && free_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    aura::compiler::types::EvalValue s;
+    aura::compiler::types::EvalValue clv;
+    aura::compiler::ClosureId cid = 0;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        const auto idx = ev.push_string_heap("hello");
+        s = make_string(static_cast<std::uint64_t>(idx));
+        aura::compiler::Closure cl;
+        cid = ev.register_active_closure(std::move(cl));
+        clv = make_closure(cid);
+    }
+    CHECK(ev.copy_string_heap_at(
+              static_cast<std::size_t>(aura::compiler::types::as_string_idx(s))) == "hello",
+          "4428: tenant 7 interned hello");
+    CHECK(ev.find_active_closure(cid).has_value(), "4428: tenant 7 closure registered");
+
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto filled = (*fill_fn)({s, make_int(88)});
+        auto freed = (*free_fn)({clv});
+        CHECK(is_error(filled), "4428: tenant 9 string-fill! denied");
+        CHECK(is_bool(freed) && !as_bool(freed), "4428: tenant 9 closure:free! returns false");
+        CHECK(ev.copy_string_heap_at(
+                  static_cast<std::size_t>(aura::compiler::types::as_string_idx(s))) == "hello",
+              "4428: string bytes unchanged");
+        CHECK(ev.find_active_closure(cid).has_value(), "4428: closure still present");
+        CHECK(ring_has_isolation_deny("string-fill!"), "4428: IsolationDeny string-fill!");
+        CHECK(ring_has_isolation_deny("closure:free!"), "4428: IsolationDeny closure:free!");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto filled = (*fill_fn)({s, make_int(88)});
+        CHECK(!is_error(filled), "4428: owner string-fill! lands");
+        const auto owner_bytes = ev.copy_string_heap_at(
+            static_cast<std::size_t>(aura::compiler::types::as_string_idx(s)));
+        const std::string filled88(5, static_cast<char>(88));
+        CHECK(owner_bytes == filled88, "4428: owner fill wrote 88");
+        auto freed = (*free_fn)({clv});
+        CHECK(is_bool(freed) && as_bool(freed), "4428: owner closure:free! returns true");
+        CHECK(!ev.find_active_closure(cid).has_value(), "4428: owner free removed the closure");
+    }
+
+    // Tenant 0's intern is a real stamp (not the never-stamped hole).
+    aura::compiler::types::EvalValue zs;
+    aura::compiler::types::EvalValue zclv;
+    aura::compiler::ClosureId zcid = 0;
+    {
+        aura::compiler::Evaluator::TenantScope t0(ev, 0);
+        const auto idx = ev.push_string_heap("zero");
+        zs = make_string(static_cast<std::uint64_t>(idx));
+        aura::compiler::Closure zcl;
+        zcid = ev.register_active_closure(std::move(zcl));
+        zclv = make_closure(zcid);
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto filled = (*fill_fn)({zs, make_int(89)});
+        auto freed = (*free_fn)({zclv});
+        CHECK(is_error(filled), "4428: tenant-0 string refuses tenant 9");
+        CHECK(is_bool(freed) && !as_bool(freed), "4428: tenant-0 closure refuses tenant 9");
+        CHECK(ev.copy_string_heap_at(
+                  static_cast<std::size_t>(aura::compiler::types::as_string_idx(zs))) == "zero",
+              "4428: tenant-0 string unchanged");
+        CHECK(ev.find_active_closure(zcid).has_value(), "4428: tenant-0 closure still present");
+    }
+
+    // Soft/Off: foreign fill and free land, and the stamp is not consulted.
+    reset_security_event_ring_for_test();
+    ev.set_effect_sandbox_mode(0);
+    aura::compiler::types::EvalValue soft_s;
+    aura::compiler::types::EvalValue soft_clv;
+    aura::compiler::ClosureId soft_cid = 0;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        const auto idx = ev.push_string_heap("soft");
+        soft_s = make_string(static_cast<std::uint64_t>(idx));
+        aura::compiler::Closure scl;
+        soft_cid = ev.register_active_closure(std::move(scl));
+        soft_clv = make_closure(soft_cid);
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto filled = (*fill_fn)({soft_s, make_int(90)});
+        auto freed = (*free_fn)({soft_clv});
+        CHECK(!is_error(filled), "4428: Off string-fill! kept");
+        const auto off_bytes = ev.copy_string_heap_at(
+            static_cast<std::size_t>(aura::compiler::types::as_string_idx(soft_s)));
+        const std::string filled90(4, static_cast<char>(90));
+        CHECK(off_bytes == filled90, "4428: Off write visible, stamp not loaded");
+        CHECK(is_bool(freed) && as_bool(freed), "4428: Off closure:free! kept");
+        CHECK(!ev.find_active_closure(soft_cid).has_value(), "4428: Off free removed the closure");
+        CHECK(!ring_has_isolation_deny("string-fill!"),
+              "4428: Off records no string IsolationDeny");
+        CHECK(!ring_has_isolation_deny("closure:free!"),
+              "4428: Off records no closure IsolationDeny");
+    }
+
+    const auto pair_src = read_file("src/compiler/evaluator_primitives_pair.cpp");
+    const auto sfpos = pair_src.find("add, ev, \"string-fill!\"");
+    CHECK(sfpos != std::string::npos, "4428: string-fill! body located");
+    if (sfpos != std::string::npos) {
+        const auto win = pair_src.substr(sfpos, 1200);
+        CHECK(win.find("inrange_string_tenant_allows") != std::string::npos,
+              "4428: string-fill! consults the intern stamp");
+        CHECK(win.find("require_effect") == std::string::npos,
+              "4428: string-fill! window stays body-choke-free");
+    }
+    const auto mem_src = read_file("src/compiler/evaluator_primitives_memory.cpp");
+    const auto cfpos = mem_src.find("\"closure:free!\"");
+    CHECK(cfpos != std::string::npos, "4428: closure:free! body located");
+    if (cfpos != std::string::npos) {
+        const auto win = mem_src.substr(cfpos, 1600);
+        CHECK(win.find("aura_free_closure_checked") != std::string::npos,
+              "4428: int path still uses aura_free_closure_checked");
+        CHECK(win.find("tw_closure_tenant_allows") != std::string::npos,
+              "4428: value path compares the owner");
+        const auto allow = win.find("tw_closure_tenant_allows");
+        const auto erase = win.find("erase_active_closure");
+        CHECK(allow != std::string::npos && erase != std::string::npos && allow < erase,
+              "4428: owner compare precedes the erase");
+    }
+    const auto sec_src = read_file("src/compiler/evaluator_security.cpp");
+    const auto spos = sec_src.find("bool Evaluator::inrange_string_tenant_allows");
+    CHECK(spos != std::string::npos, "4428: string allow helper located");
+    if (spos != std::string::npos) {
+        const auto win = sec_src.substr(spos, 1800);
+        CHECK(win.find("if (!prod)") != std::string::npos,
+              "4428: Soft/Off returns before the stamp");
+        CHECK(win.find("rec == 0") != std::string::npos,
+              "4428: never-stamped string stays allowed");
+        CHECK(win.find("check_workspace_isolation") != std::string::npos,
+              "4428: string mismatch audits IsolationDeny");
+    }
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -3385,6 +3548,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4298: in-range cons/vector tenant stamp ──
     ac4298_inrange_pair_vector_tenant();
+
+    // ── Issue #4428: string-fill! and closure:free! value owner ──
+    ac4428_string_fill_and_closure_value();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
