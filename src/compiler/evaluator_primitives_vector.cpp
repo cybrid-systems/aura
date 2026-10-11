@@ -644,6 +644,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i - 1] != 0xFF) {
                     auto pid = pairs.size();
                     pairs.push_back({EvalValue{keys[i - 1]}, result});
+                    ev.note_inrange_pair_mint(pid); // Issue #4431
                     result = make_pair(pid);
                 }
             }
@@ -677,6 +678,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i - 1] != 0xFF) {
                     auto pid = pairs.size();
                     pairs.push_back({EvalValue{vals[i - 1]}, result});
+                    ev.note_inrange_pair_mint(pid); // Issue #4431
                     result = make_pair(pid);
                 }
             }
@@ -728,9 +730,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     // Build (key . value) cons cell.
                     auto kv_pid = pairs.size();
                     pairs.push_back({EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]}});
+                    ev.note_inrange_pair_mint(kv_pid); // Issue #4431
                     // Prepend to the result list.
                     auto list_pid = pairs.size();
                     pairs.push_back({make_pair(kv_pid), result});
+                    ev.note_inrange_pair_mint(list_pid); // Issue #4431
                     result = make_pair(list_pid);
                 }
             }
