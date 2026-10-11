@@ -1,6 +1,7 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -290,6 +291,11 @@ private:
     RunResult run_function(const aura::ir::IRFunction& func, std::vector<EvalValue>& locals,
                            std::span<const EvalValue> args);
 
+    // Pop frames above `base`. A reentrant call_closure keeps the caller's
+    // frames: clear() used to drop them, and the outer pop_back aborted
+    // (NDEBUG: free(): invalid pointer).
+    EvalResult drain_call_stack(std::size_t base);
+
     // Build a snapshot from runtime closure data
     ClosureSnapshot make_snapshot(std::uint64_t id, const IRClosure& closure) const;
 
@@ -365,8 +371,10 @@ private:
     // ":find" the string and :find the keyword do not alias.
     std::unordered_map<std::uint32_t, EvalValue> const_keyword_cache_;
 
-    // Explicit call stack: replaces C++ recursion for closure calls
-    std::vector<ExecFrame> call_stack_;
+    // Explicit call stack: replaces C++ recursion for closure calls.
+    // deque so a nested call_closure can push while run_function still
+    // holds a reference to an outer frame's locals.
+    std::deque<ExecFrame> call_stack_;
 
     // Issue #124: exception stack. TryBegin pushes a frame; Raise
     // unwinds to the top frame's handler_block; TryEnd pops.
