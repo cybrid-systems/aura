@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "security_capabilities.h"
+#include "typed_mutation_audit.h" // Issue #4435: production_defaults_active
 
 module aura.compiler.evaluator;
 
@@ -59,6 +60,44 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+
+// Issue #4435: parser output is User. Copy MacroIntroduced from the
+// still-live displaced subtree onto the reparsed nodes. False means the
+// old id is gone or the shape differs — caller must not set_child.
+[[nodiscard]] bool copy_displaced_macro_markers(aura::ast::FlatAST& flat,
+                                                aura::ast::NodeId old_root,
+                                                aura::ast::NodeId new_root) {
+    if (old_root == aura::ast::NULL_NODE || new_root == aura::ast::NULL_NODE)
+        return false;
+    struct Item {
+        aura::ast::NodeId old_id;
+        aura::ast::NodeId new_id;
+    };
+    std::vector<Item> stack;
+    stack.push_back(Item{old_root, new_root});
+    constexpr std::size_t kMaxNodes = 1024;
+    std::size_t seen = 0;
+    while (!stack.empty()) {
+        if (seen >= kMaxNodes)
+            return false;
+        const auto item = stack.back();
+        stack.pop_back();
+        ++seen;
+        if (!flat.is_live_node(item.old_id) || !flat.is_live_node(item.new_id))
+            return false;
+        const auto old_n = flat.get(item.old_id);
+        const auto new_n = flat.get(item.new_id);
+        if (old_n.tag != new_n.tag || old_n.children.size() != new_n.children.size())
+            return false;
+        std::vector<aura::ast::NodeId> old_kids(old_n.children.begin(), old_n.children.end());
+        std::vector<aura::ast::NodeId> new_kids(new_n.children.begin(), new_n.children.end());
+        if (flat.is_macro_introduced(item.old_id))
+            flat.set_marker(item.new_id, aura::ast::SyntaxMarker::MacroIntroduced);
+        for (std::size_t i = 0; i < old_kids.size(); ++i)
+            stack.push_back(Item{old_kids[i], new_kids[i]});
+    }
+    return true;
+}
 
 void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                                    std::function<void()> destroy_defuse_index) {
@@ -221,9 +260,29 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 const auto child_idx = rec.child_idx;
                 const auto mid = rec.mutation_id;
                 const std::string old_src = rec.old_subtree_source;
+                // Issue #4435: old_value is the displaced root; new_value is 1
+                // when that subtree held MacroIntroduced.
+                const auto displaced_root = static_cast<aura::ast::NodeId>(rec.old_value);
+                const auto displaced_macro = rec.new_value;
+                const auto size_before_parse = ev.workspace_flat_->size();
                 auto pr =
                     aura::parser::parse_to_flat(old_src, *ev.workspace_flat_, *ev.workspace_pool_);
                 if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    // Production face only. Soft/Off keeps the text reparse.
+                    const bool prod_face =
+                        aura::compiler::typed_audit::production_defaults_active() &&
+                        ev.effect_sandbox_mode() != 0;
+                    if (prod_face && displaced_macro != 0 &&
+                        !copy_displaced_macro_markers(*ev.workspace_flat_, displaced_root,
+                                                      pr.root)) {
+                        ev.record_hygiene_violation_attempt();
+                        aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                            aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                        if (size_before_parse < ev.workspace_flat_->size())
+                            (void)ev.workspace_flat_->free_orphan_nodes_from(
+                                static_cast<aura::ast::NodeId>(size_before_parse));
+                        return make_int(0);
+                    }
                     ev.workspace_flat_->set_child(parent_id, child_idx, pr.root);
                     // try_rollback_record: status + generation bump + dirty
                     // (SubtreeMark path). Re-resolve by index after parse

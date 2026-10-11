@@ -287,6 +287,9 @@ namespace mutation {
         std::uint64_t author_fingerprint = 0;
         std::uint64_t parent_mutation_id = 0;
         std::uint64_t composite_transaction_id = 0;
+        // Issue #4435: displaced root and MacroIntroduced bit. 0 is pre-fix.
+        std::uint64_t old_value = 0;
+        std::uint64_t new_value = 0;
     };
 
     export [[nodiscard]] std::uint64_t timestamp_ms() noexcept {
@@ -309,8 +312,9 @@ namespace mutation {
     create_subtree_mutation_record(const SubtreeMutationParams& p) {
         return MutationRecord{
             p.mutation_id, timestamp_ms(), p.target_node, std::string(p.operator_name), "", "",
-            std::string(p.summary), MutationStatus::Committed, 0, 0, 0, false, p.parent_id,
-            p.child_idx, std::string(p.old_subtree_source), true, InvariantStatus::NotChecked,
+            std::string(p.summary), MutationStatus::Committed, 0, p.old_value, p.new_value, false,
+            p.parent_id, p.child_idx, std::string(p.old_subtree_source), true,
+            InvariantStatus::NotChecked,
             // Issue #1419: stamp compound provenance
             p.author_fingerprint, p.parent_mutation_id, p.composite_transaction_id};
     }

@@ -6216,8 +6216,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         [&] {
                             flat.set_child(parent_id, child_idx, pr.root);
                             flat.mark_dirty_upward(parent_id);
+                            // Issue #4435: the printer stores text only. Remember
+                            // the displaced root and whether it held MacroIntroduced
+                            // so workspace:rollback-latest can restamp the reparse.
+                            std::uint64_t displaced_macro = 0;
+                            flat.walk_subtree(target, [&](aura::ast::NodeId id) {
+                                if (displaced_macro == 0 && flat.is_macro_introduced(id))
+                                    displaced_macro = 1;
+                            });
                             flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source,
-                                                      "replace-subtree", summary);
+                                                      "replace-subtree", summary, target,
+                                                      displaced_macro);
                             // Issue #3061: allowed MacroIntroduced target →
                             // propagate marker / restamp on the installed body.
                             if (allow_macro_rs && target_was_macro)
