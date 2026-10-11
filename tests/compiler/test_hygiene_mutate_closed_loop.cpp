@@ -6750,7 +6750,12 @@ static void ac4106_read_trio() {
     const auto qd = read_file("src/compiler/evaluator_primitives_query_defuse.cpp");
     const auto b_re = qd.find("add(\"query:reaches\"");
     CHECK(b_re != std::string::npos, "4106: reaches body present");
-    const auto w_re = qd.substr(b_re, 3600);
+    // Next primitive bounds the cite. A fixed 3600-char cap dropped the
+    // #3395 face after the reaches body grew (fiberless resolve, #4438).
+    const auto b_fx = qd.find("add(\"query:effects\"", b_re);
+    CHECK(b_fx != std::string::npos && b_fx > b_re, "4106: reaches body bounded");
+    const auto w_re =
+        (b_fx != std::string::npos && b_fx > b_re) ? qd.substr(b_re, b_fx - b_re) : std::string{};
     CHECK(w_re.find("Issue #4106") != std::string::npos, "4106: reaches cites the issue");
     CHECK(w_re.find("raw node-id rejected under production") != std::string::npos,
           "4106: reaches #3395 face");
