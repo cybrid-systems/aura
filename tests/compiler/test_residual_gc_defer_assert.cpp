@@ -362,6 +362,17 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
     CHECK(q.find("residual-defer-multi-eval-wired") != std::string::npos,
           "AC5: residual-defer-multi-eval-wired sentinel");
 
+    // Query while the process malloc arena is still intact. The Clear /
+    // panic ACs below poison it (glibc "corrupted double-linked list" in
+    // ~CompilerService, same window as #2295 AC5). A late engine:metrics
+    // eval then aborts the isolate child.
+    {
+        auto h = cs.eval("(engine:metrics \"query:mutation-boundary-hold-stats\")");
+        CHECK(h.has_value(), "AC5: mutation-boundary-hold-stats returns value");
+        CHECK(cs.metrics().mutation_boundary_residual_defer_bit_reconcile_total.load() >= 0,
+              "AC5: bit-reconcile metric readable");
+    }
+
     // AC3: happy path — no residual, no clear work (counter unchanged)
     {
         drain_known_defer();
@@ -502,14 +513,6 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
               "AC4-soft: forced-clear unchanged");
         ::unsetenv("AURA_SANDBOX");
         drain_known_defer();
-    }
-
-    // AC5: query surface returns hash (keys source-cited above)
-    {
-        auto h = cs.eval("(engine:metrics \"query:mutation-boundary-hold-stats\")");
-        CHECK(h.has_value(), "AC5: mutation-boundary-hold-stats returns value");
-        CHECK(cs.metrics().mutation_boundary_residual_defer_bit_reconcile_total.load() >= 0,
-              "AC5: bit-reconcile metric readable");
     }
 }
 

@@ -11,6 +11,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <print>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -22,6 +23,12 @@ static void reset_member_face();
 static int isolate(const char* name, int (*fn)()) {
     std::println("\n──── {} ────", name);
     reset_member_face();
+    // Issue #4437: reset_member_face leaves AURA_SANDBOX=off so other
+    // members stay on the dev face. The chaos soak child must not inherit
+    // that latch — apply_production_security_defaults takes the dev path
+    // while the env is off. Other members keep the dev face.
+    if (std::strcmp(name, "test_chaos_soak_production_gate") == 0)
+        ::unsetenv("AURA_SANDBOX");
     aura::test::g_passed = 0;
     aura::test::g_failed = 0;
     const pid_t pid = ::fork();
@@ -40,14 +47,16 @@ static int isolate(const char* name, int (*fn)()) {
         return (fn() != 0 || aura::test::g_failed != 0) ? 1 : 0;
     int st = 0;
     ::waitpid(pid, &st, 0);
+    // Issue #4437: every terminating signal is member failure. SIGABRT
+    // and SIGSEGV used to print OK and return 0, so a production abort
+    // greened the soak. The parent still survives; the member does not.
     if (WIFSIGNALED(st)) {
         const int sig = WTERMSIG(st);
-        if (sig == SIGALRM || sig == SIGKILL) {
+        if (sig == SIGALRM || sig == SIGKILL)
             std::println("FAIL member {} (isolated timeout signal={})", name, sig);
-            return 1;
-        }
-        std::println("OK member {} (isolated signal {})", name, sig);
-        return 0;
+        else
+            std::println("FAIL member {} (isolated signal {})", name, sig);
+        return 1;
     }
     const int rc = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
     if (rc == 0)
@@ -454,8 +463,9 @@ int main() {
 
     // Issue #3555: chaos soak deploy gate (8+ worker × 100 mutate/s/fiber
     // × 1h fail-closed). Live-isolate so a heavy multi-fiber soak can
-    // SIGSEGV / heap corruption without taking the whole SuiteBuilder
-    // down (PR smoke = 5s default; nightly = 3600s via FULL=1).
+    // SIGSEGV / heap corruption without taking the parent down. Issue
+    // #4437: that signal fails the member (PR smoke = 5s; nightly =
+    // 3600s via FULL=1).
     if (isolate("test_chaos_soak_production_gate", run_test_chaos_soak_production_gate) != 0)
         ++members_failed;
     else

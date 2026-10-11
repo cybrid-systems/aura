@@ -46,8 +46,10 @@
 #include "test_harness.hpp"
 
 #include "compiler/lock_order_audit.h"
+#include "compiler/security_defaults.hh"   // apply_production_security_defaults (#4437)
 #include "compiler/typed_mutation_audit.h" // production_defaults_active (#2902)
 #include "core/gc_hooks.h"
+#include "core/sandbox.hh" // Restricted before the fiber loop (#4437)
 #include "core/provenance_tracker.hh"
 #include "core/workspace_epoch.hh" // query_epoch_strict (#3075 / #3590)
 #include "serve/fiber.h"
@@ -451,9 +453,12 @@ int run_test_chaos_soak_production_gate() {
     const int n_fibers = soak_fibers();
     const std::uint64_t seed = soak_seed();
 
-    // AC3: production_defaults_active gate. Soft / sandbox=off →
-    // observe-only (logs only, no CHECK fail).
-    const bool production = aura::compiler::typed_audit::production_defaults_active() != 0;
+    // AC3: a process that entered with AURA_SANDBOX=off stays observe-only.
+    // Issue #4437: the mailbox batch clears that env for this member before
+    // fork. Sample the entry face before the unarmed probes, which restore
+    // the dev latch. Arm after those probes and before the fiber loop.
+    const bool entered_sandbox_off = sandbox_is_off();
+    bool production = aura::compiler::typed_audit::production_defaults_active() != 0;
 
     std::println("=== Issue #3555: chaos soak deploy gate (workers={}, fibers={}, "
                  "duration={}s, full={}, production={}, seed={}) ===",
@@ -463,6 +468,21 @@ int run_test_chaos_soak_production_gate() {
     ac3586_unarmed_multi_worker_refuses();
     ac3590_query_epoch_strict_joins_bootstrap_gate();
     ac3592_unify_strict_joins_bootstrap_gate();
+    if (!entered_sandbox_off) {
+        // apply_production_security_defaults reads AURA_SANDBOX and takes
+        // the dev path while it is off. Leave Restricted first.
+        ::unsetenv("AURA_SANDBOX");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::compiler::security::apply_production_security_defaults();
+        production = aura::compiler::typed_audit::production_defaults_active() != 0;
+        CHECK(production, "4437: production defaults armed before the fiber loop");
+        CHECK(!sandbox_is_off(), "4437: sandbox left Restricted before the fiber loop");
+        const auto mode =
+            aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+        CHECK(mode == static_cast<std::uint8_t>(aura::core::sandbox::SandboxMode::Restricted),
+              "4437: sandbox mode is Restricted");
+        std::println("4437: soak face production={} sandbox=Restricted", production ? "yes" : "no");
+    }
     // Soft soak still needs an explicit off latch so Scheduler::run
     // does not FATAL (#3586) after the death test unset the env.
     if (!production && !sandbox_is_off())
