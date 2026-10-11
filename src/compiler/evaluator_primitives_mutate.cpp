@@ -1388,6 +1388,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->mutate_force_effect_allowed_total.fetch_add(1, std::memory_order_relaxed);
 
+                // Issue #4438: packed v2 still carrying another Agent's mint
+                // is stale before the guard. The body ensure already denies,
+                // and the guard abort then replaces that stale-ref with
+                // persist-reject. Hash operands stay on the hash arm.
+                if (!a.empty() && is_pair(a[0]) && arg_ref.has_value() &&
+                    aura::compiler::typed_audit::production_defaults_active()) {
+                    const auto cur = ev.agent_scoped_fiber_id();
+                    const auto held = arg_ref->fiber_id;
+                    if (held != 0 && cur != 0 && held != cur) {
+                        return mev("stale-ref", std::string(op) + ": stable-ref is stale");
+                    }
+                }
+
                 std::uint64_t wraps_before = 0;
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     wraps_before =
@@ -3696,7 +3709,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             using aura::compiler::query_result_decode::resolve_query_result_match;
             auto hr = resolve_query_result_match(
                 a[0], ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()), "query:as-stable-ref",
+                // Issue #4438: do not remint a foreign hash as this Agent.
+                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), "query:as-stable-ref",
                 parse_query_result_match_index(a, ev.keyword_table()));
             if (hr.kind != HashNodeKind::Ok)
                 return mev(hr.err_kind, hr.err_msg);
@@ -3711,6 +3725,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             StableNodeRef ref = *packed;
             if (!ev.allow_query_stable_ref_export(ref.id))
                 return restamp_lag();
+            // Issue #4438: tenant 0 under Restricted+MT consults occupancy
+            // before get_safe. Single-tenant and Soft allow inside the helper.
+            if (ref.tenant_id == 0 && !ev.restamp_read_ref(ref, "query:as-stable-ref"))
+                return mev("stale-ref", "query:as-stable-ref: packed StableNodeRef not fresh");
             // Issue #3425: validate identity; no occupancy auto-refresh.
             if (!flat.get_safe(ref).has_value() ||
                 !ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())

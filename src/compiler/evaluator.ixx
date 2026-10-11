@@ -7516,6 +7516,14 @@ public:
     // (ac3637-style flips from the test TU arm only the test TU's copy).
     void arm_production_audit_defaults_for_test() noexcept;
     void disarm_production_audit_defaults_for_test() noexcept;
+    // Issue #4438: library-side production bundle. Including
+    // security_defaults.hh from a test TU splits the audit counters
+    // from this module (#3640). Callers set AURA_SANDBOX and
+    // AURA_MULTI_TENANT first. AURA_SANDBOX=off takes the dev path
+    // and puts back prefs that path does not unwind. Production
+    // prims must not call this.
+    void apply_production_security_defaults_for_test() noexcept;
+    [[nodiscard]] bool probe_multi_tenant_env_active_for_test() const noexcept;
     // Issue #3646: library-side boundary-TLS shims — per-TU TLS (#3640)
     // means tests must note/clear through this TU (the one grant_effect_*
     // and require_effect read).

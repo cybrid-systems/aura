@@ -357,8 +357,10 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
 // in evaluator_primitives_query.cpp, query:reaches in _defuse.cpp,
 // query:macro-provenance-chain in _lifecycle.cpp). Same #3396/#3398 v2
 // wire shape the workspace file's local unpack_query_stable_ref lambda
-// walks: (id . (gen . (wrap . (tenant . (cow . (fiber . (boundary . _)))))))
-// — the caller stamps via Evaluator::stamp_query_stable_ref_export and
+// walks: (id . (gen . (wrap . (tenant . (cow . (fiber . (boundary . install)))))))
+// The first int after cow is fiber. A later int is the #4315 install id.
+// A bool is the boundary pin and is not an install id. The caller stamps
+// via Evaluator::stamp_query_stable_ref_export and
 // enforces the non-refresh rule (ensure_valid_or_refresh auto_refresh=false,
 // Issue #3661). nullopt → caller returns the bare-int #3395-class face
 // (raw node operand rejected under production).
@@ -419,18 +421,26 @@ unpack_query_stable_ref_v2(const PairVec& pairs, types::EvalValue arg) {
         return std::nullopt;
     ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(pairs[p_cow].car));
     rest = pairs[p_cow].cdr;
-    // fiber (optional) + boundary (optional)
-    if (is_pair(rest)) {
-        const auto p_fiber = as_pair_idx(rest);
-        if (static_cast<std::size_t>(p_fiber) < pairs.size() && is_int(pairs[p_fiber].car))
-            ref.fiber_id = static_cast<std::uint32_t>(as_int(pairs[p_fiber].car));
-        rest = pairs[p_fiber].cdr;
-        if (is_pair(rest)) {
-            const auto p_boundary = as_pair_idx(rest);
-            if (static_cast<std::size_t>(p_boundary) < pairs.size() &&
-                is_int(pairs[p_boundary].car))
-                ref.boundary_pinned = as_int(pairs[p_boundary].car) != 0;
+    // Issue #4315 / #4438: same tail as walk_v2. The first int is fiber
+    // (0 is a real fiber so the next int stays the install id). A bool is
+    // the boundary pin. A later int is install_id_at_capture. Treating that
+    // int as boundary_pinned leaves install at 0, and is_valid then refuses
+    // a live v2 (#4106 schema-620).
+    bool saw_fiber = false;
+    while (is_pair(rest)) {
+        const auto p = as_pair_idx(rest);
+        if (static_cast<std::size_t>(p) >= pairs.size())
+            break;
+        if (is_int(pairs[p].car)) {
+            const auto n = as_int(pairs[p].car);
+            if (!saw_fiber) {
+                ref.fiber_id = static_cast<std::uint32_t>(n);
+                saw_fiber = true;
+            } else {
+                ref.install_id_at_capture = static_cast<std::uint32_t>(n);
+            }
         }
+        rest = pairs[p].cdr;
     }
     return ref;
 }

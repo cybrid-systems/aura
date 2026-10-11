@@ -1226,6 +1226,50 @@ void Evaluator::disarm_production_audit_defaults_for_test() noexcept {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+namespace {
+
+    // Issue #4438: prefs apply_production_security_defaults does not unwind
+    // on the AURA_SANDBOX=off path. Snapshotted in this TU (the copy the
+    // production gates read) and restored after the dev-off re-apply.
+    struct SecurityPrefSnap4438 {
+        bool valid = false;
+        int moving = -1;
+        int pin = -1;
+        int epoch = 0;
+    };
+
+    SecurityPrefSnap4438& security_pref_snap_4438() noexcept {
+        static SecurityPrefSnap4438 snap;
+        return snap;
+    }
+
+} // namespace
+
+void Evaluator::apply_production_security_defaults_for_test() noexcept {
+    auto& snap = security_pref_snap_4438();
+    const char* sb = std::getenv("AURA_SANDBOX");
+    const bool dev_off = sb != nullptr && std::string_view(sb) == "off";
+    if (!dev_off && !snap.valid) {
+        snap.moving = aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+        snap.pin = aura::core::lifetime::g_general_object_pin_required_pref.load(
+            std::memory_order_relaxed);
+        snap.epoch = ::aura_epoch_invariant_mode();
+        snap.valid = true;
+    }
+    security::apply_production_security_defaults();
+    if (dev_off && snap.valid) {
+        aura::ast::g_moving_untracked_hard_abort_pref.store(snap.moving, std::memory_order_relaxed);
+        aura::core::lifetime::g_general_object_pin_required_pref.store(snap.pin,
+                                                                       std::memory_order_release);
+        ::aura_set_epoch_invariant_mode(snap.epoch);
+        snap.valid = false;
+    }
+}
+
+bool Evaluator::probe_multi_tenant_env_active_for_test() const noexcept {
+    return ::aura::core::provenance::multi_tenant_env_active();
+}
+
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.
 bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept {
     using namespace ::aura::core::audit_wal;
@@ -2853,7 +2897,24 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
     }
     if (ref.id == ast::NULL_NODE)
         return;
-    stamp_stable_ref(ref);
+    // Issue #4438: an inbound unpacked v2 leaves mutation_id_at_capture at 0.
+    // Layout exports set it from next_mutation_id_ and still stamp. Under
+    // production, a tenant-0 unpacked ref consults occupancy before the
+    // stamp wash. A captured non-zero fiber is restored so ensure still
+    // sees the exporter's mint.
+    {
+        const bool hard_export = aura::compiler::typed_audit::production_defaults_active();
+        const auto captured_fiber = ref.fiber_id;
+        if (hard_export && ref.tenant_id == 0 && ref.mutation_id_at_capture == 0) {
+            if (!const_cast<Evaluator*>(this)->restamp_read_ref(ref, "query-stable-export")) {
+                ref = {};
+                return;
+            }
+        }
+        stamp_stable_ref(ref);
+        if (hard_export && captured_fiber != 0)
+            ref.fiber_id = captured_fiber;
+    }
     ::aura::core::provenance::record_query_stable_ref_stamped();
     // Issue #3327: last-export StableNodeRef is Agent-held memory for the
     // next over-budget hot-cone (production restamp consults this set).

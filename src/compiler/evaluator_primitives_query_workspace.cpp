@@ -615,7 +615,8 @@ void register_workspace_query_primitives(
             using aura::compiler::query_result_decode::resolve_query_result_match;
             auto hr = resolve_query_result_match(
                 arg, ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()), op,
+                // Issue #4438: fiberless production uses the per-Agent mint.
+                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), op,
                 parse_query_result_match_index(a, ws.keyword_table));
             if (hr.kind == HashNodeKind::Ok) {
                 out_node = hr.node;
@@ -633,9 +634,14 @@ void register_workspace_query_primitives(
             // remake layout (wrap/cow/mutation) when workspace advanced, then
             // stamp tenant+fiber. stamp_stable_ref alone left wrap/cow at 0
             // and multi-round restamp could fail closed after the first pass.
+            ev.clear_last_mutate_error();
             ev.stamp_query_stable_ref_export(ref);
             if (ref.id == aura::ast::NULL_NODE) {
                 *ok = false;
+                // Issue #4438: occupancy refuse is stale-ref. Torn stays restamp-lag.
+                if (ev.last_mutate_error().find("isolation-deny") != std::string::npos)
+                    return mev("stale-ref", std::string(op) + ": stable-ref is stale or "
+                                                              "provenance ensure failed");
                 return mev("restamp-lag",
                            std::string("budget-exceeded: ") + op +
                                ": restamp budget exceeded; generation torn for export "
@@ -1518,7 +1524,8 @@ void register_workspace_query_primitives(
                 using aura::compiler::query_result_decode::resolve_query_result_match;
                 auto hr = resolve_query_result_match(
                     a[0], ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
-                    static_cast<std::uint64_t>(aura_fiber_current_id()), "query:ref-valid?",
+                    // Issue #4438: same per-Agent mint as the mutate hash arm.
+                    static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), "query:ref-valid?",
                     parse_query_result_match_index(a, ws.keyword_table));
                 return make_bool(hr.kind == HashNodeKind::Ok);
             }
@@ -1530,6 +1537,16 @@ void register_workspace_query_primitives(
             const auto& ref = *packed;
             const auto cur_tenant = ev.capability_tenant_id();
             if (cur_tenant != 0 && ref.tenant_id != cur_tenant)
+                return make_bool(false);
+            // Issue #4438: tenant 0 under Restricted+MT consults occupancy.
+            // A foreign non-zero fiber denies even when the tenant matches.
+            if (ref.tenant_id == 0) {
+                auto probe = ref;
+                if (!ev.restamp_read_ref(probe, "query:ref-valid?"))
+                    return make_bool(false);
+            }
+            const auto cur_fiber = ev.agent_scoped_fiber_id();
+            if (cur_fiber != 0 && ref.fiber_id != 0 && ref.fiber_id != cur_fiber)
                 return make_bool(false);
             if (ref.workspace_id != 0)
                 return make_bool(ref.is_valid_in_layer(flat, ref.workspace_id));
