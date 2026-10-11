@@ -16,6 +16,8 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <unistd.h>
+#include <sys/wait.h>
 
 namespace {
 
@@ -337,6 +339,69 @@ void ac4167_pack_face_default() {
           "4167 AC4: no docs/design");
 }
 
+static std::string aura_binary() {
+    if (const char* e = std::getenv("AURA_BIN")) {
+        if (::access(e, X_OK) == 0)
+            return e;
+    }
+    char buf[4096];
+    const auto n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string dir(buf);
+        const auto slash = dir.rfind('/');
+        if (slash != std::string::npos) {
+            auto cand = dir.substr(0, slash + 1) + "aura";
+            if (::access(cand.c_str(), X_OK) == 0)
+                return cand;
+        }
+    }
+    for (const char* c : {"./aura", "./build/aura", "../build/aura"}) {
+        if (::access(c, X_OK) == 0)
+            return c;
+    }
+    return {};
+}
+
+// Issue #4457: a file that defines a procedure runs each top-level form once.
+static void ac4457_cli_procedure_once() {
+    std::printf("\n--- #4457: procedure file prints once on every face ---\n");
+    const auto bin = aura_binary();
+    CHECK(!bin.empty(), "4457: aura binary");
+    if (bin.empty())
+        return;
+    const char* src_path = "/tmp/aura-4457-repro.aura";
+    const char* out_path = "/tmp/aura-4457-out.txt";
+    {
+        std::ofstream f(src_path);
+        f << "(define (f x) (+ x 1))\n";
+        f << "(display \"one \") (display (f 1)) (newline)\n";
+    }
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #4457") != std::string::npos, "4457: cite");
+    const char* faces[][2] = {
+        {"env -u AURA_PIPELINE_STRICT -u AURA_SANDBOX", "default"},
+        {"env -u AURA_PIPELINE_STRICT AURA_SANDBOX=off", "sandbox-off"},
+        {"env -u AURA_SANDBOX AURA_PIPELINE_STRICT=0", "strict-0"},
+    };
+    for (const auto& face : faces) {
+        std::string cmd = std::string("timeout 8 ") + face[0] + " '" + bin + "' '" + src_path +
+                          "' > '" + out_path + "' 2>/tmp/aura-4457-err.txt";
+        const int raw = std::system(cmd.c_str());
+        const int rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+        std::ifstream in(out_path);
+        std::string out((std::istreambuf_iterator<char>(in)), {});
+        CHECK(rc == 0, "4457: exit 0");
+        if (out != "one 2\n") {
+            std::printf("  FAIL body face=%s rc=%d out=[%s]\n", face[1], rc, out.c_str());
+            ++g_failed;
+        } else {
+            ++g_passed;
+            std::printf("  PASS: 4457 %s once\n", face[1]);
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -350,6 +415,7 @@ int main() {
     ac3770_one_contract_per_unbox();
     ac4007_pack_deletes_aos_factory();
     ac4167_pack_face_default();
+    ac4457_cli_procedure_once();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
