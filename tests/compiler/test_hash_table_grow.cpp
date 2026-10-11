@@ -211,6 +211,50 @@ static void ac3235_4_source() {
     CHECK(read_file("tests/compiler/test_issue_3235.cpp").empty(), "3235 AC4: no invent");
 }
 
+// Issue #4456: float and string indexes are errors. A negative integer
+// is still an int, so it fails the existing bounds check. 1.0 is not
+// coerced to 1.
+static void ac4456_vector_ref_index() {
+    std::println("\n--- #4456: vector-ref rejects a non-integer index ---");
+    CompilerService cs;
+    CHECK(cs.eval("(define v (vector 5 6))").has_value(), "4456: define v");
+    auto ok = cs.eval("(vector-ref v 1)");
+    CHECK(ok && is_int(*ok) && as_int(*ok) == 6, "4456: integer index 1 is 6");
+
+    auto flt = cs.eval("(vector-ref v 1.0)");
+    CHECK(flt && is_error(*flt), "4456: 1.0 is an error");
+    const auto fm = cs.evaluator().soft_error_message(*flt);
+    CHECK(fm.find("vector-ref: index must be an integer") != std::string::npos,
+          "4456: 1.0 message (" + fm + ")");
+
+    auto proc = cs.eval("(begin (define (at x) (vector-ref v x)) (at 1.5))");
+    CHECK(proc && is_error(*proc), "4456: 1.5 inside a procedure is an error");
+    const auto pm = cs.evaluator().soft_error_message(*proc);
+    CHECK(pm.find("index must be an integer") != std::string::npos,
+          "4456: 1.5 message (" + pm + ")");
+
+    auto str = cs.eval("(vector-ref v \"no\")");
+    CHECK(str && is_error(*str), "4456: string index is an error");
+    const auto sm = cs.evaluator().soft_error_message(*str);
+    CHECK(sm.find("index must be an integer") != std::string::npos,
+          "4456: string message (" + sm + ")");
+
+    auto neg = cs.eval("(vector-ref v -1)");
+    CHECK(neg && is_error(*neg), "4456: negative index is an error");
+    const auto nm = cs.evaluator().soft_error_message(*neg);
+    CHECK(nm.find("vector-ref:") != std::string::npos, "4456: negative message (" + nm + ")");
+    CHECK(nm.find("index must be an integer") == std::string::npos,
+          "4456: negative stays a bounds error (" + nm + ")");
+
+    auto again = cs.eval("(vector-ref v 1)");
+    CHECK(again && is_int(*again) && as_int(*again) == 6, "4456: vector still readable");
+
+    const auto src = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    CHECK(src.find("Issue #4456") != std::string::npos, "4456: cite");
+    CHECK(src.find("vector-ref: index must be an integer") != std::string::npos,
+          "4456: integer-index error string");
+}
+
 } // namespace
 
 static void ac3916_display_occupancy() {
@@ -245,7 +289,9 @@ int run_test_hash_table_grow() {
     ac3235_2_hash_and_pair();
     ac3235_3_production_guard();
     ac3235_4_source();
-    std::println("\n=== #2654/#3235: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #4456: vector-ref index ===");
+    ac4456_vector_ref_index();
+    std::println("\n=== #2654/#3235/#4456: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
