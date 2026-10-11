@@ -205,8 +205,9 @@ evaluate_wal_append_fail_slo(const WalAppendFailSloInput& in) noexcept {
     return d;
 }
 
-// Called only after WAL is_enabled() && fp (AC1: disabled path never
-// reaches here — still the existing `if (!enabled || !fp) return false`).
+// WAL-off returns at `if (!enabled || !fp)` before this when !enabled
+// (#3056 AC1). Issue #4446 also calls this when enabled but rotate left
+// fp null (same counters as fwrite-miss).
 inline void note_wal_append_fail() noexcept {
     auto& c = g_wal_append_fail_slo_counters;
     c.consecutive.fetch_add(1, std::memory_order_relaxed);
