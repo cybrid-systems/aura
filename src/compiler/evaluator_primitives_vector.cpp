@@ -605,6 +605,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_int(0);
+            // Issue #4429: metadata is still a table read. Armed foreign
+            // or unstamped returns 0; Soft/Off does not load the stamp.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-length"))
+                return make_int(0);
             return make_int(static_cast<std::int64_t>(g_hash_tables[hidx]->size));
         },
         pure_general(1, "(hash) -> int", "Number of keys in a hash."));
@@ -618,6 +623,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             std::lock_guard slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            // Issue #4429: same armed-face compare as hash-ref, before any
+            // key is copied into pairs_.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-keys"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -649,6 +659,10 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             std::lock_guard slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            // Issue #4429: deny before any value is copied into pairs_.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-values"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();
@@ -687,11 +701,15 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
     // string by iterating the alist.
     register_prim(
         add, ev, "hash->alist",
-        [&pairs](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_hash(a[0]))
                 return make_void();
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            // Issue #4429: deny before any (key . value) cons is built.
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash->alist"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
             auto meta = ht->metadata();

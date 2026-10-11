@@ -33,7 +33,9 @@
 #       evaluator_primitives_vector.cpp call aura_hash_gate_checked with
 #       the executing evaluator's tenant and sandbox mode BEFORE the
 #       probe, one gate per op name; armed deny returns void / #f
-#       without storing. JIT aura_hash_set / aura_hash_ref keep the
+#       without storing. Issue #4429 adds the same call on hash-length /
+#       hash-keys / hash-values / hash->alist (empty result, zero copy).
+#       The original four stay. JIT aura_hash_set / aura_hash_ref keep the
 #       owner hooks.
 # AC6 — aura_jit_runtime.cpp defines aura_hash_gate_checked with the face
 #       probe (jit_tenant_gate_armed) preceding any g_hash_tenants load
@@ -166,7 +168,9 @@ def main() -> int:
     if "aura_hash_alloc_tenant" not in rt:
         fails.append("AC4: aura_hash_alloc_tenant seam (#4093 pin) removed")
 
-    # ── AC5: the four tree-walker prims gate before the probe ──
+    # ── AC5: tree-walker prims gate before the probe ──
+    # The original four (#4110) plus the #4429 enumerators. Count stays
+    # exact so a dropped call fails closed.
     caller_needle = "aura_hash_gate_checked(hidx, ev.capability_tenant_id(),"
     jit_caller = "aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),"
     if jit_caller in vec:
@@ -187,7 +191,17 @@ def main() -> int:
                 return True
             at += len(face)
 
-    for op in ("hash-ref", "hash-has-key?", "hash-set!", "hash-remove!"):
+    gated_ops = (
+        "hash-ref",
+        "hash-has-key?",
+        "hash-set!",
+        "hash-remove!",
+        "hash-length",
+        "hash-keys",
+        "hash-values",
+        "hash->alist",
+    )
+    for op in gated_ops:
         if caller_needle not in vec:
             fails.append(f"AC5: {op} gate call missing (executing-evaluator caller)")
         if f'"{op}")' not in vec:
@@ -195,8 +209,8 @@ def main() -> int:
         if not _face_and_op(vec, op):
             fails.append(f"AC5: {op} gate does not pass ev.effect_sandbox_mode()")
     gate_calls = vec.count("aura_hash_gate_checked(hidx,")
-    if gate_calls != 4:
-        fails.append(f"AC5: expected 4 tree-walker gate calls, found {gate_calls}")
+    if gate_calls != len(gated_ops):
+        fails.append(f"AC5: expected {len(gated_ops)} tree-walker gate calls, found {gate_calls}")
     probes = vec.count("auto* ht = g_hash_tables[hidx];")
     if probes < 4:
         fails.append("AC5: probe shape changed (auto* ht = g_hash_tables[hidx])")
