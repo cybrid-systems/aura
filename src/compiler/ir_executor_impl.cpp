@@ -343,25 +343,8 @@ static std::optional<EvalResult> ir_typed_entry_blocked_result(CompilerMetrics* 
     return std::unexpected(Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
 }
 
-EvalResult IRInterpreter::execute() {
-    if (module_.functions.empty())
-        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty module"});
-    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
-        return *blocked;
-
-    const auto& entry = module_.entry();
-    auto local_count = entry.local_count + 64;
-    call_stack_.clear();
-    call_stack_.push_back({.func = &entry,
-                           .current_block = entry.entry_block,
-                           .locals = std::vector<EvalValue>(local_count, make_void()),
-                           .args = {},
-                           .resume_instr = 0,
-                           .is_top_level = true,
-                           .result_slot = 0,
-                           .ex_depth_at_entry = ex_stack_.size()});
-
-    while (!call_stack_.empty()) {
+EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
+    while (call_stack_.size() > base) {
         // Issue #2292: snapshot frame fields before run_function / pop —
         // a reference into call_stack_ dangles after pop_back().
         const bool is_top = call_stack_.back().is_top_level;
@@ -370,12 +353,8 @@ EvalResult IRInterpreter::execute() {
                                    call_stack_.back().args);
 
         if (std::holds_alternative<PendingCall>(result)) {
-            // Issue #252: PendingCall is the "actual closure call"
-            // moment for the IR interpreter. Bump the IR counter
-            // here (in addition to IROpcode::Call's bump, which
-            // may or may not lead to a PendingCall — some Call
-            // instructions resolve to primitives or other ops
-            // before they reach this point).
+            // Issue #252: PendingCall is the actual closure call. Bump
+            // here as well as on IROpcode::Call (some Calls never pend).
             if (context_.metrics) {
                 context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
             }
@@ -395,7 +374,7 @@ EvalResult IRInterpreter::execute() {
 
         auto& eval_res = std::get<EvalResult>(result);
         if (!eval_res) {
-            call_stack_.clear();
+            call_stack_.resize(base);
             return eval_res;
         }
 
@@ -406,11 +385,32 @@ EvalResult IRInterpreter::execute() {
 
         auto retval = *eval_res;
         call_stack_.pop_back();
-        if (!call_stack_.empty() && result_slot < call_stack_.back().locals.size())
+        if (call_stack_.size() > base && result_slot < call_stack_.back().locals.size())
             call_stack_.back().locals[result_slot] = retval;
     }
 
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
+}
+
+EvalResult IRInterpreter::execute() {
+    if (module_.functions.empty())
+        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty module"});
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
+
+    const auto& entry = module_.entry();
+    auto local_count = entry.local_count + 64;
+    // Keep any frames a reentrant caller still owns. clear() dropped them.
+    const auto base = call_stack_.size();
+    call_stack_.push_back({.func = &entry,
+                           .current_block = entry.entry_block,
+                           .locals = std::vector<EvalValue>(local_count, make_void()),
+                           .args = {},
+                           .resume_instr = 0,
+                           .is_top_level = true,
+                           .result_slot = 0,
+                           .ex_depth_at_entry = ex_stack_.size()});
+    return drain_call_stack(base);
 }
 
 // Issue #1513 / #1616: dual-check IRClosure (bridge_epoch + EnvFrame version_/id
@@ -616,7 +616,10 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
         context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
     }
 
-    call_stack_.clear();
+    // Reentrant: orch:parallel applies a lambda this same interpreter
+    // minted while run_function still holds the outer frame. clear()
+    // freed that frame; the outer pop_back then aborted.
+    const auto base = call_stack_.size();
     auto local_count = callee_func.local_count + std::max(std::size_t(64), all_args.size());
     call_stack_.push_back({.func = &callee_func,
                            .current_block = callee_func.entry_block,
@@ -626,50 +629,7 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
                            .is_top_level = true,
                            .result_slot = 0,
                            .ex_depth_at_entry = ex_stack_.size()});
-
-    while (!call_stack_.empty()) {
-        // Issue #2292: snapshot before pop (see execute() above).
-        const bool is_top = call_stack_.back().is_top_level;
-        const std::uint32_t result_slot = call_stack_.back().result_slot;
-        auto result = run_function(*call_stack_.back().func, call_stack_.back().locals,
-                                   call_stack_.back().args);
-
-        if (std::holds_alternative<PendingCall>(result)) {
-            if (context_.metrics) {
-                context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            auto& pc = std::get<PendingCall>(result);
-            auto new_count = pc.func->local_count + std::max(std::size_t(64), pc.args.size());
-            std::vector<EvalValue> new_locals(new_count, make_void());
-            call_stack_.push_back({.func = pc.func,
-                                   .current_block = pc.func->entry_block,
-                                   .locals = std::move(new_locals),
-                                   .args = std::move(pc.args),
-                                   .resume_instr = 0,
-                                   .is_top_level = false,
-                                   .result_slot = pc.result_slot,
-                                   .ex_depth_at_entry = ex_stack_.size()});
-            continue;
-        }
-
-        auto& eval_res = std::get<EvalResult>(result);
-        if (!eval_res) {
-            call_stack_.clear();
-            return eval_res;
-        }
-
-        if (is_top) {
-            call_stack_.pop_back();
-            return eval_res;
-        }
-
-        auto retval = *eval_res;
-        call_stack_.pop_back();
-        if (!call_stack_.empty() && result_slot < call_stack_.back().locals.size())
-            call_stack_.back().locals[result_slot] = retval;
-    }
-
-    return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
+    return drain_call_stack(base);
 }
 
 EvalResult IRInterpreter::execute_function(const IRFunction& func,
