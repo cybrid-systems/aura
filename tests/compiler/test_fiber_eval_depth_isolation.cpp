@@ -8,6 +8,8 @@
 //   AC4: load_module_file path refuse smoke (full H10 suite: #2653 test)
 //   AC5: Shallow recursive eval still works under host path
 
+#include "compiler/pipeline_policy.hh"
+#include "core/sandbox.hh"
 #include "serve/fiber.h"
 #include "test_harness.hpp"
 
@@ -165,6 +167,77 @@ static void ac_env_depth_isolated() {
     g_current_fiber = prev;
 }
 
+// Issue #4454: tail position of when/unless/and/or must not grow the C
+// stack, and a deep non-tail call must return the depth diagnostic
+// before the fat eval_flat prologue SIGSEGVs.
+static bool depth_10000_ok(CompilerService& cs) {
+    auto r = cs.eval("(depth 10000)");
+    if (r && is_int(*r))
+        return as_int(*r) == 10000;
+    if (!r && r.error().message.find("recursion depth exceeded") != std::string::npos)
+        return true;
+    if (!r)
+        std::println("  depth diag: {}", r.error().message);
+    return false;
+}
+
+static void ac4454_tail_forms_and_depth() {
+    std::println("\n--- #4454: when/unless/and/or tail + depth guard ---");
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    set_mode(SandboxMode::Off);
+
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #4454") != std::string::npos, "4454: eval_flat cites issue");
+    CHECK(flat.find("MAX_C_STACK_DEPTH = 512") != std::string::npos,
+          "4454: cap is ahead of the fat frame");
+    CHECK(flat.find("aura_eval_c_stack_depth_slot") != std::string::npos,
+          "4454: still uses the fiber-local slot");
+
+    CompilerService cs;
+    CHECK(cs.eval("(define (count-when n) "
+                  "(let lp ((t 0)) (when (< t n) (lp (+ t 1)))) n)")
+              .has_value(),
+          "4454: define count-when");
+    CHECK(cs.eval("(define (count-unless n) "
+                  "(let lp ((t 0)) (unless (>= t n) (lp (+ t 1)))) n)")
+              .has_value(),
+          "4454: define count-unless");
+    CHECK(cs.eval("(define (count-and n) "
+                  "(let lp ((t 0)) (and (< t n) (lp (+ t 1)))) n)")
+              .has_value(),
+          "4454: define count-and");
+    CHECK(cs.eval("(define (count-or n) "
+                  "(let lp ((t 0)) (or (>= t n) (lp (+ t 1)))) n)")
+              .has_value(),
+          "4454: define count-or");
+    auto when_r = cs.eval("(count-when 20000)");
+    CHECK(when_r && is_int(*when_r) && as_int(*when_r) == 20000, "4454: when tail 20000");
+    auto unless_r = cs.eval("(count-unless 20000)");
+    CHECK(unless_r && is_int(*unless_r) && as_int(*unless_r) == 20000, "4454: unless tail 20000");
+    auto and_r = cs.eval("(count-and 20000)");
+    CHECK(and_r && is_int(*and_r) && as_int(*and_r) == 20000, "4454: and tail 20000");
+    auto or_r = cs.eval("(count-or 20000)");
+    CHECK(or_r && is_int(*or_r) && as_int(*or_r) == 20000, "4454: or tail 20000");
+
+    CHECK(cs.eval("(define (depth n) (if (= n 0) 0 (+ 1 (depth (- n 1)))))").has_value(),
+          "4454: define depth");
+    auto shallow = cs.eval("(depth 40)");
+    CHECK(shallow && is_int(*shallow) && as_int(*shallow) == 40, "4454: depth 40");
+    CHECK(depth_10000_ok(cs), "4454: soft depth 10000 value or depth error");
+
+    set_mode(SandboxMode::Restricted);
+    aura::compiler::set_production_pipeline_strict(true);
+    CompilerService prod;
+    CHECK(prod.eval("(define (depth n) (if (= n 0) 0 (+ 1 (depth (- n 1)))))").has_value(),
+          "4454: production define depth");
+    CHECK(depth_10000_ok(prod), "4454: production depth 10000 value or depth error");
+
+    set_mode(SandboxMode::Off);
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+}
+
 } // namespace
 
 int run_test_fiber_eval_depth_isolation() {
@@ -175,6 +248,7 @@ int run_test_fiber_eval_depth_isolation() {
     ac4_module_path_refuse();
     ac5_shallow_recursion();
     ac_env_depth_isolated();
+    ac4454_tail_forms_and_depth();
     std::println("\n=== #2650: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
