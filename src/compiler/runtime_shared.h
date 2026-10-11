@@ -456,6 +456,12 @@ extern "C" bool aura_hash_gate_checked(std::uint64_t hidx, std::uint64_t caller_
 extern "C" std::int64_t aura_pair_car_unchecked_checked(std::int64_t pair_val,
                                                         std::uint64_t caller_tenant,
                                                         int sandbox_mode);
+// Issue #4441: slow-path and non-L2 car/cdr (aura_pair_car / aura_pair_cdr)
+// share pair_field_locked. Light-link tests pass caller and face explicitly.
+extern "C" std::int64_t aura_pair_car_checked(std::int64_t pair_val, std::uint64_t caller_tenant,
+                                              int sandbox_mode);
+extern "C" std::int64_t aura_pair_cdr_checked(std::int64_t pair_val, std::uint64_t caller_tenant,
+                                              int sandbox_mode);
 // Issue #4093: alloc-time stamp seams (the C-ABI alloc shapes; explicit
 // tenant per #4036 — light-link binaries cannot read the strong hook).
 extern "C" std::int64_t aura_hash_alloc_tenant(std::int64_t owner_tenant);
