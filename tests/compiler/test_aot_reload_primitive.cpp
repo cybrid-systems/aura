@@ -11,6 +11,8 @@
 #include "compiler/runtime_shared.h"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/aot_reload_consistency_proof.h"
+#include "compiler/security_defaults.hh"
+#include "core/sandbox.hh"
 
 // Issue #2178: C-linkage accessors for the cross-workspace guard + counter.
 // Forward-declared here so the test file can call them without pulling in
@@ -71,6 +73,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
@@ -1353,6 +1356,150 @@ static void ac4433_live_mirror_refuses_stale_reload() {
     }
 }
 
+// Issue #4452: production Restricted stamps aot:reload as kEffectFfi at
+// dispatch. No grant → error and the reload counters stay put (no dlopen).
+// A live Ffi grant reaches the body (missing file → #f, attempts +1).
+// Sibling aot:* masks stay kEffectNone. Soft/Off stays a no-op.
+struct Ac4452DevRestore {
+    ~Ac4452DevRestore() {
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::compiler::security::apply_production_security_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::capability::reset_capability_effects_for_test();
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+        aura_set_aot_metrics(nullptr);
+    }
+};
+
+static void ac4452_aot_reload_ffi_choke() {
+    std::println("\n--- #4452: aot:reload takes the c-load Ffi choke ---");
+    const auto hh = read_file("src/compiler/security_side_effect.hh");
+    CHECK(hh.find("name == \"aot:reload\"") != std::string::npos, "4452: exact-name infer");
+    CHECK(hh.find("starts_with(\"aot:") == std::string::npos, "4452: no aot: prefix choke");
+    const auto prim = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto reload_at = prim.find("add(\"aot:reload\"");
+    const auto next_at = prim.find("add(\"aot:set-region-mask\"", reload_at);
+    CHECK(reload_at != std::string::npos && next_at != std::string::npos && next_at > reload_at,
+          "4452: reload body located");
+    if (reload_at != std::string::npos && next_at > reload_at) {
+        const auto body = prim.substr(reload_at, next_at - reload_at);
+        CHECK(body.find("require_effect") == std::string::npos,
+              "4452: body does not require_effect");
+        CHECK(body.find("aura_reload_aot_module_for_eval") != std::string::npos,
+              "4452: body still calls for_eval");
+    }
+    CHECK(prim.find("schema-4452") == std::string::npos, "4452: no new query key");
+    CHECK(hh.find("schema-4452") == std::string::npos, "4452: header has no query key");
+    CHECK(read_file("tests/compiler/test_issue_4452.cpp").empty(), "4452: no test_issue");
+    CHECK(read_file("docs/design/4452-aot-reload-ffi.md").empty(), "4452: no docs/design");
+
+    constexpr const char* kMissing = "/tmp/aura_nonexistent_aot_module_4452.so";
+    {
+        Ac4452DevRestore restore;
+        (void)restore;
+        aura::core::capability::reset_capability_effects_for_test();
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::compiler::security::apply_production_security_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::bump_mutation_epoch(1);
+        const auto mid = aura::core::current_mutation_epoch();
+        CHECK(mid != 0, "4452: live mutation epoch");
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "4452: production defaults armed");
+
+        {
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_capability_tenant_id(4452);
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            CHECK(m != nullptr, "4452: metrics");
+            if (!m)
+                return;
+            aura_set_aot_metrics(m);
+            const auto att0 = m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed);
+            const auto c0 = m->aot_reload_attempts_.load(std::memory_order_relaxed);
+            const auto deny0 =
+                m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed);
+            auto sib = cs.eval("(aot:set-region-mask 7)");
+            CHECK(sib && is_bool(*sib) && as_bool(*sib), "4452: set-region-mask stays #t");
+            CHECK(aura_get_aot_region_mask_for_eval(&ev) == 7, "4452: region mask body ran");
+            auto ver = cs.eval("(aot:set-module-version 11)");
+            CHECK(ver && is_bool(*ver) && as_bool(*ver), "4452: set-module-version stays #t");
+            CHECK(aura_get_module_version_for_eval(&ev) == 11, "4452: module version body ran");
+            auto r = cs.eval(std::format("(aot:reload \"{}\")", kMissing));
+            CHECK(r && is_error(*r), "4452: no Ffi grant → error");
+            CHECK(m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed) == att0,
+                  "4452: via-primitive unchanged");
+            CHECK(m->aot_reload_attempts_.load(std::memory_order_relaxed) == c0,
+                  "4452: C attempts unchanged (no dlopen)");
+            CHECK(m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed) ==
+                      deny0 + 1,
+                  "4452: dispatch deny");
+            (void)cs.eval("(aot:set-region-mask 0)");
+            (void)cs.eval("(aot:set-module-version 0)");
+        }
+
+        {
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_capability_tenant_id(4452);
+            // A leftover boundary note would make peek disagree with the
+            // epoch the grant is bound to, and production provenance_ok
+            // then denies a live Ffi row. Clear, join peek, and pin it.
+            ev.clear_boundary_audit_mid_for_test();
+            const auto live = aura::compiler::typed_audit::peek_audit_mutation_id(0);
+            CHECK(live != 0, "4452: grant mid");
+            ev.note_boundary_audit_mid_for_test(live);
+            // Restricted grant of a non-default tenant needs TenantAdmin
+            // (#3409). Mint the row under Off, then restore Restricted so
+            // the eval is the production face. Ffi is not a high bit; the
+            // Off window is only the fixture mint, same as #3594 AC2.
+            const auto prev =
+                aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            auto prov = aura::core::capability::make_grant_provenance(live, true, 0, 0);
+            const bool granted = aura::core::capability::g_capability_registry().grant(
+                4452, "ffi-4452", aura::core::capability::Effect::Ffi, prov);
+            aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(prev));
+            CHECK(granted, "4452: Ffi grant lands");
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            CHECK(m != nullptr, "4452: grant-path metrics");
+            if (!m)
+                return;
+            aura_set_aot_metrics(m);
+            const auto att0 = m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed);
+            const auto c0 = m->aot_reload_attempts_.load(std::memory_order_relaxed);
+            const auto deny0 =
+                m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed);
+            auto r = cs.eval(std::format("(aot:reload \"{}\")", kMissing));
+            CHECK(r && is_bool(*r) && !as_bool(*r), "4452: Ffi grant → missing file #f");
+            CHECK(m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed) == att0 + 1,
+                  "4452: grant path via-primitive +1");
+            CHECK(m->aot_reload_attempts_.load(std::memory_order_relaxed) >= c0 + 1,
+                  "4452: grant path C attempts +1");
+            CHECK(m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed) == deny0,
+                  "4452: grant path is not a dispatch deny");
+        }
+    }
+
+    {
+        CompilerService cs;
+        auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        CHECK(m != nullptr, "4452: soft metrics");
+        if (!m)
+            return;
+        aura_set_aot_metrics(m);
+        const auto att0 = m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed);
+        auto r = cs.eval(std::format("(aot:reload \"{}\")", kMissing));
+        CHECK(r && is_bool(*r) && !as_bool(*r), "4452: Soft/Off missing file stays #f");
+        CHECK(m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed) == att0 + 1,
+              "4452: Soft/Off still enters the body");
+        aura_set_aot_metrics(nullptr);
+    }
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -1499,6 +1646,8 @@ int main() {
             CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "wrong version → #f");
         }
     }
+
+    ac4452_aot_reload_ffi_choke();
 
     // ── Direct C API null path ──
     {
