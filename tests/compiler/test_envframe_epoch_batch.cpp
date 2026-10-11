@@ -12,6 +12,8 @@
 //   Issue #3267 — publish_live_env_linear_to_bridge env_frames_ lock
 //                 + combined live bridge-state C ABI
 //   Issue #4343 — O(1) SymId index on Env (top-level define lookup)
+//   Issue #4448 — cap_snap_cache_ invalidation on compact / truncate
+//                 (EnvId reuse / renumber must not serve stale captures)
 // Pattern: CHECK() + run_* AC blocks (test_env_lookup_batch precedent).
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
 
@@ -1372,6 +1374,149 @@ static void run_4343_symid_index_lookup() {
     CHECK(env_src.find("Issue #4343") != std::string::npos, "4343: source cites the issue");
 }
 
+// ── Issue #4448 — cap_snap_cache_ invalidation on compact / truncate ──
+// The #4350 snapshot cache is keyed by EnvId, but EnvIds are not immutable
+// identity: truncate reuses them, compact renumbers them. The fast path
+// returned before the env_gen fence, so a live closure could materialize
+// ANOTHER frame's captures. Fix: env_gen-stamped snapshots + cache clear
+// in the same critical section as the env_generation_ bump (+ root frame
+// pin so top_'s parent chain survives a reclaim).
+static void run_4448_cap_snap_invalidation() {
+    using aura::compiler::Env;
+    using aura::compiler::types::make_int;
+    std::println("\n=== Issue #4448: cap_snap_cache_ invalidation ===");
+    using aura::compiler::Env;
+    using aura::compiler::types::make_int;
+
+    // AC1: truncate reuses the EnvId — the reused id must NOT inherit the
+    // doomed frame's cached snapshot (repro A).
+    {
+        aura::ast::StringPool pool;
+        Evaluator ev;
+        ev.set_panic_safe_env_frames_size_for_test(ev.env_frames_size());
+
+        Env e1;
+        e1.set_pool(&pool);
+        e1.bind_symid(pool.intern("secret"), make_int(111));
+        const auto id1 = ev.alloc_env_frame_from_env(e1, NULL_ENV_ID);
+        CHECK(id1 != NULL_ENV_ID, "4448 AC1: capture frame allocated");
+
+        Closure a;
+        a.env_id = id1;
+        a.pool = &pool;
+        ev.stamp_closure_bridge_epoch(a);
+        auto ma = ev.materialize_call_env(a);
+        auto sa = ma.lookup("secret");
+        CHECK(sa.has_value() && is_int(*sa) && as_int(*sa) == 111,
+              "4448 AC1: first materialize reads its own capture");
+
+        const auto dropped = ev.truncate_env_frames_to_checkpoint();
+        CHECK(dropped == 1, "4448 AC1: truncate drops the doomed frame");
+
+        Env e2;
+        e2.set_pool(&pool);
+        e2.bind_symid(pool.intern("secret"), make_int(222));
+        const auto id2 = ev.alloc_env_frame_from_env(e2, NULL_ENV_ID);
+        CHECK(id2 == id1, "4448 AC1: EnvId is reused post-truncate (precondition)");
+
+        Closure b;
+        b.env_id = id2;
+        b.pool = &pool;
+        ev.stamp_closure_bridge_epoch(b);
+        auto mb = ev.materialize_call_env(b);
+        auto sb = mb.lookup("secret");
+        CHECK(sb.has_value() && is_int(*sb) && as_int(*sb) == 222,
+              "4448 AC1: reused EnvId materializes ITS OWN captures (stale snapshot rejected)");
+    }
+
+    // AC2: compact renumbers frames — a survivor's renumbered EnvId must
+    // not hit a reclaimed frame's cached snapshot (repro B).
+    {
+        aura::ast::StringPool pool;
+        Evaluator ev;
+
+        // Frame 1: materialized then released — its snapshot stays cached
+        // under an id the sweep below will hand to a survivor.
+        Env ej;
+        ej.set_pool(&pool);
+        ej.bind_symid(pool.intern("val"), make_int(100));
+        const auto idj = ev.alloc_env_frame_from_env(ej, NULL_ENV_ID);
+        Closure cj;
+        cj.env_id = idj;
+        cj.pool = &pool;
+        ev.stamp_closure_bridge_epoch(cj);
+        (void)ev.materialize_call_env(cj);
+        const auto cidj = ev.register_active_closure(cj);
+
+        // Frame 2 + 3: registered survivors with distinct captures.
+        Env ea;
+        ea.set_pool(&pool);
+        ea.bind_symid(pool.intern("val"), make_int(200));
+        const auto ida = ev.alloc_env_frame_from_env(ea, NULL_ENV_ID);
+        Closure ca;
+        ca.env_id = ida;
+        ca.pool = &pool;
+        ev.stamp_closure_bridge_epoch(ca);
+        (void)ev.materialize_call_env(ca);
+        const auto cida = ev.register_active_closure(ca);
+
+        Env eb;
+        eb.set_pool(&pool);
+        eb.bind_symid(pool.intern("val"), make_int(222));
+        const auto idb = ev.alloc_env_frame_from_env(eb, NULL_ENV_ID);
+        Closure cb;
+        cb.env_id = idb;
+        cb.pool = &pool;
+        ev.stamp_closure_bridge_epoch(cb);
+        (void)ev.materialize_call_env(cb);
+        const auto cidb = ev.register_active_closure(cb);
+
+        CHECK(ev.erase_active_closure(cidj), "4448 AC2: released closure erased");
+        ev.bump_defuse_version_for_test();
+        const auto reclaimed = ev.compact_env_frames();
+        CHECK(reclaimed >= 1, "4448 AC2: sweep reclaims the released frame");
+
+        auto ba = ev.find_active_closure(cida);
+        auto bb = ev.find_active_closure(cidb);
+        CHECK(ba.has_value() && bb.has_value(), "4448 AC2: survivors still tracked");
+        CHECK(ba->env_id < ida && bb->env_id < idb,
+              "4448 AC2: survivor frames were renumbered downward (precondition)");
+
+        auto ma = ev.materialize_call_env(*ba);
+        auto va = ma.lookup("val");
+        CHECK(va.has_value() && is_int(*va) && as_int(*va) == 200,
+              "4448 AC2: renumbered frame A materializes its own captures");
+        auto mb = ev.materialize_call_env(*bb);
+        auto vb = mb.lookup("val");
+        CHECK(vb.has_value() && is_int(*vb) && as_int(*vb) == 222,
+              "4448 AC2: renumbered frame B materializes ITS OWN captures "
+              "(never a reclaimed frame's snapshot)");
+    }
+
+    // AC3: the ctor-allocated root frame (top_'s parent) is a live root —
+    // a sweep that reclaims other frames must not reclaim / strand it.
+    {
+        aura::ast::StringPool pool;
+        Evaluator ev;
+        const auto root_before = ev.top_env().parent_id();
+        CHECK(root_before != NULL_ENV_ID, "4448 AC3: root frame exists pre-compact");
+
+        Env tj;
+        tj.set_pool(&pool);
+        tj.bind_symid(pool.intern("junk"), make_int(9));
+        (void)ev.alloc_env_frame_from_env(tj, NULL_ENV_ID);
+        ev.bump_defuse_version_for_test();
+        const auto reclaimed = ev.compact_env_frames();
+        CHECK(reclaimed >= 1, "4448 AC3: unreferenced frame reclaimed (precondition)");
+
+        const auto root_after = ev.top_env().parent_id();
+        CHECK(root_after != NULL_ENV_ID && ev.resolve_env_frame(root_after) != nullptr,
+              "4448 AC3: root frame survives the sweep (pinned, remapped)");
+        CHECK(!ev.top_env().lookup("junk").has_value(),
+              "4448 AC3: top chain never resolves a reclaimed frame's bindings");
+    }
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1401,12 +1546,14 @@ int main() {
     aura_envframe_epoch_batch::run_4099_behind_frame_not_washed();
     std::println("\n=== Issue #4343: O(1) SymId index on Env ===");
     aura_envframe_epoch_batch::run_4343_symid_index_lookup();
+    std::println("\n=== Issue #4448: cap_snap_cache_ invalidation ===");
+    aura_envframe_epoch_batch::run_4448_cap_snap_invalidation();
     if (::aura::test::g_failed)
         return 1;
-    std::println(
-        "envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343): OK "
-        "({} "
-        "passed)",
-        ::aura::test::g_passed);
+    std::println("envframe/epoch batch "
+                 "(#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343/#4448): OK "
+                 "({} "
+                 "passed)",
+                 ::aura::test::g_passed);
     return 0;
 }

@@ -990,6 +990,13 @@ export struct CapSnapshot {
     // bindings; alloc_env_frame_from_env of that env must parent here so
     // a nested named let still sees them (#4350).
     EnvId source_frame = NULL_ENV_ID;
+    // Issue #4448: env_generation_ at build time. EnvIds are not immutable
+    // identity — compact renumbers frames and truncate reuses their ids —
+    // so a cached snapshot only describes its own generation's frame.
+    // Cache hits validate this against the live env_generation_ and
+    // rebuild on mismatch; compact / truncate clear the cache in the
+    // same critical section as their env_generation_ bump.
+    std::uint64_t env_gen = 0;
     std::shared_ptr<const CapSnapshot> parent;
 };
 
