@@ -4201,10 +4201,12 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("string>?", {String, String}, Bool);
     register_primitive("string>=?", {String, String}, Bool);
     register_primitive("string<=?", {String, String}, Bool);
-    register_primitive("number->string", {Int}, String);
+    // Issue #4472: optional radix. Dotted rest so one argument stays legal
+    // and a second int (the radix) typechecks. Last string->number wins.
+    register_primitive("number->string", {Int, Int}, String, true);
     register_primitive("string-index", {String, String, Int}, Int);
     register_primitive("string->number", {String}, Dyn);
-    register_primitive("string->number", {String}, Int);
+    register_primitive("string->number", {String, Int}, Int, true);
 
     // Pair operations
     register_primitive("cons", {Dyn, Dyn}, Dyn);

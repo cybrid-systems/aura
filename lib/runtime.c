@@ -1099,6 +1099,110 @@ static int is_pair_val(int64_t v) {
     return IS_PAIR(v);
 }
 
+// Issue #4472: one UTF-8 scalar, or one ill-formed byte. *adv is bytes
+// consumed (at least 1 when i < n). The raw byte is the unit when the
+// sequence is ill-formed, so a later well-formed sequence is not split.
+static uint32_t utf8_unit_at_c(const char* s, size_t n, size_t i, size_t* adv) {
+    unsigned char c0;
+    int need;
+    uint32_t cp;
+    uint32_t minc;
+    int k;
+    if (!s || i >= n) {
+        *adv = 0;
+        return 0;
+    }
+    c0 = (unsigned char)s[i];
+    *adv = 1;
+    if (c0 < 0x80)
+        return c0;
+    need = 0;
+    cp = 0;
+    minc = 0;
+    if (c0 >= 0xC2 && c0 <= 0xDF) {
+        need = 2;
+        cp = c0 & 0x1Fu;
+        minc = 0x80;
+    } else if (c0 >= 0xE0 && c0 <= 0xEF) {
+        need = 3;
+        cp = c0 & 0x0Fu;
+        minc = 0x800;
+    } else if (c0 >= 0xF0 && c0 <= 0xF4) {
+        need = 4;
+        cp = c0 & 0x07u;
+        minc = 0x10000;
+    } else {
+        return c0;
+    }
+    if (i + (size_t)need > n)
+        return c0;
+    for (k = 1; k < need; ++k) {
+        unsigned char ck = (unsigned char)s[i + (size_t)k];
+        if ((ck & 0xC0u) != 0x80u)
+            return c0;
+        cp = (cp << 6) | (ck & 0x3Fu);
+    }
+    if (cp < minc || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+        return c0;
+    *adv = (size_t)need;
+    return cp;
+}
+
+static size_t utf8_unit_count_c(const char* s) {
+    size_t n, i, count, adv;
+    if (!s)
+        return 0;
+    n = strlen(s);
+    i = 0;
+    count = 0;
+    while (i < n) {
+        (void)utf8_unit_at_c(s, n, i, &adv);
+        if (adv == 0)
+            break;
+        i += adv;
+        count++;
+    }
+    return count;
+}
+
+static size_t utf8_byte_offset_c(const char* s, size_t cp_index) {
+    size_t n, i, seen, adv;
+    if (!s)
+        return 0;
+    n = strlen(s);
+    i = 0;
+    seen = 0;
+    while (seen < cp_index && i < n) {
+        (void)utf8_unit_at_c(s, n, i, &adv);
+        if (adv == 0)
+            break;
+        i += adv;
+        seen++;
+    }
+    return i;
+}
+
+static int utf8_cp_at_c(const char* s, size_t cp_index, uint32_t* out) {
+    size_t n, i, seen, adv;
+    if (!s)
+        return 0;
+    n = strlen(s);
+    i = 0;
+    seen = 0;
+    while (i < n) {
+        uint32_t cp = utf8_unit_at_c(s, n, i, &adv);
+        if (adv == 0)
+            return 0;
+        if (seen == cp_index) {
+            *out = cp;
+            return 1;
+        }
+        i += adv;
+        seen++;
+    }
+    return 0;
+}
+
 // aura_prim_call: slow-path primitive dispatch for AOT-compiled binaries.
 //
 // Issue #2576: ABI is (prim_id, args*, count) — full N-arg vector.
@@ -1146,40 +1250,47 @@ int64_t aura_prim_call(int64_t prim_id, int64_t* args, int64_t argc) {
             free(buf);
             return result;
         }
-        case 6: // StringLength — return fixnum-encoded
-            return ((int64_t)strlen(aura_string_ref(a1))) << 1;
-        case 7: { // StringRef
+        case 6: // StringLength — code points, fixnum-encoded (#4472)
+            return ((int64_t)utf8_unit_count_c(aura_string_ref(a1))) << 1;
+        case 7: { // StringRef — code point at a character index (#4472)
             const char* s = aura_string_ref(a1);
             int64_t idx = a2;
+            uint32_t cp = 0;
             // a2 may be fixnum-encoded
             if ((idx & 1) == 0)
                 idx >>= 1;
-            if (s && idx >= 0 && idx < (int64_t)strlen(s))
-                return (int64_t)(unsigned char)s[idx];
-            return 0;
+            if (idx < 0 || !utf8_cp_at_c(s, (size_t)idx, &cp))
+                return 0;
+            return (int64_t)cp;
         }
-        case 8: { // Substring(s, start, end)
+        case 8: { // Substring(s, start, end) — code-point bounds (#4472)
             const char* s = aura_string_ref(a1);
             int64_t start = a2;
             int64_t end = a3;
+            size_t sb, eb, sub_len;
+            char* buf;
+            int64_t result;
             if ((start & 1) == 0)
                 start >>= 1;
             if ((end & 1) == 0)
                 end >>= 1;
             if (!s)
                 return aura_alloc_string("");
-            size_t len = strlen(s);
             if (start < 0)
                 start = 0;
-            if (end <= 0 || end > (int64_t)len)
-                end = (int64_t)len;
-            if (start >= end)
+            if (end < 0)
+                end = 0;
+            sb = utf8_byte_offset_c(s, (size_t)start);
+            eb = utf8_byte_offset_c(s, (size_t)end);
+            if (sb >= eb)
                 return aura_alloc_string("");
-            size_t sub_len = (size_t)(end - start);
-            char* buf = (char*)malloc(sub_len + 1);
-            memcpy(buf, s + start, sub_len);
+            sub_len = eb - sb;
+            buf = (char*)malloc(sub_len + 1);
+            if (!buf)
+                return aura_alloc_string("");
+            memcpy(buf, s + sb, sub_len);
             buf[sub_len] = 0;
-            int64_t result = aura_alloc_string(buf);
+            result = aura_alloc_string(buf);
             free(buf);
             return result;
         }
@@ -1187,18 +1298,56 @@ int64_t aura_prim_call(int64_t prim_id, int64_t* args, int64_t argc) {
             return strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0 ? 7 : 3;
         case 10: // StringLt — return pointer-tagged bool
             return strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0 ? 7 : 3;
-        case 11: { // NumberToString — decode fixnum, then format
-            char buf[64];
+        case 11: { // NumberToString — optional radix 2..36 (#4472)
+            char buf[80];
             long val = IS_FIXNUM(a1) ? (a1 >> 1) : (long)a1;
-            snprintf(buf, sizeof(buf), "%ld", val);
+            int radix = 10;
+            int neg, i;
+            unsigned long mag;
+            char tmp[72];
+            size_t o;
+            if (argc > 1) {
+                long r = IS_FIXNUM(a2) ? (a2 >> 1) : (long)a2;
+                if (r < 2 || r > 36)
+                    return 0;
+                radix = (int)r;
+            }
+            if (radix == 10) {
+                snprintf(buf, sizeof(buf), "%ld", val);
+                return aura_alloc_string(buf);
+            }
+            neg = val < 0;
+            mag = neg ? (unsigned long)(-(val + 1)) + 1UL : (unsigned long)val;
+            if (mag == 0)
+                return aura_alloc_string("0");
+            i = 0;
+            while (mag && i < (int)sizeof(tmp)) {
+                unsigned d = (unsigned)(mag % (unsigned)radix);
+                tmp[i++] = (char)(d < 10 ? '0' + d : 'a' + (d - 10));
+                mag /= (unsigned)radix;
+            }
+            o = 0;
+            if (neg && o + 1 < sizeof(buf))
+                buf[o++] = '-';
+            while (i > 0 && o + 1 < sizeof(buf))
+                buf[o++] = tmp[--i];
+            buf[o] = 0;
             return aura_alloc_string(buf);
         }
-        case 12: { // StringToNumber
+        case 12: { // StringToNumber — optional radix (#4472)
             const char* s = aura_string_ref(a1);
+            int base = 10;
+            char* end = NULL;
+            long val;
             if (!s || !*s)
                 return 0;
-            char* end = NULL;
-            long val = strtol(s, &end, 10);
+            if (argc > 1) {
+                long r = IS_FIXNUM(a2) ? (a2 >> 1) : (long)a2;
+                if (r < 2 || r > 36)
+                    return 0;
+                base = (int)r;
+            }
+            val = strtol(s, &end, base);
             return (int64_t)val;
         }
         case 13: // Display (fast-pathed, but keep as fallback)
