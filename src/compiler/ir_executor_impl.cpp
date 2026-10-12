@@ -22,11 +22,13 @@ module;
 #include "core/provenance_tracker.hh"      // Issue #2026: validate_linear_provenance
 #include "compiler/typed_mutation_audit.h" // Issue #2899: linear_ir_fastpath_try_skip
 #include "compiler/mutation_hold_budget.h" // Issue #3988: opcode-stride poll stride
+#include "compiler/user_arity.hh"          // Issue #4467: call-site procedure arity
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.evaluator_pure;
+import aura.core.ast;
 // Issue #146 Phase 3: bring the pure is_truthy into the
 // global namespace so existing call sites that use
 // `is_truthy(x)` (unqualified) keep working.
@@ -595,6 +597,77 @@ static void restamp_ir_call_closure_4349(IRClosure& closure, Evaluator* ev,
         metrics->live_closure_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #4467: user arity is IRFunction::arg_count (parameters only).
+// Captures are a prefix of the runtime args vector, not part of arg_count.
+// A variadic procedure accepts any count at or above its named parameters.
+static bool ir_user_arity_bad(const aura::ir::IRFunction& func, std::size_t got) noexcept {
+    return user_arity_mismatch(static_cast<std::size_t>(func.arg_count), func.variadic, got);
+}
+
+static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* ev) {
+    std::uint32_t line = 1;
+    std::uint32_t col = 1;
+    if (ev && instr && instr->source_ast_node_id != 0) {
+        auto* flat = ev->current_flat();
+        const auto nid = static_cast<aura::ast::NodeId>(instr->source_ast_node_id);
+        if (flat && nid < flat->size()) {
+            auto call = flat->get(nid);
+            if (call.line > 0)
+                line = call.line;
+            if (call.col > 0)
+                col = call.col;
+        }
+    }
+    return SourceLocation{line, col, 0};
+}
+
+static std::string ir_arity_proc_name(const aura::ir::IRFunction& func, const IRInstruction* instr,
+                                      Evaluator* ev) {
+    if (ev && instr && instr->source_ast_node_id != 0) {
+        auto* flat = ev->current_flat();
+        auto* pool = ev->current_pool();
+        const auto nid = static_cast<aura::ast::NodeId>(instr->source_ast_node_id);
+        if (flat && pool && nid < flat->size()) {
+            auto call = flat->get(nid);
+            if (call.tag == aura::ast::NodeTag::Call && !call.children.empty()) {
+                auto cal = flat->get(call.child(0));
+                if (cal.tag == aura::ast::NodeTag::Variable) {
+                    auto n = pool->resolve(cal.sym_id);
+                    if (!n.empty())
+                        return std::string(n);
+                }
+            }
+        }
+    }
+    const std::string& n = func.name;
+    if (n.empty() || n == "__lambda__" || n == "__top__" || n == "__self_placeholder__")
+        return "lambda";
+    const auto hash = n.find('#');
+    if (hash != std::string::npos && hash > 0)
+        return n.substr(0, hash);
+    return n;
+}
+
+static std::optional<Diagnostic> ir_user_arity_diag(const IRInstruction* instr,
+                                                    const aura::ir::IRFunction& func,
+                                                    std::size_t got, Evaluator* ev) {
+    if (!ir_user_arity_bad(func, got))
+        return std::nullopt;
+    // dispatch_ir_define_closure turns a call_closure error into nullopt.
+    // The pending text is what eval_flat reports for that bridge (#4467).
+    auto message = user_arity_message(ir_arity_proc_name(func, instr, ev),
+                                      static_cast<std::size_t>(func.arg_count), func.variadic, got);
+    set_pending_user_arity(message);
+    return Diagnostic{ErrorKind::ArityMismatch, std::move(message), ir_call_arity_loc(instr, ev)};
+}
+
+static std::optional<Diagnostic> take_ir_apply_arity(const IRInstruction* instr, Evaluator* ev) {
+    auto msg = take_pending_user_arity();
+    if (!msg)
+        return std::nullopt;
+    return Diagnostic{ErrorKind::ArityMismatch, std::move(*msg), ir_call_arity_loc(instr, ev)};
+}
+
 EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
     // Issue #4450: mints made while executing a CALL are runtime escapes
     // (register in runtime_minted_ids_); mints made during define-binding
@@ -656,6 +729,8 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             if (auto tw =
                     context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
                 return *tw;
+            if (auto arity = take_ir_apply_arity(nullptr, context_.evaluator))
+                return std::unexpected(std::move(*arity));
             return std::unexpected(
                 Diagnostic{ErrorKind::InvalidClosure,
                            "stale IR closure after mutation (bridge_epoch/env_version mismatch)"}
@@ -669,6 +744,9 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             Diagnostic{ErrorKind::IRCorruption, "invalid function id in IR closure"});
     }
     auto& callee_func = module_.functions[closure.func_id];
+    // Issue #4467: user args only. closure.env is the capture prefix.
+    if (auto arity = ir_user_arity_diag(nullptr, callee_func, args.size(), context_.evaluator))
+        return std::unexpected(std::move(*arity));
     std::vector<EvalValue> all_args;
     all_args.reserve(closure.env.size() + args.size());
     for (auto& ev : closure.env)
@@ -1716,6 +1794,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                     .with_suggestion("internal error: IR module corrupted"));
 
                         auto& callee_func = module_.functions[closure.func_id];
+                        // Issue #4467: compare the call's user arguments to
+                        // arg_count. Do not subtract the capture prefix.
+                        if (auto arity = ir_user_arity_diag(&instr, callee_func, call_args.size(),
+                                                            context_.evaluator))
+                            return std::unexpected(std::move(*arity));
 
                         std::vector<EvalValue> all_args;
                         for (auto& ev : closure.env)
@@ -1905,6 +1988,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 if (auto tw =
                                         context_.evaluator->apply_closure(closure_id, apply_args))
                                     locals[ops[2]] = *tw;
+                                else if (auto arity =
+                                             take_ir_apply_arity(&instr, context_.evaluator))
+                                    return std::unexpected(std::move(*arity));
                                 else
                                     return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                                       "invalid closure in apply"});
@@ -1922,6 +2008,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                     .with_suggestion("internal error: IR module corrupted"));
 
                         auto& callee_func = module_.functions[closure.func_id];
+                        // Issue #4467: same user-arity gate as IROpcode::Call.
+                        if (auto arity = ir_user_arity_diag(&instr, callee_func, apply_args.size(),
+                                                            context_.evaluator))
+                            return std::unexpected(std::move(*arity));
                         std::vector<EvalValue> all_args;
                         for (auto& ev : closure.env)
                             all_args.push_back(ev);
