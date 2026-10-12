@@ -38,13 +38,13 @@
   {
     "name": "tc-strict-runtime-typed-arg-mismatch",
     "code": "(begin (define (f x) (+ x 1)) (f \"hello\"))",
-    "expect_out": "<error>",
+    "expect_out": "",
     "expect_err": "type mismatch"
   },
   {
     "name": "tc-type-var-name-from-param",
     "code": "(begin (define (f x) (+ x 1)) (f \"hello\"))",
-    "expect_out": "<error>",
+    "expect_out": "",
     "expect_err": "type mismatch"
   },
   {
