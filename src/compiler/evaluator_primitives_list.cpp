@@ -68,6 +68,21 @@ namespace {
         return is_void(v);
     }
 
+    // Issue #4470: R7RS eqv?. Same exactness for numbers (so 2 and 2.0
+    // differ), then identity. Chars are ints. Symbols compare by intern
+    // index, the same way eq? does. Floats compare by value, not pool slot.
+    bool values_eqv(const EvalValue& x, const EvalValue& y) {
+        if (is_int(x) && is_int(y))
+            return as_int(x) == as_int(y);
+        if (is_float(x) && is_float(y))
+            return as_float(x) == as_float(y);
+        if (x == y)
+            return true;
+        if (is_string(x) && is_string(y))
+            return as_string_idx(x) == as_string_idx(y);
+        return false;
+    }
+
 } // namespace
 
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
@@ -364,6 +379,86 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(0); // documented not-found (falsy)
         },
         pure_general(2, "(any list) -> any", "Sublist whose car equals the key, or empty."));
+    // Issue #4470: tree-walker primitive. Not lowered to IROpcode::Eq.
+    register_prim(
+        add, ev, "eqv?",
+        [](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_bool(false);
+            return make_bool(values_eqv(a[0], a[1]));
+        },
+        pure_general(2, "(any any) -> bool",
+                     "True when identical, or numbers of the same exactness."));
+    register_prim(
+        add, ev, "memv",
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "memv: too few args",
+                                            counter);
+            }
+            auto& val = a[0];
+            auto v = a[1];
+            if (!is_end_of_list(v) && !is_pair(v)) {
+                return make_primitive_error(string_heap, error_values, "memv: not a list", counter);
+            }
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v)) {
+                    return make_primitive_error(string_heap, error_values, "memv: improper list",
+                                                counter);
+                }
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values, "memv: corrupted pair",
+                                                counter);
+                }
+                if (values_eqv(pairs[idx].car, val))
+                    return v;
+                v = pairs[idx].cdr;
+            }
+            return make_int(0);
+        },
+        pure_general(2, "(any list) -> any", "Sublist whose car is eqv? to the key, or empty."));
+    register_prim(
+        add, ev, "assv",
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "assv: too few args",
+                                            counter);
+            }
+            auto& key = a[0];
+            auto v = a[1];
+            if (!is_end_of_list(v) && !is_pair(v)) {
+                return make_primitive_error(string_heap, error_values, "assv: not a list", counter);
+            }
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v)) {
+                    return make_primitive_error(string_heap, error_values, "assv: improper list",
+                                                counter);
+                }
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values, "assv: corrupted pair",
+                                                counter);
+                }
+                auto entry = pairs[idx].car;
+                if (!is_pair(entry)) {
+                    return make_primitive_error(string_heap, error_values, "assv: not a pair",
+                                                counter);
+                }
+                auto eidx = as_pair_idx(entry);
+                if (eidx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values, "assv: corrupted pair",
+                                                counter);
+                }
+                if (values_eqv(pairs[eidx].car, key))
+                    return entry;
+                v = pairs[idx].cdr;
+            }
+            return make_int(0);
+        },
+        pure_general(2, "(any list) -> any", "Alist pair whose car is eqv? to the key, or empty."));
     // (append list ...) — Variadic: concatenate all provided lists
     register_prim(
         add, ev, "append",
