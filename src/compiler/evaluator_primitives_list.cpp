@@ -197,14 +197,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_void();
             const auto n = a.size();
             Evaluator::ListCtorLockHold hold(ev);
-            // Issue #4473: quota is per-mint inside mint_pair — a freelist
-            // hit (#4459) does not grow pairs_ and must not fail the quota,
-            // so the old pairs.size()+n pre-check is gone (it false-denied
-            // steady-state loops that the freelist serves flat, like cons).
+            // Issue #2997: unlimited + n <= kPrimHeapUnlimitedSmall skips allow().
+            // Issue #4473: a limited or larger list still denies inside mint_pair,
+            // which calls prim_heap_quota_allow only after a freelist miss.
+            // pairs.size()+n is not a pre-deny — that charged reused slots.
+            const bool small_unlimited =
+                !ev.prim_heap_quota_limited(PrimHeapDim::Pairs) && n <= kPrimHeapUnlimitedSmall;
+            if (!small_unlimited && !ev.prim_heap_quota_limited(PrimHeapDim::Pairs))
+                (void)ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size());
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = a.rbegin(); it != a.rend(); ++it) {
-                const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+                const auto id = ev.mint_pair(*it, result, /*check_quota=*/!small_unlimited);
                 if (id == Evaluator::kFileHeapMintDenied) {
                     return make_primitive_error(
                         string_heap, error_values,

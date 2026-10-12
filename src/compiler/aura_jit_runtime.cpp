@@ -4,6 +4,7 @@
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 #include "core/atomic_fence_port.h"
 
+#include "compiler/float_repr.hh"      // Issue #4468: display/write float spelling
 #include "compiler/lock_order_audit.h" // #4083: skip workspace re-lock under the guard
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
 #include "compiler/security_capabilities.h" // #3720/#4018 kEffectMutate for JIT hash/cell writes
@@ -7025,7 +7026,9 @@ void aura_display_value(int64_t val, int64_t write_mode) {
     }
     // Float v2 (if available)
     if (aura::compiler::types::is_float_raw_v2(val)) {
-        fprintf(stdout, "%g", aura_float_ref(val));
+        // Issue #4468: same shortest spelling as the tree-walker printer.
+        const auto s = aura::compiler::format_float_shortest(aura_float_ref(val));
+        fputs(s.c_str(), stdout);
         fflush(stdout);
         return;
     }

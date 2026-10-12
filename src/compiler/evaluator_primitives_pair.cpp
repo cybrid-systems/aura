@@ -9,6 +9,7 @@ module;
 
 
 #include "runtime_shared.h"
+#include "float_repr.hh"      // Issue #4468
 #include "prim_heap_quota.hh" // Issue #2916
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
@@ -995,23 +996,14 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.empty())
                 return make_int(0);
             std::string s;
+            // Issue #4468: display, write, and number->string share one spelling.
+            // std::to_string keeps 6 digits after the point, so 1e-9 became "0".
             if (is_float(a[0]))
-                s = std::to_string(as_float(a[0]));
+                s = aura::compiler::format_float_shortest(as_float(a[0]));
             else if (is_int(a[0]))
                 s = std::to_string(as_int(a[0]));
             else
                 s = "0";
-            // Trim trailing zeros from float representation
-            if (is_float(a[0])) {
-                auto dot = s.find('.');
-                if (dot != std::string::npos) {
-                    auto last = s.find_last_not_of('0');
-                    if (last > dot)
-                        s = s.substr(0, last + 1);
-                    else
-                        s = s.substr(0, dot);
-                }
-            }
             // Issue #2652: locked push.
             return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(s))));
         },

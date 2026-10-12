@@ -1232,8 +1232,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         ev.string_heap_.push_back(code);
         auto result = (*eval_fn)({make_string(sidx)});
         // Format result as string
-        auto formatted = aura::compiler::format_value(result, ev.string_heap_, ev.pairs_, 0,
-                                                      &ev.primitives_, ev.keyword_table());
+        auto formatted =
+            aura::compiler::format_value(result, ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                                         ev.keyword_table(), ev.vector_heap_);
         auto ris = ev.string_heap_.size();
         ev.string_heap_.push_back(std::move(formatted));
         return make_string(ris);

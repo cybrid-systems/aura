@@ -62,9 +62,9 @@ using aura::compiler::types::is_error;
 using aura::compiler::types::is_string;
 
 static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& cs) {
-    return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
-                                        cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
-                                        cs.evaluator().keyword_table());
+    return aura::compiler::format_value(
+        v, cs.evaluator().primitives().string_heap(), cs.evaluator().pairs(), 0,
+        &cs.evaluator().primitives(), cs.evaluator().keyword_table(), cs.evaluator().vector_heap());
 }
 
 // ── In-process libcurl (Issue #473 §8) ────────────────────────────
@@ -441,7 +441,8 @@ void run_serve_async(int num_workers) {
                 if (r) {
                     *result = aura::compiler::format_value(
                         *r, svc->evaluator().primitives().string_heap(), svc->evaluator().pairs(),
-                        0, &svc->evaluator().primitives(), svc->evaluator().keyword_table());
+                        0, &svc->evaluator().primitives(), svc->evaluator().keyword_table(),
+                        svc->evaluator().vector_heap());
                 } else {
                     *result = "[error] " + r.error().format();
                 }
