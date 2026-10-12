@@ -1044,13 +1044,16 @@ struct LLVMBuilder {
             case OpDiv: {
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
+                // Issue #4461: integer zero is a RefError tag, not fixnum 0.
+                // Float zero is IEEE (no substitute divisor of 1.0).
+                const auto err_tag = c64(types::make_ref(types::RefError, 0));
                 bool spec_int = (inst_shape(inst) == SHAPE_INT);
                 if (spec_int) {
                     auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                     auto safe_div = irb->CreateSelect(is_zero, c64(2), divisor); // fixnum 1
                     auto div_result = irb->CreateSDiv(dividend, safe_div);
-                    auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
-                    store(inst.ops[0], irb->CreateShl(safe, c64(1)));
+                    auto tagged = irb->CreateShl(div_result, c64(1));
+                    store(inst.ops[0], irb->CreateSelect(is_zero, err_tag, tagged));
                     return true;
                 }
                 auto a_is_float = irb->CreateICmpSLE(dividend, c64(FLOAT_BIAS_VAL));
@@ -1066,17 +1069,14 @@ struct LLVMBuilder {
                     irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
                                     llvm::ArrayRef<llvm::Value*>{divisor}),
                     irb->CreateSIToFP(irb->CreateAShr(divisor, c64(1)), double_ty));
-                auto is_zero_f = irb->CreateFCmpOEQ(b_dbl, llvm::ConstantFP::get(double_ty, 0.0));
-                auto safe_b =
-                    irb->CreateSelect(is_zero_f, llvm::ConstantFP::get(double_ty, 1.0), b_dbl);
-                auto fdiv = irb->CreateFDiv(a_dbl, safe_b);
+                auto fdiv = irb->CreateFDiv(a_dbl, b_dbl);
                 auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
                                                  llvm::ArrayRef<llvm::Value*>{fdiv});
                 auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                 auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
                 auto div_result = irb->CreateSDiv(dividend, safe_div);
-                auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
-                auto fixnum_res = irb->CreateShl(safe, c64(1));
+                auto tagged = irb->CreateShl(div_result, c64(1));
+                auto fixnum_res = irb->CreateSelect(is_zero, err_tag, tagged);
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
             }

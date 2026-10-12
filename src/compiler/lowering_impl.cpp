@@ -644,6 +644,12 @@ static std::uint32_t lower_flat_expr(
                                 auto zero = state.alloc_local();
                                 state.emit(IROpcode::ConstI64, zero, 0, 0);
                                 state.emit(op, result_slot, zero, prev);
+                            } else if (callee_name == "/") {
+                                // Issue #4461: (/ x) is 1/x, not x/x. A float
+                                // zero is IEEE inf; an int zero is an error.
+                                auto one = state.alloc_local();
+                                state.emit(IROpcode::ConstI64, one, 1, 0);
+                                state.emit(op, result_slot, one, prev);
                             } else {
                                 state.emit(op, result_slot, prev, prev);
                             }

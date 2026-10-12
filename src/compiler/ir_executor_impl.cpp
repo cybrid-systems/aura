@@ -859,6 +859,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             if (oclass == IROpcodeClass::Arith) {
                 auto& a = locals[ops[1]];
                 auto& b = locals[ops[2]];
+                // Issue #4461: integer zero stores an error value and continues.
+                // No evaluator (bare executor) keeps the diagnostic. Never 0.
+                auto int_div_zero = [&]() -> bool {
+                    if (!context_.evaluator)
+                        return false;
+                    locals[ops[0]] = context_.evaluator->make_div_zero_error();
+                    return true;
+                };
                 // Issue #2259: pure tag tests (zero atomic) + dual-fixnum
                 // fast path — single expected branch for pure arithmetic.
                 const bool a_int = is_int(a);
@@ -877,10 +885,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             locals[ops[0]] = make_int(ai * bi);
                             break;
                         case IROpcode::Div: {
-                            if (bi == 0)
+                            if (bi == 0) {
+                                if (int_div_zero())
+                                    break;
                                 return std::unexpected(
                                     Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
                                         .with_suggestion("use a non-zero denominator"));
+                            }
                             locals[ops[0]] = make_int(ai / bi);
                             break;
                         }
@@ -905,19 +916,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         break;
                     case IROpcode::Div: {
                         if (fl) {
-                            auto y = coerce_f(b);
-                            if (y == 0.0)
-                                return std::unexpected(
-                                    Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
-                                        .with_suggestion("use a non-zero denominator"));
-                            locals[ops[0]] = make_float(coerce_f(a) / y);
+                            // Issue #4461: IEEE. 1.0/0.0 is +inf, 0.0/0.0 is nan.
+                            locals[ops[0]] = make_float(coerce_f(a) / coerce_f(b));
                         } else {
                             auto y = coerce_i(b);
-                            if (y == 0)
-                                return std::unexpected(
-                                    Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
-                                        .with_suggestion("use a non-zero denominator"));
-                            locals[ops[0]] = make_int(coerce_i(a) / y);
+                            if (y == 0) {
+                                if (!int_div_zero())
+                                    return std::unexpected(
+                                        Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
+                                            .with_suggestion("use a non-zero denominator"));
+                            } else {
+                                locals[ops[0]] = make_int(coerce_i(a) / y);
+                            }
                         }
                         break;
                     }

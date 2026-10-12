@@ -3749,6 +3749,13 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_pack_pipeline_strict)
 endif()
 
+# Issue #4461: float `/` by zero is IEEE; integer `/` by zero is an error value.
+aura_add_issue_test(test_arithmetic_int64_safety)
+aura_issue_test_link_light(test_arithmetic_int64_safety)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_arithmetic_int64_safety)
+endif()
+
 
 # Domain batch: Module load/rebind/export + query hygiene/index (12 members + driver). Stream A4.
 add_executable(test_module_query_batch

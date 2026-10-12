@@ -14,6 +14,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.compiler.evaluator_pure;
 import aura.compiler.value;
+import aura.diag;
 
 namespace aura::compiler {
 
@@ -100,20 +101,23 @@ Primitives::Primitives() {
     };
     // (/) → 1, (/ x) → 1.0/x (float reciprocal), (/ x y ...) → x / y / z / ...
     // Issue #212 Phase 3: thin forwarder to arithmetic_div_pure.
-    // On div-by-zero the pure function returns an unexpected Diagnostic;
-    // we mirror the legacy behavior (silent 0 result for non-empty divisor
-    // lists, or 0 for the reciprocal case) so the existing test surface
-    // doesn't change. A future migration can surface the error.
+    // Issue #4461: integer division by zero is an error value (same shape
+    // as modulo), not a silent 0. Float zero is already an IEEE result
+    // from the pure function. Empty (/) stays 1. Type mismatch and int64
+    // overflow keep the legacy 0.
     table_["/"] = [this](std::span<const EvalValue> a) {
         auto r = aura::compiler::pure::arithmetic_div_pure(a, *string_heap_, &std::cerr);
         if (r)
             return *r;
-        // Error path: legacy behavior. For (/) empty → 1 (but
-        // the pure function already errors on empty, so legacy
-        // returned 1; we mirror that). For other errors (div by
-        // zero, type mismatch), legacy returned 0; mirror that.
         if (a.empty())
             return make_int(1);
+        if (r.error().kind == aura::diag::ErrorKind::DivisionByZero) {
+            if (error_values_ != nullptr && string_heap_ != nullptr) {
+                return primitives_detail::make_primitive_error(
+                    *string_heap_, *error_values_, "/: division by zero", primitive_error_counter_);
+            }
+            return make_error(0);
+        }
         return make_int(0);
     };
     auto chain_cmp = [this](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
