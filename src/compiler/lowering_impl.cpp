@@ -643,6 +643,9 @@ static std::uint32_t lower_flat_expr(
                     auto op = *found_op;
                     auto result_slot = state.alloc_local();
                     auto arg_count = v.children.size() - 1;
+                    // Issue #4463: numeric `=` shares IROpcode::Eq with eq?/eqv?.
+                    // ops[3] == 1 rejects non-numbers. eq?/eqv? leave it 0.
+                    const std::uint32_t num_eq = callee_name == "=" ? 1u : 0u;
                     if (arg_count == 0) {
                         // No args: return 0
                         state.emit(IROpcode::ConstI64, result_slot, 0, 0);
@@ -663,12 +666,12 @@ static std::uint32_t lower_flat_expr(
                                 state.emit(IROpcode::ConstI64, one, 1, 0);
                                 state.emit(op, result_slot, one, prev);
                             } else {
-                                state.emit(op, result_slot, prev, prev);
+                                state.emit(op, result_slot, prev, prev, num_eq);
                             }
                         } else if (arg_count == 2) {
                             auto arg1 =
                                 lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
-                            state.emit(op, result_slot, prev, arg1);
+                            state.emit(op, result_slot, prev, arg1, num_eq);
                         } else {
                             // 3+ args: comparison ops need pairwise AND (= a b c → (and (= a b) (=
                             // b c))) arithmetic chains as before: ((a + b) + c)
@@ -684,7 +687,7 @@ static std::uint32_t lower_flat_expr(
                                     auto pair_next = lower_flat_expr(state, flat, pool, v.child(ai),
                                                                      cache, cache_hits);
                                     auto cmp = state.alloc_local();
-                                    state.emit(op, cmp, pair_prev, pair_next);
+                                    state.emit(op, cmp, pair_prev, pair_next, num_eq);
                                     if (first) {
                                         state.emit(IROpcode::And, and_acc, cmp, cmp);
                                         first = false;

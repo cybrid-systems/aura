@@ -74,23 +74,31 @@ using types::make_void;
 
 namespace {
 
-    std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
-        auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-        if (r)
-            return *r;
-        return 0;
-    }
-
-    // Issue #2998: true coerce failure (non-numeric) vs documented 0.
+    // Issue #2998 / #4463: ints and floats only. Strings are not parsed.
     [[nodiscard]] bool try_coerce_int(const EvalValue& v, std::span<const std::string> heap,
                                       std::int64_t& out) {
-        if (!is_int(v) && !is_float(v) && !is_string(v))
+        if (is_int(v)) {
+            out = as_int(v);
+            return true;
+        }
+        if (!is_float(v))
             return false;
         auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
         if (!r)
             return false;
         out = *r;
         return true;
+    }
+
+    void note_arith_mismatch(const EvalValue& v, std::span<const std::string> heap) {
+        std::string_view text;
+        if (is_string(v) && !heap.empty()) {
+            const auto idx = as_string_idx(v);
+            if (idx < heap.size())
+                text = heap[idx];
+        }
+        std::println(std::cerr, "error: {}",
+                     aura::compiler::pure::numeric_type_mismatch_detail(v, text));
     }
 
     // Issue #2479: wall-clock budget for regex-* (ReDoS guard).
@@ -371,135 +379,94 @@ void register_math_regex_and_arithmetic_primitives(
         pure_general(2, "(string string) -> list", "Split string on regex."));
 
     // ── Math ────────────────────────────────────────────────────
-    auto to_double = [](const EvalValue& v) -> double {
-        if (is_float(v))
-            return as_float(v);
-        if (is_int(v))
-            return static_cast<double>(as_int(v));
-        return 0.0;
+    // Issue #4463: empty calls stay 0.0. A present non-number is a type error.
+    auto as_math_double = [](const EvalValue& v, double& out) -> bool {
+        if (is_float(v)) {
+            out = as_float(v);
+            return true;
+        }
+        if (is_int(v)) {
+            out = static_cast<double>(as_int(v));
+            return true;
+        }
+        return false;
+    };
+    auto unary_math = [&](const char* cause, auto fn) {
+        // Copy the pointer and the predicate. [&] would dangle after
+        // register returns; the heaps outlive the primitive table.
+        return [&string_heap, &error_values, primitive_error_counter, as_math_double, cause,
+                fn](const auto& a) -> EvalValue {
+            if (a.empty())
+                return make_float(0.0);
+            double d = 0.0;
+            if (!as_math_double(a[0], d)) {
+                note_arith_mismatch(a[0], string_heap);
+                return make_primitive_error(string_heap, error_values, cause,
+                                            primitive_error_counter);
+            }
+            return make_float(fn(d));
+        };
     };
 
-    register_prim(
-        add, ev, "sin",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::sin(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Sine of a number."));
-    register_prim(
-        add, ev, "cos",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::cos(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Cosine of a number."));
-    register_prim(
-        add, ev, "tan",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::tan(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Tangent of a number."));
-    register_prim(
-        add, ev, "asin",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::asin(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Arcsine of a number."));
-    register_prim(
-        add, ev, "acos",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::acos(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Arccosine of a number."));
-    register_prim(
-        add, ev, "atan",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::atan(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Arctangent of a number."));
-    register_prim(
-        add, ev, "log",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::log(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Natural logarithm."));
-    register_prim(
-        add, ev, "log10",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::log10(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Base-10 logarithm."));
-    register_prim(
-        add, ev, "exp",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::exp(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "e raised to the argument."));
+    register_prim(add, ev, "sin",
+                  unary_math("sin: expected number", [](double d) { return std::sin(d); }),
+                  pure_general(1, "(number) -> float", "Sine of a number."));
+    register_prim(add, ev, "cos",
+                  unary_math("cos: expected number", [](double d) { return std::cos(d); }),
+                  pure_general(1, "(number) -> float", "Cosine of a number."));
+    register_prim(add, ev, "tan",
+                  unary_math("tan: expected number", [](double d) { return std::tan(d); }),
+                  pure_general(1, "(number) -> float", "Tangent of a number."));
+    register_prim(add, ev, "asin",
+                  unary_math("asin: expected number", [](double d) { return std::asin(d); }),
+                  pure_general(1, "(number) -> float", "Arcsine of a number."));
+    register_prim(add, ev, "acos",
+                  unary_math("acos: expected number", [](double d) { return std::acos(d); }),
+                  pure_general(1, "(number) -> float", "Arccosine of a number."));
+    register_prim(add, ev, "atan",
+                  unary_math("atan: expected number", [](double d) { return std::atan(d); }),
+                  pure_general(1, "(number) -> float", "Arctangent of a number."));
+    register_prim(add, ev, "log",
+                  unary_math("log: expected number", [](double d) { return std::log(d); }),
+                  pure_general(1, "(number) -> float", "Natural logarithm."));
+    register_prim(add, ev, "log10",
+                  unary_math("log10: expected number", [](double d) { return std::log10(d); }),
+                  pure_general(1, "(number) -> float", "Base-10 logarithm."));
+    register_prim(add, ev, "exp",
+                  unary_math("exp: expected number", [](double d) { return std::exp(d); }),
+                  pure_general(1, "(number) -> float", "e raised to the argument."));
     register_prim(
         add, ev, "pow",
-        [to_double](const auto& a) {
+        [&string_heap, &error_values, primitive_error_counter,
+         as_math_double](const auto& a) -> EvalValue {
             if (a.size() < 2)
                 return make_float(0.0);
-            return make_float(std::pow(to_double(a[0]), to_double(a[1])));
+            double x = 0.0, y = 0.0;
+            if (!as_math_double(a[0], x) || !as_math_double(a[1], y)) {
+                const auto& bad = aura::compiler::pure::is_arith_number(a[0]) ? a[1] : a[0];
+                note_arith_mismatch(bad, string_heap);
+                return make_primitive_error(string_heap, error_values, "pow: expected number",
+                                            primitive_error_counter);
+            }
+            return make_float(std::pow(x, y));
         },
         pure_general(2, "(number number) -> float", "Raise base to exponent."));
-    register_prim(
-        add, ev, "sqrt",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::sqrt(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Square root."));
-    register_prim(
-        add, ev, "floor",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::floor(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Greatest integer <= argument as float."));
-    register_prim(
-        add, ev, "ceil",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::ceil(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Least integer >= argument as float."));
-    register_prim(
-        add, ev, "round",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::round(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Nearest integer as float."));
+    register_prim(add, ev, "sqrt",
+                  unary_math("sqrt: expected number", [](double d) { return std::sqrt(d); }),
+                  pure_general(1, "(number) -> float", "Square root."));
+    register_prim(add, ev, "floor",
+                  unary_math("floor: expected number", [](double d) { return std::floor(d); }),
+                  pure_general(1, "(number) -> float", "Greatest integer <= argument as float."));
+    register_prim(add, ev, "ceil",
+                  unary_math("ceil: expected number", [](double d) { return std::ceil(d); }),
+                  pure_general(1, "(number) -> float", "Least integer >= argument as float."));
+    register_prim(add, ev, "round",
+                  unary_math("round: expected number", [](double d) { return std::round(d); }),
+                  pure_general(1, "(number) -> float", "Nearest integer as float."));
     // std/math re-exports (define trunc trunc); was missing while floor/ceil/round existed.
-    register_prim(
-        add, ev, "trunc",
-        [to_double](const auto& a) {
-            if (a.empty())
-                return make_float(0.0);
-            return make_float(std::trunc(to_double(a[0])));
-        },
-        pure_general(1, "(number) -> float", "Truncate toward zero as float."));
+    register_prim(add, ev, "trunc",
+                  unary_math("trunc: expected number", [](double d) { return std::trunc(d); }),
+                  pure_general(1, "(number) -> float", "Truncate toward zero as float."));
 
     // Issue #1153/#1158/#1174 family: saturate float→int out of range.
     register_prim(
@@ -556,6 +523,8 @@ void register_math_regex_and_arithmetic_primitives(
             std::int64_t divisor = 0, n = 0;
             if (!try_coerce_int(a[1], string_heap, divisor) ||
                 !try_coerce_int(a[0], string_heap, n)) {
+                const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
+                note_arith_mismatch(bad, string_heap);
                 return make_primitive_error(string_heap, error_values, "modulo: expected number",
                                             primitive_error_counter);
             }
@@ -585,6 +554,8 @@ void register_math_regex_and_arithmetic_primitives(
             std::int64_t divisor = 0, n = 0;
             if (!try_coerce_int(a[1], string_heap, divisor) ||
                 !try_coerce_int(a[0], string_heap, n)) {
+                const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
+                note_arith_mismatch(bad, string_heap);
                 return make_primitive_error(string_heap, error_values, "mod: expected number",
                                             primitive_error_counter);
             }
@@ -614,6 +585,8 @@ void register_math_regex_and_arithmetic_primitives(
             std::int64_t divisor = 0, n = 0;
             if (!try_coerce_int(a[1], string_heap, divisor) ||
                 !try_coerce_int(a[0], string_heap, n)) {
+                const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
+                note_arith_mismatch(bad, string_heap);
                 return make_primitive_error(string_heap, error_values, "quotient: expected number",
                                             primitive_error_counter);
             }
@@ -640,6 +613,8 @@ void register_math_regex_and_arithmetic_primitives(
             std::int64_t divisor = 0, n = 0;
             if (!try_coerce_int(a[1], string_heap, divisor) ||
                 !try_coerce_int(a[0], string_heap, n)) {
+                const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
+                note_arith_mismatch(bad, string_heap);
                 return make_primitive_error(string_heap, error_values, "remainder: expected number",
                                             primitive_error_counter);
             }
@@ -667,6 +642,7 @@ void register_math_regex_and_arithmetic_primitives(
                 return make_float(std::abs(as_float(a[0])));
             std::int64_t n = 0;
             if (!try_coerce_int(a[0], string_heap, n)) {
+                note_arith_mismatch(a[0], string_heap);
                 return make_primitive_error(string_heap, error_values, "abs: expected number",
                                             primitive_error_counter);
             }
@@ -675,10 +651,20 @@ void register_math_regex_and_arithmetic_primitives(
         pure_general(1, "(number) -> number", "Absolute value."));
     register_prim(
         add, ev, "gcd",
-        [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter,
+         safe_abs_i64](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
-            auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
+            if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
+                note_arith_mismatch(*bad, string_heap);
+                return make_primitive_error(string_heap, error_values, "gcd: expected number",
+                                            primitive_error_counter);
+            }
+            auto to_int = [&](const EvalValue& v) {
+                std::int64_t n = 0;
+                (void)try_coerce_int(v, string_heap, n);
+                return n;
+            };
             auto r = to_int(a[0]);
             auto abs_gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
                 x = safe_abs_i64(x);
@@ -697,10 +683,20 @@ void register_math_regex_and_arithmetic_primitives(
         pure_general(2, "(int int) -> int", "Greatest common divisor."));
     register_prim(
         add, ev, "lcm",
-        [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter,
+         safe_abs_i64](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(1);
-            auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
+            if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
+                note_arith_mismatch(*bad, string_heap);
+                return make_primitive_error(string_heap, error_values, "lcm: expected number",
+                                            primitive_error_counter);
+            }
+            auto to_int = [&](const EvalValue& v) {
+                std::int64_t n = 0;
+                (void)try_coerce_int(v, string_heap, n);
+                return n;
+            };
             auto r = to_int(a[0]);
             auto gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
                 x = safe_abs_i64(x);
@@ -737,9 +733,14 @@ void register_math_regex_and_arithmetic_primitives(
         pure_general(2, "(int int) -> int", "Least common multiple."));
     register_prim(
         add, ev, "min",
-        [&string_heap](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
+            if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
+                note_arith_mismatch(*bad, string_heap);
+                return make_primitive_error(string_heap, error_values, "min: expected number",
+                                            primitive_error_counter);
+            }
             bool any_f = false;
             for (auto& v : a)
                 if (is_float(v)) {
@@ -747,26 +748,30 @@ void register_math_regex_and_arithmetic_primitives(
                     break;
                 }
             if (any_f) {
-                auto to_f = [&](const EvalValue& v) {
-                    return is_float(v) ? as_float(v)
-                                       : static_cast<double>(coerce_to_int(v, string_heap));
+                auto to_f = [](const EvalValue& v) {
+                    return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
                 };
                 double r = to_f(a[0]);
                 for (std::size_t i = 1; i < a.size(); ++i)
                     r = std::min(r, to_f(a[i]));
                 return make_float(r);
             }
-            std::int64_t r = coerce_to_int(a[0], string_heap);
+            std::int64_t r = as_int(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
-                r = std::min(r, coerce_to_int(a[i], string_heap));
+                r = std::min(r, as_int(a[i]));
             return make_int(r);
         },
         pure_general(255, "(...numbers) -> number", "Minimum of numeric arguments."));
     register_prim(
         add, ev, "max",
-        [&string_heap](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
+            if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
+                note_arith_mismatch(*bad, string_heap);
+                return make_primitive_error(string_heap, error_values, "max: expected number",
+                                            primitive_error_counter);
+            }
             bool any_f = false;
             for (auto& v : a)
                 if (is_float(v)) {
@@ -774,18 +779,17 @@ void register_math_regex_and_arithmetic_primitives(
                     break;
                 }
             if (any_f) {
-                auto to_f = [&](const EvalValue& v) {
-                    return is_float(v) ? as_float(v)
-                                       : static_cast<double>(coerce_to_int(v, string_heap));
+                auto to_f = [](const EvalValue& v) {
+                    return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
                 };
                 double r = to_f(a[0]);
                 for (std::size_t i = 1; i < a.size(); ++i)
                     r = std::max(r, to_f(a[i]));
                 return make_float(r);
             }
-            std::int64_t r = coerce_to_int(a[0], string_heap);
+            std::int64_t r = as_int(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
-                r = std::max(r, coerce_to_int(a[i], string_heap));
+                r = std::max(r, as_int(a[i]));
             return make_int(r);
         },
         pure_general(255, "(...numbers) -> number", "Maximum of numeric arguments."));
