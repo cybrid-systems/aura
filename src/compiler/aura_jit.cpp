@@ -1016,6 +1016,39 @@ struct LLVMBuilder {
             phi->addIncoming(fres, bb_flt);
             return phi;
         };
+        // Issue #4463: a number is a v2 float or a fixnum above the float
+        // bias. Bool, string, and ref tags are not numbers. Bit 0 clear
+        // alone is not enough: integer 1 is tagged 2.
+        auto is_numeric_tag = [&](llvm::Value* v) -> llvm::Value* {
+            auto* low2 = irb->CreateAnd(v, c64(3));
+            auto* float_bits = irb->CreateICmpEQ(low2, c64(0));
+            auto* in_float = irb->CreateAnd(irb->CreateICmpSLE(v, c64(FLOAT_BIAS_VAL)),
+                                            irb->CreateICmpSGT(v, c64(types::STRING_BIAS_VAL_2)));
+            auto* is_float = irb->CreateAnd(float_bits, in_float);
+            auto* bit0 = irb->CreateAnd(v, c64(1));
+            auto* is_fix = irb->CreateAnd(irb->CreateICmpEQ(bit0, c64(0)),
+                                          irb->CreateICmpSGT(v, c64(FLOAT_BIAS_VAL)));
+            return irb->CreateOr(is_float, is_fix);
+        };
+        const auto num_err = c64(types::make_ref(types::RefError, 0));
+        // Bad operands store a RefError and join. The numeric arm keeps
+        // the existing fixnum/float body, and the next opcode continues
+        // at the join.
+        auto guard_numeric_arith = [&](llvm::Value* a, llvm::Value* b, int kind) {
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto* bb_bad = llvm::BasicBlock::Create(ctx, "arith_nanum", parent);
+            auto* bb_good = llvm::BasicBlock::Create(ctx, "arith_num", parent);
+            auto* bb_join = llvm::BasicBlock::Create(ctx, "arith_join", parent);
+            auto* ok = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
+            irb->CreateCondBr(ok, bb_good, bb_bad);
+            irb->SetInsertPoint(bb_bad);
+            store(inst.ops[0], num_err);
+            irb->CreateBr(bb_join);
+            irb->SetInsertPoint(bb_good);
+            store(inst.ops[0], emit_fixnum_arith(a, b, kind));
+            irb->CreateBr(bb_join);
+            irb->SetInsertPoint(bb_join);
+        };
         switch (inst.opcode) {
             case OpNop:
                 // Issue #427: explicit Nop. No-op instruction — no
@@ -1053,23 +1086,33 @@ struct LLVMBuilder {
                 return true;
             }
             case OpAdd: {
-                store(inst.ops[0], emit_fixnum_arith(load(inst.ops[1]), load(inst.ops[2]), 0));
+                guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 0);
                 return true;
             }
             case OpSub: {
-                store(inst.ops[0], emit_fixnum_arith(load(inst.ops[1]), load(inst.ops[2]), 1));
+                guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 1);
                 return true;
             }
             case OpMul: {
-                store(inst.ops[0], emit_fixnum_arith(load(inst.ops[1]), load(inst.ops[2]), 2));
+                guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 2);
                 return true;
             }
             case OpDiv: {
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
+                auto* parent = irb->GetInsertBlock()->getParent();
+                auto* bb_bad = llvm::BasicBlock::Create(ctx, "div_nanum", parent);
+                auto* bb_good = llvm::BasicBlock::Create(ctx, "div_num", parent);
+                auto* bb_join = llvm::BasicBlock::Create(ctx, "div_join", parent);
+                auto* ok = irb->CreateAnd(is_numeric_tag(dividend), is_numeric_tag(divisor));
+                irb->CreateCondBr(ok, bb_good, bb_bad);
+                irb->SetInsertPoint(bb_bad);
+                store(inst.ops[0], num_err);
+                irb->CreateBr(bb_join);
+                irb->SetInsertPoint(bb_good);
                 // Issue #4461: integer zero is a RefError tag, not fixnum 0.
                 // Float zero is IEEE (no substitute divisor of 1.0).
-                const auto err_tag = c64(types::make_ref(types::RefError, 0));
+                const auto err_tag = num_err;
                 bool spec_int = (inst_shape(inst) == SHAPE_INT);
                 if (spec_int) {
                     auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
@@ -1077,55 +1120,63 @@ struct LLVMBuilder {
                     auto div_result = irb->CreateSDiv(dividend, safe_div);
                     auto tagged = irb->CreateShl(div_result, c64(1));
                     store(inst.ops[0], irb->CreateSelect(is_zero, err_tag, tagged));
-                    return true;
+                } else {
+                    auto a_is_float = irb->CreateICmpSLE(dividend, c64(FLOAT_BIAS_VAL));
+                    auto b_is_float = irb->CreateICmpSLE(divisor, c64(FLOAT_BIAS_VAL));
+                    auto any_float = irb->CreateOr(a_is_float, b_is_float);
+                    auto a_dbl = irb->CreateSelect(
+                        a_is_float,
+                        irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
+                                        llvm::ArrayRef<llvm::Value*>{dividend}),
+                        irb->CreateSIToFP(irb->CreateAShr(dividend, c64(1)), double_ty));
+                    auto b_dbl = irb->CreateSelect(
+                        b_is_float,
+                        irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
+                                        llvm::ArrayRef<llvm::Value*>{divisor}),
+                        irb->CreateSIToFP(irb->CreateAShr(divisor, c64(1)), double_ty));
+                    auto fdiv = irb->CreateFDiv(a_dbl, b_dbl);
+                    auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
+                                                     llvm::ArrayRef<llvm::Value*>{fdiv});
+                    auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
+                    auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
+                    auto div_result = irb->CreateSDiv(dividend, safe_div);
+                    auto tagged = irb->CreateShl(div_result, c64(1));
+                    auto fixnum_res = irb->CreateSelect(is_zero, err_tag, tagged);
+                    store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 }
-                auto a_is_float = irb->CreateICmpSLE(dividend, c64(FLOAT_BIAS_VAL));
-                auto b_is_float = irb->CreateICmpSLE(divisor, c64(FLOAT_BIAS_VAL));
-                auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                auto a_dbl = irb->CreateSelect(
-                    a_is_float,
-                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                    llvm::ArrayRef<llvm::Value*>{dividend}),
-                    irb->CreateSIToFP(irb->CreateAShr(dividend, c64(1)), double_ty));
-                auto b_dbl = irb->CreateSelect(
-                    b_is_float,
-                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                    llvm::ArrayRef<llvm::Value*>{divisor}),
-                    irb->CreateSIToFP(irb->CreateAShr(divisor, c64(1)), double_ty));
-                auto fdiv = irb->CreateFDiv(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
-                                                 llvm::ArrayRef<llvm::Value*>{fdiv});
-                auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
-                auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
-                auto div_result = irb->CreateSDiv(dividend, safe_div);
-                auto tagged = irb->CreateShl(div_result, c64(1));
-                auto fixnum_res = irb->CreateSelect(is_zero, err_tag, tagged);
-                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
+                irb->CreateBr(bb_join);
+                irb->SetInsertPoint(bb_join);
                 return true;
             }
             case OpEq: {
-                auto c = irb->CreateICmpEQ(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                // ops[3] == 0 is eq?/eqv? (raw tag). Numeric `=` rejects
+                // a non-number. Float identity stays the raw compare.
+                auto a = load(inst.ops[1]);
+                auto b = load(inst.ops[2]);
+                auto c = irb->CreateICmpEQ(a, b);
+                auto boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
+                if (inst.ops[3] != 0) {
+                    auto both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
+                    store(inst.ops[0], irb->CreateSelect(both, boolv, num_err));
+                } else {
+                    store(inst.ops[0], boolv);
+                }
                 return true;
             }
-            case OpLt: {
-                auto c = irb->CreateICmpSLT(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                return true;
-            }
-            case OpGt: {
-                auto c = irb->CreateICmpSGT(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                return true;
-            }
-            case OpLe: {
-                auto c = irb->CreateICmpSLE(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                return true;
-            }
+            case OpLt:
+            case OpGt:
+            case OpLe:
             case OpGe: {
-                auto c = irb->CreateICmpSGE(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                auto a = load(inst.ops[1]);
+                auto b = load(inst.ops[2]);
+                const auto pred = inst.opcode == OpLt   ? llvm::CmpInst::ICMP_SLT
+                                  : inst.opcode == OpGt ? llvm::CmpInst::ICMP_SGT
+                                  : inst.opcode == OpLe ? llvm::CmpInst::ICMP_SLE
+                                                        : llvm::CmpInst::ICMP_SGE;
+                auto c = irb->CreateICmp(pred, a, b);
+                auto boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
+                auto both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
+                store(inst.ops[0], irb->CreateSelect(both, boolv, num_err));
                 return true;
             }
             case OpAnd: {

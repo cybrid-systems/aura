@@ -59,54 +59,75 @@ using types::make_void;
 
 namespace {
 
-    std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
-        auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-        if (r)
-            return *r;
-        if (v.val != 3 && is_string(v) && !heap.empty()) {
-            auto idx = as_string_idx(v);
-            if (idx < heap.size()) {
-                std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
-                             heap[idx]);
-            }
+    std::string mismatch_detail(const EvalValue& v, const std::pmr::vector<std::string>* heap) {
+        std::string_view text;
+        if (is_string(v) && heap != nullptr) {
+            const auto idx = as_string_idx(v);
+            if (idx < heap->size())
+                text = (*heap)[idx];
         }
-        return 0;
+        return aura::compiler::pure::numeric_type_mismatch_detail(v, text);
     }
 
 } // namespace
 
 Primitives::Primitives() {
+    // Issue #4463: non-number operand. Stderr keeps the legacy line.
+    // The value is a primitive error, not a coerced int.
+    auto type_error = [this](std::string detail) -> EvalValue {
+        std::println(std::cerr, "error: {}", detail);
+        if (error_values_ != nullptr && string_heap_ != nullptr) {
+            return primitives_detail::make_primitive_error(
+                *string_heap_, *error_values_, std::move(detail), primitive_error_counter_);
+        }
+        return make_error(0);
+    };
+    auto reject_non_number =
+        [this, type_error](std::span<const EvalValue> a) -> std::optional<EvalValue> {
+        if (const auto* bad = aura::compiler::pure::first_non_number(a))
+            return type_error(mismatch_detail(*bad, string_heap_));
+        return std::nullopt;
+    };
     // ── Variadic arithmetic ────────────────────────────────────────
     // (+) → 0, (+ x) → x, (+ x y ...) → sum; float if any arg is float
-    // Issue #146 (7th extract): the body is now a 1-line
-    // forwarder to aura::compiler::pure::arithmetic_sum_pure.
-    // The diag sink is std::cerr to preserve the legacy "type
-    // mismatch" stderr emission that the stateful coerce_to_int
-    // wrapper used to provide — regression tests
-    // tc-strict-runtime-typed-arg-mismatch and
-    // tc-type-var-name-from-param depend on this.
-    table_["+"] = [this](std::span<const EvalValue> a) {
+    // Issue #146: forwarder to arithmetic_sum_pure. Issue #4463: a
+    // non-number prints the type-mismatch line and returns an error
+    // value (tc-strict-runtime-typed-arg-mismatch still matches stderr).
+    table_["+"] = [this, reject_non_number](std::span<const EvalValue> a) {
+        if (auto err = reject_non_number(a))
+            return *err;
         std::span<const std::string> heap(string_heap_->data(), string_heap_->size());
-        return aura::compiler::pure::arithmetic_sum_pure(a, heap, &std::cerr);
+        auto v = aura::compiler::pure::arithmetic_sum_pure(a, heap, nullptr);
+        if (is_error(v))
+            return make_error(0);
+        return v;
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
-    // Issue #212 Phase 3: thin forwarder to arithmetic_sub_pure.
-    table_["-"] = [this](std::span<const EvalValue> a) {
-        return aura::compiler::pure::arithmetic_sub_pure(a, *string_heap_, &std::cerr);
+    table_["-"] = [this, reject_non_number](std::span<const EvalValue> a) {
+        if (auto err = reject_non_number(a))
+            return *err;
+        auto v = aura::compiler::pure::arithmetic_sub_pure(a, *string_heap_, nullptr);
+        if (is_error(v))
+            return make_error(0);
+        return v;
     };
     // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
-    // Issue #212 Phase 3: thin forwarder to arithmetic_mul_pure.
-    table_["*"] = [this](std::span<const EvalValue> a) {
-        return aura::compiler::pure::arithmetic_mul_pure(a, *string_heap_, &std::cerr);
+    table_["*"] = [this, reject_non_number](std::span<const EvalValue> a) {
+        if (auto err = reject_non_number(a))
+            return *err;
+        auto v = aura::compiler::pure::arithmetic_mul_pure(a, *string_heap_, nullptr);
+        if (is_error(v))
+            return make_error(0);
+        return v;
     };
-    // (/) → 1, (/ x) → 1.0/x (float reciprocal), (/ x y ...) → x / y / z / ...
-    // Issue #212 Phase 3: thin forwarder to arithmetic_div_pure.
-    // Issue #4461: integer division by zero is an error value (same shape
-    // as modulo), not a silent 0. Float zero is already an IEEE result
-    // from the pure function. Empty (/) stays 1. Type mismatch and int64
-    // overflow keep the legacy 0.
-    table_["/"] = [this](std::span<const EvalValue> a) {
-        auto r = aura::compiler::pure::arithmetic_div_pure(a, *string_heap_, &std::cerr);
+    // (/) → 1, (/ x) → 1/x, (/ x y ...) → x / y / z / ...
+    // Issue #4461: integer division by zero is an error value. Float
+    // zero stays IEEE. Empty (/) stays 1. Int64 overflow stays 0.
+    // Issue #4463: a non-number is a type error, not a coerced divisor.
+    table_["/"] = [this, reject_non_number](std::span<const EvalValue> a) {
+        if (auto err = reject_non_number(a))
+            return *err;
+        auto r = aura::compiler::pure::arithmetic_div_pure(a, *string_heap_, nullptr);
         if (r)
             return *r;
         if (a.empty())
@@ -118,13 +139,22 @@ Primitives::Primitives() {
             }
             return make_error(0);
         }
+        if (r.error().message.find("type mismatch") != std::string::npos) {
+            if (error_values_ != nullptr && string_heap_ != nullptr) {
+                return primitives_detail::make_primitive_error(
+                    *string_heap_, *error_values_, r.error().message, primitive_error_counter_);
+            }
+            return make_error(0);
+        }
         return make_int(0);
     };
-    auto chain_cmp = [this](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
+    auto chain_cmp = [this, type_error](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
         if (a.size() < 2)
             return make_bool(true);
-        auto to_f = [this](const EvalValue& v) -> double {
-            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
+        if (const auto* bad = aura::compiler::pure::first_non_number(a))
+            return type_error(mismatch_detail(*bad, string_heap_));
+        auto to_f = [](const EvalValue& v) -> double {
+            return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
         };
         bool any_f = false;
         for (auto& v : a)
@@ -139,7 +169,7 @@ Primitives::Primitives() {
             return make_bool(true);
         }
         for (std::size_t i = 1; i < a.size(); ++i)
-            if (!fn_int(coerce_to_int(a[i - 1], *string_heap_), coerce_to_int(a[i], *string_heap_)))
+            if (!fn_int(as_int(a[i - 1]), as_int(a[i])))
                 return make_bool(false);
         return make_bool(true);
     };

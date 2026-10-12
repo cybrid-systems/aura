@@ -739,44 +739,45 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
     // Issue #2259: pure is_* (no classify atomics) + contracted as_*.
     // Fixnum path is the common case under pure arithmetic microbench.
+    // Issue #4463: callers reject non-numbers before coerce. Int and float
+    // only; strings are not prefix-parsed and bools are not 0/1.
     auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
         if (is_int(v))
             return as_int(v); // AURA_HOT_CONTRACT elided under NDEBUG
         if (is_float(v))
             return static_cast<std::int64_t>(as_float(v));
-        if (is_string(v)) {
-            // make_string indices are prim_heap indices (ConstString /
-            // interpreter push_string_heap). Local string_heap_ can lag
-            // when prim_heap already held entries at ConstString first
-            // hit — prefer prim_heap, fall back to local (eq_str path).
-            const auto idx = as_string_idx(v);
-            auto& prim_heap = context_.primitives.string_heap();
-            const std::string* s = nullptr;
-            if (idx < prim_heap.size())
-                s = &prim_heap[idx];
-            else if (idx < string_heap_.size())
-                s = &string_heap_[idx];
-            if (s) {
-                try {
-                    return static_cast<std::int64_t>(std::stoll(*s));
-                } catch (...) {
-                    // [SILENCE-PRIM-#615] string→int coerce failure —
-                    // log + return 0 (#1669 class A IR coerce contract).
-                    std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
-                                 *s);
-                    return 0;
-                }
-            }
-        }
-        if (is_bool(v))
-            return as_bool(v) ? 1 : 0;
         return 0;
     };
     auto coerce_f = [&](const types::EvalValue& v) -> double {
         if (is_float(v))
             return as_float(v);
-        return static_cast<double>(coerce_i(v));
+        if (is_int(v))
+            return static_cast<double>(as_int(v));
+        return 0.0;
     };
+    auto string_text_of = [&](const types::EvalValue& v) -> std::string_view {
+        if (!is_string(v))
+            return {};
+        const auto idx = as_string_idx(v);
+        auto& prim_heap = context_.primitives.string_heap();
+        if (idx < prim_heap.size())
+            return prim_heap[idx];
+        if (idx < string_heap_.size())
+            return string_heap_[idx];
+        return {};
+    };
+    // Prints the legacy line and stores a primitive error. False means
+    // there is no evaluator; the caller returns a TypeError diagnostic.
+    auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v) -> bool {
+        const auto detail =
+            aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
+        std::println(std::cerr, "error: {}", detail);
+        if (!context_.evaluator)
+            return false;
+        locals[slot] = context_.evaluator->make_arith_type_error(detail);
+        return true;
+    };
+    auto operand_is_number = [](const types::EvalValue& v) { return is_int(v) || is_float(v); };
 
     // Issue #2292: after a nested PendingCall returns, resume at the
     // call site's block + instruction — not always entry_block with a
@@ -914,6 +915,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         }
                         default:
                             break;
+                    }
+                    continue;
+                }
+                // Issue #4463: a bool, string, pair, or vector is not an operand.
+                if (!operand_is_number(a) || !operand_is_number(b)) {
+                    const auto& bad = operand_is_number(a) ? b : a;
+                    if (!store_num_mismatch(ops[0], bad)) {
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::TypeError, "type mismatch — expected Int"});
                     }
                     continue;
                 }
@@ -1068,7 +1078,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Add/Sub/Mul/Div: handled by IROpcodeClass::Arith table path (#910).
 
                 case IROpcode::Eq: {
-                    // Content-aware equality (not just raw pointer comparison)
+                    // Content-aware equality (not just raw pointer comparison).
+                    // ops[3] == 1 is numeric `=` (Issue #4463). eq?/eqv? keep
+                    // ops[3] == 0 and stay identity.
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
@@ -1078,6 +1090,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             return static_cast<double>(as_int(v));
                         return 0.0;
                     };
+                    if (ops[3] != 0) {
+                        if (!operand_is_number(a) || !operand_is_number(b)) {
+                            const auto& bad = operand_is_number(a) ? b : a;
+                            if (!store_num_mismatch(ops[0], bad)) {
+                                return std::unexpected(Diagnostic{ErrorKind::TypeError,
+                                                                  "type mismatch — expected Int"});
+                            }
+                            break;
+                        }
+                        locals[ops[0]] = make_bool(to_val(a) == to_val(b));
+                        break;
+                    }
                     // Float comparison
                     if (is_float(a) || is_float(b)) {
                         locals[ops[0]] = make_bool(to_val(a) == to_val(b));
@@ -1097,56 +1121,30 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     locals[ops[0]] = make_bool(a == b);
                     break;
                 }
-                case IROpcode::Lt: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v))
-                            return as_float(v);
-                        if (is_int(v))
-                            return static_cast<double>(as_int(v));
-                        return 0.0; // non-numeric (pair, string, etc.) → 0
-                    };
-                    locals[ops[0]] = make_bool(to_val(a) < to_val(b));
-                    break;
-                }
-                case IROpcode::Gt: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v))
-                            return as_float(v);
-                        if (is_int(v))
-                            return static_cast<double>(as_int(v));
-                        return 0.0;
-                    };
-                    locals[ops[0]] = make_bool(to_val(a) > to_val(b));
-                    break;
-                }
-                case IROpcode::Le: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v))
-                            return as_float(v);
-                        if (is_int(v))
-                            return static_cast<double>(as_int(v));
-                        return 0.0;
-                    };
-                    locals[ops[0]] = make_bool(to_val(a) <= to_val(b));
-                    break;
-                }
+                case IROpcode::Lt:
+                case IROpcode::Gt:
+                case IROpcode::Le:
                 case IROpcode::Ge: {
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
+                    if (!operand_is_number(a) || !operand_is_number(b)) {
+                        const auto& bad = operand_is_number(a) ? b : a;
+                        if (!store_num_mismatch(ops[0], bad)) {
+                            return std::unexpected(
+                                Diagnostic{ErrorKind::TypeError, "type mismatch — expected Int"});
+                        }
+                        break;
+                    }
                     auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v))
-                            return as_float(v);
-                        if (is_int(v))
-                            return static_cast<double>(as_int(v));
-                        return 0.0;
+                        return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
                     };
-                    locals[ops[0]] = make_bool(to_val(a) >= to_val(b));
+                    const double da = to_val(a);
+                    const double db = to_val(b);
+                    const bool cmp = instr.opcode == IROpcode::Lt   ? da < db
+                                     : instr.opcode == IROpcode::Gt ? da > db
+                                     : instr.opcode == IROpcode::Le ? da <= db
+                                                                    : da >= db;
+                    locals[ops[0]] = make_bool(cmp);
                     break;
                 }
 

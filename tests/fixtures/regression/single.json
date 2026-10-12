@@ -8,7 +8,7 @@
   {
     "name": "blame-add-str",
     "code": "(+ 1 \"hello\")",
-    "expect_out": "1",
+    "expect_out": "<error>",
     "expect_err": "type mismatch"
   },
   {

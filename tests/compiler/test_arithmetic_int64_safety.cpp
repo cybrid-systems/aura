@@ -345,6 +345,70 @@ int main() {
         }
     }
 
+    // Issue #4463: a non-number is a type error on both faces. The legacy
+    // stderr line stays. The value is an error, not a coerced int.
+    {
+        const auto bin = aura_binary();
+        CHECK(!bin.empty(), "4463: aura binary");
+        if (!bin.empty()) {
+            const char* path = "/tmp/aura-4463.aura";
+            CHECK(write_text(path, "(display (+ 1 #f)) (newline)\n"
+                                   "(display (+ 1 #t)) (newline)\n"
+                                   "(display (* 1.0 \"2.5\")) (newline)\n"
+                                   "(display (* 1.0 \"0.95\")) (newline)\n"
+                                   "(display (+ 1 \"12abc\")) (newline)\n"
+                                   "(display (- 10 \"4\")) (newline)\n"
+                                   "(display (abs \"-3\")) (newline)\n"
+                                   "(display (floor \"2.7\")) (newline)\n"
+                                   "(display (exp #f)) (newline)\n"
+                                   "(display (< 0 #f)) (newline)\n"
+                                   "(display (+ 1 \"abc\")) (newline)\n"
+                                   "(display (+ 2 3)) (newline)\n"
+                                   "(display (* 1.0 2)) (newline)\n"
+                                   "(display (= 1 1)) (newline)\n"
+                                   "(display (try (+ 1 \"abc\") (catch (e) e))) (newline)\n"
+                                   "(define (scale x) (* x 1.5))\n"
+                                   "(display (scale #f)) (newline)\n"
+                                   "(display (scale \"2\")) (newline)\n"
+                                   "(define v (make-vector 2 #f))\n"
+                                   "(display (+ (vector-ref v 0) 1)) (newline)\n"
+                                   "(display \"end\") (newline)\n"),
+                  "4463: write script");
+            const std::string expect = "<unknown>\n<unknown>\n<unknown>\n<unknown>\n<unknown>\n"
+                                       "<unknown>\n<unknown>\n<unknown>\n<unknown>\n<unknown>\n"
+                                       "<unknown>\n5\n2\n#t\n"
+                                       "type mismatch — expected Int, got String 'abc'\n"
+                                       "<unknown>\n<unknown>\n<unknown>\nend\n";
+            auto check_face = [&](const char* face, const char* outp, const char* errp,
+                                  const char* label) {
+                auto run = run_aura_file(bin, path, face, outp, errp);
+                if (run.out != expect || run.rc != 0)
+                    std::println(std::cerr, "{} rc {} out [{}] err [{}]", label, run.rc, run.out,
+                                 run.err);
+                CHECK(run.rc == 0, std::string(label) + " exits 0");
+                CHECK(run.out == expect, std::string(label) + " does not coerce");
+                CHECK(run.err.find("error: type mismatch — expected Int, got String 'abc'") !=
+                          std::string::npos,
+                      std::string(label) + " string 'abc'");
+                CHECK(run.err.find("error: type mismatch — expected Int, got String '2.5'") !=
+                          std::string::npos,
+                      std::string(label) + " string '2.5'");
+                CHECK(run.err.find("error: type mismatch — expected Int, got String '-3'") !=
+                          std::string::npos,
+                      std::string(label) + " string '-3'");
+                CHECK(run.err.find("error: type mismatch — expected Int, got Bool") !=
+                          std::string::npos,
+                      std::string(label) + " bool");
+                CHECK(run.err.find("AURA CRASH") == std::string::npos,
+                      std::string(label) + " does not abort");
+            };
+            check_face("AURA_SANDBOX=off AURA_PIPELINE_STRICT=0", "/tmp/aura-4463-soft-out.txt",
+                       "/tmp/aura-4463-soft-err.txt", "4463: soft");
+            check_face("", "/tmp/aura-4463-def-out.txt", "/tmp/aura-4463-def-err.txt",
+                       "4463: default");
+        }
+    }
+
     if (::aura::test::g_failed)
         return 1;
     std::println("arithmetic int64 safety: OK ({} passed)", ::aura::test::g_passed);

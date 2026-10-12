@@ -221,7 +221,11 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Eq: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                // Issue #4463: numeric `=` (ops[3] == 1) does not fold a bool.
+                // eq?/eqv? (ops[3] == 0) still fold identity of tagged bools.
+                const bool numeric = ops[3] != 0;
+                if (it_a != known.end() && it_b != known.end() &&
+                    !(numeric && (is_tagged_bool(it_a->second) || is_tagged_bool(it_b->second)))) {
                     replace_bool(instr, ops[0], it_a->second == it_b->second, known);
                     ++folded;
                 }
@@ -229,7 +233,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Lt: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace_bool(instr, ops[0], it_a->second < it_b->second, known);
                     ++folded;
                 }
@@ -237,7 +242,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Gt: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace_bool(instr, ops[0], it_a->second > it_b->second, known);
                     ++folded;
                 }
@@ -245,7 +251,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Le: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace_bool(instr, ops[0], it_a->second <= it_b->second, known);
                     ++folded;
                 }
@@ -253,7 +260,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Ge: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace_bool(instr, ops[0], it_a->second >= it_b->second, known);
                     ++folded;
                 }

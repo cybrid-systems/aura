@@ -14832,6 +14832,13 @@ public:
         return primitives_detail::make_primitive_error(
             string_heap_, error_values_, "/: division by zero", &primitive_error_count_);
     }
+    // Issue #4463: same error-value shape as division by zero, so try
+    // binds the cause string. `cause` is the mismatch detail without
+    // the "error: " prefix.
+    [[nodiscard]] types::EvalValue make_arith_type_error(std::string_view cause) {
+        return primitives_detail::make_primitive_error(string_heap_, error_values_, cause,
+                                                       &primitive_error_count_);
+    }
     void bump_primitive_error_count() noexcept {
         primitive_error_count_.fetch_add(1, std::memory_order_relaxed);
     }

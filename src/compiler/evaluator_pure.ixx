@@ -443,45 +443,90 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
                                                   "coerce_value: unsupported coercion"));
 }
 
+// Issue #4463: arithmetic accepts only ints and floats. Bool, void, pair,
+// vector, closure, error, and every string (including "2.5" and "12abc")
+// are non-numbers. Annotation coercion stays in coerce_value_pure.
+export inline bool is_arith_number(const types::EvalValue& v) noexcept {
+    return types::is_int(v) || types::is_float(v);
+}
+
+export inline const types::EvalValue*
+first_non_number(std::span<const types::EvalValue> args) noexcept {
+    for (const auto& v : args) {
+        if (!is_arith_number(v))
+            return &v;
+    }
+    return nullptr;
+}
+
+export inline const char* numeric_operand_type_name(const types::EvalValue& v) noexcept {
+    if (types::is_bool(v))
+        return "Bool";
+    if (types::is_void(v))
+        return "Void";
+    if (types::is_pair(v))
+        return "Pair";
+    if (types::is_vector(v))
+        return "Vector";
+    if (types::is_closure(v))
+        return "Closure";
+    if (types::is_error(v))
+        return "Error";
+    if (types::is_string(v))
+        return "String";
+    return "Value";
+}
+
+// Legacy stderr text, without the "error: " prefix. Strings keep the
+// exact "got String '…'" form (em dash). Callers print `error: ` + this.
+export inline std::string numeric_type_mismatch_detail(const types::EvalValue& v,
+                                                       std::string_view string_text) {
+    if (types::is_string(v)) {
+        return std::string("type mismatch — expected Int, got String '") +
+               std::string(string_text) + "'";
+    }
+    return std::string("type mismatch — expected Int, got ") + numeric_operand_type_name(v);
+}
+
+inline std::string_view arith_string_text(const types::EvalValue& v,
+                                          std::span<const std::string> heap) noexcept {
+    if (!types::is_string(v) || heap.empty())
+        return {};
+    const auto idx = types::as_string_idx(v);
+    if (idx >= heap.size())
+        return {};
+    return heap[idx];
+}
+
+// Issue #4463: a non-number is not a sum. make_error(0) is the sentinel
+// the primitive wrapper replaces with a cause string. Numeric results
+// are never error values.
+inline types::EvalValue arith_type_sentinel(const types::EvalValue& bad,
+                                            std::span<const std::string> heap, std::ostream* diag) {
+    if (diag) {
+        *diag << "error: " << numeric_type_mismatch_detail(bad, arith_string_text(bad, heap))
+              << '\n';
+    }
+    return types::make_error(0);
+}
+
 // arithmetic_sum_pure — Issue #146 (7th extract).
 //
 // Pure variadic sum: (+) → 0, (+ x) → x, (+ x y ...) → sum.
 // Promotes to float if any arg is float; otherwise stays int.
 // Returns the result as a fresh EvalValue (make_int or make_float).
 //
-// `diag` is an optional diagnostics sink. When non-null, the
-// function writes the legacy \"type mismatch\" line to *diag on
-// any arg whose coercion to int fails (matches pre-extract
-// stateful behavior — regression tests
-// tc-strict-runtime-typed-arg-mismatch and
-// tc-type-var-name-from-param depend on this). When null
-// (default), no diagnostics are emitted. The function remains
-// pure modulo the sink: every dependency (args, heap, diag
-// stream) is passed in, no `this` or Evaluator member access.
+// `diag` is an optional diagnostics sink. When non-null, a non-number
+// operand writes the legacy "type mismatch" line (regression tests
+// tc-strict-runtime-typed-arg-mismatch and tc-type-var-name-from-param
+// substring-match stderr). The result is an error sentinel, not 0.
 export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalValue> args,
                                                    std::span<const std::string> string_heap,
                                                    std::ostream* diag = nullptr) {
-    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
-        auto r = coerce_to_int_pure(v, string_heap);
-        if (r)
-            return *r;
-        // Coercion failed. If the failing value is a String and
-        // a diag sink is provided, mirror the pre-Phase-1 stderr
-        // line so callers that previously relied on the
-        // stateful coerce_to_int wrapper's stderr emission
-        // (e.g. the `+` primitive in evaluator_primitives_builtins.cpp) keep
-        // working.
-        if (diag && types::is_string(v) && !string_heap.empty()) {
-            auto idx = types::as_string_idx(v);
-            if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
-                      << "'\n";
-            }
-        }
-        return 0;
-    };
     if (args.empty())
         return types::make_int(0);
+    if (const auto* bad = first_non_number(args))
+        return arith_type_sentinel(*bad, string_heap, diag);
     bool any_f = false;
     for (const auto& v : args) {
         if (types::is_float(v)) {
@@ -492,13 +537,13 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
     if (any_f) {
         double r = 0.0;
         for (const auto& v : args)
-            r += types::is_float(v) ? types::as_float(v) : static_cast<double>(coerce_one(v));
+            r += types::is_float(v) ? types::as_float(v) : static_cast<double>(types::as_int(v));
         return types::make_float(r);
     }
     // Issue #1150: checked int64 sum — overflow promotes to float (no UB).
     std::int64_t r = 0;
     for (const auto& v : args) {
-        const std::int64_t op = coerce_one(v);
+        const std::int64_t op = types::as_int(v);
         std::int64_t next = 0;
         // Issue #4462: [2^62, 2^63) passes the int64 check and is not a fixnum.
         if (__builtin_add_overflow(r, op, &next) || !types::fits_fixnum(next)) {
@@ -509,7 +554,8 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
             // Re-sum with float from the start for correct total.
             double fr = 0.0;
             for (const auto& x : args)
-                fr += types::is_float(x) ? types::as_float(x) : static_cast<double>(coerce_one(x));
+                fr +=
+                    types::is_float(x) ? types::as_float(x) : static_cast<double>(types::as_int(x));
             return types::make_float(fr);
         }
         r = next;
@@ -526,21 +572,10 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
 export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalValue> args,
                                                    std::span<const std::string> string_heap,
                                                    std::ostream* diag = nullptr) {
-    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
-        auto r = coerce_to_int_pure(v, string_heap);
-        if (r)
-            return *r;
-        if (diag && types::is_string(v) && !string_heap.empty()) {
-            auto idx = types::as_string_idx(v);
-            if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
-                      << "'\n";
-            }
-        }
-        return 0;
-    };
     if (args.empty())
         return types::make_int(0);
+    if (const auto* bad = first_non_number(args))
+        return arith_type_sentinel(*bad, string_heap, diag);
     bool any_f = false;
     for (const auto& v : args) {
         if (types::is_float(v)) {
@@ -552,40 +587,40 @@ export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalVa
         if (args.size() == 1)
             return types::make_float(-(types::is_float(args[0])
                                            ? types::as_float(args[0])
-                                           : static_cast<double>(coerce_one(args[0]))));
+                                           : static_cast<double>(types::as_int(args[0]))));
         double r = types::is_float(args[0]) ? types::as_float(args[0])
-                                            : static_cast<double>(coerce_one(args[0]));
+                                            : static_cast<double>(types::as_int(args[0]));
         for (std::size_t i = 1; i < args.size(); ++i)
             r -= types::is_float(args[i]) ? types::as_float(args[i])
-                                          : static_cast<double>(coerce_one(args[i]));
+                                          : static_cast<double>(types::as_int(args[i]));
         return types::make_float(r);
     }
     // Issue #1150: checked int64 sub — overflow/underflow promotes to float.
     if (args.size() == 1) {
-        const std::int64_t a0 = coerce_one(args[0]);
+        const std::int64_t a0 = types::as_int(args[0]);
         std::int64_t neg = 0;
         if (__builtin_sub_overflow(static_cast<std::int64_t>(0), a0, &neg) ||
             !types::fits_fixnum(neg))
             return types::make_float(-static_cast<double>(a0));
         return types::make_int(neg);
     }
-    std::int64_t r = coerce_one(args[0]);
+    std::int64_t r = types::as_int(args[0]);
     if (!types::fits_fixnum(r)) {
         double fr = static_cast<double>(r);
         for (std::size_t j = 1; j < args.size(); ++j)
             fr -= types::is_float(args[j]) ? types::as_float(args[j])
-                                           : static_cast<double>(coerce_one(args[j]));
+                                           : static_cast<double>(types::as_int(args[j]));
         return types::make_float(fr);
     }
     for (std::size_t i = 1; i < args.size(); ++i) {
-        const std::int64_t op = coerce_one(args[i]);
+        const std::int64_t op = types::as_int(args[i]);
         std::int64_t next = 0;
         if (__builtin_sub_overflow(r, op, &next) || !types::fits_fixnum(next)) {
             double fr = types::is_float(args[0]) ? types::as_float(args[0])
-                                                 : static_cast<double>(coerce_one(args[0]));
+                                                 : static_cast<double>(types::as_int(args[0]));
             for (std::size_t j = 1; j < args.size(); ++j)
                 fr -= types::is_float(args[j]) ? types::as_float(args[j])
-                                               : static_cast<double>(coerce_one(args[j]));
+                                               : static_cast<double>(types::as_int(args[j]));
             return types::make_float(fr);
         }
         r = next;
@@ -600,21 +635,10 @@ export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalVa
 export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalValue> args,
                                                    std::span<const std::string> string_heap,
                                                    std::ostream* diag = nullptr) {
-    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
-        auto r = coerce_to_int_pure(v, string_heap);
-        if (r)
-            return *r;
-        if (diag && types::is_string(v) && !string_heap.empty()) {
-            auto idx = types::as_string_idx(v);
-            if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
-                      << "'\n";
-            }
-        }
-        return 0;
-    };
     if (args.empty())
         return types::make_int(1);
+    if (const auto* bad = first_non_number(args))
+        return arith_type_sentinel(*bad, string_heap, diag);
     bool any_f = false;
     for (const auto& v : args) {
         if (types::is_float(v)) {
@@ -625,18 +649,19 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
     if (any_f) {
         double r = 1.0;
         for (const auto& v : args)
-            r *= types::is_float(v) ? types::as_float(v) : static_cast<double>(coerce_one(v));
+            r *= types::is_float(v) ? types::as_float(v) : static_cast<double>(types::as_int(v));
         return types::make_float(r);
     }
     // Issue #1150/#1152: checked int64 mul — overflow promotes to float.
     std::int64_t r = 1;
     for (const auto& v : args) {
-        const std::int64_t op = coerce_one(v);
+        const std::int64_t op = types::as_int(v);
         std::int64_t next = 0;
         if (__builtin_mul_overflow(r, op, &next) || !types::fits_fixnum(next)) {
             double fr = 1.0;
             for (const auto& x : args)
-                fr *= types::is_float(x) ? types::as_float(x) : static_cast<double>(coerce_one(x));
+                fr *=
+                    types::is_float(x) ? types::as_float(x) : static_cast<double>(types::as_int(x));
             return types::make_float(fr);
         }
         r = next;
@@ -664,36 +689,27 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
     // span's data() is non-null (i.e. not a default-constructed
     // span with a null pointer).
     pre(args.data() != nullptr || args.empty()) {
-    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
-        auto r = coerce_to_int_pure(v, string_heap);
-        if (r)
-            return *r;
-        if (diag && types::is_string(v) && !string_heap.empty()) {
-            auto idx = types::as_string_idx(v);
-            if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
-                      << "'\n";
-            }
-        }
-        return 0;
-    };
-    // Issue #2940: zero-check must NOT use int coercion. static_cast<int64_t>
-    // of floats with |x| < 1 truncates to 0, so (/ -0.001 0.0015) after
-    // intermediate vector arith falsely hit DivisionByZero → silent 0.
-    // Type-aware: float uses IEEE 0.0 (+0/-0); int uses == 0; else coerce.
-    auto is_zero = [&](const types::EvalValue& v) -> bool {
+    // Issue #2940: zero-check must NOT truncate floats. |x| < 1 is not 0.
+    // Issue #4463: a non-number is not a zero divisor.
+    auto is_zero = [](const types::EvalValue& v) -> bool {
         if (types::is_float(v)) {
             const double d = types::as_float(v);
             return d == 0.0; // +0.0 and -0.0
         }
         if (types::is_int(v))
             return types::as_int(v) == 0;
-        auto r = coerce_to_int_pure(v, string_heap);
-        return r.has_value() && *r == 0;
+        return false;
     };
     if (args.empty()) {
         return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
                                                       "division: at least one argument required"));
+    }
+    if (const auto* bad = first_non_number(args)) {
+        const auto detail =
+            numeric_type_mismatch_detail(*bad, arith_string_text(*bad, string_heap));
+        if (diag)
+            *diag << "error: " << detail << '\n';
+        return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, detail));
     }
     // Issue #1151/#1156: single-arg reciprocal; Issue #2940: float reciprocal.
     if (args.size() == 1) {
@@ -702,7 +718,7 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
             const double d = types::as_float(args[0]);
             return types::make_float(1.0 / d);
         }
-        const std::int64_t d = coerce_one(args[0]);
+        const std::int64_t d = types::as_int(args[0]);
         if (d == 0) {
             return std::unexpected(
                 aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero, "division by zero"));
@@ -734,15 +750,15 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
     }
     if (any_f) {
         double r = types::is_float(args[0]) ? types::as_float(args[0])
-                                            : static_cast<double>(coerce_one(args[0]));
+                                            : static_cast<double>(types::as_int(args[0]));
         for (std::size_t i = 1; i < args.size(); ++i)
             r /= types::is_float(args[i]) ? types::as_float(args[i])
-                                          : static_cast<double>(coerce_one(args[i]));
+                                          : static_cast<double>(types::as_int(args[i]));
         return types::make_float(r);
     }
-    std::int64_t r = coerce_one(args[0]);
+    std::int64_t r = types::as_int(args[0]);
     for (std::size_t i = 1; i < args.size(); ++i) {
-        const std::int64_t d = coerce_one(args[i]);
+        const std::int64_t d = types::as_int(args[i]);
         if (r == std::numeric_limits<std::int64_t>::min() && d == -1) {
             return std::unexpected(
                 aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, "int64 overflow in /"));
