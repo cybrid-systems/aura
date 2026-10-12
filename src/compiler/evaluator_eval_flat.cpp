@@ -3115,6 +3115,28 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
         // root-eval semantics), not just the lambda child — the Define
         // eval carries the full rebind semantics (sym binding / closure
         // registration) that the (f x) call sites read back.
+        //
+        // Issue #4476: eval_flat of a Define re-keys top_env() onto the
+        // workspace pool (the #3915 face — same as eval-current). The
+        // lockless batch refresh left that re-key in place, so the next
+        // bind in the CALLER's frame mirrored its SymId through the
+        // workspace pool: (define x (mutate:atomic-batch ...)) stored the
+        // define under a cross-pool SymId with no string mirror, and the
+        // following set_pool re-key rebuilt bindings_symid_ from the
+        // string truth — dropping x entirely (unbound variable).
+        // Restore the caller's pool, mirroring eval-current and
+        // rebind_workspace_defines_after_rollback.
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(top_env());
         flat.force_align_subtree_gen(old_define);
         auto refreshed = eval_flat(flat, *workspace_pool_, old_define, top_env());
         if (refreshed) {
