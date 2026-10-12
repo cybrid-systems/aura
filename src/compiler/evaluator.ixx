@@ -4797,6 +4797,32 @@ public:
     // Does not pin-invalidate, live-compact, restamp, or bump env_generation_.
     [[nodiscard]] bool reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                                               std::span<const types::EvalValue> held);
+    // Issue #4474: dynamic reclaim trigger window. Shared constexpr
+    // constants so the defaults, the scaling, and the contracts cannot
+    // drift apart; the post-conditions pin every reader/writer to the
+    // window.
+    static constexpr std::uint32_t kReclaimTriggerFloor = 128;
+    static constexpr std::uint32_t kReclaimTriggerCeiling = 32768;
+    static constexpr std::uint32_t kReclaimTriggerDivisor = 32;
+    // Scale the next reclaim triggers from the live set the mark just
+    // walked (live/32, clamped to the window) so a large live heap
+    // amortizes the full-heap mark instead of paying it every 128
+    // allocations. Skipped reclaims reset both triggers to the floor.
+    void note_live_set_for_reclaim_trigger(std::size_t live_objects) noexcept
+        post(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
+             tw_closure_allocs_trigger_ <= kReclaimTriggerCeiling &&
+             file_heap_allocs_trigger_ >= kReclaimTriggerFloor &&
+             file_heap_allocs_trigger_ <= kReclaimTriggerCeiling);
+    // The dynamic trigger (live/32 from the last mark) — read by the IR
+    // dispatch reclaim checks.
+    [[nodiscard]] std::uint32_t file_heap_allocs_trigger() const noexcept
+        post(r : r >= kReclaimTriggerFloor && r <= kReclaimTriggerCeiling) {
+        return file_heap_allocs_trigger_;
+    }
+    [[nodiscard]] std::uint32_t file_heap_allocs_trigger_for_test() const noexcept
+        post(r : r >= kReclaimTriggerFloor && r <= kReclaimTriggerCeiling) {
+        return file_heap_allocs_trigger_;
+    }
     void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
@@ -7137,6 +7163,14 @@ private:
     // Issue #4459: tree-walker Lambda / named-let allocations since
     // the last file-mode sweep. alloc_cell also bumps the heap counter.
     std::uint32_t tw_closure_allocs_ = 0;
+    // Issue #4474: dynamic reclaim triggers — after a mark, the next
+    // reclaim fires after allocations proportional to the live set the
+    // mark found (live/32, clamped to [128, 32768], see
+    // note_live_set_for_reclaim_trigger), so a large live heap amortizes
+    // the full-heap mark instead of paying it every 128 allocations.
+    // Skipped reclaims reset both to the 128 floor.
+    std::uint32_t tw_closure_allocs_trigger_ = kReclaimTriggerFloor;
+    std::uint32_t file_heap_allocs_trigger_ = kReclaimTriggerFloor;
     bool file_reclaim_active_ = false;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
