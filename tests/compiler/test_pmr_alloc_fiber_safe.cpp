@@ -239,8 +239,12 @@ static void ac7_single_fiber_hotpath() {
     CHECK(math && is_int(*math) && as_int(*math) == 17, "AC5: math");
     const auto listp = read_file("src/compiler/evaluator_primitives_list.cpp");
     CHECK(listp.find("ListCtorLockHold") != std::string::npos, "AC2: list uses timed lock");
-    CHECK(listp.find("kPrimHeapUnlimitedSmall") != std::string::npos,
-          "AC3: small unlimited bypass");
+    // Issue #4473 reshaped the quota face: the #2997 small-unlimited bypass
+    // left list.cpp with the quota pre-checks; every builder now routes
+    // through mint_pair, whose grow path is the allow() check (same bypass
+    // semantics per mint, in evaluator_gc.cpp).
+    CHECK(listp.find("mint_pair") != std::string::npos,
+          "AC3: quota moved to per-mint mint_pair (#4473)");
     const auto hh = read_file("src/compiler/prim_heap_quota.hh");
     CHECK(hh.find("2997") != std::string::npos, "AC1: quota header notes #2997");
 }
@@ -336,6 +340,52 @@ static void ac4453_list_growth_linear() {
 
 } // namespace
 
+// ── Issue #4473: list builders mint through the #4459 pair freelist ──
+// cons reuses reclaimed slots via mint_pair; list/append/reverse/map/filter/
+// sort used to pairs.push_back directly, so a steady-state loop built with
+// them grew pairs_ linearly while the same cons chain stayed flat. After the
+// conversion every builder routes through mint_pair (per-mint quota: a
+// freelist hit does not count), so all shapes stay at the live set.
+static void ac4473_list_mint_reuse() {
+    std::println("\n--- #4473: list builders reuse the pair freelist ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+
+    // AC1: the issue repro — a list-building loop crosses many reclaims
+    // (kFileReclaimAllocs = 128 mints) and must stay at the live set.
+    auto r1 = cs.eval("(begin (define (lp i acc) (if (< i 20000) (begin (list i 2 3 4) "
+                      "(lp (+ i 1) acc)) acc)) (lp 0 0))");
+    CHECK(r1 && is_int(*r1) && as_int(*r1) == 0, "4473 AC1: list loop evals");
+    const auto pairs_after_list = ev.pairs_size();
+
+    // AC2: the cons chain (the #4459 face) — the parity bound.
+    auto r2 = cs.eval("(begin (define (lq i acc) (if (< i 20000) (begin (cons i (cons 2 "
+                      "(cons 3 (cons 4 (quote ()))))) (lq (+ i 1) acc)) acc)) (lq 0 0))");
+    CHECK(r2 && is_int(*r2) && as_int(*r2) == 0, "4473 AC2: cons loop evals");
+    const auto pairs_after_cons = ev.pairs_size();
+    CHECK(pairs_after_list <= pairs_after_cons + 64,
+          "4473 AC3: list-built pairs stay flat like cons (" + std::to_string(pairs_after_list) +
+              " vs " + std::to_string(pairs_after_cons) + ")");
+
+    // AC4: reverse + map shapes (named by the issue) stay flat too.
+    auto r3 = cs.eval("(begin (define (lr i acc) (if (< i 10000) (begin (reverse (list i 2 3 "
+                      "4)) (lr (+ i 1) acc)) acc)) (lr 0 0))");
+    CHECK(r3 && is_int(*r3) && as_int(*r3) == 0, "4473 AC4: reverse loop evals");
+    auto r4 = cs.eval("(begin (define (lm i acc) (if (< i 10000) (begin (map (lambda (x) x) "
+                      "(list i 2 3 4)) (lm (+ i 1) acc)) acc)) (lm 0 0))");
+    CHECK(r4 && is_int(*r4) && as_int(*r4) == 0, "4473 AC5: map loop evals");
+    const auto pairs_after_more = ev.pairs_size();
+    CHECK(pairs_after_more <= pairs_after_cons + 256,
+          "4473 AC6: reverse/map-built pairs stay flat (" + std::to_string(pairs_after_more) +
+              " vs " + std::to_string(pairs_after_cons) + ")");
+
+    // AC7: the builders honor the mint_pair deny sentinel (cons-shaped
+    // typed quota error on the grow path).
+    const auto src = read_file("src/compiler/evaluator_primitives_list.cpp");
+    CHECK(src.find("kFileHeapMintDenied") != std::string::npos,
+          "4473 AC7: list builders honor the mint_pair deny sentinel");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -346,6 +396,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac6_concurrent_list_ctor();
     ac7_single_fiber_hotpath();
     ac4453_list_growth_linear();
+    ac4473_list_mint_reuse();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
