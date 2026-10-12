@@ -629,10 +629,9 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
 // arithmetic_div_pure — Issue #212 Phase 3.
 //
 // Pure variadic division. Returns Result<EvalValue> because
-// division by zero is a runtime error that the caller can
-// decide how to handle (legacy: silent #inf / #nan for floats,
-// trap for ints; the result type lets new code report the
-// error explicitly via .error()).
+// an all-integer zero divisor is a runtime error the caller
+// surfaces (Issue #4461: an error value, not a silent 0).
+// A float zero divisor is IEEE 754: +inf, -inf, or nan.
 //
 // `nonzero_count` out-param: when non-null, set to the count
 // of args that were non-zero. Useful for callers that want to
@@ -681,11 +680,8 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
     // Issue #1151/#1156: single-arg reciprocal; Issue #2940: float reciprocal.
     if (args.size() == 1) {
         if (types::is_float(args[0])) {
+            // Issue #4461: IEEE reciprocal. (/ 0.0) is +inf, (/ -0.0) is -inf.
             const double d = types::as_float(args[0]);
-            if (d == 0.0) {
-                return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero,
-                                                              "division by zero"));
-            }
             return types::make_float(1.0 / d);
         }
         const std::int64_t d = coerce_one(args[0]);
@@ -699,19 +695,23 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
         return types::make_int(1 / d); // legacy: 1/x for int
     }
 
-    // Multi-arg: a / b / c / ... — type-aware zero check (#2940).
-    for (std::size_t i = 1; i < args.size(); ++i) {
-        if (is_zero(args[i])) {
-            return std::unexpected(
-                aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero, "division by zero"));
-        }
-    }
-
+    // Multi-arg: a / b / c / ...
+    // Issue #4461: float zero is IEEE (inf/nan). All-integer zero is
+    // DivisionByZero. #2940: the zero test stays type-aware so a
+    // float with |x| < 1 is not a false zero.
     bool any_f = false;
     for (const auto& v : args) {
         if (types::is_float(v)) {
             any_f = true;
             break;
+        }
+    }
+    if (!any_f) {
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (is_zero(args[i])) {
+                return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero,
+                                                              "division by zero"));
+            }
         }
     }
     if (any_f) {

@@ -385,6 +385,12 @@ public:
         return it != table_.end() ? std::optional(it->second) : std::nullopt;
     }
     void set_string_heap(std::pmr::vector<std::string>* h) { string_heap_ = h; }
+    // Issue #4461: integer `/` by zero becomes an error value, not 0.
+    void set_error_sink(std::vector<types::EvalValue>* errs,
+                        std::atomic<std::uint64_t>* counter) noexcept {
+        error_values_ = errs;
+        primitive_error_counter_ = counter;
+    }
     std::span<const std::string> string_heap() const { return *string_heap_; }
     std::pmr::vector<std::string>& string_heap() { return *string_heap_; }
     // Slot-based lookup for primitive values
@@ -540,6 +546,9 @@ private:
     // Pair storage; std::string char buffers still heap-allocate
     // (Phase 2.4.1 will move string contents inline).
     std::pmr::vector<std::string>* string_heap_ = nullptr;
+    // Issue #4461: wired by Evaluator before any eval. Null means no sink.
+    std::vector<types::EvalValue>* error_values_ = nullptr;
+    std::atomic<std::uint64_t>* primitive_error_counter_ = nullptr;
     std::vector<std::string> ordered_names_;
     std::vector<PrimMeta> meta_;
     std::vector<PrimFn> fn_slots_;
@@ -14810,6 +14819,12 @@ public:
                 return string_heap_[sidx];
         }
         return "<error>";
+    }
+    // Issue #4461: integer `/` by zero. Same error value as modulo, so a
+    // literal zero and a zero from a binding agree.
+    [[nodiscard]] types::EvalValue make_div_zero_error() {
+        return primitives_detail::make_primitive_error(
+            string_heap_, error_values_, "/: division by zero", &primitive_error_count_);
     }
     void bump_primitive_error_count() noexcept {
         primitive_error_count_.fetch_add(1, std::memory_order_relaxed);
