@@ -97,7 +97,20 @@ int main() {
 
     // Leftover extra members after already-green Io/json ACs: list void
     // AC drift, load mid==0 residual, sys-open path, tcp vector OOB abort.
+    // test_write_string_escape stays live (#2574 and #4468).
     CHECK(true, "skip leftover list/load/sys-open/tcp extra members");
+
+    std::println("\n──── test_write_string_escape ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_write_string_escape() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_write_string_escape ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_write_string_escape ({} checks)", g_passed);
+    }
 #if 0
     std::println("\n──── test_list_end_of_list_void ────");
     g_passed = 0;
@@ -141,17 +154,6 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_sys_open_path_harden ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_write_string_escape ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_write_string_escape() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_write_string_escape ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_write_string_escape ({} checks)", g_passed);
     }
 
     std::println("\n──── test_tcp_listen_accept ────");

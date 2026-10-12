@@ -6,6 +6,7 @@ module;
 
 #include "primitives_detail.h"
 #include "runtime_shared.h"
+#include "float_repr.hh" // Issue #4468
 
 module aura.compiler.evaluator;
 
@@ -65,7 +66,8 @@ namespace {
     }
     // Format a value to string (same formatting as io_print_val but returns string)
     static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
-                                         std::span<const Pair> pairs, bool quote, int depth = 0) {
+                                         std::span<const Pair> pairs, bool quote, int depth,
+                                         std::span<const std::vector<EvalValue>> vectors) {
         std::string out;
         auto app = [&](const auto&... args) { (out += ... += args); };
         if (depth > 64)
@@ -74,8 +76,9 @@ namespace {
             return "()";
         if (is_bool(v))
             return as_bool(v) ? "#t" : "#f";
+        // Issue #4468: same shortest spelling as display / number->string.
         if (is_float(v))
-            return std::to_string(as_float(v));
+            return aura::compiler::format_float_shortest(as_float(v));
         if (is_int(v))
             return std::to_string(as_int(v));
         if (is_string(v)) {
@@ -92,7 +95,7 @@ namespace {
             if (idx >= pairs.size())
                 return "<pair>";
             out = "(";
-            out += fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1);
+            out += fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1, vectors);
             auto cdr = pairs[idx].cdr;
             while (is_pair(cdr)) {
                 out += " ";
@@ -101,18 +104,32 @@ namespace {
                     out += "<pair>";
                     break;
                 }
-                out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1);
+                out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1, vectors);
                 cdr = pairs[nidx].cdr;
             }
             if (!is_end_of_list(cdr)) {
                 out += " . ";
-                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1);
+                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1, vectors);
             }
             out += ")";
             return out;
         }
-        if (is_vector(v))
-            return std::format("<vector[{}]>", as_vector_idx(v));
+        // Issue #4468: #(e1 e2 ...), same depth cap as lists. The index is a
+        // heap slot, not the length, so it is not the external representation.
+        if (is_vector(v)) {
+            const auto idx = as_vector_idx(v);
+            if (idx >= vectors.size())
+                return "<vector>";
+            const auto& elems = vectors[idx];
+            out = "#(";
+            for (std::size_t i = 0; i < elems.size(); ++i) {
+                if (i > 0)
+                    out += ' ';
+                out += fmt_val_to_string(elems[i], heap, pairs, quote, depth + 1, vectors);
+            }
+            out += ')';
+            return out;
+        }
         if (is_hash(v)) {
             // Issue #3916: print occupancy, not the table index (Strand
             // saw <hash[2]> for an 8-key agent:loop-stats).
@@ -128,8 +145,9 @@ namespace {
     }
 
     static void io_print_val(const EvalValue& v, std::span<const std::string> heap,
-                             std::span<const Pair> pairs, bool quote, int depth = 0,
-                             std::span<const std::string> keywords = {}) {
+                             std::span<const Pair> pairs, bool quote, int depth,
+                             std::span<const std::string> keywords,
+                             std::span<const std::vector<EvalValue>> vectors) {
         if (depth > 64) {
             std::fprintf(stdout, "...");
             return;
@@ -200,7 +218,9 @@ namespace {
             return;
         }
         if (is_float(v)) {
-            std::fprintf(stdout, "%g", as_float(v));
+            // Issue #4468: %g keeps 6 digits, so write cannot be read back.
+            const auto s = aura::compiler::format_float_shortest(as_float(v));
+            std::fputs(s.c_str(), stdout);
             return;
         }
         if (is_int(v)) {
@@ -218,7 +238,7 @@ namespace {
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
                 std::fprintf(stdout, "(");
-                io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords);
+                io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords, vectors);
                 std::fprintf(stdout, ")");
                 return;
             }
@@ -244,17 +264,30 @@ namespace {
             for (std::size_t i = 0; i < elements.size(); ++i) {
                 if (i > 0)
                     std::fprintf(stdout, " ");
-                io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords);
+                io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords, vectors);
             }
             if (!is_end_of_list(next)) {
                 std::fprintf(stdout, " . ");
-                io_print_val(next, heap, pairs, quote, depth + 1, keywords);
+                io_print_val(next, heap, pairs, quote, depth + 1, keywords, vectors);
             }
             std::fprintf(stdout, ")");
             return;
         }
         if (is_vector(v)) {
-            std::fprintf(stdout, "<vector[%zu]>", (size_t)as_vector_idx(v));
+            // Issue #4468: print elements, not the heap slot.
+            const auto idx = as_vector_idx(v);
+            if (idx >= vectors.size()) {
+                std::fputs("<vector>", stdout);
+                return;
+            }
+            const auto& elems = vectors[idx];
+            std::fputs("#(", stdout);
+            for (std::size_t i = 0; i < elems.size(); ++i) {
+                if (i > 0)
+                    std::fputc(' ', stdout);
+                io_print_val(elems[i], heap, pairs, quote, depth + 1, keywords, vectors);
+            }
+            std::fputc(')', stdout);
             return;
         }
         if (is_hash(v)) {
@@ -431,7 +464,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             std::fflush(stdout);
             return make_void();
         }
-        io_print_val(a[0], ev.string_heap_, ev.pairs_, false, 0, ev.keyword_table_);
+        io_print_val(a[0], ev.string_heap_, ev.pairs_, false, 0, ev.keyword_table_,
+                     ev.vector_heap_);
         std::fflush(stdout);
         return make_void();
     });
@@ -472,7 +506,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             std::fflush(stdout);
             return make_void();
         }
-        io_print_val(a[0], ev.string_heap_, ev.pairs_, true, 0, ev.keyword_table_);
+        io_print_val(a[0], ev.string_heap_, ev.pairs_, true, 0, ev.keyword_table_, ev.vector_heap_);
         std::fflush(stdout);
         return make_void();
     });
@@ -501,7 +535,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                                 // Snapshot string args (avoid UAF during format).
                                 result += ev.copy_string_heap_at(as_string_idx(val));
                             } else {
-                                result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false);
+                                result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false,
+                                                            0, ev.vector_heap_);
                             }
                         }
                         ++i;
@@ -524,7 +559,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                                 }
                                 result += '"';
                             } else {
-                                result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true);
+                                result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true,
+                                                            0, ev.vector_heap_);
                             }
                         }
                         ++i;

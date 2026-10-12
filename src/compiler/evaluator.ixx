@@ -2070,6 +2070,11 @@ public:
     // Phase 2.4: mut accessor returns pmr::vector reference
     // (matches the underlying storage type).
     std::pmr::vector<std::string>& string_heap_mut() { return string_heap_; }
+    // Issue #4468: result printing walks elements. The slot index is not
+    // the vector's external representation.
+    [[nodiscard]] std::span<const std::vector<types::EvalValue>> vector_heap() const noexcept {
+        return vector_heap_;
+    }
 
     // IR closure bridge: called when a closure id is not in
     // closures_shards_[closures_shard_index(cid)].map.
@@ -17006,10 +17011,11 @@ private:
 
 
 // Pair-aware value formatting (recursively prints lists)
-export inline std::string format_value(const types::EvalValue& v, std::span<const std::string> heap,
-                                       std::span<const Pair> pairs, int depth = 0,
-                                       const Primitives* primitives = nullptr,
-                                       std::span<const std::string> keywords = {}) {
+export inline std::string
+format_value(const types::EvalValue& v, std::span<const std::string> heap,
+             std::span<const Pair> pairs, int depth = 0, const Primitives* primitives = nullptr,
+             std::span<const std::string> keywords = {},
+             std::span<const std::vector<types::EvalValue>> vectors = {}) {
     const int max_depth = 64;
     if (depth > max_depth)
         return "...";
@@ -17056,8 +17062,8 @@ export inline std::string format_value(const types::EvalValue& v, std::span<cons
             if (cidx >= pairs.size()) {
                 break;
             }
-            elements.push_back(
-                format_value(pairs[cidx].car, heap, pairs, depth + 1, primitives, keywords));
+            elements.push_back(format_value(pairs[cidx].car, heap, pairs, depth + 1, primitives,
+                                            keywords, vectors));
             current = pairs[cidx].cdr;
             if (elements.size() > 256) {
                 elements.push_back("...");
@@ -17079,13 +17085,27 @@ export inline std::string format_value(const types::EvalValue& v, std::span<cons
         } else {
             if (!elements.empty())
                 result += " . ";
-            result += format_value(current, heap, pairs, depth + 1, primitives, keywords);
+            result += format_value(current, heap, pairs, depth + 1, primitives, keywords, vectors);
         }
         result += ")";
         return result;
     }
-    if (types::is_vector(v))
-        return std::format("<vector[{}]>", types::as_vector_idx(v));
+    if (types::is_vector(v)) {
+        // Issue #4468: #(e1 e2 ...) when the caller passed the vector heap.
+        // Callers without it still see the slot, which is not a length.
+        const auto idx = types::as_vector_idx(v);
+        if (idx >= vectors.size())
+            return std::format("<vector[{}]>", idx);
+        const auto& elems = vectors[idx];
+        std::string out = "#(";
+        for (std::size_t i = 0; i < elems.size(); ++i) {
+            if (i > 0)
+                out += ' ';
+            out += format_value(elems[i], heap, pairs, depth + 1, primitives, keywords, vectors);
+        }
+        out += ')';
+        return out;
+    }
     if (types::is_hash(v))
         return std::format("<hash[{}]>", types::as_hash_idx(v));
     if (types::is_closure(v)) {
