@@ -7062,6 +7062,12 @@ private:
     }
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
+    // Issue #4456 vs try-catch contract (#try-catch-error regression net):
+    // outside a try body, display consumes an error-valued argument (prints
+    // and returns void, so a later begin form still runs). Inside a try
+    // body, the pre-#4456 face returns: the error-valued argument must
+    // propagate so the catch fires. Depth-counted for nesting.
+    int try_body_depth_ = 0;
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
 
     // ── Memory pressure observability (Issue #69) ───────────────
