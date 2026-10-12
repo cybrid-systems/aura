@@ -8,6 +8,7 @@
 //   AC4: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "compiler/pipeline_policy.hh"
 
 #include <cstdlib>
 #include <filesystem>
@@ -440,6 +441,219 @@ static void ac4465_escaped_primitive_continues() {
     CHECK(bare_run.out == "beforeafter", "4465: bare primitive still continues");
 }
 
+// Issue #4467: a user procedure, lambda, or named let with the wrong
+// number of arguments is an arity diagnostic at the call. Later forms
+// run once. The default face does not return ().
+static Cli4460 run_file_4467(const std::string& bin, const std::string& src,
+                             const std::string& assignments) {
+    Cli4460 r;
+    const char* outp = "/tmp/aura-4467-out.txt";
+    const char* errp = "/tmp/aura-4467-err.txt";
+    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+                      assignments + " '" + bin + "' '" + src + "' >'" + std::string(outp) +
+                      "' 2>'" + std::string(errp) + "'";
+    const int raw = std::system(cmd.c_str());
+    r.rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+    {
+        std::ifstream in(outp);
+        r.out.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    {
+        std::ifstream in(errp);
+        r.err.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    return r;
+}
+
+static void ac4467_user_call_arity() {
+    std::println("\n--- #4467: user call arity is reported at the call ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    const char* prev_st = std::getenv("AURA_PIPELINE_STRICT");
+    const std::string saved_sb = prev_sb ? prev_sb : "";
+    const std::string saved_st = prev_st ? prev_st : "";
+    const bool had_sb = prev_sb != nullptr;
+    const bool had_st = prev_st != nullptr;
+    const auto prev_policy = aura::compiler::tree_walker_fallback_policy();
+    struct RestoreFace {
+        std::string sb;
+        std::string st;
+        bool had_sb;
+        bool had_st;
+        aura::compiler::TreeWalkerFallbackPolicy policy;
+        ~RestoreFace() {
+            if (had_sb)
+                setenv("AURA_SANDBOX", sb.c_str(), 1);
+            else
+                unsetenv("AURA_SANDBOX");
+            if (had_st)
+                setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
+            else
+                unsetenv("AURA_PIPELINE_STRICT");
+            aura::compiler::set_tree_walker_fallback_policy(policy);
+        }
+    } restore{saved_sb, saved_st, had_sb, had_st, prev_policy};
+
+    auto face = [](const char* strict) {
+        setenv("AURA_SANDBOX", "off", 1);
+        if (strict && *strict)
+            setenv("AURA_PIPELINE_STRICT", strict, 1);
+        else
+            unsetenv("AURA_PIPELINE_STRICT");
+        aura::compiler::apply_pipeline_strict_defaults(true);
+    };
+    auto expect_arity = [](const char* src, const char* phrase, const char* tag) {
+        CompilerService cs;
+        auto r = cs.eval(src);
+        if (r || r.error().message.find(phrase) == std::string::npos ||
+            r.error().format().find("arity mismatch") == std::string::npos) {
+            std::println(std::cerr, "{} diag [{}]", tag, r ? std::string{} : r.error().format());
+        }
+        CHECK(!r, std::string(tag) + " is a diagnostic");
+        CHECK(!r && r.error().message.find(phrase) != std::string::npos, std::string(tag));
+        CHECK(!r && r.error().format().find("arity mismatch") != std::string::npos,
+              std::string(tag) + " kind");
+    };
+    auto expect_int = [](const char* src, std::int64_t n, const char* tag) {
+        CompilerService cs;
+        auto r = cs.eval(src);
+        if (!r || !is_int(*r) || as_int(*r) != n) {
+            std::println(std::cerr, "{} got {}", tag,
+                         r ? (is_int(*r) ? std::to_string(as_int(*r)) : std::string("non-int"))
+                           : r.error().format());
+        }
+        CHECK(r && is_int(*r) && as_int(*r) == n, tag);
+    };
+
+    const char* faces[] = {"0", "force-soa"};
+    for (const char* strict : faces) {
+        face(strict);
+        const std::string tag = std::string("4467 ") + strict;
+        expect_arity("(define (g a b) (+ a b)) (g 1 2 3)", "g expects 2 arguments, got 3",
+                     (tag + " too many").c_str());
+        expect_arity("(define (g a b) b) (g 7)", "g expects 2 arguments, got 1",
+                     (tag + " too few").c_str());
+        expect_arity("((lambda (x) x) 1 2)", "lambda expects 1 argument, got 2",
+                     (tag + " lambda many").c_str());
+        expect_arity("((lambda (x y) y) 1)", "lambda expects 2 arguments, got 1",
+                     (tag + " lambda few").c_str());
+        expect_arity("(let loop ((a 1)) (loop a a))", "loop expects 1 argument, got 2",
+                     (tag + " named many").c_str());
+        expect_arity("(let loop ((a 1) (b 2)) (loop a))", "loop expects 2 arguments, got 1",
+                     (tag + " named few").c_str());
+        expect_arity("(define (f a b . rest) (+ a b)) (f 1)",
+                     "f expects at least 2 arguments, got 1", (tag + " rest few").c_str());
+        expect_int("(define (g a b) (+ a b)) (g 1 2)", 3, (tag + " exact").c_str());
+        expect_int("(let ((k 10)) ((lambda (x) (+ k x)) 5))", 15, (tag + " capture").c_str());
+        expect_int("(define (f a . rest) a) (f 1 2 3)", 1, (tag + " rest extra").c_str());
+        expect_int("(define (f . rest) 7) (f)", 7, (tag + " rest zero").c_str());
+        expect_int("(define (f . rest) 7) (f 1 2)", 7, (tag + " rest any").c_str());
+        expect_int("(let loop ((n 3) (a 0)) (if (= n 0) a (loop (- n 1) (+ a 1))))", 3,
+                   (tag + " named ok").c_str());
+        expect_int("(+ 1 2 3)", 6, (tag + " prim").c_str());
+        expect_int("(define (g a b) b) (try (g 1) (catch (e) 9))", 9, (tag + " try").c_str());
+        expect_arity("(define (g a b) b) (display (g 1))", "g expects 2 arguments, got 1",
+                     (tag + " display").c_str());
+    }
+
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(flat.find("#4467") != std::string::npos, "4467: walker cite");
+    CHECK(ir.find("#4467") != std::string::npos, "4467: ir cite");
+    CHECK(flat.find("abort begin on first-class error") != std::string::npos,
+          "4467: #2570 phrase stays");
+
+    const auto bin = aura_binary_4460();
+    CHECK(!bin.empty(), "4467: aura binary");
+    if (bin.empty())
+        return;
+
+    const char* o1 = "/tmp/aura-4467-o1.aura";
+    {
+        std::ofstream f(o1);
+        f << "(define (g a b) b)\n";
+        f << "(display \"start\") (newline)\n";
+        f << "(display (g 1)) (newline)\n";
+        f << "(display \"after\") (newline)\n";
+    }
+    const char* o2 = "/tmp/aura-4467-o2.aura";
+    {
+        std::ofstream f(o2);
+        f << "(define (g a b) (+ a b))\n";
+        f << "(display (g 1 2 3)) (newline)\n";
+        f << "(display ((lambda (x) x) 1 2)) (newline)\n";
+        f << "(define (h a b) a)\n";
+        f << "(display (h 7)) (newline)\n";
+    }
+    const char* ok = "/tmp/aura-4467-ok.aura";
+    {
+        std::ofstream f(ok);
+        f << "(define (g a b) (+ a b))\n";
+        f << "(display (g 4 5)) (newline)\n";
+    }
+    const char* file_faces[][2] = {
+        {"soft", "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0"},
+        {"def", ""},
+        {"sand", "AURA_SANDBOX=off"},
+        {"soa", "AURA_SANDBOX=off AURA_PIPELINE_STRICT=force-soa"},
+    };
+    for (auto& ff : file_faces) {
+        auto run = run_file_4467(bin, o1, ff[1]);
+        if (run.rc != 1 || count_sub(run.out, "start") != 1 || count_sub(run.out, "after") != 1 ||
+            run.out.find("()") != std::string::npos ||
+            run.err.find("g expects 2 arguments, got 1") == std::string::npos ||
+            run.err.find("unbound") != std::string::npos ||
+            count_sub(run.err, "arity mismatch") < 1) {
+            std::println(std::cerr, "4467 o1 {} rc {} out [{}] err [{}]", ff[0], run.rc, run.out,
+                         run.err);
+        }
+        CHECK(run.rc == 1, std::string("4467 o1 ") + ff[0] + " exits 1");
+        CHECK(count_sub(run.out, "start") == 1, std::string("4467 o1 ") + ff[0] + " start once");
+        CHECK(count_sub(run.out, "after") == 1, std::string("4467 o1 ") + ff[0] + " after once");
+        CHECK(run.out.find("()") == std::string::npos, std::string("4467 o1 ") + ff[0] + " no ()");
+        CHECK(run.err.find("g expects 2 arguments, got 1") != std::string::npos,
+              std::string("4467 o1 ") + ff[0] + " names g");
+        CHECK(run.err.find("error:") != std::string::npos,
+              std::string("4467 o1 ") + ff[0] + " located");
+        CHECK(run.err.find("unbound") == std::string::npos,
+              std::string("4467 o1 ") + ff[0] + " not unbound");
+
+        auto bad = run_file_4467(bin, o2, ff[1]);
+        const bool lambda_arity =
+            bad.err.find("lambda expects 1 argument, got 2") != std::string::npos;
+        const bool lambda_2213 =
+            bad.err.find("tree-walker fallback forbidden") != std::string::npos;
+        if (bad.rc != 1 || bad.out.find("3") != std::string::npos ||
+            bad.out.find("7") != std::string::npos || bad.out.find("()") != std::string::npos ||
+            bad.err.find("g expects 2 arguments, got 3") == std::string::npos ||
+            bad.err.find("h expects 2 arguments, got 1") == std::string::npos ||
+            (!lambda_arity && !lambda_2213)) {
+            std::println(std::cerr, "4467 o2 {} rc {} out [{}] err [{}]", ff[0], bad.rc, bad.out,
+                         bad.err);
+        }
+        CHECK(bad.rc == 1, std::string("4467 o2 ") + ff[0] + " exits 1");
+        CHECK(bad.out.find("3") == std::string::npos, std::string("4467 o2 ") + ff[0] + " no 3");
+        CHECK(bad.out.find("7") == std::string::npos, std::string("4467 o2 ") + ff[0] + " no 7");
+        CHECK(bad.out.find("()") == std::string::npos, std::string("4467 o2 ") + ff[0] + " no ()");
+        CHECK(bad.err.find("g expects 2 arguments, got 3") != std::string::npos,
+              std::string("4467 o2 ") + ff[0] + " g");
+        CHECK(bad.err.find("h expects 2 arguments, got 1") != std::string::npos,
+              std::string("4467 o2 ") + ff[0] + " h");
+        CHECK(lambda_arity || lambda_2213, std::string("4467 o2 ") + ff[0] + " lambda");
+        // Sandbox-off with strict unset is the same Forbidden gate as the
+        // default face (#2213). Only Soft and force-soa must name the lambda.
+        if (std::string(ff[0]) == "soft" || std::string(ff[0]) == "soa")
+            CHECK(lambda_arity, std::string("4467 o2 ") + ff[0] + " lambda arity");
+
+        auto good = run_file_4467(bin, ok, ff[1]);
+        if (good.rc != 0 || good.out.find("9") == std::string::npos) {
+            std::println(std::cerr, "4467 ok {} rc {} out [{}] err [{}]", ff[0], good.rc, good.out,
+                         good.err);
+        }
+        CHECK(good.rc == 0, std::string("4467 ok ") + ff[0] + " exits 0");
+        CHECK(count_sub(good.out, "9") == 1, std::string("4467 ok ") + ff[0] + " prints once");
+    }
+}
+
 } // namespace
 
 int run_test_module_load_tail_export() {
@@ -451,6 +665,7 @@ int run_test_module_load_tail_export() {
     ac5_prim_reexport_math();
     ac4460_failed_require_continues();
     ac4465_escaped_primitive_continues();
+    ac4467_user_call_arity();
     std::println("\n=== #2570: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

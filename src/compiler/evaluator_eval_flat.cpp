@@ -22,6 +22,7 @@ module;
 #include "core/lifetime_consistency_proof.hh" // Issue #3421: last_lifetime_consistency_would_allow
 #include "core/densify_consistency_report.h"  // Issue #4125: densify_in_flight_for (eval-keyed)
 #include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
+#include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
 
 module aura.compiler.evaluator;
 
@@ -855,6 +856,8 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
 
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
+    // Issue #4467: drop a message left by a caller that did not take it.
+    clear_pending_user_arity();
     // Issue #252: closure dual-path observability. Bump the
     // total counter on every call. The path-specific counters
     // (ffi / tw / bridge / ir) are bumped in each branch.
@@ -1379,6 +1382,15 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             ne.set_pool(cl_copy.pool);
         else if (auto* cp = canonical_pool())
             ne.set_pool(cp);
+        // Issue #4467: reject a short or long argument list before bind.
+        // The overlap bind left an unread parameter unbound and dropped
+        // extras. nullopt stays InvalidClosure; the pending message is
+        // the arity diagnostic for a caller that has a source location.
+        if (user_arity_mismatch(cl_copy.params.size(), cl_copy.dotted, args.size())) {
+            set_pending_user_arity(user_arity_message(cl_copy.name, cl_copy.params.size(),
+                                                      cl_copy.dotted, args.size()));
+            return std::nullopt;
+        }
         if (cl_copy.dotted) {
             // Dotted rest param: bind named params, collect rest into list
             std::size_t named_count = cl_copy.params.size() - 1;
@@ -2689,6 +2701,14 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     // Issue #145: set the pool so bind_symid can mirror
                     if (cl.pool)
                         tail_env.set_pool(cl.pool);
+                    // Issue #4467: do not enter the body on a wrong arity.
+                    if (user_arity_mismatch(cl.params.size(), cl.dotted, cargs.size())) {
+                        const std::string who = cl.name.empty() ? fn_name : cl.name;
+                        return std::unexpected(Diagnostic{
+                            ErrorKind::ArityMismatch,
+                            user_arity_message(who, cl.params.size(), cl.dotted, cargs.size()),
+                            aura::diag::SourceLocation{1, 1, 0}});
+                    }
                     for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                         tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
                     if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
@@ -2711,6 +2731,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         auto result = apply_closure(cid, {});
         if (result)
             return *result;
+        // The empty probe is not the real argument list (#4467).
+        clear_pending_user_arity();
         // Issue #3688: apply_closure nullopt on persist-reject must not
         // fall through to eval_flat of the pre-restore body.
         if (production_eval_flat_commit_readiness_refuse(
@@ -2741,6 +2763,15 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             // Issue #145: set the pool so bind_symid can mirror
             if (cl.pool)
                 tail_env.set_pool(cl.pool);
+            // Issue #4467: do not enter the body on a wrong arity.
+            // This arm is not the string-name path, so the callee name is
+            // the closure's own name (empty becomes "lambda").
+            if (user_arity_mismatch(cl.params.size(), cl.dotted, cargs.size())) {
+                return std::unexpected(Diagnostic{
+                    ErrorKind::ArityMismatch,
+                    user_arity_message(cl.name, cl.params.size(), cl.dotted, cargs.size()),
+                    aura::diag::SourceLocation{1, 1, 0}});
+            }
             for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                 tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
             if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
@@ -5378,24 +5409,37 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // Evaluate named + rest args before emplace.
                         // Issue #3915: rest eval after emplace dangled the
                         // TCO caller Env (same class as TW closure TCO).
+                        // Issue #4467: evaluate every provided argument, then
+                        // reject a wrong fixed arity at this call. Extras used
+                        // to be dropped; a missing parameter stayed unbound.
+                        std::vector<EvalValue> provided;
+                        TwPinMany pin_provided(provided);
+                        if (v.children.size() > 1)
+                            provided.reserve(v.children.size() - 1);
+                        for (std::size_t i = 1; i < v.children.size(); ++i) {
+                            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                            if (!ar)
+                                return ar;
+                            provided.push_back(std::move(*ar));
+                        }
+                        if (user_arity_mismatch(pspan.size(), dotted, provided.size())) {
+                            const auto line = v.line == 0 ? 1u : v.line;
+                            const auto col = v.col == 0 ? 1u : v.col;
+                            return std::unexpected(Diagnostic{
+                                ErrorKind::ArityMismatch,
+                                user_arity_message("lambda", pspan.size(), dotted, provided.size()),
+                                aura::diag::SourceLocation{line, col, 0}, current_id});
+                        }
                         std::vector<EvalValue> iargs;
                         TwPinMany pin_iargs(iargs);
                         iargs.reserve(named_count);
-                        for (std::size_t i = 0; i < named_count && i + 1 < v.children.size(); ++i) {
-                            auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
-                            if (!ar)
-                                return ar;
-                            iargs.push_back(*ar);
-                        }
+                        for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
+                            iargs.push_back(std::move(provided[i]));
                         std::vector<EvalValue> rest_args;
                         TwPinMany pin_rest(rest_args);
                         if (dotted && !pspan.empty()) {
-                            for (std::size_t i = named_count + 1; i < v.children.size(); ++i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                                if (!ar)
-                                    return ar;
-                                rest_args.push_back(*ar);
-                            }
+                            for (std::size_t i = named_count; i < provided.size(); ++i)
+                                rest_args.push_back(std::move(provided[i]));
                         }
                         // Issue #2871: pin parent if it lives in tail_env before emplace.
                         pin_if_current_in_tail();
@@ -6325,6 +6369,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto result = apply_closure(cid, cargs);
                             if (result)
                                 return *result;
+                            if (auto msg = take_pending_user_arity()) {
+                                if (callee.tag == aura::ast::NodeTag::Variable)
+                                    prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
+                                const auto line = v.line == 0 ? 1u : v.line;
+                                const auto col = v.col == 0 ? 1u : v.col;
+                                return std::unexpected(Diagnostic{
+                                    ErrorKind::ArityMismatch, std::move(*msg),
+                                    aura::diag::SourceLocation{line, col, 0}, current_id});
+                            }
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: foreign call failed"});
                         }
@@ -6380,6 +6433,18 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto bridged = apply_closure(cid, cargs);
                             if (bridged)
                                 return *bridged;
+                            if (auto msg = take_pending_user_arity()) {
+                                // The IR define bridge drops call_closure's
+                                // diagnostic. The parked text says "lambda"
+                                // when the function was lowered unnamed.
+                                if (callee.tag == aura::ast::NodeTag::Variable)
+                                    prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
+                                const auto line = v.line == 0 ? 1u : v.line;
+                                const auto col = v.col == 0 ? 1u : v.col;
+                                return std::unexpected(Diagnostic{
+                                    ErrorKind::ArityMismatch, std::move(*msg),
+                                    aura::diag::SourceLocation{line, col, 0}, current_id});
+                            }
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: invalid closure"});
                         }
@@ -6391,28 +6456,43 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         std::size_t named_count = cl.dotted && !cl.params.empty()
                                                       ? cl.params.size() - 1
                                                       : cl.params.size();
-                        std::vector<EvalValue> cargs;
-                        TwPinMany pin_cargs(cargs);
-                        cargs.reserve(named_count);
-                        for (std::size_t i = 0; i < named_count && i + 1 < v.children.size(); ++i) {
-                            auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
+                        // Issue #4467: every argument is evaluated first.
+                        // A fixed-arity call with the wrong count is an error
+                        // at this call, before the body runs.
+                        std::vector<EvalValue> provided;
+                        TwPinMany pin_provided(provided);
+                        if (v.children.size() > 1)
+                            provided.reserve(v.children.size() - 1);
+                        for (std::size_t i = 1; i < v.children.size(); ++i) {
+                            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                             if (!ar)
                                 return ar;
                             if (is_error(*ar))
                                 return ar;
-                            cargs.push_back(*ar);
+                            provided.push_back(std::move(*ar));
                         }
+                        if (user_arity_mismatch(cl.params.size(), cl.dotted, provided.size())) {
+                            std::string arity_name = cl.name;
+                            if (arity_name.empty() && callee.tag == aura::ast::NodeTag::Variable)
+                                arity_name = std::string(p->resolve(callee.sym_id));
+                            const auto line = v.line == 0 ? 1u : v.line;
+                            const auto col = v.col == 0 ? 1u : v.col;
+                            return std::unexpected(
+                                Diagnostic{ErrorKind::ArityMismatch,
+                                           user_arity_message(arity_name, cl.params.size(),
+                                                              cl.dotted, provided.size()),
+                                           aura::diag::SourceLocation{line, col, 0}, current_id});
+                        }
+                        std::vector<EvalValue> cargs;
+                        TwPinMany pin_cargs(cargs);
+                        cargs.reserve(named_count);
+                        for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
+                            cargs.push_back(std::move(provided[i]));
                         std::vector<EvalValue> rest_args;
                         TwPinMany pin_rest(rest_args);
                         if (cl.dotted && !cl.params.empty()) {
-                            for (std::size_t i = named_count + 1; i < v.children.size(); ++i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                                if (!ar)
-                                    return ar;
-                                if (is_error(*ar) && !is_string(*ar))
-                                    return ar;
-                                rest_args.push_back(*ar);
-                            }
+                            for (std::size_t i = named_count; i < provided.size(); ++i)
+                                rest_args.push_back(std::move(provided[i]));
                         }
                         tail_env = materialize_call_env(cl);
                         tail_env->set_primitives(&primitives_);

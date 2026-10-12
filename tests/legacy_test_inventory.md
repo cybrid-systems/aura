@@ -2044,7 +2044,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_list_end_of_list_void.cpp` (—) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true
 - `tests/compiler/test_lock_order_audit_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_lock_order_audit_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_export_display.cpp` (—) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
-- `tests/compiler/test_module_load_tail_export.cpp` (—) [domain_suite, theme_compiler] — AC1: tail defines always export after require
+- `tests/compiler/test_module_load_tail_export.cpp` (—) [large, domain_suite, theme_compiler] — AC1: tail defines always export after require
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_prefix_dead_heap.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1693 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_node_meta_bounds.cpp` (—) [domain_suite, theme_core] — AC1: meta(NodeTag{}) returns well-defined sentinel (no UB)
