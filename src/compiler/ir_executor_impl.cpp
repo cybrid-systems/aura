@@ -343,6 +343,52 @@ static std::optional<EvalResult> ir_typed_entry_blocked_result(CompilerMetrics* 
     return std::unexpected(Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
 }
 
+// Issue #4459: true when every instruction after this call only copies
+// `result_slot` and returns it. Parent frames otherwise keep the
+// per-iteration closure alive until the recursion unwinds, so a safepoint
+// sweep cannot bound RSS. Anything other than Local/Jump/Return is not
+// a tail — fact-style `(* n (fact …))` stays a real frame.
+static bool ir_call_is_tail(const IRFunction& func, std::uint32_t block_idx, std::size_t instr_idx,
+                            std::uint32_t result_slot) {
+    if (block_idx >= func.blocks.size())
+        return false;
+    struct Step {
+        std::uint32_t block;
+        std::size_t index;
+        std::uint32_t slot;
+    };
+    std::vector<Step> work;
+    std::vector<std::uint8_t> seen(func.blocks.size(), 0);
+    work.push_back({block_idx, instr_idx + 1, result_slot});
+    int steps = 0;
+    while (!work.empty() && steps < 16) {
+        const Step s = work.back();
+        work.pop_back();
+        if (s.block >= func.blocks.size() || seen[s.block])
+            return false;
+        seen[s.block] = 1;
+        const auto& ins = func.blocks[s.block].instructions;
+        std::uint32_t slot = s.slot;
+        for (std::size_t i = s.index; i < ins.size(); ++i) {
+            if (++steps > 16)
+                return false;
+            const auto& in = ins[i];
+            if (in.opcode == IROpcode::Return)
+                return in.operands[0] == slot && work.empty();
+            if (in.opcode == IROpcode::Local && in.operands[1] == slot) {
+                slot = in.operands[0];
+                continue;
+            }
+            if (in.opcode == IROpcode::Jump) {
+                work.push_back({in.operands[0], 0, slot});
+                break;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
 EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
     while (call_stack_.size() > base) {
         // Issue #2292: snapshot frame fields before run_function / pop —
@@ -361,6 +407,23 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
             auto& pc = std::get<PendingCall>(result);
             auto new_count = pc.func->local_count + std::max(std::size_t(64), pc.args.size());
             std::vector<EvalValue> new_locals(new_count, make_void());
+            // Issue #4459: replace the caller. run_function has returned, so
+            // its locals& is dead — pop here, not inside the opcode.
+            if (pc.tail && call_stack_.size() > base) {
+                const bool tail_top = call_stack_.back().is_top_level;
+                const std::uint32_t tail_slot = call_stack_.back().result_slot;
+                const std::size_t tail_ex = call_stack_.back().ex_depth_at_entry;
+                call_stack_.pop_back();
+                call_stack_.push_back({.func = pc.func,
+                                       .current_block = pc.func->entry_block,
+                                       .locals = std::move(new_locals),
+                                       .args = std::move(pc.args),
+                                       .resume_instr = 0,
+                                       .is_top_level = tail_top,
+                                       .result_slot = tail_slot,
+                                       .ex_depth_at_entry = tail_ex});
+                continue;
+            }
             call_stack_.push_back({.func = pc.func,
                                    .current_block = pc.func->entry_block,
                                    .locals = std::move(new_locals),
@@ -755,6 +818,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 return std::unexpected(Diagnostic{ErrorKind::InternalError,
                                                   "hold-budget-cancel: outermost force-released"});
             }
+            // Issue #4459: sweep only between instructions. The local counter
+            // is a compare; the evaluator pair/vector counter is polled on
+            // the same stride as the hold-budget check.
+            if (allocs_since_reclaim_ >= kFileReclaimAllocs ||
+                ((opcode_poll_n % kHoldBudgetOpcodePollStride) == 0 && context_.evaluator &&
+                 context_.evaluator->file_heap_allocs_since_reclaim() >= kFileReclaimAllocs))
+                maybe_reclaim_unreachable();
 
             // Issue #259: track type propagation coverage.
             // Bump total for every instruction; bump with_type
@@ -1608,12 +1678,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
                         // Issue #2292: stamp call-site block + next instr so
                         // run_function resumes after the Call (not at entry).
+                        // Issue #4459: a tail call replaces the frame in drain
+                        // and never resumes here. Open try handlers block it.
+                        bool tail = false;
+                        if (!call_stack_.empty() &&
+                            ex_stack_.size() == call_stack_.back().ex_depth_at_entry)
+                            tail = ir_call_is_tail(func, current, ii, ops[3]);
                         if (!call_stack_.empty()) {
                             call_stack_.back().current_block = current;
                             call_stack_.back().resume_instr =
                                 static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
                         }
-                        return PendingCall{&callee_func, std::move(all_args), ops[3]};
+                        return PendingCall{&callee_func, std::move(all_args), ops[3], tail};
                     } else if (is_primitive(callee_val)) {
                         // Primitive function call — look up and invoke.
                         // Issue #1676: share invoke_prim_with_telemetry with the
@@ -1726,6 +1802,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         runtime_minted_ids_.insert(id);
                     if (ops[2] == 0)
                         empty_env_closure_by_func_[ops[1]] = id;
+                    else
+                        note_reclaim_alloc(); // #4459: capturing closure, not #4357 reuse
                     locals[ops[0]] = make_closure(id);
                     break;
                 }
@@ -1804,12 +1882,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             all_args.push_back(a);
 
                         // Issue #2292: stamp call-site block + next instr (Apply).
+                        // Issue #4459: same tail-frame reuse as Call.
+                        bool tail = false;
+                        if (!call_stack_.empty() &&
+                            ex_stack_.size() == call_stack_.back().ex_depth_at_entry)
+                            tail = ir_call_is_tail(func, current, ii, ops[2]);
                         if (!call_stack_.empty()) {
                             call_stack_.back().current_block = current;
                             call_stack_.back().resume_instr =
                                 static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
                         }
-                        return PendingCall{&callee_func, std::move(all_args), ops[2]};
+                        return PendingCall{&callee_func, std::move(all_args), ops[2], tail};
                     } else {
                         locals[ops[2]] = closure_val;
                     }
@@ -1817,10 +1900,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::NewCell: {
-                    auto cell_id = next_cell_id_++;
-                    if (cell_heap_.size() <= cell_id)
-                        cell_heap_.resize(cell_id + 1, make_void());
-                    cell_heap_[cell_id] = make_void();
+                    const auto cell_id = alloc_cell();
+                    note_reclaim_alloc(); // #4459
                     locals[ops[0]] = make_cell(cell_id);
                     break;
                 }
@@ -2330,6 +2411,119 @@ void IRInterpreter::collect_active_gc_roots(std::vector<std::int64_t>& closure_r
             continue; // expired by invalidate live-walk
         closure_roots_out.push_back(static_cast<std::int64_t>(id));
     }
+}
+
+const std::vector<EvalValue>* IRInterpreter::ir_env_thunk(void* ctx, std::uint64_t id) {
+    return static_cast<const IRInterpreter*>(ctx)->ir_closure_env_for_reclaim(id);
+}
+
+const std::vector<EvalValue>* IRInterpreter::ir_closure_env_for_reclaim(std::uint64_t id) const {
+    const auto it = runtime_closures_.find(id);
+    if (it == runtime_closures_.end())
+        return nullptr;
+    return &it->second.env;
+}
+
+std::uint64_t IRInterpreter::alloc_cell() {
+    if (!cell_reuse_.empty()) {
+        const auto id = cell_reuse_.back();
+        cell_reuse_.pop_back();
+        if (id < cell_on_freelist_.size())
+            cell_on_freelist_[id] = 0;
+        if (cell_heap_.size() <= id)
+            cell_heap_.resize(id + 1, make_void());
+        cell_heap_[id] = make_void();
+        return id;
+    }
+    const auto id = next_cell_id_++;
+    if (cell_heap_.size() <= id)
+        cell_heap_.resize(id + 1, make_void());
+    cell_heap_[id] = make_void();
+    if (cell_on_freelist_.size() <= id)
+        cell_on_freelist_.resize(static_cast<std::size_t>(id) + 1, 0);
+    return id;
+}
+
+void IRInterpreter::maybe_reclaim_unreachable() {
+    if (reclaiming_ || !context_.evaluator)
+        return;
+    auto* ev = context_.evaluator;
+    if (allocs_since_reclaim_ < kFileReclaimAllocs &&
+        ev->file_heap_allocs_since_reclaim() < kFileReclaimAllocs)
+        return;
+    struct Guard {
+        bool& flag;
+        explicit Guard(bool& f)
+            : flag(f) {
+            flag = true;
+        }
+        ~Guard() { flag = false; }
+    } guard(reclaiming_);
+
+    std::vector<EvalValue> roots;
+    std::size_t nroots = empty_env_closure_by_func_.size();
+    for (const auto& fr : call_stack_)
+        nroots += fr.locals.size() + fr.args.size();
+    for (const auto& le : linear_heap_) {
+        if (le.live)
+            ++nroots;
+    }
+    roots.reserve(nroots);
+    for (const auto& fr : call_stack_) {
+        roots.insert(roots.end(), fr.locals.begin(), fr.locals.end());
+        roots.insert(roots.end(), fr.args.begin(), fr.args.end());
+    }
+    for (const auto& le : linear_heap_) {
+        if (le.live)
+            roots.push_back(le.value);
+    }
+    for (const auto& entry : empty_env_closure_by_func_)
+        roots.push_back(make_closure(entry.second));
+
+    std::vector<std::uint64_t> live_ir;
+    std::vector<std::uint8_t> live_cells;
+    Evaluator::FileModeReclaimView view;
+    view.extra_roots = roots;
+    view.ir_cells = cell_heap_;
+    view.ir_closure_env = &IRInterpreter::ir_env_thunk;
+    view.ir_ctx = this;
+    view.live_ir = &live_ir;
+    view.live_ir_cells = &live_cells;
+    if (!ev->reclaim_file_mode_unreachable(view)) {
+        // Skipped. Do not erase from an empty live set. Back off so a
+        // panic window is not a reclaim attempt on every opcode.
+        allocs_since_reclaim_ = 0;
+        ev->reset_file_heap_allocs_since_reclaim();
+        return;
+    }
+    std::unordered_set<std::uint64_t> live(live_ir.begin(), live_ir.end());
+    for (auto it = runtime_closures_.begin(); it != runtime_closures_.end();) {
+        if (live.contains(it->first)) {
+            ++it;
+            continue;
+        }
+        runtime_minted_ids_.erase(it->first);
+        it = runtime_closures_.erase(it);
+    }
+    for (auto it = empty_env_closure_by_func_.begin(); it != empty_env_closure_by_func_.end();) {
+        if (runtime_closures_.contains(it->second))
+            ++it;
+        else
+            it = empty_env_closure_by_func_.erase(it);
+    }
+    if (live_cells.size() == cell_heap_.size()) {
+        for (std::size_t i = 1; i < cell_heap_.size() && i < next_cell_id_; ++i) {
+            const bool on = i < cell_on_freelist_.size() && cell_on_freelist_[i] != 0;
+            if (live_cells[i] != 0 || on)
+                continue;
+            cell_heap_[i] = make_void();
+            if (cell_on_freelist_.size() <= i)
+                cell_on_freelist_.resize(i + 1, 0);
+            cell_on_freelist_[i] = 1;
+            cell_reuse_.push_back(i);
+        }
+    }
+    allocs_since_reclaim_ = 0;
 }
 
 } // namespace aura::compiler

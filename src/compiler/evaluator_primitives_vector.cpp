@@ -209,19 +209,17 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
 
     register_prim(
         add, ev, "vector",
-        [&vector_heap, &string_heap, &error_values, primitive_error_counter,
-         &ev](std::span<const EvalValue> a) {
-            // Issue #2916: soft vectors quota under multi-fiber construction.
-            if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
+        [&string_heap, &error_values, primitive_error_counter, &ev](std::span<const EvalValue> a) {
+            // Issue #2916: quota is inside mint_vector, and only when the
+            // slot freelist is empty (#4459). Reuse does not grow the heap.
+            std::vector<EvalValue> elems(a.begin(), a.end());
+            const auto idx = ev.mint_vector(std::move(elems), /*check_quota=*/true);
+            if (idx == Evaluator::kFileHeapMintDenied) {
                 return make_primitive_error(
                     string_heap, error_values,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
                     primitive_error_counter);
             }
-            std::vector<EvalValue> elems(a.begin(), a.end());
-            auto idx = vector_heap.size();
-            vector_heap.push_back(std::move(elems));
-            ev.note_inrange_vector_mint(idx); // Issue #4298
             return make_vector(idx);
         },
         pure_general(255, "(...vals) -> vector", "Construct a vector from arguments."));
@@ -324,8 +322,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
     // results); never reinterpret float bits via as_int → max_size() noise.
     register_prim(
         add, ev, "make-vector",
-        [&vector_heap, &string_heap, &error_values, primitive_error_counter,
-         &ev](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter, &ev](std::span<const EvalValue> a) {
             std::size_t n = 0;
             if (!a.empty()) {
                 std::int64_t len = 0;
@@ -368,18 +365,17 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                         primitive_error_counter);
                 }
             }
-            // Issue #2916: soft vectors quota before materializing the buffer.
-            if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
+            // Issue #2916 / #4459: quota before the buffer exists, and only
+            // when no dead slot can take the fill. mint_vector_fill assigns
+            // into a cleared slot so capacity stays put.
+            EvalValue init = a.size() > 1 ? a[1] : make_void();
+            const auto idx = ev.mint_vector_fill(n, init, /*check_quota=*/true);
+            if (idx == Evaluator::kFileHeapMintDenied) {
                 return make_primitive_error(
                     string_heap, error_values,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
                     primitive_error_counter);
             }
-            EvalValue init = a.size() > 1 ? a[1] : make_void();
-            std::vector<EvalValue> elems(n, init);
-            auto idx = vector_heap.size();
-            vector_heap.push_back(std::move(elems));
-            ev.note_inrange_vector_mint(idx); // Issue #4298
             return make_vector(idx);
         },
         pure_general(2, "(int any) -> vector", "Allocate a vector filled with a value."));

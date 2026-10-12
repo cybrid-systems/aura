@@ -779,6 +779,79 @@ static void store_apply_closure_tls(Evaluator& ev, ClosureId cid, const Closure&
     s.occupied = true;
 }
 
+void Evaluator::drop_apply_closure_tls() noexcept {
+    auto& cache = apply_closure_tls_cache();
+    const auto iid = instance_id();
+    for (auto& s : cache.slots) {
+        if (s.instance_id == iid)
+            s.occupied = false;
+    }
+}
+
+// Issue #4459: tree-walker safepoint roots. Every eval_flat_body
+// pushes its env (the go loop is nested under display's arg eval).
+// Value pins cover closures that live only in an argument temporary
+// while a nested eval hits the safepoint — those are not in any env
+// yet, and freeing them would hand the caller a dead closure id.
+struct TwFrame {
+    const Env** current = nullptr;
+    std::optional<Env>* tail = nullptr;
+    std::vector<std::unique_ptr<Env>>* pinned = nullptr;
+};
+thread_local std::vector<TwFrame> g_tw_frames;
+thread_local std::vector<const EvalResult*> g_tw_results;
+thread_local std::vector<const std::vector<types::EvalValue>*> g_tw_vecs;
+
+struct TwPinResult {
+    explicit TwPinResult(const EvalResult& r) { g_tw_results.push_back(&r); }
+    ~TwPinResult() {
+        if (!g_tw_results.empty())
+            g_tw_results.pop_back();
+    }
+    TwPinResult(const TwPinResult&) = delete;
+};
+
+struct TwPinMany {
+    explicit TwPinMany(const std::vector<types::EvalValue>& v) { g_tw_vecs.push_back(&v); }
+    ~TwPinMany() {
+        if (!g_tw_vecs.empty())
+            g_tw_vecs.pop_back();
+    }
+    TwPinMany(const TwPinMany&) = delete;
+};
+
+void Evaluator::maybe_reclaim_tw_unreachable() {
+    constexpr std::uint32_t kTrigger = 128;
+    if (tw_closure_allocs_ < kTrigger && file_heap_allocs_since_reclaim_ < kTrigger)
+        return;
+    std::vector<const Env*> envs;
+    envs.reserve(g_tw_frames.size() * 2 + 4);
+    for (const auto& fr : g_tw_frames) {
+        if (fr.current && *fr.current)
+            envs.push_back(*fr.current);
+        if (fr.tail && fr.tail->has_value())
+            envs.push_back(&**fr.tail);
+        if (!fr.pinned)
+            continue;
+        for (const auto& p : *fr.pinned) {
+            if (p)
+                envs.push_back(p.get());
+        }
+    }
+    std::vector<types::EvalValue> held;
+    for (const EvalResult* r : g_tw_results) {
+        if (r && *r)
+            held.push_back(**r);
+    }
+    for (const auto* many : g_tw_vecs) {
+        if (!many)
+            continue;
+        for (const auto& v : *many)
+            held.push_back(v);
+    }
+    (void)reclaim_tw_unreachable(envs, held);
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #252: closure dual-path observability. Bump the
@@ -2146,6 +2219,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 if (aura::compiler::pure::is_truthy(*cond_result)) {
                     // Evaluate body expressions sequentially
                     EvalResult last = make_void();
+                    TwPinResult pin_last(last);
                     while (types::is_pair(body_rest)) {
                         auto bp = types::as_pair_idx(body_rest);
                         last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
@@ -2258,6 +2332,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.params.push_back(ps);
                     closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
                 }
+                note_tw_closure_alloc();
                 // Issue #2676: extend closures_mtx_ critical section to cover
                 // the make_closure read (P0 multi-fiber race: another fiber
                 // could mutate closures_ between the write block end and the
@@ -2277,6 +2352,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         if (fn_name == "begin") {
             auto current = cdr_val;
             EvalResult last = make_void();
+            TwPinResult pin_last(last);
             while (types::is_pair(current)) {
                 auto elem_pair = types::as_pair_idx(current);
                 last = eval_data_as_code(pairs_[elem_pair].car, env, flat, pool);
@@ -2386,6 +2462,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                             bump_closures_apply_epoch(); // Issue #3832
                             closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
                         }
+                        note_tw_closure_alloc();
 
                         // Bind in env
                         auto ci = alloc_cell(make_void());
@@ -2463,6 +2540,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 // Evaluate body in new env
                 auto body_current = body_rest;
                 EvalResult last = make_void();
+                TwPinResult pin_last(last);
                 while (types::is_pair(body_current)) {
                     auto elem_pair = types::as_pair_idx(body_current);
                     last = eval_data_as_code(pairs_[elem_pair].car, new_env, flat, pool);
@@ -2489,6 +2567,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         }
         if (prim) {
             std::vector<EvalValue> args;
+            TwPinMany pin_args(args);
             auto current = cdr_val;
             while (types::is_pair(current)) {
                 auto arg_pair = types::as_pair_idx(current);
@@ -2552,6 +2631,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 eval_flat(*md.flat, md.pool ? *md.pool : *current_pool_, md.body_id, tail_env);
             if (!template_result)
                 return template_result;
+            TwPinResult pin_template(template_result);
             // Re-evaluate the data as code. The recursive call
             // here is what enables macro composition: the inner
             // macro's expansion is re-evaluated, which may itself
@@ -2591,6 +2671,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         return eval_flat_commit_readiness_refused();
                     // Evaluate args and apply
                     std::vector<EvalValue> cargs;
+                    TwPinMany pin_cargs(cargs);
                     auto current = cdr_val;
                     while (types::is_pair(current)) {
                         auto arg_pair = types::as_pair_idx(current);
@@ -2622,6 +2703,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
     auto fn = eval_data_as_code(car_val, env, flat, pool);
     if (!fn)
         return fn;
+    TwPinResult pin_fn(fn);
     if (types::is_closure(*fn)) {
         auto cid = types::as_closure_id(*fn);
         // Try tree-walker closure first, then IR bridge
@@ -2642,6 +2724,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             it->second.lifetime_valid_for_views()) {
             auto& cl = it->second;
             std::vector<EvalValue> cargs;
+            TwPinMany pin_cargs(cargs);
             auto current = cdr_val;
             while (types::is_pair(current)) {
                 auto arg_pair = types::as_pair_idx(current);
@@ -5044,8 +5127,23 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             }
         }
 
+        struct TwFrameReg {
+            TwFrameReg(const Env** c, std::optional<Env>* t, std::vector<std::unique_ptr<Env>>* p) {
+                g_tw_frames.push_back(TwFrame{c, t, p});
+            }
+            ~TwFrameReg() {
+                if (!g_tw_frames.empty())
+                    g_tw_frames.pop_back();
+            }
+            TwFrameReg(const TwFrameReg&) = delete;
+        } tw_frame_reg(&current_env, &tail_env, &tco_pinned);
+
         while (true) {
             EVAL_FLAT_HOLD_BUDGET_POLL();
+            // Issue #4459: between opcodes, after the poll. Nested bodies
+            // see outer envs via g_tw_frames, so the go loop under display
+            // reclaims the previous iteration's closure.
+            maybe_reclaim_tw_unreachable();
             current_flat_ = f;
             current_pool_ = p;
             // Issue #3457: SymId intern is pool-local. TCO / nested
@@ -5248,6 +5346,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // Issue #3915: rest eval after emplace dangled the
                         // TCO caller Env (same class as TW closure TCO).
                         std::vector<EvalValue> iargs;
+                        TwPinMany pin_iargs(iargs);
                         iargs.reserve(named_count);
                         for (std::size_t i = 0; i < named_count && i + 1 < v.children.size(); ++i) {
                             auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
@@ -5256,6 +5355,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             iargs.push_back(*ar);
                         }
                         std::vector<EvalValue> rest_args;
+                        TwPinMany pin_rest(rest_args);
                         if (dotted && !pspan.empty()) {
                             for (std::size_t i = named_count + 1; i < v.children.size(); ++i) {
                                 auto ar = eval_flat(*f, *p, v.child(i), eval_env);
@@ -5635,6 +5735,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             if (!arena_)
                                 return make_void();
                             EvalResult last = make_void();
+                            TwPinResult pin_last(last);
                             for (auto& mod_path : mod_names) {
                                 // Derive prefix from module name (last path component)
                                 std::string prefix;
@@ -5799,6 +5900,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // performance-region: (performance-region body...)
                         if (cname == "performance-region" && v.children.size() >= 2) {
                             EvalResult last = make_void();
+                            TwPinResult pin_last(last);
                             for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
                                 last = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!last)
@@ -5809,6 +5911,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // evolution-region: (evolution-region body...)
                         if (cname == "evolution-region" && v.children.size() >= 2) {
                             EvalResult last = make_void();
+                            TwPinResult pin_last(last);
                             for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
                                 last = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!last)
@@ -5854,6 +5957,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             capability_stack_.push_back(caps);
                             // Evaluate body in child env
                             EvalResult last = make_void();
+                            TwPinResult pin_last(last);
                             for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
                                 last = eval_flat(*f, *p, v.child(ci), *tail_env);
                                 if (!last) {
@@ -6068,6 +6172,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         }
                         if (prim) {
                             std::vector<EvalValue> args;
+                            TwPinMany pin_args(args);
                             for (std::size_t i = 1; i < v.children.size(); ++i) {
                                 auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                                 if (!ar)
@@ -6100,6 +6205,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto fn = eval_flat(*f, *p, callee_id, eval_env);
                     if (!fn)
                         return fn;
+                    TwPinResult pin_fn(fn);
                     if (is_closure(*fn)) {
                         auto cid = as_closure_id(*fn);
                         // Check for foreign function (high bit set)
@@ -6112,6 +6218,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // delegates the counter bumps to it.)
                             std::size_t named_count = 0;
                             std::vector<EvalValue> cargs;
+                            TwPinMany pin_cargs(cargs);
                             for (std::size_t i = 0; i + 1 < v.children.size(); ++i) {
                                 auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
                                 if (!ar)
@@ -6164,6 +6271,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (!tw_closure) {
                             // IR-produced closure (e.g. lambda arg to cached define).
                             std::vector<EvalValue> cargs;
+                            TwPinMany pin_cargs(cargs);
                             for (std::size_t i = 1; i < v.children.size(); ++i) {
                                 auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                                 if (!ar)
@@ -6187,6 +6295,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                       ? cl.params.size() - 1
                                                       : cl.params.size();
                         std::vector<EvalValue> cargs;
+                        TwPinMany pin_cargs(cargs);
                         cargs.reserve(named_count);
                         for (std::size_t i = 0; i < named_count && i + 1 < v.children.size(); ++i) {
                             auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
@@ -6197,6 +6306,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             cargs.push_back(*ar);
                         }
                         std::vector<EvalValue> rest_args;
+                        TwPinMany pin_rest(rest_args);
                         if (cl.dotted && !cl.params.empty()) {
                             for (std::size_t i = named_count + 1; i < v.children.size(); ++i) {
                                 auto ar = eval_flat(*f, *p, v.child(i), eval_env);
@@ -6351,6 +6461,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
                                 // Eval body by re-parsing the serialized source
                                 EvalResult last = make_void();
+                                TwPinResult pin_last(last);
                                 auto& body_src = tpl_it->second.body_source;
                                 if (!body_src.empty()) {
                                     // Parse body as a begin block so all expressions become
@@ -6592,6 +6703,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 prim = primitives_.slot_lookup_fast(slot);
                             if (prim) {
                                 std::vector<EvalValue> args;
+                                TwPinMany pin_args(args);
                                 for (std::size_t i = 1; i < v.children.size(); ++i) {
                                     auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                                     if (!ar)
@@ -6671,6 +6783,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         stamp_closure_bridge_epoch(cl);
                         closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
                     }
+                    note_tw_closure_alloc();
                     // Issue #2676: shared_lock to serialize with closures_ write
                     // (P0 multi-fiber race — see block above).
                     {
@@ -6745,8 +6858,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         }
                         tail_env->set_parent_id(letrec_parent.parent_id());
 
-                        std::size_t ci = cells_.size();
-                        cells_.push_back(make_void());
+                        auto ci = alloc_cell(make_void());
                         // SymId primary (captured by alloc_env_frame_from_env) +
                         // string mirror via bind_symid when pool_ is set. Parity
                         // with the Let path below.
@@ -6880,8 +6992,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
                         auto& me = const_cast<Env&>(eval_env);
 
-                        auto ci = cells_.size();
-                        cells_.push_back(*vv);
+                        auto ci = alloc_cell(*vv);
                         // Issue #1539: stamp Owned when init is Linear e.
                         // State lives on Env.bindings_linear_ownership_state_ and is
                         // copied into EnvFrame by alloc_env_frame_from_env (closure capture).
@@ -7247,6 +7358,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // in this group keeps the snapshot — the value the
                         // name had when the alias form was reached.
                         std::vector<EvalValue> pre_lambda_cell(letrec_defs.size());
+                        TwPinMany pin_pre_lambda(pre_lambda_cell);
                         std::vector<char> lambda_def(letrec_defs.size(), 0);
                         for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
                             auto rhs = letrec_defs[i].second;
@@ -7744,8 +7856,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (!var_name.empty()) {
                             auto& me = const_cast<Env&>(eval_env);
 
-                            auto ci = cells_.size();
-                            cells_.push_back(*child_result);
+                            auto ci = alloc_cell(*child_result);
                             me.bind(std::string(var_name), make_cell(ci));
                         }
                     }

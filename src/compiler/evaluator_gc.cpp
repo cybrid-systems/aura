@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "prim_heap_quota.hh" // Issue #4459: mint_pair / mint_vector grow-path quota
 #include <array>
 #include "observability_metrics.h"
 #include "messaging_bridge.h"
@@ -29,6 +30,7 @@ using types::EvalValue;
 using types::as_bool;
 using types::as_cell_id;
 using types::as_closure_id;
+using types::as_error_idx;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
@@ -1363,6 +1365,646 @@ static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev) {
     // stays at 0 in those paths.
     ev.scan_live_env_frame_refs_after_densify();
     return 0;
+}
+
+// Issue #4459: file-mode mark of one EvalValue. Pushes children. Cycles
+// stop at the per-heap seen sets. IR cell ids and evaluator cell ids share
+// the make_cell tag; a seen id follows both heaps. False IR retention is
+// bounded by cells_.size() (prelude), not by the allocation loop.
+static void file_reclaim_mark_value(
+    const EvalValue v, std::vector<EvalValue>& work, std::vector<std::uint8_t>& seen_pair,
+    std::vector<std::uint8_t>& seen_vec, std::vector<std::uint8_t>& seen_hash,
+    std::vector<std::uint8_t>& seen_ev_cell, std::vector<std::uint8_t>& seen_err,
+    std::unordered_set<std::uint64_t>& seen_ir, std::unordered_set<std::uint64_t>& live_tw,
+    const Evaluator::FileModeReclaimView& view, const std::pmr::vector<Pair>& pairs,
+    const std::vector<std::vector<EvalValue>>& vector_heap,
+    const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values) {
+    if (is_pair(v)) {
+        const auto id = as_pair_idx(v);
+        if (id < seen_pair.size() && !seen_pair[id]) {
+            seen_pair[id] = 1;
+            work.push_back(pairs[id].car);
+            work.push_back(pairs[id].cdr);
+        }
+        return;
+    }
+    if (is_vector(v)) {
+        const auto id = as_vector_idx(v);
+        if (id < seen_vec.size() && !seen_vec[id]) {
+            seen_vec[id] = 1;
+            for (const auto& el : vector_heap[id])
+                work.push_back(el);
+        }
+        return;
+    }
+    if (is_hash(v)) {
+        const auto id = as_hash_idx(v);
+        if (id >= seen_hash.size() || seen_hash[id])
+            return;
+        seen_hash[id] = 1;
+        auto* ht = g_hash_tables[id];
+        if (!ht)
+            return;
+        const auto* meta = ht->metadata();
+        const auto* keys = ht->keys();
+        const auto* vals = ht->values();
+        for (std::uint64_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            work.push_back(EvalValue{keys[i]});
+            work.push_back(EvalValue{vals[i]});
+        }
+        return;
+    }
+    if (is_cell(v)) {
+        const auto id = as_cell_id(v);
+        if (view.live_ir_cells && id < view.live_ir_cells->size() && !(*view.live_ir_cells)[id]) {
+            (*view.live_ir_cells)[id] = 1;
+            if (id < view.ir_cells.size())
+                work.push_back(view.ir_cells[id]);
+        }
+        if (id < seen_ev_cell.size() && !seen_ev_cell[id]) {
+            seen_ev_cell[id] = 1;
+            work.push_back(cells[id]);
+        }
+        return;
+    }
+    if (is_closure(v)) {
+        const auto id = as_closure_id(v);
+        if (view.ir_closure_env) {
+            if (const auto* env = view.ir_closure_env(view.ir_ctx, id)) {
+                if (seen_ir.insert(id).second) {
+                    if (view.live_ir)
+                        view.live_ir->push_back(id);
+                    for (const auto& el : *env)
+                        work.push_back(el);
+                }
+                return;
+            }
+        }
+        live_tw.insert(id);
+        return;
+    }
+    if (is_error(v)) {
+        const auto id = as_error_idx(v);
+        if (id < seen_err.size() && !seen_err[id]) {
+            seen_err[id] = 1;
+            work.push_back(error_values[id]);
+        }
+    }
+}
+
+bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
+    // Same destructive-GC predicate as compact_sweep. Do not also skip on
+    // mutation_boundary_depth: a boundary held across cs.eval would disable
+    // file-mode reclaim for the whole program.
+    if (file_reclaim_active_ || aura::gc_hooks::should_defer_destructive_gc() ||
+        has_panic_checkpoint())
+        return false;
+    struct Active {
+        bool& flag;
+        explicit Active(bool& f)
+            : flag(f) {
+            flag = true;
+        }
+        ~Active() { flag = false; }
+    } active(file_reclaim_active_);
+
+    if (view.live_ir)
+        view.live_ir->clear();
+    if (view.live_ir_cells)
+        view.live_ir_cells->assign(view.ir_cells.size(), 0);
+
+    std::vector<EvalValue> roots;
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        roots.reserve(cells_.size());
+        for (const auto& c : cells_)
+            roots.push_back(c);
+    }
+    auto push_env = [&](const Env& e) {
+        for (const auto& b : e.bindings())
+            roots.push_back(b.second);
+        for (const auto& b : e.bindings_symid())
+            roots.push_back(b.second);
+    };
+    push_env(top_env());
+    if (require_inject_env_)
+        push_env(*require_inject_env_);
+    for (Env* m : modules_) {
+        if (m)
+            push_env(*m);
+    }
+    {
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t i = 0; i < kEnvFramesShardCount; ++i)
+            rlock[i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[i].mu);
+        for (const auto& fr : env_frames_) {
+            for (const auto& b : fr.bindings_)
+                roots.push_back(b.second);
+            for (const auto& b : fr.bindings_symid_)
+                roots.push_back(b.second);
+        }
+    }
+    {
+        std::lock_guard lock(cap_snap_mtx_);
+        for (const auto& entry : cap_snap_cache_) {
+            for (auto sp = entry.second; sp; sp = sp->parent) {
+                for (const auto& b : sp->bindings_)
+                    roots.push_back(b.second);
+                for (const auto& b : sp->bindings_symid_)
+                    roots.push_back(b.second);
+            }
+        }
+    }
+
+    const std::size_t n_pairs = pairs_.size();
+    const std::size_t n_vecs = vector_heap_.size();
+    std::vector<std::uint8_t> seen_pair(n_pairs, 0);
+    std::vector<std::uint8_t> seen_vec(n_vecs, 0);
+    std::vector<std::uint8_t> seen_hash;
+    std::vector<std::uint8_t> seen_ev_cell(cells_.size(), 0);
+    std::vector<std::uint8_t> seen_err(error_values_.size(), 0);
+    std::unordered_set<std::uint64_t> seen_ir;
+    std::unordered_set<std::uint64_t> live_tw;
+
+    std::vector<EvalValue> work;
+    work.reserve(roots.size() + view.extra_roots.size());
+    for (const auto& r : roots)
+        work.push_back(r);
+    for (const auto& r : view.extra_roots)
+        work.push_back(r);
+    {
+        // hash_tables_mutex is the outer lock car uses before alloc. Trace
+        // holds it alone, then drops it before the closures / alloc locks.
+        std::lock_guard hash_lock(hash_tables_mtx_);
+        seen_hash.assign(g_hash_tables.size(), 0);
+        for (std::size_t wi = 0; wi < work.size(); ++wi) {
+            file_reclaim_mark_value(work[wi], work, seen_pair, seen_vec, seen_hash, seen_ev_cell,
+                                    seen_err, seen_ir, live_tw, view, pairs_, vector_heap_, cells_,
+                                    error_values_);
+        }
+    }
+
+    {
+        aura::compiler::lock_order::AuditScope lo_closures(
+            aura::compiler::lock_order::Level::Closures);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+        bump_closures_apply_epoch();
+        for (auto& cl_sh : closures_shards_) {
+            for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
+                const auto id = it->first;
+                if (id < gc_safe_closure_id_ || live_tw.contains(id) || seen_ir.contains(id)) {
+                    ++it;
+                    continue;
+                }
+                invalidate_closure_lifetime(it->second);
+                it = cl_sh.map.erase(it);
+            }
+        }
+    }
+
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto voidv = types::make_void();
+        if (pair_on_freelist_.size() < n_pairs)
+            pair_on_freelist_.resize(n_pairs, 0);
+        pair_reuse_freelist_.clear();
+        const auto pair_n = std::min(n_pairs, pairs_.size());
+        for (std::size_t i = 0; i < pair_n; ++i) {
+            if (seen_pair[i]) {
+                pair_on_freelist_[i] = 0;
+                continue;
+            }
+            if (!pair_on_freelist_[i]) {
+                pairs_[i].car = voidv;
+                pairs_[i].cdr = voidv;
+                if (i < g_pair_slots.size() && g_pair_slots[i]) {
+                    g_pair_slots[i]->car = voidv.val;
+                    g_pair_slots[i]->cdr = voidv.val;
+                }
+            }
+            pair_on_freelist_[i] = 1;
+            pair_reuse_freelist_.push_back(i);
+        }
+        if (vector_on_freelist_.size() < n_vecs)
+            vector_on_freelist_.resize(n_vecs, 0);
+        vector_reuse_freelist_.clear();
+        const auto vec_n = std::min(n_vecs, vector_heap_.size());
+        for (std::size_t i = 0; i < vec_n; ++i) {
+            if (seen_vec[i]) {
+                vector_on_freelist_[i] = 0;
+                continue;
+            }
+            if (!vector_on_freelist_[i])
+                vector_heap_[i].clear();
+            vector_on_freelist_[i] = 1;
+            vector_reuse_freelist_.push_back(i);
+        }
+        file_heap_allocs_since_reclaim_ = 0;
+    }
+    return true;
+}
+
+bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
+                                       std::span<const types::EvalValue> held) {
+    // Same destructive-GC predicate as compact_sweep, plus an
+    // EnvFrameLifetimeGuard: freelist reuse would alias a held index.
+    // A whole-eval mutation boundary is NOT a skip — file mode holds
+    // none on this path, and treating one as fatal would disable reclaim.
+    if (file_reclaim_active_ || aura::gc_hooks::should_defer_destructive_gc() ||
+        has_panic_checkpoint() ||
+        aura::core::envframe_lifetime::should_block_compact_for_guards()) {
+        tw_closure_allocs_ = 0;
+        reset_file_heap_allocs_since_reclaim();
+        return false;
+    }
+    struct Active {
+        bool& flag;
+        explicit Active(bool& f)
+            : flag(f) {
+            flag = true;
+        }
+        ~Active() { flag = false; }
+    } active(file_reclaim_active_);
+
+    std::size_t n_pairs = 0;
+    std::size_t n_vecs = 0;
+    std::size_t n_cells = 0;
+    std::size_t n_errs = 0;
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        n_pairs = pairs_.size();
+        n_vecs = vector_heap_.size();
+        n_cells = cells_.size();
+        n_errs = error_values_.size();
+    }
+    std::size_t n_frames = 0;
+    {
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t i = 0; i < kEnvFramesShardCount; ++i)
+            rlock[i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[i].mu);
+        n_frames = env_frames_.size();
+    }
+
+    std::vector<std::uint8_t> seen_pair(n_pairs, 0);
+    std::vector<std::uint8_t> seen_vec(n_vecs, 0);
+    std::vector<std::uint8_t> seen_hash;
+    std::vector<std::uint8_t> seen_ev_cell(n_cells, 0);
+    std::vector<std::uint8_t> seen_err(n_errs, 0);
+    std::vector<std::uint8_t> live_frame(n_frames, 0);
+    std::vector<std::uint8_t> frame_scanned(n_frames, 0);
+    std::unordered_set<std::uint64_t> seen_ir;
+    std::unordered_set<std::uint64_t> live_tw;
+    std::vector<EvalValue> work;
+    work.reserve(held.size() + 64);
+
+    auto push_env = [&](const Env& e) {
+        for (const auto& b : e.bindings())
+            work.push_back(b.second);
+        for (const auto& b : e.bindings_symid())
+            work.push_back(b.second);
+    };
+    std::vector<EnvId> pending;
+    auto note_frame = [&](EnvId id) {
+        if (id != NULL_ENV_ID)
+            pending.push_back(id);
+    };
+    // Frame 0 is the SoA root walk (parent_id 0 means "live top_").
+    // top_'s parent frame stays even when no closure names it (#4448).
+    if (n_frames > 0)
+        note_frame(static_cast<EnvId>(0));
+    note_frame(top_.parent_id());
+
+    for (const Env* root : stack_envs) {
+        const Env* cur = root;
+        const Env* seen_ptr[64]{};
+        int hops = 0;
+        while (cur && hops < 64) {
+            bool cycle = false;
+            for (int i = 0; i < hops; ++i) {
+                if (seen_ptr[i] == cur) {
+                    cycle = true;
+                    break;
+                }
+            }
+            if (cycle)
+                break;
+            seen_ptr[hops++] = cur;
+            push_env(*cur);
+            note_frame(cur->parent_id());
+            if (const auto& snap = cur->cap_snapshot()) {
+                int sh = 0;
+                for (auto sp = snap; sp && sh < 32; sp = sp->parent, ++sh) {
+                    for (const auto& b : sp->bindings_)
+                        work.push_back(b.second);
+                    for (const auto& b : sp->bindings_symid_)
+                        work.push_back(b.second);
+                    note_frame(sp->source_frame);
+                    note_frame(sp->parent_id);
+                }
+            }
+            cur = cur->parent();
+        }
+    }
+    push_env(top_env());
+    if (require_inject_env_)
+        push_env(*require_inject_env_);
+    for (Env* m : modules_) {
+        if (m)
+            push_env(*m);
+    }
+    for (const auto& h : held)
+        work.push_back(h);
+
+    auto absorb = [&](std::vector<EnvId>& ids) {
+        if (ids.empty())
+            return;
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t i = 0; i < kEnvFramesShardCount; ++i)
+            rlock[i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[i].mu);
+        std::vector<EnvId> queue;
+        queue.swap(ids);
+        for (std::size_t qi = 0; qi < queue.size(); ++qi) {
+            const EnvId id = queue[qi];
+            if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >= n_frames)
+                continue;
+            if (frame_scanned[id])
+                continue;
+            frame_scanned[id] = 1;
+            live_frame[id] = 1;
+            const EnvFrame& fr = env_frames_[id];
+            for (const auto& b : fr.bindings_)
+                work.push_back(b.second);
+            for (const auto& b : fr.bindings_symid_)
+                work.push_back(b.second);
+            const EnvId parent = fr.parent_id;
+            if (parent != NULL_ENV_ID && static_cast<std::size_t>(parent) < n_frames &&
+                !frame_scanned[parent])
+                queue.push_back(parent);
+        }
+    };
+    absorb(pending);
+
+    FileModeReclaimView view;
+    std::unordered_set<std::uint64_t> expanded;
+    std::size_t traced = 0;
+    for (int guard = 0; guard < 1000000; ++guard) {
+        {
+            std::lock_guard hash_lock(hash_tables_mtx_);
+            if (seen_hash.size() < g_hash_tables.size())
+                seen_hash.resize(g_hash_tables.size(), 0);
+            while (traced < work.size()) {
+                file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
+                                        seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
+                                        vector_heap_, cells_, error_values_);
+            }
+        }
+        std::vector<EnvId> more;
+        {
+            std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+            for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+                cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+            for (const auto& cl_sh : closures_shards_) {
+                for (const auto& kv : cl_sh.map) {
+                    const auto id = kv.first;
+                    const bool keep =
+                        id < gc_safe_closure_id_ || live_tw.contains(id) || seen_ir.contains(id);
+                    if (!keep || !expanded.insert(id).second)
+                        continue;
+                    if (kv.second.env_id != NULL_ENV_ID)
+                        more.push_back(kv.second.env_id);
+                }
+            }
+        }
+        if (more.empty())
+            break;
+        const auto work_mark = work.size();
+        absorb(more);
+        if (work.size() == work_mark)
+            break;
+    }
+
+    {
+        aura::compiler::lock_order::AuditScope lo_closures(
+            aura::compiler::lock_order::Level::Closures);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+        bump_closures_apply_epoch();
+        drop_apply_closure_tls();
+        for (auto& cl_sh : closures_shards_) {
+            for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
+                const auto id = it->first;
+                if (id < gc_safe_closure_id_ || live_tw.contains(id) || seen_ir.contains(id)) {
+                    ++it;
+                    continue;
+                }
+                invalidate_closure_lifetime(it->second);
+                it = cl_sh.map.erase(it);
+            }
+        }
+    }
+
+    std::vector<EnvId> dead_snaps;
+    {
+        std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
+        std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+        if (env_frame_on_freelist_.size() < env_frames_.size())
+            env_frame_on_freelist_.resize(env_frames_.size(), 0);
+        std::vector<EnvId> rebuilt;
+        rebuilt.reserve(env_frames_.size());
+        for (std::size_t i = 0; i < env_frames_.size(); ++i) {
+            const bool live = i < live_frame.size() && live_frame[i] != 0;
+            // Allocated after the snapshot: another fiber's frame. Keep it.
+            const bool newborn = i >= n_frames;
+            if (live || newborn) {
+                env_frame_on_freelist_[i] = 0;
+                continue;
+            }
+            if (!env_frame_on_freelist_[i]) {
+                EnvFrame& fr = env_frames_[i];
+                fr.bindings_.clear();
+                fr.bindings_symid_.clear();
+                fr.bindings_linear_ownership_state_.clear();
+                fr.pool_ = nullptr;
+                fr.version_ = INVALID_VERSION;
+            }
+            env_frame_on_freelist_[i] = 1;
+            const auto id = static_cast<EnvId>(i);
+            rebuilt.push_back(id);
+            dead_snaps.push_back(id);
+        }
+        env_frame_reuse_ = std::move(rebuilt);
+    }
+    {
+        std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+        for (const EnvId id : dead_snaps)
+            cap_snap_cache_.erase(id);
+    }
+
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto voidv = types::make_void();
+        if (cell_on_freelist_eval_.size() < n_cells)
+            cell_on_freelist_eval_.resize(n_cells, 0);
+        cell_reuse_eval_.clear();
+        const auto cell_n = std::min(n_cells, cells_.size());
+        for (std::size_t i = 0; i < cell_n; ++i) {
+            if (i < seen_ev_cell.size() && seen_ev_cell[i]) {
+                cell_on_freelist_eval_[i] = 0;
+                continue;
+            }
+            if (!cell_on_freelist_eval_[i])
+                cells_[i] = voidv;
+            cell_on_freelist_eval_[i] = 1;
+            cell_reuse_eval_.push_back(i);
+        }
+        if (pair_on_freelist_.size() < n_pairs)
+            pair_on_freelist_.resize(n_pairs, 0);
+        pair_reuse_freelist_.clear();
+        const auto pair_n = std::min(n_pairs, pairs_.size());
+        for (std::size_t i = 0; i < pair_n; ++i) {
+            if (seen_pair[i]) {
+                pair_on_freelist_[i] = 0;
+                continue;
+            }
+            if (!pair_on_freelist_[i]) {
+                pairs_[i].car = voidv;
+                pairs_[i].cdr = voidv;
+                if (i < g_pair_slots.size() && g_pair_slots[i]) {
+                    g_pair_slots[i]->car = voidv.val;
+                    g_pair_slots[i]->cdr = voidv.val;
+                }
+            }
+            pair_on_freelist_[i] = 1;
+            pair_reuse_freelist_.push_back(i);
+        }
+        if (vector_on_freelist_.size() < n_vecs)
+            vector_on_freelist_.resize(n_vecs, 0);
+        vector_reuse_freelist_.clear();
+        const auto vec_n = std::min(n_vecs, vector_heap_.size());
+        for (std::size_t i = 0; i < vec_n; ++i) {
+            if (seen_vec[i]) {
+                vector_on_freelist_[i] = 0;
+                continue;
+            }
+            if (!vector_on_freelist_[i])
+                vector_heap_[i].clear();
+            vector_on_freelist_[i] = 1;
+            vector_reuse_freelist_.push_back(i);
+        }
+        file_heap_allocs_since_reclaim_ = 0;
+    }
+    tw_closure_allocs_ = 0;
+    return true;
+}
+
+void Evaluator::abandon_file_heap_freelists() {
+    std::lock_guard lock(alloc_storage_lock_);
+    pair_reuse_freelist_.clear();
+    pair_on_freelist_.clear();
+    vector_reuse_freelist_.clear();
+    vector_on_freelist_.clear();
+    cell_reuse_eval_.clear();
+    cell_on_freelist_eval_.clear();
+}
+
+void Evaluator::abandon_vector_reuse_freelist() {
+    std::lock_guard lock(alloc_storage_lock_);
+    vector_reuse_freelist_.clear();
+    vector_on_freelist_.clear();
+}
+
+void Evaluator::note_file_heap_truncated(std::size_t pairs_n, std::size_t cells_n) {
+    std::lock_guard lock(alloc_storage_lock_);
+    if (pair_on_freelist_.size() > pairs_n)
+        pair_on_freelist_.resize(pairs_n);
+    std::erase_if(pair_reuse_freelist_, [pairs_n](std::size_t id) { return id >= pairs_n; });
+    if (cell_on_freelist_eval_.size() > cells_n)
+        cell_on_freelist_eval_.resize(cells_n);
+    std::erase_if(cell_reuse_eval_, [cells_n](std::size_t id) { return id >= cells_n; });
+}
+
+std::size_t Evaluator::mint_pair(types::EvalValue car, types::EvalValue cdr, bool check_quota) {
+    std::lock_guard lock(alloc_storage_lock_);
+    ++file_heap_allocs_since_reclaim_;
+    while (!pair_reuse_freelist_.empty()) {
+        const auto id = pair_reuse_freelist_.back();
+        pair_reuse_freelist_.pop_back();
+        if (id >= pairs_.size())
+            continue;
+        if (id < pair_on_freelist_.size())
+            pair_on_freelist_[id] = 0;
+        pairs_[id].car = car;
+        pairs_[id].cdr = cdr;
+        if (id < g_pair_slots.size() && g_pair_slots[id]) {
+            g_pair_slots[id]->car = car.val;
+            g_pair_slots[id]->cdr = cdr.val;
+        }
+        note_inrange_pair_mint(id);
+        return id;
+    }
+    if (check_quota && !prim_heap_quota_allow(PrimHeapDim::Pairs, pairs_.size() + 1))
+        return kFileHeapMintDenied;
+    const auto id = pairs_.size();
+    pairs_.push_back({car, cdr});
+    if (pair_on_freelist_.size() < pairs_.size())
+        pair_on_freelist_.resize(pairs_.size(), 0);
+    note_inrange_pair_mint(id);
+    return id;
+}
+
+std::size_t Evaluator::mint_vector(std::vector<types::EvalValue> elems, bool check_quota) {
+    std::lock_guard lock(alloc_storage_lock_);
+    ++file_heap_allocs_since_reclaim_;
+    while (!vector_reuse_freelist_.empty()) {
+        const auto id = vector_reuse_freelist_.back();
+        vector_reuse_freelist_.pop_back();
+        if (id >= vector_heap_.size())
+            continue;
+        if (id < vector_on_freelist_.size())
+            vector_on_freelist_[id] = 0;
+        vector_heap_[id].assign(elems.begin(), elems.end());
+        note_inrange_vector_mint(id);
+        return id;
+    }
+    if (check_quota && !prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap_.size() + 1))
+        return kFileHeapMintDenied;
+    const auto id = vector_heap_.size();
+    vector_heap_.push_back(std::move(elems));
+    if (vector_on_freelist_.size() < vector_heap_.size())
+        vector_on_freelist_.resize(vector_heap_.size(), 0);
+    note_inrange_vector_mint(id);
+    return id;
+}
+
+std::size_t Evaluator::mint_vector_fill(std::size_t n, types::EvalValue init, bool check_quota) {
+    std::lock_guard lock(alloc_storage_lock_);
+    ++file_heap_allocs_since_reclaim_;
+    while (!vector_reuse_freelist_.empty()) {
+        const auto id = vector_reuse_freelist_.back();
+        vector_reuse_freelist_.pop_back();
+        if (id >= vector_heap_.size())
+            continue;
+        if (id < vector_on_freelist_.size())
+            vector_on_freelist_[id] = 0;
+        vector_heap_[id].assign(n, init);
+        note_inrange_vector_mint(id);
+        return id;
+    }
+    if (check_quota && !prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap_.size() + 1))
+        return kFileHeapMintDenied;
+    const auto id = vector_heap_.size();
+    vector_heap_.emplace_back(n, init);
+    if (vector_on_freelist_.size() < vector_heap_.size())
+        vector_on_freelist_.resize(vector_heap_.size(), 0);
+    note_inrange_vector_mint(id);
+    return id;
 }
 
 } // namespace aura::compiler

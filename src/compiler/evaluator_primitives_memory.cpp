@@ -302,6 +302,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
                 ev.opaque_heap_.clear();
                 ev.opaque_heap_.shrink_to_fit();
+                // Issue #4459: pairs_/cells_/vector_heap_ were just cleared.
+                // A freelist id from before the clear would mint into the
+                // empty buffer.
+                ev.abandon_file_heap_freelists();
             }
             // gc-heap is a stronger reset than gc-temp; also clear
             // module + workspace state under the matching locks so
@@ -394,6 +398,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
             ev.opaque_heap_.clear();
             ev.opaque_heap_.shrink_to_fit();
+            // Issue #4459: vector_heap_ was cleared above. Pair and cell
+            // freelists stay; those heaps were not reset.
+            ev.abandon_vector_reuse_freelist();
         }
 
         return types::make_bool(true);

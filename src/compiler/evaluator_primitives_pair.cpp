@@ -220,20 +220,17 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
     // ── Pair / List / String primitives ─────────────────────────
     register_prim(
         add, ev, "cons",
-        [&ev, &pairs, &string_heap, &error_values,
-         primitive_error_counter](std::span<const EvalValue> a) {
-            // Issue #2651 / #1397: concurrent fiber cons must not race pairs_.
-            // Issue #2916: soft pairs quota under multi-fiber Agent loops.
-            std::lock_guard lock(ev.alloc_storage_lock_);
-            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+        [&ev, &string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            // Issue #2651 / #1397: mint_pair locks pairs_ (recursive).
+            // Issue #2916: quota is the grow path only. A freelist hit (#4459)
+            // does not change pairs.size(), so it must not fail the quota.
+            const auto id = ev.mint_pair(a[0], a[1], /*check_quota=*/true);
+            if (id == Evaluator::kFileHeapMintDenied) {
                 return make_primitive_error(
                     string_heap, error_values,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     primitive_error_counter);
             }
-            auto id = pairs.size();
-            pairs.push_back({a[0], a[1]});
-            ev.note_inrange_pair_mint(id); // Issue #4298
             return make_pair(id);
         },
         pure_general(2, "(any any) -> pair", "Construct a pair."));
