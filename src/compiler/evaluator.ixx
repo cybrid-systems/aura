@@ -4826,6 +4826,22 @@ public:
     void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
+    // Issue #4480: RAII root for a host-side EvalValue vector that must
+    // stay reachable across nested tree-walker evals (primitive apply
+    // loops accumulate results into locals the mark phase cannot see).
+    // While live, maybe_reclaim_tw_unreachable treats every element as a
+    // root, so pair chains referenced only by the vector survive a
+    // reclaim triggered inside a nested closure call.
+    class TwVecPin {
+    public:
+        explicit TwVecPin(const std::vector<types::EvalValue>& v);
+        ~TwVecPin();
+        TwVecPin(const TwVecPin&) = delete;
+        TwVecPin& operator=(const TwVecPin&) = delete;
+
+    private:
+        const std::vector<types::EvalValue>* v_ = nullptr;
+    };
     // Freelist hit overwrites the slot. check_quota is the #2916 grow path
     // only — reuse does not change pairs_/vector_heap_ size.
     [[nodiscard]] std::size_t mint_pair(types::EvalValue car, types::EvalValue cdr,
