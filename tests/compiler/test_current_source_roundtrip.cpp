@@ -55,10 +55,12 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_keyword;
 using aura::compiler::types::is_string;
@@ -827,6 +829,63 @@ static void ac4357_workspace_bools() {
           "4357: unparse keeps bool literals for the IR reparse");
 }
 
+// Issue #4475: set-code + eval-current specializes workspace lambda bodies
+// onto the IR interpreter via a re-parse of the unparsed source. The
+// compiler-side unparser printed float literals as "()" (the default arm),
+// which re-parses as the nil sentinel — LiteralInt 0 — so (z1) was 0 and
+// (* m 2.5) was (* m 0). Value defines keep the tree-walker cell and
+// mutate:rebind publishes the raw string, so both stayed correct.
+static void ac4475_workspace_floats() {
+    std::println("\n--- #4475: workspace lambda bodies keep float literals ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    auto close_to = [](double got, double want) { return std::fabs(got - want) < 1e-9; };
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (z1) 0.05)\n"
+                       "(define (z2) 2.75)\n"
+                       "(define (z3 m) (* m 2.5))\n"
+                       "(define z4 0.5)\n"
+                       "(define (z5 m) (+ m 0.05))"),
+          "4475: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4475: eval-current");
+    auto z1 = cs.eval("(z1)");
+    CHECK(z1 && is_float(*z1) && close_to(as_float(*z1), 0.05), "4475: (z1) is 0.05");
+    auto z2 = cs.eval("(z2)");
+    CHECK(z2 && is_float(*z2) && close_to(as_float(*z2), 2.75), "4475: (z2) is 2.75");
+    auto z3 = cs.eval("(= (z3 2) 5)");
+    CHECK(z3 && is_bool(*z3) && as_bool(*z3), "4475: (z3 2) is 5");
+    auto z4 = cs.eval("z4");
+    CHECK(z4 && is_float(*z4) && close_to(as_float(*z4), 0.5), "4475: value define z4 is 0.5");
+    auto z5 = cs.eval("(z5 1)");
+    CHECK(z5 && is_float(*z5) && close_to(as_float(*z5), 1.05), "4475: (z5 1) is 1.05");
+    // Same run, more shapes: float inside a call argument list and a let
+    // binding — both previously re-parsed as the nil sentinel (0).
+    CHECK(set_code(cs, "(define (y2) (list 1.5 2))\n"
+                       "(define (y3) (let ((k 1.5)) k))"),
+          "4475: set-code shapes");
+    CHECK(cs.eval("(eval-current)").has_value(), "4475: eval-current shapes");
+    auto y2 = cs.eval("(car (y2))");
+    CHECK(y2 && is_float(*y2) && close_to(as_float(*y2), 1.5), "4475: list element 1.5");
+    auto y3 = cs.eval("(y3)");
+    CHECK(y3 && is_float(*y3) && close_to(as_float(*y3), 1.5), "4475: let-bound 1.5");
+    // mutate:rebind keeps publishing the raw string; stays correct.
+    CHECK(set_code(cs, "(define (z1) 0.05)"), "4475: set-code rebind face");
+    CHECK(cs.eval("(eval-current)").has_value(), "4475: eval-current rebind face");
+    CHECK(cs.eval("(mutate:rebind \"z1\" \"(lambda () 0.25)\" \"f\")").has_value(), "4475: rebind");
+    CHECK(cs.eval("(eval-current)").has_value(), "4475: eval-current rebind");
+    auto rb = cs.eval("(z1)");
+    CHECK(rb && is_float(*rb) && close_to(as_float(*rb), 0.25), "4475: rebound body 0.25");
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("Issue #4475") != std::string::npos,
+          "4475: unparse keeps float literals for the IR reparse");
+}
+
 // Issue #4450: runtime MakeClosure inside an IR define mints ids from the
 // interpreter's stale cursor — a range already handed to the NEXT define —
 // so an escaping closure ((let ((a n)) (lambda () a)) shape) silently ran
@@ -1078,6 +1137,7 @@ int run_test_current_source_roundtrip() {
     ac4349_restore_over_rebind();
     ac4349_snapshot_keeps_caller();
     ac4357_workspace_bools();
+    ac4475_workspace_floats();
     run_4450_runtime_mint_ids();
     ac4360_sibling_and_hard_caller();
     ac4362_soft_caller_arity();
