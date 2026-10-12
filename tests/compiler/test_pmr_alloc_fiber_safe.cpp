@@ -33,8 +33,10 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::EvalValue;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -442,6 +444,61 @@ static void ac4474_dynamic_reclaim_trigger() {
     }
 }
 
+// ── Issue #4480: map's accumulator must survive reclaims triggered by the
+// mapped procedure. #4459's tree-walker safepoint marks envs and pinned
+// temporaries only; map accumulated row results into a raw host vector,
+// so a reclaim inside a nested user-procedure call freelisted the already
+// computed row pairs and the later row mints plus the outer-chain build
+// recycled those slots — the returned list aliased live rows (early
+// elements lost their heads and showed later elements; the 3-element
+// issue repro stopped firing after #4474 lifted the trigger, so AC2
+// forces the reclaim window with 200 rows × 2 mints > the 128 floor).
+// The map lambda now holds Evaluator::TwVecPin roots over cars/mapped
+// for the whole apply + construction.
+static void ac4480_map_accumulator_pinned() {
+    std::println("\n--- #4480: map results survive nested-call reclaims ---");
+    CompilerService cs;
+
+    // AC1: the issue repro — row calls f before (list x 2).
+    auto r1 = cs.eval("(begin (define (f) 1)"
+                      "(define (row x) (f) (list x 2))"
+                      "(equal? (map row (list 1 2 3))"
+                      "(quote ((1 2) (2 2) (3 2)))))");
+    CHECK(r1 && is_bool(*r1) && as_bool(*r1),
+          "4480 AC1: issue repro returns one fresh correct row per element");
+
+    // AC2: force the #4459 reclaim mid-apply. 200 rows × 2 mints crosses
+    // the 128-allocation floor between marks, so nested (f) calls hit the
+    // safepoint while earlier row pairs are live only in map's
+    // accumulator (the pre-fix corruption face).
+    auto r2 = cs.eval("(begin (define (build i acc) (if (< i 0) acc (build (- i 1) (cons i acc))))"
+                      "(define (ok res i) (if (null? res) #t"
+                      "(if (and (= (car (car res)) i) (= (car (cdr (car res))) 2))"
+                      "(ok (cdr res) (+ i 1)) #f)))"
+                      "(ok (map (lambda (x) (f) (list x 2)) (build 199 (quote ()))) 0))");
+    CHECK(r2 && is_bool(*r2) && as_bool(*r2),
+          "4480 AC2: 200-row map under mid-apply reclaim stays fresh");
+
+    // AC3: the hand-written recursive map (rooted via env frames) keeps
+    // working with the same row — the pin must not change its face.
+    auto r3 = cs.eval("(begin (define (mymap fn lst)"
+                      "(if (null? lst) (quote ())"
+                      "(cons (fn (car lst)) (mymap fn (cdr lst)))))"
+                      "(equal? (mymap row (list 1 2 3))"
+                      "(quote ((1 2) (2 2) (3 2)))))");
+    CHECK(r3 && is_bool(*r3) && as_bool(*r3), "4480 AC3: hand-written recursive map keeps working");
+
+    // AC4: plain map with no callee never reclaims mid-apply.
+    auto r4 = cs.eval("(equal? (map (lambda (x) (list x 2)) (list 1 2 3))"
+                      "(quote ((1 2) (2 2) (3 2))))");
+    CHECK(r4 && is_bool(*r4) && as_bool(*r4), "4480 AC4: plain map without a callee keeps working");
+
+    // AC5: the fix's anchor — map holds the accumulator root.
+    const auto src = read_file("src/compiler/evaluator_primitives_list.cpp");
+    CHECK(src.find("TwVecPin pin_mapped") != std::string::npos,
+          "4480 AC5: map holds a TwVecPin root over its accumulator");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -454,6 +511,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4453_list_growth_linear();
     ac4473_list_mint_reuse();
     ac4474_dynamic_reclaim_trigger();
+    ac4480_map_accumulator_pinned();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
