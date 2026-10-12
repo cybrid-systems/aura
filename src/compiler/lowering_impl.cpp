@@ -2326,6 +2326,18 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id,
                 return v.int_value ? "#t" : "#f";
             return std::to_string(v.int_value);
 
+        case NodeTag::LiteralFloat: {
+            // Issue #4475: the dirty-define relower and the closure-bridge
+            // body_source both re-parse this text. The default arm printed
+            // "()", which re-parses as the nil sentinel (LiteralInt 0), so
+            // float literals in workspace lambda bodies evaluated to 0.
+            // Format like the #2922 SSOT unparser's append_float.
+            auto s = std::to_string(v.float_value);
+            if (s.find('.') == std::string::npos)
+                s += ".0";
+            return s;
+        }
+
         case NodeTag::LiteralString: {
             auto s = pool.resolve(v.sym_id);
             std::string out = "\"";
