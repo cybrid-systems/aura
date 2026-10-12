@@ -1822,6 +1822,10 @@ public:
         session_id_ = id;
         evaluator_.set_session_id(id);
     }
+    // Issue #4460: file-mode oneshot only. cs.eval stays an error value.
+    void set_require_failure_is_diagnostic(bool on) noexcept {
+        evaluator_.set_require_failure_is_diagnostic(on);
+    }
     std::string session_id() const { return session_id_; }
     void set_wake_eventfd(int fd) { wake_eventfd_ = fd; }
 

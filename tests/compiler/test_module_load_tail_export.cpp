@@ -15,6 +15,8 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -184,6 +186,140 @@ static void ac5_prim_reexport_math() {
           "AC5: Variable void-cell→prim path");
 }
 
+static std::string aura_binary_4460() {
+    if (const char* e = std::getenv("AURA_BIN")) {
+        if (::access(e, X_OK) == 0)
+            return e;
+    }
+    char buf[4096];
+    const auto n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string dir(buf);
+        const auto slash = dir.rfind('/');
+        if (slash != std::string::npos) {
+            auto cand = dir.substr(0, slash + 1) + "aura";
+            if (::access(cand.c_str(), X_OK) == 0)
+                return cand;
+        }
+    }
+    for (const char* c : {"./aura", "./build/aura", "../aura", "../build/aura"}) {
+        if (::access(c, X_OK) == 0)
+            return c;
+    }
+    return {};
+}
+
+static int count_sub(std::string_view hay, std::string_view needle) {
+    int n = 0;
+    if (needle.empty())
+        return 0;
+    for (std::size_t p = 0; (p = hay.find(needle, p)) != std::string_view::npos; p += needle.size())
+        ++n;
+    return n;
+}
+
+struct Cli4460 {
+    int rc = -1;
+    std::string out;
+    std::string err;
+};
+
+static Cli4460 run_file_4460(const std::string& bin, const std::string& src,
+                             const std::string& assignments) {
+    Cli4460 r;
+    const char* outp = "/tmp/aura-4460-out.txt";
+    const char* errp = "/tmp/aura-4460-err.txt";
+    // Options before NAME=VALUE. Soft face, isolated module path.
+    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+                      assignments + " '" + bin + "' '" + src + "' >'" + std::string(outp) +
+                      "' 2>'" + std::string(errp) + "'";
+    const int raw = std::system(cmd.c_str());
+    r.rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+    {
+        std::ifstream in(outp);
+        r.out.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    {
+        std::ifstream in(errp);
+        r.err.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    return r;
+}
+
+// Issue #4460: a failed require is one located error, later forms run, exit 1.
+// cs.eval still returns an error value so #2570 fail-closed stays a value.
+static void ac4460_failed_require_continues() {
+    std::println("\n--- #4460: failed require continues and exits 1 ---");
+    CompilerService cs;
+    auto api = cs.eval("(require \"nosuchmod-4460-api\" all:)");
+    CHECK(api.has_value() && is_error(*api) && !is_string(*api),
+          "4460: cs.eval require failure stays an error value");
+
+    const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto main_src = read_file("src/main.cpp");
+    CHECK(loader.find("#4460") != std::string::npos, "4460: loader cite");
+    CHECK(flat.find("#4460") != std::string::npos, "4460: require cite");
+    CHECK(main_src.find("set_require_failure_is_diagnostic(true)") != std::string::npos,
+          "4460: file mode arms the diagnostic");
+
+    const auto bin = aura_binary_4460();
+    CHECK(!bin.empty(), "4460: aura binary");
+    if (bin.empty())
+        return;
+
+    const char* miss = "/tmp/aura-4460-miss.aura";
+    {
+        std::ofstream f(miss);
+        f << "(display \"first\") (newline)\n";
+        f << "(require \"nosuchmod-4460\" all:)\n";
+        f << "(display \"second\") (newline)\n";
+    }
+    auto miss_run = run_file_4460(bin, miss, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0");
+    CHECK(miss_run.rc == 1, "4460: missing module exits 1");
+    CHECK(miss_run.out.find("first") != std::string::npos, "4460: form before require ran");
+    CHECK(miss_run.out.find("second") != std::string::npos, "4460: form after require ran");
+    CHECK(miss_run.out.find("<error>") == std::string::npos, "4460: no <error> on stdout");
+    CHECK(count_sub(miss_run.err, "load_module_file:") == 0, "4460: no loader stderr");
+    CHECK(count_sub(miss_run.err, "cannot resolve") == 1, "4460: reason reported once");
+    CHECK(miss_run.err.find("nosuchmod-4460") != std::string::npos, "4460: module name reported");
+    CHECK(miss_run.err.find("error:") != std::string::npos, "4460: located error line");
+
+    const std::string dir = "/tmp/aura-4460-mods";
+    CHECK(
+        write_mod(dir, "badmod.aura", "(export good)\n(define (good x) (* 2 x))\n(define a 1 2)\n"),
+        "4460: write badmod");
+    CHECK(write_mod(dir, "good4460.aura", "(export good)\n(define (good x) (* 2 x))\n"),
+          "4460: write good module");
+    const char* bad = "/tmp/aura-4460-bad.aura";
+    {
+        std::ofstream f(bad);
+        f << "(require \"badmod\" all:)\n";
+        f << "(display \"before\") (newline)\n";
+        f << "(display (good 21)) (newline)\n";
+    }
+    auto bad_run =
+        run_file_4460(bin, bad, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_PATH=" + dir);
+    CHECK(bad_run.rc == 1, "4460: parse-error module exits 1");
+    CHECK(bad_run.out.find("before") != std::string::npos, "4460: form after bad require ran");
+    CHECK(bad_run.out.find("<error>") == std::string::npos, "4460: bad require no <error>");
+    CHECK(count_sub(bad_run.err, "load_module_file:") == 0, "4460: parse failure no loader stderr");
+    CHECK(count_sub(bad_run.err, "parse error") == 1, "4460: parse reason once");
+    CHECK(bad_run.err.find("badmod") != std::string::npos, "4460: bad module name reported");
+
+    const char* ok = "/tmp/aura-4460-ok.aura";
+    {
+        std::ofstream f(ok);
+        f << "(require \"good4460\" all:)\n";
+        f << "(display (good 21)) (newline)\n";
+    }
+    auto ok_run =
+        run_file_4460(bin, ok, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_PATH=" + dir);
+    CHECK(ok_run.rc == 0, "4460: successful require still exits 0");
+    CHECK(ok_run.out.find("42") != std::string::npos, "4460: successful require still binds");
+}
+
 } // namespace
 
 int run_test_module_load_tail_export() {
@@ -193,6 +329,7 @@ int run_test_module_load_tail_export() {
     ac3_nested_require_fail();
     ac4_source_gate();
     ac5_prim_reexport_math();
+    ac4460_failed_require_continues();
     std::println("\n=== #2570: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
