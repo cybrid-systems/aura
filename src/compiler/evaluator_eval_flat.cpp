@@ -5038,6 +5038,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     if (arm_file_diag) {
         file_diag_root_flat_ = &flat;
         file_diag_root_id_ = id;
+        file_resume_form_ = {};
     }
     struct FileDiagGuard {
         Evaluator* ev;
@@ -7365,7 +7366,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                            file_diag_root_flat_ == f && file_diag_root_id_ == v.id;
                     auto finish_child = [&](EvalResult r, aura::ast::NodeId form) -> EvalResult {
                         if (r && file_root && is_error(*r) && !is_string(*r))
-                            return file_mode_escaped_primitive(*this, *r, *f, form);
+                            r = file_mode_escaped_primitive(*this, *r, *f, form);
+                        // Issue #4471: resume after this top-level form. The
+                        // diagnostic location can be an earlier define body.
+                        if (file_root && !r) {
+                            const auto nv = f->get(form);
+                            if (nv.line > 0)
+                                file_resume_form_ = aura::diag::SourceLocation{
+                                    nv.line, nv.col == 0 ? 1u : nv.col, 0};
+                        }
                         return r;
                     };
 
