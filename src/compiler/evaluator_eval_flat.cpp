@@ -5806,8 +5806,49 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                                       : "hygiene-pass-limit"});
                                 }
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
-                                if (!last)
+                                if (!last) {
+                                    // Issue #4460: file mode needs a source
+                                    // location so the oneshot runner resumes.
+                                    if (require_failure_is_diagnostic_ &&
+                                        !last.error().location.valid()) {
+                                        Diagnostic d = last.error();
+                                        d.location = aura::diag::SourceLocation{
+                                            v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col, 0};
+                                        d.node_id = current_id;
+                                        return std::unexpected(std::move(d));
+                                    }
                                     return last;
+                                }
+                                // Issue #4460: import turns a void load into an
+                                // error value. File mode reports that once, at
+                                // this require. Flag off keeps the value (#2570).
+                                if (require_failure_is_diagnostic_ && is_error(*last) &&
+                                    !is_string(*last)) {
+                                    std::string why;
+                                    const auto eidx = as_error_idx(*last);
+                                    if (eidx < error_values_.size() &&
+                                        is_string(error_values_[eidx])) {
+                                        why = copy_string_heap_at(static_cast<std::size_t>(
+                                            as_string_idx(error_values_[eidx])));
+                                    }
+                                    if (!last_module_load_failure_.empty() &&
+                                        (why.empty() || why.find(last_module_load_failure_) ==
+                                                            std::string::npos)) {
+                                        why = last_module_load_failure_;
+                                    }
+                                    last_module_load_failure_.clear();
+                                    if (why.empty())
+                                        why = "module load failed";
+                                    std::string msg = "require: " + why;
+                                    if (!mod_path.empty() &&
+                                        msg.find(mod_path) == std::string::npos)
+                                        msg = "require \"" + mod_path + "\": " + why;
+                                    const auto line = v.line == 0 ? 1u : v.line;
+                                    const auto col = v.col == 0 ? 1u : v.col;
+                                    return std::unexpected(Diagnostic{
+                                        ErrorKind::InternalError, std::move(msg),
+                                        aura::diag::SourceLocation{line, col, 0}, current_id});
+                                }
                             }
                             return last;
                         }

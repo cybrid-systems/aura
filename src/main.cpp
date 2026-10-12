@@ -3231,6 +3231,9 @@ int main(int argc, char* argv[]) {
     // split pipeline state across calls and broke fiber:spawn parameter
     // capture inside defines — issue_135_define_loop_n_acc printed 0 from
     // stdin while the same source via --load printed 5150.
+    // Issue #4460: failed require is a located diagnostic. This loop then
+    // prints it once, runs forms after that location, and exits 1.
+    cs.set_require_failure_is_diagnostic(true);
     if (auto r = cs.eval(all_input)) {
         if (!is_void(*r))
             std::println("{}", fmt_val(*r, cs));

@@ -3041,6 +3041,12 @@ public:
         return false;
     }
     void set_session_id(const std::string& id) { session_id_ = id; }
+    // Issue #4460: file-mode oneshot. A failed require becomes a located
+    // diagnostic so main resumes later forms and exits 1. Off for cs.eval
+    // and --load, which keep the error value (#2570).
+    void set_require_failure_is_diagnostic(bool on) noexcept {
+        require_failure_is_diagnostic_ = on;
+    }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
         mark_define_dirty_fn_ = std::move(fn);
@@ -5742,6 +5748,11 @@ private:
     // vars unbound under materialize_call_env SoA walk. Null → top-level
     // import (inject into top_ only). Nested loads restore previous.
     Env* require_inject_env_ = nullptr;
+    // Issue #4460: file-mode oneshot (see set_require_failure_is_diagnostic).
+    bool require_failure_is_diagnostic_ = false;
+    // Set by load_module_file on cannot-resolve / parse error. The require
+    // form reads it once. Cleared at the next load.
+    std::string last_module_load_failure_;
     std::vector<std::string> module_names_; // display names for modules
     std::unordered_map<std::string, ast::ASTArena*, aura::core::TransparentStringHash,
                        std::equal_to<>>

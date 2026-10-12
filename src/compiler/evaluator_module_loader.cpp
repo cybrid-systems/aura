@@ -339,6 +339,8 @@ namespace {
 
 // ── Load module file, return module object ────────────────
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
+    // Issue #4460: this load's reason replaces any previous one.
+    last_module_load_failure_.clear();
     // Issue #3266: validate before lock (string predicate; no shared
     // state). Refuse path does not take compact_env_frames_lock_
     // (zero extra). Issue #2653 H10 fail-closed. Issue #1401: lock
@@ -383,8 +385,13 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // the rest of this load may touch (Issue #4399).
     auto resolved = host_path_policy_active() ? std::move(gated) : resolve_module_path(gated);
     if (resolved.empty()) {
-        std::println(std::cerr, "load_module_file: cannot resolve '{}'",
-                     truncate_path_for_log(path));
+        const auto shown = truncate_path_for_log(path);
+        last_module_load_failure_ = std::string("cannot resolve '") + std::string(shown) + "'";
+        // Issue #4460: file mode reports this once, on the require form.
+        // Other callers keep the operator log and the void return.
+        if (!require_failure_is_diagnostic_) {
+            std::println(std::cerr, "load_module_file: cannot resolve '{}'", shown);
+        }
         return types::make_void();
     }
     // Issue #3174 / #3176: install deferred host prims
@@ -479,9 +486,17 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
-        std::println(std::cerr, "load_module_file: parse error for {}", resolved);
-        if (!pr.error.empty())
-            std::println(std::cerr, "  {}", pr.error);
+        last_module_load_failure_ = "parse error for " + resolved;
+        if (!pr.error.empty()) {
+            last_module_load_failure_ += ": ";
+            last_module_load_failure_ += pr.error;
+        }
+        // Issue #4460: file mode reports this once, on the require form.
+        if (!require_failure_is_diagnostic_) {
+            std::println(std::cerr, "load_module_file: parse error for {}", resolved);
+            if (!pr.error.empty())
+                std::println(std::cerr, "  {}", pr.error);
+        }
         // Free the partial allocation — module was never inserted into cache.
         arena_group_->reset_module(resolved);
         return types::make_void();
@@ -569,7 +584,10 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // (require …) returned #t, early:fn worked, and late:fn stayed void/
     // uncallable. All-or-nothing: abort load, free arena, surface error.
     auto fail_load = [&](const std::string& why) -> types::EvalValue {
-        std::println(std::cerr, "load_module_file: eval failed for {}: {}", resolved, why);
+        // Issue #4460: file mode surfaces why on the require diagnostic.
+        // The fail-closed reset below is unchanged (#2570).
+        if (!require_failure_is_diagnostic_)
+            std::println(std::cerr, "load_module_file: eval failed for {}: {}", resolved, why);
         if (current_export_set_)
             current_export_set_->clear();
         {
