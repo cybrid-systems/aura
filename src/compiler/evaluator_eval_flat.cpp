@@ -823,8 +823,13 @@ struct TwPinMany {
 };
 
 void Evaluator::maybe_reclaim_tw_unreachable() {
-    constexpr std::uint32_t kTrigger = 128;
-    if (tw_closure_allocs_ < kTrigger && file_heap_allocs_since_reclaim_ < kTrigger)
+    // Issue #4474: dynamic triggers — after a mark, the next reclaim waits
+    // for allocations proportional to the live set found (live/32, clamped
+    // to [128, 32768]), so a large live heap amortizes the full-heap mark
+    // instead of paying it every 128 allocations. The floor keeps the
+    // #4459 small-heap cadence unchanged.
+    if (tw_closure_allocs_ < tw_closure_allocs_trigger_ &&
+        file_heap_allocs_since_reclaim_ < file_heap_allocs_trigger_)
         return;
     std::vector<const Env*> envs;
     envs.reserve(g_tw_frames.size() * 2 + 4);

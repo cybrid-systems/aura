@@ -1573,9 +1573,12 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             pair_on_freelist_.resize(n_pairs, 0);
         pair_reuse_freelist_.clear();
         const auto pair_n = std::min(n_pairs, pairs_.size());
+        // Issue #4474: reachable counts drive the dynamic reclaim triggers.
+        std::size_t live_pairs = 0;
         for (std::size_t i = 0; i < pair_n; ++i) {
             if (seen_pair[i]) {
                 pair_on_freelist_[i] = 0;
+                ++live_pairs;
                 continue;
             }
             if (!pair_on_freelist_[i]) {
@@ -1593,9 +1596,11 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             vector_on_freelist_.resize(n_vecs, 0);
         vector_reuse_freelist_.clear();
         const auto vec_n = std::min(n_vecs, vector_heap_.size());
+        std::size_t live_vecs = 0;
         for (std::size_t i = 0; i < vec_n; ++i) {
             if (seen_vec[i]) {
                 vector_on_freelist_[i] = 0;
+                ++live_vecs;
                 continue;
             }
             if (!vector_on_freelist_[i])
@@ -1604,8 +1609,31 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             vector_reuse_freelist_.push_back(i);
         }
         file_heap_allocs_since_reclaim_ = 0;
+        // Issue #4474: the mark just walked the heap — scale the next
+        // reclaim triggers from the reachable set (live/32, clamped).
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs);
     }
     return true;
+}
+
+// Issue #4474: scale the next reclaim triggers from the live set the
+// mark just walked. The mark is a full-heap pass (seen_* vectors sized
+// by the heap), so firing it every 128 allocations costs O(live) per
+// alloc on large heaps — the #4474 measurements showed 1.7–2.8x on
+// alloc-heavy loops. live/32 keeps the amortized mark cost ~3% of the
+// live set; the 128 floor preserves the #4459 small-heap cadence and
+// the 32768 cap bounds garbage between reclaims.
+void Evaluator::note_live_set_for_reclaim_trigger(std::size_t live_objects) noexcept {
+    const auto scaled =
+        static_cast<std::uint64_t>(live_objects) / kReclaimTriggerDivisor + kReclaimTriggerFloor;
+    const auto next =
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(scaled, kReclaimTriggerCeiling));
+    tw_closure_allocs_trigger_ = next;
+    file_heap_allocs_trigger_ = next;
+    // Issue #4474: window invariants (assertion face of the decl-site post).
+    contract_assert(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
+                    tw_closure_allocs_trigger_ <= kReclaimTriggerCeiling);
+    contract_assert(file_heap_allocs_trigger_ == tw_closure_allocs_trigger_);
 }
 
 bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
@@ -1619,6 +1647,10 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         aura::core::envframe_lifetime::should_block_compact_for_guards()) {
         tw_closure_allocs_ = 0;
         reset_file_heap_allocs_since_reclaim();
+        // Issue #4474: nothing was learned about the heap — back to the
+        // floor so a deferred/guarded window keeps the #4459 cadence.
+        tw_closure_allocs_trigger_ = kReclaimTriggerFloor;
+        file_heap_allocs_trigger_ = kReclaimTriggerFloor;
         return false;
     }
     struct Active {
@@ -1854,9 +1886,14 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             cell_on_freelist_eval_.resize(n_cells, 0);
         cell_reuse_eval_.clear();
         const auto cell_n = std::min(n_cells, cells_.size());
+        // Issue #4474: reachable counts drive the dynamic reclaim triggers.
+        std::size_t live_cells = 0;
+        std::size_t live_pairs = 0;
+        std::size_t live_vecs = 0;
         for (std::size_t i = 0; i < cell_n; ++i) {
             if (i < seen_ev_cell.size() && seen_ev_cell[i]) {
                 cell_on_freelist_eval_[i] = 0;
+                ++live_cells;
                 continue;
             }
             if (!cell_on_freelist_eval_[i])
@@ -1871,6 +1908,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         for (std::size_t i = 0; i < pair_n; ++i) {
             if (seen_pair[i]) {
                 pair_on_freelist_[i] = 0;
+                ++live_pairs;
                 continue;
             }
             if (!pair_on_freelist_[i]) {
@@ -1891,6 +1929,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         for (std::size_t i = 0; i < vec_n; ++i) {
             if (seen_vec[i]) {
                 vector_on_freelist_[i] = 0;
+                ++live_vecs;
                 continue;
             }
             if (!vector_on_freelist_[i])
@@ -1899,6 +1938,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             vector_reuse_freelist_.push_back(i);
         }
         file_heap_allocs_since_reclaim_ = 0;
+        // Issue #4474: the mark just walked the heap — scale the next
+        // reclaim triggers from the reachable set (live/32, clamped).
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells);
     }
     tw_closure_allocs_ = 0;
     return true;

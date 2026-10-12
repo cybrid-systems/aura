@@ -386,6 +386,62 @@ static void ac4473_list_mint_reuse() {
           "4473 AC7: list builders honor the mint_pair deny sentinel");
 }
 
+// ── Issue #4474: dynamic reclaim triggers (live/32, clamped) ──
+// #4459's fixed every-128-allocations full-heap mark costs O(live) per
+// allocation on large live heaps (1.7–2.8x on alloc-heavy loops). After
+// a mark, the next trigger now scales with the reachable set the mark
+// found; the floor keeps the #4459 small-heap cadence unchanged.
+static void ac4474_dynamic_reclaim_trigger() {
+    std::println("\n--- #4474: reclaim trigger scales with the live set ---");
+
+    // AC1: floor — a fresh evaluator's first mark finds a tiny live set:
+    // the next trigger stays at the #4459 128-allocation cadence.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const bool ran = ev.reclaim_tw_unreachable({}, {});
+        CHECK(ran, "4474 AC1: fresh-evaluator reclaim runs");
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 128,
+              "4474 AC1: small live set keeps the 128 floor");
+    }
+
+    // AC2: scale — a ~48k-pair live heap lifts the next trigger to
+    // ~live/32, so the mark cost amortizes instead of firing every 128.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto r = cs.eval("(begin (define v (make-vector 48000 0))"
+                         "(define (fill i) (if (< i 48000)"
+                         "(begin (vector-set! v i (cons i i)) (fill (+ i 1))) #f))"
+                         "(fill 0))");
+        CHECK(r.has_value(), "4474 AC2: 48k-pair live fill evals");
+        (void)ev.reclaim_tw_unreachable({}, {});
+        const auto trig = ev.file_heap_allocs_trigger_for_test();
+        CHECK(trig >= 1400, "4474 AC2: large live set scales the trigger (got " +
+                                std::to_string(trig) + ", want >= 1400)");
+
+        // AC3: memory stays bounded — a throwaway loop with the scaled
+        // trigger grows pairs_ by at most ~one trigger window, then the
+        // next mark folds the garbage into the freelist (flat like #4459).
+        const auto before = ev.pairs_size();
+        auto r2 = cs.eval("(begin (define (lp i acc) (if (< i 5000) (begin (cons i acc) "
+                          "(lp (+ i 1) acc)) acc)) (lp 0 0))");
+        CHECK(r2 && is_int(*r2), "4474 AC3: throwaway cons loop evals");
+        const auto grown = ev.pairs_size() - before;
+        CHECK(grown <= 2500, "4474 AC3: garbage between reclaims stays ~one trigger window (grew " +
+                                 std::to_string(grown) + ")");
+    }
+
+    // AC4: cap — an absurd live-set report clamps the trigger at 32768.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.note_live_set_for_reclaim_trigger(100000000);
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 32768,
+              "4474 AC4: trigger clamps at the 32768 ceiling");
+    }
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -397,6 +453,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac7_single_fiber_hotpath();
     ac4453_list_growth_linear();
     ac4473_list_mint_reuse();
+    ac4474_dynamic_reclaim_trigger();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

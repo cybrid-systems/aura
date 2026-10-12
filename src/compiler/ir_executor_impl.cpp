@@ -902,9 +902,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             // Issue #4459: sweep only between instructions. The local counter
             // is a compare; the evaluator pair/vector counter is polled on
             // the same stride as the hold-budget check.
-            if (allocs_since_reclaim_ >= kFileReclaimAllocs ||
+            // Issue #4474: the evaluator trigger is dynamic (live/32 from
+            // the last mark, clamped) so a large live heap amortizes the
+            // full-heap mark instead of paying it every 128 allocations.
+            const auto reclaim_trigger = context_.evaluator
+                                             ? context_.evaluator->file_heap_allocs_trigger()
+                                             : kFileReclaimAllocs;
+            if (allocs_since_reclaim_ >= reclaim_trigger ||
                 ((opcode_poll_n % kHoldBudgetOpcodePollStride) == 0 && context_.evaluator &&
-                 context_.evaluator->file_heap_allocs_since_reclaim() >= kFileReclaimAllocs))
+                 context_.evaluator->file_heap_allocs_since_reclaim() >= reclaim_trigger))
                 maybe_reclaim_unreachable();
 
             // Issue #259: track type propagation coverage.
@@ -2585,8 +2591,11 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     if (reclaiming_ || !context_.evaluator)
         return;
     auto* ev = context_.evaluator;
+    // Issue #4474: dynamic evaluator trigger (live/32 from the last mark,
+    // clamped) — the IR-local counter keeps its own floor.
+    const auto trigger = ev->file_heap_allocs_trigger();
     if (allocs_since_reclaim_ < kFileReclaimAllocs &&
-        ev->file_heap_allocs_since_reclaim() < kFileReclaimAllocs)
+        ev->file_heap_allocs_since_reclaim() < trigger)
         return;
     struct Guard {
         bool& flag;
