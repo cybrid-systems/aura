@@ -66,6 +66,10 @@ enum class ErrorKind : std::uint8_t {
     UncaughtException,
     Note,
     Warning,
+    // Issue #4349: the mirror must track the production enum (diag.ixx)
+    // or the wire static_asserts (enum_count vs kDiagErrorKindNameCount)
+    // fail — #4474 round, flagged by the ship-4477 agent.
+    StaleWorkspace,
 };
 
 enum class BlameParty : std::uint8_t {
@@ -126,7 +130,7 @@ int main() {
     static_assert(enum_name(ErrorKind::Warning) == "Warning");
     static_assert(enum_name(ErrorKind::IRCorruption) == "IRCorruption");
 
-    check(enum_count<ErrorKind>() == 15, "diag count");
+    check(enum_count<ErrorKind>() == 16, "diag count"); // #4349: + StaleWorkspace
     for (std::size_t i = 0; i < kDiagErrorKindNameCount; ++i) {
         auto n = enum_name<ErrorKind>(static_cast<int>(i));
         if (n != kDiagErrorKindIdents[i]) {
