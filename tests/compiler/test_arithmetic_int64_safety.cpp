@@ -18,12 +18,14 @@ import aura.compiler.service;
 import aura.compiler.value;
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
 using aura::compiler::types::is_void;
 
@@ -482,6 +484,91 @@ int main() {
                        "/tmp/aura-4469-soft-err.txt", "4469: soft");
             check_face("", "/tmp/aura-4469-def-out.txt", "/tmp/aura-4469-def-err.txt",
                        "4469: default");
+        }
+    }
+
+    // Issue #4470: eqv? is a primitive (same exactness, then identity).
+    // memv / assv walk with that predicate. Soft is the tree-walker;
+    // force-soa lowers the procedure and must agree.
+    {
+        auto eqv = [&](const char* expr, bool want, const char* label) {
+            auto r = cs.eval(expr);
+            CHECK(r && is_bool(*r) && as_bool(*r) == want, label);
+        };
+        eqv("(eqv? 2 2)", true, "eqv? 2 2");
+        eqv("(eqv? 2 2.0)", false, "eqv? 2 2.0");
+        eqv("(eqv? 1.5 1.5)", true, "eqv? 1.5 1.5");
+        eqv("(eqv? 1.5 1.6)", false, "eqv? 1.5 1.6");
+        eqv("(eqv? 'a 'a)", true, "eqv? symbol a");
+        eqv("(eqv? 'a 'b)", false, "eqv? symbol a b");
+        eqv("(eqv? #\\a #\\a)", true, "eqv? char a");
+        eqv("(eqv? #\\a #\\b)", false, "eqv? char a b");
+        auto hit = cs.eval("(memv 2 (list 1 2 3))");
+        CHECK(hit && is_pair(*hit), "memv 2 hits");
+        auto miss = cs.eval("(memv 2.0 (list 1 2 3))");
+        CHECK(miss && is_int(*miss) && as_int(*miss) == 0, "memv 2.0 misses an int");
+        auto alist = cs.eval("(cdr (assv 'b (list (cons 'a 1) (cons 'b 2))))");
+        CHECK(alist && is_int(*alist) && as_int(*alist) == 2, "assv 'b yields 2");
+        auto no = cs.eval("(assv 'z (list (cons 'a 1)))");
+        CHECK(no && is_int(*no) && as_int(*no) == 0, "assv miss is empty");
+
+        const auto bin = aura_binary();
+        CHECK(!bin.empty(), "4470: aura binary");
+        if (!bin.empty()) {
+            const char* repro = "/tmp/aura-4470-repro.aura";
+            const std::string repro_expect = "#t\n#t\nafter\n";
+            CHECK(write_text(repro, "(display (eq? 'a 'a)) (newline)\n"
+                                    "(display (eqv? 2 2)) (newline)\n"
+                                    "(display \"after\") (newline)\n"),
+                  "4470: write repro");
+            auto check_repro = [&](const char* face, const char* outp, const char* errp,
+                                   const char* label) {
+                auto run = run_aura_file(bin, repro, face, outp, errp);
+                if (run.out != repro_expect || run.rc != 0)
+                    std::println(std::cerr, "{} rc {} out [{}] err [{}]", label, run.rc, run.out,
+                                 run.err);
+                CHECK(run.rc == 0, std::string(label) + " exits 0");
+                CHECK(run.out == repro_expect, std::string(label) + " prints #t #t after");
+            };
+            check_repro("AURA_SANDBOX=off AURA_PIPELINE_STRICT=0", "/tmp/aura-4470-soft-out.txt",
+                        "/tmp/aura-4470-soft-err.txt", "4470: soft repro");
+
+            const char* agree = "/tmp/aura-4470-agree.aura";
+            const std::string agree_expect =
+                "#t\n#f\n#t\n#f\n#t\n#f\n#t\n#f\n#t\n#f\n1.5\n#t\n2\n#f\n";
+            CHECK(write_text(agree,
+                             "(define (ev a b) (eqv? a b))\n"
+                             "(display (ev 2 2)) (newline)\n"
+                             "(display (ev 2 2.0)) (newline)\n"
+                             "(display (ev 1.5 1.5)) (newline)\n"
+                             "(display (ev 1.5 1.6)) (newline)\n"
+                             "(display (ev 'a 'a)) (newline)\n"
+                             "(display (ev 'a 'b)) (newline)\n"
+                             "(display (ev #\\a #\\a)) (newline)\n"
+                             "(display (ev #\\a #\\b)) (newline)\n"
+                             "(display (if (memv 2 (list 1 2 3)) #t #f)) (newline)\n"
+                             "(display (if (memv 2.0 (list 1 2 3)) #t #f)) (newline)\n"
+                             "(display (car (memv 1.5 (list 1.0 1.5)))) (newline)\n"
+                             "(display (if (assv 'b (list (cons 'a 1) (cons 'b 2))) #t #f)) "
+                             "(newline)\n"
+                             "(display (cdr (assv 'b (list (cons 'a 1) (cons 'b 2))))) (newline)\n"
+                             "(display (if (assv 'z (list (cons 'a 1))) #t #f)) (newline)\n"),
+                  "4470: write agreement");
+            auto check_agree = [&](const char* face, const char* outp, const char* errp,
+                                   const char* label) {
+                auto run = run_aura_file(bin, agree, face, outp, errp);
+                if (run.out != agree_expect || run.rc != 0)
+                    std::println(std::cerr, "{} rc {} out [{}] err [{}]", label, run.rc, run.out,
+                                 run.err);
+                CHECK(run.rc == 0, std::string(label) + " exits 0");
+                CHECK(run.out == agree_expect, std::string(label) + " tree and IR agree");
+            };
+            check_agree("AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
+                        "/tmp/aura-4470-agree-soft-out.txt", "/tmp/aura-4470-agree-soft-err.txt",
+                        "4470: soft agree");
+            check_agree("AURA_SANDBOX=off AURA_PIPELINE_STRICT=force-soa",
+                        "/tmp/aura-4470-agree-soa-out.txt", "/tmp/aura-4470-agree-soa-err.txt",
+                        "4470: force-soa agree");
         }
     }
 

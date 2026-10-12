@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**445** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**448** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 55 primitives (12%)
-- **core**: 356 primitives (80%)
+- **core**: 359 primitives (80%)
 - **internal-observable**: 33 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -139,7 +139,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (248)
+## Core builtins (251)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -151,6 +151,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `arena-offset` *[core]* — `src/compiler/evaluator_primitives_misc.cpp`
 - `asin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `assv` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `aura-executable-path` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -204,6 +205,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `drop` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `eof-object?` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `equal?` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `eqv?` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `error` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error?` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `eval` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -273,6 +275,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `max` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `member` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `memory-pressure` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `memv` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `min` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `mod` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
@@ -654,7 +657,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (356)
+### Core builtins (must remain primitive) (359)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -677,6 +680,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `arena:set-auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `asin` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `assv` — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` — `src/compiler/evaluator_primitives_math.cpp`
 - `aura-executable-path` — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -745,6 +749,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `engine:surface` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`
 - `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `eqv?` — `src/compiler/evaluator_primitives_list.cpp`
 - `error` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error?` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `eval` — `src/compiler/evaluator_primitives_eval.cpp`
@@ -829,6 +834,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `max` — `src/compiler/evaluator_primitives_math.cpp`
 - `member` — `src/compiler/evaluator_primitives_list.cpp`
 - `memory-pressure` — `src/compiler/evaluator_primitives_memory.cpp`
+- `memv` — `src/compiler/evaluator_primitives_list.cpp`
 - `min` — `src/compiler/evaluator_primitives_math.cpp`
 - `mod` — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` — `src/compiler/evaluator_primitives_module.cpp`

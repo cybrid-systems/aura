@@ -626,8 +626,12 @@ static std::uint32_t lower_flat_expr(
                     // Issue #1137: do NOT lower equal? to Eq — Eq is fixnum/pointer
                     // equality and historically conflated int 0 with empty-list void.
                     // equal? stays a call to the deep-equality primitive.
+                    // Issue #4470: do NOT lower eqv? to Eq. Eq is fixnum/pointer
+                    // identity on the JIT, and the interpreter also compares a
+                    // float with an int by magnitude, so (eqv? 2 2.0) became #t.
+                    // The runtime primitive checks same exactness, then identity.
+                    // Tree-walker and IR Call share that primitive.
                     {"eq?", IROpcode::Eq},
-                    {"eqv?", IROpcode::Eq},
                     {"cons", IROpcode::MakePair},
                     {"car", IROpcode::Car},
                     {"cdr", IROpcode::Cdr},
@@ -643,8 +647,9 @@ static std::uint32_t lower_flat_expr(
                     auto op = *found_op;
                     auto result_slot = state.alloc_local();
                     auto arg_count = v.children.size() - 1;
-                    // Issue #4463: numeric `=` shares IROpcode::Eq with eq?/eqv?.
-                    // ops[3] == 1 rejects non-numbers. eq?/eqv? leave it 0.
+                    // Issue #4463: numeric `=` shares IROpcode::Eq with eq?.
+                    // ops[3] == 1 rejects non-numbers. eq? leaves it 0.
+                    // Issue #4470: eqv? is not in this table.
                     const std::uint32_t num_eq = callee_name == "=" ? 1u : 0u;
                     if (arg_count == 0) {
                         // No args: return 0
