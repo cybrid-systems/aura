@@ -6083,6 +6083,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
                         if (cname == "try" && v.children.size() >= 2) {
                             auto body_id = v.child(1);
+                            // Issue #4456 vs try-catch contract: mark the body
+                            // so display's arg-error consumption is suspended
+                            // here — the error must reach this try's catch.
+                            ++try_body_depth_;
+                            struct TryBodyScope {
+                                int& d;
+                                ~TryBodyScope() { --d; }
+                            } try_body_scope{try_body_depth_};
                             auto result = eval_flat(*f, *p, body_id, eval_env);
                             if (result && !is_error(*result)) {
                                 // Body succeeded — return result as-is
@@ -6225,7 +6233,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Issue #4456: display must print a primitive error
                                 // (float vector-ref index) and return void, so a
                                 // later form in the same begin still runs.
-                                if (is_error(*ar) && !is_string(*ar) && cname != "display")
+                                // EXCEPT inside a try body: there the error-valued
+                                // argument must propagate so the catch fires
+                                // ((try (display (car ())) …) in the regression
+                                // net must print the handler's value).
+                                if (is_error(*ar) && !is_string(*ar) &&
+                                    (cname != "display" || try_body_depth_ > 0))
                                     return ar;
                                 args.push_back(*ar);
                             }
