@@ -197,19 +197,20 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_void();
             const auto n = a.size();
             Evaluator::ListCtorLockHold hold(ev);
-            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
-                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
+            // Issue #4473: quota is per-mint inside mint_pair — a freelist
+            // hit (#4459) does not grow pairs_ and must not fail the quota,
+            // so the old pairs.size()+n pre-check is gone (it false-denied
+            // steady-state loops that the freelist serves flat, like cons).
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = a.rbegin(); it != a.rend(); ++it) {
-                auto id = pairs.size();
-                pairs.push_back({*it, result});
-                ev.note_inrange_pair_mint(id); // Issue #4298
+                const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+                if (id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -386,19 +387,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto n = cars.size();
             if (n == 0)
                 return a.back();
-            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
-                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
+            // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+            // not count) replaces the pairs.size()+n pre-check.
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = a.back();
             for (auto it = cars.rbegin(); it != cars.rend(); ++it) {
-                auto id = pairs.size();
-                pairs.push_back({*it, result});
-                ev.note_inrange_pair_mint(id); // Issue #4298
+                const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+                if (id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -440,19 +440,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto n = cars.size();
             if (n == 0)
                 return make_void();
-            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
-                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
+            // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+            // not count) replaces the pairs.size()+n pre-check.
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (const auto& car : cars) {
-                auto new_id = pairs.size();
-                pairs.push_back({car, result});
-                ev.note_inrange_pair_mint(new_id); // Issue #4298
+                const auto new_id = ev.mint_pair(car, result, /*check_quota=*/true);
+                if (new_id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 result = make_pair(new_id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -498,19 +497,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto n = mapped.size();
             if (n == 0)
                 return make_void();
-            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
-                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
+            // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+            // not count) replaces the pairs.size()+n pre-check.
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
-                auto id = pairs.size();
-                pairs.push_back({*it, result});
-                ev.note_inrange_pair_mint(id); // Issue #4298
+                const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+                if (id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -562,19 +560,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto n = kept.size();
             if (n == 0)
                 return make_void();
-            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
-                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
+            // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+            // not count) replaces the pairs.size()+n pre-check.
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
-                auto id = pairs.size();
-                pairs.push_back({*it, result});
-                ev.note_inrange_pair_mint(id); // Issue #4298
+                const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+                if (id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 result = make_pair(id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
@@ -635,10 +632,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size())
                     return result;
-                auto new_id = pairs.size();
-                pairs.push_back({pairs[idx].car, result});
-                ev.note_inrange_pair_mint(new_id); // Issue #4298
-                ev.bump_pair_alloc_count();        // Issue #614
+                const auto new_id = ev.mint_pair(pairs[idx].car, result, /*check_quota=*/true);
+                if (new_id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
+                ev.bump_pair_alloc_count(); // Issue #614
                 result = make_pair(new_id);
                 v = pairs[idx].cdr;
             }
@@ -650,10 +651,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto idx = as_pair_idx(result);
                 if (idx >= pairs.size())
                     break;
-                auto nid = pairs.size();
-                pairs.push_back({pairs[idx].car, final});
-                ev.note_inrange_pair_mint(nid); // Issue #4298
-                ev.bump_pair_alloc_count();     // Issue #614
+                const auto nid = ev.mint_pair(pairs[idx].car, final, /*check_quota=*/true);
+                if (nid == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
+                ev.bump_pair_alloc_count(); // Issue #614
                 final = make_pair(nid);
                 result = pairs[idx].cdr;
             }
@@ -762,19 +767,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Issue #2651 / #2997: timed lock + reserve + one allow.
             Evaluator::ListCtorLockHold hold(ev);
             const auto n = buf.size();
-            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
-                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
+            // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+            // not count) replaces the pairs.size()+n pre-check.
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
-                auto new_id = pairs.size();
-                pairs.push_back({make_int(*it), result});
-                ev.note_inrange_pair_mint(new_id); // Issue #4298
+                const auto new_id = ev.mint_pair(make_int(*it), result, /*check_quota=*/true);
+                if (new_id == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 result = make_pair(new_id);
             }
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
