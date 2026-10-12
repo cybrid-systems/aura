@@ -2013,6 +2013,43 @@ public:
         return disp;
     }
 
+    // Issue #4478: when the strict #2213 gate refuses the tree-walker
+    // fallback for a Call root, the env may already prove the callee is not
+    // a procedure. The tree walker would have raised "cannot call" at this
+    // site — raise it here instead of an internal pipeline error. A callable
+    // callee (closure / primitive / cell holding one) keeps the existing
+    // refusal: the fallback has a different cause there.
+    [[nodiscard]] std::optional<aura::diag::Diagnostic>
+    noncallable_call_diag_4478(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                               aura::ast::NodeId root) const {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return std::nullopt;
+        const auto rv = flat.get(root);
+        if (rv.tag != aura::ast::NodeTag::Call || rv.children.empty())
+            return std::nullopt;
+        const auto cal = flat.get(rv.child(0));
+        if (cal.tag != aura::ast::NodeTag::Variable)
+            return std::nullopt;
+        auto name = std::string(pool.resolve(cal.sym_id));
+        if (name.empty())
+            return std::nullopt;
+        auto bound = evaluator_.top_env().lookup(name);
+        if (!bound)
+            return std::nullopt;
+        auto fn = *bound;
+        if (types::is_cell(fn)) {
+            auto ci = types::as_cell_id(fn);
+            if (ci < evaluator_.cells().size())
+                fn = evaluator_.cells()[ci];
+        }
+        if (types::is_closure(fn) || types::is_primitive(fn))
+            return std::nullopt;
+        const auto line = rv.line == 0 ? 1u : rv.line;
+        const auto col = rv.col == 0 ? 1u : rv.col;
+        return aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError, "cannot call: " + name,
+                                      aura::diag::SourceLocation{line, col, 0}};
+    }
+
     // Check if an expression needs the tree-walker evaluator.
     // IR pipeline cannot handle: EDSL primitives, quoted pairs, special forms,
     // macro definitions, error handling, or non-primitive variable references
@@ -2988,6 +3025,10 @@ public:
             const auto tw_disp =
                 consult_tree_walker_fallback_gate_(*flat_ptr, *pool_ptr, expanded_root);
             if (tw_disp == TreeWalkerFallbackDisposition::HardError) {
+                // Issue #4478: a bound non-procedure callee is a type error
+                // at the call site, not a pipeline-internal refusal.
+                if (auto nc = noncallable_call_diag_4478(*flat_ptr, *pool_ptr, expanded_root))
+                    return std::unexpected(std::move(*nc));
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "tree-walker fallback forbidden in production pipeline "

@@ -772,6 +772,93 @@ static void ac4471_file_lines_and_resume() {
     CHECK(count_sub(after.err, "unbound variable: zork") == 1, "4471: after does not re-call");
 }
 
+// Issue #4478: a top-level cannot-call must not re-run earlier forms, and a
+// non-procedure apply must raise (not silently return the callee) on both
+// pipeline faces.
+static void ac4478_top_level_cannot_call() {
+    std::println("\n--- #4478: top-level cannot-call resume + no silent apply ---");
+    const auto bin = aura_binary_4460();
+    CHECK(!bin.empty(), "4478: aura binary");
+    if (bin.empty())
+        return;
+
+    const char* rerun_path = "/tmp/aura-4478-rerun.aura";
+    {
+        std::ofstream f(rerun_path);
+        f << "(display \"one\")\n";
+        f << "(newline)\n";
+        f << "(define (f x) (+ x 1))\n";
+        f << "(define z 0)\n";
+        f << "(display (f (z 1)))\n";
+    }
+    const char* silent_path = "/tmp/aura-4478-silent.aura";
+    {
+        std::ofstream f(silent_path);
+        f << "(define z 0)\n";
+        f << "(5 5)\n";
+        f << "(\"s\" 1)\n";
+        f << "(z 5)\n";
+    }
+    // Same-pass (z 5): the issue's own repro shape — the call evaluates in
+    // the same pass as the define, so both faces must name z.
+    const char* zcall_path = "/tmp/aura-4478-zcall.aura";
+    {
+        std::ofstream f(zcall_path);
+        f << "(define z 0)\n";
+        f << "(z 5)\n";
+    }
+    const char* faces[][2] = {
+        {"soft", "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0"},
+        {"strict", "AURA_SANDBOX=off AURA_PIPELINE_STRICT=1"},
+    };
+    for (auto& ff : faces) {
+        // A: the located type error resumes after the executing form — the
+        // display side effect must run exactly once, not once per pass.
+        auto run = run_file_4460(bin, rerun_path, ff[1]);
+        if (run.rc != 1 || count_sub(run.out, "one") != 1 ||
+            run.err.find("cannot call: z") == std::string::npos) {
+            std::println(std::cerr, "4478 rerun {} rc {} out [{}] err [{}]", ff[0], run.rc, run.out,
+                         run.err);
+        }
+        CHECK(run.rc == 1, std::string("4478 rerun ") + ff[0] + " exits 1");
+        CHECK(count_sub(run.out, "one") == 1,
+              std::string("4478 rerun ") + ff[0] + " side effect once");
+        CHECK(run.err.find("cannot call: z") != std::string::npos,
+              std::string("4478 rerun ") + ff[0] + " names z");
+
+        // B: (5 5) / ("s" 1) / (z 5) raise at top level — no self-result.
+        // Each failing form reports once and the later forms still run (#4460).
+        // On the strict face a resume-loop form that references an earlier
+        // value define re-raises the pre-existing #2213 fallback refusal
+        // (still an error, never a silent apply) — so strict pins >= 2 and
+        // the same-pass zcall below pins the named z on both faces.
+        auto silent = run_file_4460(bin, silent_path, ff[1]);
+        if (silent.rc != 1 || !silent.out.empty() || count_sub(silent.err, "cannot call") < 2) {
+            std::println(std::cerr, "4478 silent {} rc {} out [{}] err [{}]", ff[0], silent.rc,
+                         silent.out, silent.err);
+        }
+        CHECK(silent.rc == 1, std::string("4478 silent ") + ff[0] + " exits 1");
+        CHECK(silent.out.empty(), std::string("4478 silent ") + ff[0] + " no self-result");
+        CHECK(count_sub(silent.err, "cannot call") >= 2,
+              std::string("4478 silent ") + ff[0] + " literal applies raise");
+        if (std::string(ff[0]) == "soft") {
+            CHECK(count_sub(silent.err, "cannot call") == 3,
+                  std::string("4478 silent ") + ff[0] + " every apply raises");
+            CHECK(silent.err.find("cannot call: z") != std::string::npos,
+                  std::string("4478 silent ") + ff[0] + " names z");
+        }
+
+        auto zcall = run_file_4460(bin, zcall_path, ff[1]);
+        if (zcall.rc != 1 || zcall.err.find("cannot call: z") == std::string::npos) {
+            std::println(std::cerr, "4478 zcall {} rc {} out [{}] err [{}]", ff[0], zcall.rc,
+                         zcall.out, zcall.err);
+        }
+        CHECK(zcall.rc == 1, std::string("4478 zcall ") + ff[0] + " exits 1");
+        CHECK(zcall.err.find("cannot call: z") != std::string::npos,
+              std::string("4478 zcall ") + ff[0] + " names z");
+    }
+}
+
 } // namespace
 
 int run_test_module_load_tail_export() {
@@ -785,6 +872,7 @@ int run_test_module_load_tail_export() {
     ac4465_escaped_primitive_continues();
     ac4467_user_call_arity();
     ac4471_file_lines_and_resume();
+    ac4478_top_level_cannot_call();
     std::println("\n=== #2570: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
