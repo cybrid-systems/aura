@@ -648,6 +648,48 @@ static std::string ir_arity_proc_name(const aura::ir::IRFunction& func, const IR
     return n;
 }
 
+// Issue #4478: a non-procedure in an IR Call's callee slot must raise at the
+// call site. The top-level apply path used to return the callee as the call
+// result (silent apply: (5 5) ⇒ 5, (z 5) with z=0 ⇒ 0, exit 0). c-func/c-load
+// can leave 0 in a kernel slot, so a ground value callee is reachable in
+// normal programs. Name the callee from the source Call node when it is a
+// Variable; describe the value otherwise.
+static Diagnostic ir_cannot_call_diag(const IRInstruction* instr, const EvalValue& callee_val,
+                                      Evaluator* ev) {
+    std::string name;
+    if (ev && instr && instr->source_ast_node_id != 0) {
+        auto* flat = ev->current_flat();
+        auto* pool = ev->current_pool();
+        const auto nid = static_cast<aura::ast::NodeId>(instr->source_ast_node_id);
+        if (flat && pool && nid < flat->size()) {
+            auto call = flat->get(nid);
+            if (call.tag == aura::ast::NodeTag::Call && !call.children.empty()) {
+                auto cal = flat->get(call.child(0));
+                if (cal.tag == aura::ast::NodeTag::Variable) {
+                    auto n = pool->resolve(cal.sym_id);
+                    if (!n.empty())
+                        name = std::string(n);
+                }
+            }
+        }
+    }
+    if (name.empty()) {
+        if (is_int(callee_val))
+            name = std::to_string(as_int(callee_val));
+        else if (is_float(callee_val))
+            name = std::to_string(as_float(callee_val));
+        else if (is_string(callee_val) && ev) {
+            const auto idx = as_string_idx(callee_val);
+            const auto heap = ev->string_heap();
+            name = idx < heap.size() ? "\"" + heap[idx] + "\"" : "string";
+        } else if (is_void(callee_val))
+            name = "<void>";
+        else
+            name = "value";
+    }
+    return Diagnostic{ErrorKind::TypeError, "cannot call: " + name, ir_call_arity_loc(instr, ev)};
+}
+
 static std::optional<Diagnostic> ir_user_arity_diag(const IRInstruction* instr,
                                                     const aura::ir::IRFunction& func,
                                                     std::size_t got, Evaluator* ev) {
@@ -1854,7 +1896,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             locals[ops[3]] = callee_val;
                         }
                     } else {
-                        locals[ops[3]] = callee_val;
+                        // Issue #4478: raise instead of the silent self-result.
+                        return std::unexpected(
+                            ir_cannot_call_diag(&instr, callee_val, context_.evaluator));
                     }
                     break;
                 }

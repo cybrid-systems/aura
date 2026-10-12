@@ -6926,6 +6926,19 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         }
                     }
                     auto callee_name = std::string(p->resolve(callee.sym_id));
+                    // Issue #4478: a non-Variable callee (literal / computed
+                    // value) has no symbol to resolve — describe the evaluated
+                    // value so the diagnostic is not "cannot call: ".
+                    if (callee.tag != aura::ast::NodeTag::Variable) {
+                        if (is_int(*fn))
+                            callee_name = std::to_string(as_int(*fn));
+                        else if (is_float(*fn))
+                            callee_name = std::to_string(as_float(*fn));
+                        else if (is_string(*fn))
+                            callee_name = "\"" + string_heap_[as_string_idx(*fn)] + "\"";
+                        else
+                            callee_name = "value";
+                    }
                     // Build diagnostic with appropriate suggestion (no self-move)
                     std::string suggestion;
                     if (callee_name.size() > 3 &&
@@ -6933,10 +6946,17 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         suggestion = "if using c-func: (c-func -1 \"" +
                                      callee_name.substr(0, callee_name.size() - 3) +
                                      "\" \"(String) -> Int\")";
-                    else
+                    else if (callee.tag == aura::ast::NodeTag::Variable)
                         suggestion = "did you forget to define '" + callee_name + "'?";
                     return std::unexpected(
-                        Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
+                        // Issue #4478: the type error must carry the call
+                        // site. An unlocated "cannot call" made the oneshot
+                        // file runner fall back to a full re-run of every
+                        // earlier top-level form (side effects ran twice).
+                        Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name,
+                                   aura::diag::SourceLocation{v.line == 0 ? 1u : v.line,
+                                                              v.col == 0 ? 1u : v.col, 0},
+                                   current_id}
                             .with_suggestion(std::move(suggestion)));
                 }
                 case aura::ast::NodeTag::IfExpr: {
