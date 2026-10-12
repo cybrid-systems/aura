@@ -2021,6 +2021,10 @@ aura_issue_test_link_light(test_rebind_new_body_hygiene)
 # MacroIntroduced hygiene — #2792 twin for the atomic-batch path.
 aura_add_issue_test(test_atomic_batch_rebind_hygiene_lockless)
 aura_issue_test_link_light(test_atomic_batch_rebind_hygiene_lockless)
+# Issue #4476: two-op atomic-batch in a top-level Soft file form — batch +
+# ast:restore + eval-current runs the file once; a define with a batch RHS binds.
+aura_add_issue_test(test_compiler_atomic_batch_file_mode)
+aura_issue_test_link_light(test_compiler_atomic_batch_file_mode)
 # Issue #3374 wire-up moved below to live alongside all_test_issue_targets
 # (the add_custom_target for all_test_issue_targets comes after the early
 # add_dependencies block; calling add_dependencies before the target

@@ -1,0 +1,33 @@
+{
+  "issue": 4476,
+  "title": "Issue #4476: mutate:atomic-batch in a top-level form — two-op batch + ast:restore silently re-runs the whole file; (define x (batch)) leaves x unbound",
+  "ok": "OK #4476 atomic-batch file mode: caller env pool restored across lockless rebind refresh; file runs once, batch-RHS define binds",
+  "checks": [
+    {
+      "ac": "AC1-env-pool",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4476",
+        "RestoreTopPool",
+        "eval_flat_apply_mutate_rebind"
+      ]
+    },
+    {
+      "ac": "AC2-tests",
+      "path": "tests/compiler/test_compiler_atomic_batch_file_mode.cpp",
+      "contains": [
+        "4476 AC1",
+        "4476 AC2",
+        "Issue #4476"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4476.cpp",
+        "tests/compiler/test_atomic_batch_file_mode_4476.cpp",
+        "docs/design/4476-atomic-batch-file-mode.md"
+      ]
+    }
+  ]
+}
