@@ -2,9 +2,10 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/float_repr.hh"
+
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -284,11 +285,8 @@ int main() {
         const auto bin = aura_binary();
         CHECK(!bin.empty(), "4462: aura binary");
         if (!bin.empty()) {
-            auto fmt = [](double d) {
-                char b[64];
-                std::snprintf(b, sizeof(b), "%g", d);
-                return std::string(b);
-            };
+            // Display uses the #4468 shortest spelling, not %g.
+            auto fmt = [](double d) { return aura::compiler::format_float_shortest(d); };
             const std::string two62 = fmt(4611686018427387904.0);
             const std::string neg62 = fmt(-4611686018427387904.0);
             const std::string two64 = fmt(18446744073709551616.0);
@@ -376,7 +374,7 @@ int main() {
                   "4463: write script");
             const std::string expect = "<unknown>\n<unknown>\n<unknown>\n<unknown>\n<unknown>\n"
                                        "<unknown>\n<unknown>\n<unknown>\n<unknown>\n<unknown>\n"
-                                       "<unknown>\n5\n2\n#t\n"
+                                       "<unknown>\n5\n2.0\n#t\n"
                                        "type mismatch — expected Int, got String 'abc'\n"
                                        "<unknown>\n<unknown>\n<unknown>\nend\n";
             auto check_face = [&](const char* face, const char* outp, const char* errp,
@@ -406,6 +404,84 @@ int main() {
                        "/tmp/aura-4463-soft-err.txt", "4463: soft");
             check_face("", "/tmp/aura-4463-def-out.txt", "/tmp/aura-4463-def-err.txt",
                        "4463: default");
+        }
+    }
+
+    // Issue #4469: round halves to even, integer? accepts integral floats,
+    // and the R7RS names exist.
+    {
+        auto expect_int = [&](const char* expr, std::int64_t want, const char* msg) {
+            auto r = cs.eval(expr);
+            CHECK(r && is_int(*r) && as_int(*r) == want, msg);
+        };
+        auto expect_bool = [&](const char* expr, bool want, const char* msg) {
+            auto r = cs.eval(expr);
+            CHECK(r && is_bool(*r) && aura::compiler::types::as_bool(*r) == want, msg);
+        };
+        auto expect_float = [&](const char* expr, double want, const char* msg) {
+            auto r = cs.eval(expr);
+            CHECK(r && is_float(*r) && as_float(*r) == want, msg);
+        };
+        expect_int("(round 0.5)", 0, "round 0.5 → 0");
+        expect_int("(round -0.5)", 0, "round -0.5 → 0");
+        expect_int("(round 1.5)", 2, "round 1.5 → 2");
+        expect_int("(round -1.5)", -2, "round -1.5 → -2");
+        expect_int("(round 2.5)", 2, "round 2.5 → 2");
+        expect_int("(round -2.5)", -2, "round -2.5 → -2");
+        expect_int("(round 2.4)", 2, "round 2.4 → 2");
+        expect_int("(round 2.6)", 3, "round 2.6 → 3");
+        expect_int("(round -2.6)", -3, "round -2.6 → -3");
+        expect_int("(round 2)", 2, "round of an exact int stays exact");
+        expect_bool("(integer? 2)", true, "integer? 2");
+        expect_bool("(integer? 2.0)", true, "integer? 2.0");
+        expect_bool("(integer? 2.5)", false, "integer? 2.5");
+        expect_bool("(integer? (floor 2.7))", true, "integer? (floor 2.7)");
+        expect_bool("(integer? (round 2.4))", true, "integer? (round 2.4)");
+        expect_int("(inexact->exact 2.0)", 2, "inexact->exact 2.0");
+        expect_int("(exact 2.0)", 2, "exact aliases inexact->exact");
+        expect_float("(exact->inexact 2)", 2.0, "exact->inexact 2");
+        expect_float("(inexact 2)", 2.0, "inexact aliases exact->inexact");
+        expect_bool("(exact? 2)", true, "exact? 2");
+        expect_bool("(exact? 2.0)", false, "exact? 2.0");
+        expect_bool("(inexact? 2.0)", true, "inexact? 2.0");
+        expect_bool("(inexact? 2)", false, "inexact? 2");
+        auto tr = cs.eval("(truncate -2.9)");
+        auto tru = cs.eval("(trunc -2.9)");
+        CHECK(tr && tru && is_float(*tr) && is_float(*tru) && as_float(*tr) == as_float(*tru),
+              "truncate aliases trunc");
+        auto ce = cs.eval("(ceiling -2.1)");
+        auto cei = cs.eval("(ceil -2.1)");
+        CHECK(ce && cei && is_float(*ce) && is_float(*cei) && as_float(*ce) == as_float(*cei),
+              "ceiling aliases ceil");
+
+        const auto bin = aura_binary();
+        CHECK(!bin.empty(), "4469: aura binary");
+        if (!bin.empty()) {
+            const char* path = "/tmp/aura-4469-repro.aura";
+            const std::string expect = "0\n2\n-2\n#t\n#t\n#t\n#t\n2\n2.0\n";
+            CHECK(write_text(path, "(display (round 0.5)) (newline)\n"
+                                   "(display (round 2.5)) (newline)\n"
+                                   "(display (round -2.5)) (newline)\n"
+                                   "(display (integer? 2)) (newline)\n"
+                                   "(display (integer? 2.0)) (newline)\n"
+                                   "(display (integer? (round 2.4))) (newline)\n"
+                                   "(display (integer? (floor 2.7))) (newline)\n"
+                                   "(display (inexact->exact 2.0)) (newline)\n"
+                                   "(display (exact->inexact 2)) (newline)\n"),
+                  "4469: write repro");
+            auto check_face = [&](const char* face, const char* outp, const char* errp,
+                                  const char* label) {
+                auto run = run_aura_file(bin, path, face, outp, errp);
+                if (run.out != expect || run.rc != 0)
+                    std::println(std::cerr, "{} rc {} out [{}] err [{}]", label, run.rc, run.out,
+                                 run.err);
+                CHECK(run.rc == 0, std::string(label) + " exits 0");
+                CHECK(run.out == expect, std::string(label) + " prints the R7RS block");
+            };
+            check_face("AURA_SANDBOX=off AURA_PIPELINE_STRICT=0", "/tmp/aura-4469-soft-out.txt",
+                       "/tmp/aura-4469-soft-err.txt", "4469: soft");
+            check_face("", "/tmp/aura-4469-def-out.txt", "/tmp/aura-4469-def-err.txt",
+                       "4469: default");
         }
     }
 
