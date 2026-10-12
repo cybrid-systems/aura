@@ -10,6 +10,7 @@ module;
 
 #include "runtime_shared.h"
 #include "float_repr.hh"      // Issue #4468
+#include "utf8_scalar.hh"     // Issue #4472
 #include "prim_heap_quota.hh" // Issue #2916
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
@@ -65,6 +66,111 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+namespace {
+
+    // Issue #4472: lowercase digits, radix 2..36. Radix 10 stays std::to_string.
+    std::string format_int_radix(std::int64_t n, int radix) {
+        if (radix == 10)
+            return std::to_string(n);
+        const bool neg = n < 0;
+        std::uint64_t mag = 0;
+        if (neg)
+            mag = static_cast<std::uint64_t>(-(n + 1)) + 1u;
+        else
+            mag = static_cast<std::uint64_t>(n);
+        if (mag == 0)
+            return "0";
+        char buf[72];
+        int i = 0;
+        while (mag > 0 && i < static_cast<int>(sizeof(buf))) {
+            const auto d = static_cast<unsigned>(mag % static_cast<unsigned>(radix));
+            buf[i++] = static_cast<char>(d < 10 ? '0' + d : 'a' + (d - 10));
+            mag /= static_cast<unsigned>(radix);
+        }
+        std::string s;
+        s.reserve(static_cast<std::size_t>(i) + (neg ? 1 : 0));
+        if (neg)
+            s.push_back('-');
+        while (i > 0)
+            s.push_back(buf[--i]);
+        return s;
+    }
+
+    EvalValue radix_out_of_range(Evaluator& ev, std::vector<EvalValue>& error_values,
+                                 const char* who) {
+        auto idx = static_cast<std::uint64_t>(
+            ev.push_string_heap(std::string(who) + ": radix out of range"));
+        auto e = error_values.size();
+        error_values.push_back(make_string(idx));
+        return make_error(e);
+    }
+
+    // Issue #4472: live string->number. Optional radix 2..36, default 10.
+    // Integer digits go through from_chars before any double conversion so
+    // values past 2^53 stay exact and [2^62, 2^63) does not abort (#4462).
+    // Parse failure stays #f ([SILENCE-PRIM-#615]). A radix outside 2..36
+    // is an error, not a silent decimal parse.
+    EvalValue parse_string_number(Evaluator& ev, std::pmr::vector<std::string>& string_heap,
+                                  std::vector<EvalValue>& error_values,
+                                  std::span<const EvalValue> a) {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto i = as_string_idx(a[0]);
+        if (i >= string_heap.size())
+            return make_bool(false);
+        const auto& str = string_heap[i];
+        if (str.empty())
+            return make_bool(false);
+        int base = 10;
+        if (a.size() > 1) {
+            if (!is_int(a[1]))
+                return radix_out_of_range(ev, error_values, "string->number");
+            const auto r = as_int(a[1]);
+            if (r < 2 || r > 36)
+                return radix_out_of_range(ev, error_values, "string->number");
+            base = static_cast<int>(r);
+        }
+        const auto first = str.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            return make_bool(false);
+        const auto last = str.find_last_not_of(" \t\r\n");
+        const std::string_view trimmed(str.data() + first, last - first + 1);
+        const bool want_float = base == 10 && (trimmed.find('.') != std::string_view::npos ||
+                                               trimmed.find('e') != std::string_view::npos ||
+                                               trimmed.find('E') != std::string_view::npos);
+        if (!want_float) {
+            std::string_view body = trimmed;
+            if (!body.empty() && body.front() == '+')
+                body.remove_prefix(1);
+            if (body.empty())
+                return make_bool(false);
+            std::int64_t iv = 0;
+            const char* b0 = body.data();
+            const char* b1 = b0 + body.size();
+            const auto [pi, eci] = std::from_chars(b0, b1, iv, base);
+            if (eci == std::errc{} && pi == b1)
+                return make_int_or_promote(iv);
+            if (base == 10 && eci == std::errc::result_out_of_range) {
+                double wide = 0;
+                const char* t0 = trimmed.data();
+                const char* t1 = t0 + trimmed.size();
+                const auto [pf, ecf] = std::from_chars(t0, t1, wide);
+                if (ecf == std::errc{} && pf == t1)
+                    return make_float(wide);
+            }
+            return make_bool(false);
+        }
+        const char* start = trimmed.data();
+        const char* end = start + trimmed.size();
+        double fval = 0;
+        const auto [pfloat, ec_float] = std::from_chars(start, end, fval);
+        if (ec_float == std::errc{} && pfloat == end)
+            return make_float(fval);
+        return make_bool(false);
+    }
+
+} // namespace
+
 void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                                          std::pmr::vector<Pair>& pairs,
                                          std::pmr::vector<std::string>& string_heap,
@@ -118,25 +224,33 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             auto idx = as_string_idx(a[0]);
             if (idx >= string_heap.size())
                 return make_bool(false);
-            auto& s = string_heap[idx];
-            // Issue #2916: soft pairs quota for char list materialization.
+            const auto& s = string_heap[idx];
+            // Issue #4472: one code point per element. Byte length is an
+            // upper bound, so the #2916 quota check stays conservative.
             if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + s.size())) {
                 return make_primitive_error(
                     string_heap, error_values,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     primitive_error_counter);
             }
+            std::vector<std::int64_t> cps;
+            cps.reserve(s.size());
+            std::size_t bi = 0;
+            Utf8Unit unit;
+            while (utf8_unit_at(s, bi, unit)) {
+                cps.push_back(static_cast<std::int64_t>(unit.cp));
+                bi += unit.nbytes;
+            }
             EvalValue result = make_void();
-            for (auto it = s.rbegin(); it != s.rend(); ++it) {
+            for (auto it = cps.rbegin(); it != cps.rend(); ++it) {
                 auto pid = pairs.size();
-                pairs.push_back(
-                    {make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
+                pairs.push_back({make_int(*it), result});
                 ev.note_inrange_pair_mint(pid); // Issue #4298
                 result = make_pair(pid);
             }
             return result;
         },
-        pure_general(1, "(string) -> list", "Convert a string to a list of chars."));
+        pure_general(1, "(string) -> list", "Convert a string to a list of code points."));
     register_prim(
         add, ev, "list->string",
         [&ev, &pairs, &string_heap, &error_values,
@@ -154,7 +268,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                         break;
                     auto car = pairs[p].car;
                     if (is_int(car)) {
-                        result += static_cast<char>(as_int(car));
+                        // Issue #4472: encode a code point. ASCII stays one byte.
+                        utf8_append(result, as_int(car));
                     } else if (is_string(car)) {
                         auto sidx = as_string_idx(car);
                         if (sidx < string_heap.size())
@@ -776,15 +891,17 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.empty())
                 return make_int(0);
             std::size_t len = 0;
+            // Issue #4472: code points, not UTF-8 bytes. A non-string is 0
+            // (an integer is not measured as its decimal spelling).
             if (is_string(a[0])) {
                 auto idx = as_string_idx(a[0]);
-                len = (idx < string_heap.size()) ? string_heap[idx].size() : 0;
-            } else if (is_int(a[0])) {
-                len = std::to_string(as_int(a[0])).size();
+                if (idx < string_heap.size())
+                    len = utf8_unit_count(string_heap[idx]);
             }
             return make_int(static_cast<std::int64_t>(len));
         },
-        pure_general(1, "(string) -> int", "Number of characters in a string."));
+        pure_general(1, "(string) -> int",
+                     "Number of Unicode code points. An ill-formed byte counts as one."));
     register_prim(
         add, ev, "string-ref",
         [&ev, &error_values](std::span<const EvalValue> a) {
@@ -803,22 +920,17 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 error_values.push_back(make_string(__i));
                 return make_error(__e);
             };
-            // Issue #4320: one locked byte, not a copy of the heap string.
+            // Issue #4320 / #4472: one locked scan, not a copy of the heap
+            // string. The result is the code point (a character fixnum).
             if (is_string(a[0])) {
-                int byte = ev.string_heap_byte_at(as_string_idx(a[0]), pos);
-                if (byte < 0)
+                int cp = ev.string_heap_code_point_at(as_string_idx(a[0]), pos);
+                if (cp < 0)
                     return oob();
-                return make_int(byte);
-            }
-            if (is_int(a[0])) {
-                auto s = std::to_string(as_int(a[0]));
-                if (pos >= s.size())
-                    return oob();
-                return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
+                return make_int(cp);
             }
             return oob();
         },
-        pure_general(2, "(string int) -> int", "Character code at index."));
+        pure_general(2, "(string int) -> int", "Code point at a character index."));
     register_prim(
         add, ev, "substring",
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
@@ -828,22 +940,21 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             std::string s;
             if (is_string(a[0]))
                 s = ev.copy_string_heap_at(as_string_idx(a[0]));
-            else if (is_int(a[0]))
-                s = std::to_string(as_int(a[0]));
             else
                 return make_int(0);
+            // Issue #4472: indexes are code points, so a slice never splits
+            // a well-formed UTF-8 sequence. Past-the-end clamps.
             auto start = static_cast<std::size_t>(as_int(a[1]));
             auto end = static_cast<std::size_t>(as_int(a[2]));
-            if (start > s.size())
-                start = s.size();
-            if (end > s.size())
-                end = s.size();
-            if (start >= end)
+            auto start_b = utf8_byte_offset(s, start);
+            auto end_b = utf8_byte_offset(s, end);
+            if (start_b >= end_b)
                 return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
-            return make_string(
-                static_cast<std::uint64_t>(ev.push_string_heap(s.substr(start, end - start))));
+            return make_string(static_cast<std::uint64_t>(
+                ev.push_string_heap(s.substr(start_b, end_b - start_b))));
         },
-        pure_general(3, "(string int int) -> string", "Substring from start to end."));
+        pure_general(3, "(string int int) -> string",
+                     "Substring from start to end, in code points."));
     register_prim(
         add, ev, "string=?",
         [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
@@ -934,41 +1045,15 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(to_str(a[0]) <= to_str(a[1]));
         },
         pure_general(2, "(string string) -> bool", "Lexicographic string less-or-equal."));
+    // Both registrations share parse_string_number. The later one wins
+    // name lookup; keeping the same body means the earlier slot agrees.
     register_prim(
         add, ev, "string->number",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-            if (a.size() < 1 || a.size() > 2)
-                return make_int(0);
-            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
-                if (is_string(v)) {
-                    auto idx = as_string_idx(v);
-                    return (idx < string_heap.size()) ? string_heap[idx] : "";
-                }
-                return "";
-            };
-            auto s = to_str(a[0]);
-            auto radix = (a.size() > 1 && is_int(a[1])) ? static_cast<int>(as_int(a[1])) : 10;
-            try {
-                if (s.find('.') != std::string::npos)
-                    return make_float(std::stod(s));
-                // Issue #4462: 2^62 fits in int64 and is not a fixnum.
-                const auto iv = static_cast<std::int64_t>(std::stoll(s, nullptr, radix));
-                return make_int_or_promote(iv);
-            } catch (const std::out_of_range&) {
-                try {
-                    return make_float(std::stod(s));
-                } catch (...) {
-                    return make_bool(false);
-                }
-            } catch (...) {
-                // [SILENCE-PRIM-#615] string-to-int/float parse failure —
-                // (#) returns #f on parse failure per the documented pair
-                // primitive contract; raising would break every existing
-                // caller that relies on #f as the parse-failure sentinel.
-                return make_bool(false);
-            }
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            return parse_string_number(ev, string_heap, error_values, a);
         },
-        pure_general(1, "(string) -> any", "Parse a string as a number."));
+        pure_general(2, "(string int) -> any",
+                     "Parse a string as a number. Optional radix 2..36."));
 
     register_prim(
         add, ev, "string-index",
@@ -981,87 +1066,58 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             auto needle = (is_string(a[1]) && as_string_idx(a[1]) < string_heap.size())
                               ? string_heap[as_string_idx(a[1])]
                               : "";
-            auto start =
+            // Issue #4472: start and the result are code-point indexes,
+            // the same unit substring uses.
+            auto start_cp =
                 (a.size() > 2 && is_int(a[2])) ? static_cast<std::size_t>(as_int(a[2])) : 0;
             if (needle.empty())
                 return make_int(0);
-            auto pos = haystack.find(needle, start);
-            return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
+            auto start_b = utf8_byte_offset(haystack, start_cp);
+            auto pos = haystack.find(needle, start_b);
+            if (pos == std::string::npos)
+                return make_int(-1);
+            return make_int(static_cast<std::int64_t>(utf8_units_before(haystack, pos)));
         },
-        pure_general(3, "(string string int) -> int", "Index of substring or -1."));
+        pure_general(3, "(string string int) -> int", "Code-point index of substring or -1."));
 
     register_prim(
         add, ev, "number->string",
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
+            int radix = 10;
+            if (a.size() > 1) {
+                if (!is_int(a[1]))
+                    return radix_out_of_range(ev, error_values, "number->string");
+                const auto r = as_int(a[1]);
+                if (r < 2 || r > 36)
+                    return radix_out_of_range(ev, error_values, "number->string");
+                radix = static_cast<int>(r);
+            }
             std::string s;
             // Issue #4468: display, write, and number->string share one spelling.
             // std::to_string keeps 6 digits after the point, so 1e-9 became "0".
-            if (is_float(a[0]))
+            // Radix 10 keeps that spelling. Another radix formats integers only.
+            if (is_float(a[0])) {
+                if (radix != 10)
+                    return radix_out_of_range(ev, error_values, "number->string");
                 s = aura::compiler::format_float_shortest(as_float(a[0]));
-            else if (is_int(a[0]))
-                s = std::to_string(as_int(a[0]));
+            } else if (is_int(a[0]))
+                s = format_int_radix(as_int(a[0]), radix);
             else
                 s = "0";
             // Issue #2652: locked push.
             return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(s))));
         },
-        pure_general(1, "(number) -> string", "Render a number as a string."));
+        pure_general(2, "(number int) -> string",
+                     "Render a number as a string. Optional radix 2..36."));
     register_prim(
         add, ev, "string->number",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-            if (a.empty() || !is_string(a[0]))
-                return make_bool(false);
-            auto i = as_string_idx(a[0]);
-            if (i >= string_heap.size())
-                return make_bool(false);
-            auto& str = string_heap[i];
-            if (str.empty())
-                return make_bool(false);
-            // Trim leading/trailing whitespace (CSV fields, user input)
-            auto first = str.find_first_not_of(" \t\r\n");
-            if (first == std::string::npos)
-                return make_bool(false);
-            auto last = str.find_last_not_of(" \t\r\n");
-            std::string_view trimmed(str.data() + first, last - first + 1);
-            // Issue #4462: parse an integer with from_chars before any
-            // double conversion. Casting the double back to int64 truncates
-            // past 2^53 and aborts on [2^62, 2^63).
-            const bool want_float = trimmed.find('.') != std::string_view::npos ||
-                                    trimmed.find('e') != std::string_view::npos ||
-                                    trimmed.find('E') != std::string_view::npos;
-            if (!want_float) {
-                std::string_view body = trimmed;
-                if (!body.empty() && body.front() == '+')
-                    body.remove_prefix(1);
-                if (body.empty())
-                    return make_bool(false);
-                std::int64_t iv = 0;
-                const char* b0 = body.data();
-                const char* b1 = b0 + body.size();
-                const auto [pi, eci] = std::from_chars(b0, b1, iv);
-                if (eci == std::errc{} && pi == b1)
-                    return make_int_or_promote(iv);
-                if (eci == std::errc::result_out_of_range) {
-                    double wide = 0;
-                    const char* t0 = trimmed.data();
-                    const char* t1 = t0 + trimmed.size();
-                    const auto [pf, ecf] = std::from_chars(t0, t1, wide);
-                    if (ecf == std::errc{} && pf == t1)
-                        return make_float(wide);
-                }
-                return make_bool(false);
-            }
-            const char* start = trimmed.data();
-            const char* end = start + trimmed.size();
-            double fval = 0;
-            auto [pfloat, ec_float] = std::from_chars(start, end, fval);
-            if (ec_float == std::errc{} && pfloat == end)
-                return make_float(fval);
-            return make_bool(false);
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            return parse_string_number(ev, string_heap, error_values, a);
         },
-        pure_general(1, "(string) -> any", "Parse a string as a number."));
+        pure_general(2, "(string int) -> any",
+                     "Parse a string as a number. Optional radix 2..36."));
 }
 
 } // namespace aura::compiler::primitives_detail

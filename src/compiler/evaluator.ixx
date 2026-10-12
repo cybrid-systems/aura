@@ -30,6 +30,7 @@ module;
 #include "security_side_effect.hh"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
 #include "runtime_shared.h"
+#include "utf8_scalar.hh" // Issue #4472: code-point index, no heap-string copy
 // Issue #1443/#1445: aura_invoke_long_mutation_scheduler_hook (C ABI)
 #include "aura_jit_bridge.h"
 #include <algorithm>
@@ -9247,6 +9248,15 @@ public:
         if (pos >= s.size())
             return -1;
         return static_cast<int>(static_cast<unsigned char>(s[pos]));
+    }
+    // Issue #4472: code point at a character index. One locked scan,
+    // no copy of the heap string (#4320). -1 is out of range / missing.
+    // An ill-formed byte is its own unit so a valid sequence is not split.
+    [[nodiscard]] int string_heap_code_point_at(std::size_t idx, std::size_t cp_index) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        if (idx >= string_heap_.size())
+            return -1;
+        return utf8_code_point_at(string_heap_[idx], cp_index);
     }
     // Issue #2652: process-wide mutex for g_hash_tables mutation + string
     // key compare (hash-set! / hash-ref under multi-fiber stats-bump).

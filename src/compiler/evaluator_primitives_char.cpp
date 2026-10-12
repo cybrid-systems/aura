@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
+#include "utf8_scalar.hh" // Issue #4472
 
 #include <poll.h>
 #include <termios.h>
@@ -83,10 +84,13 @@ namespace {
 
 void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    // Issue #4472: not a blanket is_int. Characters stay fixnums (#4129),
+    // so a Unicode scalar — including U+0005 — is a character. Negatives,
+    // values above U+10FFFF, surrogates, and non-integers are not.
     add("char?", [](const auto& a) {
-        if (a.empty())
+        if (a.empty() || !is_int(a[0]))
             return make_bool(false);
-        return make_bool(is_int(a[0]));
+        return make_bool(unicode_scalar(as_int(a[0])));
     });
 
     add("char->integer", [](const auto& a) {
@@ -112,11 +116,20 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         } else if (is_int(a[0])) {
             s = std::to_string(as_int(a[0]));
         }
+        // Issue #4472: code points, so list->string can encode them back.
+        // This registration runs after the pair one and wins name lookup.
+        std::vector<std::int64_t> cps;
+        cps.reserve(s.size());
+        std::size_t bi = 0;
+        Utf8Unit unit;
+        while (utf8_unit_at(s, bi, unit)) {
+            cps.push_back(static_cast<std::int64_t>(unit.cp));
+            bi += unit.nbytes;
+        }
         EvalValue result = make_void();
-        for (auto it = s.rbegin(); it != s.rend(); ++it) {
+        for (auto it = cps.rbegin(); it != cps.rend(); ++it) {
             auto pid = ev.pairs_.size();
-            ev.pairs_.push_back(
-                {make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
+            ev.pairs_.push_back({make_int(*it), result});
             result = make_pair(pid);
         }
         return result;
@@ -133,7 +146,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 break;
             auto car = ev.pairs_[idx].car;
             if (is_int(car))
-                result.push_back(static_cast<char>(as_int(car)));
+                utf8_append(result, as_int(car)); // Issue #4472
             v = ev.pairs_[idx].cdr;
         }
         auto sid = ev.string_heap_.size();

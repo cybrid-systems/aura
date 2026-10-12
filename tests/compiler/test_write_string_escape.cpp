@@ -28,10 +28,14 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_float;
+using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_float;
+using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -359,6 +363,168 @@ static void ac4468_vector_and_float_print() {
     }
 }
 
+// Issue #4472: code-point indexes, scalar char?, and radix.
+static void ac4472_codepoints_and_radix() {
+    std::println("\n--- #4472: code points, char?, radix ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    const char* prev_st = std::getenv("AURA_PIPELINE_STRICT");
+    const char* prev_path = std::getenv("AURA_PATH");
+    const std::string saved_sb = prev_sb ? prev_sb : "";
+    const std::string saved_st = prev_st ? prev_st : "";
+    const std::string saved_path = prev_path ? prev_path : "";
+    const bool had_sb = prev_sb != nullptr;
+    const bool had_st = prev_st != nullptr;
+    const bool had_path = prev_path != nullptr;
+    const auto prev_policy = aura::compiler::tree_walker_fallback_policy();
+    struct RestoreFace {
+        std::string sb, st, path;
+        bool had_sb, had_st, had_path;
+        aura::compiler::TreeWalkerFallbackPolicy policy;
+        ~RestoreFace() {
+            if (had_sb)
+                setenv("AURA_SANDBOX", sb.c_str(), 1);
+            else
+                unsetenv("AURA_SANDBOX");
+            if (had_st)
+                setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
+            else
+                unsetenv("AURA_PIPELINE_STRICT");
+            if (had_path)
+                setenv("AURA_PATH", path.c_str(), 1);
+            else
+                unsetenv("AURA_PATH");
+            aura::compiler::set_tree_walker_fallback_policy(policy);
+        }
+    } restore{saved_sb, saved_st, saved_path, had_sb, had_st, had_path, prev_policy};
+    setenv("AURA_PATH", AURA_SOURCE_DIR "/lib", 1);
+
+    const char* faces[] = {"0", "force-soa"};
+    for (const char* strict : faces) {
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", strict, 1);
+        aura::compiler::apply_pipeline_strict_defaults(true);
+        const std::string tag = std::string("4472 ") + strict;
+        CompilerService cs;
+        auto ival = [&](const char* src) -> std::int64_t {
+            auto r = cs.eval(src);
+            return (r && is_int(*r)) ? as_int(*r) : static_cast<std::int64_t>(-999);
+        };
+        auto sval = [&](const char* src) -> std::string {
+            auto r = cs.eval(src);
+            return (r && is_string(*r)) ? heap_string(cs, *r) : std::string{};
+        };
+        auto bval = [&](const char* src) -> int {
+            auto r = cs.eval(src);
+            if (!r || !is_bool(*r))
+                return -1;
+            return as_bool(*r) ? 1 : 0;
+        };
+        auto iserr = [&](const char* src) {
+            auto r = cs.eval(src);
+            return r && is_error(*r);
+        };
+
+        CHECK(ival(R"((string-length "hello"))") == 5, (tag + " hello").c_str());
+        CHECK(ival(R"((string-length "h\xC3\xA9llo"))") == 5, (tag + " hello-acute").c_str());
+        CHECK(ival(R"((string-length "\xE5\xBC\xBA\xE5\x8C\x96"))") == 2,
+              (tag + " two han").c_str());
+        CHECK(ival(R"((string-length "\xFF\x80"))") == 2, (tag + " two bad bytes").c_str());
+        CHECK(ival(R"((string-length "\xC3"))") == 1, (tag + " truncated lead").c_str());
+        CHECK(ival(R"((string-length 12345))") == 0, (tag + " length of int").c_str());
+        CHECK(ival(R"((string-ref "h\xC3\xA9llo" 1))") == 233, (tag + " ref acute").c_str());
+        CHECK(ival(R"((string-ref "h\xC3\xA9llo" 2))") == 108, (tag + " ref after acute").c_str());
+        CHECK(ival(R"((string-ref "\xE5\xBC\xBA\xE5\x8C\x96" 0))") == 0x5F3A,
+              (tag + " ref han0").c_str());
+        CHECK(ival(R"((string-ref "\xE5\xBC\xBA\xE5\x8C\x96" 1))") == 0x5316,
+              (tag + " ref han1").c_str());
+        CHECK(ival(R"((string-ref "\xC3" 0))") == 195, (tag + " ref bad lead").c_str());
+        CHECK(ival(R"((string-ref "a" 0))") == 97, (tag + " ref ascii").c_str());
+        CHECK(iserr(R"((string-ref 12345 0))"), (tag + " ref of int").c_str());
+        CHECK(sval(R"((substring "\xE5\xBC\xBA\xE5\x8C\x96" 0 1))") == "\xE5\xBC\xBA",
+              (tag + " sub one").c_str());
+        CHECK(sval(R"((substring "\xE5\xBC\xBA\xE5\x8C\x96" 0 2))") == "\xE5\xBC\xBA\xE5\x8C\x96",
+              (tag + " sub both").c_str());
+        CHECK(sval(R"((substring "\xE5\xBC\xBA\xE5\x8C\x96" 1 2))") == "\xE5\x8C\x96",
+              (tag + " sub second").c_str());
+        CHECK(ival(R"((string-index "\xE5\xBC\xBA\xE5\x8C\x96x" "x"))") == 2,
+              (tag + " index").c_str());
+        CHECK(ival(R"((car (cdr (string->list "h\xC3\xA9llo"))))") == 233,
+              (tag + " list acute").c_str());
+        CHECK(bval(R"((equal? (list->string (string->list "h\xC3\xA9llo")) "h\xC3\xA9llo"))") == 1,
+              (tag + " round trip").c_str());
+        CHECK(bval(R"((char=? #\a (string-ref "a" 0)))") == 1, (tag + " char=?").c_str());
+        CHECK(bval(R"((char? #\a))") == 1, (tag + " char? literal").c_str());
+        CHECK(bval(R"((char? 5))") == 1, (tag + " char? scalar 5").c_str());
+        CHECK(bval(R"((char? -1))") == 0, (tag + " char? neg").c_str());
+        CHECK(bval(R"((char? "a"))") == 0, (tag + " char? string").c_str());
+        CHECK(bval(R"((char? 55296))") == 0, (tag + " char? surrogate").c_str());
+        CHECK(bval(R"((char? 1114111))") == 1, (tag + " char? max").c_str());
+        CHECK(bval(R"((char? 1114112))") == 0, (tag + " char? past").c_str());
+        CHECK(sval(R"((number->string 255 16))") == "ff", (tag + " hex").c_str());
+        CHECK(sval(R"((number->string 10 2))") == "1010", (tag + " bin").c_str());
+        CHECK(sval(R"((number->string -10 2))") == "-1010", (tag + " neg bin").c_str());
+        CHECK(sval(R"((number->string 255))") == "255", (tag + " dec").c_str());
+        CHECK(sval(R"((number->string 1e-9))") == "1e-09", (tag + " tiny").c_str());
+        CHECK(sval(R"((number->string 1e-9 10))") == "1e-09", (tag + " tiny radix 10").c_str());
+        CHECK(sval(R"((number->string 2.0))") == "2.0", (tag + " 2.0").c_str());
+        CHECK(iserr(R"((number->string 2.0 16))"), (tag + " float radix").c_str());
+        CHECK(iserr(R"((number->string 255 1))"), (tag + " bad radix").c_str());
+        CHECK(ival(R"((string->number "ff" 16))") == 255, (tag + " parse hex").c_str());
+        CHECK(ival(R"((string->number "FF" 16))") == 255, (tag + " parse HEX").c_str());
+        CHECK(ival(R"((string->number "1010" 2))") == 10, (tag + " parse bin").c_str());
+        CHECK(ival(R"((string->number "  ff" 16))") == 255, (tag + " parse trim").c_str());
+        CHECK(ival(R"((string->number "+7"))") == 7, (tag + " plus").c_str());
+        CHECK(ival(R"((string->number "9007199254740993"))") == 9007199254740993LL,
+              (tag + " 2^53+1").c_str());
+        CHECK(bval(R"((string->number "ff"))") == 0, (tag + " hex without radix").c_str());
+        CHECK(bval(R"((string->number "nope"))") == 0, (tag + " nope").c_str());
+        CHECK(iserr(R"((string->number "10" 1))"), (tag + " parse bad radix").c_str());
+        auto big = cs.eval(R"((string->number "4611686018427387904"))");
+        CHECK(big && is_float(*big) && as_float(*big) == 4611686018427387904.0,
+              (tag + " 2^62 float").c_str());
+
+        auto imported = cs.eval(R"((import "std/string"))");
+        CHECK(imported.has_value(), (tag + " import").c_str());
+        CHECK(sval(R"((string-pad-left "\xE5\xBC\xBA" 4))") == "   \xE5\xBC\xBA",
+              (tag + " pad").c_str());
+        CHECK(sval(R"((string-upcase "h\xC3\xA9llo"))") == "H\xC3\xA9LLO",
+              (tag + " upcase").c_str());
+        CHECK(sval(R"((string-reverse "\xE5\xBC\xBA\xE5\x8C\x96"))") == "\xE5\x8C\x96\xE5\xBC\xBA",
+              (tag + " reverse").c_str());
+    }
+
+    const auto bin = aura_binary_4468();
+    CHECK(!bin.empty(), "4472: aura binary");
+    if (bin.empty())
+        return;
+    const char* path = "/tmp/aura-4472-repro.aura";
+    {
+        std::ofstream f(path);
+        f << R"((display (string-length "h\xC3\xA9llo")) (newline)
+(display (string-length "\xE5\xBC\xBA\xE5\x8C\x96")) (newline)
+(display (string-ref "h\xC3\xA9llo" 1)) (newline)
+(display (substring "\xE5\xBC\xBA\xE5\x8C\x96" 0 1)) (newline)
+(display (string-length 12345)) (newline)
+(display (char? -1)) (newline)
+(display (char? "a")) (newline)
+(display (number->string 255 16)) (newline)
+(display (number->string 10 2)) (newline)
+(display (string->number "ff" 16)) (newline)
+(import "std/string")
+(display (string-pad-left "\xE5\xBC\xBA" 4)) (newline)
+(display (string-upcase "h\xC3\xA9llo")) (newline)
+)";
+    }
+    const std::string expect =
+        "5\n2\n233\n\xE5\xBC\xBA\n0\n#f\n#f\nff\n1010\n255\n   \xE5\xBC\xBA\nH\xC3\xA9LLO\n";
+    auto run = run_file_4468(
+        bin, path, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_PATH=" AURA_SOURCE_DIR "/lib");
+    if (run.rc != 0 || run.out != expect)
+        std::println(stderr, "4472 file rc {} out [{}] err [{}]", run.rc, run.out, run.err);
+    CHECK(run.rc == 0, "4472 file rc");
+    CHECK(run.out == expect, "4472 file out");
+}
+
 static void ac5_source_gate() {
     std::println("\n--- #2574 AC5: source-cite + gate ---");
     const auto jit = read_file("src/compiler/aura_jit_runtime.cpp");
@@ -384,6 +550,7 @@ int run_test_write_string_escape() {
     ac3_display_raw();
     ac4_tw_matches_jit();
     ac4468_vector_and_float_print();
+    ac4472_codepoints_and_radix();
     ac5_source_gate();
     std::println("\n=== #2574: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
