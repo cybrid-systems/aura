@@ -425,6 +425,9 @@ bool Evaluator::restore_panic_checkpoint() {
         if (panic_safe_pairs_size_ > 0 && pairs_.size() != panic_safe_pairs_size_) {
             bump_panic_checkpoint_size_mismatch();
         }
+        // Issue #4459: resize drops the tail. Freelist ids past the new
+        // sizes would mint into the truncated buffer.
+        note_file_heap_truncated(pairs_.size(), cells_.size());
         // Issue #1360: actually truncate env_frames_ (was mark-only
         // INVALID_VERSION in #356 — leaked ~8MB/day under panic load).
         // truncate_env_frames_to_checkpoint also soft-marks doomed

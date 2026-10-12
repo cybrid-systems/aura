@@ -75,6 +75,9 @@ export struct PendingCall {
     const aura::ir::IRFunction* func;
     std::vector<EvalValue> args;
     std::uint32_t result_slot;
+    // Issue #4459: the call's result is the caller's return value. drain
+    // replaces the caller frame so per-iteration closures die with it.
+    bool tail = false;
 };
 
 // Frame managed by the explicit call stack in execute().
@@ -386,6 +389,20 @@ private:
     // escape_maps_[func_id][slot] = 1 (ESCAPED) or 0 (NON_ESCAPING).
     // Empty if no escape info available.
     std::vector<std::vector<std::uint8_t>> escape_maps_;
+
+    // Issue #4459: reclaim unreachable IR closures / cells at an instruction
+    // boundary once this many capturing closures or cells have been minted
+    // (or the evaluator has minted that many pairs / vectors).
+    static constexpr std::uint32_t kFileReclaimAllocs = 128;
+    void note_reclaim_alloc() noexcept { ++allocs_since_reclaim_; }
+    void maybe_reclaim_unreachable();
+    static const std::vector<EvalValue>* ir_env_thunk(void* ctx, std::uint64_t id);
+    [[nodiscard]] const std::vector<EvalValue>* ir_closure_env_for_reclaim(std::uint64_t id) const;
+    [[nodiscard]] std::uint64_t alloc_cell();
+    std::uint32_t allocs_since_reclaim_ = 0;
+    bool reclaiming_ = false;
+    std::vector<std::uint64_t> cell_reuse_;
+    std::vector<std::uint8_t> cell_on_freelist_;
 };
 
 } // namespace aura::compiler

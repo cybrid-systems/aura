@@ -1062,6 +1062,35 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         // to make the failure mode visible.
         return NULL_ENV_ID;
     }
+    // Issue #4459: reuse a frame the tree-walker sweep cleared.
+    // In-place restamp keeps the binding vectors' capacity so the
+    // next capture does not allocate. Do not assign a fresh EnvFrame
+    // over the slot — that drops the capacity. Do not bump
+    // env_generation_; the caller fills bindings next, and a stale
+    // cap_snap for this id is dropped so #4448 cannot alias.
+    while (!env_frame_reuse_.empty()) {
+        const EnvId id = env_frame_reuse_.back();
+        env_frame_reuse_.pop_back();
+        if (id >= env_frames_.size())
+            continue;
+        if (id < env_frame_on_freelist_.size())
+            env_frame_on_freelist_[id] = 0;
+        EnvFrame& fr = env_frames_[id];
+        fr.bindings_.clear();
+        fr.bindings_symid_.clear();
+        fr.bindings_linear_ownership_state_.clear();
+        fr.parent_id = parent_id;
+        fr.primitives_ = primitives;
+        fr.pool_ = nullptr;
+        fr.version_ = defuse_version_.load(std::memory_order_acquire);
+        fr.env_gen_stamp_ = env_generation_;
+        fr.set_owner(this);
+        {
+            std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+            cap_snap_cache_.erase(id);
+        }
+        return id;
+    }
     // Issue #1384: construct the frame locally with version_ =
     // current defuse_version_ BEFORE push_back, so any reader
     // that observes the new index via env_frames_.size() sees a
@@ -1160,6 +1189,14 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // wrongly classified as stale by is_env_frame_stale even
     // though its bindings are current).
     fr.version_ = defuse_version_.load(std::memory_order_acquire);
+    // Issue #4459: a reused id may still have the previous occupant's
+    // snapshot (or an empty one built in the window before this fill).
+    // Drop it while the shard lock is held so the next materialize
+    // rebuilds from these bindings. Fresh ids have no entry.
+    {
+        std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+        cap_snap_cache_.erase(id);
+    }
     return id;
 }
 
@@ -2545,6 +2582,13 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // held here. env_frames_mtx_ is non-recursive — do not call
     // publish_live_env_linear_to_bridge() (takes shared_lock).
     publish_live_env_linear_to_bridge_holding_env_lock();
+    // Issue #4459: the resize above dropped the tail. Holes below the
+    // checkpoint stay reusable; indices at or past it must not be popped.
+    if (env_frame_on_freelist_.size() > checkpoint_size)
+        env_frame_on_freelist_.resize(checkpoint_size);
+    std::erase_if(env_frame_reuse_, [checkpoint_size](EnvId id) {
+        return static_cast<std::size_t>(id) >= checkpoint_size;
+    });
     // Issue #1927 / #1955: dual-epoch lockstep with compact_env_frames —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure).
     defuse_version_.fetch_add(1, std::memory_order_release);
@@ -2808,6 +2852,8 @@ std::size_t Evaluator::compact_env_frames() {
             std::lock_guard<std::mutex> lock(cap_snap_mtx_);
             cap_snap_cache_.clear();
         }
+        env_frame_reuse_.clear();
+        env_frame_on_freelist_.clear();
         // Issue #2131: empty compact still closes PostAudit (no roots).
         (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
         compact_gc_coord.after_cascade();
@@ -2943,6 +2989,10 @@ std::size_t Evaluator::compact_env_frames() {
 
     const std::size_t reclaimed = orig_size - new_env_frames.size();
     env_frames_ = std::move(new_env_frames);
+    // Issue #4459: remap invalidates freelist indices. Drop them;
+    // the packed deque has no holes to reuse.
+    env_frame_reuse_.clear();
+    env_frame_on_freelist_.clear();
     // Issue #2164: advance hold-generation stamp so Guard dtor can detect
     // compact that proceeded under a hold (should be impossible when gate works).
     if (reclaimed > 0 || !env_id_remap_.empty())

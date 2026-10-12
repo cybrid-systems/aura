@@ -4742,6 +4742,53 @@ public:
     // first (#1664).
     CompactSweepResult compact_sweep(void* sweep_buffers);
 
+    // Issue #4459: file / --load never enters compact_sweep, and that sweep
+    // does not see IRInterpreter::runtime_closures_. The IR loop calls this
+    // at an instruction boundary. false = skipped (destructive-GC defer,
+    // pending panic checkpoint, or re-entry). An empty live set on false is
+    // not "nothing is reachable" — the caller must not erase.
+    struct FileModeReclaimView {
+        std::span<const types::EvalValue> extra_roots{};
+        std::span<const types::EvalValue> ir_cells{};
+        const std::vector<types::EvalValue>* (*ir_closure_env)(void* ctx,
+                                                               std::uint64_t id) = nullptr;
+        void* ir_ctx = nullptr;
+        std::vector<std::uint64_t>* live_ir = nullptr;
+        std::vector<std::uint8_t>* live_ir_cells = nullptr;
+    };
+    static constexpr std::size_t kFileHeapMintDenied = static_cast<std::size_t>(-1);
+    [[nodiscard]] bool reclaim_file_mode_unreachable(FileModeReclaimView& view);
+    // Issue #4459: file-mode programs never enter the IR interpreter, so
+    // the sweep above does not run for `aura file.aura`. This one marks
+    // from the tree-walker env stack (and value temporaries) only — not
+    // from every cell or every env frame — then freelists unreachable
+    // closures, capture frames, and cells. false = skipped; counters are
+    // cleared either way so a defer window is not a per-opcode retry.
+    // Does not pin-invalidate, live-compact, restamp, or bump env_generation_.
+    [[nodiscard]] bool reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
+                                              std::span<const types::EvalValue> held);
+    void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
+    // Loop-head safepoint. No-op under the allocation threshold.
+    void maybe_reclaim_tw_unreachable();
+    // Freelist hit overwrites the slot. check_quota is the #2916 grow path
+    // only — reuse does not change pairs_/vector_heap_ size.
+    [[nodiscard]] std::size_t mint_pair(types::EvalValue car, types::EvalValue cdr,
+                                        bool check_quota);
+    [[nodiscard]] std::size_t mint_vector(std::vector<types::EvalValue> elems, bool check_quota);
+    [[nodiscard]] std::size_t mint_vector_fill(std::size_t n, types::EvalValue init,
+                                               bool check_quota);
+    // (gc-heap) clears pairs_/cells_/vector_heap_. (gc-temp) clears
+    // vector_heap_ only. Drop the matching freelist so the next mint
+    // cannot return an index into the cleared buffer.
+    void abandon_file_heap_freelists();
+    void abandon_vector_reuse_freelist();
+    // Panic restore resizes pairs_ and cells_ down to the checkpoint.
+    // Indices at or past the new sizes are gone.
+    void note_file_heap_truncated(std::size_t pairs_n, std::size_t cells_n);
+    [[nodiscard]] std::uint32_t file_heap_allocs_since_reclaim() const noexcept {
+        return file_heap_allocs_since_reclaim_;
+    }
+    void reset_file_heap_allocs_since_reclaim() noexcept { file_heap_allocs_since_reclaim_ = 0; }
 
     void
     set_messaging_callbacks(std::function<bool(const std::string&, const std::string&)>* send_fn,
@@ -5362,7 +5409,11 @@ public:
     // Bulk reset (testing + GC integration). Clears env_frames_
     // but does NOT free the modules_ Env* array (those live in
     // module arenas, lifetime managed separately).
-    void reset_env_frames() { env_frames_.clear(); }
+    void reset_env_frames() {
+        env_frames_.clear();
+        env_frame_reuse_.clear();
+        env_frame_on_freelist_.clear();
+    }
 
 private:
     ClosureId next_id() { return next_id_++; }
@@ -5372,8 +5423,24 @@ private:
         // workers (which share the Evaluator). std::lock_guard RAII
         // releases the mutex at scope exit; the duration here is
         // bounded to the vector reallocation + the size_t return.
+        // Issue #4459: reuse a dead cell index. cells_ is monotonic,
+        // so push_back never returns the buffer; the freelist stops
+        // the vector (and its buffer) from tracking a file-mode loop.
         std::lock_guard lock(alloc_storage_lock_);
+        ++file_heap_allocs_since_reclaim_;
+        while (!cell_reuse_eval_.empty()) {
+            const auto id = cell_reuse_eval_.back();
+            cell_reuse_eval_.pop_back();
+            if (id >= cells_.size())
+                continue;
+            if (id < cell_on_freelist_eval_.size())
+                cell_on_freelist_eval_[id] = 0;
+            cells_[id] = v;
+            return id;
+        }
         cells_.push_back(v);
+        if (cell_on_freelist_eval_.size() < cells_.size())
+            cell_on_freelist_eval_.resize(cells_.size(), 0);
         return cells_.size() - 1;
     }
     // Forward decl: MemoryPolicy is defined further down in the class
@@ -5632,6 +5699,10 @@ private:
     void bump_closures_apply_epoch() noexcept {
         closures_apply_epoch_.fetch_add(1, std::memory_order_acq_rel);
     }
+    // Issue #4459: drop this evaluator's apply_closure TLS copies.
+    // Epoch bump already misses them; clearing the slot means the
+    // next apply cannot observe a Closure whose frame was freelisted.
+    void drop_apply_closure_tls() noexcept;
     ClosureBridgeFn closure_bridge_;
     // Issue #252: optional pointer to CompilerMetrics for
     // closure_* counter increments. nullptr = counters
@@ -5701,12 +5772,20 @@ private:
     // order).
     std::pmr::monotonic_buffer_resource runtime_resource_;
     std::pmr::vector<types::EvalValue> cells_{&runtime_resource_};
+    // Issue #4459: dead evaluator cells. The monotonic buffer does not
+    // shrink; reuse stops cells_.size() from tracking the loop.
+    std::vector<std::size_t> cell_reuse_eval_;
+    std::vector<std::uint8_t> cell_on_freelist_eval_;
     std::pmr::vector<Pair> pairs_{&runtime_resource_};
     // Issue #4298: owner record parallel to pairs_. 0 = never stamped
     // (internal push, not a cons/list mint). A mint stores tenant+1 so
     // tenant 0 is distinct from that hole. Not process-global — g_pair_slot_tenants
     // stays the JIT tail (#4057).
     std::vector<std::uint64_t> pair_slot_tenants_;
+    // Issue #4459: dead pair slots reused in place. pairs_ stays on the
+    // monotonic resource; compacting it abandons blocks (#4453).
+    std::vector<std::size_t> pair_reuse_freelist_;
+    std::vector<std::uint8_t> pair_on_freelist_;
 
 public:
     // Issue #1397: uniform mutex guarding `cells_` / `pairs_` /
@@ -5801,6 +5880,12 @@ public:
     }
     std::array<EnvFramesShard, kEnvFramesShardCount> env_frame_shards_;
     std::deque<EnvFrame> env_frames_;
+    // Issue #4459: capture frames freed by the tree-walker sweep.
+    // Slots stay in the deque (no renumber). alloc_env_frame pops
+    // one and restamps it. Cleared when compact renumbers or
+    // truncate drops the tail.
+    std::vector<EnvId> env_frame_reuse_;
+    std::vector<std::uint8_t> env_frame_on_freelist_;
     // Issue #145 P0 follow-up: shared_mutex protects
     // env_frames_ against concurrent access from fiber threads
     // (e.g. a std::thread spawned by fiber:spawn calling
@@ -6996,6 +7081,15 @@ private:
     // Issue #4298: owner record parallel to vector_heap_. Same encoding as
     // pair_slot_tenants_ (0 = never stamped, else tenant+1).
     std::vector<std::uint64_t> vector_slot_tenants_;
+    // Issue #4459: dead vector slots. clear() keeps capacity so the next
+    // make-vector of the same length does not allocate.
+    std::vector<std::size_t> vector_reuse_freelist_;
+    std::vector<std::uint8_t> vector_on_freelist_;
+    std::uint32_t file_heap_allocs_since_reclaim_ = 0;
+    // Issue #4459: tree-walker Lambda / named-let allocations since
+    // the last file-mode sweep. alloc_cell also bumps the heap counter.
+    std::uint32_t tw_closure_allocs_ = 0;
+    bool file_reclaim_active_ = false;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
     // Issue #68: depth counter (was bool) so nested `intend` calls
@@ -9121,10 +9215,9 @@ public:
     // remain valid after the call.
     // Issue #2651: lock pairs_ growth (same race class as string_heap_).
     std::int32_t push_pair(EvalValue car, EvalValue cdr) {
-        std::lock_guard lock(alloc_storage_lock_);
-        const auto idx = static_cast<std::int32_t>(pairs_.size());
-        pairs_.push_back({car, cdr});
-        return idx;
+        // Issue #4459: reuse a dead slot when file-mode reclaim has one.
+        const auto idx = mint_pair(car, cdr, /*check_quota=*/false);
+        return static_cast<std::int32_t>(idx);
     }
     // Issue #1987: GC safepoint coordination state. The request path
     // signals "we are now at a safepoint" by setting safepoint_active_=true
