@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 889 | Preferred destination suites |
-| **Total scanned** | **889** | |
+| `tests/core/test_*.cpp` | 890 | Preferred destination suites |
+| **Total scanned** | **890** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 92 | 92 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 275 | 275 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 276 | 276 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 106 | 106 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 60 | 60 | P1 — domain hygiene suite exists |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **101**
+- Existing `*_batch` drivers (migration milestones): **102**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -100,6 +100,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_cascade_impact_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_closure_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_closure_view_batch.cpp` → theme `observability`
+- `tests/compiler/test_compiler_atomic_batch_file_mode.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_cross_cow_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_dead_coercion_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` → theme `observability`
@@ -338,6 +339,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_compact_policy.cpp`
 - `tests/compiler/test_compile02_no_dup_imports.cpp`
 - `tests/compiler/test_compile_primitive_guard.cpp`
+- `tests/compiler/test_compiler_atomic_batch_file_mode.cpp`
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp`
 - `tests/compiler/test_compiler_core_incremental_selfmod_gaps.cpp`
 - `tests/compiler/test_compiler_hot_update_facade.cpp`
@@ -1208,13 +1210,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (275)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (276)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (275)
+#### domain/ (276)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1273,6 +1275,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_unify_incomplete_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → applied==0, no CoercionNode
 - `tests/compiler/test_command_line_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_commercial_tenant_profile.cpp` (—) [domain_suite, theme_compiler] — AC1: No AURA_COMMERCIAL_TENANT — Restricted default soft (#2536 regression)
+- `tests/compiler/test_compiler_atomic_batch_file_mode.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: repro A file prints start once, then (end 7 2 0), exit 0
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_compiler_closure_env_safety_post_invalidate.cpp —
 - `tests/compiler/test_composite_auto_partial_from_cone.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Production + cone dirty + empty CS + !txn_dirty → hard reject;
 - `tests/compiler/test_composite_nested_txn_invariant_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2027; composite counters + partial recover helpers
