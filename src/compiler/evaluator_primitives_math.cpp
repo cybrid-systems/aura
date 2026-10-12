@@ -167,6 +167,23 @@ namespace {
         return {RegexRunStatus::Ok, std::move(box->value)};
     }
 
+    // Issue #4469: R7RS round. Halves go to the even integer.
+    // std::round ties away from zero, so 0.5 became 1 and -2.5 became -3.
+    double round_half_even(double d) {
+        if (!std::isfinite(d))
+            return d;
+        double whole = 0.0;
+        const double frac = std::modf(d, &whole);
+        const double afrac = std::fabs(frac);
+        if (afrac < 0.5)
+            return whole;
+        if (afrac > 0.5)
+            return whole + std::copysign(1.0, d);
+        if (std::fmod(std::fabs(whole), 2.0) == 0.0)
+            return whole;
+        return whole + std::copysign(1.0, d);
+    }
+
 } // namespace
 
 void register_math_regex_and_arithmetic_primitives(
@@ -460,26 +477,54 @@ void register_math_regex_and_arithmetic_primitives(
     register_prim(add, ev, "ceil",
                   unary_math("ceil: expected number", [](double d) { return std::ceil(d); }),
                   pure_general(1, "(number) -> float", "Least integer >= argument as float."));
-    register_prim(add, ev, "round",
-                  unary_math("round: expected number", [](double d) { return std::round(d); }),
-                  pure_general(1, "(number) -> float", "Nearest integer as float."));
+    // Issue #4469: halves to even. An in-range result is an exact int so
+    // display prints 0 / 2 / -2. A magnitude past int64 stays a float.
+    register_prim(
+        add, ev, "round",
+        [&string_heap, &error_values, primitive_error_counter,
+         as_math_double](const auto& a) -> EvalValue {
+            if (a.empty())
+                return make_float(0.0);
+            if (is_int(a[0]))
+                return a[0];
+            double d = 0.0;
+            if (!as_math_double(a[0], d)) {
+                note_arith_mismatch(a[0], string_heap);
+                return make_primitive_error(string_heap, error_values, "round: expected number",
+                                            primitive_error_counter);
+            }
+            const double r = round_half_even(d);
+            if (!std::isfinite(r))
+                return make_float(r);
+            constexpr double kMax = static_cast<double>(std::numeric_limits<std::int64_t>::max());
+            constexpr double kMin = static_cast<double>(std::numeric_limits<std::int64_t>::min());
+            if (r >= kMax || r < kMin)
+                return make_float(r);
+            return make_int(static_cast<std::int64_t>(r));
+        },
+        pure_general(1, "(number) -> int", "Nearest integer; halves round to even."));
     // std/math re-exports (define trunc trunc); was missing while floor/ceil/round existed.
     register_prim(add, ev, "trunc",
                   unary_math("trunc: expected number", [](double d) { return std::trunc(d); }),
                   pure_general(1, "(number) -> float", "Truncate toward zero as float."));
+    // Issue #4469: R7RS names for the same operations.
+    register_prim(add, ev, "truncate",
+                  unary_math("truncate: expected number", [](double d) { return std::trunc(d); }),
+                  pure_general(1, "(number) -> float", "Alias of trunc."));
+    register_prim(add, ev, "ceiling",
+                  unary_math("ceiling: expected number", [](double d) { return std::ceil(d); }),
+                  pure_general(1, "(number) -> float", "Alias of ceil."));
 
     // Issue #1153/#1158/#1174 family: saturate float→int out of range.
-    register_prim(
-        add, ev, "inexact->exact",
-        [&string_heap, &error_values, primitive_error_counter](const auto& a) -> EvalValue {
+    auto coerce_exact = [&](const char* too_few, const char* bad_type) {
+        return [&string_heap, &error_values, primitive_error_counter, too_few,
+                bad_type](const auto& a) -> EvalValue {
             if (a.empty()) {
-                return make_primitive_error(string_heap, error_values,
-                                            "inexact->exact: too few args",
+                return make_primitive_error(string_heap, error_values, too_few,
                                             primitive_error_counter);
             }
             if (!is_int(a[0]) && !is_float(a[0])) {
-                return make_primitive_error(string_heap, error_values,
-                                            "inexact->exact: expected number",
+                return make_primitive_error(string_heap, error_values, bad_type,
                                             primitive_error_counter);
             }
             if (types::is_float(a[0])) {
@@ -495,8 +540,36 @@ void register_math_regex_and_arithmetic_primitives(
                 return types::make_int(static_cast<std::int64_t>(d));
             }
             return a[0];
-        },
-        pure_general(1, "(number) -> int", "Coerce inexact number to exact int."));
+        };
+    };
+    register_prim(add, ev, "inexact->exact",
+                  coerce_exact("inexact->exact: too few args", "inexact->exact: expected number"),
+                  pure_general(1, "(number) -> int", "Coerce inexact number to exact int."));
+    // Issue #4469: exact is the R7RS alias of inexact->exact.
+    register_prim(add, ev, "exact", coerce_exact("exact: too few args", "exact: expected number"),
+                  pure_general(1, "(number) -> int", "Alias of inexact->exact."));
+
+    auto coerce_inexact = [&](const char* too_few, const char* bad_type) {
+        return [&string_heap, &error_values, primitive_error_counter, too_few,
+                bad_type](const auto& a) -> EvalValue {
+            if (a.empty()) {
+                return make_primitive_error(string_heap, error_values, too_few,
+                                            primitive_error_counter);
+            }
+            if (is_int(a[0]))
+                return make_float(static_cast<double>(as_int(a[0])));
+            if (is_float(a[0]))
+                return a[0];
+            return make_primitive_error(string_heap, error_values, bad_type,
+                                        primitive_error_counter);
+        };
+    };
+    register_prim(add, ev, "exact->inexact",
+                  coerce_inexact("exact->inexact: too few args", "exact->inexact: expected number"),
+                  pure_general(1, "(number) -> float", "Coerce exact number to inexact float."));
+    register_prim(add, ev, "inexact",
+                  coerce_inexact("inexact: too few args", "inexact: expected number"),
+                  pure_general(1, "(number) -> float", "Alias of exact->inexact."));
 
     // ── Arithmetic extensions (#1158/#1159/#1174: no signed int64 UB) ──
     constexpr auto kI64Min = std::numeric_limits<std::int64_t>::min();

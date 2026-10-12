@@ -7,6 +7,7 @@
 
 module;
 
+#include <cmath>
 
 module aura.compiler.evaluator;
 
@@ -20,10 +21,28 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 void register_type_and_char_primitives(PrimRegistrar add) {
     // ── Type predicates ──────────────────────────────────────────
+    // Issue #4469: an integral float (2.0, (floor 2.7)) is an integer.
+    // Non-finite floats are not. exact? stays on the int tag only.
     add("integer?", [](const auto& a) {
         if (a.empty())
             return types::make_bool(false);
+        if (types::is_int(a[0]))
+            return types::make_bool(true);
+        if (types::is_float(a[0])) {
+            const double d = types::as_float(a[0]);
+            return types::make_bool(std::isfinite(d) && std::trunc(d) == d);
+        }
+        return types::make_bool(false);
+    });
+    add("exact?", [](const auto& a) {
+        if (a.empty())
+            return types::make_bool(false);
         return types::make_bool(types::is_int(a[0]));
+    });
+    add("inexact?", [](const auto& a) {
+        if (a.empty())
+            return types::make_bool(false);
+        return types::make_bool(types::is_float(a[0]));
     });
     add("float?", [](const auto& a) {
         if (a.empty())
