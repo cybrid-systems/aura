@@ -6057,8 +6057,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             return val.has_value() ? make_bool(true) : make_bool(false);
                         }
 
-                        // while: (while cond body) — evaluate condition, if true evaluate body,
-                        // repeat
+                        // while: (while cond body ...) — re-evaluate cond, then every
+                        // body form in order (Issue #4466). Repeat.
                         if (cname == "while" && v.children.size() >= 3) {
                             // Check if args are Lambda nodes (EDSL while with closures)
                             // In that case, fall through to primitive dispatch instead
@@ -6075,7 +6075,6 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 {
                                     static std::atomic<bool> warned_define_in_while{false};
                                     if (!warned_define_in_while.load(std::memory_order_relaxed)) {
-                                        auto body_id = v.child(2);
                                         std::function<bool(aura::ast::NodeId)> has_define =
                                             [&](aura::ast::NodeId nid) -> bool {
                                             if (nid == aura::ast::NULL_NODE || nid >= f->size())
@@ -6088,7 +6087,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                     return true;
                                             return false;
                                         };
-                                        if (has_define(body_id) &&
+                                        // Issue #4466: a define in a later body form
+                                        // still warns. The single-body begin still hits.
+                                        bool found_define = false;
+                                        for (std::size_t bi = 2;
+                                             bi < v.children.size() && !found_define; ++bi)
+                                            found_define = has_define(v.child(bi));
+                                        if (found_define &&
                                             !warned_define_in_while.exchange(true)) {
                                             std::println(
                                                 std::cerr,
@@ -6106,9 +6111,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         return cond_result;
                                     if (!is_truthy(*cond_result))
                                         break;
-                                    auto body_result = eval_flat(*f, *p, v.child(2), eval_env);
-                                    if (!body_result)
-                                        return body_result;
+                                    // Issue #4466: implicit begin. An unexpected
+                                    // diagnostic still aborts. An error value does
+                                    // not, matching the one-body loop.
+                                    for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
+                                        auto body_result = eval_flat(*f, *p, v.child(bi), eval_env);
+                                        if (!body_result)
+                                            return body_result;
+                                    }
                                 }
                                 return make_void();
                             }
