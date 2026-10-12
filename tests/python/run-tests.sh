@@ -1361,6 +1361,9 @@ _file_4363() {
     errh=$(cat "$dir/errh" 2>/dev/null || true)
     soft=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e "$src" 2>"$dir/errs")
     errs=$(cat "$dir/errs" 2>/dev/null || true)
+    # Issue #4463: arithmetic rejects non-numbers — the rebind is still
+    # accepted on the soft face (RB1 #t), but (hello 3) now raises the
+    # type mismatch inside the try (was: CALL1 3 under the lax face).
     if printf '%s\n' "$hard" | grep -q 'expected Int, got String' \
         && printf '%s\n' "$hard" | grep -q 'arity mismatch' \
         && printf '%s\n' "$hard" | grep -q '(hello y)' \
@@ -1368,7 +1371,8 @@ _file_4363() {
         && ! printf '%s\n' "$hard" | grep -q '(hello y y)' \
         && printf '%s\n' "$hard" | grep -q 'CALL1 4' \
         && printf '%s\n' "$soft" | grep -q 'RB1 #t' \
-        && printf '%s\n' "$soft" | grep -q 'CALL1 3' \
+        && printf '%s\n' "$soft" | grep -q 'CALL1 ("raised"' \
+        && printf '%s\n' "$soft" | grep -q "expected Int, got String" \
         && ! printf '%s\n' "$soft" | grep -q 'unbound variable' \
         && [ -z "$errh" ]; then
         _record_pass "4363-value-define-type"
