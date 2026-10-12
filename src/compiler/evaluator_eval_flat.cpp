@@ -117,6 +117,7 @@ using types::make_error;
 using types::make_float;
 using types::make_hash;
 using types::make_int;
+using types::make_int_or_promote;
 using types::make_keyword;
 using types::make_pair;
 using types::make_primitive;
@@ -1571,7 +1572,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
 
     switch (v.tag) {
         case ast::NodeTag::LiteralInt:
-            return make_int(v.int_value);
+            return make_int_or_promote(v.int_value);
         case ast::NodeTag::LiteralFloat:
             return make_float(v.float_value);
         case ast::NodeTag::LiteralString: {
@@ -5202,7 +5203,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // #t/#f have BoolLiteral marker — convert to Bool at runtime
                     if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
                         return make_bool(v.int_value != 0);
-                    return make_int(v.int_value);
+                    return make_int_or_promote(v.int_value);
                 case aura::ast::NodeTag::LiteralFloat:
                     return make_float(v.float_value);
                 case aura::ast::NodeTag::LiteralString: {

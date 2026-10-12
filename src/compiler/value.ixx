@@ -117,6 +117,27 @@ export inline std::int64_t as_int(const EvalValue& v) noexcept {
     return v.val >> kFixnumShift;
 }
 
+// Issue #4462: make_int's contract is [INT64_MIN>>1, INT64_MAX>>1], but a
+// tagged value classifies as Fixnum only when it is strictly above
+// FLOAT_BIAS_VAL. -2^62 encodes as INT64_MIN and is not a fixnum. 2^62
+// does not fit the contract. Callers promote; this predicate does not
+// allocate and does not weaken make_int.
+export inline constexpr bool fits_fixnum(std::int64_t v) noexcept {
+    constexpr auto kMin = std::numeric_limits<std::int64_t>::min() >> kFixnumShift;
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max() >> kFixnumShift;
+    if (v < kMin || v > kMax)
+        return false;
+    const auto tagged = static_cast<std::int64_t>(static_cast<std::uint64_t>(v) << kFixnumShift);
+    return tagged > FLOAT_BIAS_VAL;
+}
+
+static_assert(fits_fixnum(0));
+static_assert(fits_fixnum(std::numeric_limits<std::int64_t>::max() >> kFixnumShift));
+static_assert(!fits_fixnum((std::numeric_limits<std::int64_t>::max() >> kFixnumShift) + 1));
+static_assert(!fits_fixnum(std::numeric_limits<std::int64_t>::min() >> kFixnumShift));
+static_assert(fits_fixnum(-4999999999999999LL));
+static_assert(!fits_fixnum(-5000000000000000LL));
+
 export inline EvalValue make_bool(bool v) noexcept {
     AURA_HOT_RECORD();                                  // Issue #1519 / #2142
     return EvalValue(v ? kSpecialTrue : kSpecialFalse); // #902
@@ -140,6 +161,14 @@ export inline bool is_void(const EvalValue& v) noexcept {
 
 export inline EvalValue make_float(double d) {
     return EvalValue(aura_alloc_float(d)); // FLOAT_BIAS encoding
+}
+
+// In-domain values stay fixnums. Every other int64 becomes a float so
+// make_int is never handed a value outside its hot contract.
+export inline EvalValue make_int_or_promote(std::int64_t v) {
+    if (fits_fixnum(v))
+        return make_int(v);
+    return make_float(static_cast<double>(v));
 }
 export inline bool is_float(const EvalValue& v) noexcept {
     return is_float_hot(v.val); // #2259 pure

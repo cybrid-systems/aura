@@ -208,6 +208,20 @@ static void remap_func_ids(aura::ir::IRFunction& func, std::uint32_t base_fid) {
     }
 }
 
+// Issue #4462: an integer literal outside the fixnum domain lowers as a
+// float. In-range values keep the full 64-bit ConstI64 split.
+static void emit_int_const(LoweringState& state, std::uint32_t slot, std::int64_t v) {
+    if (!types::fits_fixnum(v)) {
+        const auto bits = std::bit_cast<std::uint64_t>(static_cast<double>(v));
+        state.emit(IROpcode::ConstF64, slot, static_cast<std::uint32_t>(bits & 0xFFFFFFFFu),
+                   static_cast<std::uint32_t>(bits >> 32));
+        return;
+    }
+    const auto bits = static_cast<std::uint64_t>(v);
+    state.emit(IROpcode::ConstI64, slot, static_cast<std::uint32_t>(bits),
+               static_cast<std::uint32_t>(bits >> 32));
+}
+
 static std::uint32_t lower_flat_expr(
     LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
@@ -243,9 +257,7 @@ static std::uint32_t lower_flat_expr(
                 // Bool literals (#t/#f) should produce make_bool, not make_int
                 state.emit(IROpcode::ConstBool, slot, v.int_value != 0 ? 1 : 0);
             } else {
-                auto val = static_cast<std::uint64_t>(v.int_value);
-                state.emit(IROpcode::ConstI64, slot, static_cast<std::uint32_t>(val),
-                           static_cast<std::uint32_t>(val >> 32));
+                emit_int_const(state, slot, v.int_value);
             }
             return slot;
         }
@@ -1643,7 +1655,7 @@ static std::uint32_t lower_flat_expr(
                         return slot;
                     }
                     auto slot = state.alloc_local();
-                    state.emit(IROpcode::ConstI64, slot, cv.int_value, 0);
+                    emit_int_const(state, slot, cv.int_value);
                     return slot;
                 }
                 if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
@@ -1692,7 +1704,7 @@ static std::uint32_t lower_flat_expr(
                 // Simple literals
                 if (nv.tag == NodeTag::LiteralInt) {
                     auto s = state.alloc_local();
-                    state.emit(IROpcode::ConstI64, s, nv.int_value, 0);
+                    emit_int_const(state, s, nv.int_value);
                     return s;
                 }
                 if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {

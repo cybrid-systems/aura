@@ -14,6 +14,26 @@
 // builder code free of fully-qualified names.
 namespace types = aura::compiler::types;
 
+// Issue #4462: keep in lockstep with types::fits_fixnum. This TU does not
+// import the value module. -2^62 is not a fixnum (tag is INT64_MIN).
+namespace {
+constexpr bool jit_fits_fixnum(std::int64_t v) noexcept {
+    constexpr std::int64_t kMin = INT64_MIN >> 1;
+    constexpr std::int64_t kMax = INT64_MAX >> 1;
+    if (v < kMin || v > kMax)
+        return false;
+    const auto tagged = static_cast<std::int64_t>(static_cast<std::uint64_t>(v) << 1);
+    return tagged > types::FLOAT_BIAS_VAL;
+}
+static_assert(jit_fits_fixnum(0));
+static_assert(jit_fits_fixnum(INT64_MAX >> 1));
+static_assert(!jit_fits_fixnum((INT64_MAX >> 1) + 1));
+static_assert(!jit_fits_fixnum(INT64_MIN >> 1));
+static_assert(jit_fits_fixnum(-4999999999999999LL));
+static_assert(!jit_fits_fixnum(-5000000000000000LL));
+} // namespace
+
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Transforms/Utils/Cloning.h> // Issue #170: CloneModule for AOT snapshot
 #include <llvm/IR/Function.h>
@@ -929,6 +949,73 @@ struct LLVMBuilder {
             irb->CreateRet(c64(0));
             irb->SetInsertPoint(bb_cont);
         };
+        // Issue #4462: tagged add/sub/mul that leaves the fixnum domain
+        // promotes to float. A previous promotion is a value <= FLOAT_BIAS,
+        // so SHAPE_INT still has to notice it. kind: 0 add, 1 sub, 2 mul.
+        auto emit_fixnum_arith = [&](llvm::Value* a, llvm::Value* b, int kind) -> llvm::Value* {
+            auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+            auto* a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
+            auto* b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
+            auto* any_float = irb->CreateOr(a_is_float, b_is_float);
+            // Add/sub of the tags is the tag of the sum. Mul of the tags is
+            // (a*b)<<2, which overflows while a*b still fits, and a product
+            // in (2^62, 2^63) wraps the retag above FLOAT_BIAS. Untag first.
+            llvm::Value* lhs = a;
+            llvm::Value* rhs = b;
+            if (kind == 2) {
+                lhs = irb->CreateAShr(a, c64(1));
+                rhs = irb->CreateAShr(b, c64(1));
+            }
+            const auto id = kind == 1   ? llvm::Intrinsic::ssub_with_overflow
+                            : kind == 2 ? llvm::Intrinsic::smul_with_overflow
+                                        : llvm::Intrinsic::sadd_with_overflow;
+            auto* decl = llvm::Intrinsic::getOrInsertDeclaration(mod, id, {i64_ty});
+            auto* ovf = irb->CreateCall(decl, {lhs, rhs});
+            auto* raw = irb->CreateExtractValue(ovf, 0);
+            auto* overflow = irb->CreateExtractValue(ovf, 1);
+            llvm::Value* tagged = kind == 2 ? irb->CreateShl(raw, c64(1)) : raw;
+            llvm::Value* out_of_domain = irb->CreateICmpSLE(tagged, c64(FLOAT_BIAS_VAL));
+            if (kind == 2) {
+                // kMin's tag is INT64_MIN (caught above). A product above
+                // kMax can still wrap to a tag that looks in range.
+                constexpr std::int64_t kMin = INT64_MIN >> 1;
+                constexpr std::int64_t kMax = INT64_MAX >> 1;
+                auto* below = irb->CreateICmpSLT(raw, c64(kMin));
+                auto* above = irb->CreateICmpSGT(raw, c64(kMax));
+                out_of_domain = irb->CreateOr(out_of_domain, irb->CreateOr(below, above));
+            }
+            auto* bad = irb->CreateOr(any_float, irb->CreateOr(overflow, out_of_domain));
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto* bb_flt = llvm::BasicBlock::Create(ctx, "fixnum_promote", parent);
+            auto* bb_int = llvm::BasicBlock::Create(ctx, "fixnum_keep", parent);
+            auto* bb_done = llvm::BasicBlock::Create(ctx, "fixnum_arith_done", parent);
+            irb->CreateCondBr(bad, bb_flt, bb_int);
+
+            irb->SetInsertPoint(bb_int);
+            irb->CreateBr(bb_done);
+
+            irb->SetInsertPoint(bb_flt);
+            auto to_dbl = [&](llvm::Value* v, llvm::Value* is_f) {
+                return irb->CreateSelect(is_f,
+                                         irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
+                                                         llvm::ArrayRef<llvm::Value*>{v}),
+                                         irb->CreateSIToFP(irb->CreateAShr(v, c64(1)), double_ty));
+            };
+            auto* da = to_dbl(a, a_is_float);
+            auto* db = to_dbl(b, b_is_float);
+            llvm::Value* fd = kind == 1   ? irb->CreateFSub(da, db)
+                              : kind == 2 ? irb->CreateFMul(da, db)
+                                          : irb->CreateFAdd(da, db);
+            auto* fres = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
+                                         llvm::ArrayRef<llvm::Value*>{fd});
+            irb->CreateBr(bb_done);
+
+            irb->SetInsertPoint(bb_done);
+            auto* phi = irb->CreatePHI(i64_ty, 2, "fixnum_arith");
+            phi->addIncoming(tagged, bb_int);
+            phi->addIncoming(fres, bb_flt);
+            return phi;
+        };
         switch (inst.opcode) {
             case OpNop:
                 // Issue #427: explicit Nop. No-op instruction — no
@@ -942,10 +1029,18 @@ struct LLVMBuilder {
                 // result).
                 return true;
             case OpConstI64: {
-                // Fixnum-encode: value << 1 (matching EvalValue pointer tagging)
-                auto raw = c64(static_cast<int64_t>(inst.ops[1]) |
-                               (static_cast<int64_t>(inst.ops[2]) << 32));
-                store(inst.ops[0], irb->CreateShl(raw, c64(1)));
+                // Fixnum-encode: value << 1 (matching EvalValue pointer tagging).
+                // Issue #4462: outside the domain, box a float instead.
+                const auto rv =
+                    static_cast<int64_t>(inst.ops[1]) | (static_cast<int64_t>(inst.ops[2]) << 32);
+                if (!jit_fits_fixnum(rv)) {
+                    auto* fp = llvm::ConstantFP::get(double_ty, static_cast<double>(rv));
+                    auto* call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
+                                                 llvm::ArrayRef<llvm::Value*>{fp});
+                    store(inst.ops[0], call);
+                } else {
+                    store(inst.ops[0], irb->CreateShl(c64(rv), c64(1)));
+                }
                 return true;
             }
             case OpLocal:
@@ -958,87 +1053,15 @@ struct LLVMBuilder {
                 return true;
             }
             case OpAdd: {
-                auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-                // L1 specialization: if the result is known Int, skip float check
-                bool spec_int = (inst_shape(inst) == SHAPE_INT);
-                if (spec_int) {
-                    store(inst.ops[0], irb->CreateAdd(a, b));
-                    return true;
-                }
-                auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
-                auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
-                auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                auto a_dbl =
-                    irb->CreateSelect(a_is_float,
-                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                      llvm::ArrayRef<llvm::Value*>{a}),
-                                      irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
-                auto b_dbl =
-                    irb->CreateSelect(b_is_float,
-                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                      llvm::ArrayRef<llvm::Value*>{b}),
-                                      irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
-                auto fsum = irb->CreateFAdd(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
-                                                 llvm::ArrayRef<llvm::Value*>{fsum});
-                auto fixnum_res = irb->CreateAdd(a, b);
-                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
+                store(inst.ops[0], emit_fixnum_arith(load(inst.ops[1]), load(inst.ops[2]), 0));
                 return true;
             }
             case OpSub: {
-                auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-                bool spec_int = (inst_shape(inst) == SHAPE_INT);
-                if (spec_int) {
-                    store(inst.ops[0], irb->CreateSub(a, b));
-                    return true;
-                }
-                auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
-                auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
-                auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                auto a_dbl =
-                    irb->CreateSelect(a_is_float,
-                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                      llvm::ArrayRef<llvm::Value*>{a}),
-                                      irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
-                auto b_dbl =
-                    irb->CreateSelect(b_is_float,
-                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                      llvm::ArrayRef<llvm::Value*>{b}),
-                                      irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
-                auto fsub = irb->CreateFSub(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
-                                                 llvm::ArrayRef<llvm::Value*>{fsub});
-                auto fixnum_res = irb->CreateSub(a, b);
-                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
+                store(inst.ops[0], emit_fixnum_arith(load(inst.ops[1]), load(inst.ops[2]), 1));
                 return true;
             }
             case OpMul: {
-                auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-                bool spec_int = (inst_shape(inst) == SHAPE_INT);
-                if (spec_int) {
-                    // Tagged fixnums: (a*b) >> 1
-                    store(inst.ops[0], irb->CreateAShr(irb->CreateMul(a, b), c64(1)));
-                    return true;
-                }
-                auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
-                auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
-                auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                auto a_dbl =
-                    irb->CreateSelect(a_is_float,
-                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                      llvm::ArrayRef<llvm::Value*>{a}),
-                                      irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
-                auto b_dbl =
-                    irb->CreateSelect(b_is_float,
-                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                      llvm::ArrayRef<llvm::Value*>{b}),
-                                      irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
-                auto fmul = irb->CreateFMul(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
-                                                 llvm::ArrayRef<llvm::Value*>{fmul});
-                // Fixnum path: tagged fixnums (val<<1), multiply → (a*b)>>1
-                auto fixnum_res = irb->CreateAShr(irb->CreateMul(a, b), c64(1));
-                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
+                store(inst.ops[0], emit_fixnum_arith(load(inst.ops[1]), load(inst.ops[2]), 2));
                 return true;
             }
             case OpDiv: {

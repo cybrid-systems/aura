@@ -343,9 +343,19 @@ NodeId parse_expr(ParserState& s) {
 }
 
 NodeId parse_number(ParserState& s, Token tok) {
+    const std::string text(tok.text);
     try {
-        auto v = std::stoll(std::string(tok.text));
+        auto v = std::stoll(text);
         return s.flat.add_literal(v);
+    } catch (const std::out_of_range&) {
+        // Issue #4462: past int64 is still a number. Store a float so the
+        // reader does not drop the token. Values inside int64 stay integers
+        // here; eval promotes the ones outside the fixnum domain.
+        try {
+            return s.flat.add_literal_float(std::stod(text));
+        } catch (...) {
+            return NULL_NODE;
+        }
     } catch (...) {
         return NULL_NODE;
     }

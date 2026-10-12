@@ -20,9 +20,12 @@
 // as the legacy Wrap, same final IR after fold).
 
 module;
+#include <bit>
+#include <limits>
 
 module aura.compiler.constant_folding;
 import std;
+import aura.compiler.value;
 
 namespace aura::compiler {
 
@@ -93,6 +96,33 @@ static void replace_bool(aura::ir::IRInstruction& instr, std::uint32_t slot, boo
     known[slot] = make_tagged_bool(val);
 }
 
+// Issue #4462: an out-of-domain integer folds to ConstF64 and leaves the
+// known-int map, so a later fold does not treat the float as an int.
+static void replace_f64(aura::ir::IRInstruction& instr, std::uint32_t slot, double val,
+                        ConstantKnownMap& known) {
+    const auto bits = std::bit_cast<std::uint64_t>(val);
+    instr.opcode = aura::ir::IROpcode::ConstF64;
+    instr.operands = {slot, static_cast<std::uint32_t>(bits & 0xFFFFFFFFu),
+                      static_cast<std::uint32_t>(bits >> 32), 0};
+    known.erase(slot);
+}
+
+static void fold_int_arith(aura::ir::IRInstruction& instr, std::uint32_t slot, std::int64_t a,
+                           std::int64_t b, int kind, ConstantKnownMap& known) {
+    std::int64_t next = 0;
+    const bool ov = kind == 0   ? __builtin_add_overflow(a, b, &next)
+                    : kind == 1 ? __builtin_sub_overflow(a, b, &next)
+                                : __builtin_mul_overflow(a, b, &next);
+    if (ov || !aura::compiler::types::fits_fixnum(next)) {
+        const double da = static_cast<double>(a);
+        const double db = static_cast<double>(b);
+        const double r = kind == 0 ? da + db : kind == 1 ? da - db : da * db;
+        replace_f64(instr, slot, r, known);
+    } else {
+        replace(instr, slot, next, known);
+    }
+}
+
 // ── constant_fold_block — pure per-block folder ──────────────
 //
 // Same logic as the legacy `ConstantFoldingWrap::fold_block`,
@@ -109,9 +139,17 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
     for (auto& instr : block.instructions) {
         auto& ops = instr.operands;
         switch (instr.opcode) {
-            case aura::ir::IROpcode::ConstI64:
-                known[ops[0]] = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
+            case aura::ir::IROpcode::ConstI64: {
+                const auto val = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
+                // Issue #4462: do not record an integer the executor cannot box.
+                if (!aura::compiler::types::fits_fixnum(val)) {
+                    replace_f64(instr, ops[0], static_cast<double>(val), known);
+                    ++folded;
+                } else {
+                    known[ops[0]] = val;
+                }
                 break;
+            }
             case aura::ir::IROpcode::ConstBool:
                 // Issue #1098: high-bit tag so ints 3/7 stay pure integers.
                 known[ops[0]] = make_tagged_bool(ops[1] != 0);
@@ -134,7 +172,7 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                 // Issue #1098: never arithmetically fold tagged bools.
                 if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
                     !is_tagged_bool(it_b->second)) {
-                    replace(instr, ops[0], it_a->second + it_b->second, known);
+                    fold_int_arith(instr, ops[0], it_a->second, it_b->second, 0, known);
                     ++folded;
                 }
                 break;
@@ -143,7 +181,7 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
                 if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
                     !is_tagged_bool(it_b->second)) {
-                    replace(instr, ops[0], it_a->second - it_b->second, known);
+                    fold_int_arith(instr, ops[0], it_a->second, it_b->second, 1, known);
                     ++folded;
                 }
                 break;
@@ -152,7 +190,7 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
                 if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
                     !is_tagged_bool(it_b->second)) {
-                    replace(instr, ops[0], it_a->second * it_b->second, known);
+                    fold_int_arith(instr, ops[0], it_a->second, it_b->second, 2, known);
                     ++folded;
                 }
                 break;
@@ -163,9 +201,19 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                     !is_tagged_bool(it_b->second)) {
                     // Don't fold division by zero — the runtime needs
                     // to trap. Leave the IR as-is so the interpreter
-                    // hits the actual Div opcode.
-                    if (it_b->second != 0) {
-                        replace(instr, ops[0], it_a->second / it_b->second, known);
+                    // hits the actual Div opcode. INT64_MIN/-1 stays on
+                    // that path too (pre-existing).
+                    const auto a = it_a->second;
+                    const auto b = it_b->second;
+                    const bool min_div = a == std::numeric_limits<std::int64_t>::min() &&
+                                         b == static_cast<std::int64_t>(-1);
+                    if (b != 0 && !min_div) {
+                        const auto q = a / b;
+                        if (aura::compiler::types::fits_fixnum(q))
+                            replace(instr, ops[0], q, known);
+                        else
+                            replace_f64(instr, ops[0],
+                                        static_cast<double>(a) / static_cast<double>(b), known);
                         ++folded;
                     }
                 }

@@ -390,7 +390,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 try {
                     if (is_float)
                         return types::make_float(std::stod(num_str));
-                    return types::make_int(std::stoll(num_str));
+                    return types::make_int_or_promote(std::stoll(num_str));
                 } catch (const std::out_of_range&) {
                     // [SILENCE-PRIM-#615] structured error path (#2480).
                     return make_primitive_error(string_heap, error_values,
