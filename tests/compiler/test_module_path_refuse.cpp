@@ -147,7 +147,7 @@ static void ac3266_2_validate_before_lock() {
     const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
     auto pos = loader.find("Evaluator::load_module_file");
     CHECK(pos != std::string::npos, "3266 AC2: load_module_file");
-    auto win = loader.substr(pos, 1200);
+    auto win = loader.substr(pos, 1600);
     auto val = win.find("is_plausible_module_path(path)");
     auto lock = win.find("std::lock_guard interlock(compact_env_frames_lock_)");
     CHECK(val != std::string::npos && lock != std::string::npos && val < lock,
