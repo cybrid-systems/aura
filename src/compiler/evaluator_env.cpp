@@ -34,6 +34,8 @@ namespace aura::compiler {
 // 1 = Soft (compat/debug): legacy materialize + GC walk continue.
 namespace {
     std::atomic<int> g_envframe_dual_path_desync_mode{0};
+    // Issue #4464: #2116 capture desync checks. Once per snapshot build.
+    std::atomic<std::uint64_t> g_capture_dual_diverge_checks{0};
 } // namespace
 
 using types::EvalValue;
@@ -201,6 +203,39 @@ void Evaluator::inject_envframe_dual_path_desync_for_test(EnvId id) noexcept {
     // Length desync: push only on string path (bindings_ longer than
     // bindings_symid_) so ensure_dual_path_consistent() fails.
     env_frames_[id].bindings_.emplace_back("__desync_inject__", make_int(0));
+    // Issue #4464: a snapshot of the pre-inject frame would hide this
+    // desync on the #4350 fast path. Drop it under the shard lock
+    // (cap_snap_mtx_ is a leaf, same order as alloc_env_frame).
+    std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+    cap_snap_cache_.erase(id);
+}
+
+std::uint64_t Evaluator::capture_dual_diverge_checks_for_test() noexcept {
+    return g_capture_dual_diverge_checks.load(std::memory_order_relaxed);
+}
+
+// Issue #2116 / #4464: length + content desync of bindings_ vs
+// bindings_symid_. Same three checks as ensure_dual_path_consistent,
+// without its counter bumps. materialize_call_env's legacy path still
+// bumps dual_path_desync_hard_fail_total / soft_continue when this
+// returns true and the snapshot is refused.
+static bool capture_frame_dual_diverges(const EnvFrame& fr) noexcept {
+    g_capture_dual_diverge_checks.fetch_add(1, std::memory_order_relaxed);
+    if (fr.bindings_.size() != fr.bindings_symid_.size())
+        return true;
+    if (fr.bindings_linear_ownership_state_.size() != fr.bindings_symid_.size())
+        return true;
+    if (!fr.pool_ || fr.bindings_.size() != fr.bindings_symid_.size())
+        return false;
+    const std::size_t n = fr.bindings_symid_.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        if (fr.bindings_[i].second != fr.bindings_symid_[i].second)
+            return true;
+        const std::string_view expected = fr.pool_->resolve(fr.bindings_symid_[i].first);
+        if (!expected.empty() && fr.bindings_[i].first != expected)
+            return true;
+    }
+    return false;
 }
 
 // Depth guard: protects Env::lookup against cyclic parent chains
@@ -1268,6 +1303,11 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
                 break;
             }
         if (!has_linear) {
+            // Issue #4464: decide #2116 desync once, under the lock this
+            // copy already holds. A diverging frame is not cached, so
+            // materialize_call_env falls through to the hard/soft gate.
+            if (capture_frame_dual_diverges(cfr))
+                return nullptr;
             auto ns = std::make_shared<CapSnapshot>();
             ns->bindings_symid_ = cfr.bindings_symid_;
             ns->bindings_ = cfr.bindings_;
@@ -1312,33 +1352,23 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // below keeps exact #1539 per-call states). Stale closures skip the
     // fast path: the legacy frame gates below keep their exact observe
     // and safe-fallback faces.
-    // Issue #2116: length / content desync must reach the hard/soft
-    // gate below. The snapshot fast path returns before that gate, so
-    // an injected desync never bumps hard_fail or soft++.
-    auto capture_dual_diverges = [&](EnvId id) -> bool {
+    // Issue #2116 / #4464: content parity (pool resolve + string compare
+    // per binding) runs once, inside cap_snap_for_frame, when the
+    // snapshot is built. The hot path only compares the three array
+    // lengths — O(1), so a top-level call does not walk every define.
+    // A later length drift (rebind, inject) must not reuse the snapshot;
+    // the legacy gate below still bumps hard_fail or soft++.
+    auto capture_len_diverges = [&](EnvId id) -> bool {
         if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >= env_frames_.size())
             return false;
         std::shared_lock<std::shared_mutex> rlock(env_frame_shards_[env_frame_shard_index(id)].mu);
         const EnvFrame& fr = env_frames_[id];
-        if (fr.bindings_.size() != fr.bindings_symid_.size())
-            return true;
-        if (fr.bindings_linear_ownership_state_.size() != fr.bindings_symid_.size())
-            return true;
-        if (!fr.pool_ || fr.bindings_.size() != fr.bindings_symid_.size())
-            return false;
-        const std::size_t n = fr.bindings_symid_.size();
-        for (std::size_t i = 0; i < n; ++i) {
-            if (fr.bindings_[i].second != fr.bindings_symid_[i].second)
-                return true;
-            const std::string_view expected = fr.pool_->resolve(fr.bindings_symid_[i].first);
-            if (!expected.empty() && fr.bindings_[i].first != expected)
-                return true;
-        }
-        return false;
+        return fr.bindings_.size() != fr.bindings_symid_.size() ||
+               fr.bindings_linear_ownership_state_.size() != fr.bindings_symid_.size();
     };
-    const bool dual_diverges = capture_dual_diverges(cl.env_id);
+    const bool len_diverges = capture_len_diverges(cl.env_id);
     std::shared_ptr<const CapSnapshot> snap;
-    if (!dual_diverges && cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size())
+    if (!len_diverges && cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size())
         snap = cap_snap_for_frame(cl.env_id);
     if (snap && !epoch_or_env_stale) {
         Env ne;

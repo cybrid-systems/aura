@@ -25,6 +25,7 @@
 #include <vector>
 
 import std;
+import aura.core.ast;
 import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -34,6 +35,7 @@ namespace {
 using aura::compiler::Closure;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::Env;
 using aura::compiler::EnvId;
 using aura::compiler::Evaluator;
 using aura::compiler::NULL_ENV_ID;
@@ -163,6 +165,61 @@ static void ac4_query() {
     CHECK(href(cs, "dual-path-desync-policy-mode") == 0, "mode Hard");
 }
 
+// Issue #4464: the #2116 check used to walk every capture binding on
+// every call, in front of the #4350 snapshot. It now runs once, when
+// that snapshot is built. A later inject still reaches the hard gate.
+static void ac6_check_once_per_snapshot() {
+    std::println("\n--- AC6 (#4464): dual-diverges check is once per snapshot ---");
+    Evaluator::reset_envframe_dual_path_desync_mode_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = metrics_of(ev);
+    CHECK(m != nullptr, "metrics");
+    if (!m)
+        return;
+
+    aura::ast::StringPool pool;
+    Env src;
+    src.set_pool(&pool);
+    constexpr int kBinds = 400;
+    for (int i = 0; i < kBinds; ++i)
+        src.bind(std::format("pad{}", i), aura::compiler::types::make_int(i));
+    const EnvId id = ev.alloc_env_frame_from_env(src);
+    CHECK(id != NULL_ENV_ID, "frame");
+    CHECK(ev.env_frame(id).ensure_dual_path_consistent(), "frame consistent");
+
+    Closure cl;
+    cl.env_id = id;
+    cl.pool = &pool;
+    cl.bridge_epoch = ev.current_bridge_epoch();
+
+    const auto checks0 = Evaluator::capture_dual_diverge_checks_for_test();
+    const auto hard0 = m->dual_path_desync_hard_fail_total.load();
+    const void* first = nullptr;
+    const void* last = nullptr;
+    for (int i = 0; i < 50; ++i) {
+        auto ne = ev.materialize_call_env(cl);
+        if (i == 0) {
+            first = ne.cap_snapshot().get();
+            auto v = ne.lookup("pad399");
+            CHECK(v && is_int(*v) && as_int(*v) == 399, "capture pad399 via snapshot");
+        }
+        if (i == 49)
+            last = ne.cap_snapshot().get();
+    }
+    CHECK(first != nullptr && first == last, "one snapshot across 50 calls");
+    CHECK(Evaluator::capture_dual_diverge_checks_for_test() - checks0 == 1,
+          "one dual check for 50 calls");
+    CHECK(m->dual_path_desync_hard_fail_total.load() == hard0, "clean frame: no hard_fail");
+
+    ev.inject_envframe_dual_path_desync_for_test(id);
+    auto ne = ev.materialize_call_env(cl);
+    CHECK(ne.bindings().empty(), "post-inject hard: empty string bindings");
+    CHECK(ne.bindings_symid().empty(), "post-inject hard: empty symid bindings");
+    CHECK(!ne.cap_snapshot(), "post-inject: snapshot refused");
+    CHECK(m->dual_path_desync_hard_fail_total.load() == hard0 + 1, "post-inject hard_fail++");
+}
+
 static void ac5_source() {
     std::println("\n--- AC5: source wiring ---");
     auto env = read_file("src/compiler/evaluator_env.cpp");
@@ -188,6 +245,7 @@ int run_test_dual_path_desync_hard_fail() {
     ac3_soft_mode();
     ac4_query();
     ac5_source();
+    ac6_check_once_per_snapshot();
     Evaluator::reset_envframe_dual_path_desync_mode_for_test();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

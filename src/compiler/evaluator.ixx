@@ -3708,6 +3708,9 @@ public:
     [[nodiscard]] static bool envframe_dual_path_desync_is_hard() noexcept;
     static void reset_envframe_dual_path_desync_mode_for_test() noexcept;
     void inject_envframe_dual_path_desync_for_test(EnvId id) noexcept;
+    // Issue #4464: how many times the #2116 capture desync check ran.
+    // Snapshot build only — a per-call walk grows this with the call count.
+    [[nodiscard]] static std::uint64_t capture_dual_diverge_checks_for_test() noexcept;
     // Issue #1638: mutation_log compact at boundary exit success path.
     // Delegates to FlatAST::compact_mutation_log() (shrink_to_fit on
     // mutation_log_) and bumps mutation_log_compact_bytes_saved by
