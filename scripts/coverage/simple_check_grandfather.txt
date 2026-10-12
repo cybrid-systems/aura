@@ -456,3 +456,5 @@ check_escape_soa_no_flat_4262.py
 scripts/coverage/checks/check_escape_soa_no_flat_4262.py
 check_primfn_no_std_function_4261.py
 scripts/coverage/checks/check_primfn_no_std_function_4261.py
+check_prim_shadow_eval_current_4477.py
+scripts/coverage/checks/check_prim_shadow_eval_current_4477.py

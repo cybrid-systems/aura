@@ -54,12 +54,27 @@
 //   AC20: repeated Path B pick-best calls with fresh args -> fresh max each
 //   AC21: set-code + eval-current session shape — replay parity + freshness
 //   AC22: source + linter wiring
+//
+// Issue #4477 — a user top-level define (or module export) whose name is also
+// a registered primitive (e.g. check) reverted to the primitive after
+// set-code + eval-current: the #4273 blanket drop unbound EVERY top_
+// prim-shadowing binding — once inside set-code, and again after every
+// eval-current walk — so the first reload silently rerouted (check ...)
+// call sites to the registered primitive (printed 1, not the user line).
+//
+//   AC24: user define keeps shadowing check across set-code + eval-current
+//         (issue repro shape, 42 before AND after); a prim-name define
+//         INSIDE the set-code'd source still falls through to the prim
+//         (#4273 AC23 parity kept)
+//   AC25: module export keeps shadowing check across set-code + eval-current
+//   AC26: source + linter wiring
 
 #include "test_harness.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -651,6 +666,90 @@ static void ac23_pick_best_prim_shadow_4273() {
           "AC23: serve emit_exec_result for soft Error status");
 }
 
+// Issue #4477 user-define face, service path. A user VALUE define shadowing
+// the check primitive must keep precedence across set-code + eval-current:
+// if the reload dropped the binding, (check ...) would re-resolve to the
+// registered primitive and return 1; with the binding kept, the shadowed
+// value is called and the eval errors instead. (A pre-reload FUNCTION
+// define keeps its binding too, but calling it across set-code hits the
+// pre-existing IR closure invalidation face — set-code refuses stale IR
+// closures of ANY name, prim or not — so the value shape isolates pure
+// precedence here; the callable function face runs file-mode in
+// tests/suite/prim_shadow_eval_current_4477.aura.)
+static void ac24_user_define_prim_shadow_4477() {
+    std::println("\n--- #4477 AC24: user define shadows check across set-code + eval-current ---");
+    CompilerService cs;
+    CHECK(cs.eval("(define check 42)").has_value(), "AC24: user (define check 42) binds");
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(),
+          "AC24: set-code installs fresh workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC24: eval-current completes");
+    auto after = cs.eval("(check \"after\" #t)");
+    CHECK(after.has_value() && aura::compiler::types::is_int(*after) &&
+              aura::compiler::types::as_int(*after) == 42,
+          "AC24: shadowed check stays user-bound across reload (constant-call 42; "
+          "a dropped binding would reroute to the prim and return 1)");
+    auto f = cs.eval("(f 7)");
+    CHECK(f.has_value() && aura::compiler::types::is_int(*f) &&
+              aura::compiler::types::as_int(*f) == 7,
+          "AC24: set-code'd define f is live");
+    // #4273 parity (AC23): a prim-name define inside the set-code'd source
+    // is walk-installed, so it still falls through to the prim.
+    CHECK(cs.eval("(set-code \"(define > 42) (define (g x) (+ x 1))\")").has_value(),
+          "AC24: set-code with (define > 42)");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC24: eval-current with workspace >");
+    auto gt = cs.eval("(> 3 1)");
+    CHECK(gt.has_value() && aura::compiler::types::is_bool(*gt) &&
+              aura::compiler::types::as_bool(*gt),
+          "AC24: walk-installed prim-name define still resolves to the prim (#4273 kept)");
+}
+
+// Issue #4477 module face: (require "m" all:) exports check into top_; the
+// export must keep shadowing the check primitive across set-code +
+// eval-current (aura-kernel-sink load-order dependent face).
+static void ac25_module_export_prim_shadow_4477() {
+    std::println(
+        "\n--- #4477 AC25: module export shadows check across set-code + eval-current ---");
+    namespace fs = std::filesystem;
+    auto tmp = fs::temp_directory_path() / "aura_4477_mod";
+    fs::create_directories(tmp);
+    {
+        std::ofstream out(tmp / "m.aura");
+        CHECK(static_cast<bool>(out), "AC25: module file writable");
+        out << "(export check)\n";
+        out << "(define (check name ok) 43)\n";
+    }
+    setenv("AURA_SANDBOX", "off", 1);
+    CompilerService cs;
+    const auto req_src = "(require \"" + (tmp / "m.aura").string() + "\" all:)";
+    auto req = cs.eval(req_src);
+    CHECK(req.has_value() && !aura::compiler::types::is_error(*req), "AC25: require module export");
+    auto before = cs.eval("(check \"mod\" #t)");
+    CHECK(before.has_value() && aura::compiler::types::is_int(*before) &&
+              aura::compiler::types::as_int(*before) == 43,
+          "AC25: module export shadows prim before seed (43, not prim 1)");
+    CHECK(cs.eval("(set-code \"(define (h x) (* x 3))\")").has_value(), "AC25: seed workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC25: eval-current completes");
+    auto after = cs.eval("(check \"mod2\" #t)");
+    CHECK(after.has_value() && aura::compiler::types::is_int(*after) &&
+              aura::compiler::types::as_int(*after) == 43,
+          "AC25: module export still shadows prim after set-code + eval-current (#4477)");
+    fs::remove_all(tmp);
+}
+
+// Issue #4477 source + linter wiring: the scoped shadow drop lives in the
+// eval-current prim body, set-code no longer drops pre-existing shadows,
+// and the #4477 linter is wired into build.py.
+static void ac26_source_gate_4477() {
+    std::println("\n--- #4477 AC26: source + linter wiring ---");
+    const auto evp = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(evp.find("Issue #4477") != std::string::npos, "AC26: eval primitives cite #4477");
+    CHECK(evp.find("ws_prim_defines") != std::string::npos,
+          "AC26: eval-current scopes the shadow drop to workspace-defined prim names");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_prim_shadow_eval_current_4477") != std::string::npos,
+          "AC26: build.py wires check_prim_shadow_eval_current_4477.py");
+}
+
 } // namespace
 
 
@@ -679,6 +778,9 @@ int run_test_primcall_narg() {
     ac21_pick_best_session_replay_parity();
     ac22_source_gate_4265();
     ac23_pick_best_prim_shadow_4273();
+    ac24_user_define_prim_shadow_4477();
+    ac25_module_export_prim_shadow_4477();
+    ac26_source_gate_4477();
     std::println("\n=== #2576+#4175+#4177+#4232+#4265+#4273: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;

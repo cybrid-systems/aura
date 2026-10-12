@@ -310,21 +310,19 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // or (typecheck-status) serves the pre-swap result (stale #t for
                 // an ill-typed replacement → safe-refactor reports 'applied').
                 ev.invalidate_typecheck_report_cache();
-                // Issue #4273: prior workspace (define > ...) left top_
-                // shadows that poison Path B pick-best
+                // Issue #4273 originally dropped every top_ binding whose
+                // name is a registered primitive here so stale shadows
+                // could not poison Path B pick-best after a reload
                 // (type error: cannot call: > / soft_mismatch:-999999).
-                // Drop bindings whose names are registered primitives so
-                // lookup falls through to the prim table again. Prelude
-                // std bindings (make-hash etc.) are not prims and stay.
-                {
-                    std::vector<std::string> shadowed;
-                    for (auto& [name, _val] : ev.top_env().bindings_with_names()) {
-                        if (ev.top_env().lookup_primitive(name))
-                            shadowed.push_back(name);
-                    }
-                    for (auto& n : shadowed)
-                        (void)ev.top_env().unbind_local(n);
-                }
+                // Issue #4477: set-code swaps the workspace SOURCE only —
+                // the previous program stays authoritative (its bindings,
+                // including user defines and module exports that shadow a
+                // primitive, stay live) until eval-current walks the new
+                // source. eval-current scopes its #4273 shadow drop to
+                // names the walked workspace itself defines, so the
+                // blanket drop here is gone: dropping pre-existing shadows
+                // at install time silently rerouted calls like (check ...)
+                // to the primitive after the first reload.
                 ev.coverage_counters_[0]++;
                 ev.coverage_counters_[5]++;
                 if (a.empty() || !is_string(a[0])) {
@@ -1119,14 +1117,50 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Issue #4273: drop prim shadows installed by this workspace walk
         // (define > / null? / list) so Soft Path B pick-best after
         // set-code scoring still resolves language prims.
+        // Issue #4477: scoped to names the walked workspace itself defines
+        // (top-level Define heads in the expanded flat, value or lambda).
+        // The historical blanket drop also unbound pre-existing user
+        // defines and module exports that legitimately shadow a primitive
+        // (e.g. check), so the first set-code + eval-current silently
+        // rerouted their call sites to the primitive. Bindings no
+        // workspace define carries — the user's own top-level defines and
+        // module exports — keep shadowing; a name the reloaded workspace
+        // defines still falls through to the prim table (#4273 AC23).
         {
-            std::vector<std::string> shadowed;
-            for (auto& [name, _val] : ev.top_env().bindings_with_names()) {
-                if (ev.top_env().lookup_primitive(name))
-                    shadowed.push_back(name);
+            std::vector<std::pair<std::string, aura::ast::SymId>> ws_prim_defines;
+            if (expanded != aura::ast::NULL_NODE) {
+                const auto rv = flat->get(expanded);
+                if (rv.tag == aura::ast::NodeTag::Define) {
+                    if (rv.sym_id != aura::ast::INVALID_SYM) {
+                        auto nm = std::string(pool->resolve(rv.sym_id));
+                        if (!nm.empty() && ev.top_env().lookup_primitive(nm))
+                            ws_prim_defines.emplace_back(std::move(nm), rv.sym_id);
+                    }
+                } else {
+                    for (auto child : rv.children) {
+                        if (child == aura::ast::NULL_NODE || child >= flat->size() ||
+                            flat->is_free_slot(child))
+                            continue;
+                        const auto cv = flat->get(child);
+                        if (cv.tag != aura::ast::NodeTag::Define ||
+                            cv.sym_id == aura::ast::INVALID_SYM)
+                            continue;
+                        auto nm = std::string(pool->resolve(cv.sym_id));
+                        if (!nm.empty() && ev.top_env().lookup_primitive(nm))
+                            ws_prim_defines.emplace_back(std::move(nm), cv.sym_id);
+                    }
+                }
             }
-            for (auto& n : shadowed)
+            // Dual-write rollback: unbind_local removes the string mirror
+            // only (Issue #2872); the walk re-keyed bindings_symid_ to the
+            // workspace pool (Issue #2868), and the IR/file executor
+            // resolves heads by SymId — unbind_local_symid with the same
+            // workspace-pool SymId or the reload keeps resolving the stale
+            // shadow on the SymId path.
+            for (const auto& [n, sym] : ws_prim_defines) {
                 (void)ev.top_env().unbind_local(n);
+                (void)ev.top_env().unbind_local_symid(sym);
+            }
         }
         return *result;
     });

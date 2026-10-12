@@ -5373,6 +5373,20 @@ def cmd_lint():
             "Issue #4263 IR SoA column_slab upstream linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_slab_upstream_4263.py"
         )
         return r
+    # Issue #4477: user define / module export shadowing a primitive (check)
+    # must survive set-code + eval-current. set-code drops nothing; eval-
+    # current scopes the #4273 shadow drop to walk-installed bindings.
+    # Extends test_primcall_narg AC24-AC26; #4273 AC23 parity kept. No invent.
+    psec4477_script = COVERAGE_CHECKS / "check_prim_shadow_eval_current_4477.py"
+    if not psec4477_script.exists():
+        fail(f"missing {psec4477_script}")
+        return 1
+    r = run([sys.executable, str(psec4477_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4477 prim shadow eval-current linter failed — run python3 scripts/coverage/checks/check_prim_shadow_eval_current_4477.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay

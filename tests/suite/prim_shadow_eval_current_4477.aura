@@ -1,0 +1,69 @@
+; Issue #4477 — a user top-level define that shadows a primitive (check)
+; reverted to the primitive after set-code + eval-current. The #4273 blanket
+; drop unbound every top_ prim-shadowing binding (once in set-code, once
+; after every eval-current walk), so the first reload silently rerouted
+; (check ...) call sites to the registered primitive (printed 1, not the
+; user-check line). aura-kernel-sink saw the same face with a user-module
+; export after the workspace was seeded.
+;
+; Fix: set-code drops nothing; eval-current scopes the #4273 shadow drop to
+; prim-named top-level Define heads in the walked workspace (dual-mirror
+; unbind: string + SymId).
+;
+; AC1 user top-level define keeps shadowing check across set-code +
+;     eval-current (the issue repro, file mode — callable function face)
+; AC2 user module export keeps shadowing a primitive (check=) across
+;     set-code + eval-current (aura-kernel-sink seeded-workspace face)
+; AC3 reloaded-workspace prim-name defines still resolve to the prim
+;     (#4273 AC23 parity kept)
+;
+; No std/test require here: the lazy oneshot std prelude reroutes reloaded
+; prim-shadowing CALL heads through its own tables on main (pre-existing,
+; outside #4477) — the faces below assert the #4477 semantics directly.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; ── AC1: user top-level define shadows the check primitive ─────────
+(display "AC1 user define shadows prim across set-code + eval-current\n")
+(define (check name ok) (display (list "user-check" name ok)) (newline) 42)
+(check "before" #t)
+(assert! (= (check "before" #t) 42) "user-check before reload (42, not prim 1)")
+(set-code "(define (f x) x)")
+(eval-current)
+(assert! (= (check "after" #t) 42) "user-check after reload (42, not prim 1)")
+(assert! (= (f 7) 7) "set-code'd define f is live")
+
+; ── AC2: required module export shadows a primitive ────────────────
+(display "AC2 module export shadows prim across set-code + eval-current\n")
+(write-file "/tmp/aura4477_mod.aura"
+  (string-append "(export check=)\n"
+                 "(define (check= name ok) 43)\n"))
+(require "/tmp/aura4477_mod.aura" all:)
+(assert! (= (check= "mod" #t) 43) "module check= shadows prim after require (43)")
+(set-code "(define (h x) (* x 3))")
+(eval-current)
+(assert! (= (check= "mod2" #t) 43) "module check= still shadows prim after reload (43)")
+(assert! (= (h 5) 15) "set-code'd define h is live")
+
+; ── AC3: workspace-defined prim names still fall through to the prim ──
+(display "AC3 reloaded workspace prim-name define resolves to prim\n")
+(set-code "(define > 42) (define (g x) (+ x 1))")
+(eval-current)
+(assert! (> 3 1) "walk-installed > still resolves to the prim (#4273 kept)")
+(assert! (= (g 1) 2) "set-code'd define g is live")
+
+(if (= *fails* 0)
+    (begin (display "OK-4477 prim shadow survives reload\n"))
+    (begin
+      (display "FAIL-4477 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))
