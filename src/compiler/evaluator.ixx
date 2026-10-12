@@ -3061,6 +3061,12 @@ public:
     void set_require_failure_is_diagnostic(bool on) noexcept {
         require_failure_is_diagnostic_ = on;
     }
+    // Issue #4471: file-mode oneshot. The top-level form that was executing
+    // when eval returned a diagnostic. Its source location can name an
+    // earlier procedure body; main resumes after this form.
+    [[nodiscard]] aura::diag::SourceLocation file_resume_form() const noexcept {
+        return file_resume_form_;
+    }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
         mark_define_dirty_fn_ = std::move(fn);
@@ -5772,6 +5778,8 @@ private:
     // Nested begins and module bodies keep the error value (#2570).
     const ast::FlatAST* file_diag_root_flat_ = nullptr;
     ast::NodeId file_diag_root_id_ = ast::NULL_NODE;
+    // Issue #4471: start of the file-root child that returned the diagnostic.
+    aura::diag::SourceLocation file_resume_form_{};
     // Set by load_module_file on cannot-resolve / parse error. The require
     // form reads it once. Cleared at the next load.
     std::string last_module_load_failure_;

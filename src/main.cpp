@@ -3243,39 +3243,79 @@ int main(int argc, char* argv[]) {
         // effects and, after set-code, rebuilds closures so later calls
         // throw invalid closure (Issue #4355).
         //
-        // A runtime diagnostic carries the file line/col of the form that
-        // failed. Print it once against the whole program, then evaluate
-        // only forms that start after that spot. A parse failure happens
-        // before any form runs, so the historical per-expression walk
-        // still covers it (and keeps source carets on diag:parse-error-*).
+        // Issue #4471: a runtime error inside a procedure is located at
+        // that body, which may be an earlier define. Resume after the
+        // top-level form that was executing (file_resume_form), not after
+        // the form that contains the diagnostic. Print the first diagnostic
+        // once against the whole program. Later forms are evaluated alone,
+        // so their locations are shifted back onto all_input. A parse
+        // failure happens before any form runs, so the historical
+        // per-expression walk still covers it (diag:parse-error-*).
+        struct FormAnchor {
+            std::size_t offset = std::string::npos;
+            std::uint32_t line = 1;
+            std::uint32_t col = 1;
+        };
+        std::vector<FormAnchor> anchors(exprs.size());
+        {
+            std::size_t search = 0;
+            for (std::size_t i = 0; i < exprs.size(); ++i) {
+                const auto pos = all_input.find(exprs[i], search);
+                if (pos == std::string::npos)
+                    break;
+                std::uint32_t ln = 1;
+                std::uint32_t cl = 1;
+                for (std::size_t k = 0; k < pos; ++k) {
+                    if (all_input[k] == '\n') {
+                        ++ln;
+                        cl = 1;
+                    } else {
+                        ++cl;
+                    }
+                }
+                anchors[i] = {pos, ln, cl};
+                search = pos + exprs[i].size();
+            }
+        }
+        auto offset_of = [&](aura::diag::SourceLocation loc) -> std::size_t {
+            if (!loc.valid())
+                return 0;
+            std::size_t off = 0;
+            std::uint32_t line = 1;
+            for (std::size_t k = 0; k < all_input.size() && line < loc.line; ++k) {
+                if (all_input[k] == '\n')
+                    ++line;
+                off = k + 1;
+            }
+            if (loc.column > 0)
+                off += static_cast<std::size_t>(loc.column - 1);
+            if (off > all_input.size())
+                off = all_input.size();
+            return off;
+        };
         const auto& diag = r.error();
         const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
                                 diag.kind == aura::diag::ErrorKind::UnexpectedToken ||
                                 diag.kind == aura::diag::ErrorKind::UnterminatedSExpr;
         std::size_t resume_at = 0;
+        bool file_resume = false;
         if (!parse_fail && diag.location.valid()) {
-            std::size_t err_off = 0;
-            std::uint32_t line = 1;
-            for (std::size_t k = 0; k < all_input.size() && line < diag.location.line; ++k) {
-                if (all_input[k] == '\n')
-                    ++line;
-                err_off = k + 1;
-            }
-            if (diag.location.column > 0)
-                err_off += static_cast<std::size_t>(diag.location.column - 1);
-            std::size_t search = 0;
+            auto resume_loc = diag.location;
+            const auto stamped = cs.evaluator().file_resume_form();
+            if (stamped.valid())
+                resume_loc = stamped;
+            const std::size_t err_off = offset_of(resume_loc);
             for (std::size_t i = 0; i < exprs.size(); ++i) {
-                auto pos = all_input.find(exprs[i], search);
-                if (pos == std::string::npos)
+                if (anchors[i].offset == std::string::npos)
                     break;
-                if (pos <= err_off)
+                if (anchors[i].offset <= err_off)
                     resume_at = i + 1;
                 else
                     break;
-                search = pos + exprs[i].size();
             }
             std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
             err = true;
+            file_resume = true;
         }
         for (std::size_t i = resume_at; i < exprs.size(); ++i) {
             auto& e = exprs[i];
@@ -3285,7 +3325,18 @@ int main(int argc, char* argv[]) {
             e = e.substr(s);
             auto r2 = cs.eval(e);
             if (!r2) {
-                std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
+                if (file_resume && anchors[i].offset != std::string::npos &&
+                    r2.error().location.valid()) {
+                    auto d = r2.error();
+                    // Line 1 of a trimmed form is shifted by the form's
+                    // start column. Later lines keep their own columns.
+                    if (d.location.line == 1 && d.location.column > 0 && anchors[i].col > 0)
+                        d.location.column += anchors[i].col - 1;
+                    d.location.line += anchors[i].line - 1;
+                    std::println(std::cerr, "error: {}", d.format_with_source(all_input));
+                } else {
+                    std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
+                }
                 err = true;
             } else if (i + 1 == exprs.size() && !is_void(*r2))
                 std::println("{}", fmt_val(*r2, cs));
