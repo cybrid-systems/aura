@@ -1,0 +1,57 @@
+{
+  "issue": 4477,
+  "title": "Issue #4477: user define / module export shadowing a primitive reverts to the primitive after set-code + eval-current",
+  "ok": "OK #4477 prim_shadow_eval_current: set-code drops nothing; eval-current scopes the #4273 drop to walk-installed bindings",
+  "checks": [
+    {
+      "ac": "AC1-src",
+      "path": "src/compiler/evaluator_primitives_eval.cpp",
+      "contains": [
+        "Issue #4477",
+        "ws_prim_defines",
+        "lookup_primitive",
+        "unbind_local",
+        "Issue #4273"
+      ],
+      "forbid_contains": [
+        "Drop bindings whose names are registered primitives"
+      ]
+    },
+    {
+      "ac": "AC2-tests",
+      "path": "tests/compiler/test_primcall_narg.cpp",
+      "contains": [
+        "ac24_user_define_prim_shadow_4477",
+        "ac25_module_export_prim_shadow_4477",
+        "ac26_source_gate_4477",
+        "#4477"
+      ]
+    },
+    {
+      "ac": "AC2b-suite",
+      "path": "tests/suite/prim_shadow_eval_current_4477.aura",
+      "contains": [
+        "(define (check name ok) (display (list \"user-check\" name ok)) (newline) 42)",
+        "(assert! (= (check \"after\" #t) 42)",
+        "(assert! (= (check= \"mod2\" #t) 43)",
+        "(assert! (> 3 1)",
+        "OK-4477"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_prim_shadow_eval_current_4477",
+        "Issue #4477"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4477.cpp",
+        "docs/design/4477-prim-shadow.md"
+      ]
+    }
+  ]
+}
