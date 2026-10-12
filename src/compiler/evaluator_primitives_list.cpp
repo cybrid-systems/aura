@@ -589,6 +589,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             std::vector<EvalValue> mapped;
             mapped.reserve(cars.size());
+            // Issue #4480: cars/mapped are the only roots for the row results
+            // while the mapped procedure runs. The tree-walker safepoint
+            // marks envs and pinned temporaries only, so an unpinned
+            // accumulator lets a reclaim inside a nested user-procedure call
+            // freelist the already computed row pairs; the later row mints
+            // and this outer-chain build then recycle those slots while map
+            // still holds them — the returned list aliases live rows.
+            const Evaluator::TwVecPin pin_cars(cars);
+            const Evaluator::TwVecPin pin_mapped(mapped);
             for (const auto& car : cars)
                 mapped.push_back(apply_unary(a[0], car, true));
 

@@ -822,6 +822,24 @@ struct TwPinMany {
     TwPinMany(const TwPinMany&) = delete;
 };
 
+// Issue #4480: public root for primitive-local EvalValue vectors (map's
+// accumulator). Erases the matching entry so an unbalanced pop cannot
+// drop a foreign pin when nesting ever goes out of LIFO order.
+Evaluator::TwVecPin::TwVecPin(const std::vector<types::EvalValue>& v)
+    : v_(&v) {
+    g_tw_vecs.push_back(&v);
+}
+Evaluator::TwVecPin::~TwVecPin() {
+    if (!v_)
+        return;
+    for (auto it = g_tw_vecs.rbegin(); it != g_tw_vecs.rend(); ++it) {
+        if (*it == v_) {
+            g_tw_vecs.erase(std::next(it).base());
+            break;
+        }
+    }
+}
+
 void Evaluator::maybe_reclaim_tw_unreachable() {
     // Issue #4474: dynamic triggers — after a mark, the next reclaim waits
     // for allocations proportional to the live set found (live/32, clamped
