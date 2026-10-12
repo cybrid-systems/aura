@@ -4957,6 +4957,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     return make_bool(true);
 }
 
+// Issue #4465: file mode. The cause string already names the primitive
+// ("vector-ref: index out of bounds", "car: not a pair").
+static EvalResult file_mode_escaped_primitive(Evaluator& ev, const EvalValue& err,
+                                              const aura::ast::FlatAST& f, aura::ast::NodeId form) {
+    std::string msg = ev.soft_error_message(err);
+    const auto nv = f.get(form);
+    const auto line = nv.line == 0 ? 1u : nv.line;
+    const auto col = nv.col == 0 ? 1u : nv.col;
+    return std::unexpected(Diagnostic{ErrorKind::TypeError, std::move(msg),
+                                      aura::diag::SourceLocation{line, col, 0}, form});
+}
+
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 // Issue #4454: trip the C-stack guard before the fat frame exists.
 // The body prologue is ~12KB (aarch64 `sub sp, #0x3060` plus the
@@ -4989,7 +5001,27 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         std::size_t& d;
         ~DepthGuard() { --d; }
     } guard{c_stack_depth};
-    return eval_flat_body(flat, pool, id, env);
+    // Issue #4465: arm only the outermost eval. Nested module eval keeps
+    // its error value so load_module_file still fail-closes (#2570).
+    const bool arm_file_diag = require_failure_is_diagnostic_ && file_diag_root_flat_ == nullptr;
+    if (arm_file_diag) {
+        file_diag_root_flat_ = &flat;
+        file_diag_root_id_ = id;
+    }
+    struct FileDiagGuard {
+        Evaluator* ev;
+        bool armed;
+        ~FileDiagGuard() {
+            if (!armed)
+                return;
+            ev->file_diag_root_flat_ = nullptr;
+            ev->file_diag_root_id_ = ast::NULL_NODE;
+        }
+    } file_diag_guard{this, arm_file_diag};
+    auto result = eval_flat_body(flat, pool, id, env);
+    if (arm_file_diag && result && is_error(*result) && !is_string(*result))
+        return file_mode_escaped_primitive(*this, *result, flat, id);
+    return result;
 }
 
 // Issue #4454: noinline so this ~12KB frame stays out of eval_flat.
@@ -7234,6 +7266,19 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     if (count == 0)
                         return EvalResult(make_void());
 
+                    // Issue #4465: file-mode root only. A primitive error that
+                    // escapes a direct child is a located diagnostic, so the
+                    // oneshot runner reports it and resumes later forms.
+                    // Issue #2570: abort begin on first-class error for every
+                    // other begin, so a module load does not continue.
+                    const bool file_root = require_failure_is_diagnostic_ &&
+                                           file_diag_root_flat_ == f && file_diag_root_id_ == v.id;
+                    auto finish_child = [&](EvalResult r, aura::ast::NodeId form) -> EvalResult {
+                        if (r && file_root && is_error(*r) && !is_string(*r))
+                            return file_mode_escaped_primitive(*this, *r, *f, form);
+                        return r;
+                    };
+
                     // Multiple defines at the *head* of a body → letrec semantics
                     // (mutual recursion + private free-var capture). Issue #2740 /
                     // #2739: if any define appears *after* a non-define expression
@@ -7345,10 +7390,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto child_node = f->get(cid);
                             if (!is_module_prologue(child_node))
                                 continue;
-                            auto r = eval_flat(*f, *p, cid, eval_env);
-                            if (!r)
-                                return r;
-                            if (r && is_error(*r) && !is_string(*r))
+                            auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
+                            if (!r || (is_error(*r) && !is_string(*r)))
                                 return r;
                         }
                         // Phase 1: pre-allocate cells for all defines
@@ -7506,18 +7549,17 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 continue;
                             if (is_module_prologue(child_node))
                                 continue; // #2766 Phase 0 already ran
-                            auto r = eval_flat(*f, *p, cid, eval_env);
-                            if (!r)
-                                return r;
-                            // Issue #2570: abort begin on first-class error
-                            // (e.g. nested (require …) module-load-failed) so
-                            // outer module load does not continue past a
-                            // silent half-import.
-                            if (r && is_error(*r) && !is_string(*r))
+                            auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
+                            if (!r || (is_error(*r) && !is_string(*r)))
                                 return r;
                         }
                         // TCO: last expression (if last is prologue, re-run is
                         // idempotent for export; require cache-hits).
+                        // Issue #4465: file root evals the last form so an
+                        // escaped error is reported at that form, not lost
+                        // to the tail call.
+                        if (file_root)
+                            return finish_child(eval_flat(*f, *p, last_expr, eval_env), last_expr);
                         current_id = last_expr;
                         continue;
                     }
@@ -7527,12 +7569,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         auto cid = v.child(i);
                         if (cid == aura::ast::NULL_NODE)
                             continue;
-                        auto r = eval_flat(*f, *p, cid, eval_env);
-                        if (!r)
-                            return r;
-                        // Issue #2570: abort begin on first-class error (parity
-                        // with multi-define phase 3).
-                        if (r && is_error(*r) && !is_string(*r))
+                        auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
+                        if (!r || (is_error(*r) && !is_string(*r)))
                             return r;
                     }
                     // Find last non-NULL child
@@ -7546,6 +7584,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     }
                     if (current_id == aura::ast::NULL_NODE)
                         return EvalResult(make_void());
+                    // Issue #2570: a non-file begin still tail-calls, and an
+                    // error value from that form aborts the caller. Issue
+                    // #4465: the file root reports it at this form instead.
+                    if (file_root)
+                        return finish_child(eval_flat(*f, *p, current_id, eval_env), current_id);
                     continue; // TCO: last expression in begin
                 }
                 case aura::ast::NodeTag::DefineModule: {

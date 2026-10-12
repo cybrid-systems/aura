@@ -320,6 +320,126 @@ static void ac4460_failed_require_continues() {
     CHECK(ok_run.out.find("42") != std::string::npos, "4460: successful require still binds");
 }
 
+// Issue #4465: a primitive error that escapes a top-level user call is one
+// located diagnostic. Later forms run. Exit status is 1. cs.eval keeps the
+// error value (#2570). display of that value still prints <unknown> (#4456).
+static void ac4465_escaped_primitive_continues() {
+    std::println("\n--- #4465: escaped primitive error is reported once ---");
+    CompilerService cs;
+    auto swallowed = cs.eval("(define (id x) x) (id (vector-ref (vector 1 2 3) 5))");
+    CHECK(swallowed.has_value() && is_error(*swallowed) && !is_string(*swallowed),
+          "4465: cs.eval keeps the error value");
+
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("#4465") != std::string::npos, "4465: cite");
+
+    const auto bin = aura_binary_4460();
+    CHECK(!bin.empty(), "4465: aura binary");
+    if (bin.empty())
+        return;
+
+    const char* face = "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0";
+    auto check_escape = [&](const char* path, const char* body, const char* cause,
+                            const char* tag) {
+        {
+            std::ofstream f(path);
+            f << body;
+        }
+        auto run = run_file_4460(bin, path, face);
+        if (run.rc != 1 || run.out.find("before") == std::string::npos ||
+            run.out.find("after") == std::string::npos ||
+            run.out.find("<error>") != std::string::npos || count_sub(run.err, cause) != 1) {
+            std::println(std::cerr, "{} rc {} out [{}] err [{}]", tag, run.rc, run.out, run.err);
+        }
+        CHECK(run.rc == 1, std::string(tag) + " exits 1");
+        CHECK(run.out.find("before") != std::string::npos, std::string(tag) + " ran before");
+        CHECK(run.out.find("after") != std::string::npos, std::string(tag) + " ran after");
+        CHECK(run.out.find("<error>") == std::string::npos, std::string(tag) + " no <error>");
+        CHECK(count_sub(run.err, cause) == 1, std::string(tag) + " cause once");
+        CHECK(run.err.find("error:") != std::string::npos, std::string(tag) + " located error");
+    };
+
+    check_escape("/tmp/aura-4465-id.aura",
+                 "(define (id x) x)\n"
+                 "(display \"before\")\n"
+                 "(id (vector-ref (vector 1 2 3) 5))\n"
+                 "(display \"after\")\n",
+                 "vector-ref: index out of bounds", "4465: id");
+    check_escape("/tmp/aura-4465-car.aura",
+                 "(define (id x) x)\n"
+                 "(display \"before\")\n"
+                 "(id (car (quote ())))\n"
+                 "(display \"after\")\n",
+                 "car: not a pair", "4465: car");
+    check_escape("/tmp/aura-4465-q.aura",
+                 "(define (q v) (vector-ref v 9))\n"
+                 "(display \"before\")\n"
+                 "(q (vector 1 2))\n"
+                 "(display \"after\")\n",
+                 "vector-ref: index out of bounds", "4465: return");
+    {
+        std::ofstream f("/tmp/aura-4465-main.aura");
+        f << "(define (id x) x)\n";
+        f << "(define (main) (id (vector-ref (vector 1 2 3) 5)) (display \"inside-after\"))\n";
+        f << "(display \"before\")\n";
+        f << "(main)\n";
+        f << "(display \"after\")\n";
+    }
+    auto main_run = run_file_4460(bin, "/tmp/aura-4465-main.aura", face);
+    CHECK(main_run.rc == 1, "4465: main exits 1");
+    CHECK(main_run.out.find("before") != std::string::npos, "4465: main ran before");
+    CHECK(main_run.out.find("after") != std::string::npos, "4465: main ran after");
+    CHECK(main_run.out.find("inside-after") == std::string::npos, "4465: body stops at the error");
+    CHECK(main_run.out.find("<error>") == std::string::npos, "4465: main no <error>");
+    CHECK(count_sub(main_run.err, "vector-ref: index out of bounds") == 1, "4465: main cause once");
+
+    {
+        std::ofstream f("/tmp/aura-4465-try.aura");
+        f << "(define (id x) x)\n";
+        f << "(display \"before\")\n";
+        f << "(try (id (vector-ref (vector 1 2 3) 5)) (catch (e) (display \"caught\")))\n";
+        f << "(display \"after\")\n";
+    }
+    auto try_run = run_file_4460(bin, "/tmp/aura-4465-try.aura", face);
+    CHECK(try_run.rc == 0, "4465: try exits 0");
+    CHECK(try_run.out.find("beforecaughtafter") != std::string::npos, "4465: try catches");
+    CHECK(try_run.err.find("vector-ref:") == std::string::npos, "4465: try does not report");
+
+    {
+        std::ofstream f("/tmp/aura-4465-def.aura");
+        f << "(define (id x) x)\n";
+        f << "(define y (id (vector-ref (vector 1 2 3) 5)))\n";
+        f << "(display \"after\")\n";
+    }
+    auto def_run = run_file_4460(bin, "/tmp/aura-4465-def.aura", face);
+    CHECK(def_run.rc == 0, "4465: define-group still exits 0");
+    CHECK(def_run.out == "after", "4465: define-group binds the error and continues");
+    CHECK(def_run.err.find("vector-ref:") == std::string::npos, "4465: define-group is silent");
+
+    {
+        std::ofstream f("/tmp/aura-4465-disp.aura");
+        f << "(define (q v) (vector-ref v 9))\n";
+        f << "(display \"before\")\n";
+        f << "(display (q (vector 1 2)))\n";
+        f << "(display \"after\")\n";
+    }
+    auto disp_run = run_file_4460(bin, "/tmp/aura-4465-disp.aura", face);
+    CHECK(disp_run.rc == 0, "4465: display of an error exits 0");
+    CHECK(disp_run.out == "before<unknown>after", "4465: display prints <unknown>");
+    CHECK(disp_run.err.find("vector-ref:") == std::string::npos,
+          "4465: display does not re-report");
+
+    {
+        std::ofstream f("/tmp/aura-4465-bare.aura");
+        f << "(display \"before\")\n";
+        f << "(vector-ref (vector 1 2 3) 5)\n";
+        f << "(display \"after\")\n";
+    }
+    auto bare_run = run_file_4460(bin, "/tmp/aura-4465-bare.aura", face);
+    CHECK(bare_run.rc == 0, "4465: bare primitive still exits 0");
+    CHECK(bare_run.out == "beforeafter", "4465: bare primitive still continues");
+}
+
 } // namespace
 
 int run_test_module_load_tail_export() {
@@ -330,6 +450,7 @@ int run_test_module_load_tail_export() {
     ac4_source_gate();
     ac5_prim_reexport_math();
     ac4460_failed_require_continues();
+    ac4465_escaped_primitive_continues();
     std::println("\n=== #2570: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

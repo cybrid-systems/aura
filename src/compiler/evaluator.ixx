@@ -5762,6 +5762,11 @@ private:
     Env* require_inject_env_ = nullptr;
     // Issue #4460: file-mode oneshot (see set_require_failure_is_diagnostic).
     bool require_failure_is_diagnostic_ = false;
+    // Issue #4465: outermost eval_flat while that flag is on. Only a direct
+    // child of this begin turns an escaped primitive error into a diagnostic.
+    // Nested begins and module bodies keep the error value (#2570).
+    const ast::FlatAST* file_diag_root_flat_ = nullptr;
+    ast::NodeId file_diag_root_id_ = ast::NULL_NODE;
     // Set by load_module_file on cannot-resolve / parse error. The require
     // form reads it once. Cleared at the next load.
     std::string last_module_load_failure_;
