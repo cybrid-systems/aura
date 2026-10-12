@@ -365,6 +365,12 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
             i = std::numeric_limits<std::int64_t>::min();
         else
             i = static_cast<std::int64_t>(d);
+        // Issue #4462: a saturated int64 is outside the fixnum domain.
+        // Keep the original float instead of aborting in make_int.
+        if (!types::fits_fixnum(i)) {
+            val = types::make_float(d);
+            return {};
+        }
         val = types::make_int(i);
         return {};
     }
@@ -387,7 +393,10 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
                         aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
                                                "coerce_value: string integer out of int64 range"));
                 }
-                val = types::make_int(static_cast<std::int64_t>(parsed));
+                const auto iv = static_cast<std::int64_t>(parsed);
+                // Issue #4462: in int64 but outside the fixnum domain.
+                val = types::fits_fixnum(iv) ? types::make_int(iv)
+                                             : types::make_float(static_cast<double>(iv));
                 return {};
             } catch (const std::exception&) {
                 return std::unexpected(aura::diag::Diagnostic(
@@ -491,7 +500,8 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
     for (const auto& v : args) {
         const std::int64_t op = coerce_one(v);
         std::int64_t next = 0;
-        if (__builtin_add_overflow(r, op, &next)) {
+        // Issue #4462: [2^62, 2^63) passes the int64 check and is not a fixnum.
+        if (__builtin_add_overflow(r, op, &next) || !types::fits_fixnum(next)) {
             double dr = static_cast<double>(r) + static_cast<double>(op);
             // finish remaining with float path from next arg
             // (restart from current position by consuming rest in float)
@@ -554,15 +564,23 @@ export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalVa
     if (args.size() == 1) {
         const std::int64_t a0 = coerce_one(args[0]);
         std::int64_t neg = 0;
-        if (__builtin_sub_overflow(static_cast<std::int64_t>(0), a0, &neg))
+        if (__builtin_sub_overflow(static_cast<std::int64_t>(0), a0, &neg) ||
+            !types::fits_fixnum(neg))
             return types::make_float(-static_cast<double>(a0));
         return types::make_int(neg);
     }
     std::int64_t r = coerce_one(args[0]);
+    if (!types::fits_fixnum(r)) {
+        double fr = static_cast<double>(r);
+        for (std::size_t j = 1; j < args.size(); ++j)
+            fr -= types::is_float(args[j]) ? types::as_float(args[j])
+                                           : static_cast<double>(coerce_one(args[j]));
+        return types::make_float(fr);
+    }
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::int64_t op = coerce_one(args[i]);
         std::int64_t next = 0;
-        if (__builtin_sub_overflow(r, op, &next)) {
+        if (__builtin_sub_overflow(r, op, &next) || !types::fits_fixnum(next)) {
             double fr = types::is_float(args[0]) ? types::as_float(args[0])
                                                  : static_cast<double>(coerce_one(args[0]));
             for (std::size_t j = 1; j < args.size(); ++j)
@@ -615,7 +633,7 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
     for (const auto& v : args) {
         const std::int64_t op = coerce_one(v);
         std::int64_t next = 0;
-        if (__builtin_mul_overflow(r, op, &next)) {
+        if (__builtin_mul_overflow(r, op, &next) || !types::fits_fixnum(next)) {
             double fr = 1.0;
             for (const auto& x : args)
                 fr *= types::is_float(x) ? types::as_float(x) : static_cast<double>(coerce_one(x));

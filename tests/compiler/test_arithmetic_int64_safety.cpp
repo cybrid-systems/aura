@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -57,10 +58,10 @@ std::string aura_binary() {
     return {};
 }
 
-CliRun run_aura_file(const std::string& bin, const std::string& src, const char* face) {
+CliRun run_aura_file(const std::string& bin, const std::string& src, const char* face,
+                     const char* outp = "/tmp/aura-4461-out.txt",
+                     const char* errp = "/tmp/aura-4461-err.txt") {
     CliRun r;
-    const char* outp = "/tmp/aura-4461-out.txt";
-    const char* errp = "/tmp/aura-4461-err.txt";
     std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT ";
     if (face && face[0] != '\0')
         cmd += face;
@@ -124,8 +125,66 @@ int main() {
         CHECK(is_int(*r) || is_float(*r), "large * is int or float");
     }
 
-    // #1150 large add used literals past the fixnum domain. make_int's hot
-    // contract aborts on those, so this live binary does not eval them.
+    // Issue #4462: integers outside the real fixnum domain promote to float.
+    // The domain is [-4999999999999999, 2^62-1]. -2^62 encodes as INT64_MIN
+    // and is not a fixnum. 2^62 aborts make_int unless it is promoted.
+    {
+        constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max() >> 1;
+        constexpr std::int64_t kTwo62 = kMax + 1;
+        constexpr std::int64_t kNegTwo62 = std::numeric_limits<std::int64_t>::min() >> 1;
+        auto exact_int = [&](const char* src, std::int64_t want, const char* msg) {
+            auto r = cs.eval(src);
+            CHECK(r && is_int(*r) && as_int(*r) == want, msg);
+        };
+        auto exact_float = [&](const char* src, double want, const char* msg) {
+            auto r = cs.eval(src);
+            CHECK(r && is_float(*r) && as_float(*r) == want, msg);
+        };
+        exact_int("4611686018427387903", kMax, "2^62-1 stays int");
+        exact_int("-4999999999999999", -4999999999999999LL, "most negative fixnum stays int");
+        exact_int("(+ 2305843009213693951 2305843009213693951)", 4611686018427387902LL,
+                  "(+ c c) stays int");
+        exact_int("(* 1073741824 2147483648)", 2305843009213693952LL, "2^30*2^31 stays int");
+        exact_int("(string->number \"42\")", 42, "string->number 42 stays int");
+        exact_int("(string->number \"9007199254740993\")", 9007199254740993LL,
+                  "string->number keeps 2^53+1");
+        exact_int("(string->number \"+7\")", 7, "string->number keeps a leading plus");
+        auto bad = cs.eval("(string->number \"nope\")");
+        CHECK(bad && is_bool(*bad) && !aura::compiler::types::as_bool(*bad),
+              "string->number failure is #f");
+        exact_float("4611686018427387904", static_cast<double>(kTwo62), "literal 2^62 is float");
+        exact_float("-4611686018427387904", static_cast<double>(kNegTwo62),
+                    "literal -2^62 is float");
+        exact_float("-5000000000000000", -5000000000000000.0, "-5e15 is float");
+        exact_float("-2305843009213693952", -2305843009213693952.0, "-2^61 is float");
+        exact_float("(+ 2305843009213693951 2305843009213693951 2)", static_cast<double>(kTwo62),
+                    "(+ c c 2) is float");
+        exact_float("(* 2 (+ 2305843009213693951 1))", static_cast<double>(kTwo62),
+                    "(* 2 (+ c 1)) is float");
+        exact_float("(+ -2305843009213693952 -2305843009213693952)", static_cast<double>(kNegTwo62),
+                    "(+ d d) is float");
+        exact_float("(- 4611686018427387903)", -static_cast<double>(kMax),
+                    "negation of 2^62-1 is float");
+        exact_float("(* 4294967296 4294967296)", 18446744073709551616.0,
+                    "literal 2^32*2^32 is 2^64");
+        exact_float("(* 4611686018427387903 2)", static_cast<double>(kMax) * 2.0,
+                    "(2^62-1)*2 promotes");
+        exact_float("(string->number \"4611686018427387904\")", static_cast<double>(kTwo62),
+                    "string->number 2^62 is float");
+        exact_float("(string->number \"9223372036854775808\")", 9223372036854775808.0,
+                    "string->number past int64 is float");
+        exact_float("9223372036854775808", 9223372036854775808.0, "literal 2^63 is float");
+        const double nine = static_cast<double>(9000000000000000000LL);
+        exact_float("(+ 9000000000000000000 9000000000000000000)", nine + nine,
+                    "literals past 2^62 promote");
+        auto quoted = cs.eval("'4294967296");
+        CHECK(quoted && is_int(*quoted) && as_int(*quoted) == 4294967296LL,
+              "quoted 2^32 stays the full integer");
+        auto quoted_big = cs.eval("'4611686018427387904");
+        CHECK(quoted_big && is_float(*quoted_big) &&
+                  as_float(*quoted_big) == static_cast<double>(kTwo62),
+              "quoted 2^62 is float");
+    }
 
     {
         auto a = cs.eval("(+ 40 2)");
@@ -217,6 +276,72 @@ int main() {
             CHECK(lit_run.out.find("after") != std::string::npos, "4461: default continues");
             CHECK(lit_run.err.find("error:") == std::string::npos,
                   "4461: default face does not abort");
+        }
+    }
+
+    // Same results on the soft face (tree walker) and the default face (IR).
+    {
+        const auto bin = aura_binary();
+        CHECK(!bin.empty(), "4462: aura binary");
+        if (!bin.empty()) {
+            auto fmt = [](double d) {
+                char b[64];
+                std::snprintf(b, sizeof(b), "%g", d);
+                return std::string(b);
+            };
+            const std::string two62 = fmt(4611686018427387904.0);
+            const std::string neg62 = fmt(-4611686018427387904.0);
+            const std::string two64 = fmt(18446744073709551616.0);
+            const std::string neg61 = fmt(-2305843009213693952.0);
+            const std::string two63 = fmt(9223372036854775808.0);
+            std::string expect = "4611686018427387902\n" + two62 + "\n" + two62 + "\n" + two62 +
+                                 "\n" + two62 + "\n" + neg61 + "\n" + neg62 + "\n" + neg62 + "\n" +
+                                 neg62 + "\n" + two64 + "\n" + two64 + "\n" +
+                                 "4611686018427387903\n4294967296\n" + two62 + "\n" + two63 +
+                                 "\n2305843009213693952\n" + two63 + "\nafter\n";
+            const char* path = "/tmp/aura-4462.aura";
+            CHECK(write_text(path, "(define c 2305843009213693951)\n"
+                                   "(display (+ c c)) (newline)\n"
+                                   "(display (+ c c 2)) (newline)\n"
+                                   "(display (* 2 (+ c 1))) (newline)\n"
+                                   "(display 4611686018427387904) (newline)\n"
+                                   "(display (string->number \"4611686018427387904\")) (newline)\n"
+                                   "(define d -2305843009213693952)\n"
+                                   "(display d) (newline)\n"
+                                   "(display (+ d d)) (newline)\n"
+                                   "(display (- (+ d d) 1)) (newline)\n"
+                                   "(display -4611686018427387904) (newline)\n"
+                                   "(display (* 4294967296 4294967296)) (newline)\n"
+                                   "(define a 4294967296)\n"
+                                   "(display (* a a)) (newline)\n"
+                                   "(display 4611686018427387903) (newline)\n"
+                                   "(display '4294967296) (newline)\n"
+                                   "(display '4611686018427387904) (newline)\n"
+                                   "(display 9223372036854775808) (newline)\n"
+                                   "(define p 1073741824)\n"
+                                   "(define q 2147483648)\n"
+                                   "(display (* p q)) (newline)\n"
+                                   "(display (* 4611686018427387903 2)) (newline)\n"
+                                   "(display \"after\") (newline)\n"),
+                  "4462: write script");
+            auto soft = run_aura_file(bin, path, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
+                                      "/tmp/aura-4462-soft-out.txt", "/tmp/aura-4462-soft-err.txt");
+            if (soft.out != expect || soft.rc != 0)
+                std::println(std::cerr, "soft rc {} out [{}] err [{}]", soft.rc, soft.out,
+                             soft.err);
+            CHECK(soft.rc == 0, "4462: soft face exits 0");
+            CHECK(soft.out == expect, "4462: soft face prints the promoted values");
+            CHECK(soft.err.find("AURA CRASH") == std::string::npos,
+                  "4462: soft face does not abort");
+            auto def = run_aura_file(bin, path, "", "/tmp/aura-4462-def-out.txt",
+                                     "/tmp/aura-4462-def-err.txt");
+            if (def.out != expect || def.rc != 0)
+                std::println(std::cerr, "default rc {} out [{}] err [{}]", def.rc, def.out,
+                             def.err);
+            CHECK(def.rc == 0, "4462: default face exits 0");
+            CHECK(def.out == expect, "4462: default face agrees with the soft face");
+            CHECK(def.err.find("AURA CRASH") == std::string::npos,
+                  "4462: default face does not abort");
         }
     }
 

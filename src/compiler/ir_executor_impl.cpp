@@ -53,6 +53,7 @@ using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
 using types::EvalValue;
+using types::fits_fixnum;
 using types::is_bool;
 using types::is_cell;
 using types::is_closure;
@@ -69,6 +70,7 @@ using types::make_closure;
 using types::make_error;
 using types::make_float;
 using types::make_int;
+using types::make_int_or_promote;
 using types::make_keyword;
 using types::make_pair;
 using types::make_primitive;
@@ -876,14 +878,29 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     const auto bi = as_int(b);
                     switch (instr.opcode) {
                         case IROpcode::Add:
-                            locals[ops[0]] = make_int(ai + bi);
-                            break;
                         case IROpcode::Sub:
-                            locals[ops[0]] = make_int(ai - bi);
+                        case IROpcode::Mul: {
+                            // Issue #4462: checked int64, then the fixnum domain.
+                            // A result in [2^62, 2^63) or at/below the float bias
+                            // promotes. Signed overflow is not a wrapped integer.
+                            std::int64_t next = 0;
+                            const bool ov = instr.opcode == IROpcode::Add
+                                                ? __builtin_add_overflow(ai, bi, &next)
+                                            : instr.opcode == IROpcode::Sub
+                                                ? __builtin_sub_overflow(ai, bi, &next)
+                                                : __builtin_mul_overflow(ai, bi, &next);
+                            if (ov || !fits_fixnum(next)) {
+                                const double da = static_cast<double>(ai);
+                                const double db = static_cast<double>(bi);
+                                const double dr = instr.opcode == IROpcode::Add   ? da + db
+                                                  : instr.opcode == IROpcode::Sub ? da - db
+                                                                                  : da * db;
+                                locals[ops[0]] = make_float(dr);
+                            } else {
+                                locals[ops[0]] = make_int(next);
+                            }
                             break;
-                        case IROpcode::Mul:
-                            locals[ops[0]] = make_int(ai * bi);
-                            break;
+                        }
                         case IROpcode::Div: {
                             if (bi == 0) {
                                 if (int_div_zero())
@@ -903,17 +920,36 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 const bool fl = is_float(a) || is_float(b);
                 switch (instr.opcode) {
                     case IROpcode::Add:
-                        locals[ops[0]] = fl ? make_float(coerce_f(a) + coerce_f(b))
-                                            : make_int(coerce_i(a) + coerce_i(b));
-                        break;
                     case IROpcode::Sub:
-                        locals[ops[0]] = fl ? make_float(coerce_f(a) - coerce_f(b))
-                                            : make_int(coerce_i(a) - coerce_i(b));
+                    case IROpcode::Mul: {
+                        if (fl) {
+                            const double da = coerce_f(a);
+                            const double db = coerce_f(b);
+                            const double dr = instr.opcode == IROpcode::Add   ? da + db
+                                              : instr.opcode == IROpcode::Sub ? da - db
+                                                                              : da * db;
+                            locals[ops[0]] = make_float(dr);
+                            break;
+                        }
+                        const auto x = coerce_i(a);
+                        const auto y = coerce_i(b);
+                        std::int64_t next = 0;
+                        const bool ov =
+                            instr.opcode == IROpcode::Add   ? __builtin_add_overflow(x, y, &next)
+                            : instr.opcode == IROpcode::Sub ? __builtin_sub_overflow(x, y, &next)
+                                                            : __builtin_mul_overflow(x, y, &next);
+                        if (ov || !fits_fixnum(next)) {
+                            const double da = static_cast<double>(x);
+                            const double db = static_cast<double>(y);
+                            const double dr = instr.opcode == IROpcode::Add   ? da + db
+                                              : instr.opcode == IROpcode::Sub ? da - db
+                                                                              : da * db;
+                            locals[ops[0]] = make_float(dr);
+                        } else {
+                            locals[ops[0]] = make_int(next);
+                        }
                         break;
-                    case IROpcode::Mul:
-                        locals[ops[0]] = fl ? make_float(coerce_f(a) * coerce_f(b))
-                                            : make_int(coerce_i(a) * coerce_i(b));
-                        break;
+                    }
                     case IROpcode::Div: {
                         if (fl) {
                             // Issue #4461: IEEE. 1.0/0.0 is +inf, 0.0/0.0 is nan.
@@ -949,7 +985,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
                 case IROpcode::ConstI64: {
                     std::int64_t val = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
-                    locals[ops[0]] = make_int(val);
+                    // Issue #4462: a literal outside the fixnum domain is a float.
+                    locals[ops[0]] = make_int_or_promote(val);
                     break;
                 }
                 case IROpcode::ConstF64: {
@@ -1165,8 +1202,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 auto idx = as_string_idx(val);
                                 if (idx < string_heap_.size()) {
                                     try {
-                                        locals[ops[0]] = make_int(static_cast<std::int64_t>(
-                                            std::stoll(string_heap_[idx])));
+                                        locals[ops[0]] =
+                                            make_int_or_promote(static_cast<std::int64_t>(
+                                                std::stoll(string_heap_[idx])));
                                     } catch (...) {
                                         // [SILENCE-PRIM-#615] string→int
                                         // coerce fail → 0 (#1669 class A).
@@ -1178,7 +1216,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             } else if (is_bool(val)) {
                                 locals[ops[0]] = make_int(as_bool(val) ? 1 : 0);
                             } else if (is_float(val)) {
-                                locals[ops[0]] = make_int(static_cast<std::int64_t>(as_float(val)));
+                                locals[ops[0]] =
+                                    make_int_or_promote(static_cast<std::int64_t>(as_float(val)));
                             } else {
                                 report_blame("Int", "unknown", blame_loc, blame_node);
                                 locals[ops[0]] = make_int(0);

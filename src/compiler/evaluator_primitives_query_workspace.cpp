@@ -64,6 +64,7 @@ using types::make_error;
 using types::make_float;
 using types::make_hash;
 using types::make_int;
+using types::make_int_or_promote;
 using types::make_keyword;
 using types::make_pair;
 using types::make_primitive;
@@ -1127,7 +1128,7 @@ void register_workspace_query_primitives(
             // value (int or string content for string literals)
             if (v.has_int() && v.tag != aura::ast::NodeTag::LiteralString) {
                 pid = ws.pairs.size();
-                ws.push_stamped_pair({make_int(v.int_value), result});
+                ws.push_stamped_pair({make_int_or_promote(v.int_value), result});
                 result = make_pair(pid);
             } else if (v.sym_id != aura::ast::INVALID_SYM) {
                 auto sym_name = std::string(ws.workspace_pool->resolve(v.sym_id));
@@ -2580,7 +2581,7 @@ void register_workspace_query_primitives(
                 append_field("sym", make_string(sidx));
             }
             if (v.has_int() && v.tag == aura::ast::NodeTag::LiteralInt) {
-                append_field("int-value", make_int(v.int_value));
+                append_field("int-value", make_int_or_promote(v.int_value));
             }
             if (v.tag == aura::ast::NodeTag::Define && !v.children.empty()) {
                 auto body_ref = pack_member_ref(v.child(0));

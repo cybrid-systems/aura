@@ -13601,7 +13601,7 @@ private:
                 std::size_t consumed = 0;
                 long long v = std::stoll(ts, &consumed);
                 if (consumed == ts.size())
-                    return make_int(v);
+                    return make_int_or_promote(v);
             } catch (...) {
                 // [SILENCE-PRIM-#615] int parse fail — fall through to
                 // float/bool/void cascade (#1669 class A).
@@ -13711,7 +13711,7 @@ private:
         auto v = flat.get(node_id);
         switch (v.tag) {
             case aura::ast::NodeTag::LiteralInt:
-                return types::make_int(v.int_value);
+                return types::make_int_or_promote(v.int_value);
             case aura::ast::NodeTag::LiteralFloat:
                 return types::make_float(v.float_value);
             case aura::ast::NodeTag::LiteralString: {

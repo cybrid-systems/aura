@@ -57,6 +57,7 @@ using types::make_error;
 using types::make_float;
 using types::make_hash;
 using types::make_int;
+using types::make_int_or_promote;
 using types::make_pair;
 using types::make_primitive;
 using types::make_string;
@@ -949,7 +950,15 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             try {
                 if (s.find('.') != std::string::npos)
                     return make_float(std::stod(s));
-                return make_int(static_cast<std::int64_t>(std::stoll(s, nullptr, radix)));
+                // Issue #4462: 2^62 fits in int64 and is not a fixnum.
+                const auto iv = static_cast<std::int64_t>(std::stoll(s, nullptr, radix));
+                return make_int_or_promote(iv);
+            } catch (const std::out_of_range&) {
+                try {
+                    return make_float(std::stod(s));
+                } catch (...) {
+                    return make_bool(false);
+                }
             } catch (...) {
                 // [SILENCE-PRIM-#615] string-to-int/float parse failure —
                 // (#) returns #f on parse failure per the documented pair
@@ -1024,20 +1033,40 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_bool(false);
             auto last = str.find_last_not_of(" \t\r\n");
             std::string_view trimmed(str.data() + first, last - first + 1);
-            // Use from_chars — entire trimmed string must be consumed
+            // Issue #4462: parse an integer with from_chars before any
+            // double conversion. Casting the double back to int64 truncates
+            // past 2^53 and aborts on [2^62, 2^63).
+            const bool want_float = trimmed.find('.') != std::string_view::npos ||
+                                    trimmed.find('e') != std::string_view::npos ||
+                                    trimmed.find('E') != std::string_view::npos;
+            if (!want_float) {
+                std::string_view body = trimmed;
+                if (!body.empty() && body.front() == '+')
+                    body.remove_prefix(1);
+                if (body.empty())
+                    return make_bool(false);
+                std::int64_t iv = 0;
+                const char* b0 = body.data();
+                const char* b1 = b0 + body.size();
+                const auto [pi, eci] = std::from_chars(b0, b1, iv);
+                if (eci == std::errc{} && pi == b1)
+                    return make_int_or_promote(iv);
+                if (eci == std::errc::result_out_of_range) {
+                    double wide = 0;
+                    const char* t0 = trimmed.data();
+                    const char* t1 = t0 + trimmed.size();
+                    const auto [pf, ecf] = std::from_chars(t0, t1, wide);
+                    if (ecf == std::errc{} && pf == t1)
+                        return make_float(wide);
+                }
+                return make_bool(false);
+            }
             const char* start = trimmed.data();
             const char* end = start + trimmed.size();
-            // Try float first (includes ints like "42" → 42.0)
-            double fval;
+            double fval = 0;
             auto [pfloat, ec_float] = std::from_chars(start, end, fval);
-            if (ec_float == std::errc{} && pfloat == end) {
-                // Check if it has a decimal point or exponent → return float
-                if (trimmed.find('.') != std::string_view::npos ||
-                    trimmed.find('e') != std::string_view::npos ||
-                    trimmed.find('E') != std::string_view::npos)
-                    return make_float(fval);
-                return make_int(static_cast<std::int64_t>(fval));
-            }
+            if (ec_float == std::errc{} && pfloat == end)
+                return make_float(fval);
             return make_bool(false);
         },
         pure_general(1, "(string) -> any", "Parse a string as a number."));
