@@ -10,11 +10,15 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
+
 #include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -22,7 +26,9 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::apply_pipeline_strict_defaults;
 using aura::compiler::CompilerService;
+using aura::compiler::reset_tree_walker_fallback_policy_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
@@ -327,6 +333,148 @@ static void ac4379_ir_while_lambda_set() {
     CHECK(low.find("Issue #4379") != std::string::npos, "4379: cite");
 }
 
+// Issue #4466: (while cond b1 b2 ...) runs every body form each iteration.
+// Increment-first is in-process (a missing later form returns the wrong sum).
+// Display-first is a timeout subprocess so a dropped increment cannot hang.
+static std::string aura_binary_4466() {
+#ifdef AURA_SOURCE_DIR
+    std::string cand = std::string(AURA_SOURCE_DIR) + "/build/aura";
+    if (::access(cand.c_str(), X_OK) == 0)
+        return cand;
+#endif
+    for (const char* c : {"./build/aura", "./aura", "../build/aura", "../aura"}) {
+        if (::access(c, X_OK) == 0)
+            return std::string(c);
+    }
+    return {};
+}
+
+struct Cli4466 {
+    int rc = -1;
+    std::string out;
+    std::string err;
+};
+
+static Cli4466 run_file_4466(const std::string& bin, const std::string& src,
+                             const std::string& assignments) {
+    Cli4466 r;
+    const char* outp = "/tmp/aura-4466-out.txt";
+    const char* errp = "/tmp/aura-4466-err.txt";
+    std::string cmd = "timeout 8 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+                      assignments + " '" + bin + "' '" + src + "' >'" + std::string(outp) +
+                      "' 2>'" + std::string(errp) + "'";
+    const int raw = std::system(cmd.c_str());
+    r.rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+    {
+        std::ifstream in(outp);
+        r.out.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    {
+        std::ifstream in(errp);
+        r.err.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    return r;
+}
+
+static void ac4466_while_multi_body() {
+    std::println("\n--- #4466: while runs every body form ---");
+    CHECK(read_file("src/compiler/evaluator_eval_flat.cpp").find("#4466") != std::string::npos,
+          "4466: walker cite");
+    CHECK(read_file("src/compiler/evaluator_primitives_control.cpp").find("#4466") !=
+              std::string::npos,
+          "4466: primitive cite");
+    CHECK(read_file("src/compiler/lowering_impl.cpp").find("#4466") != std::string::npos,
+          "4466: lowering cite");
+    CHECK(read_file("src/compiler/service.ixx").find("callee_name == \"while\"") !=
+              std::string::npos,
+          "4466: while still needs the walker fallback");
+
+    const char* bare = "(let ((i 0) (s 0)) (while (< i 3) (set! i (+ i 1)) (set! s (+ s i))) s)";
+    const char* three = "(let ((i 0) (s 0)) (while (< i 3) (set! i (+ i 1)) (set! s (+ s i)) "
+                        "(set! s (+ s 1))) s)";
+    const char* thunks =
+        "(let ((i 0) (s 0)) (while (lambda () (< i 3)) (lambda () (set! i (+ i 1))) "
+        "(lambda () (set! s (+ s i)))) s)";
+    const char* one = "(let ((i 0) (s 0)) (while (lambda () (< i 3)) (lambda () (set! i (+ i 1)) "
+                      "(set! s (+ s i)))) s)";
+
+    auto face = [&](const char* strict, const char* tag) {
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", strict, 1);
+        apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
+        CompilerService cs;
+        eval_int_eq(cs, bare, 6, (std::string(tag) + " bare").c_str());
+        eval_int_eq(cs, three, 9, (std::string(tag) + " three bodies").c_str());
+        eval_int_eq(cs, thunks, 6, (std::string(tag) + " thunks").c_str());
+        eval_int_eq(cs, one, 6, (std::string(tag) + " one lambda").c_str());
+    };
+    face("0", "4466 walker");
+    face("force-soa", "4466 ir");
+    unsetenv("AURA_SANDBOX");
+    unsetenv("AURA_PIPELINE_STRICT");
+    reset_tree_walker_fallback_policy_for_test();
+
+    const auto bin = aura_binary_4466();
+    CHECK(!bin.empty(), "4466: aura binary");
+    if (bin.empty())
+        return;
+
+    struct FileCase {
+        const char* name;
+        const char* body;
+        const char* want;
+    };
+    const FileCase cases[] = {
+        {"x1",
+         "(define (wh n) (let ((i 0)) (while (< i n) (display i) (set! i (+ i 1))) i))\n"
+         "(display (wh 3))\n(newline)\n",
+         "0123\n"},
+        {"x2",
+         "(define (wh n) (let ((i 0)) (while (< i n) (set! i (+ i 1)) (display i)) i))\n"
+         "(display (wh 3))\n(newline)\n",
+         "1233\n"},
+        {"x3",
+         "(define (wh n) (let ((i 0)) (while (< i n) (begin (display i) "
+         "(set! i (+ i 1)))) i))\n"
+         "(display (wh 3))\n(newline)\n",
+         "0123\n"},
+        {"top", "(define i 0)\n(while (< i 3) (display i) (set! i (+ i 1)))\n", "012"},
+        {"thunk",
+         "(define i 0)\n(define s 0)\n"
+         "(while (lambda () (< i 3)) (lambda () (set! s (+ s i))) "
+         "(lambda () (set! i (+ i 1))))\n"
+         "(display s)\n",
+         "3"},
+        {"vec",
+         "(define v (vector 0 0 0))\n(define i 0)\n"
+         "(while (< i 3) (vector-set! v i i) (set! i (+ i 1)))\n"
+         "(display (vector-ref v 0))(display (vector-ref v 1))(display (vector-ref v 2))\n",
+         "012"},
+    };
+    const char* faces[] = {"AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
+                           "AURA_SANDBOX=off AURA_PIPELINE_STRICT=force-soa"};
+    const char* face_tags[] = {"soft", "soa"};
+    for (std::size_t fi = 0; fi < 2; ++fi) {
+        const char* env = faces[fi];
+        const char* ftag = face_tags[fi];
+        for (const auto& c : cases) {
+            std::string path = std::string("/tmp/aura-4466-") + c.name + ".aura";
+            {
+                std::ofstream out(path);
+                out << c.body;
+            }
+            auto run = run_file_4466(bin, path, env);
+            std::string label = std::string("4466 ") + ftag + " " + c.name;
+            if (run.rc != 0 || run.out != c.want) {
+                std::println(std::cerr, "{} rc {} out [{}] err [{}]", label, run.rc, run.out,
+                             run.err);
+            }
+            CHECK(run.rc == 0, label + " exits 0");
+            CHECK(run.out == c.want, label + " output");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -338,6 +486,7 @@ int run_test_while_define_oneshot() {
     ac4350_capture_snapshot_set();
     ac4372_while_set_in_define();
     ac4379_ir_while_lambda_set();
+    ac4466_while_multi_body();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

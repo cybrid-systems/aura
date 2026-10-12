@@ -76,11 +76,12 @@ using types::make_void;
 
 void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    // Issue #4466: (while pred b1 b2 ...) applies every body closure
+    // each iteration. One body closure stays the stdlib shape.
     add("while", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_closure(a[0]) || !types::is_closure(a[1]))
             return make_void();
         auto pred_cid = types::as_closure_id(a[0]);
-        auto body_cid = types::as_closure_id(a[1]);
         for (;;) {
             auto pred_result = ev.apply_closure(pred_cid, {});
             if (!pred_result)
@@ -91,7 +92,11 @@ void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
                                              : false;
             if (!cont)
                 break;
-            (void)ev.apply_closure(body_cid, {});
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (!types::is_closure(a[i]))
+                    continue;
+                (void)ev.apply_closure(types::as_closure_id(a[i]), {});
+            }
         }
         return make_void();
     });

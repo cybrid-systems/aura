@@ -1108,7 +1108,7 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
-                // Issue #4320: (while cond body) re-evaluates both arms.
+                // Issue #4320: (while cond body ...) re-evaluates every arm.
                 // A general Call lowered the arms once, so force-soa ran
                 // the body a single time. Same split as the tree walker.
                 // Issue #4379: zero-arg lambda arms are the stdlib trim /
@@ -1116,17 +1116,25 @@ static std::uint32_t lower_flat_expr(
                 // closures; an IR MakeClosure is not one of those, so the
                 // loop never ran and set! of the let cell was skipped.
                 // Inline those bodies into this function's cells.
+                // Issue #4466: later body forms belong in the loop. A mix
+                // of bare expressions and thunks falls through.
                 if (callee_name == "while" && v.children.size() >= 3 && state.cur_func) {
                     auto c1 = flat.get(v.child(1));
                     auto c2 = flat.get(v.child(2));
                     const bool bare = c1.tag != NodeTag::Lambda && c2.tag != NodeTag::Lambda;
-                    const bool thunk = c1.tag == NodeTag::Lambda && c2.tag == NodeTag::Lambda &&
-                                       c1.params.empty() && c2.params.empty() &&
-                                       c1.int_value == 0 && c2.int_value == 0 &&
-                                       !c1.children.empty() && !c2.children.empty();
-                    if (bare || thunk) {
-                        auto cond_id = thunk ? c1.child(0) : v.child(1);
-                        auto body_id = thunk ? c2.child(0) : v.child(2);
+                    auto zero_arg_thunk = [](const NodeView& n) {
+                        return n.tag == NodeTag::Lambda && n.params.empty() && n.int_value == 0 &&
+                               !n.children.empty();
+                    };
+                    bool all_thunk = true;
+                    for (std::size_t i = 1; i < v.children.size(); ++i) {
+                        if (!zero_arg_thunk(flat.get(v.child(i)))) {
+                            all_thunk = false;
+                            break;
+                        }
+                    }
+                    if (bare || all_thunk) {
+                        auto cond_id = all_thunk ? flat.get(v.child(1)).child(0) : v.child(1);
                         auto head = state.alloc_block();
                         state.emit(IROpcode::Jump, head);
                         state.cur_block = head;
@@ -1136,7 +1144,10 @@ static std::uint32_t lower_flat_expr(
                         auto done_blk = state.alloc_block();
                         state.emit(IROpcode::Branch, cond_slot, body_blk, done_blk);
                         state.cur_block = body_blk;
-                        (void)lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
+                        for (std::size_t i = 2; i < v.children.size(); ++i) {
+                            auto body_id = all_thunk ? flat.get(v.child(i)).child(0) : v.child(i);
+                            (void)lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
+                        }
                         state.emit(IROpcode::Jump, head);
                         state.cur_block = done_blk;
                         auto result_slot = state.alloc_local();
