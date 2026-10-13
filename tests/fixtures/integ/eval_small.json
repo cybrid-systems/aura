@@ -105,7 +105,7 @@
     "name": "list_member_not_found",
     "code": "(member 99 (list 1 2 3))",
     "pipeline": "eval",
-    "expected": "0"
+    "expected": "#f"
   },
   {
     "name": "list_ref",
