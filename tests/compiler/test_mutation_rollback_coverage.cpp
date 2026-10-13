@@ -281,7 +281,7 @@ static void test_abort_force_generation_fence_3069() {
         irs.push_back(std::move(top));
         irs.push_back(std::move(body));
         const std::string src = "(define f3069 (lambda (x) (+ x 1)))";
-        cs.store_define_v2("f3069", src, std::move(irs), {}, {});
+        cs.store_define_v2("f3069", src, std::move(irs), {}, {}, cs.public_mutation_epoch());
         const auto stored = cs.get_define_v2("f3069");
         CHECK(stored && !stored->dirty, "3069 AC3: store clears dirty");
         CHECK(stored && stored->version_stamp_.abort_force_generation ==
@@ -372,7 +372,7 @@ static void test_abort_restore_ir_map_fence_3117() {
         irs.push_back(std::move(top));
         irs.push_back(std::move(body));
         const std::string src = "(define f3117 (lambda (x) (+ x 1)))";
-        cs.store_define_v2("f3117", src, std::move(irs), {}, {});
+        cs.store_define_v2("f3117", src, std::move(irs), {}, {}, cs.public_mutation_epoch());
         const auto stored = cs.get_define_v2("f3117");
         CHECK(stored && !stored->dirty, "3117 AC3: store clears dirty");
         CHECK(stored && !stored->abort_map_invalid, "3117 AC3: store clears abort_map_invalid");
