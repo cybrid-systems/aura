@@ -73,7 +73,7 @@
   },
   {
     "name": "if_false",
-    "code": "(if 0 42 0)",
+    "code": "(if #f 42 0)",
     "pipeline": "eval",
     "expected_val": 0
   },
