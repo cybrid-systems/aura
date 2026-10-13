@@ -1,0 +1,14 @@
+;; expect: (a 1) (a . b) ((Zerind . 75) (Sibiu . 140)) (1 2 . 3) 0 (#t #f) (#t #t #t #f) ok
+; Issue #4487: a quoted dotted pair is the pair itself (not (cons a b ...),
+; and not cyclic). Issue #4490: quoted #t / #f stay booleans.
+(define x '(a . 1))
+(display (list (car x) (cdr x))) (display " ")
+(display '(a . b)) (display " ")
+(display '((Zerind . 75) (Sibiu . 140))) (display " ")
+(display '(1 2 . 3)) (display " ")
+(display (car '(0 . 0))) (display " ")
+(display '(#t #f)) (display " ")
+(display (list (boolean? (car '(#t))) (eq? '#f #f) (equal? '(#t) (list #t)) (integer? (car '(#f)))))
+(display " ")
+(display (if (equal? (cdr (assv 'Sibiu '((Zerind . 75) (Sibiu . 140)))) 140) "ok" "bad"))
+(newline)
