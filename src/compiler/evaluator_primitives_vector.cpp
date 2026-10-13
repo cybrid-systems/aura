@@ -184,15 +184,52 @@ namespace {
         return try_insert();
     }
 
+    // Issue #4489: key equality for every hash probe (ref / has-key? / set!
+    // / remove!). Ints and strings as before; floats by eqv? (same double
+    // bits, so 1.5 finds 1.5 while 0.0 and -0.0 stay distinct); pairs and
+    // vectors structurally (Racket make-hash is equal?-based). Anything
+    // else keeps identity. Probes are linear scans, so the bucket hash
+    // only affects placement and can stay coarse for these key kinds.
     [[nodiscard]] bool eval_hash_keys_eq(const EvalValue& a, const EvalValue& b,
-                                         const std::pmr::vector<std::string>& sh) noexcept {
+                                         const std::pmr::vector<std::string>& sh,
+                                         const std::pmr::vector<Pair>* pairs = nullptr,
+                                         const std::vector<std::vector<EvalValue>>* vh = nullptr,
+                                         int depth = 0) noexcept {
+        if (a.val == b.val)
+            return true;
         if (is_int(a) && is_int(b))
             return as_int(a) == as_int(b);
         if (is_string(a) && is_string(b)) {
             auto ai = as_string_idx(a), bi = as_string_idx(b);
             return (ai < sh.size() && bi < sh.size()) && sh[ai] == sh[bi];
         }
-        return a.val == b.val;
+        if (is_float(a) && is_float(b))
+            return std::bit_cast<std::uint64_t>(as_float(a)) ==
+                   std::bit_cast<std::uint64_t>(as_float(b));
+        if (depth > 64)
+            return false;
+        if (pairs && is_pair(a) && is_pair(b)) {
+            auto ai = as_pair_idx(a), bi = as_pair_idx(b);
+            if (ai >= pairs->size() || bi >= pairs->size())
+                return false;
+            return eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh,
+                                     depth + 1) &&
+                   eval_hash_keys_eq((*pairs)[ai].cdr, (*pairs)[bi].cdr, sh, pairs, vh, depth + 1);
+        }
+        if (vh && is_vector(a) && is_vector(b)) {
+            auto ai = as_vector_idx(a), bi = as_vector_idx(b);
+            if (ai >= vh->size() || bi >= vh->size())
+                return false;
+            const auto& va = (*vh)[ai];
+            const auto& vb = (*vh)[bi];
+            if (va.size() != vb.size())
+                return false;
+            for (std::size_t i = 0; i < va.size(); ++i)
+                if (!eval_hash_keys_eq(va[i], vb[i], sh, pairs, vh, depth + 1))
+                    return false;
+            return true;
+        }
+        return false;
     }
 
 } // namespace
@@ -470,7 +507,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(255, "(...kvs) -> hash", "Construct a hash from key/value pairs."));
     register_prim(
         add, ev, "hash-ref",
-        [&ev, &string_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
             // Issue #2569: honor optional 3rd-arg default when key is missing
             // (Racket-compatible). 2-arg miss still returns void.
             if (a.size() < 2 || !is_hash(a[0]))
@@ -500,14 +537,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                bool eq = false;
-                if (is_int(k) && is_int(a[1]))
-                    eq = as_int(k) == as_int(a[1]);
-                else if (is_string(k) && is_string(a[1])) {
-                    auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                    eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-                } else
-                    eq = keys[i] == a[1].val;
+                const bool eq = eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap);
                 if (eq)
                     return EvalValue{vals[i]};
             }
@@ -516,7 +546,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(2, "(hash any) -> any", "Lookup a key in a hash."));
     register_prim(
         add, ev, "hash-has-key?",
-        [&ev, &string_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_hash(a[0]))
                 return make_bool(false);
             std::lock_guard hlock(ev.hash_tables_mutex());
@@ -537,14 +567,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                bool eq = false;
-                if (is_int(k) && is_int(a[1]))
-                    eq = as_int(k) == as_int(a[1]);
-                else if (is_string(k) && is_string(a[1])) {
-                    auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                    eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-                } else
-                    eq = keys[i] == a[1].val;
+                const bool eq = eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap);
                 if (eq)
                     return make_bool(true);
             }
@@ -553,7 +576,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(2, "(hash any) -> bool", "True if hash contains the key."));
     register_prim(
         add, ev, "hash-set!",
-        [&ev, &string_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
             if (a.size() < 3 || !is_hash(a[0]))
                 return make_void();
             // Issue #2652: aether:stats-bump! path — concurrent hash-set! + string
@@ -585,7 +608,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                if (eval_hash_keys_eq(k, a[1], string_heap)) {
+                if (eval_hash_keys_eq(k, a[1], string_heap, &pairs, &vector_heap)) {
                     vals[i] = a[2].val;
                     return make_void();
                 }
@@ -747,7 +770,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(1, "(hash) -> list", "Convert a hash to an association list."));
     register_prim(
         add, ev, "hash-remove!",
-        [&ev, &string_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_hash(a[0]))
                 return make_void();
             auto hidx = as_hash_idx(a[0]);
@@ -766,14 +789,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                bool eq = false;
-                if (is_int(k) && is_int(a[1]))
-                    eq = as_int(k) == as_int(a[1]);
-                else if (is_string(k) && is_string(a[1])) {
-                    auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                    eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-                } else
-                    eq = keys[i] == a[1].val;
+                const bool eq = eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap);
                 if (eq) {
                     meta[i] = 0xFF;
                     ht->size--;
