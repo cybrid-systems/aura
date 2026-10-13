@@ -1,0 +1,4 @@
+;; expect: caught
+; #4493: an error value in an if test propagates; it is not a true test.
+(display (try (if (< 1 #f) "yes" "no") (catch (e) "caught")))
+(newline)
