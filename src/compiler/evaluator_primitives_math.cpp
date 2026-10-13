@@ -610,9 +610,10 @@ void register_math_regex_and_arithmetic_primitives(
                                             "modulo: integer overflow (INT64_MIN/-1)",
                                             primitive_error_counter);
             }
+            // Issue #4486: floor modulo — result takes the divisor's sign.
             auto r = n % divisor;
-            if (r < 0)
-                r += safe_abs_i64(divisor);
+            if (r != 0 && ((r < 0) != (divisor < 0)))
+                r += divisor;
             return make_int(r);
         },
         pure_general(2, "(int int) -> int", "Floor modulo of two integers."));
@@ -641,9 +642,10 @@ void register_math_regex_and_arithmetic_primitives(
                                             "mod: integer overflow (INT64_MIN/-1)",
                                             primitive_error_counter);
             }
+            // Issue #4486: floor modulo — result takes the divisor's sign.
             auto r = n % divisor;
-            if (r < 0)
-                r += safe_abs_i64(divisor);
+            if (r != 0 && ((r < 0) != (divisor < 0)))
+                r += divisor;
             return make_int(r);
         },
         pure_general(2, "(int int) -> int", "Alias for modulo."));
