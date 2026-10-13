@@ -390,6 +390,10 @@ NodeId parse_float(ParserState& s, Token tok) {
     }
 }
 
+NodeId parse_case(ParserState& s);
+NodeId parse_do(ParserState& s);
+NodeId parse_let_values(ParserState& s);
+
 NodeId parse_list(ParserState& s) {
     auto tok = s.lex.peek(); // '(' or first token
     // () → null sentinel (0)
@@ -438,6 +442,13 @@ NodeId parse_list(ParserState& s) {
                                   /*preserve_dotted=*/true);
         if (kw == "match")
             return parse_match(s);
+        // Issue #4496: R7RS case / do / let-values, desugared here.
+        if (kw == "case")
+            return parse_case(s);
+        if (kw == "do")
+            return parse_do(s);
+        if (kw == "let-values")
+            return parse_let_values(s);
         if (kw == "cast")
             return parse_cast(s);
         if (kw == "check")
@@ -2297,6 +2308,200 @@ NodeId expand_qq_pair(ParserState& s, NodeId expr, int depth) {
 }
 
 // ── Free function ──────────────────────────────────────────────
+// ── Issue #4496: case / do / let-values ─────────────────────────────
+namespace {
+    SymId fresh_desugar_sym(ParserState& s, std::string_view base) {
+        static std::atomic<std::uint64_t> counter{0};
+        return s.pool.intern(std::format("__{}_{}", base, counter.fetch_add(1)));
+    }
+
+    NodeId parse_body_seq(ParserState& s) {
+        std::vector<NodeId> body;
+        while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
+            auto e = parse_expr(s);
+            if (e == NULL_NODE)
+                break;
+            body.push_back(e);
+        }
+        if (body.empty())
+            return NULL_NODE;
+        return body.size() == 1 ? body[0] : s.flat.add_begin(body);
+    }
+
+    NodeId void_node(ParserState& s) {
+        std::vector<NodeId> none;
+        return s.flat.add_begin(none);
+    }
+} // namespace
+
+// (case key ((d1 d2 ...) e ...) ... (else e ...))
+//   → (let ((tmp key)) (if (member tmp '(d1 d2 ...)) (begin e ...) ...))
+// Datums compare with equal? (symbols are interned strings in Aura).
+NodeId parse_case(ParserState& s) {
+    s.lex.consume(); // 'case'
+    auto key = parse_expr(s);
+    if (key == NULL_NODE) {
+        skip_rparen(s);
+        return NULL_NODE;
+    }
+    auto tmp = fresh_desugar_sym(s, "case");
+    struct Clause {
+        NodeId test; // NULL_NODE = else
+        NodeId body;
+    };
+    std::vector<Clause> clauses;
+    while (s.lex.peek().kind == TokenKind::LParen) {
+        s.lex.consume(); // '('
+        NodeId test = NULL_NODE;
+        auto p = s.lex.peek();
+        if (p.kind == TokenKind::Identifier && p.text == "else") {
+            s.lex.consume();
+        } else if (p.kind == TokenKind::LParen) {
+            auto datums = parse_val(s);
+            if (datums == NULL_NODE) {
+                skip_rparen(s);
+                return NULL_NODE;
+            }
+            test = s.flat.add_call(
+                s.flat.add_variable(s.pool.intern("member")),
+                std::vector<NodeId>{s.flat.add_variable(tmp), s.flat.add_quote(datums)});
+        } else {
+            skip_rparen(s);
+            return NULL_NODE;
+        }
+        auto body = parse_body_seq(s);
+        if (body == NULL_NODE || s.lex.peek().kind != TokenKind::RParen)
+            return NULL_NODE;
+        s.lex.consume(); // ')'
+        clauses.push_back({test, body});
+    }
+    if (s.lex.peek().kind != TokenKind::RParen)
+        return NULL_NODE;
+    s.lex.consume(); // ')'
+    NodeId result = void_node(s);
+    for (auto it = clauses.rbegin(); it != clauses.rend(); ++it)
+        result = it->test == NULL_NODE ? it->body : s.flat.add_if(it->test, it->body, result);
+    return s.flat.add_let(tmp, key, result);
+}
+
+// (do ((var init step) ...) (test res ...) body ...)
+//   → (let loop ((var init) ...) (if test (begin res ...) (begin body ... (loop step ...))))
+NodeId parse_do(ParserState& s) {
+    s.lex.consume(); // 'do'
+    if (s.lex.peek().kind != TokenKind::LParen)
+        return NULL_NODE;
+    s.lex.consume();
+    std::vector<SymId> vars;
+    std::vector<NodeId> inits;
+    std::vector<NodeId> steps;
+    while (s.lex.peek().kind == TokenKind::LParen) {
+        s.lex.consume();
+        auto n = s.lex.consume();
+        if (n.kind != TokenKind::Identifier)
+            return NULL_NODE;
+        auto var = s.pool.intern(std::string(n.text));
+        auto init = parse_expr(s);
+        if (init == NULL_NODE)
+            return NULL_NODE;
+        NodeId step = NULL_NODE;
+        if (s.lex.peek().kind != TokenKind::RParen) {
+            step = parse_expr(s);
+            if (step == NULL_NODE)
+                return NULL_NODE;
+        }
+        if (s.lex.consume().kind != TokenKind::RParen)
+            return NULL_NODE;
+        vars.push_back(var);
+        inits.push_back(init);
+        steps.push_back(step == NULL_NODE ? s.flat.add_variable(var) : step);
+    }
+    if (s.lex.consume().kind != TokenKind::RParen)
+        return NULL_NODE;
+    // (test res ...)
+    if (s.lex.consume().kind != TokenKind::LParen)
+        return NULL_NODE;
+    auto test = parse_expr(s);
+    if (test == NULL_NODE)
+        return NULL_NODE;
+    NodeId res = NULL_NODE;
+    if (s.lex.peek().kind != TokenKind::RParen)
+        res = parse_body_seq(s);
+    if (s.lex.consume().kind != TokenKind::RParen)
+        return NULL_NODE;
+    if (res == NULL_NODE)
+        res = void_node(s);
+    std::vector<NodeId> body;
+    while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
+        auto e = parse_expr(s);
+        if (e == NULL_NODE)
+            break;
+        body.push_back(e);
+    }
+    if (s.lex.consume().kind != TokenKind::RParen)
+        return NULL_NODE;
+    auto loop = fresh_desugar_sym(s, "do_loop");
+    body.push_back(s.flat.add_call(s.flat.add_variable(loop), steps));
+    auto iter = body.size() == 1 ? body[0] : s.flat.add_begin(body);
+    auto lam = s.flat.add_lambda(vars, s.flat.add_if(test, res, iter));
+    return s.flat.add_letrec(loop, lam, s.flat.add_call(s.flat.add_variable(loop), inits));
+}
+
+// (let-values (((a b ...) expr) ...) body ...)
+//   → (let ((tmp expr)) (let ((a (list-ref tmp 0)) ...) body ...))
+// `values` (std/list) returns its one argument as is, else a list.
+NodeId parse_let_values(ParserState& s) {
+    s.lex.consume(); // 'let-values'
+    if (s.lex.consume().kind != TokenKind::LParen)
+        return NULL_NODE;
+    struct Group {
+        std::vector<SymId> formals;
+        NodeId expr;
+    };
+    std::vector<Group> groups;
+    while (s.lex.peek().kind == TokenKind::LParen) {
+        s.lex.consume();
+        if (s.lex.consume().kind != TokenKind::LParen)
+            return NULL_NODE;
+        Group g;
+        while (s.lex.peek().kind == TokenKind::Identifier)
+            g.formals.push_back(s.pool.intern(std::string(s.lex.consume().text)));
+        if (s.lex.consume().kind != TokenKind::RParen)
+            return NULL_NODE; // dotted rest formals are not supported
+        g.expr = parse_expr(s);
+        if (g.expr == NULL_NODE || s.lex.consume().kind != TokenKind::RParen)
+            return NULL_NODE;
+        groups.push_back(std::move(g));
+    }
+    if (s.lex.consume().kind != TokenKind::RParen)
+        return NULL_NODE;
+    auto body = parse_body_seq(s);
+    if (body == NULL_NODE || s.lex.consume().kind != TokenKind::RParen)
+        return NULL_NODE;
+    // Evaluate every expr before binding any formal (let, not let*).
+    std::vector<SymId> tmps;
+    for (std::size_t gi = 0; gi < groups.size(); ++gi)
+        tmps.push_back(fresh_desugar_sym(s, "lv"));
+    NodeId inner = body;
+    for (std::size_t gi = groups.size(); gi-- > 0;) {
+        const auto& g = groups[gi];
+        if (g.formals.size() == 1) {
+            inner = s.flat.add_let(g.formals[0], s.flat.add_variable(tmps[gi]), inner);
+            continue;
+        }
+        for (std::size_t k = g.formals.size(); k-- > 0;) {
+            auto ref = s.flat.add_call(
+                s.flat.add_variable(s.pool.intern("list-ref")),
+                std::vector<NodeId>{s.flat.add_variable(tmps[gi]),
+                                    s.flat.add_literal(static_cast<std::int64_t>(k))});
+            inner = s.flat.add_let(g.formals[k], ref, inner);
+        }
+    }
+    for (std::size_t gi = groups.size(); gi-- > 0;)
+        inner = s.flat.add_let(tmps[gi], groups[gi].expr, inner);
+    return inner;
+}
+
+
 } // namespace aura::parser::detail
 
 namespace aura::parser {

@@ -24,3 +24,5 @@ string-starts-with: Any Any -> Bool
 string-ends-with: Any Any -> Bool
 string-starts-with?: Any Any -> Bool
 string-ends-with?: Any Any -> Bool
+string->symbol: Any -> Any
+symbol->string: Any -> Any

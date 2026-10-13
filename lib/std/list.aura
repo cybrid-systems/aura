@@ -11,7 +11,9 @@
 (export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
         partition sort range sum product last flatten intersperse
         intersperse-iterative any all
-        make-list list-tail find count remove delete)
+        make-list list-tail find count remove delete
+        assoc assq iota vector-map vector-fill! vector-copy
+        values call-with-values)
 
 ; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
 (define (foldl f init lst)
@@ -212,3 +214,64 @@
       (if (equal? (car xs) x)
         (loop (cdr xs) acc)
         (loop (cdr xs) (cons (car xs) acc))))))
+
+; ── Issue #4496: common R7RS list/vector bindings ─────────────────
+
+; (assoc key alist) — first pair whose car is equal? to key, else #f
+(define (assoc key alist)
+  (let loop ((xs alist))
+    (cond ((null? xs) #f)
+          ((equal? (car (car xs)) key) (car xs))
+          (else (loop (cdr xs))))))
+
+; (assq key alist) — like assoc with eq?
+(define (assq key alist)
+  (let loop ((xs alist))
+    (cond ((null? xs) #f)
+          ((eq? (car (car xs)) key) (car xs))
+          (else (loop (cdr xs))))))
+
+; (iota n [start [step]]) — n numbers start, start+step, ...
+(define (iota n . opt)
+  (let ((start (if (null? opt) 0 (car opt)))
+        (step (if (or (null? opt) (null? (cdr opt))) 1 (car (cdr opt)))))
+    (let loop ((i (- n 1)) (acc (list)))
+      (if (< i 0) acc
+        (loop (- i 1) (cons (+ start (* i step)) acc))))))
+
+; (vector-map f v1 v2 ...) — new vector of f applied elementwise; the
+; result is as long as the shortest vector
+(define (vector-map f v . vs)
+  (let* ((all (cons v vs))
+         (len (foldl (lambda (m x) (min m (vector-length x))) (vector-length v) vs))
+         (out (make-vector len 0)))
+    (let loop ((i 0))
+      (if (>= i len) out
+        (begin
+          (vector-set! out i (apply f (map (lambda (x) (vector-ref x i)) all)))
+          (loop (+ i 1)))))))
+
+; (vector-fill! v x) — set every element to x; returns v
+(define (vector-fill! v x)
+  (let loop ((i 0))
+    (if (>= i (vector-length v)) v
+      (begin (vector-set! v i x) (loop (+ i 1))))))
+
+; (vector-copy v [start [end]]) — fresh vector with elements start..end-1
+(define (vector-copy v . opt)
+  (let* ((start (if (null? opt) 0 (car opt)))
+         (end (if (or (null? opt) (null? (cdr opt))) (vector-length v) (car (cdr opt))))
+         (out (make-vector (max 0 (- end start)) 0)))
+    (let loop ((i start))
+      (if (>= i end) out
+        (begin (vector-set! out (- i start) (vector-ref v i)) (loop (+ i 1)))))))
+
+; (values x ...) — one value is returned as is; several are packed in a
+; list that let-values / call-with-values unpack. Aura has no native
+; multiple values.
+(define (values . xs)
+  (if (and (pair? xs) (null? (cdr xs))) (car xs) xs))
+
+(define (call-with-values producer consumer)
+  (let ((v (producer)))
+    (if (list? v) (apply consumer v) (consumer v))))
