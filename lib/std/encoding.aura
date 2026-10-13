@@ -20,9 +20,13 @@
 ; character (the old fold emitted zero bytes past it); hex/base64 decoders
 ; stop at the first invalid char instead of emitting zeros.
 
+; Issue #4500: the natives are registered as %hex-encode etc. They used to be
+; `encoding:hex-encode`, which `(require "std/encoding")` rebinds to these
+; very wrappers (prefix `encoding:`), turning each into an infinite tail call.
+
 (export hex-encode hex-decode base64-encode base64-decode)
 
-(define (hex-encode data) (encoding:hex-encode data))
-(define (hex-decode hex) (encoding:hex-decode hex))
-(define (base64-encode data) (encoding:base64-encode data))
-(define (base64-decode b64) (encoding:base64-decode b64))
+(define (hex-encode data) (%hex-encode data))
+(define (hex-decode hex) (%hex-decode hex))
+(define (base64-encode data) (%base64-encode data))
+(define (base64-decode b64) (%base64-decode b64))

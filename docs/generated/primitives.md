@@ -139,8 +139,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (252)
+## Core builtins (256)
 
+- `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `%hex-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `%hex-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -433,13 +437,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 - `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
-## Encoding: (4)
-
-- `encoding:base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
-- `encoding:base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
-- `encoding:hex-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
-- `encoding:hex-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
-
 ## Engine: (2)
 
 - `engine:metrics` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -660,6 +657,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ### Core builtins (must remain primitive) (360)
 
+- `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
+- `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
+- `%hex-decode` — `src/compiler/evaluator_primitives_char.cpp`
+- `%hex-encode` — `src/compiler/evaluator_primitives_char.cpp`
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -742,10 +743,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `encoding:base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
-- `encoding:base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
-- `encoding:hex-decode` — `src/compiler/evaluator_primitives_char.cpp`
-- `encoding:hex-encode` — `src/compiler/evaluator_primitives_char.cpp`
 - `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`

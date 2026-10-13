@@ -221,7 +221,9 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     // retained ~42.8 GB RSS and wedged/OOM-killed Soft mid-batch (third
     // concurrent MiniMax batch → serve_session_timeout). These allocate ONE
     // heap entry per call; lib/std/encoding.aura delegates to them.
-    add("encoding:base64-encode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    // Issue #4500: `%` names, not `encoding:*` — a prefixed
+    // (require "std/encoding") binds encoding:hex-encode to the wrapper itself.
+    add("%base64-encode", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         const auto idx = types::as_string_idx(a[0]);
@@ -263,7 +265,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sid);
     });
 
-    add("encoding:base64-decode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("%base64-decode", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         const auto idx = types::as_string_idx(a[0]);
@@ -305,7 +307,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sid);
     });
 
-    add("encoding:hex-encode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("%hex-encode", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         const auto idx = types::as_string_idx(a[0]);
@@ -324,7 +326,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sid);
     });
 
-    add("encoding:hex-decode", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("%hex-decode", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         const auto idx = types::as_string_idx(a[0]);
