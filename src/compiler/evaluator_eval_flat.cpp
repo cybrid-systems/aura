@@ -1664,6 +1664,23 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return make_string(static_cast<std::int64_t>(idx));
         }
         case ast::NodeTag::Call: {
+            // Issue #4490: a quoted #( ... ) is parsed with the reserved
+            // callee "#vector" — the datum is a real vector of the quoted
+            // elements, not the list (vector ...).
+            if (!v.children.empty()) {
+                auto cv = flat.get(v.child(0));
+                if (cv.tag == ast::NodeTag::Variable && pool.resolve(cv.sym_id) == "#vector") {
+                    std::vector<EvalValue> elems;
+                    elems.reserve(v.children.size() - 1);
+                    for (std::size_t i = 1; i < v.children.size(); ++i)
+                        elems.push_back(ast_to_data(flat, pool, v.child(i)));
+                    const TwPinMany pin_elems(elems);
+                    const auto vid = mint_vector(std::move(elems), /*check_quota=*/true);
+                    if (vid == kFileHeapMintDenied)
+                        return make_void();
+                    return types::make_vector(vid);
+                }
+            }
             // Issue #3703: recurse WITHOUT alloc_storage_lock_ — the
             // evaluator-wide mutex must not be held across the ast_to_data
             // recursion (multi-fiber quote of disjoint lists serializes on

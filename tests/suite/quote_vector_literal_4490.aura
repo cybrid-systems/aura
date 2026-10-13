@@ -1,0 +1,12 @@
+;; expect: (#t 2 #t 0 #t) #t #(x y) #(1 2) (#f vector)
+; Issue #4490: a quoted #( ... ) is a vector datum; '(vector ...) stays a list.
+(display (list (vector? '#(1 2)) (vector-ref '#(1 2) 1) (vector-ref '#(#t) 0) (vector-length '#()) (equal? '#(1 (2 3)) (vector 1 (list 2 3)))))
+(display " ")
+(display (vector? (car '(#(1)))))
+(display " ")
+(display (quote #(x y)))
+(display " ")
+(display #(1 2))
+(display " ")
+(display (list (vector? '(vector 1 2)) (car '(vector 1 2))))
+(newline)
