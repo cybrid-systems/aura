@@ -758,6 +758,14 @@ struct LLVMBuilder {
     }
     void store(uint32_t slot, llvm::Value* val) { irb->CreateStore(val, llvm_locals[slot]); }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
+    // Issue #4491: the single JIT truthiness test. Must match
+    // aura::compiler::pure::is_truthy (see value_tags.h kIntZeroIsFalse).
+    llvm::Value* jit_truthy(llvm::Value* v) {
+        auto* not_false = irb->CreateICmpNE(v, c64(KWD_FALSE_VAL));
+        if constexpr (!types::kIntZeroIsFalse)
+            return not_false;
+        return irb->CreateAnd(not_false, irb->CreateICmpNE(v, c64(0)));
+    }
 
     // Lower one FlatInstruction into the current LLVM IR builder.
     // Contract: inst.opcode must be a valid IROpcode value (< MaxIROpcode);
@@ -1180,46 +1188,30 @@ struct LLVMBuilder {
                 return true;
             }
             case OpAnd: {
-                // Truthiness: #f (val=3) and integer 0 (val=0) are both falsy.
-                auto is_truthy_fn = [&](llvm::Value* v) -> llvm::Value* {
-                    auto not_false = irb->CreateICmpNE(v, c64(KWD_FALSE_VAL));
-                    auto not_zero = irb->CreateICmpNE(v, c64(0));
-                    return irb->CreateAnd(not_false, not_zero);
-                };
-                auto a = is_truthy_fn(load(inst.ops[1]));
-                auto b = is_truthy_fn(load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(irb->CreateAnd(a, b), c64(KWD_TRUE_VAL),
-                                                     c64(KWD_FALSE_VAL)));
+                // Issue #4491: Scheme and/or return an operand, not #t/#f.
+                // Truthiness lives in one helper (jit_truthy) that mirrors
+                // aura::compiler::pure::is_truthy.
+                auto a = load(inst.ops[1]);
+                auto b = load(inst.ops[2]);
+                store(inst.ops[0], irb->CreateSelect(jit_truthy(a), b, a));
                 return true;
             }
             case OpOr: {
-                auto is_truthy_fn = [&](llvm::Value* v) -> llvm::Value* {
-                    auto not_false = irb->CreateICmpNE(v, c64(KWD_FALSE_VAL));
-                    auto not_zero = irb->CreateICmpNE(v, c64(0));
-                    return irb->CreateOr(not_false, not_zero);
-                };
-                auto a = is_truthy_fn(load(inst.ops[1]));
-                auto b = is_truthy_fn(load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateSelect(irb->CreateOr(a, b), c64(KWD_TRUE_VAL),
-                                                     c64(KWD_FALSE_VAL)));
+                auto a = load(inst.ops[1]);
+                auto b = load(inst.ops[2]);
+                store(inst.ops[0], irb->CreateSelect(jit_truthy(a), a, b));
                 return true;
             }
             case OpNot: {
-                // #f and int 0 are both falsy → not is true only for those
                 auto v = load(inst.ops[1]);
-                auto eq_false = irb->CreateICmpEQ(v, c64(KWD_FALSE_VAL));
-                auto eq_zero = irb->CreateICmpEQ(v, c64(0));
-                auto falsy = irb->CreateOr(eq_false, eq_zero);
-                store(inst.ops[0], irb->CreateSelect(falsy, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                store(inst.ops[0], irb->CreateSelect(jit_truthy(v), c64(KWD_FALSE_VAL),
+                                                     c64(KWD_TRUE_VAL)));
                 return true;
             }
             case OpBranch: {
-                // Truthiness: #f (val=3) and integer 0 (val=0) are both falsy.
                 auto cond_val = load(inst.ops[0]);
-                auto not_false = irb->CreateICmpNE(cond_val, c64(KWD_FALSE_VAL));
-                auto not_int0 = irb->CreateICmpNE(cond_val, c64(0));
-                auto truthy = irb->CreateAnd(not_false, not_int0);
-                irb->CreateCondBr(truthy, block_map[inst.ops[1]], block_map[inst.ops[2]]);
+                irb->CreateCondBr(jit_truthy(cond_val), block_map[inst.ops[1]],
+                                  block_map[inst.ops[2]]);
                 return true;
             }
             // Issue #61 Iter 3: lazy-deopt guard. Computes the runtime

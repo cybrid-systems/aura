@@ -1,0 +1,39 @@
+; Issue #4491 step 1 — and/or return an operand on every execution path
+; (tree-walker, IR executor, JIT). Each probe runs cold once, then hot
+; so the IR/JIT tiers take over, and every result must match.
+(define *fails* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (begin (display "  pass: ") (display name) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+
+(define (p-and a b) (and a b))
+(define (p-or a b) (or a b))
+(define (p-not a) (not a))
+(define (p-if a) (if a 'T 'F))
+
+(define (hot name f args want)
+  (check (string-append name " cold") (apply f args) want)
+  (let loop ((i 0) (ok #t))
+    (if (< i 3000)
+        (loop (+ i 1) (and ok (equal? (apply f args) want)))
+        (check (string-append name " hot") ok #t))))
+
+(hot "and #t sym" p-and (list #t 'y) 'y)
+(hot "and 5 sym" p-and (list 5 'y) 'y)
+(hot "and #f sym" p-and (list #f 'y) #f)
+(hot "or #f sym" p-or (list #f 'y) 'y)
+(hot "or 5 sym" p-or (list 5 'y) 5)
+(hot "or str" p-or (list "s" 'y) "s")
+(hot "not #f" p-not (list #f) #t)
+(hot "not 1" p-not (list 1) #f)
+(hot "if 0.0" p-if (list 0.0) 'T)
+(hot "if nil" p-if (list '()) 'T)
+(hot "if #f" p-if (list #f) 'F)
+
+(if (= *fails* 0)
+    (begin (display "PASS-4491-and-or") (newline))
+    (begin (display "FAIL-4491 fails=") (display *fails*) (newline)
+           (error "4491 and/or suite failed")))

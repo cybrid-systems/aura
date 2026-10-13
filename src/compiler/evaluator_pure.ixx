@@ -39,6 +39,7 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "value_tags.h"
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.evaluator_pure;
@@ -65,11 +66,8 @@ namespace aura::compiler::pure {
 // common case (bool / int) to keep the hot path branch-free
 // at the cost of an int comparison. Matches legacy.
 export inline bool is_truthy(const types::EvalValue& v) noexcept {
-    if (v.val == 3)
-        return false; // #f
-    if (types::is_int(v) && types::as_int(v) == 0)
-        return false; // integer 0
-    return true;
+    // Issue #4491: shared with JIT / constant folding via value_tags.h.
+    return ::aura::compiler::types::raw_is_truthy(v.val);
 }
 
 // edit_distance_pure — Issue #146 Phase 4 extract.
