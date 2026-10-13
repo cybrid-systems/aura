@@ -25,3 +25,11 @@ find: Any Any -> Any
 count: Any Any -> Any
 remove: Any Any -> Any
 delete: Any Any -> Any
+assoc: Any Any -> Any
+assq: Any Any -> Any
+iota: Any -> Any
+vector-map: Any Any -> Any
+vector-fill!: Any Any -> Any
+vector-copy: Any -> Any
+values: Any -> Any
+call-with-values: Any Any -> Any

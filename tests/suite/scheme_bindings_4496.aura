@@ -1,0 +1,23 @@
+;; expect: (b . 2) (b . 2) (0 1 2 3) one #(0 0) #(4 6) #(1 2 3) xy xy 3 2 (2 1 0) (7 2 5) 3 (1 3 5) #(2 3) #f
+; #4496: common R7RS bindings: assoc/assq/iota/vector-*/symbol conversions
+; (std/list, std/string via the oneshot prelude), case/do/let-values
+; (parser desugarings), values/call-with-values.
+(define (show x) (display x) (display " "))
+(show (assoc 'b '((a . 1) (b . 2))))
+(show (assq 'b '((a . 1) (b . 2))))
+(show (iota 4))
+(show (case 1 ((1) 'one) (else 'other)))
+(show (vector-fill! (vector 1 2) 0))
+(show (vector-map + (vector 1 2) (vector 3 4)))
+(show (vector-copy (vector 1 2 3)))
+(show (string->symbol "xy"))
+(show (symbol->string 'xy))
+(show (let-values (((a b) (values 1 2))) (+ a b)))
+(show (case 'b ((a) 1) ((b c) 2) (else 3)))
+(show (do ((i 0 (+ i 1)) (acc '() (cons i acc))) ((= i 3) acc)))
+(show (let-values (((q r) (values 7 2)) ((z) (values 5))) (list q r z)))
+(show (call-with-values (lambda () (values 1 2)) +))
+(show (iota 3 1 2))
+(show (vector-copy (vector 1 2 3 4) 1 3))
+(display (assoc 'z '((a . 1))))
+(newline)

@@ -328,6 +328,26 @@ namespace {
 
 void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    // Issue #4496: (exit [code]) ends the process with that status
+    // (default 0; #t => 0, #f => 1). Refused under a sandbox so a hosted
+    // program cannot stop the server.
+    add("exit", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (ev.sandbox_mode())
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "exit: not permitted in sandbox",
+                                        ev.primitive_error_counter_ptr());
+        int code = 0;
+        if (!a.empty()) {
+            if (types::is_int(a[0]))
+                code = static_cast<int>(types::as_int(a[0]));
+            else if (types::is_bool(a[0]))
+                code = types::as_bool(a[0]) ? 0 : 1;
+        }
+        std::fflush(stdout);
+        std::fflush(stderr);
+        std::exit(code);
+    });
+
     add("equal?", [&ev](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_bool(true);

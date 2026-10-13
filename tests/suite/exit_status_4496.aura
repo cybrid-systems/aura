@@ -1,0 +1,6 @@
+;; expect: before
+; #4496: (exit n) ends the run with status n.
+(display "before")
+(newline)
+(exit 0)
+(display "after")

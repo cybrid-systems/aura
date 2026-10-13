@@ -43,9 +43,9 @@
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
-| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+20) | Aura standard list library |
+| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+28) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
-| `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+52) | Aura standard math library |
+| `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+53) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
@@ -69,7 +69,7 @@
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
 | `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
-| `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+19) | Aura standard string library |
+| `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+21) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
 | `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+89) | lib/std/surface.aura — recommended public convenience surface (P3) |
 | `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:population` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` … (+2) | lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family |
@@ -88,7 +88,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (448 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (449 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 
