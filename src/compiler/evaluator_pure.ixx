@@ -522,6 +522,14 @@ inline types::EvalValue arith_type_sentinel(const types::EvalValue& bad,
     return types::make_error(0);
 }
 
+// Issue #4482: fixnum overflow is an error, not a silent inexact float.
+// Fixnums cover [-2^62, 2^62-1]; there is no bignum tier yet.
+inline types::EvalValue fixnum_overflow_error(const char* op, std::ostream* diag) {
+    if (diag)
+        *diag << "error: integer overflow in " << op << " (fixnum range is [-2^62, 2^62-1])\n";
+    return types::make_error(0);
+}
+
 // arithmetic_sum_pure — Issue #146 (7th extract).
 //
 // Pure variadic sum: (+) → 0, (+ x) → x, (+ x y ...) → sum.
@@ -552,24 +560,14 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
             r += types::is_float(v) ? types::as_float(v) : static_cast<double>(types::as_int(v));
         return types::make_float(r);
     }
-    // Issue #1150: checked int64 sum — overflow promotes to float (no UB).
+    // Issue #1150 / #4482: checked int64 sum — overflow is an error (no UB).
     std::int64_t r = 0;
     for (const auto& v : args) {
         const std::int64_t op = types::as_int(v);
         std::int64_t next = 0;
         // Issue #4462: [2^62, 2^63) passes the int64 check and is not a fixnum.
-        if (__builtin_add_overflow(r, op, &next) || !types::fits_fixnum(next)) {
-            double dr = static_cast<double>(r) + static_cast<double>(op);
-            // finish remaining with float path from next arg
-            // (restart from current position by consuming rest in float)
-            // We already failed at this op; remaining args not yet applied.
-            // Re-sum with float from the start for correct total.
-            double fr = 0.0;
-            for (const auto& x : args)
-                fr +=
-                    types::is_float(x) ? types::as_float(x) : static_cast<double>(types::as_int(x));
-            return types::make_float(fr);
-        }
+        if (__builtin_add_overflow(r, op, &next) || !types::fits_fixnum(next))
+            return fixnum_overflow_error("+", diag);
         r = next;
     }
     return types::make_int(r);
@@ -613,28 +611,17 @@ export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalVa
         std::int64_t neg = 0;
         if (__builtin_sub_overflow(static_cast<std::int64_t>(0), a0, &neg) ||
             !types::fits_fixnum(neg))
-            return types::make_float(-static_cast<double>(a0));
+            return fixnum_overflow_error("-", diag);
         return types::make_int(neg);
     }
     std::int64_t r = types::as_int(args[0]);
-    if (!types::fits_fixnum(r)) {
-        double fr = static_cast<double>(r);
-        for (std::size_t j = 1; j < args.size(); ++j)
-            fr -= types::is_float(args[j]) ? types::as_float(args[j])
-                                           : static_cast<double>(types::as_int(args[j]));
-        return types::make_float(fr);
-    }
+    if (!types::fits_fixnum(r))
+        return fixnum_overflow_error("-", diag);
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::int64_t op = types::as_int(args[i]);
         std::int64_t next = 0;
-        if (__builtin_sub_overflow(r, op, &next) || !types::fits_fixnum(next)) {
-            double fr = types::is_float(args[0]) ? types::as_float(args[0])
-                                                 : static_cast<double>(types::as_int(args[0]));
-            for (std::size_t j = 1; j < args.size(); ++j)
-                fr -= types::is_float(args[j]) ? types::as_float(args[j])
-                                               : static_cast<double>(types::as_int(args[j]));
-            return types::make_float(fr);
-        }
+        if (__builtin_sub_overflow(r, op, &next) || !types::fits_fixnum(next))
+            return fixnum_overflow_error("-", diag);
         r = next;
     }
     return types::make_int(r);
@@ -669,13 +656,8 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
     for (const auto& v : args) {
         const std::int64_t op = types::as_int(v);
         std::int64_t next = 0;
-        if (__builtin_mul_overflow(r, op, &next) || !types::fits_fixnum(next)) {
-            double fr = 1.0;
-            for (const auto& x : args)
-                fr *=
-                    types::is_float(x) ? types::as_float(x) : static_cast<double>(types::as_int(x));
-            return types::make_float(fr);
-        }
+        if (__builtin_mul_overflow(r, op, &next) || !types::fits_fixnum(next))
+            return fixnum_overflow_error("*", diag);
         r = next;
     }
     return types::make_int(r);

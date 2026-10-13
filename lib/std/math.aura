@@ -155,11 +155,17 @@
     (pow b n)
     (if (< n 0)
       (/ 1.0 (expt b (- n)))
-      (let loop ((e n) (acc 1) (base b))
-        (if (= e 0) acc
-          (if (= (modulo e 2) 0)
-            (loop (quotient e 2) acc (* base base))
-            (loop (quotient e 2) (* acc base) (* base base))))))))
+      ; Issue #4482: exact fixnum overflow is an error and there is no
+      ; bignum tier, so an exact result outside [-2^62, 2^62-1] comes back
+      ; inexact (pow). The base is squared only while bits remain.
+      (if (and (integer? b) (> (abs b) 1) (>= (* n (log (abs b))) 42.9))
+        (pow b n)
+        (let loop ((e n) (acc 1) (base b))
+          (if (= e 0) acc
+            (let ((acc2 (if (= (modulo e 2) 0) acc (* acc base)))
+                  (e2 (quotient e 2)))
+              (if (= e2 0) acc2
+                (loop e2 acc2 (* base base))))))))))
 
 (define (nPr n r)
   (/ (factorial n) (factorial (- n r))))

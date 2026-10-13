@@ -67,11 +67,11 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
         bool match = false;
 
         switch (expected) {
-            case 1: // Int
-                match = is_fixnum_val(val) && val > kFloatBias;
+            case 1:                         // Int
+                match = is_fixnum_val(val); // #4482: every even tag
                 break;
-            case 2: // Float
-                match = (val <= kFloatBias && val > kStringBias);
+            case 2:                                                  // Float
+                match = aura::compiler::types::is_float_raw_v2(val); // #4482
                 break;
             case 3: // Bool
                 match = (val == 3 || val == 7);

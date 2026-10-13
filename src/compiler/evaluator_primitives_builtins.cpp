@@ -98,8 +98,15 @@ Primitives::Primitives() {
             return *err;
         std::span<const std::string> heap(string_heap_->data(), string_heap_->size());
         auto v = aura::compiler::pure::arithmetic_sum_pure(a, heap, nullptr);
-        if (is_error(v))
+        if (is_error(v)) {
+            // Issue #4482: the only error left here is fixnum overflow.
+            if (error_values_ != nullptr && string_heap_ != nullptr)
+                return primitives_detail::make_primitive_error(
+                    *string_heap_, *error_values_,
+                    "+: integer overflow (fixnum range is [-2^62, 2^62-1])",
+                    primitive_error_counter_);
             return make_error(0);
+        }
         return v;
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
@@ -107,8 +114,15 @@ Primitives::Primitives() {
         if (auto err = reject_non_number(a))
             return *err;
         auto v = aura::compiler::pure::arithmetic_sub_pure(a, *string_heap_, nullptr);
-        if (is_error(v))
+        if (is_error(v)) {
+            // Issue #4482: the only error left here is fixnum overflow.
+            if (error_values_ != nullptr && string_heap_ != nullptr)
+                return primitives_detail::make_primitive_error(
+                    *string_heap_, *error_values_,
+                    "-: integer overflow (fixnum range is [-2^62, 2^62-1])",
+                    primitive_error_counter_);
             return make_error(0);
+        }
         return v;
     };
     // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
@@ -116,8 +130,15 @@ Primitives::Primitives() {
         if (auto err = reject_non_number(a))
             return *err;
         auto v = aura::compiler::pure::arithmetic_mul_pure(a, *string_heap_, nullptr);
-        if (is_error(v))
+        if (is_error(v)) {
+            // Issue #4482: the only error left here is fixnum overflow.
+            if (error_values_ != nullptr && string_heap_ != nullptr)
+                return primitives_detail::make_primitive_error(
+                    *string_heap_, *error_values_,
+                    "*: integer overflow (fixnum range is [-2^62, 2^62-1])",
+                    primitive_error_counter_);
             return make_error(0);
+        }
         return v;
     };
     // (/) → 1, (/ x) → 1/x, (/ x y ...) → x / y / z / ...

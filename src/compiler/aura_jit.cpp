@@ -22,15 +22,13 @@ constexpr bool jit_fits_fixnum(std::int64_t v) noexcept {
     constexpr std::int64_t kMax = INT64_MAX >> 1;
     if (v < kMin || v > kMax)
         return false;
-    const auto tagged = static_cast<std::int64_t>(static_cast<std::uint64_t>(v) << 1);
-    return tagged > types::FLOAT_BIAS_VAL;
+    return true; // Issue #4482: all even tagged values are fixnums
 }
 static_assert(jit_fits_fixnum(0));
 static_assert(jit_fits_fixnum(INT64_MAX >> 1));
 static_assert(!jit_fits_fixnum((INT64_MAX >> 1) + 1));
-static_assert(!jit_fits_fixnum(INT64_MIN >> 1));
-static_assert(jit_fits_fixnum(-4999999999999999LL));
-static_assert(!jit_fits_fixnum(-5000000000000000LL));
+static_assert(jit_fits_fixnum(INT64_MIN >> 1)); // #4482: symmetric
+static_assert(jit_fits_fixnum(-5000000000000000LL));
 } // namespace
 
 #include <llvm/IR/Intrinsics.h>
@@ -760,6 +758,16 @@ struct LLVMBuilder {
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
     // Issue #4491: the single JIT truthiness test. Must match
     // aura::compiler::pure::is_truthy (see value_tags.h kIntZeroIsFalse).
+    // Issue #4482: boxed float = low2 11 inside (STRING_BIAS_2, FLOAT_BIAS].
+    llvm::Value* jit_is_float(llvm::Value* v) {
+        auto* odd3 = irb->CreateICmpEQ(irb->CreateAnd(v, c64(3)), c64(3));
+        auto* in_rng = irb->CreateAnd(irb->CreateICmpSLE(v, c64(types::FLOAT_BIAS_VAL)),
+                                      irb->CreateICmpSGT(v, c64(types::STRING_BIAS_VAL_2)));
+        return irb->CreateAnd(odd3, in_rng);
+    }
+    llvm::Value* jit_is_fixnum(llvm::Value* v) {
+        return irb->CreateICmpEQ(irb->CreateAnd(v, c64(1)), c64(0));
+    }
     llvm::Value* jit_truthy(llvm::Value* v) {
         auto* not_false = irb->CreateICmpNE(v, c64(KWD_FALSE_VAL));
         if constexpr (!types::kIntZeroIsFalse)
@@ -962,8 +970,8 @@ struct LLVMBuilder {
         // so SHAPE_INT still has to notice it. kind: 0 add, 1 sub, 2 mul.
         auto emit_fixnum_arith = [&](llvm::Value* a, llvm::Value* b, int kind) -> llvm::Value* {
             auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-            auto* a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
-            auto* b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
+            auto* a_is_float = jit_is_float(a);
+            auto* b_is_float = jit_is_float(b);
             auto* any_float = irb->CreateOr(a_is_float, b_is_float);
             // Add/sub of the tags is the tag of the sum. Mul of the tags is
             // (a*b)<<2, which overflows while a*b still fits, and a product
@@ -982,10 +990,11 @@ struct LLVMBuilder {
             auto* raw = irb->CreateExtractValue(ovf, 0);
             auto* overflow = irb->CreateExtractValue(ovf, 1);
             llvm::Value* tagged = kind == 2 ? irb->CreateShl(raw, c64(1)) : raw;
-            llvm::Value* out_of_domain = irb->CreateICmpSLE(tagged, c64(FLOAT_BIAS_VAL));
+            // Issue #4482: every even tag is a fixnum; only the
+            // intrinsic overflow (and the mul range below) leave the domain.
+            llvm::Value* out_of_domain = irb->getFalse();
             if (kind == 2) {
-                // kMin's tag is INT64_MIN (caught above). A product above
-                // kMax can still wrap to a tag that looks in range.
+                // A product outside [kMin, kMax] wraps on the retag.
                 constexpr std::int64_t kMin = INT64_MIN >> 1;
                 constexpr std::int64_t kMax = INT64_MAX >> 1;
                 auto* below = irb->CreateICmpSLT(raw, c64(kMin));
@@ -1016,27 +1025,22 @@ struct LLVMBuilder {
                                           : irb->CreateFAdd(da, db);
             auto* fres = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
                                          llvm::ArrayRef<llvm::Value*>{fd});
+            // Issue #4482: fixnum overflow is an error, not a silent float.
+            auto* fout =
+                irb->CreateSelect(any_float, fres, c64(types::make_ref(types::RefError, 0)));
             irb->CreateBr(bb_done);
 
             irb->SetInsertPoint(bb_done);
             auto* phi = irb->CreatePHI(i64_ty, 2, "fixnum_arith");
             phi->addIncoming(tagged, bb_int);
-            phi->addIncoming(fres, bb_flt);
+            phi->addIncoming(fout, bb_flt);
             return phi;
         };
         // Issue #4463: a number is a v2 float or a fixnum above the float
         // bias. Bool, string, and ref tags are not numbers. Bit 0 clear
         // alone is not enough: integer 1 is tagged 2.
         auto is_numeric_tag = [&](llvm::Value* v) -> llvm::Value* {
-            auto* low2 = irb->CreateAnd(v, c64(3));
-            auto* float_bits = irb->CreateICmpEQ(low2, c64(0));
-            auto* in_float = irb->CreateAnd(irb->CreateICmpSLE(v, c64(FLOAT_BIAS_VAL)),
-                                            irb->CreateICmpSGT(v, c64(types::STRING_BIAS_VAL_2)));
-            auto* is_float = irb->CreateAnd(float_bits, in_float);
-            auto* bit0 = irb->CreateAnd(v, c64(1));
-            auto* is_fix = irb->CreateAnd(irb->CreateICmpEQ(bit0, c64(0)),
-                                          irb->CreateICmpSGT(v, c64(FLOAT_BIAS_VAL)));
-            return irb->CreateOr(is_float, is_fix);
+            return irb->CreateOr(jit_is_float(v), jit_is_fixnum(v)); // #4482
         };
         const auto num_err = c64(types::make_ref(types::RefError, 0));
         // Bad operands store a RefError and join. The numeric arm keeps
@@ -1129,8 +1133,8 @@ struct LLVMBuilder {
                     auto tagged = irb->CreateShl(div_result, c64(1));
                     store(inst.ops[0], irb->CreateSelect(is_zero, err_tag, tagged));
                 } else {
-                    auto a_is_float = irb->CreateICmpSLE(dividend, c64(FLOAT_BIAS_VAL));
-                    auto b_is_float = irb->CreateICmpSLE(divisor, c64(FLOAT_BIAS_VAL));
+                    auto a_is_float = jit_is_float(dividend); // #4482
+                    auto b_is_float = jit_is_float(divisor);
                     auto any_float = irb->CreateOr(a_is_float, b_is_float);
                     auto a_dbl = irb->CreateSelect(
                         a_is_float,
@@ -1301,13 +1305,11 @@ struct LLVMBuilder {
                     //   shape_id = (is_ref ? 10 : (is_int ? 1 : (is_string ? 4 : 0)))
                     // This is conservative: e.g. a Float value is reported
                     // as Dynamic (0) and the guard fails.
-                    auto* bit0 = irb->CreateAnd(arg_val, c64(1));
-                    auto* is_ref = irb->CreateICmpEQ(bit0, c64(1));
-                    // Issue #181 Cycle 2: v2 string encoding. Use
-                    // (v & 3) == 2 as the dedicated string tag, plus
-                    // a range check against STRING_BIAS_VAL_2.
+                    // Issue #4482: Ref is low2 01; boxed strings are low2 11
+                    // at or below STRING_BIAS_VAL_2.
                     auto* low2 = irb->CreateAnd(arg_val, c64(3));
-                    auto* is_string_tag = irb->CreateICmpEQ(low2, c64(2));
+                    auto* is_ref = irb->CreateICmpEQ(low2, c64(1));
+                    auto* is_string_tag = irb->CreateICmpEQ(low2, c64(3));
                     auto* is_string_approx = irb->CreateAnd(
                         is_string_tag,
                         irb->CreateICmpSLE(arg_val, c64(aura::compiler::types::STRING_BIAS_VAL_2)));

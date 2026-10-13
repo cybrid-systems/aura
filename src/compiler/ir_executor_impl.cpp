@@ -1017,12 +1017,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                                 ? __builtin_sub_overflow(ai, bi, &next)
                                                 : __builtin_mul_overflow(ai, bi, &next);
                             if (ov || !fits_fixnum(next)) {
-                                const double da = static_cast<double>(ai);
-                                const double db = static_cast<double>(bi);
-                                const double dr = instr.opcode == IROpcode::Add   ? da + db
-                                                  : instr.opcode == IROpcode::Sub ? da - db
-                                                                                  : da * db;
-                                locals[ops[0]] = make_float(dr);
+                                // Issue #4482: fixnum overflow is an error, not a float.
+                                locals[ops[0]] = types::make_error(0);
                             } else {
                                 locals[ops[0]] = make_int(next);
                             }
@@ -1075,12 +1071,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             : instr.opcode == IROpcode::Sub ? __builtin_sub_overflow(x, y, &next)
                                                             : __builtin_mul_overflow(x, y, &next);
                         if (ov || !fits_fixnum(next)) {
-                            const double da = static_cast<double>(x);
-                            const double db = static_cast<double>(y);
-                            const double dr = instr.opcode == IROpcode::Add   ? da + db
-                                              : instr.opcode == IROpcode::Sub ? da - db
-                                                                              : da * db;
-                            locals[ops[0]] = make_float(dr);
+                            // Issue #4482: fixnum overflow is an error, not a float.
+                            locals[ops[0]] = types::make_error(0);
                         } else {
                             locals[ops[0]] = make_int(next);
                         }

@@ -6732,7 +6732,7 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
     // is the safety belt (catches fixnums in the right range
     // that happen to have the string tag bit set).
     auto is_string = [](int64_t v) { return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2; };
-    auto is_fixnum = [](int64_t v) { return (v & 1) == 0 && v > FLOAT_BIAS_VAL; };
+    auto is_fixnum = [](int64_t v) { return (v & 1) == 0; }; // #4482
     // Issue #613: v2 float encoding — (v&3)==0 + range check.
     auto is_float = [](int64_t v) { return is_float_raw_v2(v); };
 
@@ -7019,7 +7019,7 @@ void aura_display_value(int64_t val, int64_t write_mode) {
         return;
     }
     // Fixnum: low bit clear, above float bias band (see classify_eval_value_tag)
-    if (is_fixnum(val) && val > FLOAT_BIAS_VAL) {
+    if (is_fixnum(val)) { // #4482
         fprintf(stdout, "%ld", static_cast<long>(val >> 1));
         fflush(stdout);
         return;

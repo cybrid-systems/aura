@@ -88,9 +88,9 @@ unsigned long long aura_get_aot_defuse_version(void) {
 // aura_jit_runtime.cpp that override these weak symbols.
 __attribute__((weak)) void aura_jit_epoch_acquire_fence(void) {}
 
-__attribute__((weak)) int
-aura_jit_linear_epoch_safety_check(const char* fn_name, unsigned char linear_state,
-                                   unsigned int opcode) {
+__attribute__((weak)) int aura_jit_linear_epoch_safety_check(const char* fn_name,
+                                                             unsigned char linear_state,
+                                                             unsigned int opcode) {
     (void)fn_name;
     (void)linear_state;
     (void)opcode;
@@ -124,14 +124,19 @@ __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
 }
 
 #define IS_PAIR(v) (((v) & 3) == 1)
-#define IS_SPECIAL(v) (((v) & 3) == 3)
+// Issue #4482 (value ABI 2): every even value is a fixnum (symmetric
+// 63-bit range). Boxed floats and strings have low2 == 11 and sit below
+// FLOAT_BIAS; the small low2 == 11 values are the #f/#t/void sentinels.
+// Lockstep with src/compiler/value_tags.h (kValueEncodingAbi).
+#define AURA_VALUE_ABI 2
+#define FLOAT_BIAS (-10000000000000000LL + 3)
+#define STRING_BIAS_AREA (-9000000000000000000LL + 3)
+#define IS_SPECIAL(v) ((((v) & 3) == 3) && ((v) > FLOAT_BIAS))
 #define IS_FIXNUM(v) (((v) & 1) == 0)
 #define PAIR_INDEX(v) ((v) >> 2)
-#define IS_STRING(v) ((v) <= -9000000000000000000LL)
-#define STRING_IDX(v) ((int)(-(int64_t)(v) - 9000000000000000000LL))
-#define MAKE_STRING_SENTINEL(i) (-9000000000000000000LL - (int64_t)(i))
-#define STRING_BIAS_AREA (-9000000000000000000LL)
-#define FLOAT_BIAS (-10000000000000000LL)
+#define IS_STRING(v) ((((v) & 3) == 3) && ((v) <= STRING_BIAS_AREA))
+#define STRING_IDX(v) ((int)((STRING_BIAS_AREA - (int64_t)(v)) >> 2))
+#define MAKE_STRING_SENTINEL(i) (STRING_BIAS_AREA - ((int64_t)(i) << 2))
 #define SPECIAL_TAG(v) (((v) >> 2) & 3)
 
 // ── Enum-compatible tag values (use static const instead of macros to avoid enum conflict)
@@ -752,11 +757,9 @@ extern int64_t aura_alloc_float(double d);
 
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
     int is_bool = (val == 3 || val == 7);
-    int is_string = (val <= (int64_t)-9000000000000000000LL);
-    int is_fixnum = ((val & 1) == 0 && val > (int64_t)-10000000000000000LL);
-    // Issue #613: v2 float encoding — (v&3)==0 + range check.
-    int is_float = (((val & 3) == 0) && val <= (int64_t)-10000000000000000LL &&
-                    val > (int64_t)-9000000000000000000LL);
+    int is_string = IS_STRING(val);
+    int is_fixnum = IS_FIXNUM(val); // #4482
+    int is_float = (((val & 3) == 3) && val <= FLOAT_BIAS && val > STRING_BIAS_AREA);
 
     switch (type_tag) {
         case 0: { // Coerce to Int
@@ -843,10 +846,10 @@ static int g_prim_reg_count = 0;
 // (same shape as fixnums; the range check disambiguates). The
 // pool index is stored shifted left by 2, so the max idx drops
 // from 2^62 to 2^60 — still plenty.
-#define FLOAT_BIAS_V2 (-10000000000000000LL) // low-2-bits == 0
-#define IS_FLOAT(v) (((v) <= FLOAT_BIAS_V2) && ((v) > STRING_BIAS_AREA) && (((v) & 3) == 0))
-#define FLOAT_IDX(v) ((int)((-(int64_t)(v) - 10000000000000000LL) >> 2))
-#define MAKE_FLOAT_RAW(idx) (-10000000000000000LL - ((int64_t)(idx) << 2))
+#define FLOAT_BIAS_V2 FLOAT_BIAS // #4482: low-2-bits == 3
+#define IS_FLOAT(v) (((v) <= FLOAT_BIAS_V2) && ((v) > STRING_BIAS_AREA) && (((v) & 3) == 3))
+#define FLOAT_IDX(v) ((int)((FLOAT_BIAS_V2 - (int64_t)(v)) >> 2))
+#define MAKE_FLOAT_RAW(idx) (FLOAT_BIAS_V2 - ((int64_t)(idx) << 2))
 
 static double* float_pool = NULL;
 static int float_count = 0;
@@ -1580,7 +1583,7 @@ __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* fn_name) 
 // OpApply prologue / deopt path — return 0 (no stale-epoch detection
 // in standalone AOT; single-threaded, no host bridge to deopt to).
 __attribute__((weak)) int aura_jit_is_fn_epoch_stale(const char* fn_name,
-                                                    unsigned long long current_bridge_epoch) {
+                                                     unsigned long long current_bridge_epoch) {
     (void)fn_name;
     (void)current_bridge_epoch;
     return 0;
