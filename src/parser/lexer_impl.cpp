@@ -27,6 +27,9 @@ Token Lexer::advance() {
             return make_tok(TokenKind::Unquote, source_.substr(pos_++, 1));
         }
         case '.': {
+            // Issue #4498: .5 is a float literal (R7RS).
+            if (pos_ + 1 < source_.size() && std::isdigit((unsigned char)source_[pos_ + 1]))
+                return read_number();
             if (pos_ + 2 < source_.size() && source_[pos_ + 1] == '.' && source_[pos_ + 2] == '.') {
                 auto tok = make_tok(TokenKind::Ellipsis, "...");
                 pos_ += 3;
@@ -37,6 +40,10 @@ Token Lexer::advance() {
         default:
             if (std::isdigit((unsigned char)c) || (c == '-' && pos_ + 1 < source_.size() &&
                                                    std::isdigit((unsigned char)source_[pos_ + 1])))
+                return read_number();
+            // Issue #4498: -.5
+            if (c == '-' && pos_ + 2 < source_.size() && source_[pos_ + 1] == '.' &&
+                std::isdigit((unsigned char)source_[pos_ + 2]))
                 return read_number();
             if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' ||
                 c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':' ||
@@ -151,6 +158,27 @@ Token Lexer::read_number() {
         while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
             pos_++;
         is_float = true;
+    } else if (pos_ < source_.size() && source_[pos_] == '.' && pos_ > s &&
+               std::isdigit((unsigned char)source_[pos_ - 1])) {
+        // Issue #4498: 1. is a float literal when the dot ends the number
+        // (followed by a delimiter), not the dotted-pair dot of (1 . 2).
+        const std::size_t after = pos_ + 1;
+        const bool delim = after >= source_.size() || std::isspace((unsigned char)source_[after]) ||
+                           source_[after] == '(' || source_[after] == ')' ||
+                           source_[after] == ';' || source_[after] == '"';
+        if (delim) {
+            pos_++;
+            is_float = true;
+        }
+    }
+    // Issue #4498: 1/2 is an exact rational in R7RS; Aura has none. Do not
+    // split it into 1 and the symbol /2 — return one Error token.
+    if (!is_float && pos_ + 1 < source_.size() && source_[pos_] == '/' &&
+        std::isdigit((unsigned char)source_[pos_ + 1])) {
+        pos_++;
+        while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
+            pos_++;
+        return make_tok(TokenKind::Error, source_.substr(s, pos_ - s));
     }
     // Issue #2941: scientific notation — [eE][+-]?digits
     // e.g. 1e-9, 1.0e-3, 2.5E+2, -1e2. If 'e' is not followed by a valid
