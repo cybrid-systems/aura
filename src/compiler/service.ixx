@@ -10598,8 +10598,11 @@ public:
         return bind_function_define_via_ir(ir_mod, name);
     }
 
-    // Issue #4357: focus empty = every workspace lambda (at most 8; a larger
-    // workspace stays on the tree walker). A name = that define, then its
+    // Issue #4357: focus empty = every workspace lambda (at most
+    // kWorkspaceSpecializeCap; a larger workspace stays on the tree walker).
+    // Issue #4479: the cap was 8, so a 9th procedure define dropped every
+    // workspace define (even unchanged, unrelated ones) off the IR fast path
+    // (~35x slower calls). 64 keeps ordinary workspaces specialized. A name = that define, then its
     // direct callers, callee first so the caller lower copies the new body.
     // Two passes when focusing the whole workspace so cross-calls see a
     // filled cache. Production keeps its own hot-update path.
@@ -10626,7 +10629,8 @@ public:
                     continue;
                 names.push_back(std::move(n));
             }
-            if (names.empty() || names.size() > 8)
+            constexpr std::size_t kWorkspaceSpecializeCap = 64;
+            if (names.empty() || names.size() > kWorkspaceSpecializeCap)
                 return;
         } else {
             names.push_back(focus);

@@ -1,0 +1,14 @@
+;; expect: fast-ok
+; Issue #4479: a 9+ procedure workspace keeps unrelated defines on the fast path.
+(define H "(define hot-sum-sq (lambda (n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (* i i))) s))))\n")
+(define (lams k) (if (= k 0) "" (string-append "(define f" (number->string k) " (lambda (x) (+ x " (number->string k) ")))\n" (lams (- k 1)))))
+(define (bench) (let ((t0 (current-time-ms))) (let loop ((i 0)) (if (< i 20) (begin (hot-sum-sq 5000) (loop (+ i 1))) 0)) (- (current-time-ms) t0)))
+(set-code (string-append H (lams 4)))
+(eval-current)
+(define small (bench))
+(set-code (string-append H (lams 12)))
+(eval-current)
+(define big (bench))
+; pre-fix: ~35x slower with 13 procs; allow generous noise.
+(display (if (< big (+ (* 8 small) 50)) "fast-ok" (list "slow" small big)))
+(newline)
