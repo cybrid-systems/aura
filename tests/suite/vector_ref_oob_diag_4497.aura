@@ -1,0 +1,7 @@
+;; expect: caught alive
+; #4497: out-of-range vector-ref is a catchable error naming the index;
+; displaying it uncaught reports on stderr and fails the run (exit 1).
+(define v (vector 1 2 3))
+(display (try (vector-ref v 5) (catch (e) "caught"))) (display " ")
+(display (try (vector-ref v -1) (catch (e) "alive")))
+(newline)

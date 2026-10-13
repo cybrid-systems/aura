@@ -484,6 +484,9 @@ static std::string build_lazy_oneshot_std_prelude(const std::string& source) {
     return prelude;
 }
 
+// Issue #4497: defined in evaluator_primitives_runtime.cpp.
+extern "C" std::uint64_t aura_displayed_error_count() noexcept;
+
 int main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -3361,5 +3364,6 @@ int main(int argc, char* argv[]) {
     aura::messaging::g_fiber_block = nullptr;
     aura::messaging::g_session_create = nullptr;
 
-    return err ? 1 : 0;
+    // Issue #4497: an error consumed by display/write also fails the run.
+    return (err || aura_displayed_error_count() > 0) ? 1 : 0;
 }
