@@ -1408,6 +1408,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Branch:
+                    // Issue #4493: an error value in a test position (e.g.
+                    // (< i #f)) is not "true": the error propagates as the
+                    // function's result instead of running the consequent.
+                    if (is_error(locals[ops[0]]))
+                        return locals[ops[0]];
                     current = is_truthy(locals[ops[0]]) ? ops[1] : ops[2];
                     goto next_block;
 

@@ -3472,6 +3472,7 @@ public:
 
             // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
             // to call IR-produced closures.
+            auto prev_bridge = evaluator_.closure_bridge();
             evaluator_.set_closure_bridge([this, &ir_interp,
                                            &ir_mod](aura::compiler::ClosureId cid,
                                                     std::span<const types::EvalValue> args)
@@ -3504,8 +3505,8 @@ public:
                 // non-const refs (the FlatAST itself isn't mutated by
                 // eval_flat's implementation, but the signature is
                 // non-const for historical reasons).
-                if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
-                    auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
+                if (snap->func_id < ir_mod.closure_bridge.size()) {
+                    auto& bd = ir_mod.closure_bridge[snap->func_id];
                     if (bd.flat && bd.pool) {
                         auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat.get()),
                                                       *const_cast<ast::StringPool*>(bd.pool.get()),
@@ -3569,8 +3570,12 @@ public:
 
             auto result = ir_interp.execute();
 
-            // Restore persistent define bridge (session bridge references ir_interp).
-            install_persistent_define_closure_bridge();
+            // Restore the caller's bridge when re-entered (eval-current inside
+            // a running form), else the persistent define bridge.
+            if (prev_bridge) {
+                evaluator_.set_closure_bridge(std::move(prev_bridge));
+            } else
+                install_persistent_define_closure_bridge();
 
             last_closures_ = ir_interp.list_closures();
             last_cells_ = ir_interp.list_cells();
@@ -3797,65 +3802,73 @@ public:
 
         // Set IR closure bridge — enables tree-walker primitives (map/filter/foldl)
         // to call IR-produced closures.
-        evaluator_.set_closure_bridge([this, &ir_interp](aura::compiler::ClosureId cid,
-                                                         std::span<const types::EvalValue> args)
-                                          -> std::optional<types::EvalValue> {
-            auto snap = ir_interp.inspect_closure(cid);
-            if (!snap)
-                return std::nullopt;
-            // Bridge Env must inherit `owner_` from top_env so primitive
-            // dispatch (which calls eval_env.owner()->bump_primitive_call_count)
-            // can find the CompilerMetrics via the SoA walk. Default-constructing
-            // `Env ne` leaves owner_=nullptr → SIGSEGV (si_addr=0x528, vtable
-            // slot offset) on the first primitive call inside an IR bridge,
-            // e.g. `(map (lambda (x) (+ x 1)) (list 1 2 3))`. Mirrors
-            // dispatch_ir_define_closure's pattern at the cached-define site.
-            aura::compiler::Env ne(&evaluator_.top_env());
-            ne.set_primitives(&evaluator_.primitives());
-            for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
-                ne.bind(snap->func_free_vars[i], snap->env[i]);
-            for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
-                ne.bind(snap->func_params[i], args[i]);
-            // Try bridge data from IR module. Issue #224 Cycle 2:
-            // shared_ptr is a non-owning view; dereference via .get()
-            // and const_cast (eval_flat's signature takes non-const
-            // refs but doesn't actually mutate the FlatAST).
-            if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
-                auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
-                if (bd.flat && bd.pool) {
-                    auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat.get()),
-                                                  *const_cast<ast::StringPool*>(bd.pool.get()),
-                                                  bd.body_id, ne);
-                    if (r)
-                        return *r;
-                }
-                if (!bd.body_source.empty()) {
-                    auto fallback_alloc = arena_.allocator();
-                    aura::ast::StringPool* f_pool = nullptr;
-                    aura::ast::FlatAST* f_flat = nullptr;
-                    // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
-                    f_pool = arena_.create_with_cover<aura::ast::StringPool>(
-                        nullptr, "stack-cover-dies-at-return", fallback_alloc);
-                    f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
-                        nullptr, "stack-cover-dies-at-return", fallback_alloc);
-                    if (!f_pool || !f_flat)
-                        return std::nullopt;
-                    auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
-                    if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
-                        f_flat->root = f_pr.root;
-                        auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
+        auto prev_bridge = evaluator_.closure_bridge();
+        evaluator_.set_closure_bridge(
+            [this, &ir_interp,
+             &ir_mod](aura::compiler::ClosureId cid,
+                      std::span<const types::EvalValue> args) -> std::optional<types::EvalValue> {
+                auto snap = ir_interp.inspect_closure(cid);
+                if (!snap)
+                    return std::nullopt;
+                // Bridge Env must inherit `owner_` from top_env so primitive
+                // dispatch (which calls eval_env.owner()->bump_primitive_call_count)
+                // can find the CompilerMetrics via the SoA walk. Default-constructing
+                // `Env ne` leaves owner_=nullptr → SIGSEGV (si_addr=0x528, vtable
+                // slot offset) on the first primitive call inside an IR bridge,
+                // e.g. `(map (lambda (x) (+ x 1)) (list 1 2 3))`. Mirrors
+                // dispatch_ir_define_closure's pattern at the cached-define site.
+                aura::compiler::Env ne(&evaluator_.top_env());
+                ne.set_primitives(&evaluator_.primitives());
+                for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size();
+                     ++i)
+                    ne.bind(snap->func_free_vars[i], snap->env[i]);
+                for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
+                    ne.bind(snap->func_params[i], args[i]);
+                // Try bridge data from IR module. Issue #224 Cycle 2:
+                // shared_ptr is a non-owning view; dereference via .get()
+                // and const_cast (eval_flat's signature takes non-const
+                // refs but doesn't actually mutate the FlatAST).
+                if (snap->func_id < ir_mod.closure_bridge.size()) {
+                    auto& bd = ir_mod.closure_bridge[snap->func_id];
+                    if (bd.flat && bd.pool) {
+                        auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat.get()),
+                                                      *const_cast<ast::StringPool*>(bd.pool.get()),
+                                                      bd.body_id, ne);
                         if (r)
                             return *r;
                     }
+                    if (!bd.body_source.empty()) {
+                        auto fallback_alloc = arena_.allocator();
+                        aura::ast::StringPool* f_pool = nullptr;
+                        aura::ast::FlatAST* f_flat = nullptr;
+                        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
+                        f_pool = arena_.create_with_cover<aura::ast::StringPool>(
+                            nullptr, "stack-cover-dies-at-return", fallback_alloc);
+                        f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
+                            nullptr, "stack-cover-dies-at-return", fallback_alloc);
+                        if (!f_pool || !f_flat)
+                            return std::nullopt;
+                        auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
+                        if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
+                            f_flat->root = f_pr.root;
+                            auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
+                            if (r)
+                                return *r;
+                        }
+                    }
                 }
-            }
-            return std::nullopt;
-        });
+                return std::nullopt;
+            });
 
         auto result = ir_interp.execute();
 
-        // Clear bridge after execution
-        install_persistent_define_closure_bridge();
+        // Restore the caller's bridge when re-entered (eval-current inside a
+        // running form: suite/concurrent_dual_rebind_2738's while closures
+        // lost their bridge after the nested run), else the persistent one.
+        if (prev_bridge)
+            evaluator_.set_closure_bridge(std::move(prev_bridge));
+        else
+            install_persistent_define_closure_bridge();
 
         // Capture runtime state for --inspect
         last_closures_ = ir_interp.list_closures();
