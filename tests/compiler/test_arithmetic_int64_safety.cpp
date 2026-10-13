@@ -572,6 +572,38 @@ int main() {
         }
     }
 
+    // Issue #4483: a c-func -> Int returning a C long outside the fixnum
+    // domain must not abort the process; it promotes like other
+    // out-of-domain integers (#4462).
+    {
+        const auto bin = aura_binary();
+        const char* cpath = "/tmp/aura-4483-lib.c";
+        const char* sopath = "/tmp/aura-4483-lib.so";
+        const bool have_cc =
+            write_text(cpath,
+                       "long s_min(long a) { (void)a; return (-9223372036854775807L - 1); }\n"
+                       "long s_big(long a) { (void)a; return 1L << 62; }\n") &&
+            std::system(
+                std::format("cc -shared -fPIC -o {} {} 2>/dev/null", sopath, cpath).c_str()) == 0;
+        if (!bin.empty() && have_cc) {
+            const char* src = "/tmp/aura-4483.aura";
+            CHECK(write_text(src, "(require \"std/ffi\" all:)\n"
+                                  "(define lib (c-load \"/tmp/aura-4483-lib.so\"))\n"
+                                  "(define f (c-func lib \"s_min\" \"(Int) -> Int\"))\n"
+                                  "(define g (c-func lib \"s_big\" \"(Int) -> Int\"))\n"
+                                  "(display (number? (f 1))) (newline)\n"
+                                  "(display (> (g 1) 0)) (newline)\n"
+                                  "(display \"after\") (newline)\n"),
+                  "4483: write script");
+            auto run = run_aura_file(bin, src, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
+                                     "/tmp/aura-4483-out.txt", "/tmp/aura-4483-err.txt");
+            CHECK(run.rc == 0, "4483: out-of-range c-func Int result does not abort");
+            CHECK(run.out == "#t\n#t\nafter\n", "4483: out-of-range results promote");
+        } else {
+            std::println("  SKIP: 4483 (no aura binary or cc)");
+        }
+    }
+
     if (::aura::test::g_failed)
         return 1;
     std::println("arithmetic int64 safety: OK ({} passed)", ::aura::test::g_passed);

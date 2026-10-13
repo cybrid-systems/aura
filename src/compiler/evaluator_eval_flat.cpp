@@ -1031,7 +1031,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     }
                     return types::make_opaque(oi);
                 }
-                return types::make_int(result_i);
+                // Issue #4483: a C long outside the fixnum domain used to
+                // trip make_int's contract (SIGABRT, uncatchable). Promote
+                // like every other out-of-domain integer (#4462).
+                return types::make_int_or_promote(result_i);
             }
         }
         return std::nullopt;
