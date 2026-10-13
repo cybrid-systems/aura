@@ -7,7 +7,7 @@
 
   ; Basic
   square cube abs clamp signum min max
-  avg mean median mode
+  avg mean median mode fdiv
   safe-div safe-div?
 
   ; Rounding
@@ -50,6 +50,12 @@
   (min (max x lo) hi))
 
 (define (avg a b) (/ (+ a b) 2))
+
+; Issue #4499: `/` on two exact integers truncates toward zero, like C:
+; (/ 7 2) => 3. Any inexact operand makes the result a float:
+; (/ 7.0 2) => 3.5. Aura has no exact rationals. Use fdiv (or
+; exact->inexact on an operand) when a fractional result is wanted.
+(define (fdiv a b) (/ (exact->inexact a) b))
 
 ; Issue #925: structured division with validation (no uncaught /0)
 ; Returns (ok . value) or (err . reason)

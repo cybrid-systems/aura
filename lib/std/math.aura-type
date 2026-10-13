@@ -6,6 +6,7 @@ square: Any -> Any
 cube: Any -> Any
 clamp: Any Any Any -> Any
 avg: Any Any -> Any
+fdiv: Any Any -> Any
 floor: Any -> Any
 ceil: Any -> Any
 round: Any -> Any
