@@ -859,6 +859,30 @@ public:
             if (func.specialized_for != 0) {
                 continue;
             }
+            // Issue #4501: operands are SLOTS, not instruction indices.
+            // The pass used to read block.instructions[slot].type_id, the
+            // type of an unrelated instruction, and cast (+ 2 0.25)'s float
+            // to Int. Map each slot to its defining instructions' type (0 when
+            // unknown or defined with differing types).
+            std::unordered_map<std::uint32_t, std::uint32_t> slot_types;
+            for (const auto& blk : func.blocks) {
+                for (const auto& in : blk.instructions) {
+                    if (in.opcode == aura::ir::IROpcode::Branch ||
+                        in.opcode == aura::ir::IROpcode::Jump ||
+                        in.opcode == aura::ir::IROpcode::Return)
+                        continue;
+                    auto [it, fresh] = slot_types.emplace(in.operands[0], in.type_id);
+                    if (!fresh && it->second != in.type_id)
+                        it->second = 0;
+                }
+            }
+            auto slot_type = [&](std::uint32_t slot) -> std::uint32_t {
+                auto it = slot_types.find(slot);
+                return it == slot_types.end() ? 0u : it->second;
+            };
+            auto is_tag = [&](std::uint32_t tid, aura::core::TypeTag tag) {
+                return tid != 0 && type_reg_->tag_of(aura::core::TypeId{tid, 1}) == tag;
+            };
             for (auto& block : func.blocks) {
                 std::size_t i = 0;
                 while (i < block.instructions.size()) {
@@ -872,15 +896,16 @@ public:
                         instr.opcode == aura::ir::IROpcode::Sub ||
                         instr.opcode == aura::ir::IROpcode::Mul ||
                         instr.opcode == aura::ir::IROpcode::Div) {
-                        auto t1 = (ops[1] < block.instructions.size())
-                                      ? block.instructions[ops[1]].type_id
-                                      : 0u;
-                        auto t2 = (ops[2] < block.instructions.size())
-                                      ? block.instructions[ops[2]].type_id
-                                      : 0u;
+                        auto t1 = slot_type(ops[1]);
+                        auto t2 = slot_type(ops[2]);
                         // If both are concrete (non-zero) and differ, insert CastOp on ops[2]
+                        // Only widen Int -> Float. Casting other pairs either narrows
+                        // a Float or silently coerces a String (`(+ 1 "2")` must stay a
+                        // runtime type mismatch).
+                        const bool unsafe_cast = !(is_tag(t1, aura::core::TypeTag::FLOAT) &&
+                                                   is_tag(t2, aura::core::TypeTag::INT));
                         if (t1 != 0 && t2 != 0 && t1 != t2 && t1 != dyn_id.index &&
-                            t2 != dyn_id.index) {
+                            t2 != dyn_id.index && !unsafe_cast) {
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
@@ -907,9 +932,7 @@ public:
                     // When the Return instruction has a type annotation that differs
                     // from the value being returned, insert CastOp.
                     if (instr.opcode == aura::ir::IROpcode::Return) {
-                        auto val_type = (ops[0] < block.instructions.size())
-                                            ? block.instructions[ops[0]].type_id
-                                            : 0u;
+                        auto val_type = slot_type(ops[0]);
                         auto ret_type = instr.type_id;
                         if (val_type != 0 && ret_type != 0 && val_type != ret_type &&
                             val_type != dyn_id.index && ret_type != dyn_id.index) {
@@ -969,10 +992,7 @@ public:
                                     auto& next = blk.instructions[j + 1];
                                     if (next.opcode == aura::ir::IROpcode::Jump &&
                                         loc.opcode == aura::ir::IROpcode::Local) {
-                                        auto val_type =
-                                            (loc.operands[1] < block.instructions.size())
-                                                ? block.instructions[loc.operands[1]].type_id
-                                                : 0u;
+                                        auto val_type = slot_type(loc.operands[1]);
                                         if (val_type != 0 && val_type != if_result_type &&
                                             val_type != dyn_id.index) {
                                             auto cast_slot = func.local_count++;
@@ -1008,9 +1028,7 @@ public:
 
                     // ── Remove redundant CastOp ──
                     if (instr.opcode == aura::ir::IROpcode::CastOp && ops[2] == 3) {
-                        auto source_type = (ops[1] < block.instructions.size())
-                                               ? block.instructions[ops[1]].type_id
-                                               : 0u;
+                        auto source_type = slot_type(ops[1]);
                         if (source_type != 0 && source_type == instr.type_id) {
                             block.instructions[i].opcode = aura::ir::IROpcode::Local;
                             block.instructions[i].operands = {ops[0], ops[1], 0, 0};
