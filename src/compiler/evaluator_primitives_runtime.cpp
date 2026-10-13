@@ -59,6 +59,21 @@ using types::make_void;
 using aura::compiler::pure::is_truthy;
 
 namespace {
+    // Issue #4497: errors consumed by display/write outside try. The file
+    // runner (main.cpp) reads this to exit 1.
+    std::atomic<std::uint64_t> g_displayed_errors{0};
+
+    void note_displayed_error(Evaluator& ev, const EvalValue& v) {
+        std::string msg = "runtime error";
+        const auto idx = types::as_error_idx(v);
+        if (idx < ev.error_values_.size() && types::is_string(ev.error_values_[idx]))
+            msg = ev.copy_string_heap_at(types::as_string_idx(ev.error_values_[idx]));
+        std::fflush(stdout);
+        std::fprintf(stderr, "error: %s\n", msg.c_str());
+        std::fflush(stderr);
+        g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #2482: empty list is make_void() only (int 0 is a number).
     // Improper (1 . 0) prints as dotted, not as a one-element list.
     static bool is_end_of_list(const EvalValue& v) noexcept {
@@ -450,6 +465,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("display", [&ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
+        // Issue #4497: display consumes an error-valued argument outside
+        // try (#4456). Name it on stderr and mark the run failed, instead
+        // of printing <unknown> and exiting 0.
+        if (is_error(a[0])) {
+            note_displayed_error(ev, a[0]);
+            return make_void();
+        }
         // Issue #2652: snapshot string under lock before print so concurrent
         // string_heap_ reallocate cannot UAF; NUL-safe path in io_print_val.
         if (is_string(a[0])) {
@@ -473,6 +495,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("write", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_void();
+        if (is_error(a[0])) {
+            note_displayed_error(ev, a[0]);
+            return make_void();
+        }
         if (is_string(a[0])) {
             // Issue #2652: quoted write with escapes (incl. NUL as \x00;).
             auto s = ev.copy_string_heap_at(as_string_idx(a[0]));
@@ -748,3 +774,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
 }
 
 } // namespace aura::compiler::primitives_detail
+
+extern "C" std::uint64_t aura_displayed_error_count() noexcept {
+    return aura::compiler::primitives_detail::g_displayed_errors.load(std::memory_order_relaxed);
+}

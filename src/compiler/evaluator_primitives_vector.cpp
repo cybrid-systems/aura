@@ -279,9 +279,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto idx = as_vector_idx(a[0]);
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
-                return make_primitive_error(string_heap, error_values,
-                                            "vector-ref: index out of bounds",
-                                            primitive_error_counter);
+                // Issue #4497: name the index and length.
+                const std::size_t len = idx < vector_heap.size() ? vector_heap[idx].size() : 0;
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::format("vector-ref: index {} out of range for vector of length {}",
+                                as_int(a[1]), len),
+                    primitive_error_counter);
             }
             // Issue #4298: do not return a foreign tenant's element.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
