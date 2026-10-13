@@ -271,7 +271,9 @@ NodeId parse_expr(ParserState& s) {
         }
         case TokenKind::Quote: {
             s.lex.consume(); // consume '
+            ++s.quote_depth;
             auto quoted = parse_expr(s);
+            --s.quote_depth;
             if (quoted == NULL_NODE)
                 return NULL_NODE;
             auto id = s.flat.add_quote(quoted);
@@ -281,7 +283,8 @@ NodeId parse_expr(ParserState& s) {
         case TokenKind::HashLParen: {
             // #(1 2 3) → (vector 1 2 3)
             s.lex.consume(); // consume #(
-            auto vec_fun = s.flat.add_variable(s.pool.intern("vector"));
+            auto vec_fun =
+                s.flat.add_variable(s.pool.intern(s.quote_depth > 0 ? "#vector" : "vector"));
             std::vector<aura::ast::NodeId> args;
             while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
                 auto arg = parse_expr(s);
@@ -1203,7 +1206,9 @@ NodeId parse_set(ParserState& s) {
 
 NodeId parse_quote(ParserState& s) {
     auto tok = s.lex.consume(); // 'quote'
+    ++s.quote_depth;
     auto v = parse_expr(s);
+    --s.quote_depth;
     if (v == NULL_NODE) {
         skip_rparen(s);
         return NULL_NODE;

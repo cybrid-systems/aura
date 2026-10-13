@@ -76,6 +76,10 @@ namespace detail {
         // a malformed literal fails the form instead of being silently
         // consumed by parse_list's recovery as a closing ')'.
         std::string deferred_error;
+        // Issue #4490: >0 while parsing a quoted datum. #( ... ) inside a
+        // quote becomes the reserved callee "#vector" so quote builds a
+        // real vector instead of the list (vector ...).
+        int quote_depth = 0;
     };
 
     // Free functions (forward declarations). Definitions live in

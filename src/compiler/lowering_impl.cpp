@@ -1758,6 +1758,32 @@ static std::uint32_t lower_flat_expr(
                     state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
                     return rs;
                 }
+                if (nv.tag == NodeTag::Call && !nv.children.empty() &&
+                    flat.get(nv.child(0)).tag == NodeTag::Variable &&
+                    pool.resolve(flat.get(nv.child(0)).sym_id) == "#vector") {
+                    // Issue #4490: quoted #( ... ) → vector(elem...) of the
+                    // quoted elements (parser reserved callee "#vector").
+                    auto vec_slot = state.primitives->slot_for_name("vector");
+                    if (vec_slot < state.primitives->slot_count()) {
+                        std::vector<std::uint32_t> elems;
+                        for (std::size_t ci = 1; ci < nv.children.size(); ++ci)
+                            elems.push_back(lower_q(nv.child(ci)));
+                        auto vec_fn = state.alloc_local();
+                        state.emit(IROpcode::Primitive, vec_fn,
+                                   static_cast<std::uint32_t>(vec_slot));
+                        auto first = state.alloc_local();
+                        if (!elems.empty())
+                            state.emit(IROpcode::Local, first, elems[0]);
+                        for (std::size_t ei = 1; ei < elems.size(); ++ei) {
+                            auto slot = state.alloc_local();
+                            state.emit(IROpcode::Local, slot, elems[ei]);
+                        }
+                        auto rs = state.alloc_local();
+                        state.emit(IROpcode::Call, vec_fn, first,
+                                   static_cast<std::uint32_t>(elems.size()), rs);
+                        return rs;
+                    }
+                }
                 if (nv.tag == NodeTag::Call) {
                     // Proper list: (a b c) → cons(a, cons(b, cons(c, ()))) void tail (#2482)
                     auto tail_s = state.alloc_local();
