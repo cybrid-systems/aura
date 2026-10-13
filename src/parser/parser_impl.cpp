@@ -432,7 +432,11 @@ NodeId parse_list(ParserState& s) {
             return parse_linear(s);
         if (kw == "move")
             return parse_move(s);
-        if (kw == "borrow")
+        // asan-verify emit:borrow: `(& e)` is the documented list spelling
+        // of an immutable borrow (type checker / lowering both cite it).
+        // Without it `&` parsed as an unbound callee, which #4478 now
+        // (correctly) rejects as "cannot call: &".
+        if (kw == "borrow" || kw == "&")
             return parse_borrow(s);
         if (kw == "mut-borrow")
             return parse_mut_borrow(s);

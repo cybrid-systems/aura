@@ -112,6 +112,16 @@ __attribute__((weak)) void aura_jit_pin_linear_root(unsigned long long obj_id) {
 __attribute__((weak)) void aura_jit_unpin_linear_root(unsigned long long obj_id) {
     (void)obj_id;
 }
+// asan-verify emit:borrow: Borrow lowering emits the #3186 / #3224
+// production gates (aura_jit_bridge.cpp). Standalone --emit-binary has no
+// typed-audit state or production profile, so both gates are open (the
+// Soft/Off answer); the host's strong definitions override these.
+__attribute__((weak)) int aura_jit_linear_move_drop_elision_ok(void) {
+    return 1;
+}
+__attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
+    return 1;
+}
 
 #define IS_PAIR(v) (((v) & 3) == 1)
 #define IS_SPECIAL(v) (((v) & 3) == 3)
