@@ -1811,6 +1811,14 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
     auto sym_cdr = s.pool.intern("cdr");
     auto sym_equal_q = s.pool.intern("equal?");
 
+    // Issue #4491: only #f is false. Pattern tests must yield real
+    // booleans, not integer 0/1 (0 is now true and matched every clause).
+    auto bool_lit = [&](std::int64_t b) -> NodeId {
+        auto id = s.flat.add_literal(b);
+        s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
+        return id;
+    };
+
     // Helper: call with args as initializer_list
     auto make_call = [&](SymId func, std::initializer_list<NodeId> args) -> NodeId {
         return s.flat.add_call(s.flat.add_variable(func), std::vector<NodeId>(args));
@@ -1821,11 +1829,11 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
         auto name = s.pool.resolve(v.sym_id);
         if (name == "_" || (name.size() > 1 && name[0] == '_' && name != "__match_tmp")) {
             // Wildcard: match anything, no bindings
-            *out_test = s.flat.add_literal(1);
+            *out_test = bool_lit(1);
             return bindings;
         }
         // Variable binding: match anything, bind to whole value
-        *out_test = s.flat.add_literal(1);
+        *out_test = bool_lit(1);
         bindings.emplace_back(v.sym_id, var_tmp);
         return bindings;
     }
@@ -1852,7 +1860,7 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
     // Call: (list ...), (cons ...), or other function-like pattern
     if (v.tag == NodeTag::Call) {
         if (v.children.empty()) {
-            *out_test = s.flat.add_literal(0);
+            *out_test = bool_lit(0);
             return bindings;
         }
 
@@ -1872,14 +1880,13 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
             // (list p1 p2 ...) pattern
             if (callee_name == "list") {
                 // Build chain: (pair? tmp) && (pair? (cdr tmp)) && ... && (null? (cddr... tmp))
-                NodeId accumulated_test = s.flat.add_literal(1); // start with #t
+                NodeId accumulated_test = bool_lit(1); // start with #t
                 NodeId current = var_tmp;
 
                 for (std::size_t i = 1; i < v.children.size(); ++i) {
                     // (pair? current)
                     auto pair_test = make_call(sym_pair_q, {current});
-                    accumulated_test =
-                        s.flat.add_if(accumulated_test, pair_test, s.flat.add_literal(0));
+                    accumulated_test = s.flat.add_if(accumulated_test, pair_test, bool_lit(0));
 
                     auto elem = v.child(i);
                     auto elem_v = s.flat.get(elem);
@@ -1896,15 +1903,13 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
                     } else if (elem_v.tag == NodeTag::LiteralInt && elem_v.int_value == 0) {
                         // () — exact match car against empty list
                         auto eq_test = make_call(sym_equal_q, {car_expr, elem});
-                        accumulated_test =
-                            s.flat.add_if(accumulated_test, eq_test, s.flat.add_literal(0));
+                        accumulated_test = s.flat.add_if(accumulated_test, eq_test, bool_lit(0));
                     } else if (elem_v.tag == NodeTag::LiteralInt ||
                                elem_v.tag == NodeTag::LiteralFloat ||
                                elem_v.tag == NodeTag::LiteralString) {
                         // Literal element match
                         auto eq_test = make_call(sym_equal_q, {car_expr, elem});
-                        accumulated_test =
-                            s.flat.add_if(accumulated_test, eq_test, s.flat.add_literal(0));
+                        accumulated_test = s.flat.add_if(accumulated_test, eq_test, bool_lit(0));
                     }
                     // For (list ...) sub-patterns or other complex elements,
                     // we fall through and they match anything (no equality check)
@@ -1915,8 +1920,7 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
 
                 // Final: (null? current) — proper list length check
                 auto null_test = make_call(sym_null_q, {current});
-                accumulated_test =
-                    s.flat.add_if(accumulated_test, null_test, s.flat.add_literal(0));
+                accumulated_test = s.flat.add_if(accumulated_test, null_test, bool_lit(0));
 
                 *out_test = accumulated_test;
                 return bindings;
@@ -1980,8 +1984,7 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
                     auto ctor_str = s.flat.add_literalstring(s.pool.intern(ctor_name));
                     auto tag_test = make_call(s.pool.intern("string=?"),
                                               {make_call(sym_car, {var_tmp}), ctor_str});
-                    accumulated_test =
-                        s.flat.add_if(accumulated_test, tag_test, s.flat.add_literal(0));
+                    accumulated_test = s.flat.add_if(accumulated_test, tag_test, bool_lit(0));
 
                     // Walk sub-patterns starting from (cdr tmp)
                     auto current = make_call(sym_cdr, {var_tmp});
@@ -1991,8 +1994,7 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
 
                         // (pair? current) — ensure list structure
                         auto pair_check = make_call(sym_pair_q, {current});
-                        accumulated_test =
-                            s.flat.add_if(accumulated_test, pair_check, s.flat.add_literal(0));
+                        accumulated_test = s.flat.add_if(accumulated_test, pair_check, bool_lit(0));
 
                         // Null-guarded field extraction for type checker safety
                         auto null_check = make_call(sym_null_q, {current});
@@ -2011,7 +2013,7 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
                                    elem_v.tag == NodeTag::LiteralString) {
                             auto eq_test = make_call(sym_equal_q, {elem_car, elem});
                             accumulated_test =
-                                s.flat.add_if(accumulated_test, eq_test, s.flat.add_literal(0));
+                                s.flat.add_if(accumulated_test, eq_test, bool_lit(0));
                         }
 
                         current = make_call(sym_cdr, {current});
@@ -2019,8 +2021,7 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
 
                     // Final: (null? current) — proper length
                     auto null_test = make_call(sym_null_q, {current});
-                    accumulated_test =
-                        s.flat.add_if(accumulated_test, null_test, s.flat.add_literal(0));
+                    accumulated_test = s.flat.add_if(accumulated_test, null_test, bool_lit(0));
 
                     *out_test = accumulated_test;
                     return bindings;

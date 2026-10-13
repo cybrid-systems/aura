@@ -1,0 +1,8 @@
+;; expect: 0 5 0
+; #4491 follow-up: match pattern tests must be real booleans; a failed
+; (Some x) test on None used to yield integer 0, now truthy.
+(define-type (Option a) (Some a) (None))
+(display (match None ((Some x) x) (None 0))) (display " ")
+(display (match (Some 5) ((Some x) x) (None 0))) (display " ")
+(display (match (list 1 2) ((list a) a) ((list a b) 0)))
+(newline)
