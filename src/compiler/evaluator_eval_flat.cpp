@@ -1607,6 +1607,10 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
 
     switch (v.tag) {
         case ast::NodeTag::LiteralInt:
+            // Issue #4490: #t / #f are LiteralInt 1/0 with the BoolLiteral
+            // marker; quoted data must keep them booleans.
+            if (v.marker == ast::SyntaxMarker::BoolLiteral)
+                return types::make_bool(v.int_value != 0);
             return make_int_or_promote(v.int_value);
         case ast::NodeTag::LiteralFloat:
             return make_float(v.float_value);
@@ -1806,13 +1810,17 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return make_void();
         }
         case ast::NodeTag::Pair: {
+            // Issue #4487: a dotted-pair datum is the pair itself, not the
+            // code list (cons car cdr) (which also came back cyclic when it
+            // held a symbol). Same answer as the IR quote lowering
+            // (cons(lower_q(car), lower_q(cdr))).
             auto car = ast_to_data(flat, pool, v.child(0));
-            auto cdr_val = ast_to_data(flat, pool, v.child(1));
-            auto tail = make_pair(pairs_.size());
-            pairs_.push_back({cdr_val, make_void()});
-            tail = make_pair(pairs_.size());
-            pairs_.push_back({car, tail});
-            return cd("cons", tail);
+            auto cdr_val =
+                v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1)) : make_void();
+            std::lock_guard lock(alloc_storage_lock_);
+            auto pi = pairs_.size();
+            pairs_.push_back({car, cdr_val});
+            return make_pair(pi);
         }
         default:
             return make_void();

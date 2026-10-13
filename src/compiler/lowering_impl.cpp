@@ -1723,7 +1723,11 @@ static std::uint32_t lower_flat_expr(
                 // Simple literals
                 if (nv.tag == NodeTag::LiteralInt) {
                     auto s = state.alloc_local();
-                    emit_int_const(state, s, nv.int_value);
+                    // Issue #4490: quoted #t / #f stay booleans.
+                    if (nv.marker == ast::SyntaxMarker::BoolLiteral)
+                        state.emit(IROpcode::ConstBool, s, nv.int_value != 0 ? 1 : 0);
+                    else
+                        emit_int_const(state, s, nv.int_value);
                     return s;
                 }
                 if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {
