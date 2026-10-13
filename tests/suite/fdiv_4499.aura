@@ -1,0 +1,8 @@
+;; expect: 3 3.5 3.5 -3
+; #4499: / on exact ints truncates (documented); fdiv promotes.
+(require "std/math" all:)
+(display (/ 7 2)) (display " ")
+(display (/ 7.0 2)) (display " ")
+(display (fdiv 7 2)) (display " ")
+(display (/ -7 2))
+(newline)
