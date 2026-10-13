@@ -22,6 +22,7 @@
 module;
 #include <bit>
 #include <limits>
+#include "value_tags.h"
 
 module aura.compiler.constant_folding;
 import std;
@@ -54,7 +55,8 @@ namespace {
     constexpr bool is_truthy_val(ConstantValue v) noexcept {
         if (is_tagged_bool(v))
             return tagged_bool_value(v);
-        return v != 0;
+        // Untagged entries are raw fixnum payloads (Issue #4491).
+        return !::aura::compiler::types::kIntZeroIsFalse || v != 0;
     }
 } // namespace
 
@@ -268,19 +270,23 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                 break;
             }
             case aura::ir::IROpcode::And: {
+                // Issue #4491: and/or yield an operand, not #t/#f. Fold only
+                // when both operands are tagged bools (result stays a bool).
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
-                    replace_bool(instr, ops[0],
-                                 is_truthy_val(it_a->second) && is_truthy_val(it_b->second), known);
+                if (it_a != known.end() && it_b != known.end() &&
+                    is_tagged_bool(it_a->second) && is_tagged_bool(it_b->second)) {
+                    replace_bool(instr, ops[0], tagged_bool_value(is_truthy_val(it_a->second) ? it_b->second : it_a->second), known);
                     ++folded;
                 }
                 break;
             }
             case aura::ir::IROpcode::Or: {
+                // Issue #4491: and/or yield an operand, not #t/#f. Fold only
+                // when both operands are tagged bools (result stays a bool).
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
-                    replace_bool(instr, ops[0],
-                                 is_truthy_val(it_a->second) || is_truthy_val(it_b->second), known);
+                if (it_a != known.end() && it_b != known.end() &&
+                    is_tagged_bool(it_a->second) && is_tagged_bool(it_b->second)) {
+                    replace_bool(instr, ops[0], tagged_bool_value(is_truthy_val(it_a->second) ? it_a->second : it_b->second), known);
                     ++folded;
                 }
                 break;

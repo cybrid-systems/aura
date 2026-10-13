@@ -1275,12 +1275,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::And:
-                    locals[ops[0]] =
-                        make_bool(is_truthy(locals[ops[1]]) && is_truthy(locals[ops[2]]));
+                    // Issue #4491: Scheme and/or return an operand.
+                    locals[ops[0]] = is_truthy(locals[ops[1]]) ? locals[ops[2]] : locals[ops[1]];
                     break;
                 case IROpcode::Or:
-                    locals[ops[0]] =
-                        make_bool(is_truthy(locals[ops[1]]) || is_truthy(locals[ops[2]]));
+                    locals[ops[0]] = is_truthy(locals[ops[1]]) ? locals[ops[1]] : locals[ops[2]];
                     break;
                 case IROpcode::Not:
                     locals[ops[0]] = make_bool(!is_truthy(locals[ops[1]]));

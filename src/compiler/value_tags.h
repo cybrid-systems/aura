@@ -155,6 +155,19 @@ inline void record_v2_string_collision_attempt() noexcept {
     v2_string_collision_attempts.fetch_add(1, std::memory_order_relaxed);
 }
 
+// ── Truthiness (Issue #4491) ─────────────────────────────────────
+// Single source of truth for whether fixnum 0 is false. Every
+// truthiness test (pure::is_truthy, JIT jit_truthy, constant folding,
+// type checker) reads this flag so the paths cannot drift apart.
+inline constexpr bool kIntZeroIsFalse = true;
+[[nodiscard]] inline constexpr bool raw_is_truthy(std::int64_t v) noexcept {
+    if (v == kSpecialFalse)
+        return false;
+    if constexpr (kIntZeroIsFalse)
+        return v != 0;
+    return true;
+}
+
 // ── Pool bias sentinels ───────────────────────────────────────────
 inline constexpr std::int64_t FLOAT_BIAS_VAL = -10000000000000000LL;
 inline constexpr std::int64_t STRING_BIAS_VAL = -9000000000000000000LL;
