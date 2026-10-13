@@ -738,6 +738,11 @@ run_emit_test "emit:sorted?"   "(import \"std/algorithm\")(sorted? (list 1 2 3))
 run_emit_test "emit:combine"   "(import \"std/algorithm\")(combinations 4 2)" "6"
 run_emit_test "emit:apply"     "(apply + (list 1 2 3))" "6"
 run_emit_test "emit:nested-car"  "(car (car (list (list 1 2) (list 3 4))))" "1"
+# #4502 F2/F3: fixnums >= 2^27 are not strings; AOT pair walk is exact low2==01
+run_emit_test "emit:big-fixnum"   "(display 200000000)" "200000000"
+run_emit_test "emit:len-mixed"    "(length (list -5 2.5 \"s\" -9))" "4"
+run_emit_test "emit:ref-string"   "(display (list-ref (list -5 2.5 \"s\") 2))" "s"
+run_emit_test "emit:map-negative" "(display (map (lambda (x) x) (list -3 -4)))" "(-3 -4)"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
