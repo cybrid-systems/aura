@@ -662,8 +662,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         auto name = ev.string_heap_[types::as_string_idx(a[0])];
         auto* val = ::getenv(name.c_str());
+        // Issue #4494: unset → #f (R7RS get-environment-variable), so the
+        // (or (getenv "X") default) idiom falls back. Void was truthy.
         if (!val)
-            return make_void();
+            return types::make_bool(false);
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(std::string(val));
         return types::make_string(sidx);

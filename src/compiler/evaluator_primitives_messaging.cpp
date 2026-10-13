@@ -1395,8 +1395,14 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #2483: buffer_size==0 must NOT short-circuit the wait predicate
     // (that made send non-blocking and let the queue grow unboundedly).
     add("channel:send", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+        if (a.size() < 2 || !is_int(a[0]))
             return make_bool(false);
+        // Issue #4494: messages are strings. A non-string used to return #f
+        // silently, so the paired channel:recv blocked forever.
+        if (!is_string(a[1]))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "channel:send: message must be a string",
+                                        ev.primitive_error_counter_ptr());
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
         auto msg = ev.string_heap_[as_string_idx(a[1])]; // copy before wait
         // Issue #2483: release channels_mtx_ before blocking — holding it
