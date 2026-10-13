@@ -26,6 +26,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "value_tags.h"
 
 module aura.compiler.evaluator;
 
@@ -87,9 +88,8 @@ void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!pred_result)
                 break;
             auto& val = *pred_result;
-            bool cont = types::is_bool(val)  ? types::as_bool(val)
-                        : types::is_int(val) ? types::as_int(val) != 0
-                                             : false;
+            // Issue #4491: same truthiness as if/cond (only #f stops).
+            bool cont = ::aura::compiler::types::raw_is_truthy(val.val);
             if (!cont)
                 break;
             for (std::size_t i = 1; i < a.size(); ++i) {

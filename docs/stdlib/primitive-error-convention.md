@@ -32,7 +32,7 @@ stay boolean. Documented empty / not-found stay silent only as below.
 
 | Primitive | Documented empty / not-found | True error (`make_primitive_error`) |
 |-----------|------------------------------|-------------------------------------|
-| `member` | not-found → int `0` (falsy) | too few args, not a list, improper / corrupted |
+| `member` / `memv` / `assv` | not-found → `#f` (#4491) | too few args, not a list, improper / corrupted |
 | `list-ref` | — | too few args, non-int / negative index, OOB, corrupted (including empty list at index) |
 | `take` / `drop` | `n=0`, empty list, drop past end → void | too few args, non-int / negative count, not a list, improper / corrupted |
 | `filter` / `map` | empty list → void | too few args, not a list |

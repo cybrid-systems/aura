@@ -201,13 +201,13 @@ Primitives::Primitives() {
         for (std::size_t i = 0; i + 1 < a.size(); ++i)
             if (!is_truthy(a[i]))
                 return a[i];
-        return a.empty() ? make_int(1) : a.back();
+        return a.empty() ? make_bool(true) : a.back(); // (and) => #t
     };
     table_["or"] = [](std::span<const EvalValue> a) {
         for (std::size_t i = 0; i + 1 < a.size(); ++i)
             if (is_truthy(a[i]))
                 return a[i];
-        return a.empty() ? make_int(0) : a.back();
+        return a.empty() ? make_bool(false) : a.back(); // (or) => #f
     };
     // Issue #2568: bit-identity first; for strings (quoted symbols are
     // string-heap interned) fall back to index equality which is identity

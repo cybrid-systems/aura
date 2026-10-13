@@ -4172,7 +4172,7 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("and", {Dyn, Dyn}, Dyn);
     register_primitive("or", {Dyn, Dyn}, Dyn);
 
-    // not: works on any truthy/falsy value (runtime: a[0] == 0 → 1)
+    // not: works on any value; only #f is false (Issue #4491)
     register_primitive("not", {Dyn}, Bool);
     register_primitive("eq?", {Dyn, Dyn}, Bool);
 

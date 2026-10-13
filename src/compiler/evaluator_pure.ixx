@@ -65,8 +65,22 @@ namespace aura::compiler::pure {
 // The implementation is intentionally a no-op for the
 // common case (bool / int) to keep the hot path branch-free
 // at the cost of an int comparison. Matches legacy.
+inline void note_int_zero_truth_test() noexcept {
+    static const bool enabled = [] {
+        const char* e = std::getenv("AURA_TRUTHY_WARN");
+        return e != nullptr && e[0] == '1';
+    }();
+    static std::atomic<bool> warned{false};
+    if (enabled && !warned.exchange(true))
+        std::println(std::cerr, "aura: warning: condition tested integer 0; since #4491 only #f "
+                                "is false and 0 is true (AURA_TRUTHY_WARN)");
+}
 export inline bool is_truthy(const types::EvalValue& v) noexcept {
     // Issue #4491: shared with JIT / constant folding via value_tags.h.
+    // AURA_TRUTHY_WARN=1 reports (once) a test on integer 0, which was
+    // false before #4491 and is true now. Migration aid only.
+    if (v.val == 0) [[unlikely]]
+        note_int_zero_truth_test();
     return ::aura::compiler::types::raw_is_truthy(v.val);
 }
 

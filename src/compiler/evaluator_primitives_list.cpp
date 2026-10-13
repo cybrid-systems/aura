@@ -333,7 +333,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         },
         pure_general(2, "(list int) -> any", "Element at index in a list."));
     // (member val list) — Find val in list using content equality (equal?)
-    // Not-found is documented empty (int 0, falsy). Malformed input is an error (#2998).
+    // Not-found is #f (R7RS, Issue #4491). Malformed input is an error (#2998).
     register_prim(
         add, ev, "member",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -376,9 +376,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return v;
                 v = pairs[idx].cdr;
             }
-            return make_int(0); // documented not-found (falsy)
+            return make_bool(false); // Issue #4491: not-found is #f (R7RS)
         },
-        pure_general(2, "(any list) -> any", "Sublist whose car equals the key, or empty."));
+        pure_general(2, "(any list) -> any", "Sublist whose car equals the key, or #f."));
     // Issue #4470: tree-walker primitive. Not lowered to IROpcode::Eq.
     register_prim(
         add, ev, "eqv?",
@@ -416,9 +416,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return v;
                 v = pairs[idx].cdr;
             }
-            return make_int(0);
+            return make_bool(false); // Issue #4491
         },
-        pure_general(2, "(any list) -> any", "Sublist whose car is eqv? to the key, or empty."));
+        pure_general(2, "(any list) -> any", "Sublist whose car is eqv? to the key, or #f."));
     register_prim(
         add, ev, "assv",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -456,9 +456,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return entry;
                 v = pairs[idx].cdr;
             }
-            return make_int(0);
+            return make_bool(false); // Issue #4491
         },
-        pure_general(2, "(any list) -> any", "Alist pair whose car is eqv? to the key, or empty."));
+        pure_general(2, "(any list) -> any", "Alist pair whose car is eqv? to the key, or #f."));
     // (append list ...) — Variadic: concatenate all provided lists
     register_prim(
         add, ev, "append",

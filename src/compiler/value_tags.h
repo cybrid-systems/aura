@@ -159,7 +159,8 @@ inline void record_v2_string_collision_attempt() noexcept {
 // Single source of truth for whether fixnum 0 is false. Every
 // truthiness test (pure::is_truthy, JIT jit_truthy, constant folding,
 // type checker) reads this flag so the paths cannot drift apart.
-inline constexpr bool kIntZeroIsFalse = true;
+// Issue #4491: only #f is false (R7RS 6.3). Integer 0 is true.
+inline constexpr bool kIntZeroIsFalse = false;
 [[nodiscard]] inline constexpr bool raw_is_truthy(std::int64_t v) noexcept {
     if (v == kSpecialFalse)
         return false;
