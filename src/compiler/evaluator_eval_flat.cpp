@@ -803,6 +803,13 @@ struct TwFrame {
 thread_local std::vector<TwFrame> g_tw_frames;
 thread_local std::vector<const EvalResult*> g_tw_results;
 thread_local std::vector<const std::vector<types::EvalValue>*> g_tw_vecs;
+// Issue #2738: the walker roots above are thread_local. With thread-backend
+// fibers another thread's frames, pinned results and primitive vectors
+// (e.g. the while primitive's pred/body closures) are invisible to a
+// reclaim started here, so it would erase closures that thread still
+// holds. Count threads with a live walker frame; reclaim only when this
+// thread is the only one.
+std::atomic<int> g_tw_frame_threads{0};
 
 struct TwPinResult {
     explicit TwPinResult(const EvalResult& r) { g_tw_results.push_back(&r); }
@@ -848,6 +855,9 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     // #4459 small-heap cadence unchanged.
     if (tw_closure_allocs_ < tw_closure_allocs_trigger_ &&
         file_heap_allocs_since_reclaim_ < file_heap_allocs_trigger_)
+        return;
+    // Issue #2738: another thread's walker roots are not visible here.
+    if (g_tw_frame_threads.load(std::memory_order_acquire) > 1)
         return;
     std::vector<const Env*> envs;
     envs.reserve(g_tw_frames.size() * 2 + 4);
@@ -897,7 +907,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // refuse typed-entry at this depth. Soft/Off: one hard-face load.
     if (production_eval_flat_commit_readiness_refuse(
             static_cast<CompilerMetrics*>(compiler_metrics_)))
-        { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+        return std::nullopt;
     // Issue #3626 (#252/#3421 residual): process-wide fetch_add on every
     // apply is I1 eval tax under the production pack — the dashboard
     // counter rode inter-core coherency on the shared entry. Soft/unit
@@ -952,7 +962,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                                                          static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(
                     static_cast<struct CompilerMetrics*>(compiler_metrics_), *this);
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
 
             std::int64_t result_i = 0;
@@ -1037,7 +1047,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 return types::make_int_or_promote(result_i);
             }
         }
-        { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+        return std::nullopt;
     }
 
     // Try tree-walker closures first
@@ -1126,7 +1136,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
         }
         bump_compiler_root_dangling_prevented();
-        { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+        return std::nullopt;
     }
     if (cl_found) {
         if (metrics)
@@ -1155,7 +1165,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
                                                                  metrics, &cl_copy))
                     return bridged;
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
         }
         // Issue #2128: MustDeoptBeforeNextCall — force safe path; never
@@ -1173,7 +1183,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     metrics->compiler_closure_safe_fallbacks.fetch_add(1,
                                                                        std::memory_order_relaxed);
                 note_apply_closure_densify_hard_refuse(metrics, *this);
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
             // Issue #3681: production refuses to wash MustDeopt. The flag
             // is set by expire_stale_live_closures_ after the facade
@@ -1209,7 +1219,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
                                                                  metrics, &cl_copy))
                     return bridged;
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
             const bool body_live_md = cl_copy.flat && cl_copy.pool &&
                                       cl_copy.body_id != aura::ast::NULL_NODE &&
@@ -1284,7 +1294,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (metrics)
                     metrics->must_deopt_force_deopt_fail_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
         }
         // Issue #681: epoch + EnvFrame version pre-check before
@@ -1311,7 +1321,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
                                                              static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(metrics, *this);
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
             // Issue #3681: production + this closure's define was dirtied
             // this epoch (v2 dirty flag via is_define_dirty_fn_ — the same
@@ -1334,7 +1344,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (metrics)
                     metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
                 bump_compiler_root_dangling_prevented();
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
             const bool body_live = cl_copy.flat && cl_copy.pool &&
                                    cl_copy.body_id != aura::ast::NULL_NODE &&
@@ -1385,7 +1395,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (metrics)
                     metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
                 bump_compiler_root_dangling_prevented();
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
         }
         // Issue #145 Phase 2.3 — materialize the call env from
@@ -1415,7 +1425,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         if (user_arity_mismatch(cl_copy.params.size(), cl_copy.dotted, args.size())) {
             set_pending_user_arity(user_arity_message(cl_copy.name, cl_copy.params.size(),
                                                       cl_copy.dotted, args.size()));
-            { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+            return std::nullopt;
         }
         if (cl_copy.dotted) {
             // Dotted rest param: bind named params, collect rest into list
@@ -1476,7 +1486,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     }
                     bump_stale_closure_prevented();
                     bump_compiler_root_dangling_prevented();
-                    { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                    return std::nullopt;
                 }
                 if (closure_is_epoch_stale(*this, cl_copy)) {
                     if (metrics) {
@@ -1510,7 +1520,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     if (production_apply_closure_densify_hard_refuse(
                             arena_, cl_copy, static_cast<const void*>(this))) {
                         note_apply_closure_densify_hard_refuse(metrics, *this);
-                        { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                        return std::nullopt;
                     }
                     const bool race_body_live = cl_copy.flat && cl_copy.pool &&
                                                 cl_copy.body_id != aura::ast::NULL_NODE &&
@@ -1554,7 +1564,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             return bridged;
                         if (metrics)
                             metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-                        { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                        return std::nullopt;
                     }
                 }
             }
@@ -1567,7 +1577,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
                                                              static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(metrics, *this);
-                { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+                return std::nullopt;
             }
             if (metrics)
                 metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1575,7 +1585,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             if (r)
                 return *r;
         }
-        { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+        return std::nullopt;
     }
 
     // Try IR bridge (local-map miss). Issue #1511: still go through
@@ -1588,7 +1598,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                                              /*provenance=*/nullptr);
     }
 
-    { if (std::getenv("AURA_DBG_APPLY")) std::fprintf(stderr, "apply nullopt L%d cid=%u\n", __LINE__, (unsigned)cid); return std::nullopt; }
+    return std::nullopt;
 }
 
 // ── ast_to_data: convert AST subtree to EvalValue data ───────
@@ -5267,11 +5277,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
         struct TwFrameReg {
             TwFrameReg(const Env** c, std::optional<Env>* t, std::vector<std::unique_ptr<Env>>* p) {
+                if (g_tw_frames.empty())
+                    g_tw_frame_threads.fetch_add(1, std::memory_order_acq_rel);
                 g_tw_frames.push_back(TwFrame{c, t, p});
             }
             ~TwFrameReg() {
-                if (!g_tw_frames.empty())
+                if (!g_tw_frames.empty()) {
                     g_tw_frames.pop_back();
+                    if (g_tw_frames.empty())
+                        g_tw_frame_threads.fetch_sub(1, std::memory_order_acq_rel);
+                }
             }
             TwFrameReg(const TwFrameReg&) = delete;
         } tw_frame_reg(&current_env, &tail_env, &tco_pinned);
