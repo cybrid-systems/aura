@@ -2084,6 +2084,9 @@ public:
 
     // Set the IR closure bridge for cross-evaluator closure calls
     void set_closure_bridge(ClosureBridgeFn bridge) { closure_bridge_ = std::move(bridge); }
+    // Re-entrant IR execution (eval-current inside a running top-level form)
+    // saves the caller's bridge and restores it on exit.
+    [[nodiscard]] ClosureBridgeFn closure_bridge() const { return closure_bridge_; }
 
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
