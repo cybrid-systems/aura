@@ -1,0 +1,8 @@
+;; expect: 414243 ABC QUJD ABC
+;; Issue #4500: prefixed require of std/encoding must not make the
+;; wrappers call themselves forever.
+(require "std/encoding")
+(display (hex-encode "ABC")) (display " ")
+(display (hex-decode "414243")) (display " ")
+(display (base64-encode "ABC")) (display " ")
+(display (base64-decode "QUJD"))
