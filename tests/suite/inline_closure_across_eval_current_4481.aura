@@ -1,0 +1,17 @@
+;; expect: START 21 35 ok
+; #4481: closures passed inline (not via a top-level define) to a top-level
+; form that runs mutate:rebind + eval-current must stay callable; the nested
+; eval-current used to drop the caller's IR closure bridge.
+(require "std/mutate" all:)
+(display "START ")
+(define (make-plant) (list "p" (lambda (x) (* x 3)) (lambda (x) (* x 5))))
+(define (attempt plant)
+  (set-code "(define ka (lambda (x) (* x 2)))")
+  (eval-current)
+  (mutate:rebind "ka" "(lambda (x) (* x 7))" "t")
+  (eval-current)
+  (let ((a ((cadr plant) 7)) (b ((caddr plant) 7)))
+    (display a) (display " ") (display b) (display " ")
+    (if (and (= a 21) (= b 35)) "ok" "bad")))
+(display (attempt (make-plant)))
+(newline)
