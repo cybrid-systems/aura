@@ -36,7 +36,7 @@ def main() -> int:
     must("2998" in lst, "AC1: list.cpp cites #2998")
     must("member: not a list" in lst, "AC1: member type error")
     must("member: improper list" in lst, "AC1: member improper error")
-    must("documented not-found" in lst, "AC5: member not-found documented")
+    must("not-found is #f" in lst, "AC5: member not-found documented (#4491: #f)")
     must("take: not a list" in lst, "AC1: take type error")
     must("drop: not a list" in lst, "AC1: drop type error")
     must("drop past end" in lst, "AC5: drop past end empty")
@@ -81,7 +81,7 @@ def main() -> int:
 
     suite = _read("tests/suite/query_primitives_split_2914.aura")
     must("FAIL-2998" in suite, "AC6: 2914 suite extended")
-    must("member not-found stays 0" in suite, "AC5: suite keeps not-found")
+    must("member not-found is #f" in suite, "AC5: suite keeps not-found (#4491)")
     must("json-parse invalid" in suite, "AC6: suite json invalid")
 
     build = _read("build.py")

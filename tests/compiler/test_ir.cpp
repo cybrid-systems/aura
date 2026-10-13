@@ -678,7 +678,7 @@ int main() {
 
         // Conditionals
         {"(if 1 42 0)", "42"},
-        {"(if 0 0 99)", "99"},
+        {"(if #f 0 99)", "99"}, // #4491: only #f is false
         {"(if (> 3 2) 1 0)", "1"},
 
         // Let bindings
