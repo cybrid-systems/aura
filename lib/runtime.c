@@ -711,7 +711,9 @@ static char** string_heap = NULL;
 static uint64_t string_count = 0;
 static uint64_t string_capacity = 0;
 
-#define STRING_BIAS 0x10000000
+/* Issue #4502 F2: the legacy `id + 0x10000000` string encoding is gone
+ * (even ids were fixnums, fixnums >= 2^27 displayed as strings). Runtime
+ * strings use the shared boxed encoding MAKE_STRING_SENTINEL / STRING_IDX. */
 
 int64_t aura_alloc_string(const char* s) {
     if (!string_heap) {
@@ -730,13 +732,13 @@ int64_t aura_alloc_string(const char* s) {
     }
     uint64_t id = string_count++;
     string_heap[id] = s ? strdup(s) : strdup("");
-    // Return (id << 2) | 3 in the high range so IS_FIXNUM/IS_PAIR/IS_SPECIAL checks
-    // all fail, and the display function can detect strings via the high bit range.
-    return (int64_t)(id + STRING_BIAS);
+    return MAKE_STRING_SENTINEL(id); // #4502 F2: boxed string (low2 11)
 }
 
 const char* aura_string_ref(int64_t str_id) {
-    uint64_t id = (uint64_t)(str_id - STRING_BIAS);
+    if (!IS_STRING(str_id))
+        return "";
+    uint64_t id = (uint64_t)STRING_IDX(str_id);
     if (id >= string_count)
         return "";
     return string_heap[id] ? string_heap[id] : "";
@@ -943,13 +945,13 @@ static void aura_display_pair_chain(int64_t val) {
         else if (IS_FLOAT(car_val)) {
             printf("%g", aura_float_ref(car_val));
         } else if (IS_STRING(car_val))
-            printf("%s", aura_string_ref((uint64_t)STRING_IDX(car_val)));
+            printf("%s", aura_string_ref(car_val));
         else
             printf("%ld", (long)(car_val >> 1));
         val = aura_pair_cdr(val);
     }
     if (IS_STRING(val))
-        printf(" . %s", aura_string_ref((uint64_t)STRING_IDX(val)));
+        printf(" . %s", aura_string_ref(val));
     else if (val != 0 && !IS_PAIR(val) && !IS_SPECIAL(val))
         printf(" . %ld", (long)(val >> 1));
     else if (IS_SPECIAL(val) && SPECIAL_TAG(val) != KWD_VOID)
@@ -961,7 +963,7 @@ int64_t aura_display_int(int64_t val) {
     if (IS_FLOAT(val)) {
         double d = aura_float_ref(val);
         printf("%g", d);
-    } else if (val >= STRING_BIAS) {
+    } else if (IS_STRING(val)) {
         printf("%s", aura_string_ref(val));
     } else if (IS_PAIR(val)) {
         aura_display_pair_chain(val);
@@ -1008,8 +1010,7 @@ int64_t aura_display_val(int64_t val, int type_tag) {
             else if (IS_SPECIAL(val))
                 printf("%s", SPECIAL_TAG(val) == KWD_TRUE ? "#t" : "#f");
             else if (IS_STRING(val)) {
-                int sid = STRING_IDX(val);
-                const char* sp = aura_string_ref((uint64_t)sid);
+                const char* sp = aura_string_ref(val);
                 printf("%s", sp ? sp : "<?>");
             } else if (val == 0)
                 printf("()");
@@ -1076,8 +1077,6 @@ void aura_display_value(int64_t val, int64_t write_mode) {
         // write: quote string contents; other tags share display form
         const char* s = NULL;
         if (IS_STRING(val))
-            s = aura_string_ref((uint64_t)STRING_IDX(val));
-        else if (val >= STRING_BIAS)
             s = aura_string_ref(val);
         if (s) {
             aura_fputs_scheme_write_string(s);
