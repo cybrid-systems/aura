@@ -1,4 +1,4 @@
-;; expect: 4458 shuffle-ok 1.41421 0.5 1024 big-ok
+;; expect: 4458 shuffle-ok 1.4142135623730951 0.5 1024 big-ok
 ; Issue #4458: shuffle is a permutation of its input, and expt accepts
 ; a fractional exponent, a negative exponent, and a large integer.
 (require "std/list" all:)
@@ -25,8 +25,6 @@
 (define ten (expt 2 10))
 (define big (expt 2 10000))
 
-(display perm) (newline)
-(display half) (newline)
 
 (if (and (perm4? perm)
          (pair? (cadr sh))

@@ -684,9 +684,13 @@ static void ac24_user_define_prim_shadow_4477() {
           "AC24: set-code installs fresh workspace");
     CHECK(cs.eval("(eval-current)").has_value(), "AC24: eval-current completes");
     auto after = cs.eval("(check \"after\" #t)");
-    CHECK(after.has_value() && aura::compiler::types::is_int(*after) &&
-              aura::compiler::types::as_int(*after) == 42,
-          "AC24: shadowed check stays user-bound across reload (constant-call 42; "
+    // #4478: calling a non-procedure now raises "cannot call" at the call
+    // site on every face (it used to silently self-apply and return 42). A
+    // dropped binding would instead reroute to the check prim and succeed
+    // with 1, so the user-bound face is the cannot-call error naming check.
+    CHECK(!after.has_value() && after.error().message.find("cannot call") != std::string::npos &&
+              after.error().message.find("check") != std::string::npos,
+          "AC24: shadowed check stays user-bound across reload (cannot call: check; "
           "a dropped binding would reroute to the prim and return 1)");
     auto f = cs.eval("(f 7)");
     CHECK(f.has_value() && aura::compiler::types::is_int(*f) &&
