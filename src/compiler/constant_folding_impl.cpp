@@ -273,9 +273,12 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                 // Issue #4491: and/or yield an operand, not #t/#f. Fold only
                 // when both operands are tagged bools (result stays a bool).
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end() &&
-                    is_tagged_bool(it_a->second) && is_tagged_bool(it_b->second)) {
-                    replace_bool(instr, ops[0], tagged_bool_value(is_truthy_val(it_a->second) ? it_b->second : it_a->second), known);
+                if (it_a != known.end() && it_b != known.end() && is_tagged_bool(it_a->second) &&
+                    is_tagged_bool(it_b->second)) {
+                    replace_bool(instr, ops[0],
+                                 tagged_bool_value(is_truthy_val(it_a->second) ? it_b->second
+                                                                               : it_a->second),
+                                 known);
                     ++folded;
                 }
                 break;
@@ -284,9 +287,12 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
                 // Issue #4491: and/or yield an operand, not #t/#f. Fold only
                 // when both operands are tagged bools (result stays a bool).
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end() &&
-                    is_tagged_bool(it_a->second) && is_tagged_bool(it_b->second)) {
-                    replace_bool(instr, ops[0], tagged_bool_value(is_truthy_val(it_a->second) ? it_a->second : it_b->second), known);
+                if (it_a != known.end() && it_b != known.end() && is_tagged_bool(it_a->second) &&
+                    is_tagged_bool(it_b->second)) {
+                    replace_bool(instr, ops[0],
+                                 tagged_bool_value(is_truthy_val(it_a->second) ? it_a->second
+                                                                               : it_b->second),
+                                 known);
                     ++folded;
                 }
                 break;

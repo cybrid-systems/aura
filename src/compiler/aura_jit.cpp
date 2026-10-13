@@ -1204,8 +1204,8 @@ struct LLVMBuilder {
             }
             case OpNot: {
                 auto v = load(inst.ops[1]);
-                store(inst.ops[0], irb->CreateSelect(jit_truthy(v), c64(KWD_FALSE_VAL),
-                                                     c64(KWD_TRUE_VAL)));
+                store(inst.ops[0],
+                      irb->CreateSelect(jit_truthy(v), c64(KWD_FALSE_VAL), c64(KWD_TRUE_VAL)));
                 return true;
             }
             case OpBranch: {
