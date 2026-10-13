@@ -76,7 +76,7 @@
 ;; Deeply nested lambdas — type checking calls is_subtype recursively.
 ;; Must not infinite-loop or crash.
 (define (deep-fn x) (lambda (y) (lambda (z) (+ x y z))))
-(check= 6 ((deep-fn 1) 2 3))
+(check= 6 (((deep-fn 1) 2) 3))
 
 ; ── 9. Nested function calls. ──
 ;; Confirms the basic call site still works with the new subtyping rules.

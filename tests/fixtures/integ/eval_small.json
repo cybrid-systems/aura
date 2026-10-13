@@ -135,7 +135,7 @@
     "name": "vector_basic",
     "code": "(vector 1 2 3)",
     "pipeline": "eval",
-    "expected": "vector"
+    "expected": "#(1 2 3)"
   },
   {
     "name": "vector_length",

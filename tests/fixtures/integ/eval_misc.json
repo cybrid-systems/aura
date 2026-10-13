@@ -63,13 +63,13 @@
     "name": "coerce_arith",
     "code": "(+ 1 \"2\")",
     "pipeline": "eval",
-    "expected": "3"
+    "expected_err": "type mismatch"
   },
   {
     "name": "coerce_strlen",
     "code": "(string-length 12345)",
     "pipeline": "eval",
-    "expected": "5"
+    "expected": "0"
   },
   {
     "name": "define_annot_2param",

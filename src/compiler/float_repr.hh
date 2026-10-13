@@ -10,6 +10,10 @@
 namespace aura::compiler {
 
 inline std::string format_float_shortest(double v) {
+    // NaN sign is not meaningful (0.0/0.0 yields a negative quiet NaN on
+    // x86-64 and to_chars spells it "-nan"); print one canonical "nan".
+    if (v != v)
+        return "nan";
     char buf[64];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
     if (ec != std::errc{})
