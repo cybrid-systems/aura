@@ -525,7 +525,8 @@ static void ac4492_nested_map_filter_pinned() {
           "(define (fb) (filter (lambda (p) (list p p p) (= (remainder (car p) 2) 0))"
           " (map (lambda (x) (list x 1)) (seq 199 (quote ())))))",
           "(define (ok res i) (if (null? res) (= i 200)"
-          " (if (and (= (car (car res)) i) (= (car (cdr (car res))) 1)) (ok (cdr res) (+ i 2)) #f)))",
+          " (if (and (= (car (car res)) i) (= (car (cdr (car res))) 1)) (ok (cdr res) (+ i 2)) "
+          "#f)))",
           "(define w1 (fb))", "(garbage 2000)", "(define w2 (fb))", "(garbage 2000)"})
         CHECK(cs.eval(d).has_value(), "4492 AC2: setup form evaluates");
     auto r2 = cs.eval("(if (ok w1 0) (ok w2 0) #f)");
