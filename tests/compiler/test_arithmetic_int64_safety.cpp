@@ -125,7 +125,8 @@ int main() {
     {
         auto r = cs.eval("(* 1000000 1000000 1000000 1000000)");
         CHECK(r, "large * returns");
-        CHECK(is_int(*r) || is_float(*r) || is_error(*r), "large * is int, float or overflow error (#4482)");
+        CHECK(is_int(*r) || is_float(*r) || is_error(*r),
+              "large * is int, float or overflow error (#4482)");
     }
 
     // Issue #4462 / #4482: the fixnum domain is the symmetric
@@ -505,11 +506,13 @@ int main() {
         auto hit = cs.eval("(memv 2 (list 1 2 3))");
         CHECK(hit && is_pair(*hit), "memv 2 hits");
         auto miss = cs.eval("(memv 2.0 (list 1 2 3))");
-        CHECK(miss && is_bool(*miss) && !aura::compiler::types::as_bool(*miss), "memv 2.0 misses an int (#f, #4491)");
+        CHECK(miss && is_bool(*miss) && !aura::compiler::types::as_bool(*miss),
+              "memv 2.0 misses an int (#f, #4491)");
         auto alist = cs.eval("(cdr (assv 'b (list (cons 'a 1) (cons 'b 2))))");
         CHECK(alist && is_int(*alist) && as_int(*alist) == 2, "assv 'b yields 2");
         auto no = cs.eval("(assv 'z (list (cons 'a 1)))");
-        CHECK(no && is_bool(*no) && !aura::compiler::types::as_bool(*no), "assv miss is #f (#4491)");
+        CHECK(no && is_bool(*no) && !aura::compiler::types::as_bool(*no),
+              "assv miss is #f (#4491)");
 
         const auto bin = aura_binary();
         CHECK(!bin.empty(), "4470: aura binary");
