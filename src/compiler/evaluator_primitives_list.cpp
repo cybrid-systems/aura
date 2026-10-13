@@ -659,6 +659,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             std::vector<EvalValue> kept;
             kept.reserve(cars.size());
+            // Issue #4492: same face as map (#4480). cars/kept are the only
+            // host-side roots for the snapshot elements while pred runs; a
+            // tree-walker reclaim triggered inside an allocating pred would
+            // freelist them (e.g. when the input list is a temporary such as
+            // (filter p (map f xs))) and the result chain below would alias
+            // recycled slots. Pin both for the whole apply + construction.
+            const Evaluator::TwVecPin pin_cars(cars);
+            const Evaluator::TwVecPin pin_kept(kept);
             for (const auto& car : cars) {
                 if (apply_pred(a[0], car, true))
                     kept.push_back(car);

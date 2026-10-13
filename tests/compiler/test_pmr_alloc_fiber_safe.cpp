@@ -499,6 +499,44 @@ static void ac4480_map_accumulator_pinned() {
           "4480 AC5: map holds a TwVecPin root over its accumulator");
 }
 
+// ── Issue #4492: nested map (mapped procedure allocates) and filter with an
+// allocating pred must survive reclaims forced by garbage between builds.
+static void ac4492_nested_map_filter_pinned() {
+    std::println("\n--- #4492: nested map / allocating filter survive reclaims ---");
+    CompilerService cs;
+    auto r1 = cs.eval(
+        "(begin"
+        "(define (index-of x xs) (let lp ((xs xs) (i 0)) (cond ((null? xs) -1)"
+        "((eq? (car xs) x) i) (else (lp (cdr xs) (+ i 1))))))"
+        "(define names (list 'a 'b 'c))"
+        "(define (build) (map (lambda (a) (map (lambda (b) (index-of b names)) names)) names))"
+        "(define (garbage n) (let lp ((i 0) (acc (list))) (if (< i n)"
+        "(lp (+ i 1) (cons i (if (> (length acc) 20) (list) acc))) #t)))"
+        "(define want (quote ((0 1 2) (0 1 2) (0 1 2))))"
+        "(define v1 (build)) (garbage 2000)"
+        "(define v2 (build)) (garbage 2000)"
+        "(define v3 (build)) (garbage 2000)"
+        "(and (equal? v1 want) (equal? v2 want) (equal? v3 want)))");
+    CHECK(r1 && is_bool(*r1) && as_bool(*r1),
+          "4492 AC1: nested-map results stay intact across forced reclaims");
+
+    for (const char* d :
+         {"(define (seq i acc) (if (< i 0) acc (seq (- i 1) (cons i acc))))",
+          "(define (fb) (filter (lambda (p) (list p p p) (= (remainder (car p) 2) 0))"
+          " (map (lambda (x) (list x 1)) (seq 199 (quote ())))))",
+          "(define (ok res i) (if (null? res) (= i 200)"
+          " (if (and (= (car (car res)) i) (= (car (cdr (car res))) 1)) (ok (cdr res) (+ i 2)) #f)))",
+          "(define w1 (fb))", "(garbage 2000)", "(define w2 (fb))", "(garbage 2000)"})
+        CHECK(cs.eval(d).has_value(), "4492 AC2: setup form evaluates");
+    auto r2 = cs.eval("(if (ok w1 0) (ok w2 0) #f)");
+    CHECK(r2 && is_bool(*r2) && as_bool(*r2),
+          "4492 AC2: filter over a temporary list with allocating pred stays fresh");
+
+    const auto src = read_file("src/compiler/evaluator_primitives_list.cpp");
+    CHECK(src.find("TwVecPin pin_kept") != std::string::npos,
+          "4492 AC3: filter holds a TwVecPin root over its snapshot/accumulator");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -512,6 +550,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4473_list_mint_reuse();
     ac4474_dynamic_reclaim_trigger();
     ac4480_map_accumulator_pinned();
+    ac4492_nested_map_filter_pinned();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
