@@ -53,8 +53,8 @@ namespace aura::compiler {
 //     the same int64 map can carry both fixnums and tagged
 //     bools without ambiguity.
 //
-// `IS_TRUTHY` (in the .cpp) treats tagged #f and int 0 as
-// falsy; tagged #t and non-zero ints are truthy.
+// `IS_TRUTHY` (in the .cpp) follows value_tags.h kIntZeroIsFalse:
+// only tagged #f is falsy (Issue #4491).
 //
 // The map type lives here (not in the .cpp) because the
 // per-block pure function `constant_fold_block` needs the

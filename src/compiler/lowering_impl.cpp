@@ -1017,7 +1017,7 @@ static std::uint32_t lower_flat_expr(
                     //
                     // Issue #1911 B8: pre-fix used ConstVoid on the
                     // short-circuit (nope) arm. Void is truthy under
-                    // is_truthy (only #f and int 0 are false), so
+                    // is_truthy (only #f is false since #4491), so
                     // (and #f x) became truthy void — breaking
                     // leap-year? / days-in-month for non-leap years
                     // when the define was IR-lowered (direct call path).
