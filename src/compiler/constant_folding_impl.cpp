@@ -116,10 +116,8 @@ static void fold_int_arith(aura::ir::IRInstruction& instr, std::uint32_t slot, s
                     : kind == 1 ? __builtin_sub_overflow(a, b, &next)
                                 : __builtin_mul_overflow(a, b, &next);
     if (ov || !aura::compiler::types::fits_fixnum(next)) {
-        const double da = static_cast<double>(a);
-        const double db = static_cast<double>(b);
-        const double r = kind == 0 ? da + db : kind == 1 ? da - db : da * db;
-        replace_f64(instr, slot, r, known);
+        // Issue #4482: overflow is a runtime error; leave it unfolded.
+        return;
     } else {
         replace(instr, slot, next, known);
     }

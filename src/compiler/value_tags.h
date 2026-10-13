@@ -83,17 +83,17 @@ enum class EvalValueTag : std::uint8_t {
 // consteval low-2-bit dispatch table (bits 0-1 of the tagged int64).
 // Issue #571 / #1622: primary hot-path tag class table.
 inline constexpr EvalValueTag kEvalValueTagLow2Table[4] = {
-    EvalValueTag::Fixnum,   // 00 — also Float when in float bias range
-    EvalValueTag::Ref,      // 01
-    EvalValueTag::StringV2, // 10 — range-guarded by STRING_BIAS_VAL_2
-    EvalValueTag::Special,  // 11 — #f/#t/void sentinels
+    EvalValueTag::Fixnum,  // 00 — also Float when in float bias range
+    EvalValueTag::Ref,     // 01
+    EvalValueTag::Fixnum,  // 10 — odd fixnums (#4482: always Fixnum)
+    EvalValueTag::Special, // 11 — sentinels; Float/String by range (#4482)
 };
 
 // Issue #1622: documented common tag pattern set for Agents / consteval.
 inline constexpr EvalValueTag kTagPatterns[4] = {
     EvalValueTag::Fixnum,
     EvalValueTag::Ref,
-    EvalValueTag::StringV2,
+    EvalValueTag::Fixnum,
     EvalValueTag::Special,
 };
 
@@ -119,8 +119,8 @@ static_assert(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum,
               "dispatch table drift: low2=0 must be Fixnum");
 static_assert(eval_value_tag_low2_table(1) == EvalValueTag::Ref,
               "dispatch table drift: low2=1 must be Ref");
-static_assert(eval_value_tag_low2_table(2) == EvalValueTag::StringV2,
-              "dispatch table drift: low2=2 must be StringV2");
+static_assert(eval_value_tag_low2_table(2) == EvalValueTag::Fixnum,
+              "dispatch table drift: low2=2 must be Fixnum (#4482)");
 static_assert(eval_value_tag_low2_table(3) == EvalValueTag::Special,
               "dispatch table drift: low2=3 must be Special");
 static_assert(static_cast<std::uint8_t>(EvalValueTag::Fixnum) == 0, "Fixnum tag must be 0");
@@ -170,7 +170,12 @@ inline constexpr bool kIntZeroIsFalse = false;
 }
 
 // ── Pool bias sentinels ───────────────────────────────────────────
-inline constexpr std::int64_t FLOAT_BIAS_VAL = -10000000000000000LL;
+// Issue #4482: boxed floats and strings carry low2 == 11 (odd), so every
+// even int64 is a fixnum and the fixnum range is the full symmetric
+// [-2^62, 2^62-1]. The biases keep their magnitude and gain low2 = 3.
+// Special sentinels (#f/#t/void) are the small low2 == 11 values above
+// FLOAT_BIAS_VAL. ABI: kValueEncodingAbi below.
+inline constexpr std::int64_t FLOAT_BIAS_VAL = -10000000000000000LL + 3;
 inline constexpr std::int64_t STRING_BIAS_VAL = -9000000000000000000LL;
 
 // ── Ref sub-type ids (bits 2-5) ──────────────────────────────────
@@ -245,7 +250,7 @@ inline constexpr bool is_ref(std::int64_t v) noexcept {
     return (v & 3) == static_cast<std::int64_t>(kRefLowTag);
 }
 inline constexpr bool is_special(std::int64_t v) noexcept {
-    return (v & 3) == 3;
+    return (v & 3) == 3 && v > FLOAT_BIAS_VAL; // #4482: boxed float/string are below
 }
 
 inline constexpr std::uint64_t ref_type(std::int64_t v) noexcept {
@@ -297,13 +302,16 @@ inline constexpr std::uint64_t string_idx_raw(std::int64_t v) noexcept {
 // New bias for the v2 encoding: same magnitude as STRING_BIAS_VAL
 // but with low 2 bits = 2 (the string tag).
 //   STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2  (low 2 bits: 0 → 2)
-inline constexpr std::int64_t STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2;
+inline constexpr std::int64_t STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 3; // #4482: low2 = 3
+// Issue #4482: value-encoding ABI version (2 = odd-boxed float/string,
+// symmetric 63-bit fixnum). Mirrored by lib/runtime.c AURA_VALUE_ABI.
+inline constexpr int kValueEncodingAbi = 2;
 
 inline constexpr std::int64_t make_string_raw_v2(std::uint64_t idx) noexcept {
     return STRING_BIAS_VAL_2 - static_cast<std::int64_t>(idx << 2);
 }
 inline constexpr bool is_string_raw_v2(std::int64_t v) noexcept {
-    return (v & 3) == 2;
+    return (v & 3) == 3 && v <= STRING_BIAS_VAL_2; // #4482
 }
 inline constexpr std::uint64_t string_idx_raw_v2(std::int64_t v) noexcept {
     return static_cast<std::uint64_t>(STRING_BIAS_VAL_2 - v) >> 2;
@@ -312,13 +320,13 @@ inline constexpr std::uint64_t string_idx_raw_v2(std::int64_t v) noexcept {
 // Compile-time guard: v2 helpers must produce disjoint tags.
 // (If this fires, the encoding was changed without updating
 // the tag bits — fix the constants above.)
-static_assert((make_string_raw_v2(0) & 3) == 2, "v2 string encoding broke tag bits (idx=0)");
-static_assert((make_string_raw_v2(1) & 3) == 2, "v2 string encoding broke tag bits (idx=1)");
-static_assert((make_string_raw_v2(31) & 3) == 2,
+static_assert((make_string_raw_v2(0) & 3) == 3, "v2 string encoding broke tag bits (idx=0)");
+static_assert((make_string_raw_v2(1) & 3) == 3, "v2 string encoding broke tag bits (idx=1)");
+static_assert((make_string_raw_v2(31) & 3) == 3,
               "v2 string encoding broke tag bits (idx=31 — was RefError collision)");
-static_assert((make_string_raw_v2(19) & 3) == 2,
+static_assert((make_string_raw_v2(19) & 3) == 3,
               "v2 string encoding broke tag bits (idx=19 — was RefKeyword collision)");
-static_assert((make_string_raw_v2(0xFFFFULL) & 3) == 2,
+static_assert((make_string_raw_v2(0xFFFFULL) & 3) == 3,
               "v2 string encoding broke tag bits (idx=0xFFFF)");
 
 // Roundtrip check at compile time: make then decode returns the
@@ -364,13 +372,13 @@ static_assert(string_idx_raw_v2(make_string_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
 // The remaining collision is with fixnums (also (v&3)==0); the
 // range check `v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2`
 // disambiguates them.
-inline constexpr std::int64_t FLOAT_BIAS_VAL_2 = FLOAT_BIAS_VAL; // -10^16, low-2-bits = 0
+inline constexpr std::int64_t FLOAT_BIAS_VAL_2 = FLOAT_BIAS_VAL; // -10^16+3, low-2-bits = 3 (#4482)
 
 inline constexpr std::int64_t make_float_raw_v2(std::uint64_t idx) noexcept {
     return FLOAT_BIAS_VAL_2 - static_cast<std::int64_t>(idx << 2);
 }
 inline constexpr bool is_float_raw_v2(std::int64_t v) noexcept {
-    return (v & 3) == 0 && v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2;
+    return (v & 3) == 3 && v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2; // #4482
 }
 inline constexpr std::uint64_t float_idx_raw_v2(std::int64_t v) noexcept {
     return static_cast<std::uint64_t>(FLOAT_BIAS_VAL_2 - v) >> 2;
@@ -380,11 +388,11 @@ inline constexpr std::uint64_t float_idx_raw_v2(std::int64_t v) noexcept {
 // If this fires, FLOAT_BIAS_VAL_2 lost its low-2-bits == 0 property
 // (it has to be 0 because we want the float range to overlap
 // with fixnums on (v&3)==0 — the range check disambiguates).
-static_assert((make_float_raw_v2(0) & 3) == 0, "v2 float encoding broke tag bits (idx=0)");
-static_assert((make_float_raw_v2(1) & 3) == 0, "v2 float encoding broke tag bits (idx=1)");
-static_assert((make_float_raw_v2(2) & 3) == 0, "v2 float encoding broke tag bits (idx=2)");
-static_assert((make_float_raw_v2(3) & 3) == 0, "v2 float encoding broke tag bits (idx=3)");
-static_assert((make_float_raw_v2(0xFFFFULL) & 3) == 0,
+static_assert((make_float_raw_v2(0) & 3) == 3, "v2 float encoding broke tag bits (idx=0)");
+static_assert((make_float_raw_v2(1) & 3) == 3, "v2 float encoding broke tag bits (idx=1)");
+static_assert((make_float_raw_v2(2) & 3) == 3, "v2 float encoding broke tag bits (idx=2)");
+static_assert((make_float_raw_v2(3) & 3) == 3, "v2 float encoding broke tag bits (idx=3)");
+static_assert((make_float_raw_v2(0xFFFFULL) & 3) == 3,
               "v2 float encoding broke tag bits (idx=0xFFFF)");
 
 // Roundtrip check at compile time: make then decode returns the
@@ -411,29 +419,17 @@ static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
 // Named *_consteval for historical AC naming; implemented as constexpr
 // so tests can also call it at runtime with dynamic samples.
 inline constexpr EvalValueTag classify_eval_value_tag_consteval(std::int64_t v) noexcept {
-    const auto low2 = static_cast<std::size_t>(v & 3);
-    // Prefer table for primary low2 class; refine Float/String ranges.
-    // Note: fixnums use (v<<1) so some fixnums have low2==2 (e.g. 1→2);
-    // those must NOT be treated as StringV2 unless in STRING_BIAS range.
-    const auto primary = eval_value_tag_low2_table(low2);
-    if (primary == EvalValueTag::Special)
-        return classify_special_sentinel(v);
-    if (primary == EvalValueTag::Ref)
+    // Issue #4482: bit0 clear is always Fixnum (full symmetric range).
+    // low2 == 11 is a sentinel above FLOAT_BIAS_VAL, else Float/String.
+    if (is_fixnum(v))
+        return EvalValueTag::Fixnum;
+    if ((v & 3) == 1)
         return EvalValueTag::Ref;
-    if (primary == EvalValueTag::StringV2) {
-        if (v <= STRING_BIAS_VAL_2)
-            return EvalValueTag::StringV2;
-        // low2==2 but outside string bias: fixnum path (bit0 clear).
-        if (is_fixnum(v) && v > FLOAT_BIAS_VAL)
-            return EvalValueTag::Fixnum;
-        return EvalValueTag::Unknown;
-    }
-    // low2 == 0: Fixnum or Float (range disambiguation).
+    if (is_string_raw_v2(v))
+        return EvalValueTag::StringV2;
     if (is_float_raw_v2(v))
         return EvalValueTag::Float;
-    if (is_fixnum(v) && v > FLOAT_BIAS_VAL)
-        return EvalValueTag::Fixnum;
-    return EvalValueTag::Unknown;
+    return classify_special_sentinel(v);
 }
 
 // Issue #1622: compile-time self-checks for consteval classifier.
@@ -479,45 +475,12 @@ static_assert(kTagPatterns[0] == EvalValueTag::Fixnum && kTagPatterns[3] == Eval
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     value_classify_call_count.fetch_add(1, std::memory_order_relaxed);
     aura::core::cpp26::record_hotpath_invariant_hit();
-    const auto low2 = static_cast<std::size_t>(v & 3);
-    const auto primary = eval_value_tag_low2_table(low2);
-    if (primary == EvalValueTag::Special) {
-        if (v == kSpecialFalse || v == kSpecialTrue || v == kSpecialVoid) {
-            record_value_dispatch_hit();
-            return EvalValueTag::Special;
-        }
+    const auto tag = classify_eval_value_tag_consteval(v);
+    if (tag == EvalValueTag::Unknown)
         record_value_dispatch_miss();
-        return EvalValueTag::Unknown;
-    }
-    if (primary == EvalValueTag::Ref) {
+    else
         record_value_dispatch_hit();
-        return EvalValueTag::Ref;
-    }
-    if (primary == EvalValueTag::StringV2) {
-        if (v <= STRING_BIAS_VAL_2) {
-            record_value_dispatch_hit();
-            return EvalValueTag::StringV2;
-        }
-        // Fixnums can have low2==2 (v=2,6,10…); not a string collision.
-        if (is_fixnum(v) && v > FLOAT_BIAS_VAL) {
-            record_value_dispatch_hit();
-            return EvalValueTag::Fixnum;
-        }
-        record_v2_string_collision_attempt();
-        record_value_dispatch_miss();
-        return EvalValueTag::Unknown;
-    }
-    // low2 == 0 → Fixnum or Float
-    if (is_float_raw_v2(v)) {
-        record_value_dispatch_hit();
-        return EvalValueTag::Float;
-    }
-    if (is_fixnum(v) && v > FLOAT_BIAS_VAL) {
-        record_value_dispatch_hit();
-        return EvalValueTag::Fixnum;
-    }
-    record_value_dispatch_miss();
-    return EvalValueTag::Unknown;
+    return tag;
 }
 
 // Issue #1622 / #2616: pure range/tag validity for hot paths (no atomics).

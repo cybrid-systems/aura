@@ -4574,7 +4574,7 @@ public:
                 ev_result = types::make_void();
             else if (raw_result == 3 || raw_result == 7)
                 ev_result = types::make_bool(raw_result == 7);
-            else if ((raw_result & 1) == 0 && raw_result > -10000000000000000LL)
+            else if ((raw_result & 1) == 0 /* #4482 */)
                 ev_result = types::EvalValue(raw_result); // tagged fixnum
             else
                 ev_result = types::EvalValue(raw_result);
@@ -17301,7 +17301,7 @@ public:
                 result_type = types::make_void();
             else if (raw_result == 3 || raw_result == 7)
                 result_type = types::make_bool(raw_result == 7);
-            else if ((raw_result & 1) == 0 && raw_result > -10000000000000000LL)
+            else if ((raw_result & 1) == 0 /* #4482 */)
                 result_type = types::EvalValue(raw_result);
             else
                 result_type = types::EvalValue(raw_result);

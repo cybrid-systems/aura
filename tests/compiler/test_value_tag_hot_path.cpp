@@ -78,7 +78,7 @@ static void ac1_pure_tag_tests() {
     auto s = make_string(0);
     CHECK(is_string(s) && is_string_v2_hot(s.val), "is_string pure");
     CHECK(!is_int(s), "string not int");
-    CHECK(tag_low2_hot(s.val) == 2, "string low2");
+    CHECK(tag_low2_hot(s.val) == 3, "string low2 (#4482: 3)");
 
     // Ref: low2 == 1
     CHECK(is_ref_hot(1), "ref low2=1");
@@ -111,7 +111,7 @@ static void ac3_contracts_present() {
     CHECK(is_string(s), "string ok");
     // Encoding invariants: fixnum low bit clear after make_int.
     CHECK((v.val & 1) == 0, "fixnum low bit clear");
-    CHECK((s.val & 3) == 2, "string low2 == 2");
+    CHECK((s.val & 3) == 3, "string low2 == 3 (#4482)");
     // Wired flags prove contracts surface is present in production build.
     CHECK(value_tag_hotpath_2259_wired.load() == 1, "2259 wired");
     CHECK(value_tag_hotpath_zero_overhead_wired.load() == 1, "zero-overhead wired");

@@ -125,12 +125,13 @@ int main() {
     {
         auto r = cs.eval("(* 1000000 1000000 1000000 1000000)");
         CHECK(r, "large * returns");
-        CHECK(is_int(*r) || is_float(*r), "large * is int or float");
+        CHECK(is_int(*r) || is_float(*r) || is_error(*r), "large * is int, float or overflow error (#4482)");
     }
 
-    // Issue #4462: integers outside the real fixnum domain promote to float.
-    // The domain is [-4999999999999999, 2^62-1]. -2^62 encodes as INT64_MIN
-    // and is not a fixnum. 2^62 aborts make_int unless it is promoted.
+    // Issue #4462 / #4482: the fixnum domain is the symmetric
+    // [-2^62, 2^62-1]. Literals and string->number outside it read as
+    // floats. Integer arithmetic that leaves it is an error value, not a
+    // silent inexact float.
     {
         constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max() >> 1;
         constexpr std::int64_t kTwo62 = kMax + 1;
@@ -143,10 +144,21 @@ int main() {
             auto r = cs.eval(src);
             CHECK(r && is_float(*r) && as_float(*r) == want, msg);
         };
+        auto overflow = [&](const char* src, const char* msg) {
+            auto r = cs.eval(src);
+            CHECK(!r || is_error(*r), msg);
+        };
         exact_int("4611686018427387903", kMax, "2^62-1 stays int");
-        exact_int("-4999999999999999", -4999999999999999LL, "most negative fixnum stays int");
+        exact_int("-4611686018427387904", kNegTwo62, "-2^62 is int (#4482)");
+        exact_int("-4999999999999999", -4999999999999999LL, "-5e15+1 stays int");
+        exact_int("-5000000000000000", -5000000000000000LL, "-5e15 is int (#4482)");
+        exact_int("-2305843009213693952", -2305843009213693952LL, "-2^61 is int");
         exact_int("(+ 2305843009213693951 2305843009213693951)", 4611686018427387902LL,
                   "(+ c c) stays int");
+        exact_int("(+ -2305843009213693952 -2305843009213693952)", kNegTwo62, "(+ d d) is -2^62");
+        exact_int("(- 4611686018427387903)", -kMax, "negation of 2^62-1 is int");
+        exact_int("(- 0 4611686018427387903)", -kMax, "(- 0 2^62-1) is int");
+        exact_int("(* -1 4611686018427387903)", -kMax, "(* -1 2^62-1) is int");
         exact_int("(* 1073741824 2147483648)", 2305843009213693952LL, "2^30*2^31 stays int");
         exact_int("(string->number \"42\")", 42, "string->number 42 stays int");
         exact_int("(string->number \"9007199254740993\")", 9007199254740993LL,
@@ -156,22 +168,13 @@ int main() {
         CHECK(bad && is_bool(*bad) && !aura::compiler::types::as_bool(*bad),
               "string->number failure is #f");
         exact_float("4611686018427387904", static_cast<double>(kTwo62), "literal 2^62 is float");
-        exact_float("-4611686018427387904", static_cast<double>(kNegTwo62),
-                    "literal -2^62 is float");
-        exact_float("-5000000000000000", -5000000000000000.0, "-5e15 is float");
-        exact_float("-2305843009213693952", -2305843009213693952.0, "-2^61 is float");
-        exact_float("(+ 2305843009213693951 2305843009213693951 2)", static_cast<double>(kTwo62),
-                    "(+ c c 2) is float");
-        exact_float("(* 2 (+ 2305843009213693951 1))", static_cast<double>(kTwo62),
-                    "(* 2 (+ c 1)) is float");
-        exact_float("(+ -2305843009213693952 -2305843009213693952)", static_cast<double>(kNegTwo62),
-                    "(+ d d) is float");
-        exact_float("(- 4611686018427387903)", -static_cast<double>(kMax),
-                    "negation of 2^62-1 is float");
-        exact_float("(* 4294967296 4294967296)", 18446744073709551616.0,
-                    "literal 2^32*2^32 is 2^64");
-        exact_float("(* 4611686018427387903 2)", static_cast<double>(kMax) * 2.0,
-                    "(2^62-1)*2 promotes");
+        exact_float("-4611686018427387905", -4611686018427387905.0, "literal -2^62-1 is float");
+        overflow("(+ 2305843009213693951 2305843009213693951 2)", "(+ c c 2) overflows");
+        overflow("(* 2 (+ 2305843009213693951 1))", "(* 2 (+ c 1)) overflows");
+        overflow("(- -4611686018427387904 1)", "(- -2^62 1) overflows");
+        overflow("(- -4611686018427387904)", "(- -2^62) overflows");
+        overflow("(* 4294967296 4294967296)", "2^32*2^32 overflows");
+        overflow("(* 4611686018427387903 2)", "(2^62-1)*2 overflows");
         exact_float("(string->number \"4611686018427387904\")", static_cast<double>(kTwo62),
                     "string->number 2^62 is float");
         exact_float("(string->number \"9223372036854775808\")", 9223372036854775808.0,
@@ -179,7 +182,7 @@ int main() {
         exact_float("9223372036854775808", 9223372036854775808.0, "literal 2^63 is float");
         const double nine = static_cast<double>(9000000000000000000LL);
         exact_float("(+ 9000000000000000000 9000000000000000000)", nine + nine,
-                    "literals past 2^62 promote");
+                    "float literals past 2^62 add as floats");
         auto quoted = cs.eval("'4294967296");
         CHECK(quoted && is_int(*quoted) && as_int(*quoted) == 4294967296LL,
               "quoted 2^32 stays the full integer");
@@ -287,33 +290,28 @@ int main() {
         const auto bin = aura_binary();
         CHECK(!bin.empty(), "4462: aura binary");
         if (!bin.empty()) {
-            // Display uses the #4468 shortest spelling, not %g.
+            // Issue #4482: symmetric fixnums; overflow is an error value.
             auto fmt = [](double d) { return aura::compiler::format_float_shortest(d); };
             const std::string two62 = fmt(4611686018427387904.0);
-            const std::string neg62 = fmt(-4611686018427387904.0);
-            const std::string two64 = fmt(18446744073709551616.0);
-            const std::string neg61 = fmt(-2305843009213693952.0);
             const std::string two63 = fmt(9223372036854775808.0);
-            std::string expect = "4611686018427387902\n" + two62 + "\n" + two62 + "\n" + two62 +
-                                 "\n" + two62 + "\n" + neg61 + "\n" + neg62 + "\n" + neg62 + "\n" +
-                                 neg62 + "\n" + two64 + "\n" + two64 + "\n" +
-                                 "4611686018427387903\n4294967296\n" + two62 + "\n" + two63 +
-                                 "\n2305843009213693952\n" + two63 + "\nafter\n";
+            // Overflow cases are checked in-process above (error values).
+            std::string expect = "4611686018427387902\n" + two62 + "\n" + two62 +
+                                 "\n-2305843009213693952\n-4611686018427387904\n"
+                                 "-4611686018427387904\n-5000000000000000\n"
+                                 "4611686018427387903\n4294967296\n" +
+                                 two62 + "\n" + two63 +
+                                 "\n2305843009213693952\n-3000000000000000000\nafter\n";
             const char* path = "/tmp/aura-4462.aura";
             CHECK(write_text(path, "(define c 2305843009213693951)\n"
                                    "(display (+ c c)) (newline)\n"
-                                   "(display (+ c c 2)) (newline)\n"
-                                   "(display (* 2 (+ c 1))) (newline)\n"
                                    "(display 4611686018427387904) (newline)\n"
                                    "(display (string->number \"4611686018427387904\")) (newline)\n"
                                    "(define d -2305843009213693952)\n"
                                    "(display d) (newline)\n"
                                    "(display (+ d d)) (newline)\n"
-                                   "(display (- (+ d d) 1)) (newline)\n"
                                    "(display -4611686018427387904) (newline)\n"
-                                   "(display (* 4294967296 4294967296)) (newline)\n"
+                                   "(display -5000000000000000) (newline)\n"
                                    "(define a 4294967296)\n"
-                                   "(display (* a a)) (newline)\n"
                                    "(display 4611686018427387903) (newline)\n"
                                    "(display '4294967296) (newline)\n"
                                    "(display '4611686018427387904) (newline)\n"
@@ -321,7 +319,8 @@ int main() {
                                    "(define p 1073741824)\n"
                                    "(define q 2147483648)\n"
                                    "(display (* p q)) (newline)\n"
-                                   "(display (* 4611686018427387903 2)) (newline)\n"
+                                   "(define (m x y) (* x y))\n"
+                                   "(display (m -3 1000000000000000000)) (newline)\n"
                                    "(display \"after\") (newline)\n"),
                   "4462: write script");
             auto soft = run_aura_file(bin, path, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
@@ -330,7 +329,7 @@ int main() {
                 std::println(std::cerr, "soft rc {} out [{}] err [{}]", soft.rc, soft.out,
                              soft.err);
             CHECK(soft.rc == 0, "4462: soft face exits 0");
-            CHECK(soft.out == expect, "4462: soft face prints the promoted values");
+            CHECK(soft.out == expect, "4482: soft face prints exact ints and overflow errors");
             CHECK(soft.err.find("AURA CRASH") == std::string::npos,
                   "4462: soft face does not abort");
             auto def = run_aura_file(bin, path, "", "/tmp/aura-4462-def-out.txt",
@@ -506,11 +505,11 @@ int main() {
         auto hit = cs.eval("(memv 2 (list 1 2 3))");
         CHECK(hit && is_pair(*hit), "memv 2 hits");
         auto miss = cs.eval("(memv 2.0 (list 1 2 3))");
-        CHECK(miss && is_int(*miss) && as_int(*miss) == 0, "memv 2.0 misses an int");
+        CHECK(miss && is_bool(*miss) && !aura::compiler::types::as_bool(*miss), "memv 2.0 misses an int (#f, #4491)");
         auto alist = cs.eval("(cdr (assv 'b (list (cons 'a 1) (cons 'b 2))))");
         CHECK(alist && is_int(*alist) && as_int(*alist) == 2, "assv 'b yields 2");
         auto no = cs.eval("(assv 'z (list (cons 'a 1)))");
-        CHECK(no && is_int(*no) && as_int(*no) == 0, "assv miss is empty");
+        CHECK(no && is_bool(*no) && !aura::compiler::types::as_bool(*no), "assv miss is #f (#4491)");
 
         const auto bin = aura_binary();
         CHECK(!bin.empty(), "4470: aura binary");

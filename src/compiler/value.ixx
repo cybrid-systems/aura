@@ -127,16 +127,18 @@ export inline constexpr bool fits_fixnum(std::int64_t v) noexcept {
     constexpr auto kMax = std::numeric_limits<std::int64_t>::max() >> kFixnumShift;
     if (v < kMin || v > kMax)
         return false;
-    const auto tagged = static_cast<std::int64_t>(static_cast<std::uint64_t>(v) << kFixnumShift);
-    return tagged > FLOAT_BIAS_VAL;
+    // Issue #4482: every even int64 is a fixnum, so the range check is
+    // the whole story ([-2^62, 2^62-1], symmetric).
+    return true;
 }
 
 static_assert(fits_fixnum(0));
 static_assert(fits_fixnum(std::numeric_limits<std::int64_t>::max() >> kFixnumShift));
 static_assert(!fits_fixnum((std::numeric_limits<std::int64_t>::max() >> kFixnumShift) + 1));
-static_assert(!fits_fixnum(std::numeric_limits<std::int64_t>::min() >> kFixnumShift));
+static_assert(fits_fixnum(std::numeric_limits<std::int64_t>::min() >> kFixnumShift)); // #4482
 static_assert(fits_fixnum(-4999999999999999LL));
-static_assert(!fits_fixnum(-5000000000000000LL));
+static_assert(fits_fixnum(-5000000000000000LL)); // #4482
+static_assert(fits_fixnum(-4611686018427387903LL));
 
 export inline EvalValue make_bool(bool v) noexcept {
     AURA_HOT_RECORD();                                  // Issue #1519 / #2142

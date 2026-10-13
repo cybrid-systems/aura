@@ -43,12 +43,12 @@ static int tests_passed = 0;
     } while (0)
 
 // ── Float/String bias constants ───────────────────────────────
-static constexpr std::int64_t kFloatBias = -10000000000000000LL;
+static constexpr std::int64_t kFloatBias = -10000000000000000LL + 3; // #4482
 // Issue #278 follow-up: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 (v2
 // string encoding, low 2 bits = 2). shape_profiler.cpp / shape.cpp use
 // STRING_BIAS_VAL_2 internally; tests need to align with that or the
 // boundary cases (kStringBias + 1) fall into the wrong branch.
-static constexpr std::int64_t kStringBias = -9000000000000000000LL + 2;
+static constexpr std::int64_t kStringBias = -9000000000000000000LL + 3; // #4482
 
 // ── Helper: dummy AuraJIT for SpecJITController tests ─────────
 // Defines a minimal mock that captures compilation requests.
@@ -119,7 +119,7 @@ int main() {
 
     // ── 1g: Int guard rejects string-encoded value ───────────
     {
-        std::int64_t args[] = {kStringBias - 1}; // string encoded
+        std::int64_t args[] = {kStringBias - 4}; // string encoded
         std::uint8_t map[] = {1};
         TEST("Int guard rejects string-encoded", !check_shape_guard(args, 1, map, 1));
     }
@@ -173,7 +173,7 @@ int main() {
     // ── 2f: Float guard (2) ─────────────────────────────────
     {
         // At FLOAT_BIAS boundary
-        std::int64_t args[] = {kFloatBias, kFloatBias - 1, kStringBias + 1};
+        std::int64_t args[] = {kFloatBias, kFloatBias - 4, kStringBias + 4}; // #4482
         std::uint8_t map[] = {2, 2, 2};
         TEST("Float guard matches float range", check_shape_guard(args, 3, map, 3));
     }
@@ -251,7 +251,7 @@ int main() {
     {
         // 1=Int, 2=Float, 3=Bool, 4=String, 5=Void
         // String (code 4) falls through as "unknown" in guard → pass
-        std::int64_t args[] = {42 << 1, kFloatBias, 7, kStringBias - 1, 11};
+        std::int64_t args[] = {42 << 1, kFloatBias, 7, kStringBias - 4, 11};
         std::uint8_t map[] = {1, 2, 3, 4, 5};
         TEST("All 5 shape codes (String=4 passes as dynamic)", check_shape_guard(args, 5, map, 5));
     }
@@ -524,7 +524,7 @@ int main() {
         TEST("Integration: profiler stable on Float", profiler.is_stable(fn));
 
         std::uint8_t map[2] = {2, 2};
-        std::int64_t args[] = {kFloatBias, kFloatBias - 1};
+        std::int64_t args[] = {kFloatBias, kFloatBias - 4};
         TEST("Integration: Float guard matches", check_shape_guard(args, 2, map, 2));
 
         std::int64_t bad[] = {kFloatBias, 42 << 1};

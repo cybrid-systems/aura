@@ -141,7 +141,7 @@ static void ac1_1622_consteval() {
     std::println("\n--- #1622 AC1: consteval dispatch table ---");
     static_assert(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum);
     static_assert(eval_value_tag_low2_table(1) == EvalValueTag::Ref);
-    static_assert(eval_value_tag_low2_table(2) == EvalValueTag::StringV2);
+    static_assert(eval_value_tag_low2_table(2) == EvalValueTag::Fixnum); // #4482
     static_assert(eval_value_tag_low2_table(3) == EvalValueTag::Special);
     CHECK(true, "consteval static_asserts compiled");
 }
@@ -217,7 +217,7 @@ static void ac1_task4_consteval() {
     std::println("\n--- #571 AC1: consteval low-2-bit dispatch table ---");
     CHECK(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum, "low2=0 → Fixnum");
     CHECK(eval_value_tag_low2_table(1) == EvalValueTag::Ref, "low2=1 → Ref");
-    CHECK(eval_value_tag_low2_table(2) == EvalValueTag::StringV2, "low2=2 → StringV2");
+    CHECK(eval_value_tag_low2_table(2) == EvalValueTag::Fixnum, "low2=2 → Fixnum (#4482)");
     CHECK(eval_value_tag_low2_table(3) == EvalValueTag::Special, "low2=3 → Special");
 }
 
