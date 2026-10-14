@@ -2826,10 +2826,10 @@ static void ac3186_jit_linear_move_drop_elision_probe() {
         // section. The OR is the unified unsafe signal.
         CHECK(jit.find("llvm::FunctionCallee(fn_linear_move_drop_elision_ok)") != std::string::npos,
               "ac3186 AC5: linear_safety_probe emits call to fn_linear_move_drop_elision_ok");
-        CHECK(jit.find("not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32)") !=
+        CHECK(jit.find("elision_blocked = irb->CreateICmpEQ(elision_ok_i, zero32)") !=
                   std::string::npos,
-              "ac3186 AC5: elision result compared to zero32");
-        CHECK(jit.find("any_unsafe = irb->CreateOr(is_unsafe, not_elision_ok)") !=
+              "ac3186 AC5: elision result compared to zero32 (blocked == 0, #4512 polarity)");
+        CHECK(jit.find("any_unsafe = irb->CreateOr(is_unsafe, elision_blocked)") !=
                   std::string::npos,
               "ac3186 AC5: epoch + elision OR-combined into any_unsafe");
         CHECK(jit.find("irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok)") != std::string::npos,
@@ -3280,8 +3280,9 @@ static void ac3446_linear_epoch_fence_elision_typed() {
     CHECK(jit.find("fence_entry_blocked = irb->CreateICmpEQ(fence_entry_ok_i, zero32)") !=
               std::string::npos,
           "3446: typed-entry == 0 on fence");
-    CHECK(jit.find("not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32)") != std::string::npos,
-          "3446: #3186 probe ICmpNE kept");
+    CHECK(jit.find("elision_blocked = irb->CreateICmpEQ(elision_ok_i, zero32)") !=
+              std::string::npos,
+          "3446: #3186 probe elision-blocked ICmpEQ kept (#4512 polarity)");
     const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
     CHECK(t.find("ac3446_1_fence_or_skips_move_body") != std::string::npos,
           "3446: primary fixture is test_escape_move_elision_gate");
