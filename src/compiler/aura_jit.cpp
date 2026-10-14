@@ -849,8 +849,12 @@ struct LLVMBuilder {
             auto* elision_ok_i =
                 irb->CreateCall(llvm::FunctionCallee(fn_linear_move_drop_elision_ok),
                                 llvm::ArrayRef<llvm::Value*>{});
-            auto* not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32);
-            auto* any_unsafe = irb->CreateOr(is_unsafe, not_elision_ok);
+            // Issue #4512: elision_ok==0 means elision is blocked
+            // (commit_readiness denies) — that is unsafe, same polarity as
+            // begin_linear_epoch_fence (#3759/#3446 ICmpEQ skip-body).
+            // Fail closed: any_unsafe when elision is denied.
+            auto* elision_blocked = irb->CreateICmpEQ(elision_ok_i, zero32);
+            auto* any_unsafe = irb->CreateOr(is_unsafe, elision_blocked);
             // Issue #3224: production IR entry under active mutation +
             // !would_allow_commit also deopts (beyond Move/Drop elision).
             if (fn_ir_typed_entry_commit_readiness_ok) {
