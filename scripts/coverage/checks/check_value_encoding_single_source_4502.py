@@ -5,6 +5,7 @@ Fails if src/ or lib/ reintroduce bias constants / range classifiers for
 boxed floats and strings, or the legacy 0x10000000 string encoding, or if
 the ABI consumers stop including/asserting the header.
 """
+
 import pathlib
 import re
 import sys
