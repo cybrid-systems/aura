@@ -84,7 +84,14 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                     ev.primitive_error_counter_ptr());
     };
 
-    add("read", [&ev](const auto&) {
+    add("read", [&ev, deny_io](const auto&) {
+        // Issue #4504: shared-process stdin is a host io-read channel (same
+        // class as /proc/self/cmdline, #2478). Fence BEFORE getline so a
+        // denied read consumes nothing from stdin.
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         std::string line;
         std::getline(std::cin, line);
         if (line.empty())

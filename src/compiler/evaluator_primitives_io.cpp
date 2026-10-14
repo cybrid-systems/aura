@@ -7,7 +7,8 @@
 // Issue #1975: tcp-* client names gated by AURA_ENABLE_TCP in
 // register_network_primitives. Issue #2771: +tcp-listen / tcp-accept /
 // tcp-accept-timeout / tcp-local-port (server path for multi-host denseness).
-// getenv stays always on. http/tcp/sys/git are deferred (#3174) until
+// getenv stays always on (registered unconditionally; reads are io-read
+// capability-fenced, #4504). http/tcp/sys/git are deferred (#3174) until
 // (require "std/net"|"std/socket"|"std/git"|"std/process"). See docs/git-integration.md +
 // docs/tcp.md.
 
@@ -656,10 +657,33 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 
 void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    // Issue #4504: environ and self-path reads are host io-read channels.
+    // Same deny_io shape as register_file_primitives (command-line, #2478):
+    // allow when the sandbox is off or the principal holds the named cap /
+    // io / *; otherwise bump_capability_denial() and return the error with
+    // the host value unread. No new cap name / effect bit / query key.
+    const auto deny_io = [&ev](std::string_view cap, std::string_view msg) -> EvalValue {
+        if (!ev.sandbox_mode() || ev.has_capability(cap) ||
+            ev.has_capability(aura::compiler::security::kCapIo) ||
+            ev.has_capability(aura::compiler::security::kCapWildcard))
+            return make_void();
+        ev.bump_capability_denial();
+        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                    ev.primitive_error_counter_ptr());
+    };
+
     // ── Environment + HTTP primitives ────────────────────────
-    add("getenv", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("getenv", [&ev, deny_io](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
+        // Issue #4504: fail closed behind the io-read fence BEFORE ::getenv.
+        // On deny the value is never copied into string_heap_. #4494 (unset →
+        // #f) stays on the allowed path below; Soft/Off still reads because
+        // deny_io allows before the cap check.
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         auto name = ev.string_heap_[types::as_string_idx(a[0])];
         auto* val = ::getenv(name.c_str());
         // Issue #4494: unset → #f (R7RS get-environment-variable), so the
