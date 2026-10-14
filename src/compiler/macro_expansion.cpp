@@ -1451,6 +1451,12 @@ extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcep
 // and not the process-global string (last-writer-wins). Soft/Off is one
 // sandbox load and returns 0 so the historical half-expand is still eval'd.
 // Quiet map read: get_fiber_hygiene_metrics bumps the query counter.
+// Issue #4511: reasons 8/9/10 block on the production face too, matching
+// inner_expand_production_limit_deny_all — a reexpand that refused on
+// same-flat / name-map-shared / concurrent-top-level leaves the same
+// eval-refuse face as the #3979 codes. The slot is only cleared after
+// this consult (retire_own_fiber_pre_walk_deny at the next top-level
+// walk entry); this predicate never clears it.
 extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept {
     if (!aura::core::sandbox::is_sandbox_active())
         return 0;
@@ -1463,7 +1469,10 @@ extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept {
     }
     return fr == kHygieneLimitReasonDepthLimit || fr == kHygieneLimitReasonPassLimit ||
                    fr == kHygieneLimitReasonStealAbort || fr == kHygieneLimitReasonCapabilityDeny ||
-                   fr == kHygieneLimitReasonGensymCeiling
+                   fr == kHygieneLimitReasonGensymCeiling ||
+                   fr == kHygieneLimitReasonSameFlatReject ||
+                   fr == kHygieneLimitReasonNameMapShared ||
+                   fr == kHygieneLimitReasonConcurrentTopLevel
                ? 1
                : 0;
 }
@@ -3636,7 +3645,12 @@ aura::ast::NodeId expand_inner_macros(
                     // return the original (unexpanded) call root; the
                     // parent set_child below is skipped so no half tree is
                     // committed. Soft/Off keeps the splice (contract).
-                    if (production_surface && inner_expand_production_limit_deny()) {
+                    // Issue #4511: the child-walk consult widens to deny_all
+                    // so a nested expand that stamped same-flat (8) /
+                    // name-map-shared (9) / concurrent-top-level (10) also
+                    // refuses — the unexpanded clone root is not published
+                    // as if it were an expansion (#3753 face).
+                    if (production_surface && inner_expand_production_limit_deny_all()) {
                         // Issue #4077: set-code only a checkpoint this expand
                         // installed. A Guard snapshot stays live until the
                         // dtor (depth is 0 after the stack pop, so depth is
@@ -3703,7 +3717,15 @@ aura::ast::NodeId expand_inner_macros(
     const std::size_t child_ckpt = flat->size();
     for (auto child : child_ids) {
         (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
-        if (production_surface && inner_expand_production_limit_deny()) {
+        // Issue #4511: this consult widens from inner_expand_production_limit_deny
+        // to deny_all so sibling-refuse codes 8/9/10 (same-flat /
+        // name-map-shared / concurrent-top-level, stamped by the next
+        // sibling's depth-0 ConcurrentCloneGuard) roll back an EARLIER
+        // sibling's committed splice too. A standalone caller (reexpand,
+        // Agent self-evo) installs no outer belt, so with the narrow
+        // predicate the half-expand stayed observable from the pre-call
+        // root. Soft/Off keeps the historical partial expand (contract).
+        if (production_surface && inner_expand_production_limit_deny_all()) {
             // Issue #4077: set-code only a checkpoint this expand
             // installed. A Guard snapshot stays live for the Guard
             // dtor. Issue #4292: nested frames do not re-claim, so

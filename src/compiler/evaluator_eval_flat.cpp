@@ -8538,17 +8538,22 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
         // Issue #3753: expand_inner_macros on production deny returns the
-        // clone root, not NULL_NODE. eval_flat refuses to eval that half
-        // tree; reexpand_call must not splice it into the Call parent.
-        // Issue #3979: truncate rest+clone even under MutationBoundary —
-        // this range is pre-Guard-owned, not the outer mutate log.
-        // Soft/Off: historical half-write may remain (one sandbox load).
+        // clone root, not NULL_NODE — refuse to splice it into the Call
+        // parent. Issue #3979: truncate rest+clone even under
+        // MutationBoundary (pre-Guard-owned range). Soft/Off: historical
+        // half-write (one sandbox load). Issue #4511: the consult widens
+        // to the #3787 deny_all face — same-flat (8) / name-map-shared (9)
+        // / concurrent-top-level (10), stamped by the nested depth-0 clone
+        // inside expand_inner_macros, refuse the splice too; the #3979
+        // deny() disjunct stays for that AC window (deny_all subsumes it).
         if (expanded == NULL_NODE) {
             if (aura::core::sandbox::is_sandbox_active())
                 flat.truncate_to(clone_ckpt);
             return false;
         }
-        if (aura::core::sandbox::is_sandbox_active() && inner_expand_production_limit_deny()) {
+        if (aura::core::sandbox::is_sandbox_active() &&
+            (inner_expand_production_limit_deny() ||
+             macro_exp::inner_expand_production_limit_deny_all())) {
             flat.truncate_to(clone_ckpt);
             return false;
         }

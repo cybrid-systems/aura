@@ -2329,6 +2329,355 @@ static void ac4151_source_wiring() {
     reset_all();
 }
 
+// ── Issue #4511: post_mutation reexpand + child walk refuse 8/9/10 splices ──
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
+
+// One attempt of the #4511 AC1 repro: Restricted workspace, hygienic m with
+// body (begin (m1 a) (m2 b)), a mutate-record targeting the (m) Call, and a
+// second-fiber claim of the workspace flat landing between the OUTER
+// clone_macro_body (reexpand_call) and the INNER depth-0 clones inside
+// expand_inner_macros. The watcher waits for the outer guard to arm
+// (g_macro_clone_in_flight 0→1), exit (1→0), then claims the same-flat slot
+// — the inner m1/m2 guard then fails the claim and stamps fiber reason 8
+// (same-flat-clone-reject). Returns true when the deny was observed; false
+// when the watcher missed the window (caller retries on a fresh workspace).
+static bool ac4511_one_attempt() {
+    reset_all();
+    // Clear global + per-fiber sticky deny slots — a prior attempt's reason 8
+    // must not arm deny_all before the watcher claims (ac4151 pattern).
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    // The #3979 pattern: register macros through the CompilerService session
+    // (set-code + eval-current) so the live evaluator principal / session mid
+    // the #3132/#3609 chokepoint consults are THIS service's. Grants come
+    // last — the #2386/#3594 provenance fence joins the grant's bound mid
+    // against the live mutation epoch at the consult, so grants taken before
+    // the evals fence-deny (observed: reason 7 before any clone).
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (m1_4511 x) (let ((t4511 x)) 42))\")")
+              .has_value(),
+          "4511: m1 set-code");
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (m2_4511 x) (let ((t4511 x)) 43))\")")
+              .has_value(),
+          "4511: m2 set-code");
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (m_4511 z) (begin (m1_4511 a) "
+                  "(m2_4511 b)))\")")
+              .has_value(),
+          "4511: m set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4511: eval-current registers macros_");
+    auto* ws = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    CHECK(ws != nullptr && pool != nullptr, "4511: workspace");
+    auto one = ws->add_literal(1);
+    auto call_m = ws->add_call(ws->add_variable(pool->intern("m_4511")),
+                               std::array<aura::ast::NodeId, 1>{one});
+    // let-parent (a plain node — the splice slot), not a Call head the
+    // service may register as a macro.
+    auto root = ws->add_let(ws->add_variable(pool->intern("q4511")), one, call_m);
+    const auto pid = ws->parent_of(call_m);
+    CHECK(pid != NULL_NODE, "4511: call has a parent splice slot");
+    std::uint32_t slot = 0;
+    {
+        auto pv = ws->get(pid);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci)
+            if (pv.child(ci) == call_m)
+                slot = ci;
+    }
+    const auto size0 = ws->size();
+    const auto fp0 = tree_fp(*ws, root);
+    const bool mi_reachable = [&] {
+        std::vector<aura::ast::NodeId> st{root};
+        while (!st.empty()) {
+            auto id = st.back();
+            st.pop_back();
+            if (id == NULL_NODE || id >= ws->size())
+                continue;
+            if (ws->is_macro_introduced(id))
+                return true;
+            auto v = ws->get(id);
+            for (auto c : v.children)
+                st.push_back(c);
+        }
+        return false;
+    }();
+    CHECK(!mi_reachable, "4511: pre-call tree has no MacroIntroduced nodes");
+
+    // TenantAdmin FIRST, under Off — the #3409 chicken-and-egg: production
+    // high-bit grants require an existing TenantAdmin, and grants under
+    // Restricted without one are refused.
+    using aura::core::capability::Effect;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    CHECK(g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                        aura_test_grant_prov()),
+          "4511: tenant-admin grant under Off");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    set_mode(SandboxMode::Restricted);
+
+    // Second fiber: claim the workspace flat right after the outer clone
+    // exits so the inner depth-0 clones hit same-flat-clone-reject (8).
+    std::atomic<bool> watcher_claimed{false};
+    std::thread watcher([&] {
+        const auto beg = std::chrono::steady_clock::now();
+        const auto expired = [&] {
+            return std::chrono::steady_clock::now() - beg > std::chrono::seconds(3);
+        };
+        using aura::compiler::macro_exp::g_macro_clone_in_flight;
+        while (g_macro_clone_in_flight.load(std::memory_order_relaxed) == 0)
+            if (expired())
+                return;
+            else
+                std::this_thread::yield();
+        while (g_macro_clone_in_flight.load(std::memory_order_relaxed) != 0)
+            if (expired())
+                return;
+            else
+                std::this_thread::yield();
+        while (aura_test_claim_same_flat_clone(ws) != 1)
+            if (expired())
+                return;
+            else
+                std::this_thread::yield();
+        watcher_claimed.store(true, std::memory_order_relaxed);
+    });
+
+    aura::ast::MutationRecord rec{};
+    rec.target_node = call_m;
+    rec.parent_id = pid;
+    std::size_t re = 0;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), nullptr);
+        // Grants INSIDE the boundary, bound to the session mid the
+        // outermost Guard minted (#3964) — the #3132/#3594 choke joins
+        // join_audit_and_se_mid(0) == that mid, so epoch-bound grants
+        // fence-deny (observed reason 7 before any clone ran).
+        const auto bmid = aura::compiler::typed_audit::current_boundary_audit_mid();
+        // MacroSelfEvo re-grant INSIDE the boundary, bound to the session mid
+        // the outermost Guard minted (#3964) — the #3132/#3594 choke joins
+        // join_audit_and_se_mid(0) == that mid, so epoch-bound grants fence
+        // out. TenantAdmin (granted under Off above) admits the high bit.
+        const auto mse_ok = g_capability_registry().grant_macro_self_evo(
+            0, MacroSelfEvoPolicy{}, aura_test_grant_prov(bmid));
+        CHECK(mse_ok, "4511: boundary MacroSelfEvo grant admitted by TenantAdmin");
+        re = cs.evaluator().post_mutation_macro_reexpand(*ws, *pool, rec);
+    }
+    watcher.join();
+    aura_test_release_same_flat_clone(ws);
+
+    const auto reason = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+    if (reason != aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject)
+        return false; // watcher missed the window — a clean splice is production-correct
+    CHECK(watcher_claimed.load(), "4511: reason 8 implies the second fiber claimed the flat");
+    CHECK(re == 0, "4511: reexpand returns 0 on same-flat inner refuse");
+    CHECK(ws->size() == size0, "4511: clone + splice truncated to the pre-call size");
+    CHECK(tree_fp(*ws, root) == fp0, "4511: walk from the original Call sees no spliced clone");
+    {
+        auto pv = ws->get(pid);
+        CHECK(pv.child(slot) == call_m, "4511: parent slot still holds the original Call");
+    }
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "same-flat-clone-reject",
+          "4511: stable Agent reason stays same-flat-clone-reject");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+    return true;
+}
+
+static void ac4511_reexpand_same_flat_no_splice() {
+    std::println("\n--- #4511 AC1/AC2: same-flat inner clone refuses the reexpand splice ---");
+    bool denied = false;
+    for (int attempt = 0; attempt < 8 && !denied; ++attempt)
+        denied = ac4511_one_attempt();
+    CHECK(denied, "4511: watcher landed the second-fiber claim and the refuse held");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+}
+
+static void ac4511_reexpand_soft_still_half_writes() {
+    std::println("\n--- #4511 AC4: Soft/Off keeps the historical reexpand splice ---");
+    reset_all();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (m1_4511 x) (let ((t4511 x)) 42))\")")
+              .has_value(),
+          "4511 soft: m1 set-code");
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (m_4511 z) (begin (m1_4511 1)))\")")
+              .has_value(),
+          "4511 soft: m set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4511 soft: eval-current");
+    auto* ws = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    CHECK(ws != nullptr && pool != nullptr, "4511 soft: workspace");
+    auto one = ws->add_literal(1);
+    auto call_m = ws->add_call(ws->add_variable(pool->intern("m_4511")),
+                               std::array<aura::ast::NodeId, 1>{one});
+    ws->add_call(ws->add_variable(pool->intern("begin")), std::array<aura::ast::NodeId, 1>{call_m});
+    const auto pid = ws->parent_of(call_m);
+    CHECK(pid != NULL_NODE, "4511 soft: call has a parent splice slot");
+    aura::ast::MutationRecord rec{};
+    rec.target_node = call_m;
+    rec.parent_id = pid;
+    const auto re = cs.evaluator().post_mutation_macro_reexpand(*ws, *pool, rec);
+    // Soft may walk a duplicated affected entry and splice twice — the
+    // historical half-write contract only requires the splice to happen.
+    CHECK(re >= 1, "4511 soft: reexpand splices (historical half-write)");
+    auto pv = ws->get(pid);
+    bool spliced = false;
+    for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci)
+        if (pv.child(ci) != call_m)
+            spliced = true;
+    CHECK(spliced, "4511 soft: parent slot replaced by the expanded clone");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+}
+
+// Fiber-stamped 8 on a standalone expand_inner_macros: the widened deny_all
+// consult must refuse the sibling splice pre-fix code published (#4151's
+// narrow predicate kept the earlier sibling's committed expansion).
+static void ac4511_child_walk_deny_all_predicate() {
+    std::println("\n--- #4511 AC5: child walk + macro arm consult deny_all (8/9/10) ---");
+    reset_all();
+    grant_self_evo_production();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    StringPool pool;
+    FlatAST flat;
+    FlatAST small_flat;
+    StringPool small_pool;
+    FlatAST big_flat;
+    StringPool big_pool;
+    aura::ast::NodeId small_body = NULL_NODE;
+    aura::ast::NodeId big_body = NULL_NODE;
+    fill_4151_bodies(small_flat, small_pool, small_body, big_flat, big_pool, big_body);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m_small"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"s"}, false, &small_flat, &small_pool, small_body};
+    macros["m_big"] =
+        aura::compiler::macro_exp::MacroExpansionDef{{"y"}, false, &big_flat, &big_pool, big_body};
+    const auto orig = add_4151_sibling_root(flat, pool, "f", "m_small", "m_big");
+    flat.root = orig;
+    const auto fp0 = tree_fp(flat, orig);
+    const auto size0 = flat.size();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        static_cast<std::uint32_t>(aura_fiber_current_id()),
+        aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject);
+    auto out = aura::compiler::macro_exp::expand_inner_macros(&flat, &pool, orig, /*depth=*/0,
+                                                              /*max_depth=*/4, macros);
+    CHECK(out == orig, "4511: deny_all returns the original root");
+    CHECK(tree_fp(flat, out) == fp0, "4511: sibling expansion not spliced (deny_all consult)");
+    CHECK(flat.size() == size0, "4511: clone nodes truncated");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject,
+          "4511: reason stays same-flat-clone-reject");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+}
+
+static void ac4511_child_walk_soft_keeps_splice() {
+    std::println("\n--- #4511 AC4: Soft/Off child walk keeps the sibling splice ---");
+    reset_all();
+    StringPool pool;
+    FlatAST flat;
+    FlatAST small_flat;
+    StringPool small_pool;
+    FlatAST big_flat;
+    StringPool big_pool;
+    aura::ast::NodeId small_body = NULL_NODE;
+    aura::ast::NodeId big_body = NULL_NODE;
+    fill_4151_bodies(small_flat, small_pool, small_body, big_flat, big_pool, big_body);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m_small"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"s"}, false, &small_flat, &small_pool, small_body};
+    macros["m_big"] =
+        aura::compiler::macro_exp::MacroExpansionDef{{"y"}, false, &big_flat, &big_pool, big_body};
+    const auto orig = add_4151_sibling_root(flat, pool, "f", "m_small", "m_big");
+    flat.root = orig;
+    const auto fp0 = tree_fp(flat, orig);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(
+        static_cast<std::uint32_t>(aura_fiber_current_id()),
+        aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject);
+    auto out = aura::compiler::macro_exp::expand_inner_macros(&flat, &pool, orig, /*depth=*/0,
+                                                              /*max_depth=*/4, macros);
+    CHECK(out == orig, "4511 soft: root node id unchanged");
+    CHECK(tree_fp(flat, out) != fp0, "4511 soft: historical partial expand kept");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+}
+
+static void ac4511_blocks_eval_8_9_10() {
+    std::println("\n--- #4511 AC3: expand-deny blocks eval on 8/9/10 (production face) ---");
+    reset_all();
+    grant_self_evo_production();
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    CHECK(aura_hygiene_expand_deny_blocks_eval() == 0, "4511: clean fiber does not block");
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    for (auto code : {std::uint8_t{8}, std::uint8_t{9}, std::uint8_t{10}}) {
+        aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber(fid, code);
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 1, "4511: reason 8/9/10 blocks eval");
+        CHECK(aura_hygiene_expand_deny_blocks_eval() == 1,
+              "4511: consult does not clear the fiber slot");
+    }
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CHECK(aura_hygiene_expand_deny_blocks_eval() == 0,
+          "4511: Soft/Off is one sandbox load — no block");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CHECK(aura_hygiene_expand_deny_blocks_eval() == 1, "4511: slot survives the Off consult");
+    aura_test_reset_macro_hygiene_last_limit_reason_full();
+    reset_all();
+    CHECK(aura_hygiene_expand_deny_blocks_eval() == 0, "4511: reset clears the deny");
+}
+
+static void ac4511_source_wiring() {
+    std::println("\n--- #4511 AC6: source wiring + no new artifacts ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto re = eef.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");
+    CHECK(re != std::string::npos, "4511: reexpand expands inner macros");
+    if (re != std::string::npos) {
+        const auto rwin = eef.substr(re, 2600);
+        CHECK(rwin.find("Issue #4511") != std::string::npos, "4511: reexpand cites #4511");
+        CHECK(rwin.find("inner_expand_production_limit_deny_all()") != std::string::npos,
+              "4511: reexpand consults deny_all (8/9/10 refuse the splice)");
+        CHECK(rwin.find("truncate_to(clone_ckpt)") != std::string::npos,
+              "4511: refuse truncates the clone checkpoint");
+        CHECK(rwin.find("return false") != std::string::npos, "4511: refuse does not splice");
+    }
+    const auto cw = me.find("const std::size_t child_ckpt = flat->size();");
+    CHECK(cw != std::string::npos, "4511: child walk checkpoint present");
+    if (cw != std::string::npos) {
+        const auto cwin = me.substr(cw, 2200);
+        CHECK(cwin.find("Issue #4511") != std::string::npos, "4511: child walk cites #4511");
+        CHECK(cwin.find("inner_expand_production_limit_deny_all()") != std::string::npos,
+              "4511: child walk consults deny_all");
+    }
+    const auto ma = me.find("Issue #3684: production refuses to splice");
+    CHECK(ma != std::string::npos, "4511: macro child arm present");
+    if (ma != std::string::npos) {
+        const auto mwin = me.substr(ma, 2600);
+        CHECK(mwin.find("Issue #4511") != std::string::npos, "4511: macro child arm cites #4511");
+        CHECK(mwin.find("inner_expand_production_limit_deny_all()") != std::string::npos,
+              "4511: macro child arm consults deny_all");
+    }
+    const auto be = me.find("// Issue #4511: reasons 8/9/10 block on the production face");
+    CHECK(be != std::string::npos, "4511: eval-block cites #4511");
+    if (be != std::string::npos) {
+        const auto bwin = me.substr(be, 1400);
+        CHECK(bwin.find("Issue #4511") != std::string::npos, "4511: eval-block cites #4511");
+        CHECK(bwin.find("kHygieneLimitReasonSameFlatReject") != std::string::npos &&
+                  bwin.find("kHygieneLimitReasonNameMapShared") != std::string::npos &&
+                  bwin.find("kHygieneLimitReasonConcurrentTopLevel") != std::string::npos,
+              "4511: eval-block treats 8/9/10 as blocking on the production face");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4511.cpp").empty(),
+          "4511: no test_issue_4511.cpp per #81967");
+    CHECK(read_file("docs/design/4511-reexpand-deny-all-splice.md").empty(),
+          "4511: no docs/design/4511-* per #1655");
+    reset_all();
+}
+
 // Issue #4292: a production expand_inner_macros with no live checkpoint
 // installs one for that frame. Nested frames do not re-claim. Soft does
 // not save. Success commits; deny restores once.
@@ -3039,6 +3388,14 @@ int run_test_macro_hygiene_limits() {
     ac4151_nested_cascade_rolls_back();
     ac4151_full_expand_unaffected();
     ac4151_source_wiring();
+    std::println(
+        "\n=== Issue #4511: reexpand / child walk refuse same-flat + concurrent-top-level ===");
+    ac4511_reexpand_same_flat_no_splice();
+    ac4511_reexpand_soft_still_half_writes();
+    ac4511_child_walk_deny_all_predicate();
+    ac4511_child_walk_soft_keeps_splice();
+    ac4511_blocks_eval_8_9_10();
+    ac4511_source_wiring();
     std::println("\n=== Issue #4292: inner expand owns an idle ExpandCheckpoint ===");
     ac4292_inner_owns_checkpoint_when_idle();
     std::println("\n=== Issue #4309: subst must not dirty caller arguments ---");
