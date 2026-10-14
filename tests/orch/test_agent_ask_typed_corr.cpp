@@ -60,6 +60,9 @@ using aura::serve::mf_mailbox::PushStatus;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+// Issue #4506: steal-complete strong def (evaluator_fiber_mutation.cpp).
+extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept;
+
 void cleanup_handle(AgentHandle& h) {
     if (h.fiber) {
         h.fiber->request_cancel();
@@ -1209,6 +1212,266 @@ int run_test_agent_ask_typed_corr() {
         CHECK(read_file("docs/design/4061-reply-not-target.md").empty(),
               "4061: no docs/design file");
         aura::serve::g_current_fiber = saved_fiber;
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    // ── Issue #4506: steal walk must see the parked per-ask reply mailbox ──
+    // agent_ask parks the asker on a per-ask reply mailbox that is never
+    // attach()ed, so Fiber::mailbox_ stays the body mailbox (or null) and
+    // the #3369 steal walk skipped it — a held_ref reply already queued at
+    // steal time kept its stamp and agent_ask published stale
+    // stable-ref:<id>:<gen> as ok (call-site bypass of the primary-mailbox
+    // walk, #3111/#3369/#3565/#3942). The walk now also clears the mailbox
+    // the fiber is parked on (depth-counted registry: ask-window +
+    // recv-park registration), so the same #3565/#4049 consume gate fires:
+    // ok=#f, status=handoff-required, payload not delivered. Reuses
+    // held_ref_stale_after_steal_total + handoff_reject_total; no new
+    // counter, query key, or docs/design.
+    {
+        namespace mf = aura::serve::mf_mailbox;
+        using aura::orch::stamp_mail_message_handoff_completed;
+
+        std::println("\n=== Issue #4506: steal walk sees the parked reply mailbox ===");
+        CompilerService cs4506;
+        CHECK(cs4506.eval("(+ 1 1)").has_value(), "4506 setup: warm");
+
+        // AC1: deterministic stand-in — stamped held_ref queued on a
+        // non-primary mailbox the asker is parked on; the steal clears the
+        // stamp; recv consumes it stale instead of delivering.
+        std::println("\n--- #4506 AC1: parked reply mailbox stamp cleared on steal ---");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        {
+            mf::MultiFiberMailbox body_mb4506(/*high_water=*/16);
+            aura::serve::Fiber asker4506([] {});
+            body_mb4506.attach(&asker4506);
+            CHECK(asker4506.mailbox() == &body_mb4506,
+                  "4506 AC1: body mailbox is the primary (attach-time bind)");
+            auto reply_mb4506 = std::make_shared<mf::MultiFiberMailbox>(/*high_water=*/16);
+            mf::MailMessage rep4506;
+            rep4506.kind = MailKind::Reply;
+            rep4506.correlation_id = 4506001;
+            rep4506.payload = format_reply_payload(4506001, "stable-ref:4506:1");
+            stamp_mail_message_handoff_completed(rep4506, 4506);
+            CHECK(reply_mb4506->push(rep4506) == PushStatus::Ok,
+                  "4506 AC1: stamped reply queued on the per-ask mailbox");
+            CHECK(reply_mb4506.get() != asker4506.mailbox(),
+                  "4506 AC1: reply mailbox is not the primary");
+
+            const auto stale04506 = mf::g_mf_mailbox_stats.held_ref_stale_after_steal_total.load(
+                std::memory_order_relaxed);
+            // Parked-asker registration — what agent_ask (ask window) and
+            // the recv park do for a real ask.
+            mf::note_fiber_parked_mailbox(asker4506.id(), reply_mb4506.get());
+            CHECK(mf::fiber_parked_mailbox(asker4506.id()) == reply_mb4506.get(),
+                  "4506 AC1: reply mailbox registered as the parked mailbox");
+
+            aura_evaluator_on_steal_complete(&asker4506);
+
+            bool saw4506 = false;
+            bool cleared4506 = true;
+            reply_mb4506->for_each_pending_held_ref_for_fiber(
+                &asker4506, [&saw4506, &cleared4506](auto& m) {
+                    saw4506 = true;
+                    cleared4506 = cleared4506 && !m.handoff_completed;
+                });
+            CHECK(saw4506 && cleared4506, "4506 AC1: steal walk cleared the parked-mailbox stamp");
+            CHECK(mf::g_mf_mailbox_stats.held_ref_stale_after_steal_total.load(
+                      std::memory_order_relaxed) == stale04506 + 1,
+                  "4506 AC1: held_ref_stale_after_steal_total +1");
+            bool stale_seen4506 = false;
+            auto m4506 = reply_mb4506->recv(/*wait=*/false, /*timeout_ms=*/0, /*fiber_id=*/0,
+                                            &stale_seen4506);
+            CHECK(!m4506.has_value() && stale_seen4506,
+                  "4506 AC1: recv consumes stale → no payload, stale_handoff");
+            CHECK(reply_mb4506->size() == 0, "4506 AC1: stale reply consumed (not re-queued)");
+            mf::clear_fiber_parked_mailbox(asker4506.id(), reply_mb4506.get());
+        }
+
+        // AC2: Soft / Off — no walk, delivery unchanged.
+        std::println("\n--- #4506 AC2: Soft leaves the stamp, reply delivers ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        {
+            mf::MultiFiberMailbox body_mb4506b(/*high_water=*/16);
+            aura::serve::Fiber asker4506b([] {});
+            body_mb4506b.attach(&asker4506b);
+            auto reply_mb4506b = std::make_shared<mf::MultiFiberMailbox>(/*high_water=*/16);
+            mf::MailMessage rep4506b;
+            rep4506b.kind = MailKind::Reply;
+            rep4506b.correlation_id = 4506002;
+            rep4506b.payload = format_reply_payload(4506002, "soft-body");
+            stamp_mail_message_handoff_completed(rep4506b, 4507);
+            CHECK(reply_mb4506b->push(rep4506b) == PushStatus::Ok, "4506 AC2: reply queued");
+            const auto stale04506b = mf::g_mf_mailbox_stats.held_ref_stale_after_steal_total.load(
+                std::memory_order_relaxed);
+            mf::note_fiber_parked_mailbox(asker4506b.id(), reply_mb4506b.get());
+            aura_evaluator_on_steal_complete(&asker4506b);
+            bool still_stamped4506b = false;
+            reply_mb4506b->for_each_pending_held_ref_for_fiber(
+                &asker4506b,
+                [&still_stamped4506b](auto& m) { still_stamped4506b = m.handoff_completed; });
+            CHECK(still_stamped4506b, "4506 AC2: Soft keeps the stamp (no walk)");
+            CHECK(mf::g_mf_mailbox_stats.held_ref_stale_after_steal_total.load(
+                      std::memory_order_relaxed) == stale04506b,
+                  "4506 AC2: no stale-after-steal bump under Soft");
+            bool stale_seen4506b = false;
+            auto m4506b = reply_mb4506b->recv(/*wait=*/false, /*timeout_ms=*/0, /*fiber_id=*/0,
+                                              &stale_seen4506b);
+            CHECK(m4506b.has_value() && !stale_seen4506b &&
+                      m4506b->payload == format_reply_payload(4506002, "soft-body"),
+                  "4506 AC2: Soft delivery unchanged");
+            mf::clear_fiber_parked_mailbox(asker4506b.id(), reply_mb4506b.get());
+        }
+
+        // AC3: a reply pushed AFTER the steal with a fresh stamp stays
+        // deliverable — the walk only clears what was queued when it ran
+        // (same contract as orch:agent-send on the primary mailbox).
+        std::println("\n--- #4506 AC3: post-steal fresh-stamp reply delivers ---");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        {
+            mf::MultiFiberMailbox body_mb4506c(/*high_water=*/16);
+            aura::serve::Fiber asker4506c([] {});
+            body_mb4506c.attach(&asker4506c);
+            auto reply_mb4506c = std::make_shared<mf::MultiFiberMailbox>(/*high_water=*/16);
+            mf::note_fiber_parked_mailbox(asker4506c.id(), reply_mb4506c.get());
+            aura_evaluator_on_steal_complete(&asker4506c); // steal with an empty queue
+            mf::MailMessage rep4506c;
+            rep4506c.kind = MailKind::Reply;
+            rep4506c.correlation_id = 4506003;
+            rep4506c.payload = format_reply_payload(4506003, "fresh-after-steal");
+            stamp_mail_message_handoff_completed(rep4506c, 4508);
+            CHECK(reply_mb4506c->push(rep4506c) == PushStatus::Ok,
+                  "4506 AC3: post-steal push accepted");
+            bool stale_seen4506c = false;
+            auto m4506c = reply_mb4506c->recv(/*wait=*/false, /*timeout_ms=*/0, /*fiber_id=*/0,
+                                              &stale_seen4506c);
+            CHECK(m4506c.has_value() && !stale_seen4506c &&
+                      m4506c->payload == format_reply_payload(4506003, "fresh-after-steal"),
+                  "4506 AC3: fresh-stamp reply delivers after the steal");
+            mf::clear_fiber_parked_mailbox(asker4506c.id(), reply_mb4506c.get());
+        }
+
+        // AC4: end-to-end — agent_ask runs as a real fiber on a scheduler
+        // worker. The ask-window registration + recv park put the reply
+        // mailbox on the parked registry; once the asker is suspended in a
+        // real yield (Waiting) it cannot pop until woken, so queueing the
+        // stamped reply and running the steal walk is deterministic (no
+        // pop race). The ask must return ok=#f / status=handoff-required
+        // with an empty payload.
+        std::println("\n--- #4506 AC4: agent_ask handoff-required after steal ---");
+        {
+            // Heal the #2398/#2465 BP quiet window so the ask send is not
+            // soft-rejected as backpressure before the recv gate (same
+            // preface as the #4049 AC5 ask).
+            g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+            (void)aura::orch::reset_scope_bp_map_for_test();
+            aura::compiler::typed_audit::apply_production_audit_defaults();
+            Scheduler sched4506d(1);
+            SchedRunner runner4506d(sched4506d);
+            AgentHandle target4506d{};
+            target4506d.ok = true;
+            target4506d.id = 45060042;
+            target4506d.name = "ask4506-target";
+            target4506d.bp_scope_id = "t:ask4506";
+            target4506d.mailbox = std::make_shared<mf::MultiFiberMailbox>(/*high_water=*/64);
+
+            AskResult r4506d;
+            std::atomic<bool> ask_done4506d{false};
+            auto* asker4506d = sched4506d.spawn([&] {
+                r4506d = agent_ask(target4506d, "ping-4506", /*timeout_ms=*/30000);
+                ask_done4506d.store(true, std::memory_order_release);
+            });
+            CHECK(asker4506d != nullptr, "4506 AC4: asker fiber spawned on the worker");
+
+            // Wait for the ask-window registration AND the real recv park
+            // (Waiting). From here the asker cannot pop until woken, so
+            // the push → steal ordering below is race-free.
+            std::shared_ptr<mf::MultiFiberMailbox> dest4506d;
+            std::uint64_t corr4506d = 0;
+            bool parked4506d = false;
+            for (int i = 0; i < 10000; ++i) {
+                {
+                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    for (const auto& [id, route] : aura::orch::g_pending_asks) {
+                        if (route.target_fiber == target4506d.id && route.mailbox) {
+                            corr4506d = id;
+                            dest4506d = route.mailbox;
+                            break;
+                        }
+                    }
+                }
+                if (dest4506d && mf::fiber_parked_mailbox(asker4506d->id()) == dest4506d.get() &&
+                    asker4506d->state() == aura::serve::FiberState::Waiting) {
+                    parked4506d = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            CHECK(parked4506d && dest4506d,
+                  "4506 AC4: reply mailbox registered + asker parked (Waiting)");
+
+            // Queue the stamped reply and steal the suspended asker.
+            mf::MailMessage rep4506d;
+            rep4506d.kind = MailKind::Reply;
+            rep4506d.correlation_id = corr4506d;
+            rep4506d.payload = format_reply_payload(corr4506d, "stable-ref:4506:9");
+            stamp_mail_message_handoff_completed(rep4506d, 4509);
+            CHECK(dest4506d->push(std::move(rep4506d)) == PushStatus::Ok,
+                  "4506 AC4: stamped reply queued while the asker is parked");
+            aura_evaluator_on_steal_complete(asker4506d);
+
+            // Wake the stolen asker (the thief requeues it in production;
+            // the test uses the fiber's eventfd wake path).
+            const int evfd4506d = asker4506d->eventfd();
+            CHECK(evfd4506d >= 0, "4506 AC4: asker has an eventfd");
+            if (evfd4506d >= 0) {
+                const std::uint64_t one4506d = 1;
+                (void)::write(evfd4506d, &one4506d, sizeof(one4506d));
+            }
+            for (int i = 0; i < 10000 && !ask_done4506d.load(std::memory_order_relaxed); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            CHECK(ask_done4506d.load(std::memory_order_acquire),
+                  "4506 AC4: ask returned after the steal");
+            CHECK(std::string_view(r4506d.status) == "handoff-required",
+                  std::format("4506 AC4: ask stolen mid-reply → handoff-required (status={})",
+                              r4506d.status));
+            CHECK(!r4506d.ok, "4506 AC4: ask not ok");
+            CHECK(r4506d.payload.empty(), "4506 AC4: stale stable-ref payload not delivered");
+            CHECK(dest4506d->size() == 0, "4506 AC4: stale reply consumed (not re-queued)");
+
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+        }
+
+        // AC5: source-cite.
+        std::println("\n--- #4506 AC5: source-cite ---");
+        const auto mb_src4506 = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto fm_src4506 = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto spawn_src4506 = read_file("src/orch/agent_spawn.h");
+        const auto prim_src4506 = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(mb_src4506.find("Issue #4506: parked-mailbox registry") != std::string::npos,
+              "4506 AC5: registry cite in multi_fiber_mailbox.h");
+        CHECK(mb_src4506.find("note_fiber_parked_mailbox") != std::string::npos &&
+                  mb_src4506.find("record the mailbox this fiber parks on") != std::string::npos,
+              "4506 AC5: recv-park registration wired");
+        CHECK(fm_src4506.find("Issue #4506: the walk must also see the mailbox the fiber is") !=
+                  std::string::npos,
+              "4506 AC5: steal-walk cite in evaluator_fiber_mutation.cpp");
+        CHECK(fm_src4506.find("fiber_parked_mailbox(fiber->id())") != std::string::npos,
+              "4506 AC5: steal walk reads the parked mailbox");
+        CHECK(spawn_src4506.find("Issue #4506: the per-ask reply mailbox is the mailbox this "
+                                 "fiber") != std::string::npos,
+              "4506 AC5: ask-window cite in agent_spawn.h");
+        CHECK(spawn_src4506.find("note_fiber_parked_mailbox(parked_reply_guard.fid") !=
+                  std::string::npos,
+              "4506 AC5: agent_ask registers the reply mailbox");
+        CHECK(prim_src4506.find("aura::orch::agent_ask(*hp, payload, timeout_ms)") !=
+                  std::string::npos,
+              "4506 AC5: prim publishes the helper result verbatim");
+        CHECK(mb_src4506.find("4506_total") == std::string::npos, "4506 AC5: no new counter");
+        CHECK(spawn_src4506.find("schema-4506") == std::string::npos, "4506 AC5: no new query key");
+        CHECK(read_file("docs/design/4506-parked-reply-walk.md").empty(),
+              "4506 AC5: no docs/design file");
+        CHECK(read_file("tests/issues/test_issue_4506.cpp").empty(),
+              "4506 AC5: no stray issue test");
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 

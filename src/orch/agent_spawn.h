@@ -5267,6 +5267,32 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         }
     } pending_guard{corr_id};
 
+    // Issue #4506: the per-ask reply mailbox is the mailbox this fiber
+    // waits on for the whole ask window, but it is never attach()ed, so
+    // Fiber::mailbox_ stays the body mailbox (or null) and the #3369
+    // steal walk never saw it — a held_ref reply already queued on
+    // reply_mb kept its stamp through a steal and agent_ask published
+    // the stale stable-ref as ok. Register reply_mb so the steal walk
+    // clears the stamp (same consume gate as #3565 / #4049: recv then
+    // returns stale_handoff → status handoff-required). Host threads
+    // have no steal — no registration without a current fiber. Depth-
+    // counted with the recv-park registration; this ask-window entry is
+    // what keeps the reply mailbox visible between park/resume cycles.
+    auto* asker_fiber = serve::g_current_fiber;
+    struct ParkedReplyGuard {
+        std::uint64_t fid = 0;
+        serve::mf_mailbox::MultiFiberMailbox* mb = nullptr;
+        ~ParkedReplyGuard() {
+            if (mb != nullptr)
+                serve::mf_mailbox::clear_fiber_parked_mailbox(fid, mb);
+        }
+    } parked_reply_guard;
+    if (asker_fiber != nullptr) {
+        parked_reply_guard.fid = asker_fiber->id();
+        parked_reply_guard.mb = reply_mb.get();
+        serve::mf_mailbox::note_fiber_parked_mailbox(parked_reply_guard.fid, parked_reply_guard.mb);
+    }
+
     serve::mf_mailbox::MailMessage msg;
     msg.payload = format_ask_payload(corr_id, body); // dual-write legacy prefix
     msg.priority = serve::mf_mailbox::MailPriority::Normal;
