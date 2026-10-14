@@ -6551,6 +6551,24 @@ public:
                 aura_drop_jit_fn_native_for_define(name.c_str());
             }
         }
+        // Issue #4513: cache_define's LambdaBodyWalker treats ir_cache_
+        // hits as resolvable and lower_to_ir_with_cache_tracked copies that
+        // v1 bundle into the next define, so the pre-abort callee bytes
+        // would be republished after the v2 freshness refuse. Production /
+        // Full also drops the walked names' v1 / bridge / strings rows so
+        // the aborted bytes are gone. Soft / Off keeps the observe-only IR
+        // contract (#3551) — the consults refuse the copy instead.
+        if (forced > 0 && (aura::compiler::typed_audit::production_defaults_active() ||
+                           aura::compiler::typed_audit::get_strategy() ==
+                               aura::compiler::typed_audit::AuditStrategy::Full)) {
+            for (const auto& [name4513, entry4513] : ir_cache_v2_) {
+                (void)entry4513;
+                ir_cache_.erase(name4513);
+                ir_cache_bridge_.erase(name4513);
+                ir_cache_strings_.erase(name4513);
+            }
+        }
+
         abort_force_in_progress_.store(0, std::memory_order_release);
         aura::util::thread_fence(std::memory_order_release);
     }
@@ -7873,6 +7891,105 @@ public:
                     it->second.dirty = true;
                     it->second.content_stored_this_epoch = false;
                     return false;
+                }
+            }
+            // Issue #4513: the abort walk drops the walked names' v1
+            // bundles, so a full lower can reference a callee whose v2 row
+            // is untrusted without producing a cache hit (the lowerer
+            // emits ConstI64 0 for a missing cache). Scan the lowered
+            // body's define references with the same freshness predicate
+            // as the hit loop above and refuse the store while any of
+            // them is untrusted. Value cells (TopCellLoad — a live read,
+            // no embed), primitives, params / let / self and quoted data
+            // are not embeds and stay exempt. embed_safe_callees_4436_
+            // keeps its cone exemption.
+            {
+                aura::ast::NodeId scan_lambda = aura::ast::NULL_NODE;
+                if (lower_flat->root != aura::ast::NULL_NODE &&
+                    lower_flat->root < lower_flat->size()) {
+                    auto scan_root_v = lower_flat->get(lower_flat->root);
+                    if (scan_root_v.tag == aura::ast::NodeTag::Define &&
+                        !scan_root_v.children.empty())
+                        scan_lambda = scan_root_v.child(0);
+                    else if (scan_root_v.tag == aura::ast::NodeTag::Lambda)
+                        scan_lambda = lower_flat->root;
+                }
+                if (scan_lambda != aura::ast::NULL_NODE && scan_lambda < lower_flat->size() &&
+                    lower_flat->get(scan_lambda).tag == aura::ast::NodeTag::Lambda) {
+                    const auto& scan_lv = lower_flat->get(scan_lambda);
+                    std::unordered_set<std::string> scan_params;
+                    for (auto pid : scan_lv.params)
+                        scan_params.insert(std::string(lower_pool->resolve(pid)));
+                    struct UntrustedCalleeScan4513 {
+                        const aura::ast::FlatAST& f;
+                        const aura::ast::StringPool& p;
+                        const std::string& self_name;
+                        const std::unordered_set<std::string>& param_names;
+                        const Evaluator& eval;
+                        const std::unordered_map<std::string, std::size_t,
+                                                 aura::core::TransparentStringHash,
+                                                 std::equal_to<>>& value_cells;
+                        const std::unordered_map<std::string, IRCacheEntry,
+                                                 aura::core::TransparentStringHash,
+                                                 std::equal_to<>>& ir_cache_v2;
+                        const std::vector<std::string>& embed_safe;
+                        std::unordered_set<std::string> let_bound;
+                        bool untrusted = false;
+                        void walk(aura::ast::NodeId id) {
+                            if (untrusted || id == aura::ast::NULL_NODE || id >= f.size())
+                                return;
+                            auto nv = f.get(id);
+                            if (nv.tag == aura::ast::NodeTag::Quote)
+                                return;
+                            if (nv.tag == aura::ast::NodeTag::Let ||
+                                nv.tag == aura::ast::NodeTag::LetRec) {
+                                auto nm = std::string(p.resolve(nv.sym_id));
+                                if (!nv.children.empty())
+                                    walk(nv.child(0));
+                                let_bound.insert(nm);
+                                if (nv.children.size() >= 2)
+                                    walk(nv.child(1));
+                                let_bound.erase(nm);
+                                return;
+                            }
+                            if (nv.tag == aura::ast::NodeTag::Variable) {
+                                auto var_name = std::string(p.resolve(nv.sym_id));
+                                if (param_names.count(var_name) || let_bound.count(var_name))
+                                    return;
+                                if (var_name == self_name)
+                                    return;
+                                if (eval.primitives().slot_for_name(var_name) <
+                                    eval.primitives().slot_count())
+                                    return;
+                                if (value_cells.count(var_name) > 0)
+                                    return; // TopCellLoad face — live read, no embed.
+                                if (std::find(embed_safe.begin(), embed_safe.end(), var_name) !=
+                                    embed_safe.end())
+                                    return; // #4436 cone exemption.
+                                const auto cit = ir_cache_v2.find(var_name);
+                                if (cit == ir_cache_v2.end())
+                                    return; // not a define — unknown face, no embed.
+                                const auto& ce = cit->second;
+                                if (ce.dirty || ce.dirty_block_count() > 0 ||
+                                    ce.abort_map_invalid || !ce.content_stored_this_epoch)
+                                    untrusted = true;
+                                return;
+                            }
+                            for (auto c : nv.children)
+                                walk(c);
+                        }
+                    };
+                    UntrustedCalleeScan4513 scan4513{*lower_flat,  *lower_pool,
+                                                     name,         scan_params,
+                                                     evaluator_,   ir_value_cell_bindings_,
+                                                     ir_cache_v2_, embed_safe_callees_4436_};
+                    scan4513.walk(scan_lv.children.empty() ? aura::ast::NULL_NODE
+                                                           : scan_lv.child(0));
+                    if (scan4513.untrusted) {
+                        it->second.dirty = true;
+                        it->second.content_stored_this_epoch = false;
+                        return false;
+                    }
                 }
             }
         }
@@ -11011,6 +11128,9 @@ public:
         // (mitigated: self_name passed to lowering for MakeClosure pre-allocation)
         // 3. Calls to non-cached, non-primitive variables — not resolvable in IR
         bool skip_ir_cache = false;
+        // Issue #4513: skip caused by an untrusted v1 callee hit (callee
+        // v2 row dirty / abort-latched / unstored). See LambdaBodyWalker.
+        bool refused_stale_callee_4513 = false;
         if (expanded_root < flat.size()) {
             auto def_v = flat.get(expanded_root);
             if (def_v.tag == aura::ast::NodeTag::Define) {
@@ -11036,8 +11156,18 @@ public:
                             const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
                                                      aura::core::TransparentStringHash,
                                                      std::equal_to<>>& ir_cache;
+                            const std::unordered_map<std::string, IRCacheEntry,
+                                                     aura::core::TransparentStringHash,
+                                                     std::equal_to<>>& ir_cache_v2;
+                            // Issue #4513: consult the callee's v2 row for v1
+                            // hits (production / Full only — mirrors the #4436
+                            // full-arm gate).
+                            bool consult_v2_4513 = false;
                             std::unordered_set<std::string> let_bound;
                             bool skip = false;
+                            // Issue #4513: a v1 hit was refused for an
+                            // untrusted v2 row.
+                            bool refused_callee_4513 = false;
                             void walk(aura::ast::NodeId id) {
                                 if (skip || id == aura::ast::NULL_NODE || id >= f.size())
                                     return;
@@ -11081,8 +11211,30 @@ public:
                                     if (eval.primitives().slot_for_name(var_name) <
                                         eval.primitives().slot_count())
                                         return;
-                                    if (ir_cache.count(var_name))
+                                    if (ir_cache.count(var_name)) {
+                                        // Issue #4513: v1 presence alone is not
+                                        // trust. When the callee's v2 row is
+                                        // dirty / has dirty blocks /
+                                        // abort-latched / unstored, v1 holds the
+                                        // previous (post-abort: aborted) body
+                                        // and the #4436 full arm would refuse
+                                        // the embed. Refuse here too: skip
+                                        // resolves via eval_flat on the restored
+                                        // AST instead of copying that hit.
+                                        if (consult_v2_4513) {
+                                            auto v2it = ir_cache_v2.find(var_name);
+                                            if (v2it != ir_cache_v2.end()) {
+                                                const auto& ce = v2it->second;
+                                                if (ce.dirty || ce.dirty_block_count() > 0 ||
+                                                    ce.abort_map_invalid ||
+                                                    !ce.content_stored_this_epoch) {
+                                                    skip = true;
+                                                    refused_callee_4513 = true;
+                                                }
+                                            }
+                                        }
                                         return;
+                                    }
                                     // Unknown variable — IR will emit ConstI64 0
                                     skip = true;
                                 }
@@ -11090,16 +11242,34 @@ public:
                                     walk(c);
                             }
                         };
-                        LambdaBodyWalker lbw{flat,        pool,       name_str,
-                                             param_names, evaluator_, ir_cache_};
+                        const bool consult_v2_4513 =
+                            aura::compiler::typed_audit::production_defaults_active() ||
+                            aura::compiler::typed_audit::get_strategy() ==
+                                aura::compiler::typed_audit::AuditStrategy::Full;
+                        LambdaBodyWalker lbw{flat,       pool,      name_str,     param_names,
+                                             evaluator_, ir_cache_, ir_cache_v2_, consult_v2_4513};
                         lbw.walk(lambda_body);
                         skip_ir_cache = lbw.skip;
+                        // Issue #4513: the skip came from an untrusted v1
+                        // callee hit.
+                        refused_stale_callee_4513 = lbw.refused_callee_4513;
                     }
                 }
             }
         }
 
         if (skip_ir_cache) {
+            // Issue #4513: fail closed with no copy of the refused hit.
+            // Drop this define's own v1 bundle — it embeds the stale
+            // callee — so populate_ir_cache_v2_from_workspace cannot
+            // store_define_v2 it back as the next clean generation.
+            // abort_map_invalid / content_stored_this_epoch stay latched
+            // until a lower that did not embed a stale v1 callee.
+            if (refused_stale_callee_4513) {
+                ir_cache_.erase(name_str);
+                ir_cache_bridge_.erase(name_str);
+                ir_cache_strings_.erase(name_str);
+            }
             // Skip IR caching — use tree-walker only. The define has already been
             // evaluated via tree-walker below, so the env bindings are correct.
             function_sources_[name_str] = std::string(source);
