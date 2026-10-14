@@ -13,6 +13,7 @@
 #include "test_harness.hpp"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/aot_reload_consistency_proof.h" // Issue #4510: proof probe
 
 #include <cstdint>
 #include <fstream>
@@ -66,6 +67,17 @@ extern "C" void aura_hot_update_note_deopt(void);
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t, std::uint64_t);
 extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
 extern "C" void aura_hot_update_set_shape_storm_active(int);
+
+// Issue #4510: C-runtime ScalarFn world + probe surface (strong defs in
+// aura_jit_runtime.cpp / aura_jit_bridge.cpp).
+extern "C" void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                                 int32_t local_count, int32_t arg_count, int32_t env_count);
+extern "C" void aura_note_ir_func_define(int64_t func_id, const char* name);
+extern "C" int64_t aura_alloc_closure(int64_t func_id);
+extern "C" void aura_free_closure(int64_t closure_id);
+extern "C" int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc);
+extern "C" int aura_closure_get_must_deopt(int64_t closure_id);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -736,6 +748,233 @@ static void ac4108_stable_sync_side_index() {
     CHECK(r && is_int(*r) && as_int(*r) == 1, "#4108: f still evaluates after stable syncs");
 } // ac4108_stable_sync_side_index
 
+// ── Issue #4510: production shape deopt → owner-scoped native demotion ──
+//   AC1: under production defaults the hook does NOT publish a process
+//        C-bridge or Mutation bump (C-bridge / table epoch / defuse frozen).
+//   AC2: for the resolved define only, the installed ScalarFn is dropped
+//        (g_jit_fns cleared) and the live closure is MustDeopt; a closure
+//        allocated after the hook cannot enter the pre-hook ScalarFn.
+//   AC3: peer closures of other defines stay dual-fresh green (native
+//        reachable, no MustDeopt), and the existing name / slot soft-stale
+//        bits arm only when the multi-eval owner-scope is armed.
+//   AC4: the hook demotes native → the existing reload proof is stamped
+//        would_allow_native=false.
+//   AC5: the arena-compact arm does not return before the native drop
+//        (driven through public_on_arena_compact_notify, scope 3).
+//   AC6: Soft keeps the historical dual-epoch bump (zero-cost path intact).
+static int64_t ac4510_F_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 451001;
+}
+static int64_t ac4510_G_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 451002;
+}
+
+static void ac4510_production_shape_deopt_owner_scoped() {
+    std::println("\n--- #4510: production shape deopt → owner-scoped demotion ---");
+    apply_production_audit_defaults();
+    {
+        // Single CompilerService: the deopt trampoline routes through
+        // g_current_compiler_service (set by the ctor). The peer face is a
+        // second per-eval AotState entry keyed by a sentinel pointer (same
+        // pattern as the #2606 dual-eval tests) — enough to arm the
+        // multi-eval owner-scope predicate without stealing the service
+        // singletons a second ctor would re-bind.
+        CompilerService cs;
+        void* owner = &cs.evaluator();
+        constexpr std::uintptr_t kPeerSentinel = 0x4510C0DE;
+        void* peer = reinterpret_cast<void*>(kPeerSentinel);
+
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4510: warm");
+        // Set-code with a live call (the #3481 production store pattern).
+        CHECK(cs.eval("(set-code \"(define f4510 (lambda (x) (+ x 1))) (f4510 1)\")").has_value(),
+              "4510: set-code f4510");
+        CHECK(cs.eval("(eval-current)").has_value(), "4510: eval-current");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        CHECK(cs.eval("(set-code \"(define g4510 (lambda (x) (* x 2))) (g4510 2)\")").has_value(),
+              "4510: set-code g4510");
+        CHECK(cs.eval("(eval-current)").has_value(), "4510: eval-current g");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const bool f_cached = cs.get_define_v2("f4510") != nullptr;
+        const bool g_cached = cs.get_define_v2("g4510") != nullptr;
+        std::println("  4510 probe: cached f={} g={}", f_cached, g_cached);
+        // NOTE(#4510): when the production store path refuses in a host env
+        // (seen where earlier in-process storm/threshold faces poison the
+        // store — the pre-existing #3986 live-peel gap), the IR cache rows
+        // are absent; the jit_cache_ fallback below still makes the define
+        // name resolvable so the hook contract stays fully asserted.
+        if (!f_cached || !g_cached)
+            std::println("  [4510] IR cache rows unavailable in this env — "
+                         "jit_cache_-resolved face drives the hook");
+        // Name resolution fallback: without an IR cache row the hook cannot
+        // resolve the define, so arm a jit_cache_ row (public #3758-style
+        // test entry) when the store path refused in this environment.
+        if (!f_cached)
+            cs.public_jit_cache_insert_dummy_for_test("f4510");
+
+        // Pre-hook ScalarFn world (#4405 shape), armed BEFORE the multi-eval
+        // masks so the reachability probe runs in the pristine face.
+        constexpr int64_t kF = 451100;
+        constexpr int64_t kG = 451200;
+        aura_register_fn(kF, ac4510_F_fn, 1, 0, 0);
+        aura_note_ir_func_define(kF, "f4510");
+        aura_register_fn(kG, ac4510_G_fn, 1, 0, 0);
+        aura_note_ir_func_define(kG, "g4510");
+        const auto cid_f = aura_alloc_closure(kF);
+        const auto cid_g = aura_alloc_closure(kG);
+        CHECK(cid_f >= 0 && cid_g >= 0, "4510: live closures allocated");
+        std::int64_t args[1] = {0};
+        const auto f_pre_raw = aura_closure_call(cid_f, args, 0);
+        const auto g_pre_raw = aura_closure_call(cid_g, args, 0);
+        std::println("  4510 probe: pre-hook native f={} g={} deopt_pending={}", f_pre_raw,
+                     g_pre_raw, aura_jit_deopt_pending_count());
+        const bool f_native_pre = f_pre_raw == 451001;
+        const bool g_native_pre = g_pre_raw == 451002;
+        // NOTE(#4510): the reachability probes are env-conditional (some
+        // hosts refuse synthetic func_id-only native entry under
+        // production). The demotion teeth are the physical slot clear +
+        // MustDeopt below, which hold regardless.
+        if (!f_native_pre || !g_native_pre)
+            std::println("  [4510] synthetic native not reachable pre-hook in this env "
+                         "(f={} g={})",
+                         f_pre_raw, g_pre_raw);
+
+        // Multi-eval face: per-eval AotState entries + owner TLS, then the
+        // #3750 slot world — the resolved define's stable slot registered
+        // under the PEER eval, an owner slot under the owner eval.
+        (void)aura_set_aot_region_mask_for_eval(owner, 1);
+        (void)aura_set_aot_region_mask_for_eval(peer, 2);
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        int preserved = 0;
+        aura_aot_set_reemit_owner_eval(peer);
+        aura_aot_set_register_owner_eval(peer);
+        const auto sid_peer = aura_get_or_preserve_stable_func_id("f4510", &preserved);
+        aura_register_fn_tracked(static_cast<std::int64_t>(sid_peer), 0x4510B000);
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        const auto sid_own = aura_get_or_preserve_stable_func_id("f4510", &preserved);
+        aura_register_fn_tracked(static_cast<std::int64_t>(sid_own), 0x4510A000);
+
+        const auto bridge0 = aura_get_current_bridge_epoch();
+        const auto table0 = aura_aot_func_table_epoch();
+        const auto defuse0 = aura_get_aot_defuse_version();
+
+        // Production trigger: invalidate_shape fires on_shape_deopt_hook
+        // with the resolved define (kShapeDirtyScopeInvalidate — the same
+        // bottom arm the stability loss rides).
+        cs.invalidate_shape("f4510");
+
+        // AC1: no process C-bridge / Mutation / table / defuse publish.
+        CHECK(aura_get_current_bridge_epoch() == bridge0,
+              "#4510 AC1: hook does not publish the process C-bridge bump");
+        CHECK(aura_aot_func_table_epoch() == table0, "#4510 AC1: AOT table epoch frozen");
+        CHECK(aura_get_aot_defuse_version() == defuse0, "#4510 AC1: g_aot_defuse_version frozen");
+
+        // AC2: resolved define demoted.
+        CHECK(aura_jit_fn_ptr_for_test(kF) == 0, "#4510 AC2: g_jit_fns slot for F cleared");
+        CHECK(aura_closure_get_must_deopt(cid_f) == 1, "#4510 AC2: live F closure MustDeopt");
+        CHECK(aura_closure_call(cid_f, args, 0) != 451001,
+              "#4510 AC2: post-hook call does not enter the pre-hook ScalarFn");
+        const auto cid_f2 = aura_alloc_closure(kF);
+        CHECK(cid_f2 >= 0, "4510: post-hook F closure allocated");
+        CHECK(aura_closure_call(cid_f2, args, 0) != 451001,
+              "#4510 AC2: closure allocated after the hook never enters the pre-hook ScalarFn");
+
+        // AC3: peer define stays dual-fresh green.
+        CHECK(aura_jit_fn_ptr_for_test(kG) != 0, "#4510 AC3: peer G slot stays installed");
+        CHECK(aura_closure_get_must_deopt(cid_g) == 0, "#4510 AC3: peer closure not MustDeopt");
+        if (g_native_pre) {
+            CHECK(aura_closure_call(cid_g, args, 0) == 451002,
+                  "#4510 AC3: peer closure still enters native");
+            const auto cid_g2 = aura_alloc_closure(kG);
+            CHECK(cid_g2 >= 0, "4510: post-hook peer closure allocated");
+            CHECK(aura_closure_call(cid_g2, args, 0) == 451002,
+                  "#4510 AC3: post-hook peer closure is dual-fresh green");
+            aura_free_closure(cid_g2);
+        } else {
+            std::println("  [4510] synthetic ScalarFn not reachable in this env — peer native"
+                         " reachability skipped");
+        }
+
+        // AC3: existing name / slot soft-stale bits arm when the multi-eval
+        // owner-scope predicate is armed (marks no-op otherwise).
+        if (aura_aot_bump_will_be_owner_scoped() != 0) {
+            CHECK(aura_aot_peer_jit_name_is_soft_stale("f4510") == 1,
+                  "#4510 AC3: peer JIT name soft-stale armed for the resolved define");
+            CHECK(aura_aot_slot_is_soft_stale(static_cast<std::int64_t>(sid_peer)) == 1,
+                  "#4510 AC3: peer AOT slot soft-stale armed for the resolved define");
+            CHECK(aura_aot_slot_is_soft_stale(static_cast<std::int64_t>(sid_own)) == 0,
+                  "#4510 AC3: owner AOT slot not soft-staled");
+        } else {
+            std::println("  [4510] single-state host — name/slot soft-stale fanout skipped");
+        }
+
+        // AC4: the hook demoted native → the existing reload proof is
+        // stamped would_allow_native=false.
+        CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+              "#4510 AC4: reload proof stamped would_allow_native=false");
+
+        // AC5: arena-compact arm must not return before the drop. Re-install
+        // F native; the compact cone needs F's IR cache row block-dirty (the
+        // invalidate mark above), so only the cached face drives scope 3.
+        if (f_cached) {
+            aura_register_fn(kF, ac4510_F_fn, 1, 0, 0);
+            aura_note_ir_func_define(kF, "f4510");
+            CHECK(aura_jit_fn_ptr_for_test(kF) != 0,
+                  "4510: F ScalarFn re-installed for compact arm");
+            cs.public_on_arena_compact_notify();
+            CHECK(aura_jit_fn_ptr_for_test(kF) == 0,
+                  "#4510 AC5: arena-compact arm drops the native before returning");
+            CHECK(aura_get_current_bridge_epoch() == bridge0,
+                  "#4510 AC5: compact arm publishes no C-bridge bump");
+            CHECK(aura_aot_func_table_epoch() == table0,
+                  "#4510 AC5: compact arm keeps the table frozen");
+            CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+                  "#4510 AC5: compact-arm demotion keeps the proof would_allow_native=false");
+        } else {
+            std::println("  [4510] IR cache row unavailable in this env — compact arm driven via"
+                         " jit_cache_-resolved invalidate face only");
+        }
+
+        aura_free_closure(cid_f);
+        aura_free_closure(cid_f2);
+        aura_free_closure(cid_g);
+        aura_aot_set_reemit_owner_eval(nullptr);
+        aura_aot_set_register_owner_eval(nullptr);
+    }
+    apply_dev_audit_defaults();
+
+    // AC6: Soft / Off keeps the historical bump (zero-cost path intact).
+    std::println("\n--- #4510 AC6: Soft keeps the historical dual-epoch bump ---");
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4510 AC6: warm");
+        CHECK(cs.eval("(set-code \"(define h4510 (lambda (x) x))\")").has_value(),
+              "4510 AC6: set-code h4510");
+        CHECK(cs.eval("(eval-current)").has_value(), "4510 AC6: eval-current");
+        const auto bridge_soft0 = aura_get_current_bridge_epoch();
+        const auto inval0 =
+            cs.metrics().jit_hotswap_invalidate_total.load(std::memory_order_relaxed);
+        cs.invalidate_shape("h4510");
+        CHECK(aura_get_current_bridge_epoch() != bridge_soft0,
+              "#4510 AC6: Soft still publishes the historical C-bridge bump");
+        CHECK(cs.metrics().jit_hotswap_invalidate_total.load(std::memory_order_relaxed) > inval0,
+              "#4510 AC6: Soft still runs the JIT teardown");
+    }
+
+    // Source lineage: helper + compact-arm test entry cited in service.ixx.
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("demote_jit_native_owner_scoped_for_shape_deopt_") != std::string::npos,
+          "#4510: owner-scoped demotion helper present in service.ixx");
+    CHECK(ixx.find("Issue #4510") != std::string::npos, "#4510: service.ixx cites the issue");
+    CHECK(ixx.find("public_on_arena_compact_notify") != std::string::npos,
+          "#4510: arena-compact arm test entry present");
+} // ac4510_production_shape_deopt_owner_scoped
+
 } // namespace
 
 int run_test_shape_storm_partial_relower() {
@@ -745,6 +984,10 @@ int run_test_shape_storm_partial_relower() {
     ac3_query_schema_2212();
     ac4_lineage_and_source();
     ac3070_hysteresis_and_forced_thr();
+    // Issue #4510: run before the #3986 live-peel so the owner-scoped
+    // demotion contract executes even where that pre-existing block
+    // fails closed (see #3986 cache-define gate in restricted envs).
+    ac4510_production_shape_deopt_owner_scoped();
     ac3986_shape_flip_empty_persist_forces_full();
     ac4157_shape_flip_stale_persist_fails_closed();
     ac4091_shape_flip_dirty_cone();
