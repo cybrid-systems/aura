@@ -113,6 +113,16 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string s;
         if (is_string(a[0])) {
             auto idx = as_string_idx(a[0]);
+            // Issue #4505: this registration runs after the pair one and
+            // wins name lookup, so the reader gate lives here too — no
+            // foreign code points are copied into new pairs.
+            if (idx < ev.string_heap_.size() &&
+                !ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string->list")) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "string->list: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            }
             if (idx < ev.string_heap_.size())
                 s = ev.string_heap_[idx];
         } else if (is_int(a[0])) {

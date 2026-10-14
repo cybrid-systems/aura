@@ -265,7 +265,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(1, "(any) -> bool", "True if value is the empty list."));
     register_prim(
         add, ev, "length",
-        [&pairs, &ev](std::span<const EvalValue> a) {
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
             auto v = a[0];
@@ -279,6 +279,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size())
                     break;
+                // Issue #4505: the cdr walk itself reads a foreign mint's
+                // slots — the count is foreign structure. Same reader gate
+                // as car (required_effects 0, IsolationDeny in the helper).
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "length")) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "length: cross-tenant pair slot read denied (#4505)",
+                        ev.primitive_error_counter_ptr());
+                }
                 v = pairs[idx].cdr;
                 n++;
             }
@@ -314,6 +324,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return make_primitive_error(string_heap, error_values,
                                                 "list-ref: corrupted pair", counter);
                 }
+                // Issue #4505: the walk reads foreign cdrs; compare the
+                // mint stamp before the slot read.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "list-ref")) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "list-ref: cross-tenant pair slot read denied (#4505)", counter);
+                }
                 v = pairs[idx].cdr;
             }
             // Issue #614: surface the cdr-walk depth for list-ref so the
@@ -324,6 +342,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (idx >= pairs.size()) {
                     return make_primitive_error(string_heap, error_values,
                                                 "list-ref: corrupted pair", counter);
+                }
+                // Issue #4505: same reader gate before the payload returns.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "list-ref")) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "list-ref: cross-tenant pair slot read denied (#4505)", counter);
                 }
                 return pairs[idx].car;
             }
@@ -372,6 +397,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return make_primitive_error(string_heap, error_values, "member: corrupted pair",
                                                 counter);
                 }
+                // Issue #4505: no foreign car feeds the equality compare and
+                // the foreign sublist ref is not returned on a match.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "member")) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "member: cross-tenant pair slot read denied (#4505)", counter);
+                }
                 if (elem_eq(pairs[idx].car, val))
                     return v;
                 v = pairs[idx].cdr;
@@ -412,6 +445,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return make_primitive_error(string_heap, error_values, "memv: corrupted pair",
                                                 counter);
                 }
+                // Issue #4505: same reader gate as member before the eqv?
+                // compare can return the foreign pair ref.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "memv")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "memv: cross-tenant pair slot read denied (#4505)",
+                                                counter);
+                }
                 if (values_eqv(pairs[idx].car, val))
                     return v;
                 v = pairs[idx].cdr;
@@ -442,6 +483,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return make_primitive_error(string_heap, error_values, "assv: corrupted pair",
                                                 counter);
                 }
+                // Issue #4505: the spine slot and the entry pair both read
+                // foreign mints; gate both before any car/cdr read.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "assv")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "assv: cross-tenant pair slot read denied (#4505)",
+                                                counter);
+                }
                 auto entry = pairs[idx].car;
                 if (!is_pair(entry)) {
                     return make_primitive_error(string_heap, error_values, "assv: not a pair",
@@ -450,6 +499,12 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto eidx = as_pair_idx(entry);
                 if (eidx >= pairs.size()) {
                     return make_primitive_error(string_heap, error_values, "assv: corrupted pair",
+                                                counter);
+                }
+                if (!ev.inrange_slot_tenant_allows(eidx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "assv")) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "assv: cross-tenant pair slot read denied (#4505)",
                                                 counter);
                 }
                 if (values_eqv(pairs[eidx].car, key))
@@ -479,6 +534,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     auto idx = as_pair_idx(v);
                     if (idx >= pairs.size())
                         break;
+                    // Issue #4505: deny before the car snapshot copies a
+                    // foreign element into the caller-owned result list.
+                    if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                       /*required_effects=*/0, "append")) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "append: cross-tenant pair slot read denied (#4505)",
+                            ev.primitive_error_counter_ptr());
+                    }
                     cars.push_back(pairs[idx].car);
                     v = pairs[idx].cdr;
                 }
@@ -533,6 +597,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return make_primitive_error(string_heap, error_values,
                                                 "reverse: corrupted pair", counter);
                 }
+                // Issue #4505: same reader gate as append before the
+                // snapshot copies a foreign car.
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "reverse")) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "reverse: cross-tenant pair slot read denied (#4505)", counter);
+                }
                 cars.push_back(pairs[idx].car);
                 v = pairs[idx].cdr;
             }
@@ -581,6 +653,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     auto idx = as_pair_idx(current);
                     if (idx >= pairs.size())
                         break;
+                    // Issue #4505: deny before the snapshot copies a foreign
+                    // car (the mapped fn would otherwise observe it).
+                    if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                       /*required_effects=*/0, "map")) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "map: cross-tenant pair slot read denied (#4505)",
+                            ev.primitive_error_counter_ptr());
+                    }
                     cars.push_back(pairs[idx].car);
                     current = pairs[idx].cdr;
                     ev.bump_list_chain_traversals();
@@ -650,6 +731,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     auto idx = as_pair_idx(current);
                     if (idx >= pairs.size())
                         break;
+                    // Issue #4505: same reader gate as map — the predicate
+                    // must not observe a foreign car either.
+                    if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                       /*required_effects=*/0, "filter")) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "filter: cross-tenant pair slot read denied (#4505)",
+                            ev.primitive_error_counter_ptr());
+                    }
                     cars.push_back(pairs[idx].car);
                     current = pairs[idx].cdr;
                     ev.bump_list_chain_traversals();
