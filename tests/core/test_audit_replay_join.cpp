@@ -46,6 +46,10 @@
 //        no row at all, so suggested-next must fold inspect-deny from
 //        miss/refuse evidence alone. Soft + mid=0 contracts unchanged;
 //        fail-closed refuse + compensating SE kept; no new query key.
+//   #4508: durable fill keeps the operator — rec (SE WAL) /
+//        mrec (mutation-WAL provenance) / overflow fills copy op into
+//        last-se-op like the ring arm (#4303); last-se-reason stays the
+//        reason cut, se-mid-miss stays the ring miss, no new query key.
 
 #include "test_harness.hpp"
 
@@ -2082,6 +2086,204 @@ static void ac4303_last_se_op_survives_reason_cap() {
           "4303: the decision query emits no SE");
 }
 
+// Issue #4508 AC1: the SE-WAL durable fill dropped rec->op — after the
+// 1024-slot ring wraps, last-se-op published "" while the WAL row still
+// held the operator. The durable arm must copy op like the ring arm
+// (#4303); last-se-reason stays the 63-byte cut, se-mid-miss stays 1.
+static void ac4508_durable_fill_keeps_se_op() {
+    std::println("\n--- #4508 AC1: SE WAL durable fill keeps the operator ---");
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::persist_security_event;
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto dir = fresh_wal_dir_3603("ac4508-se-wal");
+    CHECK(ev.enable_security_event_wal(dir.string()), "4508 AC1: SE WAL enabled");
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "4508 AC1: mutation WAL enabled");
+    const auto ts = now_ms_3603();
+    // TARGET: the #4303 example deny, persisted to the SE WAL (denied
+    // InvariantFail) — reason[64] cuts the operator out of the reason
+    // tail, so only op[40] still holds it.
+    const std::string long_reason =
+        "invariant-denied: linear-cross-closure tenant=1 op=composite-linear-synth-hard-fail";
+    CHECK(long_reason.size() == 83, "4508 AC1: target reason is the 83-byte #4303 example");
+    CHECK(persist_security_event(SecurityEventKind::InvariantFail, /*tenant=*/42,
+                                 /*mutation_id=*/450801, /*epoch=*/7,
+                                 aura::compiler::security::kEffectMutate,
+                                 "composite-linear-synth-hard-fail", long_reason,
+                                 /*denied=*/true, /*fiber=*/0, ts),
+          "4508 AC1: TARGET InvariantFail persisted to the SE WAL");
+    // Wrap the in-memory SE ring past 1024 so no ring row shares M
+    // (se-mid-miss=1) and the auto-durable arm must answer from WAL.
+    auto& ring = aura::core::security_event::g_security_event_ring();
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 460000 + i, "test:4508-wrap", "wrap");
+    auto href = [&](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450801) \"{}\")", key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(href("durable-hit") == 1, "4508 AC1: durable fill answered after the ring wrap");
+    CHECK(href("se-mid-miss") == 1, "4508 AC1: se-mid-miss stays the ring miss (#3284)");
+    CHECK(href("forensic-source") == 3, "4508 AC1: forensic-source=3 (durable evidence)");
+    CHECK(href("typed-trail-miss") == 1, "4508 AC1: typed trail never held M");
+    CHECK(decision_str_is(cs,
+                          "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450801) "
+                          "\"last-se-op\")",
+                          "composite-linear-synth-hard-fail"),
+          "4508 AC1: last-se-op is the WAL operator the ring lost");
+    CHECK(decision_str_is(cs,
+                          "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450801) "
+                          "\"last-se-reason\")",
+                          std::string(long_reason.substr(0, 63)).c_str()),
+          "4508 AC1: last-se-reason stays the 63-byte prefix (not rewritten)");
+    // Cross-surface: the query:security-audit WAL line keeps the same op.
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 450801)");
+    bool audit_line = false;
+    for (const auto& l : lines)
+        if (l.find("mutation_id=450801") != std::string::npos &&
+            l.find("op=\"composite-linear-synth-hard-fail\"") != std::string::npos)
+            audit_line = true;
+    CHECK(audit_line, "4508 AC1: query:security-audit WAL line shows the same op");
+    ev.disable_security_event_wal();
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(dir);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #4508 AC2: the mutation-WAL provenance fallback (SE WAL missed,
+// mrec hit) filled last-se-reason from mrec->op only when the reason
+// was empty and never set last-se-op. The op copy is additive: the
+// record reason stays last-se-reason even when populated.
+static void ac4508_mwal_fallback_keeps_op() {
+    std::println("\n--- #4508 AC2: mutation-WAL fallback keeps the operator ---");
+    using aura::core::audit_wal::AuditWalRecord;
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto dir = fresh_wal_dir_3603("ac4508-mwal");
+    CHECK(ev.enable_security_event_wal(dir.string()), "4508 AC2: SE WAL enabled (no row for M)");
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "4508 AC2: mutation WAL enabled");
+    AuditWalRecord row{};
+    row.seq = 1;
+    row.timestamp_ms = now_ms_3603();
+    row.tenant_id = 42;
+    row.provenance_mutation_id = 450802;
+    row.epoch = 7;
+    row.effect_denied = 1;
+    std::memcpy(row.op, "mwal-op-4508", 12);
+    std::memcpy(row.reason, "invariant-denied: mwal tenant=1 op=mwal-op-4508", 47);
+    CHECK(aura::core::audit_wal::g_mutation_audit_wal().append(row),
+          "4508 AC2: provenance row appended to the mutation WAL");
+    auto href = [&](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450802) \"{}\")", key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(href("durable-hit") == 1, "4508 AC2: provenance fallback is a durable hit");
+    CHECK(href("se-mid-miss") == 1, "4508 AC2: SE ring/WAL hold no row for M (miss stays)");
+    CHECK(decision_str_is(cs,
+                          "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450802) "
+                          "\"last-se-op\")",
+                          "mwal-op-4508"),
+          "4508 AC2: last-se-op is the mutation-WAL operator");
+    CHECK(decision_str_is(cs,
+                          "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450802) "
+                          "\"last-se-reason\")",
+                          "mwal-op-4508"),
+          "4508 AC2: last-se-reason stays the pre-existing op-as-reason fill (not rewritten)");
+    ev.disable_security_event_wal();
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(dir);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #4508 AC3: the overflow fallback (both WALs missed, #3734
+// fail-closed emit miss) filled reason only — keep the operator too.
+// Same arming shape as AC13: Restricted + fail-closed inject lands the
+// emit on the overflow ring, then an Off evaluator queries the fold.
+static void ac4508_overflow_fill_keeps_op() {
+    std::println("\n--- #4508 AC3: overflow fallback keeps the operator ---");
+    reset_all();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(450803);
+    const auto dir = fresh_wal_dir_3603("ac4508-overflow");
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "4508 AC3: mutation WAL enabled");
+    // #3639 pattern: park SE so the inject lands on emit_mutation_audit.
+    ev.disable_security_event_wal();
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        1, std::memory_order_relaxed);
+    CHECK(!ev.emit_mutation_audit(2, 1, "ovf-op-4508", 11),
+          "4508 AC3 / #3780: fail-closed emit returns false on WAL miss");
+    CHECK(aura::core::security_event_wal::wal_overflow_find_by_mid(450803) != nullptr,
+          "4508 AC3: overflow ring captured the emit miss");
+    // The #3907 compensating EffectDeny landed in the live SE ring with
+    // the same mid (and the ring arm already copies e.op, #4303) — drop
+    // the ring so only the process-local overflow row remains: the
+    // wrap / fresh-reader face the overflow fill exists for.
+    aura::core::security_event::reset_security_event_ring_for_test();
+    CHECK(aura::core::security_event::g_security_event_ring().seq.load(std::memory_order_relaxed) ==
+              0,
+          "4508 AC3: compensating SE dropped (fold must answer from overflow)");
+    // Query face: Off sandbox + fresh evaluator (AURA_SANDBOX=off skips
+    // force_wal), mutation WAL still enabled — same shape as AC13.
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs_q;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    cs_q.evaluator().disable_security_event_wal();
+    auto href = [&](std::string_view key) -> std::int64_t {
+        auto r = cs_q.eval(std::format(
+            "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450803) \"{}\")", key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(href("durable-hit") == 0, "4508 AC3: overflow is not durable WAL (#3734)");
+    CHECK(href("wal-lookup-window-miss") == 1,
+          "4508 AC3: no WAL row on disk (window miss stays 1)");
+    CHECK(href("se-mid-miss") == 1, "4508 AC3: ring miss stays 1 (overflow is not the ring)");
+    CHECK(decision_str_is(cs_q,
+                          "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450803) "
+                          "\"last-se-op\")",
+                          "ovf-op-4508"),
+          "4508 AC3: last-se-op is the overflow operator");
+    CHECK(decision_str_is(cs_q,
+                          "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 450803) "
+                          "\"last-se-reason\")",
+                          "mutation_wal_append_miss"),
+          "4508 AC3: last-se-reason stays mutation_wal_append_miss (not rewritten)");
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(dir);
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        0, std::memory_order_relaxed);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
 // Issue #4445: hydrate must keep WAL seq on the slot it indexes.
 // A window past the 1024 ring used to land at slots [0, n) while
 // ring.seq became max(wal seq)+1, so newest-first flipped Deny to Allow.
@@ -2226,6 +2428,9 @@ int run_test_audit_replay_join() {
     ac23_wal_miss_refuse_next_4142();
     ac4302_completed_mid0_refuse_join();
     ac4303_last_se_op_survives_reason_cap();
+    ac4508_durable_fill_keeps_se_op();
+    ac4508_mwal_fallback_keeps_op();
+    ac4508_overflow_fill_keeps_op();
     ac4445_hydrate_keeps_wal_seq();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
