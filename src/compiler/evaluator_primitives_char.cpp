@@ -392,13 +392,22 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_primitive_error(ev.string_heap_, ev.error_values_, std::move(msg),
                                     ev.primitive_error_counter_ptr());
     };
-    auto f64slot = [&ev](const EvalValue& v) -> std::string* {
+    // Issue #4509: an f64vector slot lives in string_heap_, and any fiber
+    // can grow that heap (fiber:spawn shares the Evaluator). A concurrent
+    // push_back reallocates the pmr::vector and frees the old std::string
+    // buffer, so no raw std::string* may leave alloc_storage_lock_ —
+    // validate here under the lock and copy/scan the bytes under the lock
+    // at the call site, exactly like copy_string_heap_at /
+    // string_heap_byte_at. Returns the slot's byte length, or -1 when v
+    // is not an f64vector.
+    auto f64slot = [&ev](const EvalValue& v) -> std::int64_t {
         if (!is_string(v))
-            return nullptr;
-        const auto idx = types::as_string_idx(v);
+            return -1;
+        const auto idx = static_cast<std::size_t>(types::as_string_idx(v));
+        std::lock_guard lock(ev.alloc_storage_lock_);
         if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
-            return nullptr;
-        return &ev.string_heap_[idx];
+            return -1;
+        return static_cast<std::int64_t>(ev.string_heap_[idx].size());
     };
     auto as_real = [](const EvalValue& v, double& out) {
         if (is_float(v)) {
@@ -412,9 +421,12 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return false;
     };
     auto new_f64 = [&ev](std::string bytes) -> EvalValue {
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(bytes));
-        return make_string(sid);
+        // Issue #4509: mint through push_string_heap — size + push_back +
+        // index must be atomic under alloc_storage_lock_ (fiber:spawn
+        // shares the Evaluator), and the slot needs the in-range tenant
+        // stamp (#4428) the unlocked push_back skipped. Same call as every
+        // other string mint; not a second pin registry.
+        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(bytes))));
     };
     auto rd = [](const std::string& s, std::size_t i) {
         double d;
@@ -435,25 +447,31 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return new_f64(std::move(bytes));
     });
     add("f64vector-length", [f64err, f64slot](std::span<const EvalValue> a) -> EvalValue {
-        auto* s = a.empty() ? nullptr : f64slot(a[0]);
-        if (!s)
+        const auto bytes = a.empty() ? -1 : f64slot(a[0]);
+        if (bytes < 0)
             return f64err("f64vector-length: expected an f64vector");
-        return make_int(static_cast<std::int64_t>(s->size() / 8));
+        return make_int(bytes / 8);
     });
-    add("f64vector-ref", [f64err, f64slot, rd](std::span<const EvalValue> a) -> EvalValue {
-        auto* s = a.size() < 2 ? nullptr : f64slot(a[0]);
-        if (!s || !is_int(a[1]))
+    add("f64vector-ref", [f64err, &ev, rd](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return f64err("f64vector-ref: expected (f64vector index)");
         const auto i = as_int(a[1]);
-        const auto n = static_cast<std::int64_t>(s->size() / 8);
+        // Issue #4509: copy the element out under alloc_storage_lock_ — the
+        // heap can reallocate between validation and read on another fiber.
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+            return f64err("f64vector-ref: expected (f64vector index)");
+        const auto& s = ev.string_heap_[idx];
+        const auto n = static_cast<std::int64_t>(s.size() / 8);
         if (i < 0 || i >= n)
             return f64err(std::format("f64vector-ref: index {} out of range for length {}", i, n));
-        return make_float(rd(*s, static_cast<std::size_t>(i)));
+        return make_float(rd(s, static_cast<std::size_t>(i)));
     });
     add("f64vector-set!",
         [&ev, f64err, f64slot, as_real](std::span<const EvalValue> a) -> EvalValue {
             double x = 0.0;
-            if (a.size() < 3 || !f64slot(a[0]) || !is_int(a[1]) || !as_real(a[2], x))
+            if (a.size() < 3 || f64slot(a[0]) < 0 || !is_int(a[1]) || !as_real(a[2], x))
                 return f64err("f64vector-set!: expected (f64vector index number)");
             std::lock_guard lock(ev.alloc_storage_lock_);
             const auto idx = types::as_string_idx(a[0]);
@@ -470,13 +488,24 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         });
     // (f64vector-dot a b [a-off b-off n]) — sum of a[a-off+k]*b[b-off+k].
-    add("f64vector-dot", [f64err, f64slot, rd](std::span<const EvalValue> a) -> EvalValue {
-        auto* x = a.size() < 2 ? nullptr : f64slot(a[0]);
-        auto* y = a.size() < 2 ? nullptr : f64slot(a[1]);
-        if (!x || !y)
+    add("f64vector-dot", [f64err, &ev, rd](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return f64err("f64vector-dot: expected two f64vectors");
-        const auto nx = static_cast<std::int64_t>(x->size() / 8);
-        const auto ny = static_cast<std::int64_t>(y->size() / 8);
+        // Issue #4509: validate both slots and run the MAC scan under
+        // alloc_storage_lock_ — the loop previously held &string_heap_[idx]
+        // for the whole dot while a concurrent mint (push_string_heap) could
+        // reallocate the heap and free the buffer under it. The pointers
+        // stay inside the locked region; nothing is published.
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        const auto xidx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+        const auto yidx = static_cast<std::size_t>(types::as_string_idx(a[1]));
+        if (xidx >= ev.string_heap_.size() || ev.string_heap_[xidx].size() % 8 != 0 ||
+            yidx >= ev.string_heap_.size() || ev.string_heap_[yidx].size() % 8 != 0)
+            return f64err("f64vector-dot: expected two f64vectors");
+        const auto& x = ev.string_heap_[xidx];
+        const auto& y = ev.string_heap_[yidx];
+        const auto nx = static_cast<std::int64_t>(x.size() / 8);
+        const auto ny = static_cast<std::int64_t>(y.size() / 8);
         std::int64_t xo = 0, yo = 0, n = std::min(nx, ny);
         if (a.size() >= 5) {
             if (!is_int(a[2]) || !is_int(a[3]) || !is_int(a[4]))
@@ -490,7 +519,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         double acc = 0.0;
         for (std::int64_t k = 0; k < n; ++k)
             acc +=
-                rd(*x, static_cast<std::size_t>(xo + k)) * rd(*y, static_cast<std::size_t>(yo + k));
+                rd(x, static_cast<std::size_t>(xo + k)) * rd(y, static_cast<std::size_t>(yo + k));
         return make_float(acc);
     });
     // (bytes->f64vector str [byte-offset count]) — little-endian float64.
@@ -527,17 +556,34 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return new_f64(std::move(out));
     };
     add("bytes->f64vector", [&ev, f64err, from_bytes](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]) || types::as_string_idx(a[0]) >= ev.string_heap_.size())
+        if (a.empty() || !is_string(a[0]))
             return f64err("bytes->f64vector: expected a byte string");
-        std::string src = ev.string_heap_[types::as_string_idx(a[0])];
+        // Issue #4509: snapshot the source bytes under alloc_storage_lock_
+        // (copy_string_heap_at protocol) — the unlocked heap read raced a
+        // concurrent push_back realloc between the bounds check and copy.
+        std::string src;
+        {
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+            if (idx >= ev.string_heap_.size())
+                return f64err("bytes->f64vector: expected a byte string");
+            src = ev.string_heap_[idx];
+        }
         return from_bytes(a, src, 8, "bytes->f64vector");
     });
     add("f32-bytes->f64vector",
         [&ev, f64err, from_bytes](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !is_string(a[0]) ||
-                types::as_string_idx(a[0]) >= ev.string_heap_.size())
+            if (a.empty() || !is_string(a[0]))
                 return f64err("f32-bytes->f64vector: expected a byte string");
-            std::string src = ev.string_heap_[types::as_string_idx(a[0])];
+            // Issue #4509: same locked snapshot as bytes->f64vector.
+            std::string src;
+            {
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+                if (idx >= ev.string_heap_.size())
+                    return f64err("f32-bytes->f64vector: expected a byte string");
+                src = ev.string_heap_[idx];
+            }
             return from_bytes(a, src, 4, "f32-bytes->f64vector");
         });
     // (bytes-i32-ref str byte-offset) — little-endian int32 (checkpoint headers).
