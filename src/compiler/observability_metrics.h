@@ -9561,11 +9561,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_relower_cold_miss_total{0};
     // Issue #4065: last incremental reemit face. Appended at END (#2906).
     // mid is join_audit_and_se_mid (Mutation), never Bridge/JIT epoch.
-    // 0 stays 0. reason: 1 reemit-ok, 2 reemit-fail, 3 reemit-storm-skip.
-    // Soft/Off does not store (query publishes 0 / empty).
+    // 0 stays 0. reason: 1 reemit-ok, 2 reemit-fail, 3 reemit-storm-skip,
+    // 4 render-fast-deferred (#4507). Soft/Off does not store (query
+    // publishes 0 / empty).
     static constexpr std::uint8_t kAotLastReemitReasonOk = 1;
     static constexpr std::uint8_t kAotLastReemitReasonFail = 2;
     static constexpr std::uint8_t kAotLastReemitReasonStormSkip = 3;
+    // Issue #4507: render-fast dirty success defers the sync reemit to the
+    // next non-render boundary but still stamps this face with the captured
+    // session mid. Not a storm-skip — append after 3, never renumber.
+    static constexpr std::uint8_t kAotLastReemitReasonRenderFastDeferred = 4;
     std::atomic<std::uint64_t> aot_last_reemit_mid{0};
     std::atomic<std::uint64_t> aot_last_reemit_tenant{0};
     std::atomic<std::int64_t> aot_last_reemit_fiber{0};

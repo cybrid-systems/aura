@@ -2560,6 +2560,138 @@ static void ac4432_boundary_exit_reemit_session_mid() {
     aura::core::reset_mutation_epoch_for_test();
 }
 
+// Issue #4507: the render-fast dirty success arm defers the sync reemit
+// and notifies the AOT func-table epoch, but the deferred reemit face
+// must still be stamped with the session mid captured before the TLS
+// clear — never the table epoch. Reason appends after storm-skip (no
+// renumber of 1/2/3).
+static void ac4507_render_fast_deferred_reemit_session_mid() {
+    std::println("\n--- #4507: render-fast defer stamps the session mid ---");
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::hot_update_registry().reset_reemit_boundary_handshake_for_test();
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(0);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::set_reemit_captured_session_mid(0);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::bump_mutation_epoch(50);
+
+    // No renumber: the appended reason sits after the #4065 codes.
+    CHECK(CompilerMetrics::kAotLastReemitReasonOk == 1 &&
+              CompilerMetrics::kAotLastReemitReasonFail == 2 &&
+              CompilerMetrics::kAotLastReemitReasonStormSkip == 3,
+          "4507: reason codes 1/2/3 unchanged");
+    CHECK(CompilerMetrics::kAotLastReemitReasonRenderFastDeferred == 4,
+          "4507: render-fast-deferred appends reason 4");
+
+    CompilerService cs;
+    auto* sm = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    aura_set_aot_metrics(sm);
+    aura_aot_set_reemit_owner_eval(&cs.evaluator());
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    ReemitFixture rf;
+    rf.candidates = {{"ac4507", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    // ── Section A: the render-fast dirty arm runs where render-fast is live.
+    // #3872 forces the invariant hard-gate whenever the production flag is
+    // on, so the success defer only engages on the dev Sampled face; the
+    // face stamp itself is production-gated in the bridge (Section B).
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const auto defer_before =
+        sm->render_fast_exit_deferred_reemit_total.load(std::memory_order_relaxed);
+    const auto notify_before =
+        href(cs, "query:hot-update-registry-stats", "hot_update_registry_epoch_notify_total");
+    // Hotpath BEFORE the guard: the shared Guard ctor captures
+    // render_fast_exit_ from arena_policy at enter (#2215).
+    cs.evaluator().enter_render_hotpath();
+    CHECK(cs.evaluator().in_render_hotpath(), "4507: in render hotpath");
+    {
+        bool ok = true;
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(gr.has_value(), "4507: render-fast guard entered");
+        if (gr.has_value()) {
+            // Dirty defuse mark → the render-fast arm defers the reemit.
+            cs.evaluator().bump_defuse_version_for_test();
+        }
+    }
+    cs.evaluator().exit_render_hotpath();
+
+    const auto defer_after =
+        sm->render_fast_exit_deferred_reemit_total.load(std::memory_order_relaxed);
+    const auto notify_after =
+        href(cs, "query:hot-update-registry-stats", "hot_update_registry_epoch_notify_total");
+    std::println("4507 defer {} -> {} notify {} -> {}", defer_before, defer_after, notify_before,
+                 notify_after);
+    CHECK(defer_after > defer_before, "4507: deferred reemit counter moved");
+    CHECK(notify_after > notify_before, "4507: table-epoch notify still fired");
+
+    // ── Section B: the appended reason stores the caller mid on the
+    // production face — never a bridge/table/Query/Mutation epoch.
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto epoch = aura::core::current_mutation_epoch();
+    const auto table_epoch = static_cast<std::int64_t>(aura_aot_func_table_epoch());
+    aura_note_aot_reemit_audit_face(
+        aura::compiler::CompilerMetrics::kAotLastReemitReasonRenderFastDeferred, 4507001);
+    const auto stored = sm->aot_last_reemit_mid.load(std::memory_order_relaxed);
+    const auto stored_reason = sm->aot_last_reemit_reason.load(std::memory_order_relaxed);
+    const auto last = href(cs, "query:aot-incremental-reemit-stats", "last-reemit-mid");
+    std::println("4507 stored {} reason {} last {} epoch {} table {}", stored, stored_reason, last,
+                 epoch, table_epoch);
+    CHECK(stored == 4507001, "4507: face atomic mid is the caller session mid");
+    CHECK(stored != epoch, "4507: face atomic mid is not the process epoch");
+    CHECK(stored != static_cast<std::uint64_t>(table_epoch),
+          "4507: face atomic mid is not the func table epoch");
+    CHECK(last == 4507001, "4507: last-reemit-mid is the session mid");
+    CHECK(last != static_cast<std::int64_t>(epoch),
+          "4507: last-reemit-mid is not the process epoch");
+    CHECK(last != table_epoch, "4507: last-reemit-mid is not the func table epoch");
+    CHECK(stored_reason == CompilerMetrics::kAotLastReemitReasonRenderFastDeferred,
+          "4507: face reason is render-fast-deferred");
+
+    // Source cite: the dirty arm notes the face with the appended reason
+    // and the captured-mid fallback; the epoch stays on the notify call.
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto arm = mb.find("render_fast_exit_deferred_reemit_total.fetch_add");
+    const auto arm_end =
+        mb.find("outermost_exit_phase4_reemit_total.fetch_add", arm != std::string::npos ? arm : 0);
+    CHECK(arm != std::string::npos && arm_end != std::string::npos && arm < arm_end,
+          "4507: render-fast dirty arm located");
+    const auto arm_body = mb.substr(arm, arm_end - arm);
+    CHECK(arm_body.find("aura_note_aot_reemit_audit_face(") != std::string::npos,
+          "4507: dirty arm stamps the reemit face");
+    CHECK(arm_body.find("kAotLastReemitReasonRenderFastDeferred") != std::string::npos,
+          "4507: dirty arm uses the appended reason");
+    CHECK(arm_body.find("exited_cp.audit_mid != 0 ? exited_cp.audit_mid : session_mid_at_enter_") !=
+              std::string::npos,
+          "4507: dirty arm passes the captured session mid");
+    CHECK(arm_body.find("aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch())") !=
+              std::string::npos,
+          "4507: table-epoch notify stays a listener signal");
+    CHECK(arm_body.find("aot_last_reemit_mid.store") == std::string::npos,
+          "4507: dirty arm never stores the epoch into the face directly");
+    const auto hdr = read_file("src/compiler/observability_metrics.h");
+    const auto three = hdr.find("kAotLastReemitReasonStormSkip = 3");
+    const auto four = hdr.find("kAotLastReemitReasonRenderFastDeferred = 4");
+    CHECK(three != std::string::npos && four != std::string::npos && three < four,
+          "4507: reason 4 appends after 3 in the metrics header");
+
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_clear_stable_func_id_map();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura::compiler::hot_update_registry().on_region_mask_from_dirty(0);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::set_reemit_captured_session_mid(0);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+    aura::core::reset_mutation_epoch_for_test();
+}
+
 // Issue #4339: owner-scoped frozen table epoch washes the recycled-sid
 // generation check. A retired sid re-preserved under the same display name
 // stamps an EQUAL nonzero mangle epoch (#4337 inequality never fires), so
@@ -3431,6 +3563,7 @@ int main() {
 
     ac4065_reemit_last_mid();
     ac4432_boundary_exit_reemit_session_mid();
+    ac4507_render_fast_deferred_reemit_session_mid();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
