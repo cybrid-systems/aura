@@ -347,6 +347,10 @@ int main() {
 
     // Issue #4463: a non-number is a type error on both faces. The legacy
     // stderr line stays. The value is an error, not a coerced int.
+    // Issue #4497: display/write of an uncaught error value names it on
+    // stderr and fails the run (exit 1); stdout shows a blank line instead
+    // of <unknown>. The caught (try/catch) value still displays its
+    // message on stdout.
     {
         const auto bin = aura_binary();
         CHECK(!bin.empty(), "4463: aura binary");
@@ -374,18 +378,20 @@ int main() {
                                    "(display (+ (vector-ref v 0) 1)) (newline)\n"
                                    "(display \"end\") (newline)\n"),
                   "4463: write script");
-            const std::string expect = "<unknown>\n<unknown>\n<unknown>\n<unknown>\n<unknown>\n"
-                                       "<unknown>\n<unknown>\n<unknown>\n<unknown>\n<unknown>\n"
-                                       "<unknown>\n5\n2.0\n#t\n"
+            // #4497: uncaught error-value displays emit nothing on stdout
+            // (11 + 3 blank lines); the run exits 1 (aura_displayed_error_count).
+            const std::string expect = "\n\n\n\n\n\n\n\n\n\n\n"
+                                       "5\n2.0\n#t\n"
                                        "type mismatch — expected Int, got String 'abc'\n"
-                                       "<unknown>\n<unknown>\n<unknown>\nend\n";
+                                       "\n\n\n"
+                                       "end\n";
             auto check_face = [&](const char* face, const char* outp, const char* errp,
                                   const char* label) {
                 auto run = run_aura_file(bin, path, face, outp, errp);
                 if (run.out != expect || run.rc != 0)
                     std::println(std::cerr, "{} rc {} out [{}] err [{}]", label, run.rc, run.out,
                                  run.err);
-                CHECK(run.rc == 0, std::string(label) + " exits 0");
+                CHECK(run.rc == 1, std::string(label) + " exits 1 (#4497 displayed error)");
                 CHECK(run.out == expect, std::string(label) + " does not coerce");
                 CHECK(run.err.find("error: type mismatch — expected Int, got String 'abc'") !=
                           std::string::npos,
