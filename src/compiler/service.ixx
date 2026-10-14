@@ -30,6 +30,7 @@ module;
 #include <vector>
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
+#include "aot_reload_consistency_proof.h" // Issue #4510: hook demotion stamps would_allow_native=false
 #include "lock_order_audit.h"
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit state machine
 #include "runtime_shared.h"
@@ -15195,6 +15196,12 @@ public:
         it->second.fn_ptr.store(nullptr, std::memory_order_release);
         it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
     }
+    // Issue #4510: test entry for the ArenaCompact dirty-scope arm
+    // (on_arena_compact_notify is otherwise reachable only via the arena
+    // compact hook chain). Fires kShapeDirtyScopeArenaCompact deopt hooks
+    // for the dirty ∪ relocated cone (#3455) — the same trampoline the
+    // production compact drives.
+    void public_on_arena_compact_notify() noexcept { on_arena_compact_notify(); }
     // Issue #3758: light-link / no-LLVM get_function_ptr is null. Seed a
     // named jit_cache_ hit + counting ScalarFn override so try_jit_execute
     // reaches the execute catalog. Returns how many times ScalarFn ran.
@@ -16307,6 +16314,56 @@ public:
             (void)expire_stale_live_closures_(bridge_epoch());
         }
         run_epoch_invariant_if_enabled();
+    }
+
+    // Issue #4510: production shape-deopt owner-scoped demotion for the
+    // resolved define. The hook must not publish a process C-bridge or
+    // Mutation bump under production defaults (#3605 freeze posture): the
+    // historical bare bump_bridge_epoch() advanced the process clock while
+    // g_jit_fns kept the pre-hook ScalarFn, so post-hook closures passed
+    // dual-fresh against stale native and pre-hook peers false-deopted.
+    // For the resolved define only:
+    //   1. aura_drop_jit_fn_native_for_define — clears the installed
+    //      ScalarFn (#4100 order: before any AuraJIT teardown, which does
+    //      not clear g_jit_fns), MustDeopts matching live C-bridge
+    //      closures, and bumps the define drop generation so a #4388
+    //      cache-hit republish refuses. A closure allocated after the
+    //      hook cannot enter the pre-hook ScalarFn.
+    //   2. The existing name / slot soft-stale bits (#3300 / #3351 /
+    //      #3750) when the multi-eval owner-scope is armed — the marks
+    //      themselves no-op unless multi-eval live > 1 (Soft/Off zero-cost).
+    //   3. Name-precise MustDeopt for owner live closures of that name +
+    //      TLS apply-epoch bump (#3975 shape: the frozen process clocks
+    //      make the epoch-expiry walk vacuous).
+    //   4. Stamp would_allow_native=false on the existing reload proof —
+    //      the hook demoted native (#3513 posture, without the facade
+    //      reemit / table bump).
+    // Peer closures of other defines stay dual-fresh green: no process
+    // C-bridge / defuse / table epoch advances anywhere on this path.
+    void demote_jit_native_owner_scoped_for_shape_deopt_(const std::string& name) {
+        // (1) drop the installed ScalarFn first (#4100 order).
+        aura_drop_jit_fn_native_for_define(name.c_str());
+        // (2) existing name / slot soft-stale bits when the multi-eval
+        // owner-scope is armed (facade #3300 / #3351 / #3750 parity).
+        if (aura_aot_bump_will_be_owner_scoped() != 0 && aura_aot_state_map_size() > 1) {
+            aura_aot_mark_peer_jit_name_soft_stale(name.c_str());
+            aura_aot_mark_peer_ir_name_soft_stale(name.c_str());
+            void* owner = aura_aot_get_reemit_owner_eval();
+            if (!owner)
+                owner = aura_aot_get_register_owner_eval();
+            aura_aot_soft_stale_peer_slots_for_name(name.c_str(), owner);
+        }
+        // (3) owner live closures of that name ride the #3975 name-precise
+        // MustDeopt (epochs will not retire them — clocks are frozen).
+        must_deopt_owner_live_closures_for_define_(name);
+        evaluator_.bump_closures_apply_epoch_public();
+        // (4) demoted native → stamp the existing reload proof
+        // would_allow_native=false (same shape as the #3513 facade stamp;
+        // ABI early-exits must not leave a green proof from a prior store).
+        AotReloadConsistencyProof p = load_aot_reload_consistency_proof_snapshot();
+        p.would_allow_native = false;
+        p.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(p);
     }
 
     // Issue #3749: production facade early-return skipped jit_cache_
@@ -17701,6 +17758,17 @@ public:
             bump_shape_fiber_refresh();
         }
 
+        // Issue #4510: under production defaults the hook must NOT publish a
+        // process C-bridge or Mutation bump. The historical bare
+        // bump_bridge_epoch() re-pointed g_current_bridge_epoch process-wide
+        // while g_jit_fns kept the pre-hook ScalarFn: closures allocated after
+        // the hook then passed three-key dual-fresh against the stale native
+        // and ran it, and pre-hook peer closures failed dual-fresh (false
+        // deopt). Soft / Off keep the historical dual-epoch bump (zero-cost
+        // path, not this bug).
+        const bool production_active = aura_production_defaults_active_probe != nullptr &&
+                                       aura_production_defaults_active_probe() != 0;
+
         // Issue #1521: ArenaCompact — coordinate IR dirty + fiber refresh
         // without counting as deopt storm / mutation churn.
         if (dirty_scope == shape::kShapeDirtyScopeArenaCompact) {
@@ -17708,45 +17776,79 @@ public:
             bump_shape_fiber_refresh();
             if (!name.empty()) {
                 mark_shape_dirty_for_fn_key(fn_key);
-                // Soft: dual-epoch bump so JIT shape_map guards recheck
-                // (#1496: never advance bridge without defuse). Prefer
-                // mark-dirty over full jit_cache_ erase when possible.
-                bump_bridge_epoch();
-                evaluator_.bump_defuse_version_for_test();
-                // Issue #4109: this dual-epoch bump re-definitions nothing —
-                // ride still-valid captures up so the pure-counter advance
-                // does not strand them behind the empty-Env contract.
-                evaluator_.restamp_live_capture_frames_to_current();
-                metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
-                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-                shape_jit_pass::record_incremental_recompile_hit();
+                if (production_active) {
+                    // Issue #4510: owner-scoped demotion for the resolved
+                    // define. This arm must not return before the native
+                    // drop (it previously returned right after the bare
+                    // bump, before jit_.invalidate and any drop).
+                    demote_jit_native_owner_scoped_for_shape_deopt_(name);
+                    metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                    shape_jit_pass::record_incremental_recompile_hit();
+                } else {
+                    // Soft: dual-epoch bump so JIT shape_map guards recheck
+                    // (#1496: never advance bridge without defuse). Prefer
+                    // mark-dirty over full jit_cache_ erase when possible.
+                    bump_bridge_epoch();
+                    evaluator_.bump_defuse_version_for_test();
+                    // Issue #4109: this dual-epoch bump re-definitions nothing —
+                    // ride still-valid captures up so the pure-counter advance
+                    // does not strand them behind the empty-Env contract.
+                    evaluator_.restamp_live_capture_frames_to_current();
+                    metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                    shape_jit_pass::record_incremental_recompile_hit();
+                }
             }
             return;
         }
 
         if (!name.empty()) {
             mark_shape_dirty_for_fn_key(fn_key);
-            // Issue #1496: dual-epoch write — bare bump_bridge_epoch here
-            // desynced defuse_version_ when invalidate_function already ran
-            // atomic_bump_epochs_and_stamp_bridge (hard path lockstep fail).
-            bump_bridge_epoch();
-            evaluator_.bump_defuse_version_for_test();
-            // Issue #4109: this dual-epoch bump re-definitions nothing —
-            // ride still-valid captures up so the pure-counter advance does
-            // not strand them behind the empty-Env contract. The resync
-            // walk below stays observability-only (#4099 no-wash).
-            evaluator_.restamp_live_capture_frames_to_current();
-            metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
-            evaluator_.resync_live_closure_env_versions_on_invalidate();
-            jit_.invalidate(name.c_str());
-            jit_.invalidate_prefix(name.c_str());
-            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-            shape_jit_pass::record_incremental_recompile_hit();
-            evaluator_.bump_incremental_closure_jit_sync();
-            {
-                std::unique_lock cache_write(jit_cache_mtx_);
-                if (jit_cache_.erase(name) > 0)
-                    metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            if (production_active) {
+                // Issue #4510: drop the installed ScalarFn BEFORE the
+                // AuraJIT teardown (#4100 — AuraJIT::invalidate erases
+                // fn_trackers_ but does not clear g_jit_fns), and publish
+                // no process C-bridge / Mutation bump. jit_cache_.erase
+                // matches the #3749 facade window (no cache-hit return of
+                // the pre-hook ScalarFn); the drop bumps the define drop
+                // generation so a #4388 cache-hit republish refuses.
+                {
+                    std::unique_lock cache_write(jit_cache_mtx_);
+                    if (jit_cache_.erase(name) > 0)
+                        metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+                }
+                demote_jit_native_owner_scoped_for_shape_deopt_(name);
+                {
+                    std::unique_lock cache_write(jit_cache_mtx_);
+                    jit_.invalidate(name.c_str());
+                    jit_.invalidate_prefix(name.c_str());
+                    metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                shape_jit_pass::record_incremental_recompile_hit();
+                evaluator_.bump_incremental_closure_jit_sync();
+            } else {
+                // Issue #1496: dual-epoch write — bare bump_bridge_epoch here
+                // desynced defuse_version_ when invalidate_function already ran
+                // atomic_bump_epochs_and_stamp_bridge (hard path lockstep fail).
+                bump_bridge_epoch();
+                evaluator_.bump_defuse_version_for_test();
+                // Issue #4109: this dual-epoch bump re-definitions nothing —
+                // ride still-valid captures up so the pure-counter advance does
+                // not strand them behind the empty-Env contract. The resync
+                // walk below stays observability-only (#4099 no-wash).
+                evaluator_.restamp_live_capture_frames_to_current();
+                metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+                evaluator_.resync_live_closure_env_versions_on_invalidate();
+                jit_.invalidate(name.c_str());
+                jit_.invalidate_prefix(name.c_str());
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                shape_jit_pass::record_incremental_recompile_hit();
+                evaluator_.bump_incremental_closure_jit_sync();
+                {
+                    std::unique_lock cache_write(jit_cache_mtx_);
+                    if (jit_cache_.erase(name) > 0)
+                        metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+                }
             }
         }
     }
