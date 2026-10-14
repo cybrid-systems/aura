@@ -1,4 +1,4 @@
-;; expect: 3 0.5 2.5 11.0 5.0 2 1.5 -2.0 1 -2.0 1.5 7
+;; expect: 3 0.5 2.5 11.0 5.0 2 1.5 -2.0 1 -2.0 1.5 7 0 900.0 3.0 12.0 4 3.0
 ;; Issue #4503: f64vector — unboxed contiguous doubles + bulk byte loaders.
 (require "std/encoding")
 (define v (make-f64vector 3 0.5))
@@ -24,3 +24,29 @@
 ;; float32 1.5 widened; int32 header field
 (display (f64vector-ref (f32-bytes->f64vector (hex-decode "0000c03f")) 0)) (display " ")
 (display (bytes-i32-ref (hex-decode "07000000") 0))
+(display " ")
+;; Issue #4509: mint-vs-read protocol. Mints go through push_string_heap
+;; (alloc_storage_lock_ + in-range tenant stamp) and reads copy/scan the
+;; bytes under the same lock — a fiber growing string_heap_ (forced
+;; reallocation) must not tear a live f64vector read.
+(display (f64vector-length (make-f64vector 0))) (display " ")
+(define f64-race-v (make-f64vector 4 2.0))
+(f64vector-set! f64-race-v 3 3.0)
+(define f64-race-w (make-f64vector 4 1.0))
+(f64vector-set! f64-race-w 3 4.0)
+(define f64-mint-fib
+  (fiber:spawn (lambda ()
+                 (let loop ((k 0))
+                   (if (< k 300)
+                       (begin (make-f64vector (+ 64 k) 1.5) (loop (+ k 1)))
+                       0)))))
+(let loop ((k 0) (acc 0.0))
+  (if (< k 300)
+      (loop (+ k 1) (+ acc (f64vector-ref f64-race-v 3)))
+      (begin
+        (fiber:join f64-mint-fib)
+        (display acc) (display " ")
+        (display (f64vector-ref f64-race-v 3)) (display " ")
+        (display (f64vector-dot f64-race-v f64-race-w 3 3 1)) (display " ")
+        (display (f64vector-length f64-race-v)) (display " ")
+        (display (f64vector-ref (bytes->f64vector (hex-decode "0000000000000840")) 0)))))
