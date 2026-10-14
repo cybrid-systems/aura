@@ -9401,9 +9401,16 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
+            // #1232 strategy gate denies prims registered inside
+            // register_strategy_primitives when the Evaluator's ctor mirrors
+            // an armed registry (sandbox_mode_). Earlier blocks in this
+            // member leave the registry armed, so disarm before constructing
+            // cs — the orch handoff surface stays callable while production
+            // audit defaults still stamp the observation hash (#3273 keys).
+            set_mode(SandboxMode::Off);
+            CompilerService cs;
             ::setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
-            CompilerService cs;
             auto obsv = cs.eval(
                 R"((let ((r (orch:join-via-token "no-such-token-3273")))
                      (list (if (hash-has-key? r "observation-only") 1 0)
@@ -9768,6 +9775,11 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
+            // Same #1232 ctor-mirror rationale as the #3273 AC3 block above:
+            // cs exists before the registry arms, so the gated orch prims
+            // (agent-import/agent-join) stay callable under the strict WAL
+            // posture the block verifies.
+            CompilerService cs;
             ::setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
@@ -9775,7 +9787,6 @@ int run_test_join_drain_reclaim() {
             if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
                 (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
                     std::string_view("build/test-wal-3930"), nullptr, 0);
-            CompilerService cs;
             auto spawn_ok = cs.eval(R"((let ((r (orch:spawn-agent "ac3930-src" (lambda () #t))))
                                          (if (hash-ref r "ok") 1 0)))");
             CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1,

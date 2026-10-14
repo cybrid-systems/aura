@@ -323,7 +323,9 @@ static void ac4460_failed_require_continues() {
 
 // Issue #4465: a primitive error that escapes a top-level user call is one
 // located diagnostic. Later forms run. Exit status is 1. cs.eval keeps the
-// error value (#2570). display of that value still prints <unknown> (#4456).
+// error value (#2570). Issue #4497: display/write of an uncaught error
+// value names it on stderr and fails the run (vector-ref names the index
+// and length).
 static void ac4465_escaped_primitive_continues() {
     std::println("\n--- #4465: escaped primitive error is reported once ---");
     CompilerService cs;
@@ -365,7 +367,7 @@ static void ac4465_escaped_primitive_continues() {
                  "(display \"before\")\n"
                  "(id (vector-ref (vector 1 2 3) 5))\n"
                  "(display \"after\")\n",
-                 "vector-ref: index out of bounds", "4465: id");
+                 "vector-ref: index 5 out of range for vector of length 3", "4465: id");
     check_escape("/tmp/aura-4465-car.aura",
                  "(define (id x) x)\n"
                  "(display \"before\")\n"
@@ -377,7 +379,7 @@ static void ac4465_escaped_primitive_continues() {
                  "(display \"before\")\n"
                  "(q (vector 1 2))\n"
                  "(display \"after\")\n",
-                 "vector-ref: index out of bounds", "4465: return");
+                 "vector-ref: index 9 out of range for vector of length 2", "4465: return");
     {
         std::ofstream f("/tmp/aura-4465-main.aura");
         f << "(define (id x) x)\n";
@@ -392,7 +394,8 @@ static void ac4465_escaped_primitive_continues() {
     CHECK(main_run.out.find("after") != std::string::npos, "4465: main ran after");
     CHECK(main_run.out.find("inside-after") == std::string::npos, "4465: body stops at the error");
     CHECK(main_run.out.find("<error>") == std::string::npos, "4465: main no <error>");
-    CHECK(count_sub(main_run.err, "vector-ref: index out of bounds") == 1, "4465: main cause once");
+    CHECK(count_sub(main_run.err, "vector-ref: index 5 out of range for vector of length 3") == 1,
+          "4465: main cause once");
 
     {
         std::ofstream f("/tmp/aura-4465-try.aura");
@@ -425,10 +428,12 @@ static void ac4465_escaped_primitive_continues() {
         f << "(display \"after\")\n";
     }
     auto disp_run = run_file_4460(bin, "/tmp/aura-4465-disp.aura", face);
-    CHECK(disp_run.rc == 0, "4465: display of an error exits 0");
-    CHECK(disp_run.out == "before<unknown>after", "4465: display prints <unknown>");
-    CHECK(disp_run.err.find("vector-ref:") == std::string::npos,
-          "4465: display does not re-report");
+    // #4497: display of an error value names it on stderr (once) and fails
+    // the run; stdout carries no payload (<unknown> is gone).
+    CHECK(disp_run.rc == 1, "4465: display of an error exits 1 (#4497)");
+    CHECK(disp_run.out == "beforeafter", "4465: display emits no payload");
+    CHECK(count_sub(disp_run.err, "vector-ref: index 9 out of range for vector of length 2") == 1,
+          "4465: display names the error once");
 
     {
         std::ofstream f("/tmp/aura-4465-bare.aura");
