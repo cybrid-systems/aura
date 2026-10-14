@@ -190,17 +190,29 @@ namespace {
     // vectors structurally (Racket make-hash is equal?-based). Anything
     // else keeps identity. Probes are linear scans, so the bucket hash
     // only affects placement and can stay coarse for these key kinds.
+    // Issue #4505: the equality walk is a byte/element oracle. When
+    // tenant_ev is wired (every interpreter hash prim passes the executing
+    // evaluator + its own prim name), the in-range stamp compare runs
+    // before a pair car/cdr, vector element, or string byte is read; a
+    // foreign mismatch reads as inequality. Soft/Off the helpers return
+    // true before any stamp load. IsolationDeny rides the helper (op =
+    // the probing prim).
     [[nodiscard]] bool eval_hash_keys_eq(const EvalValue& a, const EvalValue& b,
                                          const std::pmr::vector<std::string>& sh,
                                          const std::pmr::vector<Pair>* pairs = nullptr,
                                          const std::vector<std::vector<EvalValue>>* vh = nullptr,
-                                         int depth = 0) noexcept {
+                                         int depth = 0, Evaluator* tenant_ev = nullptr,
+                                         std::string_view tenant_op = {}) noexcept {
         if (a.val == b.val)
             return true;
         if (is_int(a) && is_int(b))
             return as_int(a) == as_int(b);
         if (is_string(a) && is_string(b)) {
             auto ai = as_string_idx(a), bi = as_string_idx(b);
+            if (tenant_ev &&
+                (!tenant_ev->inrange_string_tenant_allows(ai, /*required_effects=*/0, tenant_op) ||
+                 !tenant_ev->inrange_string_tenant_allows(bi, /*required_effects=*/0, tenant_op)))
+                return false;
             return (ai < sh.size() && bi < sh.size()) && sh[ai] == sh[bi];
         }
         if (is_float(a) && is_float(b))
@@ -212,20 +224,34 @@ namespace {
             auto ai = as_pair_idx(a), bi = as_pair_idx(b);
             if (ai >= pairs->size() || bi >= pairs->size())
                 return false;
-            return eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh,
-                                     depth + 1) &&
-                   eval_hash_keys_eq((*pairs)[ai].cdr, (*pairs)[bi].cdr, sh, pairs, vh, depth + 1);
+            if (tenant_ev &&
+                (!tenant_ev->inrange_slot_tenant_allows(ai, /*vector_heap=*/false,
+                                                        /*required_effects=*/0, tenant_op) ||
+                 !tenant_ev->inrange_slot_tenant_allows(bi, /*vector_heap=*/false,
+                                                        /*required_effects=*/0, tenant_op)))
+                return false;
+            return eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh, depth + 1,
+                                     tenant_ev, tenant_op) &&
+                   eval_hash_keys_eq((*pairs)[ai].cdr, (*pairs)[bi].cdr, sh, pairs, vh, depth + 1,
+                                     tenant_ev, tenant_op);
         }
         if (vh && is_vector(a) && is_vector(b)) {
             auto ai = as_vector_idx(a), bi = as_vector_idx(b);
             if (ai >= vh->size() || bi >= vh->size())
+                return false;
+            if (tenant_ev &&
+                (!tenant_ev->inrange_slot_tenant_allows(ai, /*vector_heap=*/true,
+                                                        /*required_effects=*/0, tenant_op) ||
+                 !tenant_ev->inrange_slot_tenant_allows(bi, /*vector_heap=*/true,
+                                                        /*required_effects=*/0, tenant_op)))
                 return false;
             const auto& va = (*vh)[ai];
             const auto& vb = (*vh)[bi];
             if (va.size() != vb.size())
                 return false;
             for (std::size_t i = 0; i < va.size(); ++i)
-                if (!eval_hash_keys_eq(va[i], vb[i], sh, pairs, vh, depth + 1))
+                if (!eval_hash_keys_eq(va[i], vb[i], sh, pairs, vh, depth + 1, tenant_ev,
+                                       tenant_op))
                     return false;
             return true;
         }
@@ -278,6 +304,17 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             auto idx = as_vector_idx(a[0]);
             auto pos = static_cast<std::size_t>(as_int(a[1]));
+            // Issue #4298 / #4505: the owner compare runs BEFORE the #4497
+            // out-of-range branch formats vector_heap[idx].size() into the
+            // error — a foreign length is payload too. The in-range element
+            // return below shares this single gate.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
+                                               "vector-ref")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector-ref: cross-tenant vector slot read denied (#4298)",
+                    primitive_error_counter);
+            }
             if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
                 // Issue #4497: name the index and length.
                 const std::size_t len = idx < vector_heap.size() ? vector_heap[idx].size() : 0;
@@ -285,14 +322,6 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     string_heap, error_values,
                     std::format("vector-ref: index {} out of range for vector of length {}",
                                 as_int(a[1]), len),
-                    primitive_error_counter);
-            }
-            // Issue #4298: do not return a foreign tenant's element.
-            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
-                                               "vector-ref")) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    "vector-ref: cross-tenant vector slot read denied (#4298)",
                     primitive_error_counter);
             }
             return vector_heap[idx][pos];
@@ -336,7 +365,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         mutate_general(3, "(vector int any) -> void", "Set vector element at index."));
     register_prim(
         add, ev, "vector-length",
-        [&vector_heap, &string_heap, &error_values,
+        [&ev, &vector_heap, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty() || !is_vector(a[0])) {
                 return make_primitive_error(string_heap, error_values,
@@ -347,6 +376,15 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return make_primitive_error(string_heap, error_values,
                                             "vector-length: corrupted vector",
                                             primitive_error_counter);
+            }
+            // Issue #4505: the size is foreign structure; same reader gate
+            // as vector-ref before it is returned.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
+                                               "vector-length")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector-length: cross-tenant vector slot read denied (#4505)",
+                    primitive_error_counter);
             }
             return make_int(static_cast<std::int64_t>(vector_heap[idx].size()));
         },
@@ -422,7 +460,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(2, "(int any) -> vector", "Allocate a vector filled with a value."));
     register_prim(
         add, ev, "list->vector",
-        [&ev, &pairs, &vector_heap](std::span<const EvalValue> a) {
+        [&ev, &pairs, &vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
             std::vector<EvalValue> elems;
             if (!a.empty()) {
                 auto v = a[0];
@@ -430,6 +469,15 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     auto idx = as_pair_idx(v);
                     if (idx >= pairs.size())
                         break;
+                    // Issue #4505: deny before the car is copied into the
+                    // new vector's element storage.
+                    if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                       /*required_effects=*/0, "list->vector")) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "list->vector: cross-tenant pair slot read denied (#4505)",
+                            primitive_error_counter);
+                    }
                     elems.push_back(pairs[idx].car);
                     v = pairs[idx].cdr;
                 }
@@ -453,6 +501,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return make_primitive_error(string_heap, error_values,
                                             "vector->list: corrupted vector",
                                             primitive_error_counter);
+            }
+            // Issue #4505: no foreign element is copied into the new pairs.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
+                                               "vector->list")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector->list: cross-tenant vector slot read denied (#4505)",
+                    primitive_error_counter);
             }
             EvalValue result = make_void();
             for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
@@ -541,7 +597,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                const bool eq = eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap);
+                const bool eq =
+                    eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap, 0, &ev, "hash-ref");
                 if (eq)
                     return EvalValue{vals[i]};
             }
@@ -571,7 +628,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                const bool eq = eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap);
+                const bool eq =
+                    eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap, 0, &ev, "hash-has-key?");
                 if (eq)
                     return make_bool(true);
             }
@@ -612,7 +670,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                if (eval_hash_keys_eq(k, a[1], string_heap, &pairs, &vector_heap)) {
+                if (eval_hash_keys_eq(k, a[1], string_heap, &pairs, &vector_heap, 0, &ev,
+                                      "hash-set!")) {
                     vals[i] = a[2].val;
                     return make_void();
                 }
@@ -793,7 +852,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 if (meta[i] == 0xFF)
                     continue;
                 auto k = EvalValue{keys[i]};
-                const bool eq = eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap);
+                const bool eq =
+                    eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap, 0, &ev, "hash-remove!");
                 if (eq) {
                     meta[i] = 0xFF;
                     ht->size--;

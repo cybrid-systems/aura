@@ -324,6 +324,52 @@ namespace {
         }
         std::fprintf(stdout, "<unknown>");
     }
+
+    // Issue #4505: fail-closed pre-walk for display / write. Returns false
+    // before any byte is copied or reaches stdout when a pair, vector, or
+    // string slot reachable from v is a foreign tenant's mint; the in-range
+    // helpers record the IsolationDeny (op = the prim name). Mirrors the
+    // io_print_val shape (same string/pair/vector arms, same depth bound;
+    // keywords and hashes print no payload). Soft/Off the helpers return
+    // true before any stamp load, so this stays a pure structural walk.
+    // Heaps arrive as spans from the friend registration lambdas.
+    static bool io_walk_tenant_allows(const EvalValue& v, Evaluator& ev,
+                                      std::span<const std::string> heap,
+                                      std::span<const Pair> pairs,
+                                      std::span<const std::vector<EvalValue>> vectors,
+                                      std::string_view op, int depth) {
+        if (depth > 64)
+            return true; // the printer truncates here anyway
+        if (is_string(v)) {
+            auto idx = as_string_idx(v);
+            return idx >= heap.size() ||
+                   ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, op);
+        }
+        if (is_pair(v) && !pairs.empty()) {
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs.size())
+                return true; // printer prints <pair[n]> placeholder only
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, op))
+                return false;
+            if (!io_walk_tenant_allows(pairs[idx].car, ev, heap, pairs, vectors, op, depth + 1))
+                return false;
+            return io_walk_tenant_allows(pairs[idx].cdr, ev, heap, pairs, vectors, op, depth + 1);
+        }
+        if (is_vector(v)) {
+            auto idx = as_vector_idx(v);
+            if (idx >= vectors.size())
+                return true; // printer prints <vector> placeholder only
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true,
+                                               /*required_effects=*/0, op))
+                return false;
+            for (const auto& e : vectors[idx])
+                if (!io_walk_tenant_allows(e, ev, heap, pairs, vectors, op, depth + 1))
+                    return false;
+            return true;
+        }
+        return true;
+    }
 } // namespace
 
 void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -492,6 +538,15 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             note_displayed_error(ev, a[0]);
             return make_void();
         }
+        // Issue #4505: tenant-check the whole printable structure before any
+        // byte is copied or written; a foreign pair/vector/string prints
+        // nothing and returns the reader deny shape.
+        if (!io_walk_tenant_allows(a[0], ev, ev.string_heap_, ev.pairs_, ev.vector_heap_, "display",
+                                   0)) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "display: cross-tenant payload read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
+        }
         // Issue #2652: snapshot string under lock before print so concurrent
         // string_heap_ reallocate cannot UAF; NUL-safe path in io_print_val.
         if (is_string(a[0])) {
@@ -518,6 +573,14 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_error(a[0])) {
             note_displayed_error(ev, a[0]);
             return make_void();
+        }
+        // Issue #4505: same fail-closed pre-walk as display, before the
+        // quoted write copies the string bytes.
+        if (!io_walk_tenant_allows(a[0], ev, ev.string_heap_, ev.pairs_, ev.vector_heap_, "write",
+                                   0)) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "write: cross-tenant payload read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
         }
         if (is_string(a[0])) {
             // Issue #2652: quoted write with escapes (incl. NUL as \x00;).

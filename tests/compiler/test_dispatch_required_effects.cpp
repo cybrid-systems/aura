@@ -51,6 +51,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 
 import std;
 import aura.compiler.evaluator;
@@ -1563,6 +1564,57 @@ static bool ring_has_isolation_deny(std::string_view op) {
     return false;
 }
 
+// Issue #4505: fail-closed is exactly one audit row per denied prim call —
+// the helper must fire once, not per walked slot.
+static std::size_t ring_isolation_deny_count(std::string_view op) {
+    using aura::core::security_event::SecurityEventKind;
+    const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    const std::size_t rn = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < rn; ++i) {
+        const auto& e = g_security_event_ring().ring[i];
+        if (e.denied && e.kind == SecurityEventKind::IsolationDeny && std::string_view(e.op) == op)
+            ++n;
+    }
+    return n;
+}
+
+// Issue #4505: display/write deny must leave the payload off stdout. Same
+// pipe/dup2 capture shape as test_write_string_escape.cpp.
+template <typename F> static std::string with_stdout_capture(F&& fn) {
+    int pipefd[2];
+    if (::pipe(pipefd) != 0)
+        return {};
+    int saved = ::dup(STDOUT_FILENO);
+    if (saved < 0) {
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
+        return {};
+    }
+    ::fflush(stdout);
+    if (::dup2(pipefd[1], STDOUT_FILENO) < 0) {
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
+        ::close(saved);
+        return {};
+    }
+    ::close(pipefd[1]);
+
+    fn();
+
+    ::fflush(stdout);
+    ::dup2(saved, STDOUT_FILENO);
+    ::close(saved);
+
+    std::string out;
+    char buf[512];
+    ssize_t n = 0;
+    while ((n = ::read(pipefd[0], buf, sizeof(buf))) > 0)
+        out.append(buf, static_cast<std::size_t>(n));
+    ::close(pipefd[0]);
+    return out;
+}
+
 static void ac4296_executing_evaluator_hash_gate() {
     std::println("\n--- #4296: hash stamp/gate uses the executing Evaluator ---");
     reset_all();
@@ -2581,6 +2633,431 @@ static void ac4431_user_visible_pair_mint() {
         CHECK(win.find("rec == 0") != std::string::npos,
               "4431: record 0 stays the documented allow");
     }
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+}
+
+// Issue #4505: the sibling readers. Tenant 7 mints, tenant 9 holds the
+// mailbox refs (#4298 threat model). Every in-range reader — list-ref /
+// append / reverse / map / filter / member / memv / assv / length / caar,
+// vector->list / list->vector / vector-length (+ the vector-ref OOB path
+// that formatted the length before the gate), string-ref / substring /
+// string->list / string-length / string-append / string=?, display /
+// write, and the eval_hash_keys_eq probe — must compare the mint stamp
+// before any payload is copied, returned, formatted, or printed. Same
+// helper contract as car/vector-ref/string-fill!; no Effect bit, no
+// second require_effect, no query key.
+static void ac4505_inrange_reader_prims() {
+    std::println("\n--- #4505: in-range reader prims tenant gate ---");
+    using aura::compiler::types::as_error_idx;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::EvalValue;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_primitive;
+    using aura::compiler::types::is_string;
+    using aura::compiler::types::is_vector;
+    using aura::compiler::types::make_string;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+    auto lookup = [&](const char* name) { return ev.primitives().lookup(name); };
+    auto cons_fn = lookup("cons");
+    auto car_fn = lookup("car");
+    auto list_fn = lookup("list");
+    auto vec_fn = lookup("vector");
+    auto list_ref_fn = lookup("list-ref");
+    auto append_fn = lookup("append");
+    auto reverse_fn = lookup("reverse");
+    auto map_fn = lookup("map");
+    auto filter_fn = lookup("filter");
+    auto member_fn = lookup("member");
+    auto memv_fn = lookup("memv");
+    auto assv_fn = lookup("assv");
+    auto length_fn = lookup("length");
+    auto caar_fn = lookup("caar");
+    auto v2l_fn = lookup("vector->list");
+    auto l2v_fn = lookup("list->vector");
+    auto vlen_fn = lookup("vector-length");
+    auto vref_fn = lookup("vector-ref");
+    auto sref_fn = lookup("string-ref");
+    auto subs_fn = lookup("substring");
+    auto s2l_fn = lookup("string->list");
+    auto slen_fn = lookup("string-length");
+    auto sapp_fn = lookup("string-append");
+    auto seq_fn = lookup("string=?");
+    auto display_fn = lookup("display");
+    auto write_fn = lookup("write");
+    auto hash_fn = lookup("hash");
+    auto href_fn = lookup("hash-ref");
+    auto hhas_fn = lookup("hash-has-key?");
+    CHECK(list_ref_fn && append_fn && reverse_fn && map_fn && filter_fn && member_fn && memv_fn &&
+              assv_fn && length_fn && caar_fn && v2l_fn && l2v_fn && vlen_fn && vref_fn &&
+              sref_fn && subs_fn && s2l_fn && slen_fn && sapp_fn && seq_fn && display_fn &&
+              write_fn && hash_fn && href_fn && hhas_fn,
+          "4505: reader prims present");
+    if (!(list_ref_fn && append_fn && reverse_fn && map_fn && filter_fn && member_fn && memv_fn &&
+          assv_fn && length_fn && caar_fn && v2l_fn && l2v_fn && vlen_fn && vref_fn && sref_fn &&
+          subs_fn && s2l_fn && slen_fn && sapp_fn && seq_fn && display_fn && write_fn && hash_fn &&
+          href_fn && hhas_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    EvalValue pair7, lst7, vec7, str7, nested7, alist7;
+    const EvalValue car_prim = [&] {
+        auto v = cs.eval("car"); // prim value for map/filter fn slots
+        return v ? *v : make_void();
+    }();
+    CHECK(is_primitive(car_prim), "4505: car prim value resolvable");
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        pair7 = (*cons_fn)({make_int(42), make_int(1)});
+        lst7 = (*list_fn)({make_int(10), make_int(20), make_int(30)});
+        vec7 = (*vec_fn)({make_int(10), make_int(20)});
+        str7 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("hello")));
+        nested7 = (*list_fn)({(*list_fn)({make_int(77)})});
+        alist7 = (*list_fn)({(*cons_fn)({make_int(10), make_int(11)})});
+    }
+    CHECK(!is_error(pair7) && !is_error(lst7) && !is_error(vec7) && is_string(str7),
+          "4505: tenant 7 mints the shared payloads");
+
+    EvalValue own9s, own9vec, own9pair;
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        own9s = make_string(static_cast<std::uint64_t>(ev.push_string_heap("zz")));
+        own9vec = (*vec_fn)({make_int(5)});
+        own9pair = (*cons_fn)({make_int(5), make_int(6)});
+    }
+
+    // One denied call per prim; the audit ring must carry exactly one
+    // IsolationDeny row per op, and no payload may come back.
+    reset_security_event_ring_for_test();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto r_listref = (*list_ref_fn)({lst7, make_int(0)});
+        auto r_append = (*append_fn)({lst7, make_void()});
+        auto r_reverse = (*reverse_fn)({lst7});
+        auto r_map = (*map_fn)({car_prim, lst7});
+        auto r_filter = (*filter_fn)({car_prim, lst7});
+        auto r_member = (*member_fn)({make_int(10), lst7});
+        auto r_memv = (*memv_fn)({make_int(10), lst7});
+        auto r_assv = (*assv_fn)({make_int(10), alist7});
+        auto r_length = (*length_fn)({lst7});
+        auto r_caar = (*caar_fn)({nested7});
+        auto r_v2l = (*v2l_fn)({vec7});
+        auto r_l2v = (*l2v_fn)({lst7});
+        auto r_vlen = (*vlen_fn)({vec7});
+        auto r_sref = (*sref_fn)({str7, make_int(0)});
+        auto r_subs = (*subs_fn)({str7, make_int(0), make_int(2)});
+        auto r_s2l = (*s2l_fn)({str7});
+        auto r_slen = (*slen_fn)({str7});
+        auto r_sapp = (*sapp_fn)({str7});
+        auto r_seq = (*seq_fn)({str7, str7});
+        CHECK(is_error(r_listref), "4505: tenant 9 list-ref denied");
+        CHECK(is_error(r_append), "4505: tenant 9 append denied");
+        CHECK(is_error(r_reverse), "4505: tenant 9 reverse denied");
+        CHECK(is_error(r_map), "4505: tenant 9 map denied");
+        CHECK(is_error(r_filter), "4505: tenant 9 filter denied");
+        CHECK(is_error(r_member), "4505: tenant 9 member denied (no sublist ref)");
+        CHECK(is_error(r_memv), "4505: tenant 9 memv denied");
+        CHECK(is_error(r_assv), "4505: tenant 9 assv denied");
+        CHECK(is_error(r_length), "4505: tenant 9 length denied");
+        CHECK(is_error(r_caar), "4505: tenant 9 caar denied on the nested list");
+        CHECK(is_error(r_v2l), "4505: tenant 9 vector->list denied");
+        CHECK(is_error(r_l2v), "4505: tenant 9 list->vector denied");
+        CHECK(is_error(r_vlen), "4505: tenant 9 vector-length denied");
+        CHECK(is_error(r_sref), "4505: tenant 9 string-ref denied");
+        CHECK(is_error(r_subs), "4505: tenant 9 substring denied");
+        CHECK(is_error(r_s2l), "4505: tenant 9 string->list denied");
+        CHECK(is_error(r_slen), "4505: tenant 9 string-length denied");
+        CHECK(is_error(r_sapp), "4505: tenant 9 string-append denied");
+        CHECK(is_error(r_seq), "4505: tenant 9 string=? denied");
+        CHECK(ring_isolation_deny_count("list-ref") == 1, "4505: one IsolationDeny list-ref");
+        CHECK(ring_isolation_deny_count("append") == 1, "4505: one IsolationDeny append");
+        CHECK(ring_isolation_deny_count("reverse") == 1, "4505: one IsolationDeny reverse");
+        CHECK(ring_isolation_deny_count("map") == 1, "4505: one IsolationDeny map");
+        CHECK(ring_isolation_deny_count("filter") == 1, "4505: one IsolationDeny filter");
+        CHECK(ring_isolation_deny_count("member") == 1, "4505: one IsolationDeny member");
+        CHECK(ring_isolation_deny_count("memv") == 1, "4505: one IsolationDeny memv");
+        CHECK(ring_isolation_deny_count("assv") == 1, "4505: one IsolationDeny assv");
+        CHECK(ring_isolation_deny_count("length") == 1, "4505: one IsolationDeny length");
+        CHECK(ring_isolation_deny_count("caar") == 1, "4505: one IsolationDeny caar");
+        CHECK(ring_isolation_deny_count("vector->list") == 1,
+              "4505: one IsolationDeny vector->list");
+        CHECK(ring_isolation_deny_count("list->vector") == 1,
+              "4505: one IsolationDeny list->vector");
+        CHECK(ring_isolation_deny_count("vector-length") == 1,
+              "4505: one IsolationDeny vector-length");
+        CHECK(ring_isolation_deny_count("string-ref") == 1, "4505: one IsolationDeny string-ref");
+        CHECK(ring_isolation_deny_count("substring") == 1, "4505: one IsolationDeny substring");
+        CHECK(ring_isolation_deny_count("string->list") == 1,
+              "4505: one IsolationDeny string->list");
+        CHECK(ring_isolation_deny_count("string-length") == 1,
+              "4505: one IsolationDeny string-length");
+        CHECK(ring_isolation_deny_count("string-append") == 1,
+              "4505: one IsolationDeny string-append");
+        CHECK(ring_isolation_deny_count("string=?") == 1, "4505: one IsolationDeny string=?");
+
+        // display / write: no payload on stdout, deny result, one row each.
+        const auto out_ds = with_stdout_capture([&] {
+            auto r = (*display_fn)({str7});
+            CHECK(is_error(r), "4505: tenant 9 display of a foreign string denied");
+        });
+        const auto out_dp = with_stdout_capture([&] {
+            auto r = (*display_fn)({pair7});
+            CHECK(is_error(r), "4505: tenant 9 display of a foreign pair denied");
+        });
+        const auto out_dv = with_stdout_capture([&] {
+            auto r = (*display_fn)({vec7});
+            CHECK(is_error(r), "4505: tenant 9 display of a foreign vector denied");
+        });
+        const auto out_ws = with_stdout_capture([&] {
+            auto r = (*write_fn)({str7});
+            CHECK(is_error(r), "4505: tenant 9 write of a foreign string denied");
+        });
+        CHECK(out_ds.find("hello") == std::string::npos,
+              "4505: foreign string bytes absent from stdout (display)");
+        CHECK(out_dp.find("42") == std::string::npos && out_dp.find("(") == std::string::npos,
+              "4505: foreign pair payload absent from stdout (display)");
+        CHECK(out_dv.find("#(") == std::string::npos && out_dv.find("10") == std::string::npos,
+              "4505: foreign vector payload absent from stdout (display)");
+        CHECK(out_ws.find("hello") == std::string::npos,
+              "4505: foreign string bytes absent from stdout (write)");
+        CHECK(ring_isolation_deny_count("display") == 3,
+              "4505: one IsolationDeny per display deny");
+        CHECK(ring_isolation_deny_count("write") == 1, "4505: one IsolationDeny write");
+
+        // vector-ref OOB: the deny must fire before the #4497 branch formats
+        // vector_heap[idx].size() into the message — the length is payload.
+        auto r_vref_oob = (*vref_fn)({vec7, make_int(99)});
+        CHECK(is_error(r_vref_oob), "4505: tenant 9 vector-ref OOB denied");
+        if (is_error(r_vref_oob)) {
+            const auto eidx = static_cast<std::size_t>(as_error_idx(r_vref_oob));
+            CHECK(eidx < ev.error_values_.size() && is_string(ev.error_values_[eidx]),
+                  "4505: OOB deny carries an error message");
+            if (eidx < ev.error_values_.size() && is_string(ev.error_values_[eidx])) {
+                const auto msg = ev.copy_string_heap_at(
+                    static_cast<std::size_t>(as_string_idx(ev.error_values_[eidx])));
+                CHECK(msg.find("for vector of length 2") == std::string::npos,
+                      "4505: foreign length not formatted into the OOB message");
+                CHECK(msg.find("denied") != std::string::npos,
+                      "4505: OOB message is the cross-tenant deny shape");
+            }
+        }
+        CHECK(ring_isolation_deny_count("vector-ref") == 1, "4505: one IsolationDeny vector-ref");
+
+        // eval_hash_keys_eq: the probe is an equality oracle. A foreign
+        // string/vector/pair stored key must not answer byte/element
+        // equality for tenant 9 — a mismatch reads as missing.
+        auto h9s = (*hash_fn)({str7, make_int(42)});
+        auto h9v = (*hash_fn)({vec7, make_int(43)});
+        auto h9p = (*hash_fn)({pair7, make_int(44)});
+        CHECK(is_hash(h9s) && is_hash(h9v) && is_hash(h9p),
+              "4505: tenant 9 mints the probe tables");
+        if (is_hash(h9s) && is_hash(h9v) && is_hash(h9p)) {
+            const auto base_s = ring_isolation_deny_count("hash-ref");
+            auto rs = (*href_fn)({h9s, own9s});
+            auto rv = (*href_fn)({h9v, own9vec});
+            auto rp = (*href_fn)({h9p, own9pair});
+            auto hs = (*hhas_fn)({h9s, own9s});
+            CHECK(is_void(rs), "4505: foreign string key probes as missing");
+            CHECK(is_void(rv), "4505: foreign vector key probes as missing");
+            CHECK(is_void(rp), "4505: foreign pair key probes as missing");
+            CHECK(is_bool(hs) && !as_bool(hs), "4505: hash-has-key? misses on the foreign key");
+            CHECK(ring_isolation_deny_count("hash-ref") == base_s + 3,
+                  "4505: one probe IsolationDeny per foreign key arm (hash-ref)");
+            CHECK(ring_isolation_deny_count("hash-has-key?") == 1,
+                  "4505: one probe IsolationDeny (hash-has-key?)");
+        }
+    }
+
+    // Owner still reads its own mints, payloads unchanged after the denies.
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto r0 = (*list_ref_fn)({lst7, make_int(0)});
+        auto r2 = (*list_ref_fn)({lst7, make_int(2)});
+        CHECK(is_int(r0) && as_int(r0) == 10, "4505: owner list-ref head");
+        CHECK(is_int(r2) && as_int(r2) == 30, "4505: owner list-ref tail");
+        auto ap = (*append_fn)({lst7, make_void()});
+        CHECK(!is_error(ap) && is_pair(ap) && as_int((*car_fn)({ap})) == 10,
+              "4505: owner append copies");
+        auto rev = (*reverse_fn)({lst7});
+        CHECK(!is_error(rev) && is_pair(rev) && as_int((*car_fn)({rev})) == 30,
+              "4505: owner reverse copies");
+        auto mp = (*map_fn)({car_prim, alist7});
+        CHECK(!is_error(mp) && is_pair(mp) && as_int((*car_fn)({mp})) == 10,
+              "4505: owner map copies");
+        auto fl = (*filter_fn)({car_prim, alist7});
+        CHECK(!is_error(fl) && is_pair(fl), "4505: owner filter copies");
+        auto mem = (*member_fn)({make_int(20), lst7});
+        CHECK(is_pair(mem), "4505: owner member returns the sublist");
+        auto mv = (*memv_fn)({make_int(20), lst7});
+        CHECK(is_pair(mv), "4505: owner memv returns the sublist");
+        auto av = (*assv_fn)({make_int(10), alist7});
+        CHECK(is_pair(av), "4505: owner assv returns the entry");
+        auto len = (*length_fn)({lst7});
+        CHECK(is_int(len) && as_int(len) == 3, "4505: owner length");
+        auto ca = (*caar_fn)({nested7});
+        CHECK(is_int(ca) && as_int(ca) == 77, "4505: owner caar on the nested list");
+        auto v2l = (*v2l_fn)({vec7});
+        CHECK(is_pair(v2l) && as_int((*car_fn)({v2l})) == 10, "4505: owner vector->list copies");
+        auto l2v = (*l2v_fn)({lst7});
+        CHECK(is_vector(l2v), "4505: owner list->vector mints");
+        if (is_vector(l2v)) {
+            auto e = (*vref_fn)({l2v, make_int(1)});
+            CHECK(is_int(e) && as_int(e) == 20, "4505: owner list->vector elements");
+        }
+        auto vl = (*vlen_fn)({vec7});
+        CHECK(is_int(vl) && as_int(vl) == 2, "4505: owner vector-length");
+        auto sr = (*sref_fn)({str7, make_int(0)});
+        CHECK(is_int(sr) && as_int(sr) == 104, "4505: owner string-ref is 'h'");
+        auto subs = (*subs_fn)({str7, make_int(0), make_int(2)});
+        CHECK(is_string(subs) &&
+                  ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(subs))) == "he",
+              "4505: owner substring copies");
+        auto s2l = (*s2l_fn)({str7});
+        CHECK(is_pair(s2l) && as_int((*car_fn)({s2l})) == 104, "4505: owner string->list copies");
+        auto sl = (*slen_fn)({str7});
+        CHECK(is_int(sl) && as_int(sl) == 5, "4505: owner string-length");
+        auto sa = (*sapp_fn)({str7, str7});
+        CHECK(is_string(sa) && ev.copy_string_heap_at(
+                                   static_cast<std::size_t>(as_string_idx(sa))) == "hellohello",
+              "4505: owner string-append copies");
+        auto sq = (*seq_fn)({str7, str7});
+        CHECK(is_bool(sq) && as_bool(sq), "4505: owner string=? compares");
+        const auto out_own_d = with_stdout_capture([&] { (void)(*display_fn)({str7}); });
+        const auto out_own_w = with_stdout_capture([&] { (void)(*write_fn)({str7}); });
+        const auto out_own_p = with_stdout_capture([&] { (void)(*display_fn)({pair7}); });
+        const auto out_own_v = with_stdout_capture([&] { (void)(*display_fn)({vec7}); });
+        CHECK(out_own_d.find("hello") != std::string::npos, "4505: owner display prints");
+        CHECK(out_own_w.find("\"hello\"") != std::string::npos, "4505: owner write quotes");
+        CHECK(out_own_p.find("(42 . 1)") != std::string::npos, "4505: owner display pair");
+        CHECK(out_own_v.find("#(10 20)") != std::string::npos, "4505: owner display vector");
+        // Source objects untouched by every deny above (readers, not stores).
+        CHECK(as_int((*car_fn)({pair7})) == 42, "4505: owner pair bytes unchanged");
+        CHECK(ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(str7))) == "hello",
+              "4505: owner string bytes unchanged");
+        auto vlast = (*vref_fn)({vec7, make_int(1)});
+        CHECK(is_int(vlast) && as_int(vlast) == 20, "4505: owner vector unchanged");
+    }
+
+    // Tenant 0's mint is a real stamp (tenant+1) and refuses tenant 9;
+    // tenant 0 still reads its own slots.
+    EvalValue lst0, str0;
+    {
+        aura::compiler::Evaluator::TenantScope t0(ev, 0);
+        lst0 = (*list_fn)({make_int(5), make_int(6)});
+        str0 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("zero")));
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto r = (*list_ref_fn)({lst0, make_int(0)});
+        auto sl = (*slen_fn)({str0});
+        CHECK(is_error(r), "4505: tenant-0 list refused for tenant 9");
+        CHECK(is_error(sl), "4505: tenant-0 string refused for tenant 9");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t0(ev, 0);
+        auto r = (*list_ref_fn)({lst0, make_int(0)});
+        auto sl = (*slen_fn)({str0});
+        CHECK(is_int(r) && as_int(r) == 5, "4505: tenant 0 reads its own list");
+        CHECK(is_int(sl) && as_int(sl) == 4, "4505: tenant 0 reads its own string");
+    }
+
+    // Soft/Off: the helpers return true before the stamp load — foreign
+    // reads copy/print and no IsolationDeny row is written.
+    reset_security_event_ring_for_test();
+    ev.set_effect_sandbox_mode(0);
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto r = (*list_ref_fn)({lst7, make_int(0)});
+        CHECK(is_int(r) && as_int(r) == 10, "4505: Off list-ref copies");
+        auto sr = (*sref_fn)({str7, make_int(0)});
+        CHECK(is_int(sr) && as_int(sr) == 104, "4505: Off string-ref copies");
+        auto v2l = (*v2l_fn)({vec7});
+        CHECK(is_pair(v2l), "4505: Off vector->list copies");
+        const auto out = with_stdout_capture([&] { (void)(*display_fn)({str7}); });
+        CHECK(out.find("hello") != std::string::npos, "4505: Off display prints the payload");
+        CHECK(!ring_has_isolation_deny("list-ref") && !ring_has_isolation_deny("string-ref") &&
+                  !ring_has_isolation_deny("display"),
+              "4505: Off records no reader IsolationDeny");
+    }
+
+    // Source-cite windows: the gates live in the prim bodies, ahead of any
+    // copy/format/print, and none of them add a require_effect choke.
+    const auto list_src = read_file("src/compiler/evaluator_primitives_list.cpp");
+    const auto lrpos = list_src.find("add, ev, \"list-ref\"");
+    CHECK(lrpos != std::string::npos, "4505: list-ref body located");
+    if (lrpos != std::string::npos) {
+        const auto win = list_src.substr(lrpos, 2600);
+        CHECK(win.find("inrange_slot_tenant_allows") != std::string::npos,
+              "4505: list-ref consults the mint stamp");
+        CHECK(win.find("require_effect") == std::string::npos,
+              "4505: list-ref stays body-choke-free");
+    }
+    CHECK(list_src.find("append: cross-tenant pair slot read denied (#4505)") != std::string::npos,
+          "4505: append deny shape present");
+    CHECK(list_src.find("\"map\"") != std::string::npos &&
+              list_src.find("\"filter\"") != std::string::npos,
+          "4505: map/filter gates cite the prim op");
+    const auto vec_src = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    const auto vrpos = vec_src.find("add, ev, \"vector-ref\"");
+    CHECK(vrpos != std::string::npos, "4505: vector-ref body located");
+    if (vrpos != std::string::npos) {
+        const auto win = vec_src.substr(vrpos, 2600);
+        const auto gate = win.find("inrange_slot_tenant_allows");
+        const auto oob = win.find("for vector of length");
+        CHECK(gate != std::string::npos && oob != std::string::npos && gate < oob,
+              "4505: vector-ref gate precedes the length format");
+    }
+    // The char file registers the string->list that wins name lookup —
+    // its body must carry the same reader gate.
+    const auto char_src = read_file("src/compiler/evaluator_primitives_char.cpp");
+    const auto cs2l = char_src.find("add(\"string->list\"");
+    CHECK(cs2l != std::string::npos, "4505: winning string->list registration located");
+    if (cs2l != std::string::npos) {
+        const auto win = char_src.substr(cs2l, 900);
+        CHECK(win.find("inrange_string_tenant_allows") != std::string::npos,
+              "4505: winning string->list consults the intern stamp");
+    }
+    const auto eqpos = vec_src.find("bool eval_hash_keys_eq(");
+    CHECK(eqpos != std::string::npos, "4505: eval_hash_keys_eq located");
+    if (eqpos != std::string::npos) {
+        const auto win = vec_src.substr(eqpos, 3200);
+        CHECK(win.find("inrange_string_tenant_allows") != std::string::npos,
+              "4505: key equality gates foreign string bytes");
+        CHECK(win.find("inrange_slot_tenant_allows") != std::string::npos,
+              "4505: key equality gates foreign pair/vector slots");
+    }
+    const auto pair_src = read_file("src/compiler/evaluator_primitives_pair.cpp");
+    const auto s2lpos = pair_src.find("add, ev, \"string->list\"");
+    CHECK(s2lpos != std::string::npos, "4505: string->list body located");
+    if (s2lpos != std::string::npos) {
+        const auto win = pair_src.substr(s2lpos, 1200);
+        CHECK(win.find("inrange_string_tenant_allows") != std::string::npos,
+              "4505: string->list consults the intern stamp");
+        CHECK(win.find("require_effect") == std::string::npos,
+              "4505: string->list stays body-choke-free");
+    }
+    CHECK(pair_src.find("caar: cross-tenant pair slot read denied (#4505)") != std::string::npos,
+          "4505: caar deny shape present");
+    const auto rt_src = read_file("src/compiler/evaluator_primitives_runtime.cpp");
+    const auto dpos = rt_src.find("add(\"display\"");
+    CHECK(dpos != std::string::npos, "4505: display body located");
+    if (dpos != std::string::npos) {
+        const auto win = rt_src.substr(dpos, 900);
+        CHECK(win.find("io_walk_tenant_allows") != std::string::npos,
+              "4505: display pre-walks the payload before printing");
+    }
+    CHECK(rt_src.find("static bool io_walk_tenant_allows") != std::string::npos,
+          "4505: io_print_val walk is gated by the pre-walk helper");
 
     aura::core::provenance::set_multi_tenant_env_active(false);
     set_mode(SandboxMode::Off);
@@ -4275,6 +4752,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4431: stamp user-visible pair lists at the mint ──
     ac4431_user_visible_pair_mint();
+
+    // ── Issue #4505: in-range reader prims tenant gate ──
+    ac4505_inrange_reader_prims();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

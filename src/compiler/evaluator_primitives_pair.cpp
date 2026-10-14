@@ -224,6 +224,13 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             auto idx = as_string_idx(a[0]);
             if (idx >= string_heap.size())
                 return make_bool(false);
+            // Issue #4505: reader gate before the code points are read.
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string->list")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string->list: cross-tenant string slot read denied (#4505)",
+                    primitive_error_counter);
+            }
             const auto& s = string_heap[idx];
             // Issue #4472: one code point per element. Byte length is an
             // upper bound, so the #2916 quota check stays conservative.
@@ -530,194 +537,420 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
     // ── Cadr / Caddr shorthands ────────────────────────────────────
     register_prim(
         add, ev, "caar",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: the shorthand family reads the same in-range
+            // pairs_ slots as car/cdr (#4298) — stamp compare before each
+            // field read, deny shape identical, no effect consumed.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].car;
             if (!is_pair(c))
                 return make_void();
-            return pairs[as_pair_idx(c)].car;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[ci].car;
         },
         pure_general(1, "(pair) -> any", "car of car."));
     register_prim(
         add, ev, "cadr",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
                 return make_void();
-            return pairs[as_pair_idx(c)].car;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[ci].car;
         },
         pure_general(1, "(pair) -> any", "car of cdr."));
     register_prim(
         add, ev, "cdar",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].car;
             if (!is_pair(c))
                 return make_void();
-            return pairs[as_pair_idx(c)].cdr;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[ci].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of car."));
     register_prim(
         add, ev, "cddr",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
                 return make_void();
-            return pairs[as_pair_idx(c)].cdr;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[ci].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of cdr."));
     register_prim(
         add, ev, "caaar",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caaar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caaar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].car;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].car;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caaar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caaar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].car;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].car;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caaar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caaar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].car;
         },
         pure_general(1, "(pair) -> any", "car of caar."));
     register_prim(
         add, ev, "caadr",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].car;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].car;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].car;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].car;
         },
         pure_general(1, "(pair) -> any", "car of cadr."));
     register_prim(
         add, ev, "cadar",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cadar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cadar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].car;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].cdr;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cadar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cadar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].cdr;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].car;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cadar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cadar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].car;
         },
         pure_general(1, "(pair) -> any", "car of cdar."));
     register_prim(
         add, ev, "caddr",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].cdr;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].cdr;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].car;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "caddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "caddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].car;
         },
         pure_general(1, "(pair) -> any", "car of cddr."));
     register_prim(
         add, ev, "cdaar",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdaar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdaar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].car;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].car;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdaar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdaar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].car;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].cdr;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdaar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdaar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of caar."));
     register_prim(
         add, ev, "cdadr",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].car;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].car;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].cdr;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdadr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdadr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of cadr."));
     register_prim(
         add, ev, "cddar",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cddar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cddar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].car;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].cdr;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cddar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cddar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].cdr;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].cdr;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cddar")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cddar: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of cdar."));
     register_prim(
         add, ev, "cdddr",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
             if (idx >= pairs.size())
                 return make_void();
+            // Issue #4505: same reader gate as caar, one compare per slot.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
                 return make_void();
-            auto d = pairs[as_pair_idx(c)].cdr;
+            auto ci = as_pair_idx(c);
+            if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto d = pairs[ci].cdr;
             if (!is_pair(d))
                 return make_void();
-            return pairs[as_pair_idx(d)].cdr;
+            auto di = as_pair_idx(d);
+            if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "cdddr")) {
+                return make_primitive_error(string_heap, error_values,
+                                            "cdddr: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return pairs[di].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of cddr."));
 
@@ -860,8 +1093,18 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             for (auto& v : a) {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
-                    if (idx < string_heap.size())
+                    if (idx < string_heap.size()) {
+                        // Issue #4505: no foreign bytes in the concatenated
+                        // copy; same reader gate as string=?.
+                        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
+                                                             "string-append")) {
+                            return make_primitive_error(
+                                string_heap, error_values,
+                                "string-append: cross-tenant string slot read denied (#4505)",
+                                primitive_error_counter);
+                        }
                         result += string_heap[idx];
+                    }
                 } else if (is_int(v)) {
                     result += std::to_string(as_int(v));
                 }
@@ -887,7 +1130,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(255, "(...strings) -> string", "Concatenate strings."));
     register_prim(
         add, ev, "string-length",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
             std::size_t len = 0;
@@ -895,8 +1138,18 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // (an integer is not measured as its decimal spelling).
             if (is_string(a[0])) {
                 auto idx = as_string_idx(a[0]);
-                if (idx < string_heap.size())
+                if (idx < string_heap.size()) {
+                    // Issue #4505: the count is foreign structure; same
+                    // reader gate as the other string readers.
+                    if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
+                                                         "string-length")) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "string-length: cross-tenant string slot read denied (#4505)",
+                            ev.primitive_error_counter_ptr());
+                    }
                     len = utf8_unit_count(string_heap[idx]);
+                }
             }
             return make_int(static_cast<std::int64_t>(len));
         },
@@ -923,7 +1176,17 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // Issue #4320 / #4472: one locked scan, not a copy of the heap
             // string. The result is the code point (a character fixnum).
             if (is_string(a[0])) {
-                int cp = ev.string_heap_code_point_at(as_string_idx(a[0]), pos);
+                auto idx = as_string_idx(a[0]);
+                // Issue #4505: the code point is payload; compare the intern
+                // stamp before the locked scan. Same error shape as oob().
+                if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-ref")) {
+                    auto __i = static_cast<std::uint64_t>(ev.push_string_heap(
+                        "string-ref: cross-tenant string slot read denied (#4505)"));
+                    auto __e = error_values.size();
+                    error_values.push_back(make_string(__i));
+                    return make_error(__e);
+                }
+                int cp = ev.string_heap_code_point_at(idx, pos);
                 if (cp < 0)
                     return oob();
                 return make_int(cp);
@@ -938,9 +1201,18 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(0);
             // Issue #2652: copy source under lock then push via locked helper.
             std::string s;
-            if (is_string(a[0]))
+            if (is_string(a[0])) {
+                // Issue #4505: the bytes are payload; compare the intern
+                // stamp before the copy.
+                if (!ev.inrange_string_tenant_allows(as_string_idx(a[0]), /*required_effects=*/0,
+                                                     "substring")) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "substring: cross-tenant string slot read denied (#4505)",
+                        ev.primitive_error_counter_ptr());
+                }
                 s = ev.copy_string_heap_at(as_string_idx(a[0]));
-            else
+            } else
                 return make_int(0);
             // Issue #4472: indexes are code points, so a slice never splits
             // a well-formed UTF-8 sequence. Past-the-end clamps.
@@ -957,10 +1229,25 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                      "Substring from start to end, in code points."));
     register_prim(
         add, ev, "string=?",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2)
                 return make_bool(false);
-            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+            // Issue #4505: a foreign operand must not answer byte equality —
+            // the intern stamp compare runs before to_str reads the heap.
+            auto tenant_allows = [&](const EvalValue& v) {
+                if (!is_string(v))
+                    return true;
+                auto idx = as_string_idx(v);
+                return idx >= string_heap.size() ||
+                       ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string=?");
+            };
+            if (!tenant_allows(a[0]) || !tenant_allows(a[1])) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string=?: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            }
+            auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
                     return (idx < string_heap.size()) ? string_heap[idx] : "";
