@@ -275,17 +275,19 @@ def main() -> int:
 
     # ── AC6: linear_safety_probe emits call + OR with epoch check ──
     ac6_call = "llvm::FunctionCallee(fn_linear_move_drop_elision_ok)" in jit
-    ac6_icmp = "not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32)" in jit
-    ac6_or = "any_unsafe = irb->CreateOr(is_unsafe, not_elision_ok)" in jit
+    ac6_icmp = "elision_blocked = irb->CreateICmpEQ(elision_ok_i, zero32)" in jit
+    ac6_or = "any_unsafe = irb->CreateOr(is_unsafe, elision_blocked)" in jit
     ac6_condbr = "irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok)" in jit
     ac6_cite = "Issue #3186" in jit
     ac6_ok = ac6_call and ac6_icmp and ac6_or and ac6_condbr and ac6_cite
     if not ac6_call:
         fails.append("AC6: linear_safety_probe must emit CreateCall to fn_linear_move_drop_elision_ok")
     if not ac6_icmp:
-        fails.append("AC6: linear_safety_probe must ICmpNE elision_ok_i to zero32 (1=OK, 0=blocked)")
+        fails.append(
+            "AC6: linear_safety_probe must ICmpEQ elision_ok_i to zero32 (fail-closed on elision block, #4512)"
+        )
     if not ac6_or:
-        fails.append("AC6: linear_safety_probe must OR epoch-check is_unsafe with not_elision_ok into any_unsafe")
+        fails.append("AC6: linear_safety_probe must OR epoch-check is_unsafe with elision_blocked into any_unsafe")
     if not ac6_condbr:
         fails.append("AC6: linear_safety_probe must branch on any_unsafe (deopt on either failure)")
     if not ac6_cite:

@@ -67,8 +67,9 @@ def main() -> int:
     report("AC3", good, "eval_flat skips eval on deny (production-gated)")
 
     # Issue #4101 reworded the flat-side contract comment; macro-side pin
-    # unchanged.
-    good = "Soft/Off keeps the splice (contract)" in me and ("Soft/Off: historical half-write may remain" in flat)
+    # unchanged. #4511 reworded the flat-side parenthetical — pin the stable
+    # prefix so wording-only churn does not break the contract pin.
+    good = "Soft/Off keeps the splice (contract)" in me and ("Soft/Off: historical half-write" in flat)
     report("AC4", good, "Soft/Off half-expand contract unchanged")
 
     good = (
