@@ -1,4 +1,7 @@
 #include <cstdlib>
+#include "../lib/aura_value_abi.h" // #4502: single encoding source
+#define AURA_ABI_STR2(x) #x
+#define AURA_ABI_STR(x) AURA_ABI_STR2(x)
 #include "compiler/aura_jit.h"
 #include "compiler/messaging_bridge.h"
 #include "compiler/runtime_shared.h"
@@ -2488,10 +2491,15 @@ int main(int argc, char* argv[]) {
             // Issue #4502 F3: pairs are exactly low2 == 01. The old `x<0 ||`
             // test matched every negative fixnum and every boxed float/string
             // under #4482. Value ABI must match lib/runtime.c AURA_VALUE_ABI.
-            code += "#define AURA_AOT_VALUE_ABI 2\n";
+            // #4502 step 1: every constant comes from lib/aura_value_abi.h.
+            code += "#define AURA_AOT_VALUE_ABI " AURA_ABI_STR(AURA_VALUE_ABI) "\n";
+            static_assert(AURA_VALUE_ABI == 4, "#4502: update the AOT preamble with the ABI");
             code += "#define AURA_AOT_IS_PAIR(x) (((x)&3)==1)\n";
-            code += "#define MAKE_STRING_SENTINEL(i) ((-9000000000000000000LL + 3) - ((int64_t)(i) "
-                    "<< 2))\n"; // #4482
+            code += "#define AURA_AOT_FALSE " AURA_ABI_STR(AURA_V_FALSE) "\n";
+            code += "#define AURA_AOT_TRUE " AURA_ABI_STR(AURA_V_TRUE) "\n";
+            code += "#define AURA_AOT_VOID " AURA_ABI_STR(AURA_V_VOID) "\n";
+            code += "#define MAKE_STRING_SENTINEL(i) ((int64_t)(((uint64_t)(i) << " AURA_ABI_STR(
+                AURA_IMM_PAYLOAD_SHIFT) ") | " AURA_ABI_STR(AURA_STRING_LOW8) "))\n";
             code += "int64_t aura_display_int(int64_t);\n";
             code += "int64_t aura_alloc_pair(int64_t, int64_t);\n";
             code += "int64_t aura_pair_car(int64_t);\n";
@@ -2529,10 +2537,14 @@ int main(int argc, char* argv[]) {
                 else if (n == ">=")
                     code += "    for(int i=0;i<c-1;i++) if(!(a[i]>=a[i+1])) return 0; return 1;\n";
                 else if (n == "not")
-                    code += "    return (c<1||a[0]==3)?7:3;\n"; // #4491: only #f is false
+                    code += "    return "
+                            "(c<1||a[0]==AURA_AOT_FALSE)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n"; // #4491:
+                                                                                           // only
+                                                                                           // #f is
+                                                                                           // false
                 else if (n == "append") {
-                    code +=
-                        "    if(c<1)return 0; int64_t lst1=c>0?a[0]:0; int64_t lst2=c>1?a[1]:0;\n";
+                    code += "    if(c<1)return AURA_AOT_VOID; int64_t lst1=c>0?a[0]:0; int64_t "
+                            "lst2=c>1?a[1]:0;\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
                     code += "    "
                             "while(AURA_AOT_IS_PAIR(lst1)&&revc<1024){rev[revc++]=aura_pair_car("
@@ -2553,11 +2565,12 @@ int main(int argc, char* argv[]) {
                     code +=
                         "    while(AURA_AOT_IS_PAIR(lst)&&revc<1024){args[0]=aura_pair_car(lst); "
                         "rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
-                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) "
+                    code += "    int64_t r=AURA_AOT_VOID; for(int i=revc-1;i>=0;i--) "
                             "r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
                 } else if (n == "null?")
-                    code += "    return (c>=1&&(a[0]==11||a[0]==0))?1:0;\n";
+                    code += "    return (c>=1&&a[0]==AURA_AOT_VOID)?1:0;\n"; // #4502: only '(), not
+                                                                             // 0 or unspecified
                 else if (n == "pair?")
                     // Issue #106 sub-task 4 (audit): the previous
                     // expression was (c>0&&(((a[0]&3)==1))||a[0]<0)
@@ -2585,14 +2598,14 @@ int main(int argc, char* argv[]) {
                     code += "    while(i>0&&AURA_AOT_IS_PAIR(v)){v=aura_pair_cdr(v);i--;}\n";
                     code += "    if(i==0&&AURA_AOT_IS_PAIR(v))return aura_pair_car(v); return 0;\n";
                 } else if (n == "reverse") {
-                    code += "    int64_t v=c>0?a[0]:0; int64_t r=0;\n";
+                    code += "    int64_t v=c>0?a[0]:0; int64_t r=AURA_AOT_VOID;\n";
                     code +=
                         "    "
                         "while(AURA_AOT_IS_PAIR(v)){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_"
                         "pair_cdr(v);}\n";
                     code += "    return r;\n";
                 } else if (n == "list") {
-                    code += "    int64_t r=0;\n";
+                    code += "    int64_t r=AURA_AOT_VOID;\n";
                     code += "    for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
                     code += "    return r;\n";
                 } else if (n == "display") {
@@ -2606,7 +2619,7 @@ int main(int argc, char* argv[]) {
                         "    while(AURA_AOT_IS_PAIR(lst)&&revc<1024){int64_t v=aura_pair_car(lst); "
                         "args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; "
                         "lst=aura_pair_cdr(lst);}\n";
-                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) "
+                    code += "    int64_t r=AURA_AOT_VOID; for(int i=revc-1;i>=0;i--) "
                             "r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
                 } else if (n == "foldl") {
@@ -2619,7 +2632,8 @@ int main(int argc, char* argv[]) {
                     code += "    return acc;\n";
                 } else {
                     // Unknown primitives (e.g. ADT constructors): build pair chain with tag string
-                    code += "    int64_t r=0; for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
+                    code += "    int64_t r=AURA_AOT_VOID; for(int i=c-1;i>=0;i--) "
+                            "r=aura_alloc_pair(a[i],r);\n";
                     code += "    r=aura_alloc_pair(MAKE_STRING_SENTINEL(" + std::to_string(s) +
                             "),r); return r;\n";
                 }

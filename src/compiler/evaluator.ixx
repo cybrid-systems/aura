@@ -17092,6 +17092,8 @@ format_value(const types::EvalValue& v, std::span<const std::string> heap,
         return "...";
     if (types::is_void(v))
         return "()";
+    if (types::is_unspecified(v))
+        return "#<unspecified>";
     if (types::is_bool(v))
         return types::as_bool(v) ? "#t" : "#f";
     if (types::is_int(v))

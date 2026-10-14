@@ -164,7 +164,7 @@ static void ac4_no_atomic_in_is_hot() {
     std::println("\n--- #2616 AC4: pure is_* tight loop (no classify atomics) ---");
     // Source: is_fixnum_hot body has no fetch_add
     const auto tags = read_file("src/compiler/value_tags.h");
-    auto pos = tags.find("is_fixnum_hot");
+    auto pos = tags.find("bool is_fixnum_hot("); // the definition, not a comment mention
     CHECK(pos != std::string::npos, "AC4: is_fixnum_hot present");
     if (pos != std::string::npos) {
         auto slice = tags.substr(pos, 800);

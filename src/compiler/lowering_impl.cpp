@@ -1261,7 +1261,16 @@ static std::uint32_t lower_flat_expr(
 
             state.cur_block = else_blk;
             state.current_narrowing_evidence = 0;
-            auto else_val = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+            // #4502 step 4: a missing else is the unspecified value
+            // (ConstVoid ops[1] = 1), matching the interpreter; it used to
+            // lower NULL_NODE to fixnum 0.
+            std::uint32_t else_val = 0;
+            if (v.children.size() < 3 || v.child(2) == NULL_NODE) {
+                else_val = state.alloc_local();
+                state.emit(IROpcode::ConstVoid, else_val, 1);
+            } else {
+                else_val = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+            }
             state.emit(IROpcode::Local, phi_slot, else_val);
             state.emit(IROpcode::Jump, merge_blk);
             // Merge: no inherited narrow from this if.

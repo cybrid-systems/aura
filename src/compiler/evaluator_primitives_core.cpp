@@ -74,7 +74,8 @@ void register_type_and_char_primitives(PrimRegistrar add) {
     add("void?", [](const auto& a) {
         if (a.empty())
             return types::make_bool(false);
-        return types::make_bool(types::is_void(a[0]));
+        // #4502 step 4: the unspecified value is also void-like.
+        return types::make_bool(types::is_void(a[0]) || types::is_unspecified(a[0]));
     });
     add("void", [](const auto&) { return types::make_void(); });
 

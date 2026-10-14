@@ -309,10 +309,9 @@ static void pop_lock_hooks_for_eval(aura::compiler::Evaluator* ev) {
 // Same v2 encoding; PrimCall must re-intern at the boundary.
 
 // Issue #181 Cycle 2: STRING_BIAS_VAL_2 is the v2 string range upper bound.
-static constexpr std::int64_t STRING_BIAS_VAL_LOCAL = aura::compiler::types::STRING_BIAS_VAL_2;
 
 static bool is_str_val(std::int64_t val) {
-    return aura::compiler::types::is_string_raw_v2(val) && val <= STRING_BIAS_VAL_LOCAL;
+    return aura::compiler::types::is_string_raw_v2(val);
 }
 
 // JIT string pool access (defined in aura_jit_runtime.cpp)
@@ -4519,7 +4518,9 @@ public:
                                         ev_result = types::EvalValue(raw_result);
                                         goto done;
                                     case aura::ir::IROpcode::ConstVoid:
-                                        ev_result = types::make_void();
+                                        ev_result = raw_result == AURA_V_UNSPEC
+                                                        ? types::make_unspecified()
+                                                        : types::make_void(); // #4502
                                         goto done;
                                     case aura::ir::IROpcode::MakePair:
                                         if (raw_result < 0)
@@ -8342,7 +8343,7 @@ public:
                 if (!types::is_closure(actual))
                     return;
                 const auto cid = types::as_closure_id(actual);
-                if (cid & types::kClosureIdHighBit)
+                if (types::is_ir_closure_id(cid))
                     return;
                 ir_value_cell_bindings_[name] = ci;
                 return;
@@ -8353,7 +8354,7 @@ public:
             if (!types::is_closure(actual))
                 return;
             const auto cid = types::as_closure_id(actual);
-            if (cid & types::kClosureIdHighBit)
+            if (types::is_ir_closure_id(cid))
                 return;
             const auto ci = evaluator_.cells().size();
             evaluator_.cells().push_back(actual);
@@ -10712,8 +10713,8 @@ public:
         // Issue #4357: disjoint closure ids. Two defines used to both mint
         // kClosureIdHighBit, and the owner map kept only the later name, so
         // a call of the first re-entered the second (hang or a 0 result).
-        if (next_ir_define_closure_id_ < types::kClosureIdHighBit)
-            next_ir_define_closure_id_ = types::kClosureIdHighBit;
+        if (!types::is_ir_closure_id(next_ir_define_closure_id_))
+            next_ir_define_closure_id_ = types::make_ir_closure_id(0);
         binding->interpreter->set_next_closure_id(next_ir_define_closure_id_);
 
         auto result = binding->interpreter->execute();
@@ -14104,7 +14105,7 @@ private:
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
     // Issue #4357: next id for bind_function_define_via_ir. Starts at the
     // high-bit base; each persistent interpreter consumes a disjoint span.
-    std::uint64_t next_ir_define_closure_id_ = types::kClosureIdHighBit;
+    std::uint64_t next_ir_define_closure_id_ = types::make_ir_closure_id(0);
 
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
@@ -17247,7 +17248,9 @@ public:
                                     result_type = types::EvalValue(raw_result);
                                     goto result_done;
                                 case aura::ir::IROpcode::ConstVoid:
-                                    result_type = types::make_void();
+                                    result_type = raw_result == AURA_V_UNSPEC
+                                                      ? types::make_unspecified()
+                                                      : types::make_void(); // #4502
                                     goto result_done;
                                 case aura::ir::IROpcode::MakePair:
                                     if (raw_result < 0)

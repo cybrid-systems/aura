@@ -6,7 +6,7 @@
 // │  This is a traditional header, deliberately NOT a C++ module.     │
 // │                                                                   │
 // │  value.ixx is a `module;` and the tag/bias constants it owns      │
-// │  (FLOAT_BIAS_VAL, STRING_BIAS_VAL, RefPair/RefClosure/...) are    │
+// │  (kSpecial*, RefPair/RefClosure/..., boxed float/string helpers)  │
 // │  intentionally not `export`ed — they're implementation details   │
 // │  of the tagged-value encoding shared with lib/runtime.c.          │
 // │                                                                   │
@@ -25,10 +25,11 @@
 //
 // ── Bit encoding (must match lib/runtime.c and value.ixx) ───────────
 //
-//   bits 0-1: TAG
-//     00 = Fixnum (signed integer, value >> 1)
-//     01 = Ref    (pool-indexed heap type)
-//     11 = Special (#f=3, #t=7, void=11)
+//   Source of truth: lib/aura_value_abi.h (ABI 3, #4482 / #4502).
+//   bit 0 == 0: Fixnum (signed, value >> 1, symmetric [-2^62, 2^62-1])
+//   bits 0-1 == 01: Ref (pool-indexed heap type)
+//   bits 0-1 == 11: Immediate, v = (payload << 8) | (kind << 2) | 3
+//     kind 0/1/2 = #f/#t/void (raw 3/7/11), 8 = Float, 9 = String
 //
 //   Ref sub-type (bits 2-5, 4 bits = 16 types):
 //     0=Pair, 1=Closure, 2=Cell, 3=Vector,
@@ -37,8 +38,7 @@
 //
 //   Ref bit layout: (pool_index << kRefPoolShift) | (type << kRefTypeShift) | kRefLowTag
 //
-//   Float: stored in runtime pool with FLOAT_BIAS encoding
-//   String: stored in runtime pool with STRING_BIAS encoding
+//   Float / String: ImmKind 8 / 9, payload = runtime pool index
 //
 #ifndef AURA_COMPILER_VALUE_TAGS_H
 #define AURA_COMPILER_VALUE_TAGS_H
@@ -47,6 +47,8 @@
 #include <cstdint>
 
 #include "core/cpp26_contract_stats.h"
+// #4502 step 1: C ABI header is the single source of truth.
+#include "../../lib/aura_value_abi.h"
 
 namespace aura::compiler::types {
 
@@ -62,19 +64,35 @@ static_assert(kRefTypeShift + 4 <= kRefPoolShift, "RefType must fit below pool i
 inline constexpr std::uint64_t kFixnumShift = 1;
 
 // Closure id high bit (IR executor: id is not a pool index).
-inline constexpr std::uint64_t kClosureIdHighBit = 1ULL << 48;
+inline constexpr std::uint64_t kClosureIdHighBit = AURA_CLOSURE_ID_HIGH_BIT;
+// #4502 step 6: closure ids are a field, not a magnitude. Bit 48 is the
+// "IR closure id" namespace flag; bits [0, 48) are the id within it.
+inline constexpr std::uint64_t kClosureIdSpaceMask = kClosureIdHighBit - 1;
+[[nodiscard]] inline constexpr bool is_ir_closure_id(std::uint64_t cid) noexcept {
+    return (cid & kClosureIdHighBit) != 0;
+}
+[[nodiscard]] inline constexpr std::uint64_t make_ir_closure_id(std::uint64_t n) noexcept {
+    return kClosureIdHighBit | (n & kClosureIdSpaceMask);
+}
+[[nodiscard]] inline constexpr std::uint64_t ir_closure_id_index(std::uint64_t cid) noexcept {
+    return cid & kClosureIdSpaceMask;
+}
+static_assert(is_ir_closure_id(make_ir_closure_id(0)) && !is_ir_closure_id(kClosureIdSpaceMask),
+              "#4502: closure id namespace bit");
 
 // ── Special sentinels (#902): low bits == 11 (tag Special) ────────
 //   #f = 3, #t = 7, void = 11  (must match lib/runtime.c)
-inline constexpr std::int64_t kSpecialFalse = 3;
-inline constexpr std::int64_t kSpecialTrue = 7;
-inline constexpr std::int64_t kSpecialVoid = 11;
+inline constexpr std::int64_t kSpecialFalse = AURA_V_FALSE;
+inline constexpr std::int64_t kSpecialTrue = AURA_V_TRUE;
+inline constexpr std::int64_t kSpecialVoid = AURA_V_VOID;
+// #4502 step 4: unspecified value of (if #f #f) / when / unless; not '().
+inline constexpr std::int64_t kSpecialUnspecified = AURA_V_UNSPEC;
 
 // Issue #571: unified tag classification for EvalValue v2 dispatch.
 enum class EvalValueTag : std::uint8_t {
     Fixnum = 0,
     Ref = 1,
-    StringV2 = 2,
+    StringV2 = 2, // enum id only; the string encoding is ImmKind 9 (#4502)
     Special = 3,
     Float = 4,
     Unknown = 255,
@@ -104,7 +122,7 @@ inline constexpr EvalValueTag eval_value_tag_low2_table(std::size_t idx) noexcep
 
 // Issue #1622: Special sentinel table (exact values).
 inline constexpr EvalValueTag classify_special_sentinel(std::int64_t v) noexcept {
-    if (v == kSpecialFalse || v == kSpecialTrue || v == kSpecialVoid)
+    if (v == kSpecialFalse || v == kSpecialTrue || v == kSpecialVoid || v == kSpecialUnspecified)
         return EvalValueTag::Special;
     return EvalValueTag::Unknown;
 }
@@ -169,14 +187,21 @@ inline constexpr bool kIntZeroIsFalse = false;
     return true;
 }
 
-// ── Pool bias sentinels ───────────────────────────────────────────
-// Issue #4482: boxed floats and strings carry low2 == 11 (odd), so every
-// even int64 is a fixnum and the fixnum range is the full symmetric
-// [-2^62, 2^62-1]. The biases keep their magnitude and gain low2 = 3.
-// Special sentinels (#f/#t/void) are the small low2 == 11 values above
-// FLOAT_BIAS_VAL. ABI: kValueEncodingAbi below.
-inline constexpr std::int64_t FLOAT_BIAS_VAL = -10000000000000000LL + 3;
-inline constexpr std::int64_t STRING_BIAS_VAL = -9000000000000000000LL;
+// ── Immediate kinds (#4502 step 5) ────────────────────────────────
+// low2 == 11 values are immediates: v = (payload << 8) | (kind << 2) | 3
+// (lib/aura_value_abi.h). #f/#t/void are kinds 0/1/2 with payload 0
+// (raw 3/7/11); boxed floats and strings are kinds 8/9 with the pool
+// index as payload. Classification is a low-byte compare, never a range.
+inline constexpr std::int64_t kImmKindFloat = AURA_KIND_FLOAT;
+inline constexpr std::int64_t kImmKindString = AURA_KIND_STRING;
+inline constexpr std::int64_t kFloatLow8 = AURA_FLOAT_LOW8;
+inline constexpr std::int64_t kStringLow8 = AURA_STRING_LOW8;
+static_assert(AURA_IMM_LOW8(AURA_KIND_FLOAT) == AURA_FLOAT_LOW8, "#4502: float low byte drift");
+static_assert(AURA_IMM_LOW8(AURA_KIND_STRING) == AURA_STRING_LOW8, "#4502: string low byte drift");
+static_assert(AURA_IMM(AURA_KIND_FALSE, 0) == AURA_V_FALSE &&
+                  AURA_IMM(AURA_KIND_TRUE, 0) == AURA_V_TRUE &&
+                  AURA_IMM(AURA_KIND_VOID, 0) == AURA_V_VOID,
+              "#4502: specials are ImmKind 0/1/2 with payload 0");
 
 // ── Ref sub-type ids (bits 2-5) ──────────────────────────────────
 //
@@ -217,9 +242,9 @@ static_assert(RefPair == 0 && RefClosure == 1 && RefCell == 2,
 //   ─────────────────     ─────────      ───────────────────
 //   ShapeTag::Any         DYNAMIC        (no ref encoding; type_id = 0)
 //   ShapeTag::Int         (fixnum)       not a RefType; encoded in val bits
-//   ShapeTag::Float       (float bias)   not a RefType; FLOAT_BIAS encoding
+//   ShapeTag::Float       (ImmKind 8)    not a RefType; boxed pool index
 //   ShapeTag::Bool        (special)      not a RefType; val == 3 or 7
-//   ShapeTag::String      (string bias)  not a RefType; STRING_BIAS encoding
+//   ShapeTag::String      (ImmKind 9)    not a RefType; boxed pool index
 //   ShapeTag::Void        (special)      not a RefType; val == 11
 //   ShapeTag::Pair        RefPair = 0
 //   ShapeTag::Vector      RefVector = 3
@@ -250,7 +275,7 @@ inline constexpr bool is_ref(std::int64_t v) noexcept {
     return (v & 3) == static_cast<std::int64_t>(kRefLowTag);
 }
 inline constexpr bool is_special(std::int64_t v) noexcept {
-    return (v & 3) == 3 && v > FLOAT_BIAS_VAL; // #4482: boxed float/string are below
+    return AURA_IS_SPECIAL(v); // #4502: exact sentinels; agrees with classify
 }
 
 inline constexpr std::uint64_t ref_type(std::int64_t v) noexcept {
@@ -264,154 +289,45 @@ inline constexpr std::int64_t make_ref(std::uint64_t type, std::uint64_t index) 
                                      kRefLowTag);
 }
 
-// String bias helpers — these are paired with lib/runtime.c.
-inline constexpr std::int64_t make_string_raw(std::uint64_t idx) noexcept {
-    return STRING_BIAS_VAL - static_cast<std::int64_t>(idx);
-}
-inline constexpr std::uint64_t string_idx_raw(std::int64_t v) noexcept {
-    return static_cast<std::uint64_t>(-static_cast<std::int64_t>(v) - 9000000000000000000LL);
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Issue #181 — EvalValue 64-bit tagged encoding redesign (Cycle 1)
-//
-// Option A: dedicated tag bit for strings at (v & 3) == 2.
-// The current encoding (above) collides with is_ref() for odd
-// indices: for idx ≡ 31 (mod 64), the result has (v & 3) == 1
-// matching is_ref, and ref_type matches RefError (8) — so the
-// string is misclassified as RefError. This is the source of
-// the bug per the issue body.
-//
-// The v2 encoding shifts idx left by 2 to reserve the low 2
-// bits for a constant tag. Pool capacity drops from 2^62 to
-// 2^60 (still plenty for any practical string pool).
-//
-//   bits 0-1: TAG = 2 (string, was unused in old encoding)
-//   bits 2+:   (STRING_BIAS_VAL_2 - v) >> 2  = idx
-//
-// All string values have (v & 3) == 2 — disjoint from fixnum
-// (0), ref (1), and special (3). is_string becomes a simple
-// tag check; no range disambiguation needed.
-//
-// Migration is the work of Cycle 2. Cycle 1 only prototypes
-// these helpers alongside the old encoding so the new design
-// can be verified in isolation (exhaustive collision tests +
-// micro-benchmarks).
-// ═══════════════════════════════════════════════════════════════════
-
-// New bias for the v2 encoding: same magnitude as STRING_BIAS_VAL
-// but with low 2 bits = 2 (the string tag).
-//   STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2  (low 2 bits: 0 → 2)
-inline constexpr std::int64_t STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 3; // #4482: low2 = 3
-// Issue #4482: value-encoding ABI version (2 = odd-boxed float/string,
-// symmetric 63-bit fixnum). Mirrored by lib/runtime.c AURA_VALUE_ABI.
-inline constexpr int kValueEncodingAbi = 2;
+// Boxed string / float helpers (#181 / #613 history; #4502 step 5 layout).
+// Value encoding ABI version, mirrored by lib/runtime.c and the AOT preamble.
+inline constexpr int kValueEncodingAbi = AURA_VALUE_ABI;
+static_assert(kValueEncodingAbi == 4, "#4502: value_tags.h is written for ABI 4");
 
 inline constexpr std::int64_t make_string_raw_v2(std::uint64_t idx) noexcept {
-    return STRING_BIAS_VAL_2 - static_cast<std::int64_t>(idx << 2);
+    return AURA_MAKE_STRING(idx);
 }
 inline constexpr bool is_string_raw_v2(std::int64_t v) noexcept {
-    return (v & 3) == 3 && v <= STRING_BIAS_VAL_2; // #4482
+    return AURA_IS_STRING(v);
 }
 inline constexpr std::uint64_t string_idx_raw_v2(std::int64_t v) noexcept {
-    return static_cast<std::uint64_t>(STRING_BIAS_VAL_2 - v) >> 2;
+    return AURA_IMM_PAYLOAD(v);
 }
-
-// Compile-time guard: v2 helpers must produce disjoint tags.
-// (If this fires, the encoding was changed without updating
-// the tag bits — fix the constants above.)
-static_assert((make_string_raw_v2(0) & 3) == 3, "v2 string encoding broke tag bits (idx=0)");
-static_assert((make_string_raw_v2(1) & 3) == 3, "v2 string encoding broke tag bits (idx=1)");
-static_assert((make_string_raw_v2(31) & 3) == 3,
-              "v2 string encoding broke tag bits (idx=31 — was RefError collision)");
-static_assert((make_string_raw_v2(19) & 3) == 3,
-              "v2 string encoding broke tag bits (idx=19 — was RefKeyword collision)");
-static_assert((make_string_raw_v2(0xFFFFULL) & 3) == 3,
-              "v2 string encoding broke tag bits (idx=0xFFFF)");
-
-// Roundtrip check at compile time: make then decode returns the
-// same idx. (Sanity guard against off-by-one in the shift.)
-static_assert(string_idx_raw_v2(make_string_raw_v2(0)) == 0, "v2 roundtrip broke for idx=0");
-static_assert(string_idx_raw_v2(make_string_raw_v2(42)) == 42, "v2 roundtrip broke for idx=42");
-static_assert(string_idx_raw_v2(make_string_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
-              "v2 roundtrip broke for idx=0xFFFFF");
-
-// ═══════════════════════════════════════════════════════════════════
-// Issue #613 — Float v2 encoding (parallel to string v2 above).
-//
-// The pre-#613 float encoding was `FLOAT_BIAS_VAL - idx` (idx not
-// shifted). With the v2 dispatch table (#571), the resulting low-2
-// bits depend on `idx % 4`:
-//   idx=0 → (v&3)=0 → dispatched as Fixnum/Float by range
-//   idx=1 → (v&3)=3 → dispatched as Special (and missed since
-//                       the value is not 3/7/11) → Unknown
-//   idx=2 → (v&3)=2 → dispatched as StringV2 (catastrophic — pool
-//                       index gets used as a string index, display
-//                       prints "<unknown>")
-//   idx=3 → (v&3)=1 → dispatched as Ref
-//
-// This is the source of the bash/integ regression
-// (test `float`: `(/ 7.0 2)` → "<unknown>" instead of "3.5"; 2.0
-// at idx=1 misclassified as Unknown → "/ 7.0 2.0" → "division
-// by zero" path because coerce_one on the idx=1 float returns 0
-// after the tag check fails).
-//
-// Fix: mirror the v2 string encoding. Subtract `idx << 2` so the
-// low 2 bits are always 0 (no collision with StringV2's
-// (v&3)==2, Special's (v&3)==3, or Ref's (v&3)==1). Pool capacity
-// drops from 2^62 to 2^60 (still plenty for any practical float
-// pool). FLOAT_BIAS_VAL_2 = FLOAT_BIAS_VAL since -10^16 already
-// has low 2 bits == 0 — no bias shift needed (unlike strings,
-// where STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 to put the tag
-// in the low 2 bits).
-//
-// All float values now satisfy (v & 3) == 0, disjoint from:
-//   Ref   (v&3)==1
-//   StringV2 (v&3)==2
-//   Special (v&3)==3
-// The remaining collision is with fixnums (also (v&3)==0); the
-// range check `v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2`
-// disambiguates them.
-inline constexpr std::int64_t FLOAT_BIAS_VAL_2 = FLOAT_BIAS_VAL; // -10^16+3, low-2-bits = 3 (#4482)
-
 inline constexpr std::int64_t make_float_raw_v2(std::uint64_t idx) noexcept {
-    return FLOAT_BIAS_VAL_2 - static_cast<std::int64_t>(idx << 2);
+    return AURA_MAKE_FLOAT(idx);
 }
 inline constexpr bool is_float_raw_v2(std::int64_t v) noexcept {
-    return (v & 3) == 3 && v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2; // #4482
+    return AURA_IS_FLOAT(v);
 }
 inline constexpr std::uint64_t float_idx_raw_v2(std::int64_t v) noexcept {
-    return static_cast<std::uint64_t>(FLOAT_BIAS_VAL_2 - v) >> 2;
+    return AURA_IMM_PAYLOAD(v);
 }
 
-// Compile-time guard: v2 helpers must produce disjoint tags.
-// If this fires, FLOAT_BIAS_VAL_2 lost its low-2-bits == 0 property
-// (it has to be 0 because we want the float range to overlap
-// with fixnums on (v&3)==0 — the range check disambiguates).
-static_assert((make_float_raw_v2(0) & 3) == 3, "v2 float encoding broke tag bits (idx=0)");
-static_assert((make_float_raw_v2(1) & 3) == 3, "v2 float encoding broke tag bits (idx=1)");
-static_assert((make_float_raw_v2(2) & 3) == 3, "v2 float encoding broke tag bits (idx=2)");
-static_assert((make_float_raw_v2(3) & 3) == 3, "v2 float encoding broke tag bits (idx=3)");
-static_assert((make_float_raw_v2(0xFFFFULL) & 3) == 3,
-              "v2 float encoding broke tag bits (idx=0xFFFF)");
-
-// Roundtrip check at compile time: make then decode returns the
-// same idx. (Sanity guard against off-by-one in the shift.)
-static_assert(float_idx_raw_v2(make_float_raw_v2(0)) == 0, "v2 float roundtrip broke for idx=0");
-static_assert(float_idx_raw_v2(make_float_raw_v2(42)) == 42, "v2 float roundtrip broke for idx=42");
-static_assert(float_idx_raw_v2(make_float_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
-              "v2 float roundtrip broke for idx=0xFFFFF");
-
-// Disjoint-tag guard between v2 string and v2 float. A string
-// and a float must never collide on (v&3). Strings: (v&3)==2;
-// floats: (v&3)==0. Sanity check via the range: floats at idx N
-// are always > STRING_BIAS_VAL_2 (so they can't accidentally
-// be in the string range) and < FLOAT_BIAS_VAL_2 (so they can't
-// be in the fixnum range above FLOAT_BIAS_VAL).
-static_assert(make_float_raw_v2(0) > STRING_BIAS_VAL_2,
-              "v2 float upper bound is in string range (collision)");
-static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
-              "v2 string lower bound is above string range (collision)");
+// Tag and roundtrip guards, including indices up to 2^56 (AC: no type change).
+static_assert(is_string_raw_v2(make_string_raw_v2(0)) && is_string_raw_v2(make_string_raw_v2(31)),
+              "string tag");
+static_assert(is_float_raw_v2(make_float_raw_v2(0)) && is_float_raw_v2(make_float_raw_v2(3)),
+              "float tag");
+static_assert(!is_float_raw_v2(make_string_raw_v2(7)) && !is_string_raw_v2(make_float_raw_v2(7)),
+              "float/string disjoint");
+static_assert(string_idx_raw_v2(make_string_raw_v2(42)) == 42, "string roundtrip");
+static_assert(float_idx_raw_v2(make_float_raw_v2(0xFFFFFULL)) == 0xFFFFFULL, "float roundtrip");
+static_assert(float_idx_raw_v2(make_float_raw_v2((1ULL << 56) - 1)) == (1ULL << 56) - 1 &&
+                  is_float_raw_v2(make_float_raw_v2((1ULL << 56) - 1)),
+              "float index up to 2^56 keeps its type");
+static_assert(string_idx_raw_v2(make_string_raw_v2((1ULL << 56) - 1)) == (1ULL << 56) - 1 &&
+                  is_string_raw_v2(make_string_raw_v2((1ULL << 56) - 1)),
+              "string index up to 2^56 keeps its type");
 
 // Issue #571 / #1622: pure constexpr classifier (no atomics) for
 // compile-time dispatch validation and static_assert tables.
@@ -420,7 +336,7 @@ static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
 // so tests can also call it at runtime with dynamic samples.
 inline constexpr EvalValueTag classify_eval_value_tag_consteval(std::int64_t v) noexcept {
     // Issue #4482: bit0 clear is always Fixnum (full symmetric range).
-    // low2 == 11 is a sentinel above FLOAT_BIAS_VAL, else Float/String.
+    // #4502: low2 == 11 is an immediate; its low byte names the kind.
     if (is_fixnum(v))
         return EvalValueTag::Fixnum;
     if ((v & 3) == 1)
@@ -429,7 +345,7 @@ inline constexpr EvalValueTag classify_eval_value_tag_consteval(std::int64_t v) 
         return EvalValueTag::StringV2;
     if (is_float_raw_v2(v))
         return EvalValueTag::Float;
-    return classify_special_sentinel(v);
+    return classify_special_sentinel(v); // unassigned kinds -> Unknown
 }
 
 // Issue #1622: compile-time self-checks for consteval classifier.
@@ -459,17 +375,9 @@ static_assert(kTagPatterns[0] == EvalValueTag::Fixnum && kTagPatterns[3] == Eval
 // classify_eval_value_tag_consteval instead. Gate:
 // scripts/coverage/checks/check_value_tag_hotpath_ban_2616.py.
 //
-// Order matters: fixnums use (v<<1) so val=2,6,10… have (v&3)==2
-// but are NOT strings — string-v2 requires (v&3)==2 AND
-// v <= STRING_BIAS_VAL_2 (the v2 range guard from #181).
+// #4502: fixnum is bit0 == 0; float and string are exact low-byte kinds.
 //
-// Floats (v2 encoding, Issue #613) have (v&3)==0 and live in
-// [STRING_BIAS_VAL_2, FLOAT_BIAS_VAL_2]. They share (v&3)==0
-// with fixnums but are disjoint on the range (fixnums are
-// v > FLOAT_BIAS_VAL_2). The float range check uses
-// is_float_raw_v2 for clarity.
-//
-// Issue #1622: runtime path uses low2 table first, then range refine
+// Issue #1622: runtime path uses low2 table first, then the kind compare
 // (same control flow as classify_eval_value_tag_consteval).
 // Cold / Agent only — intentional atomic observability.
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {

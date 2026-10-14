@@ -131,7 +131,7 @@ ShapeID inline_shape_of(std::int64_t val) {
                 contract_assert((val & 3) == 3); // Special low2
                 return finish_inline_shape_id(SHAPE_BOOL);
             }
-            if (val == 11) {
+            if (val == 11 || val == AURA_V_UNSPEC) { // #4502: unspecified is void-shaped
                 contract_assert((val & 3) == 3);
                 return finish_inline_shape_id(SHAPE_VOID);
             }

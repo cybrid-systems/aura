@@ -30,6 +30,7 @@ mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/share/aura"
 cp build_repro/aura "$STAGE/bin/aura"
 chmod 755 "$STAGE/bin/aura"
 cp lib/runtime.c "$STAGE/lib/runtime.c"
+cp lib/aura_value_abi.h "$STAGE/lib/aura_value_abi.h" # #4502: runtime.c includes it
 cp -r demos "$STAGE/share/aura/demos" 2>/dev/null || true
 
 TARBALL="$ROOT/dist/aura-$VERSION.tar.gz"
