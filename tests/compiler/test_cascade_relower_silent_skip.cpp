@@ -919,6 +919,216 @@ int run_test_cascade_relower_silent_skip() {
         apply_dev_audit_defaults();
     }
 
+    // Issue #4513: cache_define republishes pre-abort ir_cache_ callee
+    // bodies after the v2 freshness refuse. Production / Full must drop
+    // the walked names' v1 / bridge / strings rows on abort, refuse the
+    // v1 callee copy in cache_define while the callee's v2 row is
+    // untrusted (latched or merely dirty), and keep the relower full arm
+    // from storing a body that still references an untrusted callee.
+    {
+        std::println("\n--- #4513: abort drops v1 callee bytes + fail-closed cache_define ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        // Single-define set-codes: multi-define set-code is broken on the
+        // current tree (pre-existing — see the #3484 AC5 soak failure).
+        CHECK(cs.eval("(set-code \"(define b4513 (lambda () 1))\")").has_value(),
+              "4513: set-code b");
+        CHECK(cs.eval("(eval-current)").has_value(), "4513: eval b");
+        CHECK(cs.get_define_v2("b4513") != nullptr, "4513: b cached");
+        CHECK(cs.has_cached_function("b4513"), "4513: b v1 present pre-abort");
+        CHECK(cs.eval("(set-code \"(define a4513 (lambda () (b4513)))\")").has_value(),
+              "4513: set-code a");
+        CHECK(cs.eval("(eval-current)").has_value(), "4513: eval a");
+        // a's cache state right after its define is tree-flow dependent
+        // (a dirty-callee consult may fail it closed to eval_flat); the
+        // safety contract below holds in every face.
+        const bool a_v1_pre = cs.has_cached_function("a4513");
+
+        // Repro steps 2-3: mutate b inside a boundary, then abort the
+        // boundary — dual-topology restore + force_ir_cache_dirty_after_abort.
+        auto& ev4513 = cs.evaluator();
+        ev4513.enter_mutation_boundary();
+        auto mut4513 = cs.eval("(mutate:set-body \"b4513\" \"(lambda () 2)\" \"#4513\")");
+        CHECK(mut4513.has_value(), "4513: set-body inside boundary");
+        ev4513.exit_mutation_boundary(false);
+
+        const auto* b_abort = cs.get_define_v2("b4513");
+        CHECK(b_abort != nullptr && b_abort->abort_map_invalid, "4513: b v2 abort-latched");
+        CHECK(b_abort != nullptr && !b_abort->content_stored_this_epoch,
+              "4513: b v2 content unstored");
+        // AC1: the walked names' v1 bundles are gone — the aborted bytes
+        // cannot be copied into the next define.
+        CHECK(!cs.has_cached_function("b4513"), "4513 AC1: b v1 dropped after abort");
+        if (a_v1_pre)
+            CHECK(!cs.has_cached_function("a4513"), "4513 AC1: a v1 dropped after abort");
+
+        // Repro steps 4-7: the next eval runs the sweep + populate. The
+        // aborted bytes (ConstI64 2) must never be republished: not in b's
+        // row, not in a's row, and calling a must run the restored body.
+        cs.clear_ir_value_cells_for_test(); // #4228: reach the copy face.
+        CHECK(cs.eval("(eval-current)").has_value(), "4513: post-abort eval-current");
+        auto bundle_has4513 = [](const CompilerService::IRCacheEntry& e, std::uint32_t imm) {
+            for (const auto& fn : e.irs) {
+                for (const auto& b : fn.blocks) {
+                    for (const auto& ins : b.instructions) {
+                        if (ins.opcode == aura::ir::IROpcode::ConstI64 && ins.operands[1] == imm)
+                            return true;
+                    }
+                }
+            }
+            return false;
+        };
+        auto call4513 = cs.eval("(a4513)");
+        CHECK(call4513 && aura::compiler::types::is_int(*call4513) &&
+                  aura::compiler::types::as_int(*call4513) == 1,
+              "4513 AC4: a runs the restored body");
+        // Convergence: a second eval-current lets the sweep + populate
+        // re-store the walked names from the restored AST. Whatever rows
+        // exist afterwards must hold the restored body and only the
+        // restored body.
+        CHECK(cs.eval("(eval-current)").has_value(), "4513: convergence eval-current");
+        const auto* b_after = cs.get_define_v2("b4513");
+        CHECK(b_after != nullptr, "4513 AC2: b v2 row survives");
+        if (b_after != nullptr) {
+            CHECK(!bundle_has4513(*b_after, 2), "4513 AC2: aborted bytes are gone");
+            if (!b_after->dirty && b_after->content_stored_this_epoch &&
+                !b_after->abort_map_invalid) {
+                CHECK(bundle_has4513(*b_after, 1), "4513 AC2: clean b holds the restored body");
+            }
+        }
+        const auto* a_after = cs.get_define_v2("a4513");
+        if (a_after != nullptr) {
+            // The #4228 value-cell face lowers the callee reference as a
+            // live TopCellLoad (no bundle embed), so the only universal
+            // embed contract is the negative one: never the aborted body.
+            CHECK(!bundle_has4513(*a_after, 2), "4513 AC3: a never embeds the aborted callee");
+        }
+        auto call4513b = cs.eval("(a4513)");
+        CHECK(call4513b && aura::compiler::types::is_int(*call4513b) &&
+                  aura::compiler::types::as_int(*call4513b) == 1,
+              "4513 AC4: a still runs the restored body after convergence");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4513 AC5: cache_define refuses a v1 callee hit whose v2 row
+    // is dirty even with the abort latch clear (impact-refuse face — v1
+    // holds the previous body), and drops the caller's own stale bundle
+    // so populate cannot store_define_v2 it back. Fully direct-define
+    // flow: the callee name is underscore-prefixed so the workspace sweep
+    // and populate structurally skip it and nothing re-stores it mid-flow.
+    {
+        std::println("\n--- #4513 AC5: cache_define consult refuses a dirty v1 callee ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        // Workspace anchor (first direct define installs its own flat).
+        CHECK(cs.eval("(define z4513 (lambda () 0))").has_value(), "4513 AC5: anchor define z");
+        // The callee: v1 bundle + a clean content-stored v2 row (#3117
+        // AC3 planting pattern). Underscore name → sweep + populate skip.
+        CHECK(cs.eval("(define _c4513 (lambda () 1))").has_value(), "4513 AC5: direct define c");
+        CHECK(cs.has_cached_function("_c4513"), "4513 AC5: c v1 present");
+        {
+            aura::ir::IRFunction top4513;
+            top4513.id = 0;
+            top4513.name = "__top__";
+            top4513.blocks.push_back({0, {}, {}});
+            aura::ir::IRFunction body4513;
+            body4513.id = 1;
+            body4513.name = "_c4513#0";
+            body4513.blocks.push_back({0, {}, {}});
+            std::vector<aura::ir::IRFunction> irs4513;
+            irs4513.push_back(std::move(top4513));
+            irs4513.push_back(std::move(body4513));
+            cs.store_define_v2("_c4513", "(define _c4513 (lambda () 1))", std::move(irs4513), {},
+                               {}, cs.public_mutation_epoch());
+        }
+        const auto* c_row = cs.get_define_v2("_c4513");
+        CHECK(c_row != nullptr && !c_row->dirty && c_row->content_stored_this_epoch &&
+                  !c_row->abort_map_invalid,
+              "4513 AC5: c row clean with clear latch");
+        // First d: the consult passes (c clean) — the embed is a fresh copy.
+        CHECK(cs.eval("(define d4513 (lambda () 0 (_c4513)))").has_value(),
+              "4513 AC5: direct define d");
+        CHECK(cs.has_cached_function("d4513"), "4513 AC5: d v1 present");
+        cs.clear_ir_value_cells_for_test();
+        // Dirty c's v2 row WITHOUT abort: v1[c] now holds the previous
+        // body while the row is untrusted. Nothing can re-store it (the
+        // sweep skips — not in the [z] workspace — and populate skips the
+        // underscore name), so the consult is the only face that runs.
+        cs.public_mark_define_dirty("_c4513");
+        c_row = cs.get_define_v2("_c4513");
+        CHECK(c_row != nullptr && c_row->dirty && !c_row->abort_map_invalid,
+              "4513 AC5: c dirty with clear latch");
+        // Redefine d: the walker must refuse the v1[c] hit and fail
+        // closed to eval_flat, dropping d's own stale embed.
+        CHECK(cs.eval("(define d4513 (lambda () 7 (_c4513)))").has_value(),
+              "4513 AC5: redefine d drives cache_define");
+        CHECK(!cs.has_cached_function("d4513"), "4513 AC5: d v1 refused — stale embed dropped");
+        c_row = cs.get_define_v2("_c4513");
+        CHECK(c_row != nullptr && c_row->dirty,
+              "4513 AC5: c stays dirty (refuse does not restamp)");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4513 AC6: Soft / Off keeps the observe-only abort contract —
+    // the walked names' v1 bundles survive the abort (no drop), and the
+    // cache_define consult is production-gated off.
+    {
+        std::println("\n--- #4513 AC6: Soft keeps the v1 observe-only contract ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define e4513 (lambda () 1))\")").has_value(),
+              "4513 AC6: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4513 AC6: eval");
+        if (!cs.get_define_v2("e4513"))
+            (void)cs.eval("(compile:cache-define \"e4513\")");
+        CHECK(cs.has_cached_function("e4513"), "4513 AC6: v1 present pre-abort");
+        auto& ev_s = cs.evaluator();
+        ev_s.enter_mutation_boundary();
+        (void)cs.eval("(mutate:set-body \"e4513\" \"(lambda () 2)\" \"#4513\")");
+        ev_s.exit_mutation_boundary(false);
+        CHECK(cs.get_define_v2("e4513") != nullptr && cs.get_define_v2("e4513")->abort_map_invalid,
+              "4513 AC6: v2 latch still set under Soft");
+        CHECK(cs.has_cached_function("e4513"), "4513 AC6: Soft keeps v1 (observe-only, no drop)");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4513 AC7: source cites + no new counters + no stray issue
+    // test file.
+    {
+        const auto svc4513 = read_file("src/compiler/service.ixx");
+        CHECK(read_file("tests/compiler/test_issue_4513.cpp").empty(),
+              "4513 AC7: no tests/issues/test_issue_4513.cpp");
+        CHECK(svc4513.find("g_4513_") == std::string::npos, "4513 AC7: no new file-scope counter");
+        CHECK(svc4513.find("4513_total") == std::string::npos, "4513 AC7: no new metrics counter");
+        const auto c1 = svc4513.find("Issue #4513: cache_define's LambdaBodyWalker");
+        CHECK(c1 != std::string::npos, "4513 AC7: abort-drop cite present");
+        if (c1 != std::string::npos) {
+            const auto win = svc4513.substr(c1, 3400);
+            CHECK(win.find("production_defaults_active()") != std::string::npos,
+                  "4513 AC7: drop is production-gated");
+            CHECK(win.find("ir_cache_bridge_") != std::string::npos, "4513 AC7: bridge drop cite");
+            CHECK(win.find("ir_cache_strings_") != std::string::npos,
+                  "4513 AC7: strings drop cite");
+        }
+        const auto c2 = svc4513.find("Issue #4513: v1 presence alone is not");
+        CHECK(c2 != std::string::npos, "4513 AC7: consult cite present");
+        if (c2 != std::string::npos) {
+            const auto win = svc4513.substr(c2, 1800);
+            CHECK(win.find("content_stored_this_epoch") != std::string::npos,
+                  "4513 AC7: consult checks content latch");
+            CHECK(win.find("abort_map_invalid") != std::string::npos,
+                  "4513 AC7: consult checks abort latch");
+        }
+        const auto c3 = svc4513.find("Issue #4513: the abort walk drops the walked names");
+        CHECK(c3 != std::string::npos, "4513 AC7: relower scan cite present");
+        if (c3 != std::string::npos) {
+            const auto win = svc4513.substr(c3, 3600);
+            CHECK(win.find("UntrustedCalleeScan4513") != std::string::npos,
+                  "4513 AC7: body scan present");
+            CHECK(win.find("embed_safe") != std::string::npos, "4513 AC7: cone exemption kept");
+        }
+    }
+
     std::println("\n=== #2813/#3484 cascade relower silent skip: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
