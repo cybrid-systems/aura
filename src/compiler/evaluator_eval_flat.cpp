@@ -2275,6 +2275,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                             auto else_val = pairs_[else_pair].car;
                             return eval_data_as_code(else_val, env, flat, pool);
                         }
+                        return types::make_unspecified(); // #4502 step 4: no else
                     }
                 }
             }
@@ -2290,7 +2291,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
                 if (!cond_result)
                     return cond_result;
-                if (aura::compiler::pure::is_truthy(*cond_result)) {
+                // unless runs the body on a false test (was treated like when).
+                if (aura::compiler::pure::is_truthy(*cond_result) == (fn_name == "when")) {
                     // Evaluate body expressions sequentially
                     EvalResult last = make_void();
                     TwPinResult pin_last(last);
@@ -2304,7 +2306,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     return last;
                 }
             }
-            return make_void();
+            return types::make_unspecified(); // #4502 step 4: when/unless miss
         }
 
         // ── lambda: (lambda (params) body) ──
@@ -6034,7 +6036,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // non-tail body forms stay recursive; the last form
                             // is tail position (same continue as IfExpr).
                             if (!is_truthy(*cond_result) || v.children.size() < 3)
-                                return make_void();
+                                return types::make_unspecified(); // #4502 step 4
                             for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
                                 auto step = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!step)
@@ -6051,7 +6053,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 return cond_result;
                             // Issue #4454: tail-call the last body form.
                             if (is_truthy(*cond_result) || v.children.size() < 3)
-                                return make_void();
+                                return types::make_unspecified(); // #4502 step 4
                             for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
                                 auto step = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!step)
@@ -7030,18 +7032,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // propagates — it is not a true test.
                     if (is_error(*c))
                         return c;
-                    if (v.children.size() == 2) {
+                    if (v.children.size() == 2 ||
+                        (v.children.size() >= 3 && v.child(2) == aura::ast::NULL_NODE)) {
                         // (if cond then) — conditionally execute then-branch
                         if (is_truthy(*c)) {
                             current_id = v.child(1);
                             continue;
                         }
-                        // Condition false, no else — use TCO to NULL_NODE so the
-                        // while-loop guard returns void on next iteration (avoids
-                        // a return path that can cause NULL_NODE in outer TCO loop
-                        // when used inside rest-arg lambda bodies).
-                        current_id = aura::ast::NULL_NODE;
-                        continue;
+                        // Condition false, no else: the unspecified value
+                        // (#4502 step 4), not '(). Same answer as the IR path.
+                        return types::make_unspecified();
                     }
                     current_id = is_truthy(*c) ? v.child(1) : v.child(2);
                     continue; // TCO: branch

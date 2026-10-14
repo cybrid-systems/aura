@@ -6721,17 +6721,15 @@ const char* aura_string_ref(int64_t val);
 // Must match the IR interpreter's CastOp cases exactly.
 // Operates on EvalValue-compatible tagged values.
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
-    using aura::compiler::types::FLOAT_BIAS_VAL;
     using aura::compiler::types::float_idx_raw_v2;
     using aura::compiler::types::is_float_raw_v2;
     using aura::compiler::types::is_string_raw_v2;
-    using aura::compiler::types::STRING_BIAS_VAL_2;
     auto is_bool = [](int64_t v) { return v == 3 || v == 7; };
     // Issue #181 Cycle 2: v2 string encoding. (v & 3) == 2 is
     // the dedicated string tag. Range check via STRING_BIAS_VAL_2
     // is the safety belt (catches fixnums in the right range
     // that happen to have the string tag bit set).
-    auto is_string = [](int64_t v) { return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2; };
+    auto is_string = [](int64_t v) { return is_string_raw_v2(v); };
     auto is_fixnum = [](int64_t v) { return (v & 1) == 0; }; // #4482
     // Issue #613: v2 float encoding — (v&3)==0 + range check.
     auto is_float = [](int64_t v) { return is_float_raw_v2(v); };
@@ -6983,16 +6981,19 @@ static void fputs_scheme_write_string(const char* s, FILE* out) {
 // Issue #2575: ABI write_mode is int64_t (matches LLVM i64); PrimCall
 // must re-intern evaluator strings into g_string_pool first.
 void aura_display_value(int64_t val, int64_t write_mode) {
-    using aura::compiler::types::FLOAT_BIAS_VAL;
     using aura::compiler::types::is_fixnum;
     using aura::compiler::types::is_string_raw_v2;
     using aura::compiler::types::kSpecialFalse;
     using aura::compiler::types::kSpecialTrue;
     using aura::compiler::types::kSpecialVoid;
-    using aura::compiler::types::STRING_BIAS_VAL_2;
 
     if (val == kSpecialVoid) {
         fputs("()", stdout);
+        fflush(stdout);
+        return;
+    }
+    if (val == aura::compiler::types::kSpecialUnspecified) { // #4502
+        fputs("#<unspecified>", stdout);
         fflush(stdout);
         return;
     }
@@ -7007,7 +7008,7 @@ void aura_display_value(int64_t val, int64_t write_mode) {
         return;
     }
     // v2 string: (v & 3) == 2 and in STRING_BIAS range
-    if (is_string_raw_v2(val) && val <= STRING_BIAS_VAL_2) {
+    if (is_string_raw_v2(val)) {
         const char* s = aura_string_ref(val);
         if (!s)
             s = "";

@@ -22,12 +22,12 @@
 //   * as_int / as_string / as_* accessors
 //
 // What must be accessed via value_tags.h (NOT the module interface):
-//   * FLOAT_BIAS_VAL, STRING_BIAS_VAL  (raw bias sentinels)
+//   * boxed float/string helpers (lib/aura_value_abi.h, #4502)
 //   * make_string_raw, make_ref         (low-level encoders)
 //   * is_fixnum, is_ref, is_special     (bit-pattern inspectors)
 //   * RefPair / RefClosure / ...        (RefType ids)
 //
-// Why this split? If we `export` FLOAT_BIAS_VAL, every .cpp that
+// Why this split? If we `export` the encoding constants, every .cpp that
 // imports this module gets a constexpr std::int64_t. The header
 // path is cheaper for lib/runtime.c, JIT runtime C++, and any
 // non-module consumer.
@@ -66,8 +66,8 @@ namespace aura::compiler::types {
 //   Ref sub-type (bits 2-5, 4 bits = 16 types): see value_tags.h
 //   Ref bit layout: (pool_index << 6) | (type << 2) | 1
 //
-//   Float: stored in runtime pool with FLOAT_BIAS encoding
-//   String: stored in runtime pool with STRING_BIAS encoding
+//   Float: ImmKind 8, payload = runtime pool index (#4502)
+//   String: ImmKind 9, payload = runtime pool index (#4502)
 //
 // ═══════════════════════════════════════════════════════════
 
@@ -117,11 +117,9 @@ export inline std::int64_t as_int(const EvalValue& v) noexcept {
     return v.val >> kFixnumShift;
 }
 
-// Issue #4462: make_int's contract is [INT64_MIN>>1, INT64_MAX>>1], but a
-// tagged value classifies as Fixnum only when it is strictly above
-// FLOAT_BIAS_VAL. -2^62 encodes as INT64_MIN and is not a fixnum. 2^62
-// does not fit the contract. Callers promote; this predicate does not
-// allocate and does not weaken make_int.
+// Issue #4462 / #4482: make_int's contract is [INT64_MIN>>1, INT64_MAX>>1]
+// and every even raw value is a fixnum, so the range is the symmetric
+// [-2^62, 2^62-1]. This predicate does not allocate.
 export inline constexpr bool fits_fixnum(std::int64_t v) noexcept {
     constexpr auto kMin = std::numeric_limits<std::int64_t>::min() >> kFixnumShift;
     constexpr auto kMax = std::numeric_limits<std::int64_t>::max() >> kFixnumShift;
@@ -160,9 +158,17 @@ export inline EvalValue make_void() noexcept {
 export inline bool is_void(const EvalValue& v) noexcept {
     return is_special_hot(v.val) && v.val == kSpecialVoid;
 }
+// #4502 step 4: the unspecified value ((if #f #f), when/unless miss).
+// Distinct from '() / void: null? is #f, displays as #<unspecified>.
+export inline EvalValue make_unspecified() noexcept {
+    return EvalValue(kSpecialUnspecified);
+}
+export inline bool is_unspecified(const EvalValue& v) noexcept {
+    return v.val == kSpecialUnspecified;
+}
 
 export inline EvalValue make_float(double d) {
-    return EvalValue(aura_alloc_float(d)); // FLOAT_BIAS encoding
+    return EvalValue(aura_alloc_float(d)); // ImmKind float (#4502)
 }
 
 // In-domain values stay fixnums. Every other int64 becomes a float so
@@ -184,7 +190,7 @@ export inline double as_float(const EvalValue& v) {
 // Issue #181 Cycle 2: string encoding migrated to Option A.
 // make_string / is_string / as_string_idx now use the v2
 // encoding (dedicated (v & 3) == 2 tag + range check against
-// STRING_BIAS_VAL_2). The previous encoding was susceptible
+// the string bias; #4502 replaced both with ImmKind 9). The previous encoding was susceptible
 // to collisions at idx ≡ 31 (mod 64) → RefError and
 // idx ≡ 19 (mod 64) → RefKeyword. The new encoding is
 // collision-free at the source.
@@ -196,7 +202,7 @@ export inline bool is_string(const EvalValue& v) noexcept {
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
     // Issue #1622 / #2142 / #2259. Issue #3770: one hot contract per unbox
-    // (is_string_v2_hot already covers low2==2 and STRING_BIAS range).
+    // (is_string_v2_hot is the exact ImmKind string test, #4502).
     AURA_HOT_CONTRACT(is_string(v));
     note_value_tag_hot_path();
     return string_idx_raw_v2(v.val);
@@ -204,7 +210,7 @@ export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
 
 // ── Issue #181 Cycle 1: v2 string encoding prototype ──────
 //
-// All string values have (v & 3) == 2 — disjoint from fixnum
+// #4502: all string values have low byte AURA_STRING_LOW8 — disjoint from fixnum
 // (0), ref (1), and special (3). Eliminates the
 // idx ≡ 31 (mod 64) → RefError and
 // idx ≡ 19 (mod 64) → RefKeyword collisions at the source.
@@ -365,6 +371,8 @@ export inline std::uint64_t as_keyword_idx(const EvalValue& v) noexcept {
 export inline std::string format_value(const EvalValue& v) {
     if (is_void(v))
         return "()";
+    if (is_unspecified(v))
+        return "#<unspecified>";
     if (is_bool(v))
         return as_bool(v) ? "#t" : "#f";
     if (is_int(v))
@@ -402,6 +410,8 @@ export inline std::string format_value(const EvalValue& v) {
 export inline std::string format_value(const EvalValue& v, const std::vector<std::string>* heap) {
     if (is_void(v))
         return "()";
+    if (is_unspecified(v))
+        return "#<unspecified>";
     if (is_bool(v))
         return as_bool(v) ? "#t" : "#f";
     if (is_string(v)) {

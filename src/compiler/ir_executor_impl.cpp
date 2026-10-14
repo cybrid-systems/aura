@@ -2126,7 +2126,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::ConstVoid: {
-                    locals[ops[0]] = make_void();
+                    // #4502 step 4: ops[1] == 1 is the unspecified value.
+                    locals[ops[0]] = ops[1] == 1 ? types::make_unspecified() : make_void();
                     break;
                 }
 

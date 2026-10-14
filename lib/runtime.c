@@ -123,21 +123,19 @@ __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
     return 1;
 }
 
-#define IS_PAIR(v) (((v) & 3) == 1)
-// Issue #4482 (value ABI 2): every even value is a fixnum (symmetric
-// 63-bit range). Boxed floats and strings have low2 == 11 and sit below
-// FLOAT_BIAS; the small low2 == 11 values are the #f/#t/void sentinels.
-// Lockstep with src/compiler/value_tags.h (kValueEncodingAbi).
-#define AURA_VALUE_ABI 2
-#define FLOAT_BIAS (-10000000000000000LL + 3)
-#define STRING_BIAS_AREA (-9000000000000000000LL + 3)
-#define IS_SPECIAL(v) ((((v) & 3) == 3) && ((v) > FLOAT_BIAS))
-#define IS_FIXNUM(v) (((v) & 1) == 0)
+// Issue #4502 step 1: the encoding lives in lib/aura_value_abi.h (single
+// source shared with value_tags.h, the AOT preamble and kernel C code).
+#include "aura_value_abi.h"
+_Static_assert(AURA_VALUE_ABI == 4, "runtime.c is written for value ABI 4");
+#define IS_PAIR(v) AURA_IS_PAIR(v)
+#define IS_SPECIAL(v) AURA_IS_SPECIAL(v)
+#define IS_FIXNUM(v) AURA_IS_FIXNUM(v)
 #define PAIR_INDEX(v) ((v) >> 2)
-#define IS_STRING(v) ((((v) & 3) == 3) && ((v) <= STRING_BIAS_AREA))
-#define STRING_IDX(v) ((int)((STRING_BIAS_AREA - (int64_t)(v)) >> 2))
-#define MAKE_STRING_SENTINEL(i) (STRING_BIAS_AREA - ((int64_t)(i) << 2))
+#define IS_STRING(v) AURA_IS_STRING(v)
+#define STRING_IDX(v) ((int)AURA_STRING_IDX(v))
+#define MAKE_STRING_SENTINEL(i) AURA_MAKE_STRING(i)
 #define SPECIAL_TAG(v) (((v) >> 2) & 3)
+#define IS_UNSPEC(v) ((v) == AURA_V_UNSPEC) // #4502 step 4
 
 // ── Enum-compatible tag values (use static const instead of macros to avoid enum conflict)
 static const int KWD_FALSE = 0;
@@ -761,7 +759,7 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
     int is_bool = (val == 3 || val == 7);
     int is_string = IS_STRING(val);
     int is_fixnum = IS_FIXNUM(val); // #4482
-    int is_float = (((val & 3) == 3) && val <= FLOAT_BIAS && val > STRING_BIAS_AREA);
+    int is_float = AURA_IS_FLOAT(val);
 
     switch (type_tag) {
         case 0: { // Coerce to Int
@@ -848,10 +846,9 @@ static int g_prim_reg_count = 0;
 // (same shape as fixnums; the range check disambiguates). The
 // pool index is stored shifted left by 2, so the max idx drops
 // from 2^62 to 2^60 — still plenty.
-#define FLOAT_BIAS_V2 FLOAT_BIAS // #4482: low-2-bits == 3
-#define IS_FLOAT(v) (((v) <= FLOAT_BIAS_V2) && ((v) > STRING_BIAS_AREA) && (((v) & 3) == 3))
-#define FLOAT_IDX(v) ((int)((FLOAT_BIAS_V2 - (int64_t)(v)) >> 2))
-#define MAKE_FLOAT_RAW(idx) (FLOAT_BIAS_V2 - ((int64_t)(idx) << 2))
+#define IS_FLOAT(v) AURA_IS_FLOAT(v)
+#define FLOAT_IDX(v) ((int)AURA_FLOAT_IDX(v))
+#define MAKE_FLOAT_RAW(idx) AURA_MAKE_FLOAT(idx)
 
 static double* float_pool = NULL;
 static int float_count = 0;
@@ -941,7 +938,10 @@ static void aura_display_pair_chain(int64_t val) {
         if (IS_PAIR(car_val))
             aura_display_pair_chain(car_val);
         else if (IS_SPECIAL(car_val))
-            printf("%s", SPECIAL_TAG(car_val) == KWD_TRUE ? "#t" : "#f");
+            printf("%s", IS_UNSPEC(car_val)                 ? "#<unspecified>"
+                         : SPECIAL_TAG(car_val) == KWD_TRUE ? "#t"
+                         : SPECIAL_TAG(car_val) == KWD_VOID ? "()"
+                                                            : "#f");
         else if (IS_FLOAT(car_val)) {
             printf("%g", aura_float_ref(car_val));
         } else if (IS_STRING(car_val))
@@ -955,7 +955,9 @@ static void aura_display_pair_chain(int64_t val) {
     else if (val != 0 && !IS_PAIR(val) && !IS_SPECIAL(val))
         printf(" . %ld", (long)(val >> 1));
     else if (IS_SPECIAL(val) && SPECIAL_TAG(val) != KWD_VOID)
-        printf(" . %s", SPECIAL_TAG(val) == KWD_TRUE ? "#t" : "#f");
+        printf(" . %s", IS_UNSPEC(val)                 ? "#<unspecified>"
+                        : SPECIAL_TAG(val) == KWD_TRUE ? "#t"
+                                                       : "#f");
     putchar(')');
 }
 int64_t aura_display_int(int64_t val) {
@@ -967,6 +969,8 @@ int64_t aura_display_int(int64_t val) {
         printf("%s", aura_string_ref(val));
     } else if (IS_PAIR(val)) {
         aura_display_pair_chain(val);
+    } else if (IS_UNSPEC(val)) {
+        printf("#<unspecified>");
     } else if (IS_SPECIAL(val)) {
         int st = SPECIAL_TAG(val);
         if (st == KWD_TRUE)
@@ -1005,6 +1009,8 @@ int64_t aura_display_val(int64_t val, int type_tag) {
         default:
             if (IS_PAIR(val))
                 aura_display_pair_chain(val);
+            else if (IS_UNSPEC(val))
+                printf("#<unspecified>");
             else if (IS_SPECIAL(val) && SPECIAL_TAG(val) == KWD_VOID)
                 printf("()");
             else if (IS_SPECIAL(val))
@@ -1455,7 +1461,7 @@ int64_t aura_prim_call(int64_t prim_id, int64_t* args, int64_t argc) {
         }
         case 39: { // ListReverse — reverse a pair chain
             int64_t input = a1;
-            int64_t result = 0; // empty list sentinel
+            int64_t result = AURA_V_VOID; // empty list (#4502: was 0, a fixnum)
             while (IS_PAIR(input)) {
                 int64_t car_val = aura_pair_car(input);
                 result = aura_alloc_pair(car_val, result);

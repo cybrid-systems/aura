@@ -340,11 +340,8 @@ struct LLVMBuilder {
     }
 
     // Pointer tagging constants (must match lib/runtime.c).
-    // FLOAT_BIAS_VAL comes from value_tags.h so .cpp code stays in
-    // lockstep with the module-side encoding (issue #58).
     static constexpr int64_t KWD_TRUE_VAL = 7;
     static constexpr int64_t KWD_FALSE_VAL = 3;
-    static constexpr int64_t FLOAT_BIAS_VAL = types::FLOAT_BIAS_VAL;
     llvm::Type* double_ty = llvm::Type::getDoubleTy(ctx);
     // String pool for OpConstString (IR module's string pool content)
     const std::vector<std::string>* string_pool = nullptr;
@@ -760,10 +757,8 @@ struct LLVMBuilder {
     // aura::compiler::pure::is_truthy (see value_tags.h kIntZeroIsFalse).
     // Issue #4482: boxed float = low2 11 inside (STRING_BIAS_2, FLOAT_BIAS].
     llvm::Value* jit_is_float(llvm::Value* v) {
-        auto* odd3 = irb->CreateICmpEQ(irb->CreateAnd(v, c64(3)), c64(3));
-        auto* in_rng = irb->CreateAnd(irb->CreateICmpSLE(v, c64(types::FLOAT_BIAS_VAL)),
-                                      irb->CreateICmpSGT(v, c64(types::STRING_BIAS_VAL_2)));
-        return irb->CreateAnd(odd3, in_rng);
+        // #4502 step 5: boxed float = ImmKind Float in the low byte.
+        return irb->CreateICmpEQ(irb->CreateAnd(v, c64(0xFF)), c64(AURA_FLOAT_LOW8));
     }
     llvm::Value* jit_is_fixnum(llvm::Value* v) {
         return irb->CreateICmpEQ(irb->CreateAnd(v, c64(1)), c64(0));
@@ -1309,10 +1304,8 @@ struct LLVMBuilder {
                     // at or below STRING_BIAS_VAL_2.
                     auto* low2 = irb->CreateAnd(arg_val, c64(3));
                     auto* is_ref = irb->CreateICmpEQ(low2, c64(1));
-                    auto* is_string_tag = irb->CreateICmpEQ(low2, c64(3));
-                    auto* is_string_approx = irb->CreateAnd(
-                        is_string_tag,
-                        irb->CreateICmpSLE(arg_val, c64(aura::compiler::types::STRING_BIAS_VAL_2)));
+                    auto* is_string_approx = irb->CreateICmpEQ(irb->CreateAnd(arg_val, c64(0xFF)),
+                                                               c64(AURA_STRING_LOW8)); // #4502
                     // Combine: ref -> 10; string -> 4; else 1 (treat as
                     // fixnum; over-approximation — interpreter re-checks).
                     auto* pair_id = c64(SHAPE_PAIR);     // 10
@@ -1352,7 +1345,8 @@ struct LLVMBuilder {
             case OpConstVoid: {
                 // Issue #1285: ConstVoid fully covered (not unused).
                 // Pointer tagging: void = 11 (matching EvalValue)
-                store(inst.ops[0], c64(11));
+                // #4502 step 4: ops[1] == 1 is the unspecified value (15).
+                store(inst.ops[0], c64(inst.ops[1] == 1 ? AURA_V_UNSPEC : AURA_V_VOID));
                 return true;
             }
             case OpConstF64: {

@@ -1,0 +1,41 @@
+; Issue #4502 step 4 — '() and the unspecified value are different.
+; (if #f #f), when/unless misses are unspecified: null? is #f there, #t
+; only for '(). (null? 0) is #f. Each probe runs cold, then hot so the
+; IR/JIT tiers take over, and every result must match.
+(define *fails* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (begin (display "  pass: ") (display name) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+
+(define (one-armed x) (if (> x 0) x))
+(define (null-of-one-armed x) (null? (one-armed x)))
+(define (null-of-when x) (null? (when (> x 0) x)))
+(define (null-of-unless x) (null? (unless (> x 0) x)))
+(define (void-of-one-armed x) (void? (one-armed x)))
+(define (null-of-nil x) (null? '()))
+(define (null-of-zero x) (null? (- x x)))
+
+(define (hot name f arg want)
+  (check (string-append name " cold") (f arg) want)
+  (let loop ((i 0) (ok #t))
+    (if (< i 3000)
+        (loop (+ i 1) (and ok (equal? (f arg) want)))
+        (check (string-append name " hot") ok #t))))
+
+(hot "null? (if #f #f)" null-of-one-armed -1 #f)
+(hot "null? when miss" null-of-when -1 #f)
+(hot "null? unless miss" null-of-unless 1 #f)
+(hot "void? (if #f #f)" void-of-one-armed -1 #t)
+(hot "null? '()" null-of-nil 0 #t)
+(hot "null? 0" null-of-zero 5 #f)
+(hot "one-armed taken" one-armed 7 7)
+(check "unless runs on #f" (unless #f 'ran) 'ran)
+(check "when skips on #f" (null? (when #f 'ran)) #f)
+
+(if (= *fails* 0)
+    (begin (display "unspecified_vs_nil_4502: all pass") (newline))
+    (begin (display "unspecified_vs_nil_4502: FAILURES ") (display *fails*) (newline)
+           (error "unspecified_vs_nil_4502 failed")))

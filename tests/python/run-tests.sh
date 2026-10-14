@@ -165,6 +165,9 @@ echo "=== Aura Core Tests ==="
 
 # Arithmetic
 run_test "add"      "(+ 1 2)" "3"
+run_test "unspec:null"    "(display (null? (if #f #f)))" "#f"
+run_test "unspec:display" "(display (if #f #f))" "#<unspecified>"
+run_test "unspec:nil"     "(display (null? '()))" "#t"
 run_test "sub"      "(- 5 3)" "2"
 run_test "mul"      "(* 2 3)" "6"
 run_test "div"      "(/ 6 3)" "2"
@@ -743,6 +746,10 @@ run_emit_test "emit:big-fixnum"   "(display 200000000)" "200000000"
 run_emit_test "emit:len-mixed"    "(length (list -5 2.5 \"s\" -9))" "4"
 run_emit_test "emit:ref-string"   "(display (list-ref (list -5 2.5 \"s\") 2))" "s"
 run_emit_test "emit:map-negative" "(display (map (lambda (x) x) (list -3 -4)))" "(-3 -4)"
+# #4502 step 4: '() vs unspecified, (null? 0) is #f
+run_emit_test "emit:null-nil"     "(display (null? (list)))" "#t"
+run_emit_test "emit:null-zero"    "(display (null? 0))" "#f"
+run_emit_test "emit:null-unspec"  "(display (null? (if #f #f)))" "#f"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)

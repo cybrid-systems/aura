@@ -89,6 +89,8 @@ namespace {
             return "...";
         if (is_void(v))
             return "()";
+        if (types::is_unspecified(v))
+            return "#<unspecified>";
         if (is_bool(v))
             return as_bool(v) ? "#t" : "#f";
         // Issue #4468: same shortest spelling as display / number->string.
@@ -169,6 +171,10 @@ namespace {
         }
         if (is_void(v)) {
             std::fprintf(stdout, "()");
+            return;
+        }
+        if (types::is_unspecified(v)) {
+            std::fprintf(stdout, "#<unspecified>");
             return;
         }
         if (is_bool(v)) {

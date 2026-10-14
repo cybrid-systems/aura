@@ -3,6 +3,7 @@
 // Tests: ShapeID, inline_shape_of, compute_shape_id, ShapeProfiler
 //        (stability, invalidation, metrics, edge cases)
 //
+#include "compiler/value_tags.h" // #4502: AURA_MAKE_FLOAT / AURA_MAKE_STRING
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
 #include "../src/core/cpp26_contract_stats.h"
@@ -39,14 +40,14 @@ template <typename T> const char* test_name_cstr(const T& name) {
     } while (0)
 
 // ── Float/string bias constants (must match shape_profiler.cpp) ──
-static constexpr std::int64_t kFloatBias = -10000000000000000LL + 3; // #4482: low2 = 3
+static constexpr std::int64_t kFloatBias = AURA_MAKE_FLOAT(0); // #4502: ImmKind float, idx 0
 // Issue #278 follow-up: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 (low
 // 2 bits set to 2 for the v2 string encoding). The test used the raw
 // STRING_BIAS_VAL (-9e18), but shape_profiler.cpp's kStringBias is
 // STRING_BIAS_VAL_2 (-9e18 + 2). The boundary cases (kStringBias + 1,
 // kStringBias, etc.) need to align with the source-side constant or
 // the inline_shape_of checks fall into the wrong branch.
-static constexpr std::int64_t kStringBias = -9000000000000000000LL + 3; // #4482
+static constexpr std::int64_t kStringBias = AURA_MAKE_STRING(0); // #4502: ImmKind string, idx 0
 
 // ── Issue #4090: allocation counter around hot-path profiler calls ──
 // Scoped counting allocator override — the measured regions run only
@@ -139,14 +140,16 @@ int main() {
 
     // ── 2d: Float (#4482: low2 == 3, in (kStringBias, kFloatBias]) ──
     TEST("shape_of(kFloatBias) == Float", inline_shape_of(kFloatBias) == SHAPE_FLOAT);
-    TEST("shape_of(kFloatBias - 4) == Float", inline_shape_of(kFloatBias - 4) == SHAPE_FLOAT);
+    TEST("shape_of(AURA_MAKE_FLOAT(1)) == Float",
+         inline_shape_of(AURA_MAKE_FLOAT(1)) == SHAPE_FLOAT);
     TEST("shape_of(kFloatBias - 1) == Int (even)", inline_shape_of(kFloatBias - 1) == SHAPE_INT);
-    TEST("shape_of(kStringBias + 4) == Float", inline_shape_of(kStringBias + 4) == SHAPE_FLOAT);
+    TEST("shape_of(AURA_MAKE_FLOAT(2)) == Float",
+         inline_shape_of(AURA_MAKE_FLOAT(2)) == SHAPE_FLOAT);
 
     // ── 2e: String (#4482: low2 == 3, <= kStringBias) ──────────
     TEST("shape_of(kStringBias) == String", inline_shape_of(kStringBias) == SHAPE_STRING);
-    TEST("shape_of(kStringBias - 400) == String",
-         inline_shape_of(kStringBias - 400) == SHAPE_STRING);
+    TEST("shape_of(AURA_MAKE_STRING(100)) == String",
+         inline_shape_of(AURA_MAKE_STRING(100)) == SHAPE_STRING);
     TEST("shape_of(kStringBias - 1) == Int (even)", inline_shape_of(kStringBias - 1) == SHAPE_INT);
 
     // ── 2f: Ref types (heap objects) ───────────────────────────
@@ -179,7 +182,8 @@ int main() {
     // Issue #378 follow-up: v=15 has v&3 == 3 but is not 3/7/11,
     // so classify_eval_value_tag returns Unknown → inline_shape_of
     // returns SHAPE_UNKNOWN (was contract_assert abort before).
-    TEST("shape_of(15) == Unknown (v2 invalid tag)", inline_shape_of(15) == SHAPE_UNKNOWN);
+    TEST("shape_of(15) == Void (unspecified, #4502)", inline_shape_of(15) == SHAPE_VOID);
+    TEST("shape_of(19) == Unknown (unassigned ImmKind)", inline_shape_of(19) == SHAPE_UNKNOWN);
 
     // ═══════════════════════════════════════════════════════════
     // Section 3: compute_shape_id

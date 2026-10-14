@@ -39,8 +39,6 @@ namespace aura::compiler::shape {
 // ── FLOAT_BIAS / STRING_BIAS from value_tags.h (issue #58, #181) ──
 // Issue #181 Cycle 2: STRING_BIAS_VAL_2 is the v2 upper bound of
 // the string range (was STRING_BIAS_VAL before Cycle 2).
-static constexpr std::int64_t kFloatBias = aura::compiler::types::FLOAT_BIAS_VAL;
-static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL_2;
 
 static inline bool is_fixnum_val(std::int64_t v) noexcept {
     return (v & 1) == 0;
@@ -76,8 +74,8 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
             case 3: // Bool
                 match = (val == 3 || val == 7);
                 break;
-            case 5: // Void
-                match = (val == 11);
+            case 5:                                                   // Void
+                match = (val == AURA_V_VOID || val == AURA_V_UNSPEC); // #4502
                 break;
             case 10: // Pair (ref type RefPair=0)
                 match = is_ref_val(val) && ref_type_val(val) == aura::compiler::types::RefPair;
