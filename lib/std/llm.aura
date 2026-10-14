@@ -184,6 +184,11 @@
   (cond
     ((not (string? body)) "bad-arg")
     ((llm:injection-risk? body) "injection-blocked")
+    ; #3919/#4504: sandbox without network grant leaves http-post unbound
+    ; (and getenv io-fenced) — degrade to no-http-post before the key read.
+    ; NOTE #2735: inline the probe — private free-vars can go unbound on
+    ; the capture frame, so the hot path calls primitives only.
+    ((not (try (procedure? http-post) (catch (e) #f))) "no-http-post")
     (else
      ; Best-effort rate limit (skip if free-vars lost after set-code)
      (let ((rate-ok
@@ -207,9 +212,11 @@
          "rate-limited"
          (let ((key (getenv "LLM_API_KEY"))
                (clean (llm:sanitize-prompt body)))
-           (if (or (not key) (= (string-length key) 0))
+         ; #4504: under an armed sandbox the fenced getenv returns an error
+         ; value — degrade to the no-key path instead of propagating.
+         (if (or (not key) (error? key) (= (string-length key) 0))
              ""
-             (let* ((base (getenv "LLM_BASE_URL"))
+             (let* ((base (try (getenv "LLM_BASE_URL") (catch (e) #f)))
                     (url (if (string? base)
                            (string-append base "/chat/completions")
                            "https://api.deepseek.com/v1/chat/completions"))
@@ -234,7 +241,7 @@
       (hash "ok" #f "error" "injection-blocked" "content" ""))
     (let* ((sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt "")))
            (usr (llm:sanitize-prompt (if (string? user-prompt) user-prompt "")))
-           (model-env (getenv "LLM_MODEL"))
+           (model-env (try (getenv "LLM_MODEL") (catch (e) #f)))
            (model (if (and (string? model-env) (> (string-length model-env) 0))
                     model-env
                     "deepseek-chat"))
