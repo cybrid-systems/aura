@@ -3,7 +3,9 @@
 
 module;
 
+#include "primitives_detail.h"
 #include "runtime_shared.h"
+#include "security_side_effect.hh" // kEffectMutate (#4503 f64vector-set!)
 #include "messaging_bridge.h"
 #include "utf8_scalar.hh" // Issue #4472
 
@@ -367,6 +369,179 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         // EOF is void. A blank line is "" (Issue #4325), so eof-object?
         // is false for that string.
         return make_bool(is_void(a[0]));
+    });
+
+    // ── Issue #4503: f64vector — contiguous little-endian doubles ──────────
+    // An f64vector is a string slot holding 8*n raw bytes, so elements are
+    // machine doubles (no per-element boxing) and existing string GC,
+    // tenant and quota plumbing applies unchanged. Bulk load: read the
+    // file with read-file (8-bit clean, sandbox-checked) and convert with
+    // bytes->f64vector / f32-bytes->f64vector in one pass. f64vector-dot
+    // runs a whole multiply-accumulate loop natively (one boxed result).
+    auto f64err = [&ev](std::string msg) -> EvalValue {
+        return make_primitive_error(ev.string_heap_, ev.error_values_, std::move(msg),
+                                    ev.primitive_error_counter_ptr());
+    };
+    auto f64slot = [&ev](const EvalValue& v) -> std::string* {
+        if (!is_string(v))
+            return nullptr;
+        const auto idx = types::as_string_idx(v);
+        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+            return nullptr;
+        return &ev.string_heap_[idx];
+    };
+    auto as_real = [](const EvalValue& v, double& out) {
+        if (is_float(v)) {
+            out = as_float(v);
+            return true;
+        }
+        if (is_int(v)) {
+            out = static_cast<double>(as_int(v));
+            return true;
+        }
+        return false;
+    };
+    auto new_f64 = [&ev](std::string bytes) -> EvalValue {
+        auto sid = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(bytes));
+        return make_string(sid);
+    };
+    auto rd = [](const std::string& s, std::size_t i) {
+        double d;
+        std::memcpy(&d, s.data() + i * 8, 8);
+        return d;
+    };
+
+    add("make-f64vector", [f64err, as_real, new_f64](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || as_int(a[0]) < 0 || as_int(a[0]) > (1LL << 31))
+            return f64err("make-f64vector: expected a length in [0, 2^31]");
+        double fill = 0.0;
+        if (a.size() > 1 && !as_real(a[1], fill))
+            return f64err("make-f64vector: fill must be a number");
+        const auto n = static_cast<std::size_t>(as_int(a[0]));
+        std::string bytes(n * 8, '\0');
+        for (std::size_t i = 0; i < n; ++i)
+            std::memcpy(bytes.data() + i * 8, &fill, 8);
+        return new_f64(std::move(bytes));
+    });
+    add("f64vector-length", [f64err, f64slot](std::span<const EvalValue> a) -> EvalValue {
+        auto* s = a.empty() ? nullptr : f64slot(a[0]);
+        if (!s)
+            return f64err("f64vector-length: expected an f64vector");
+        return make_int(static_cast<std::int64_t>(s->size() / 8));
+    });
+    add("f64vector-ref", [f64err, f64slot, rd](std::span<const EvalValue> a) -> EvalValue {
+        auto* s = a.size() < 2 ? nullptr : f64slot(a[0]);
+        if (!s || !is_int(a[1]))
+            return f64err("f64vector-ref: expected (f64vector index)");
+        const auto i = as_int(a[1]);
+        const auto n = static_cast<std::int64_t>(s->size() / 8);
+        if (i < 0 || i >= n)
+            return f64err(std::format("f64vector-ref: index {} out of range for length {}", i, n));
+        return make_float(rd(*s, static_cast<std::size_t>(i)));
+    });
+    add("f64vector-set!",
+        [&ev, f64err, f64slot, as_real](std::span<const EvalValue> a) -> EvalValue {
+            double x = 0.0;
+            if (a.size() < 3 || !f64slot(a[0]) || !is_int(a[1]) || !as_real(a[2], x))
+                return f64err("f64vector-set!: expected (f64vector index number)");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            const auto idx = types::as_string_idx(a[0]);
+            if (!ev.inrange_string_tenant_allows(idx, aura::compiler::security::kEffectMutate,
+                                                 "f64vector-set!"))
+                return f64err("f64vector-set!: cross-tenant slot write denied (#4428)");
+            auto& s = ev.string_heap_[idx];
+            const auto i = as_int(a[1]);
+            const auto n = static_cast<std::int64_t>(s.size() / 8);
+            if (i < 0 || i >= n)
+                return f64err(
+                    std::format("f64vector-set!: index {} out of range for length {}", i, n));
+            std::memcpy(s.data() + static_cast<std::size_t>(i) * 8, &x, 8);
+            return make_void();
+        });
+    // (f64vector-dot a b [a-off b-off n]) — sum of a[a-off+k]*b[b-off+k].
+    add("f64vector-dot", [f64err, f64slot, rd](std::span<const EvalValue> a) -> EvalValue {
+        auto* x = a.size() < 2 ? nullptr : f64slot(a[0]);
+        auto* y = a.size() < 2 ? nullptr : f64slot(a[1]);
+        if (!x || !y)
+            return f64err("f64vector-dot: expected two f64vectors");
+        const auto nx = static_cast<std::int64_t>(x->size() / 8);
+        const auto ny = static_cast<std::int64_t>(y->size() / 8);
+        std::int64_t xo = 0, yo = 0, n = std::min(nx, ny);
+        if (a.size() >= 5) {
+            if (!is_int(a[2]) || !is_int(a[3]) || !is_int(a[4]))
+                return f64err("f64vector-dot: offsets and count must be integers");
+            xo = as_int(a[2]);
+            yo = as_int(a[3]);
+            n = as_int(a[4]);
+        }
+        if (xo < 0 || yo < 0 || n < 0 || xo + n > nx || yo + n > ny)
+            return f64err("f64vector-dot: range out of bounds");
+        double acc = 0.0;
+        for (std::int64_t k = 0; k < n; ++k)
+            acc +=
+                rd(*x, static_cast<std::size_t>(xo + k)) * rd(*y, static_cast<std::size_t>(yo + k));
+        return make_float(acc);
+    });
+    // (bytes->f64vector str [byte-offset count]) — little-endian float64.
+    // (f32-bytes->f64vector str [byte-offset count]) — float32, widened.
+    auto from_bytes = [f64err, new_f64](std::span<const EvalValue> a, std::string& src,
+                                        std::size_t width, const char* who) -> EvalValue {
+        std::int64_t off = 0;
+        std::int64_t cnt = static_cast<std::int64_t>(src.size() / width);
+        if (a.size() >= 2) {
+            if (!is_int(a[1]) || as_int(a[1]) < 0 ||
+                static_cast<std::size_t>(as_int(a[1])) > src.size())
+                return f64err(std::format("{}: bad byte offset", who));
+            off = as_int(a[1]);
+            cnt = static_cast<std::int64_t>((src.size() - static_cast<std::size_t>(off)) / width);
+        }
+        if (a.size() >= 3) {
+            if (!is_int(a[2]) || as_int(a[2]) < 0 || as_int(a[2]) > cnt)
+                return f64err(std::format("{}: count exceeds the available bytes", who));
+            cnt = as_int(a[2]);
+        }
+        std::string out(static_cast<std::size_t>(cnt) * 8, '\0');
+        for (std::int64_t k = 0; k < cnt; ++k) {
+            const char* p = src.data() + off + k * static_cast<std::int64_t>(width);
+            double d;
+            if (width == 8) {
+                std::memcpy(&d, p, 8);
+            } else {
+                float f;
+                std::memcpy(&f, p, 4);
+                d = static_cast<double>(f);
+            }
+            std::memcpy(out.data() + k * 8, &d, 8);
+        }
+        return new_f64(std::move(out));
+    };
+    add("bytes->f64vector", [&ev, f64err, from_bytes](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || types::as_string_idx(a[0]) >= ev.string_heap_.size())
+            return f64err("bytes->f64vector: expected a byte string");
+        std::string src = ev.string_heap_[types::as_string_idx(a[0])];
+        return from_bytes(a, src, 8, "bytes->f64vector");
+    });
+    add("f32-bytes->f64vector",
+        [&ev, f64err, from_bytes](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]) ||
+                types::as_string_idx(a[0]) >= ev.string_heap_.size())
+                return f64err("f32-bytes->f64vector: expected a byte string");
+            std::string src = ev.string_heap_[types::as_string_idx(a[0])];
+            return from_bytes(a, src, 4, "f32-bytes->f64vector");
+        });
+    // (bytes-i32-ref str byte-offset) — little-endian int32 (checkpoint headers).
+    add("bytes-i32-ref", [&ev, f64err](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]) ||
+            types::as_string_idx(a[0]) >= ev.string_heap_.size())
+            return f64err("bytes-i32-ref: expected (string byte-offset)");
+        const auto& s = ev.string_heap_[types::as_string_idx(a[0])];
+        const auto off = as_int(a[1]);
+        if (off < 0 || static_cast<std::size_t>(off) + 4 > s.size())
+            return f64err("bytes-i32-ref: offset out of range");
+        std::int32_t v;
+        std::memcpy(&v, s.data() + off, 4);
+        return make_int(v);
     });
 }
 

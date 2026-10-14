@@ -1,0 +1,26 @@
+;; expect: 3 0.5 2.5 11.0 5.0 2 1.5 -2.0 1 -2.0 1.5 7
+;; Issue #4503: f64vector — unboxed contiguous doubles + bulk byte loaders.
+(require "std/encoding")
+(define v (make-f64vector 3 0.5))
+(display (f64vector-length v)) (display " ")
+(display (f64vector-ref v 0)) (display " ")
+(f64vector-set! v 1 2.5)
+(display (f64vector-ref v 1)) (display " ")
+(define a (make-f64vector 2 1.0))
+(f64vector-set! a 1 5.0)
+(define b (make-f64vector 2 1.0))
+(f64vector-set! b 0 6.0)
+(display (f64vector-dot a b)) (display " ")
+(display (f64vector-dot a b 1 1 1)) (display " ")
+;; little-endian float64 1.5 and -2.0
+(define raw (bytes->f64vector (hex-decode "000000000000f83f00000000000000c0")))
+(display (f64vector-length raw)) (display " ")
+(display (f64vector-ref raw 0)) (display " ")
+(display (f64vector-ref raw 1)) (display " ")
+;; offset/count select the second double only
+(define one (bytes->f64vector (hex-decode "000000000000f83f00000000000000c0") 8 1))
+(display (f64vector-length one)) (display " ")
+(display (f64vector-ref one 0)) (display " ")
+;; float32 1.5 widened; int32 header field
+(display (f64vector-ref (f32-bytes->f64vector (hex-decode "0000c03f")) 0)) (display " ")
+(display (bytes-i32-ref (hex-decode "07000000") 0))
