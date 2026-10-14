@@ -6524,6 +6524,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         }
                         last_se_denied = rec->denied ? 1 : 0;
                         last_se_reason_code = static_cast<std::int64_t>(rec->kind) + 1;
+                        // Issue #4508: durable fill keeps the operator. The
+                        // ring arm copies e.op (#4303); the WAL arm must not
+                        // drop it once the ring wraps. last-se-reason stays
+                        // the reason[64] cut; se-mid-miss stays the ring
+                        // miss (#3284) — this is the durable hit, not a
+                        // ring hit.
+                        if (rec->op[0] != '\0') {
+                            const auto n = strnlen(rec->op, sizeof(rec->op) - 1);
+                            last_se_op_str.assign(rec->op, n);
+                        }
                         if (forensic_source < 3)
                             forensic_source = 3;
                         durable_hit = 1;
@@ -6548,6 +6558,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
                                 const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
                                 last_se_reason_str.assign(mrec->op, n);
+                            }
+                            // Issue #4508: mutation-WAL fallback keeps the
+                            // operator too (provenance join, op[48]) — same
+                            // drop as the SE WAL arm above.
+                            if (mrec->op[0] != '\0') {
+                                const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
+                                last_se_op_str.assign(mrec->op, n);
                             }
                             if (forensic_source < 3)
                                 forensic_source = 3;
@@ -6609,6 +6626,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                     join_mid)) {
                             if (!ovr->reason.empty())
                                 last_se_reason_str = ovr->reason;
+                            // Issue #4508: overflow fallback keeps the
+                            // operator as well — same WAL-shape record.
+                            if (!ovr->op.empty())
+                                last_se_op_str = ovr->op;
                         } else if (::aura::core::audit_wal::g_audit_wal_metrics()
                                            .audit_wal_segment_prune_total.load(
                                                std::memory_order_relaxed) +
