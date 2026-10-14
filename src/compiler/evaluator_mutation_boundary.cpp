@@ -5866,6 +5866,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                     m->render_fast_exit_deferred_reemit_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+                // Issue #4507: the defer still stamps the reemit audit face
+                // with the session mid captured before the TLS clear — same
+                // fallback as the non-render sibling below. The func-table
+                // epoch below is a listener signal only; it never becomes
+                // the face mid (query last-reemit-mid stays a session mid).
+                aura_note_aot_reemit_audit_face(
+                    aura::compiler::CompilerMetrics::kAotLastReemitReasonRenderFastDeferred,
+                    exited_cp.audit_mid != 0 ? exited_cp.audit_mid : session_mid_at_enter_);
                 // Epoch notify only (no sync reemit) so dual-epoch observers
                 // see a bump; actual reemit coalesces on next non-render boundary.
                 aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
