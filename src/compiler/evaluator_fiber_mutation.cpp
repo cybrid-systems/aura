@@ -4475,14 +4475,26 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         // clear (push-only gate was not enough). Quiet path: mailbox()
         // null or empty queue → walk is a single lock + range-for with
         // no body.
-        if (auto* mb = fiber->mailbox()) {
-            mb->for_each_pending_held_ref_for_fiber(fiber, [](auto& m) {
-                if (m.handoff_completed) {
-                    m.handoff_completed = false;
-                    ::aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
-                }
-            });
-        }
+        // Issue #4506: the walk must also see the mailbox the fiber is
+        // parked on — a per-ask reply mailbox is never attach()ed, so
+        // Fiber::mailbox_ stays the body mailbox (or null) and a held_ref
+        // reply already queued there kept its stamp through the steal;
+        // agent_ask then returned the stale stable-ref as ok. Same clear
+        // + counter as the primary walk; a post-steal push with a fresh
+        // stamp stays deliverable (the walk only clears what was queued
+        // when on_steal_complete ran). Soft / Off: block not reached.
+        auto clear_pending_held_ref_stamp = [](auto& m) {
+            if (m.handoff_completed) {
+                m.handoff_completed = false;
+                ::aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+            }
+        };
+        auto* primary_mb = fiber->mailbox();
+        if (primary_mb)
+            primary_mb->for_each_pending_held_ref_for_fiber(fiber, clear_pending_held_ref_stamp);
+        if (auto* parked_mb = aura::serve::mf_mailbox::fiber_parked_mailbox(fiber->id());
+            parked_mb && parked_mb != primary_mb)
+            parked_mb->for_each_pending_held_ref_for_fiber(fiber, clear_pending_held_ref_stamp);
         ::aura::serve::mf_mailbox::revalidate_held_ref_after_steal();
     }
 }

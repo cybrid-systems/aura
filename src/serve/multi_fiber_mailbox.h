@@ -358,6 +358,62 @@ inline void bump_held_ref_stale_after_steal() noexcept {
     g_mf_mailbox_stats.held_ref_stale_after_steal_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #4506: parked-mailbox registry. The #3369 steal walk only sees
+// Fiber::mailbox_ (the primary / body mailbox), so a held_ref reply that
+// was already queued on a per-ask reply mailbox keeps its stamp when the
+// parked asker is stolen — agent_ask then publishes the stale
+// stable-ref payload as ok (call-site bypass of the primary-mailbox
+// walk, same consume gate as #3565 / #4049). The registry records the
+// mailbox a fiber is currently waiting on so on_steal_complete can walk
+// it in addition to the primary. Depth-counted: agent_ask registers the
+// reply mailbox for the whole ask window and recv re-registers around
+// each park, so the entry survives the park/resume cycles inside one
+// ask and is erased when the last registration clears. Raw pointer:
+// every registrar owns the mailbox for its window (agent_ask holds the
+// shared_ptr; recv is a member call), and note/clear strictly pair.
+class MultiFiberMailbox;
+struct FiberParkedMailboxEntry {
+    MultiFiberMailbox* mb = nullptr;
+    std::uint64_t depth = 0;
+};
+inline std::mutex g_fiber_parked_mailbox_mu;
+inline std::unordered_map<std::uint64_t, FiberParkedMailboxEntry> g_fiber_parked_mailbox{};
+
+// Register `mb` as a mailbox `fiber_id` is waiting on (depth +1).
+inline void note_fiber_parked_mailbox(std::uint64_t fiber_id, MultiFiberMailbox* mb) noexcept {
+    if (fiber_id == 0 || mb == nullptr)
+        return;
+    std::lock_guard lock(g_fiber_parked_mailbox_mu);
+    auto& e = g_fiber_parked_mailbox[fiber_id];
+    e.mb = mb;
+    ++e.depth;
+}
+
+// Drop one registration. Erases only when the depth reaches zero and
+// only when the live entry still points at `mb` (a stale clear must not
+// clobber a newer registration for the same fiber).
+inline void clear_fiber_parked_mailbox(std::uint64_t fiber_id, MultiFiberMailbox* mb) noexcept {
+    if (fiber_id == 0 || mb == nullptr)
+        return;
+    std::lock_guard lock(g_fiber_parked_mailbox_mu);
+    auto it = g_fiber_parked_mailbox.find(fiber_id);
+    if (it == g_fiber_parked_mailbox.end() || it->second.mb != mb)
+        return;
+    if (--it->second.depth == 0)
+        g_fiber_parked_mailbox.erase(it);
+}
+
+// Steal-walk reader (strong def of aura_evaluator_on_steal_complete).
+// The pointer is valid while a registration is live: the registrar owns
+// the mailbox for its window and clears before releasing it.
+[[nodiscard]] inline MultiFiberMailbox* fiber_parked_mailbox(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return nullptr;
+    std::lock_guard lock(g_fiber_parked_mailbox_mu);
+    auto it = g_fiber_parked_mailbox.find(fiber_id);
+    return it == g_fiber_parked_mailbox.end() ? nullptr : it->second.mb;
+}
+
 // Issue #3565: production recv/pop of held_ref_token && !handoff_completed
 // is not a successful payload delivery. Steal-complete (#3369) already
 // cleared the stamp; this is the consume-side gate the comment promised.
@@ -1946,10 +2002,16 @@ public:
             if (g_current_fiber != nullptr) {
                 // Park so GC safepoint / steal can proceed.
                 g_current_fiber->set_state(FiberState::Waiting);
+                // Issue #4506: record the mailbox this fiber parks on so
+                // the steal walk sees it even when Fiber::mailbox_ points
+                // at the body mailbox. Depth-counted: an ask-window
+                // registration (agent_ask) survives the resume clear.
+                note_fiber_parked_mailbox(g_current_fiber->id(), this);
                 if (timeout_ms > 0)
                     Fiber::yield(YieldReason::Explicit);
                 else
                     Fiber::yield(YieldReason::BlockingIO);
+                clear_fiber_parked_mailbox(g_current_fiber->id(), this);
                 // Drain eventfd if present.
                 int evfd = g_current_fiber->eventfd();
                 if (evfd >= 0) {
