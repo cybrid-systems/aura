@@ -33,7 +33,10 @@
 #include "test_harness.hpp"
 
 #include "core/densify_consistency_report.h"
+#include "compiler/security_defaults.hh"   // production bootstrap (#3586)
+#include "compiler/typed_mutation_audit.h" // production_defaults_active
 #include "core/gc_hooks.h"
+#include "core/sandbox.hh"
 #include "core/lifetime_consistency_proof.hh"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -250,6 +253,16 @@ static void run_chaos_matrix() {
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(duration_s);
 
+    // Issue #3586: an unarmed multi-worker Scheduler aborts ("multi-worker
+    // needs production bootstrap"); every nightly since 10-07 died here in
+    // 0.2 s. Arm production defaults (Restricted) like chaos_soak_production_gate.
+    if (workers > 1 && aura::compiler::typed_audit::production_defaults_active() == 0) {
+        ::unsetenv("AURA_SANDBOX");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::compiler::security::apply_production_security_defaults();
+        CHECK(aura::compiler::typed_audit::production_defaults_active() != 0,
+              "3586: production defaults armed before multi-worker Scheduler");
+    }
     Scheduler sched(static_cast<std::size_t>(workers));
     for (int i = 0; i < k_fibers; ++i) {
         const auto fseed = 0xC0FFEEULL + static_cast<std::uint64_t>(i) * 0x9E3779B97F4A7C15ull;

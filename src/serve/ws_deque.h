@@ -17,7 +17,10 @@
 // Cache alignment:
 //   - top_ and bottom_ on separate cache lines to prevent false sharing
 //   - Class itself aligns to 64 bytes (ARM64 cache line size)
-//   - The ring buffer uses std::vector for safe resize (owner-only)
+//   - The ring is published through an atomic pointer; grow() copies into a
+//     new ring and retires the old one until destruction, so a stealer that
+//     loaded the old ring never reads freed or concurrently-swapped memory
+//     (tsan race in grow(), nightly e0290ca).
 
 #ifndef AURA_SERVE_WS_DEQUE_H
 #define AURA_SERVE_WS_DEQUE_H
@@ -26,6 +29,7 @@
 #include "core/atomic_fence_port.h"
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 namespace aura::serve {
@@ -52,12 +56,13 @@ public:
     void push(T item) {
         int64_t b = bottom_.load(std::memory_order_relaxed);
         int64_t t = top_.load(std::memory_order_acquire);
+        Ring* r = ring_.load(std::memory_order_relaxed);
 
-        if (static_cast<uint64_t>(b - t) >= static_cast<uint64_t>(mask_)) {
-            grow(b, t);
+        if (static_cast<uint64_t>(b - t) >= static_cast<uint64_t>(r->mask)) {
+            r = grow(r, b, t);
         }
 
-        buffer_[static_cast<size_t>(b) & mask_] = item;
+        r->put(b, item);
         // Release fence: item write visible before bottom_ increment.
         aura::util::thread_fence(std::memory_order_release);
         bottom_.store(b + 1, std::memory_order_relaxed);
@@ -74,7 +79,7 @@ public:
         T item = nullptr;
 
         if (t <= b) {
-            item = buffer_[static_cast<size_t>(b) & mask_];
+            item = ring_.load(std::memory_order_relaxed)->get(b);
 
             if (t == b) {
                 // Last item: race with stealers.
@@ -100,7 +105,8 @@ public:
 
         T item = nullptr;
         if (t < b) {
-            item = buffer_[static_cast<size_t>(t) & mask_];
+            // Acquire pairs with grow()'s release publish of a new ring.
+            item = ring_.load(std::memory_order_acquire)->get(t);
 
             // CAS to claim the item at top_.
             if (!top_.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst,
@@ -127,34 +133,39 @@ public:
 private:
     static constexpr int64_t INITIAL_CAPACITY = 64;
 
+    struct Ring {
+        explicit Ring(int64_t cap)
+            : mask(cap - 1)
+            , slots(new std::atomic<T>[static_cast<size_t>(cap)]) {
+            for (int64_t i = 0; i < cap; ++i)
+                slots[static_cast<size_t>(i)].store(nullptr, std::memory_order_relaxed);
+        }
+        T get(int64_t i) const {
+            return slots[static_cast<size_t>(i & mask)].load(std::memory_order_relaxed);
+        }
+        void put(int64_t i, T v) {
+            slots[static_cast<size_t>(i & mask)].store(v, std::memory_order_relaxed);
+        }
+        int64_t mask;
+        std::unique_ptr<std::atomic<T>[]> slots;
+    };
+
     void set_capacity(int64_t cap) {
-        mask_ = cap - 1;
-        buffer_.assign(static_cast<size_t>(cap), nullptr);
+        rings_.push_back(std::make_unique<Ring>(cap));
+        ring_.store(rings_.back().get(), std::memory_order_relaxed);
     }
 
-    // Grow the ring buffer. Called when the deque is full.
-    // The new capacity is double the old capacity.
-    // Items are re-indexed in the new buffer.
-    // NOTE: This is called BEFORE writing the item that triggered the grow,
-    // so the snapshot of (b, t) is the current state BEFORE the pending write.
-    // The item at old position 'b' (which triggered growth) hasn't been written
-    // yet — it will be written to position 'b' in the new buffer after growth.
-    void grow(int64_t b, int64_t t) {
-        int64_t old_cap = static_cast<int64_t>(buffer_.size());
-        int64_t new_cap = old_cap * 2;
-
-        std::vector<T> new_buf(static_cast<size_t>(new_cap), nullptr);
-        int64_t new_mask = new_cap - 1;
-
-        // Copy valid items: those at indices [t, b-1] in the old buffer.
-        // Position 'b' in the old buffer hasn't been written yet (the
-        // current push will write it after growth) — so copy only up to b-1.
-        for (int64_t i = t; i < b; ++i) {
-            new_buf[static_cast<size_t>(i) & new_mask] = buffer_[static_cast<size_t>(i) & mask_];
-        }
-
-        buffer_.swap(new_buf);
-        mask_ = new_mask;
+    // Grow the ring (owner only), called BEFORE the pending push writes
+    // position b. Valid items [t, b) are copied; the old ring stays alive in
+    // rings_ because a stealer may still be reading it.
+    Ring* grow(Ring* old, int64_t b, int64_t t) {
+        auto fresh = std::make_unique<Ring>((old->mask + 1) * 2);
+        for (int64_t i = t; i < b; ++i)
+            fresh->put(i, old->get(i));
+        Ring* r = fresh.get();
+        rings_.push_back(std::move(fresh));
+        ring_.store(r, std::memory_order_release);
+        return r;
     }
 
     // ── Layout (cache-line aware) ────────────────────
@@ -168,8 +179,8 @@ private:
     char pad1_[kCacheLine - sizeof(std::atomic<int64_t>)];
 
     // Owned-only members (no false sharing risk for stealers)
-    std::vector<T> buffer_;
-    int64_t mask_;
+    std::atomic<Ring*> ring_{nullptr};
+    std::vector<std::unique_ptr<Ring>> rings_; // current + retired (owner-only)
 };
 
 } // namespace aura::serve
