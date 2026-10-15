@@ -16,6 +16,14 @@
 //   AC3: pass_pipeline_concept_rejection_total == 0 under production pack
 //   AC4: run_production_soa_dirty_hot_pack advances metrics (no to_aos)
 //   AC5: schema-2907 + linter; no docs/design/*
+//
+// Issue #4516 (extend this suite):
+//   AC1: dirty [ConstI64, ConstI64, Add] folds via the pack (issue repro);
+//        clean-block Add untouched
+//   AC2: CF SoA entry counts real rewrites (folded_count)
+//   AC3: unstamped CastOp — TP stamps type_ids_, DCE identity elides
+//   AC4: TP SoA entry stamps columns + counters (unit)
+//   AC5: CK SoA entry analyzes dirty opcodes (compute_kind_instructions)
 
 #include "test_harness.hpp"
 #include "compiler/jit_typed_mutation_stats.h"
@@ -31,6 +39,7 @@
 import std;
 import aura.compiler.pass_manager;
 import aura.compiler.optimization_passes;
+import aura.compiler.compute_kind;
 import aura.compiler.ir_soa;
 import aura.compiler.ir;
 import aura.compiler.service;
@@ -954,14 +963,156 @@ int run_test_soa_dirty_aware_pipeline() {
               "3822 soak: residual bridge still unchanged");
     }
 
+    // ── Issue #4516: SoA PureWrap stages perform the real rewrite ──
+    {
+        std::println("\n=== Issue #4516: SoA dirty hot pack folds + stamps columns ===");
+        const auto impls = read_file("src/compiler/pass_impls.ixx");
+        CHECK(impls.find("Issue #4516") != std::string::npos, "4516: pass_impls cites #4516");
+        CHECK(read_file("docs/design/4516-soa-purewrap-rewrite.md").empty(),
+              "4516: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_4516.cpp").empty(), "4516: no invent");
+
+        // AC1 (issue repro): dirty block [ConstI64, ConstI64, Add] — the
+        // pack must rewrite the Add via the fold (AoS parity); the clean
+        // block keeps its Add (dirty-only fold preserved).
+        IRModuleV2 mod;
+        auto fi = mod.add_function("f4516", 4);
+        auto b0 = mod.add_block(fi);
+        mod.add_instruction(fi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+        mod.add_instruction(fi, IROpcode::ConstI64, {1, 3, 0, 0}, 0, 1, 0, 0);
+        mod.add_instruction(fi, IROpcode::Add, {2, 0, 1, 0});
+        mod.seal_block(fi, b0);
+        auto b1 = mod.add_block(fi);
+        mod.add_instruction(fi, IROpcode::Add, {3, 0, 1, 0});
+        mod.seal_block(fi, b1);
+        {
+            auto& fn = mod.functions[fi];
+            fn.block_dirty_.assign(fn.blocks_.size(), 0);
+            fn.block_dirty_[0] = 1;
+            fn.instruction_dirty_.assign(fn.opcodes_.size(), 0);
+            for (std::uint32_t i = fn.blocks_[0].start_idx; i < fn.blocks_[0].end_idx; ++i)
+                fn.instruction_dirty_[i] = 1;
+        }
+        CHECK(run_production_soa_dirty_hot_pack(mod), "4516 AC1: hot pack ok");
+        {
+            const auto& fn = mod.functions[fi];
+            const auto add_idx = fn.blocks_[0].start_idx + 2;
+            CHECK(fn.opcodes_[add_idx] == IROpcode::ConstI64,
+                  "4516 AC1: dirty Add folded to ConstI64");
+            CHECK(fn.operand0_[add_idx] == 2 && fn.operand1_[add_idx] == 10 &&
+                      fn.operand2_[add_idx] == 0 && fn.operand3_[add_idx] == 0,
+                  "4516 AC1: folded operands {slot,10,0,0} via replace");
+            const auto clean_idx = fn.blocks_[1].start_idx;
+            CHECK(fn.opcodes_[clean_idx] == IROpcode::Add,
+                  "4516 AC1: clean-block Add untouched (dirty-only fold)");
+        }
+
+        // AC2: CF SoA entry counts real rewrites.
+        {
+            ConstantFoldingWrap cf;
+            IRModuleV2 cmod;
+            auto cfi = cmod.add_function("cf4516", 4);
+            auto cb = cmod.add_block(cfi);
+            cmod.add_instruction(cfi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+            cmod.add_instruction(cfi, IROpcode::ConstI64, {1, 3, 0, 0}, 0, 1, 0, 0);
+            cmod.add_instruction(cfi, IROpcode::Add, {2, 0, 1, 0});
+            cmod.seal_block(cfi, cb);
+            auto& cfn = cmod.functions[cfi];
+            cfn.block_dirty_.assign(cfn.blocks_.size(), 0);
+            cfn.block_dirty_[0] = 1;
+            cf.run_dirty(cmod);
+            CHECK(cf.folded_count() == 1, "4516 AC2: folded_count counts the Add rewrite");
+            CHECK(cfn.opcodes_[cfn.blocks_[0].start_idx + 2] == IROpcode::ConstI64,
+                  "4516 AC2: run_dirty folded the dirty Add");
+        }
+
+        // AC3: unstamped CastOp — TP inherits the source type_id; DCE's
+        // identity rule then elides it (end-to-end through the pack).
+        IRModuleV2 mod2;
+        auto fi2 = mod2.add_function("g4516", 4);
+        auto gb = mod2.add_block(fi2);
+        mod2.add_instruction(fi2, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+        mod2.add_instruction(fi2, IROpcode::CastOp, {1, 0, 1, 0});
+        mod2.seal_block(fi2, gb);
+        {
+            auto& fn = mod2.functions[fi2];
+            fn.block_dirty_.assign(fn.blocks_.size(), 0);
+            fn.block_dirty_[0] = 1;
+            fn.instruction_dirty_.assign(fn.opcodes_.size(), 0);
+            for (std::uint32_t i = fn.blocks_[0].start_idx; i < fn.blocks_[0].end_idx; ++i)
+                fn.instruction_dirty_[i] = 1;
+        }
+        CHECK(run_production_soa_dirty_hot_pack(mod2), "4516 AC3: hot pack ok");
+        {
+            const auto& fn = mod2.functions[fi2];
+            const auto cast_idx = fn.blocks_[0].start_idx + 1;
+            CHECK(fn.type_ids_[cast_idx] == 1, "4516 AC3: type_ids_ stamped (was 0)");
+            CHECK(fn.opcodes_[cast_idx] == IROpcode::Local,
+                  "4516 AC3: identity CastOp elided after stamp (DCE Rule 1)");
+        }
+
+        // AC4: TP SoA entry stamps columns + counters (unit).
+        {
+            TypePropagationPass tp;
+            IRModuleV2 tmod;
+            auto tfi = tmod.add_function("tp4516", 4);
+            auto tb = tmod.add_block(tfi);
+            tmod.add_instruction(tfi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 5, 0, 0);
+            tmod.add_instruction(tfi, IROpcode::Local, {1, 0, 0, 0});
+            tmod.add_instruction(tfi, IROpcode::CastOp, {2, 1, 1, 0});
+            tmod.seal_block(tfi, tb);
+            auto& tfn = tmod.functions[tfi];
+            tfn.block_dirty_.assign(tfn.blocks_.size(), 0);
+            tfn.block_dirty_[0] = 1;
+            tp.run_dirty(tmod);
+            CHECK(tp.propagated_count() == 1, "4516 AC4: Local propagation counter");
+            CHECK(tp.cast_result_stamped() == 1, "4516 AC4: cast result stamped counter");
+            const auto t0 = tfn.blocks_[0].start_idx;
+            CHECK(tfn.type_ids_[t0 + 1] == 5, "4516 AC4: type_ids_ column stamped from source");
+            CHECK(tfn.type_ids_[t0 + 2] == 5, "4516 AC4: unstamped CastOp inherits source type_id");
+        }
+
+        // AC5: ComputeKind SoA entry actually analyzes dirty opcodes.
+        {
+            ComputeKindWrap ck;
+            IRModuleV2 kmod;
+            auto kfi = kmod.add_function("ck4516", 4);
+            auto kb0 = kmod.add_block(kfi);
+            kmod.add_instruction(kfi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+            kmod.add_instruction(kfi, IROpcode::Add, {1, 0, 0, 0});
+            kmod.seal_block(kfi, kb0);
+            auto kb1 = kmod.add_block(kfi);
+            kmod.add_instruction(kfi, IROpcode::ConstI64, {2, 9, 0, 0}, 0, 1, 0, 0);
+            kmod.seal_block(kfi, kb1);
+            auto& kfn = kmod.functions[kfi];
+            kfn.block_dirty_.assign(kfn.blocks_.size(), 0);
+            kfn.block_dirty_[0] = 1;
+            ck.run_on_dirty_blocks_only(kmod);
+            CHECK(ck.results().size() == 1, "4516 AC5: one result per dirty function");
+            const auto& res = ck.results().front();
+            CHECK(res.valid, "4516 AC5: result valid");
+            CHECK(res.per_block_inst_kind.size() == 1,
+                  "4516 AC5: dirty block analyzed (clean skipped)");
+            if (!res.per_block_inst_kind.empty() && res.per_block_inst_kind[0].size() == 2) {
+                using aura::compiler::ComputeKind;
+                CHECK(res.per_block_inst_kind[0][0] == ComputeKind::Known,
+                      "4516 AC5: ConstI64 is Known");
+                CHECK(res.per_block_inst_kind[0][1] == ComputeKind::Unknown,
+                      "4516 AC5: Add over unknown operand is Unknown");
+            } else {
+                CHECK(false, "4516 AC5: per-instruction kinds present");
+            }
+        }
+    }
+
     ac3583_1_dual_eval_callee_mutate_not_stale();
     ac3583_1b_aot_emit_has_no_inline_pass();
     ac3583_2_reuse_existing_counters();
     ac3583_3_soft_zero_cost();
     ac3583_4_no_invent_no_mangle();
 
-    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007 results: {} passed, "
-                 "{} failed ===",
+    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007/#4516 results: "
+                 "{} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

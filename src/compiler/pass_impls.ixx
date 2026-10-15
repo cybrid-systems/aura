@@ -51,6 +51,52 @@ static_assert(aura::core::boundary::AllowedDependency<aura::core::boundary::Modu
 
 namespace aura::compiler {
 
+// ── Issue #4516: dirty-block materializer for the PureWrap stages ─
+//
+// Copies one BasicBlockSoA column range into a temporary AoS
+// aura::ir::BasicBlock so the audited pure per-block helpers
+// (constant_fold_block / TypePropagationPass::run_on_block /
+// compute_kind_instructions) run byte-identically to the AoS walk;
+// callers write the mutated opcode/operand/type columns back to the
+// SoA stream. This is a block-local temp, NOT to_aos_view — no
+// function-level bridge, residual_aos_bridge_total stays untouched,
+// same per-dirty-block heap profile as DCE's columnar slot map
+// (#2431). Write-back covers exactly the fields each stage mutates:
+// opcode/operands for folding (replace / replace_bool / replace_f64),
+// type_id / narrow_evidence for propagation (there is no SoA
+// provenance column; analysis writes nothing).
+static aura::ir::BasicBlock materialize_soa_block_aos(const IRFunctionSoA& func,
+                                                      const BasicBlockSoA& block) {
+    aura::ir::BasicBlock out;
+    out.id = block.block_id;
+    const auto span = block.end_idx > block.start_idx ? block.end_idx - block.start_idx : 0;
+    out.instructions.reserve(span);
+    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+        if (i >= func.opcodes_.size())
+            break;
+        aura::ir::IRInstruction instr;
+        instr.opcode = func.opcodes_[i];
+        instr.operands = {func.operand0_[i], func.operand1_[i], func.operand2_[i],
+                          func.operand3_[i]};
+        if (i < func.source_node_ids_.size())
+            instr.source_ast_node_id = func.source_node_ids_[i];
+        if (i < func.type_ids_.size())
+            instr.type_id = func.type_ids_[i];
+        if (i < func.shape_ids_.size())
+            instr.shape_id = func.shape_ids_[i];
+        if (i < func.linear_ownership_states_.size())
+            instr.linear_ownership_state = func.linear_ownership_states_[i];
+        if (i < func.adt_variant_ids_.size())
+            instr.adt_variant_id = func.adt_variant_ids_[i];
+        if (i < func.narrow_evidence_.size())
+            instr.narrow_evidence = func.narrow_evidence_[i];
+        if (i < func.source_markers_.size())
+            instr.source_marker = func.source_markers_[i];
+        out.instructions.push_back(std::move(instr));
+    }
+    return out;
+}
+
 // ── ComputeKindWrap — analysis pass (wraps pure function) ─────
 export class ComputeKindWrap {
 public:
@@ -113,20 +159,33 @@ public:
         results_.push_back(aura::compiler::compute_kind(func));
     }
 
-    // Issue #3488: ProductionPureWrapPass SoA dirty peel. Consults
+    // Issue #3488: ProductionPureWrapPass SoA dirty peel. Analyzes
     // opcodes_ on dirty blocks only (no AoS IRFunction walk / no
     // run(IRModule&) on clean fns).
+    // Issue #4516: perform the real analysis — per dirty block,
+    // materialize the instruction slice and run the pure
+    // compute_kind_instructions (same opcode/operand rules as
+    // compute_kind). The old consult-only loop loaded opcodes_ and
+    // discarded the value, leaving the production pack's compute-kind
+    // stage a no-op. Results accumulate one ComputeKindResult per
+    // function with an entry per analyzed dirty block (valid=true),
+    // mirroring the AoS results_.push_back(compute_kind(func)) shape.
     void run_on_dirty_blocks_only(IRModuleV2& mod) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
+        results_.clear();
         for (auto& func : mod.functions) {
+            ComputeKindResult result;
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                        if (i < func.opcodes_.size())
-                            (void)func.opcodes_[i];
-                    }
+                    auto instrs = materialize_soa_block_aos(func, block);
+                    result.per_block_inst_kind.push_back(
+                        aura::compiler::compute_kind_instructions(instrs.instructions));
                 },
                 /*dirty_only=*/true);
+            if (runs > 0) {
+                result.valid = true;
+                results_.push_back(std::move(result));
+            }
             if (skips)
                 aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
             if (runs)
@@ -511,28 +570,39 @@ public:
     }
 
     // Issue #1920 / #2143: SoA const-fold over dirty blocks via for_each_block.
-    // Folded count approximates elidable Const* ops in dirty ranges.
-    // Prefer run_dirty() for SoaDirtyAwarePass fold pipelines.
+    // Issue #4516: perform the real fold — materialize each dirty block,
+    // run the pure constant_fold_block (the same replace / replace_bool /
+    // replace_f64 rewrites as the AoS walk), and write the folded
+    // opcode/operand stream back to the SoA columns. The old consult-only
+    // loop merely counted Const* opcodes into folded_, so freshly lowered
+    // SoA columns kept uncollapsed Add / Sub / ... after the production
+    // pack. folded_ now counts actual rewrites (AoS parity).
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
         folded_ = 0;
         for (auto& func : mod.functions) {
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    auto instrs = materialize_soa_block_aos(func, block);
+                    // Per-block known-map reset: cross-block ConstI64
+                    // propagation must not leak (fold_function parity).
+                    known_.clear();
+                    folded_ += aura::compiler::constant_fold_block(instrs, known_);
+                    // Write back the folded stream — replace / replace_bool /
+                    // replace_f64 mutate opcode + operands only.
+                    std::uint32_t i = block.start_idx;
+                    for (std::size_t k = 0; k < instrs.instructions.size() && i < block.end_idx;
+                         ++k, ++i) {
                         if (i >= func.opcodes_.size())
                             break;
-                        using aura::ir::IROpcode;
-                        switch (func.opcodes_[i]) {
-                            case IROpcode::ConstI64:
-                            case IROpcode::ConstF64:
-                            case IROpcode::ConstBool:
-                            case IROpcode::ConstString:
-                                ++folded_;
-                                break;
-                            default:
-                                break;
-                        }
+                        const auto& folded = instrs.instructions[k];
+                        func.opcodes_[i] = folded.opcode;
+                        func.operand0_[i] = folded.operands[0];
+                        func.operand1_[i] = folded.operands[1];
+                        func.operand2_[i] = folded.operands[2];
+                        func.operand3_[i] = folded.operands[3];
+                    }
+                    for (i = block.start_idx; i < block.end_idx; ++i) {
                         if (i < func.shape_ids_.size())
                             aura::compiler::ir_soa_migration::record_shape_column_consult();
                     }
@@ -2852,29 +2922,36 @@ public:
     }
 
     // Issue #1920 / #2143: SoA type propagation via for_each_block(dirty_only).
-    // Walks type_id / narrow_evidence columns without full AoS conversion.
-    // Prefer run_dirty() for SoaDirtyAwarePass fold pipelines.
+    // Issue #4516: perform the real propagation — materialize each dirty
+    // block, run the AoS-parity run_on_block fixpoint (CastOp inherit /
+    // arith stamping; assigns type_id / narrow_evidence), and write the
+    // stamped columns back. The old consult-only loop only incremented
+    // counters for already-stamped ids, leaving freshly lowered type_ids_
+    // zeros unstamped so DeadCoercionElimination's identity rule could
+    // not fire in the production pack. Module-level entry resets the
+    // stage counters (run(IRModule&) parity).
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
+        propagated_count_ = 0;
+        narrow_propagated_ = 0;
+        cast_result_stamped_ = 0;
+        extended_ops_propagated_ = 0;
+        fixpoint_rounds_ = 0;
+        const_ground_stamped_ = 0;
         for (auto& func : mod.functions) {
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    // Columnar consult: shape + linear for each instruction in block.
-                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                        if (i < func.shape_ids_.size()) {
-                            (void)func.shape_ids_[i];
-                            aura::compiler::ir_soa_migration::record_shape_column_consult();
-                        }
-                        if (i < func.type_ids_.size() && func.type_ids_[i] != 0) {
-                            ++propagated_count_;
-                            aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
-                        }
-                        if (i < func.narrow_evidence_.size() && func.narrow_evidence_[i] != 0)
-                            ++narrow_propagated_;
-                        if (i < func.linear_ownership_states_.size()) {
-                            (void)func.linear_ownership_states_[i];
-                            aura::compiler::ir_soa_migration::record_linear_column_consult();
-                        }
+                    auto temp = materialize_soa_block_aos(func, block);
+                    run_on_block(temp);
+                    // Write back the stamped columns — run_on_block mutates
+                    // instr.type_id / instr.narrow_evidence only.
+                    std::uint32_t i = block.start_idx;
+                    for (std::size_t k = 0; k < temp.instructions.size() && i < block.end_idx;
+                         ++k, ++i) {
+                        if (i < func.type_ids_.size())
+                            func.type_ids_[i] = temp.instructions[k].type_id;
+                        if (i < func.narrow_evidence_.size())
+                            func.narrow_evidence_[i] = temp.instructions[k].narrow_evidence;
                     }
                 },
                 /*dirty_only=*/dirty_blocks_only);
