@@ -3944,10 +3944,10 @@ private:
                             try {
                                 fresh = resource_.allocate(p.size, p.align);
                                 used_bytes_.fetch_add(p.size, std::memory_order_relaxed);
-                        {
-                            std::lock_guard<std::mutex> lock(stats_mu_);
-                            stats_.used += p.size;
-                        }
+                                {
+                                    std::lock_guard<std::mutex> lock(stats_mu_);
+                                    stats_.used += p.size;
+                                }
                             } catch (...) {
                                 fresh = nullptr;
                             }
