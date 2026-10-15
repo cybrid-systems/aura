@@ -706,6 +706,23 @@ std::size_t ConstraintSystem::occurrence_persist_cap() noexcept {
     return v;
 }
 
+// Issue #4533: occurrence goals are noted under the AST mutation-log id
+// (InferenceEngine::set_active_mutation_id(rec.mutation_id) on the
+// post-mutate reanalyze path), but the persist rows must join the session
+// audit mid so rehydrate-with-preferred-mid does not skip them and Agent
+// query:type sees one mid for the action. Production/Full only; goals with
+// a zero source id keep the fallback (append_occurrence_snapshot's mid).
+void ConstraintSystem::restamp_occurrence_goals_for_persist(std::uint64_t mid) noexcept {
+    const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                      aura::compiler::typed_audit::get_strategy() ==
+                          aura::compiler::typed_audit::AuditStrategy::Full;
+    if (!hard || mid == 0)
+        return;
+    for (auto& g : occurrence_goals_)
+        if (g.source_mutation_id != 0)
+            g.source_mutation_id = mid;
+}
+
 std::size_t ConstraintSystem::append_occurrence_snapshot(std::uint64_t mutation_id) noexcept {
     if (!occurrence_persist_enabled())
         return 0; // AC2: soft zero cost
