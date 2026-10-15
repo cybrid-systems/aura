@@ -1273,7 +1273,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_reject_production_defaults.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults + incomplete chain → no CoercionNode;
 - `tests/compiler/test_coercion_stamp_at_add.cpp` (—) [large, domain_suite, theme_compiler] — AC1: active mid set → entry mid non-zero before apply; fast_path advances
 - `tests/compiler/test_coercion_unify_incomplete_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → applied==0, no CoercionNode
-- `tests/compiler/test_command_line_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
+- `tests/compiler/test_command_line_cap_io_read.cpp` (—) [large, domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_commercial_tenant_profile.cpp` (—) [domain_suite, theme_compiler] — AC1: No AURA_COMMERCIAL_TENANT — Restricted default soft (#2536 regression)
 - `tests/compiler/test_compiler_atomic_batch_file_mode.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: repro A file prints start once, then (end 7 2 0), exit 0
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_compiler_closure_env_safety_post_invalidate.cpp —

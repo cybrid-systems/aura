@@ -86,6 +86,22 @@ namespace {
 
 void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    // Issue #4517: stdin-facing prims (read-line / read-byte / char-ready?)
+    // are host io-read channels. Same deny_io shape as register_file_primitives
+    // (read, #4504) and register_network_primitives (getenv): allow when the
+    // sandbox is off or the principal holds the named cap / io / *; otherwise
+    // bump_capability_denial() and return the error with stdin unconsumed and
+    // unpolled. No new cap name / effect bit / query key.
+    const auto deny_io = [&ev](std::string_view cap, std::string_view msg) -> EvalValue {
+        if (!ev.sandbox_mode() || ev.has_capability(cap) ||
+            ev.has_capability(aura::compiler::security::kCapIo) ||
+            ev.has_capability(aura::compiler::security::kCapWildcard))
+            return make_void();
+        ev.bump_capability_denial();
+        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                    ev.primitive_error_counter_ptr());
+    };
+
     // Issue #4472: not a blanket is_int. Characters stay fixnums (#4129),
     // so a Unicode scalar — including U+0005 — is a character. Negatives,
     // values above U+10FFFF, surrogates, and non-integers are not.
@@ -172,7 +188,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #4356: the blocking read runs without the CLI body mutex so a
     // thread fiber can allocate. The string_heap_ push happens only after
     // the lock is back, on this thread's private line buffer.
-    add("read-line", [&ev](const auto&) {
+    add("read-line", [&ev, deny_io](const auto&) {
+        // Issue #4517: fail closed behind the io-read fence BEFORE getline.
+        // On deny nothing is consumed from stdin; Soft/Off still reads.
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (!std::cin.good())
             return make_void();
         std::string line;
@@ -195,7 +217,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     // read-byte would not block (byte already buffered, or the fd is
     // readable, including hangup/EOF). Does not consume the byte.
     // Timeout 0, so the CLI body lock stays held.
-    add("char-ready?", [](const auto&) {
+    add("char-ready?", [&ev, deny_io](const auto&) {
+        // Issue #4517: readability polling is an io-read probe — fence
+        // before in_avail/poll so a denied prim neither peeks nor polls.
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (auto* buf = std::cin.rdbuf()) {
             const auto avail = buf->in_avail();
             if (avail > 0)
@@ -213,7 +241,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #4325: one byte from stdin. Does not require a newline.
     // EOF is void, distinct from byte 0 and from read-line's "".
     // Issue #4356: same body-mutex drop as read-line across the read.
-    add("read-byte", [](const auto&) {
+    add("read-byte", [&ev, deny_io](const auto&) {
+        // Issue #4517: fail closed behind the io-read fence BEFORE the byte
+        // read. On deny nothing is consumed from stdin; Soft/Off still reads.
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (!std::cin.good())
             return make_void();
         int c = std::char_traits<char>::eof();
