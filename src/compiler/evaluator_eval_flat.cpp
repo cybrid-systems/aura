@@ -5101,6 +5101,53 @@ static EvalResult file_mode_escaped_primitive(Evaluator& ev, const EvalValue& er
 // fibers share one OS thread, and a TLS depth sums them. The slot is
 // fiber-local (aura_eval_c_stack_depth_slot); host TLS only when no
 // fiber is current.
+// ── Issue #4524: interpreter float-local arm ────────────────────────
+// Named-let / TCO loop accumulators rebind per iteration; the boxed path
+// allocates a fresh float-pool box for every step result (and, before the
+// #4524 literal intern, every float literal — the #4503 churn driver).
+// The TCO backedge arms the argument node it is about to bind to a loop
+// parameter; a 2-operand + - * call matching the armed node computes the
+// raw double directly (fixnum-first single-branch tests) and materializes
+// exactly one fresh immutable box — the interpreter-side complement of the
+// #4522 JIT shadow, with the rebox at the env-boundary materialization.
+// Escape semantics are identical to the boxed path by construction:
+// every box is fresh and immutable, so captures / snapshots freeze their
+// value exactly as before.
+//
+// thread_local is safe even under stackful fibers: the arm bracket
+// (push → recursive eval → pop) is contiguous within one fiber, and a
+// stale arm after a fiber switch can only ENABLE the fast path for an
+// unarmed call — the arithmetic is bit-exact either way, never unsound.
+namespace {
+
+    struct FloatLocalArmStack {
+        static constexpr std::size_t kMaxDepth = 16;
+        std::array<aura::ast::NodeId, kMaxDepth> nodes{};
+        std::size_t depth = 0;
+        void push(aura::ast::NodeId n) noexcept {
+            if (depth < kMaxDepth)
+                nodes[depth++] = n;
+        }
+        void pop() noexcept {
+            if (depth > 0)
+                --depth;
+        }
+        [[nodiscard]] bool matches(aura::ast::NodeId n) const noexcept {
+            return depth > 0 && nodes[depth - 1] == n;
+        }
+    };
+
+    thread_local FloatLocalArmStack g_float_local_arm;
+
+    struct FloatLocalArmGuard {
+        explicit FloatLocalArmGuard(aura::ast::NodeId n) { g_float_local_arm.push(n); }
+        ~FloatLocalArmGuard() { g_float_local_arm.pop(); }
+        FloatLocalArmGuard(const FloatLocalArmGuard&) = delete;
+        FloatLocalArmGuard& operator=(const FloatLocalArmGuard&) = delete;
+    };
+
+} // namespace
+
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                 aura::ast::NodeId id, const Env& env) {
     static constexpr std::size_t MAX_C_STACK_DEPTH = 512;
@@ -5304,6 +5351,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             // Issue #3457: SymId intern is pool-local. TCO / nested
             // eval / a fresh CompilerService::eval snippet swap `p`.
             bind_sym_intern_pool(p);
+            // Issue #4524: float literal intern is flat-scoped (node ids).
+            bind_float_intern_flat(f);
             // Save the eval environment before any tail_env.emplace could corrupt current_env
             const Env& eval_env = *current_env;
             if (current_id == aura::ast::NULL_NODE)
@@ -5358,8 +5407,23 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
                         return make_bool(v.int_value != 0);
                     return make_int_or_promote(v.int_value);
-                case aura::ast::NodeTag::LiteralFloat:
-                    return make_float(v.float_value);
+                case aura::ast::NodeTag::LiteralFloat: {
+                    // Issue #4524: intern the boxed literal per node
+                    // (bit-exact). Re-evaluating a float literal per loop
+                    // iteration allocated a fresh float-pool box every
+                    // time; the constant step of a named-let loop drove
+                    // half the interpreter's boxed-double churn (#4503).
+                    // Bit-pattern validation keeps mutate/tweak-literal
+                    // edits on the re-make path instead of serving a
+                    // stale box.
+                    if (const auto* e = float_intern_by_node_.get(
+                            static_cast<std::uint32_t>(current_id), v.float_value))
+                        return *e;
+                    auto val = make_float(v.float_value);
+                    float_intern_by_node_.set(static_cast<std::uint32_t>(current_id), v.float_value,
+                                              val);
+                    return val;
+                }
                 case aura::ast::NodeTag::LiteralString: {
                     // Issue #3401: happy-path string intern. std::string
                     // construction + string_heap_.push_back happen only on
@@ -5508,6 +5572,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (v.children.size() > 1)
                             provided.reserve(v.children.size() - 1);
                         for (std::size_t i = 1; i < v.children.size(); ++i) {
+                            // Issue #4524: arm float-local for each named
+                            // parameter position — the argument node about
+                            // to be bound to a loop accumulator slot.
+                            const std::size_t fl_named =
+                                dotted ? (pspan.empty() ? 0 : pspan.size() - 1) : pspan.size();
+                            FloatLocalArmGuard fl_arm{i - 1 < fl_named ? v.child(i)
+                                                                       : aura::ast::NULL_NODE};
                             auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                             if (!ar)
                                 return ar;
@@ -6429,6 +6500,46 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // IR bridge set_owner pattern.
                             Evaluator* prim_owner =
                                 eval_env.owner() != nullptr ? eval_env.owner() : this;
+                            // Issue #4524: interpreter float-local fast path.
+                            // At an armed TCO backedge argument position, a
+                            // 2-operand + - * with a float operand computes
+                            // the raw double directly — fixnum-first
+                            // single-branch classification (#2259/#4524 hot
+                            // tests), same seed and operation order as
+                            // arithmetic_sum/sub/mul_pure (bit-exact) — and
+                            // materializes one fresh immutable box at the
+                            // env-boundary rebox. Everything else falls
+                            // through to the generic primitive below:
+                            // both-fixnum results allocate nothing through
+                            // make_int, and overflow / non-number semantics
+                            // stay exactly on the generic path.
+                            if (v.children.size() == 3 && g_float_local_arm.matches(current_id) &&
+                                (cname == "+" || cname == "-" || cname == "*")) {
+                                const EvalValue& x = args[0];
+                                const EvalValue& y = args[1];
+                                const bool xi = is_int(x); // fixnum-first (#4524)
+                                const bool yi = is_int(y);
+                                const bool xf = !xi && is_float(x);
+                                const bool yf = !yi && is_float(y);
+                                if ((xi || xf) && (yi || yf) && (xf || yf)) {
+                                    const double dx =
+                                        xf ? as_float(x) : static_cast<double>(as_int(x));
+                                    const double dy =
+                                        yf ? as_float(y) : static_cast<double>(as_int(y));
+                                    double r;
+                                    if (cname[0] == '+') {
+                                        r = 0.0 + dx; // sum_pure seed: (0.0 + x) + y
+                                        r = r + dy;
+                                    } else if (cname[0] == '*') {
+                                        r = 1.0 * dx; // mul_pure seed: (1.0 * x) * y
+                                        r = r * dy;
+                                    } else {
+                                        r = dx - dy; // sub_pure: r = x; r -= y
+                                    }
+                                    return prim_owner->invoke_prim_with_telemetry(
+                                        cname, [&]() { return make_float(r); });
+                                }
+                            }
                             return prim_owner->invoke_prim_with_telemetry(
                                 cname, [&]() { return (*prim)(args); });
                         }
@@ -6555,6 +6666,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (v.children.size() > 1)
                             provided.reserve(v.children.size() - 1);
                         for (std::size_t i = 1; i < v.children.size(); ++i) {
+                            // Issue #4524: arm float-local for each named
+                            // parameter position — the argument node about
+                            // to be bound to a loop accumulator slot.
+                            FloatLocalArmGuard fl_arm{i - 1 < named_count ? v.child(i)
+                                                                          : aura::ast::NULL_NODE};
                             auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                             if (!ar)
                                 return ar;
@@ -8087,6 +8203,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         };
                         EnvId cur = eval_env.parent_id();
                         for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < 64; ++hops) {
+                            // Issue #4529: the chain can be stale post-truncate
+                            // (restore_panic_checkpoint shrank env_frames_ while
+                            // this env was parked) — the unchecked env_frame_mut
+                            // accessor asserts past size. Skip the stale tail.
+                            if (static_cast<std::size_t>(cur) >= owner->env_frames_size())
+                                break;
                             std::unique_lock<std::shared_mutex> wlock(
                                 owner->env_frame_shard_mu(Evaluator::env_frame_shard_index(cur)));
                             EnvFrame& fr = owner->env_frame_mut(cur);

@@ -5202,6 +5202,12 @@ public:
     // Issue #1756: distinguish NULL / OOB / INVALID_VERSION / OK.
     [[nodiscard]] EnvFrameResolveResult resolve_env_frame_detailed(EnvId id) const noexcept;
     [[nodiscard]] EnvFrameResolveResultMut resolve_env_frame_mut_detailed(EnvId id) noexcept;
+    // Issue #4529: unlocked core for walkers that ALREADY hold the
+    // env-frame shard locks (walk_env_frames contract). Re-entering a
+    // shared_mutex from the locked public face would deadlock under a
+    // waiting writer (truncate/compact take the same shards unique).
+    [[nodiscard]] EnvFrameResolveResult
+    resolve_env_frame_detailed_assume_env_frame_locks(EnvId id) const noexcept;
     [[nodiscard]] std::uint64_t env_generation() const noexcept { return env_generation_; }
     // Issue #2091 / #3267: publish the live env_frame_version + max
     // linear_state_fingerprint to the AOT bridge atomics so emit /
@@ -5459,6 +5465,10 @@ public:
         static_assert(std::is_convertible_v<std::invoke_result_t<F, EnvId, const EnvFrame&>, bool>,
                       "walk_env_frames: F must return a type convertible to bool "
                       "(true=continue, false=stop)");
+        // Issue #4529: per-hop resolve under the frame's shard lock —
+        // external callers (tests, env_depth, introspection) hold no
+        // env-frame locks, so each hop re-validates the range against
+        // restore_panic_checkpoint's truncate under the lock.
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
             // Issue #1360 / #1756: skip on NULL/OOB/INVALID_VERSION
@@ -5470,11 +5480,39 @@ public:
             cur = r.frame->parent_id;
         }
     }
+    // Issue #4529: face for callers that ALREADY hold the env-frame
+    // shard locks (Env::lookup_cell_ptr / Env::lookup_cell_index /
+    // lookup_by_symid_chain_ref hold the full array). Re-entering a
+    // shared_mutex per hop would deadlock under a waiting writer.
+    template <typename F>
+    void walk_env_frames_locked_caller(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
+        static_assert(
+            std::is_invocable_v<F, EnvId, const EnvFrame&>,
+            "walk_env_frames_locked_caller: F must be invocable with (EnvId, const EnvFrame&)");
+        static_assert(std::is_convertible_v<std::invoke_result_t<F, EnvId, const EnvFrame&>, bool>,
+                      "walk_env_frames_locked_caller: F must return a type convertible to bool "
+                      "(true=continue, false=stop)");
+        EnvId cur = start;
+        while (cur != NULL_ENV_ID) {
+            const auto r = resolve_env_frame_detailed_assume_env_frame_locks(cur);
+            if (!r)
+                return;
+            if (!std::forward<F>(f)(cur, *r.frame))
+                return;
+            cur = r.frame->parent_id;
+        }
+    }
     // Introspection: number of frames in the parent chain
     // starting at `start`. Useful for GC profiling and tests.
     [[nodiscard]] std::size_t env_depth(EnvId start) const pre(start != NULL_ENV_ID) {
         std::size_t depth = 0;
-        walk_env_frames(start, [&](EnvId, const EnvFrame&) {
+        // Issue #4529: introspection callers hold no env-frame locks —
+        // take the shard array for the walk (matches walk_env_frames'
+        // per-hop locking contract).
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            rlock[ef_i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
+        walk_env_frames_locked_caller(start, [&](EnvId, const EnvFrame&) {
             ++depth;
             return true;
         });
@@ -7134,6 +7172,51 @@ private:
     // Issue #3401 / #3457: :foo intern by SymId. keyword_table_ still
     // stores the leading ':' payload for existing readers.
     SymIdIntern keyword_intern_by_sym_;
+    // Issue #4524: float literal intern by node id (per-FlatAST, bit-exact).
+    // LiteralFloat re-evaluated per loop iteration allocated a fresh
+    // float-pool box every time (make_float → aura_alloc_float): the
+    // constant step of a named-let loop drove half the interpreter's
+    // boxed-double churn (#4503 driver). The cache maps node id → (raw
+    // bits, boxed value); a bit-pattern mismatch (mutate / tweak-literal
+    // re-fielding the node, or -0.0 vs 0.0) re-makes, so AST mutation
+    // semantics are intact. The cached box holds a float-POOL index
+    // (global, monotonic) — no pool-locality clear is needed; the cache
+    // clears when the FlatAST identity changes (node ids are flat-scoped).
+    struct FloatLiteralIntern {
+        std::vector<types::EvalValue> vals;
+        std::vector<double> bits;
+        std::vector<std::uint8_t> hit;
+        [[nodiscard]] const types::EvalValue* get(std::uint32_t id, double raw) const noexcept {
+            if (id >= hit.size() || !hit[id])
+                return nullptr;
+            if (bits[id] != raw) // bit-exact: mutation, -0.0 vs 0.0, NaN bits
+                return nullptr;
+            return &vals[id];
+        }
+        void set(std::uint32_t id, double raw, types::EvalValue v) {
+            if (id >= vals.size()) {
+                vals.resize(id + 1);
+                bits.resize(id + 1);
+                hit.resize(id + 1);
+            }
+            vals[id] = v;
+            bits[id] = raw;
+            hit[id] = 1;
+        }
+        void clear() noexcept {
+            vals.clear();
+            bits.clear();
+            hit.clear();
+        }
+    };
+    FloatLiteralIntern float_intern_by_node_;
+    const aura::ast::FlatAST* float_intern_flat_ = nullptr;
+    void bind_float_intern_flat(const aura::ast::FlatAST* f) noexcept {
+        if (float_intern_flat_ == f)
+            return;
+        float_intern_by_node_.clear();
+        float_intern_flat_ = f;
+    }
     const ast::StringPool* sym_intern_pool_ = nullptr;
     std::uint64_t intern_pool_gen_ = 0;
     void bind_sym_intern_pool(const ast::StringPool* p) noexcept {
@@ -7148,8 +7231,10 @@ private:
     void clear_sym_intern() noexcept {
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
+        float_intern_by_node_.clear(); // Issue #4524: flat-scoped float literal intern
         sym_intern_pool_ = nullptr;
         intern_pool_gen_ = 0;
+        float_intern_flat_ = nullptr;
     }
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow

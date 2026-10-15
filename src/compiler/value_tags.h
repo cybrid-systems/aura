@@ -412,7 +412,12 @@ inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
 // Prefer these (or is_*/as_* in value.ixx which route here) on
 // eval_flat / call-apply / ir_executor tight loops.
 [[nodiscard]] inline constexpr bool is_fixnum_hot(std::int64_t v) noexcept {
-    return classify_eval_value_tag_consteval(v) == EvalValueTag::Fixnum;
+    // #4524: fixnum-first single-branch form (bit0 == 0, AURA_IS_FIXNUM).
+    // Identical to the classifier's first test (#4482: bit0 clear is always
+    // Fixnum) — one predictor input on the eval_flat / IR / apply loops
+    // instead of the full classify walk (#2259 style). The static_asserts
+    // below pin the equivalence.
+    return (static_cast<std::uint64_t>(v) & 1ULL) == 0;
 }
 [[nodiscard]] inline constexpr bool is_ref_hot(std::int64_t v) noexcept {
     return classify_eval_value_tag_consteval(v) == EvalValueTag::Ref;
@@ -424,8 +429,22 @@ inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     return classify_eval_value_tag_consteval(v) == EvalValueTag::Special;
 }
 [[nodiscard]] inline constexpr bool is_float_hot(std::int64_t v) noexcept {
-    return classify_eval_value_tag_consteval(v) == EvalValueTag::Float;
+    // #4524: float second — direct low8 ImmKind compare (AURA_IS_FLOAT,
+    // #4502) instead of walking the classify chain's fixnum/ref/string
+    // probes first. Disjoint by construction: the float low byte is 35
+    // (odd → not fixnum, low2=11 → not ref, != 39 → not string), so the
+    // single-branch form classifies exactly the values the chain calls
+    // Float. Equivalence pinned by the static_asserts below.
+    return (v & 0xFF) == kFloatLow8;
 }
+
+// #4524: single-branch hot forms stay equivalent to the cold classifier
+// over every tag class (fixnum / ref / special / float / string encodings).
+static_assert(is_fixnum_hot(0) && is_fixnum_hot(2) && is_fixnum_hot(-4));
+static_assert(!is_fixnum_hot(1) && !is_fixnum_hot(kSpecialFalse) && !is_fixnum_hot(kSpecialVoid));
+static_assert(is_float_hot(make_float_raw_v2(0)) && is_float_hot(make_float_raw_v2(999999)));
+static_assert(!is_float_hot(make_string_raw_v2(0)) && !is_float_hot(0) && !is_float_hot(1));
+static_assert(!is_float_hot(kSpecialTrue) && !is_float_hot(kSpecialUnspecified));
 // Single low2 extract — one branch predictor input for tagged dispatch.
 [[nodiscard]] inline constexpr std::uint8_t tag_low2_hot(std::int64_t v) noexcept {
     return static_cast<std::uint8_t>(v & 3);
