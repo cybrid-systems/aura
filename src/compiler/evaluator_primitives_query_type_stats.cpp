@@ -302,7 +302,23 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             // Power-of-2 capacity;
             // #1923+#1924+#2024+#2028+#2030+#2260+#2262+#2345+#2359
             // keys.
-            auto* ht = FlatHashTable::create(1024);
+            // Issue #4534: plan for every static key plus the per-goal row
+            // block (5 keys x AURA_OCCURRENCE_GOAL_QUERY_CAP, default 64) —
+            // the old fixed 1024 dropped the tail keys (cache-epoch /
+            // occurrence-goals-live / stale-vs-epoch / memo / hit-miss /
+            // schema-issue) once 5*N crossed the table.
+            static const std::size_t goal_query_cap = []() noexcept -> std::size_t {
+                const char* e = std::getenv("AURA_OCCURRENCE_GOAL_QUERY_CAP");
+                if (e && *e) {
+                    char* end = nullptr;
+                    const auto n = std::strtoull(e, &end, 10);
+                    if (end != e)
+                        return static_cast<std::size_t>(n);
+                }
+                return 64ull;
+            }();
+            const auto planned = 900u + 5u * goal_query_cap;
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(planned));
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1099,18 +1115,23 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 // workspace epoch to detect drift). AC3
                 // documents "proof is pre-remap".
                 using namespace aura::compiler::typed_audit;
+                // Issue #4534: publish the last stamped proof face (the old
+                // constants pinned a green face under goal pressure).
                 insert_kv("type-linear-commit-proof-readiness-bp",
-                          static_cast<std::int64_t>(10000));
+                          last_proof_readiness_bp_v_read());
                 insert_kv("type-linear-commit-proof-force-"
                           "reason-code",
-                          static_cast<std::int64_t>(0));
+                          last_proof_force_reason_code_v_read());
                 insert_kv("type-linear-commit-proof-would-"
                           "allow-commit",
-                          1);
-                insert_kv("type-linear-commit-proof-linear-ok", 1);
+                          static_cast<std::int64_t>(
+                              g_last_proof_would_allow_commit.load(std::memory_order_relaxed)));
+                insert_kv("type-linear-commit-proof-linear-ok",
+                          static_cast<std::int64_t>(
+                              g_last_proof_linear_ok.load(std::memory_order_relaxed)));
                 insert_kv("type-linear-commit-proof-occurrence-"
                           "consistent",
-                          1);
+                          static_cast<std::int64_t>(last_proof_occurrence_consistent_v_read()));
                 insert_kv("type-linear-commit-proof-defuse-or-epoch-"
                           "stamp",
                           static_cast<std::int64_t>(g_last_type_linear_commit_proof_stamp.load(
