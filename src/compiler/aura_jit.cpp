@@ -317,6 +317,26 @@ struct LLVMBuilder {
     const uint8_t* shape_map = nullptr;
     uint32_t shape_map_size = 0;
 
+    // Issue #4522: raw-double shadow slot per SHAPE_FLOAT local
+    // (named-let float accumulator unboxing). 1:1 with llvm_locals;
+    // nullptr = the slot is not float-profiled (stays in the boxed
+    // tagged domain). For a float-known slot the shadow double is the
+    // authoritative in-function representation: float arith reads and
+    // writes the shadow directly (no aura_alloc_float per iteration)
+    // and the generic load() reboxes on demand — which is exactly the
+    // exit/escape boundary (OpReturn, OpCall/OpApply args, captures,
+    // boxed-structure stores). funboxed[slot] is an i1 flag alloca:
+    // 1 = the shadow is authoritative (last numeric store went
+    // unboxed), 0 = the tagged slot holds the current value (a
+    // non-number — e.g. RefError — landed in the slot; reboxed loads
+    // must return it verbatim, not the stale shadow). Shape change /
+    // deopt is handled by the existing L2 invalidation +
+    // SpecJITController recompile semantics (no new guard, no new
+    // counter): the next compile simply has no SHAPE_FLOAT slots and
+    // lowers fully boxed again.
+    std::vector<llvm::Value*> flocals{};
+    std::vector<llvm::Value*> funboxed{};
+
     // Issue #60 Iter 3: per-instruction shape_id. Set during the build
     // loop in AuraJIT::compile, this is the shape of the instruction's
     // RESULT slot (ops[0]). 0 = unknown. When nonzero, it's a 1-byte
@@ -748,10 +768,98 @@ struct LLVMBuilder {
                                    llvm::Function::ExternalLinkage, "aura_register_fn", mod);
     }
 
+    // ── Issue #4522: float-local (unboxed accumulator) helpers ──
+    // True when slot carries a raw-double shadow (SHAPE_FLOAT in the
+    // profiled shape_map at compile time). Slot indices beyond the
+    // map (e.g. the #157 defuse-version slot) never qualify.
+    inline bool is_flocal(uint32_t slot) const {
+        return slot < flocals.size() && flocals[slot] != nullptr;
+    }
+    // Raw double for a float-known local. Only valid when the caller
+    // has established the shadow is authoritative (flag=1 via storef,
+    // or an unboxed arith chain).
+    llvm::Value* loadf(uint32_t slot) { return irb->CreateLoad(double_ty, flocals[slot]); }
+    // Publish a raw double into the shadow and mark it authoritative.
+    void storef(uint32_t slot, llvm::Value* dbl) {
+        irb->CreateStore(dbl, flocals[slot]);
+        irb->CreateStore(irb->getInt8(1), funboxed[slot]);
+    }
+    // Box a raw double into a fresh float pool cell. The ONLY
+    // allocation path for unboxed locals — it runs at rebox points
+    // (loop exit, call boundary, capture, boxed-structure store).
+    llvm::Value* box_double(llvm::Value* dbl) {
+        return irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
+                               llvm::ArrayRef<llvm::Value*>{dbl});
+    }
+
     llvm::Value* load(uint32_t slot) {
+        // Issue #4522: a float-known local is authoritative in its
+        // shadow double while the flag is set; a generic reader (loop
+        // exit, call arg, capture, ...) reboxes on demand. The rebox is
+        // bit-identical, only the pool index is fresh. When the flag is
+        // clear the tagged slot holds the current (possibly non-number)
+        // value — return it verbatim so RefError/bool propagation is
+        // unchanged. Branch (not select) so the cold boxed-shadow path
+        // does not force an alloc_float call on every generic load of a
+        // boxed-tagged slot.
+        if (is_flocal(slot)) {
+            auto* flag = irb->CreateLoad(llvm::Type::getInt8Ty(ctx), funboxed[slot]);
+            auto* flagged = irb->CreateICmpNE(flag, irb->getInt8(0));
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto* bb_box = llvm::BasicBlock::Create(ctx, "flocal_rebox", parent);
+            auto* bb_raw = llvm::BasicBlock::Create(ctx, "flocal_tagged", parent);
+            auto* bb_join = llvm::BasicBlock::Create(ctx, "flocal_load_join", parent);
+            irb->CreateCondBr(flagged, bb_box, bb_raw);
+            irb->SetInsertPoint(bb_box);
+            auto* boxed = box_double(loadf(slot));
+            irb->CreateBr(bb_join);
+            auto* box_from = irb->GetInsertBlock();
+            irb->SetInsertPoint(bb_raw);
+            auto* tagged = irb->CreateLoad(llvm::Type::getInt64Ty(ctx), llvm_locals[slot]);
+            irb->CreateBr(bb_join);
+            auto* raw_from = irb->GetInsertBlock();
+            irb->SetInsertPoint(bb_join);
+            auto* phi = irb->CreatePHI(llvm::Type::getInt64Ty(ctx), 2, "flocal_load");
+            phi->addIncoming(boxed, box_from);
+            phi->addIncoming(tagged, raw_from);
+            return phi;
+        }
         return irb->CreateLoad(llvm::Type::getInt64Ty(ctx), llvm_locals[slot]);
     }
-    void store(uint32_t slot, llvm::Value* val) { irb->CreateStore(val, llvm_locals[slot]); }
+    void store(uint32_t slot, llvm::Value* val) {
+        // Issue #4522: a numeric store into a float-known local mirrors
+        // the raw double into the shadow and flags it authoritative
+        // (unbox mirrors emit_fixnum_arith's to_dbl: float ref → pool
+        // read; fixnum → sitofp — bit-identical to the boxed promote).
+        // A non-number (RefError, bool, ...) clears the flag: the tagged
+        // slot is authoritative again and generic loads return it
+        // verbatim, so error/bool propagation through a float-profiled
+        // slot is unchanged. The tagged store always happens so raw
+        // readers (exception payload machinery) stay coherent.
+        if (is_flocal(slot)) {
+            irb->CreateStore(val, llvm_locals[slot]);
+            auto* is_f = jit_is_float(val);
+            auto* unbox = irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
+                                          llvm::ArrayRef<llvm::Value*>{val});
+            auto* as_dbl = irb->CreateSIToFP(irb->CreateAShr(val, c64(1)), double_ty);
+            auto* numeric = irb->CreateOr(is_f, jit_is_fixnum(val)); // #4482
+            auto* dbl = irb->CreateSelect(is_f, unbox, as_dbl);
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto* bb_num = llvm::BasicBlock::Create(ctx, "flocal_unbox", parent);
+            auto* bb_non = llvm::BasicBlock::Create(ctx, "flocal_debox", parent);
+            auto* bb_join = llvm::BasicBlock::Create(ctx, "flocal_store_join", parent);
+            irb->CreateCondBr(numeric, bb_num, bb_non);
+            irb->SetInsertPoint(bb_num);
+            storef(slot, dbl);
+            irb->CreateBr(bb_join);
+            irb->SetInsertPoint(bb_non);
+            irb->CreateStore(irb->getInt8(0), funboxed[slot]);
+            irb->CreateBr(bb_join);
+            irb->SetInsertPoint(bb_join);
+            return;
+        }
+        irb->CreateStore(val, llvm_locals[slot]);
+    }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
     // Issue #4491: the single JIT truthiness test. Must match
     // aura::compiler::pure::is_truthy (see value_tags.h kIntZeroIsFalse).
@@ -964,6 +1072,34 @@ struct LLVMBuilder {
             irb->CreateRet(c64(0));
             irb->SetInsertPoint(bb_cont);
         };
+        // Issue #4522: unboxed float arith over float-known locals. When
+        // both operand slots carry SHAPE_FLOAT profile feedback, lower
+        // add/sub/mul/div as raw FP ops on the shadow doubles: no
+        // aura_alloc_float per iteration, no tag checks (same speculative
+        // trust as the L2 unchecked pair access and the SHAPE_INT OpDiv
+        // path — a shape violation is a recompile/deopt event, not an
+        // in-loop guard). kind: 0 add, 1 sub, 2 mul, 3 div.
+        auto emit_flocal_arith = [&](const FlatInstruction& finst, int kind) -> bool {
+            if (!is_flocal(finst.ops[1]) || !is_flocal(finst.ops[2]))
+                return false;
+            // #1610 hygiene: MacroIntroduced instructions never take
+            // L1/L2 shape specialization.
+            if (finst.source_marker == 1)
+                return false;
+            auto* lhs = loadf(finst.ops[1]);
+            auto* rhs = loadf(finst.ops[2]);
+            llvm::Value* r = kind == 1   ? irb->CreateFSub(lhs, rhs)
+                             : kind == 2 ? irb->CreateFMul(lhs, rhs)
+                             : kind == 3 ? irb->CreateFDiv(lhs, rhs)
+                                         : irb->CreateFAdd(lhs, rhs);
+            if (is_flocal(finst.ops[0]))
+                storef(finst.ops[0], r);
+            else
+                store(finst.ops[0], box_double(r)); // rebox at a dynamic-slot boundary
+            if (metrics)
+                metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        };
         // Issue #4462: tagged add/sub/mul that leaves the fixnum domain
         // promotes to float. A previous promotion is a value <= FLOAT_BIAS,
         // so SHAPE_INT still has to notice it. kind: 0 add, 1 sub, 2 mul.
@@ -1079,6 +1215,12 @@ struct LLVMBuilder {
                     static_cast<int64_t>(inst.ops[1]) | (static_cast<int64_t>(inst.ops[2]) << 32);
                 if (!jit_fits_fixnum(rv)) {
                     auto* fp = llvm::ConstantFP::get(double_ty, static_cast<double>(rv));
+                    if (is_flocal(inst.ops[0])) {
+                        // Issue #4522: float-known slot takes the raw double
+                        // directly (no pool box).
+                        storef(inst.ops[0], fp);
+                        return true;
+                    }
                     auto* call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
                                                  llvm::ArrayRef<llvm::Value*>{fp});
                     store(inst.ops[0], call);
@@ -1088,6 +1230,13 @@ struct LLVMBuilder {
                 return true;
             }
             case OpLocal:
+                // Issue #4522: float→float slot copy moves the raw double
+                // (TCO arg shuffle, loop-carried named-let bindings) — no
+                // rebox on the loop back-edge.
+                if (is_flocal(inst.ops[0]) && is_flocal(inst.ops[1]) && inst.source_marker != 1) {
+                    storef(inst.ops[0], loadf(inst.ops[1]));
+                    return true;
+                }
                 store(inst.ops[0], load(inst.ops[1]));
                 return true;
             case OpArg: {
@@ -1097,18 +1246,30 @@ struct LLVMBuilder {
                 return true;
             }
             case OpAdd: {
+                // Issue #4522: float-known accumulator chain lowers unboxed.
+                if (emit_flocal_arith(inst, 0))
+                    return true;
                 guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 0);
                 return true;
             }
             case OpSub: {
+                if (emit_flocal_arith(inst, 1))
+                    return true;
                 guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 1);
                 return true;
             }
             case OpMul: {
+                if (emit_flocal_arith(inst, 2))
+                    return true;
                 guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 2);
                 return true;
             }
             case OpDiv: {
+                // Issue #4522: float-known accumulator chain lowers unboxed
+                // (plain IEEE fdiv — div-by-zero is ±inf, matching the
+                // existing float path).
+                if (emit_flocal_arith(inst, 3))
+                    return true;
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
                 auto* parent = irb->GetInsertBlock()->getParent();
@@ -1160,6 +1321,16 @@ struct LLVMBuilder {
                 return true;
             }
             case OpEq: {
+                // Issue #4522: float-known operand pair compares by value on
+                // the raw doubles (ordered oeq: NaN compares false, IEEE `=`
+                // semantics). Raw-tag equality over reboxes would be
+                // pool-index identity — meaningless for boxed floats.
+                if (is_flocal(inst.ops[1]) && is_flocal(inst.ops[2]) && inst.source_marker != 1) {
+                    auto* fc = irb->CreateFCmpOEQ(loadf(inst.ops[1]), loadf(inst.ops[2]));
+                    store(inst.ops[0],
+                          irb->CreateSelect(fc, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                    return true;
+                }
                 // ops[3] == 0 is eq?/eqv? (raw tag). Numeric `=` rejects
                 // a non-number. Float identity stays the raw compare.
                 auto a = load(inst.ops[1]);
@@ -1178,6 +1349,19 @@ struct LLVMBuilder {
             case OpGt:
             case OpLe:
             case OpGe: {
+                // Issue #4522: float-known pair → ordered fcmp on the raw
+                // doubles (value order; the raw-tag ICmp over boxed floats
+                // would compare pool indices).
+                if (is_flocal(inst.ops[1]) && is_flocal(inst.ops[2]) && inst.source_marker != 1) {
+                    const auto fpred = inst.opcode == OpLt   ? llvm::CmpInst::FCMP_OLT
+                                       : inst.opcode == OpGt ? llvm::CmpInst::FCMP_OGT
+                                       : inst.opcode == OpLe ? llvm::CmpInst::FCMP_OLE
+                                                             : llvm::CmpInst::FCMP_OGE;
+                    auto* fc = irb->CreateFCmp(fpred, loadf(inst.ops[1]), loadf(inst.ops[2]));
+                    store(inst.ops[0],
+                          irb->CreateSelect(fc, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                    return true;
+                }
                 auto a = load(inst.ops[1]);
                 auto b = load(inst.ops[2]);
                 const auto pred = inst.opcode == OpLt   ? llvm::CmpInst::ICMP_SLT
@@ -1361,6 +1545,18 @@ struct LLVMBuilder {
                 double d;
                 d = std::bit_cast<double>(bits);
                 auto fp = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx), d);
+                if (is_flocal(inst.ops[0]) && inst.source_marker != 1) {
+                    // Issue #4522: float-known result slot — publish the raw
+                    // constant into the shadow (no pool box per iteration;
+                    // the boxed literal reboxes only if a generic reader
+                    // asks). Still counts as the #199 intrinsic migration
+                    // (the runtime call is replaced by an inline constant).
+                    if (metrics) {
+                        metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    storef(inst.ops[0], fp);
+                    return true;
+                }
                 // Issue #199: aura_alloc_float intrinsic (3/4 of
                 // the #194 migration). Bumps intrinsic_count on
                 // every OpConstF64. The full migration would
@@ -2905,6 +3101,23 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     for (uint32_t i = 0; i < fn.local_count; ++i)
         builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(local_ctx)));
 
+    // Issue #4522: raw-double shadow slots for SHAPE_FLOAT locals —
+    // same unboxed-accumulator lowering as the JIT path. builder.shape_map
+    // deliberately stays unset here so inst_shape-based L1/L2 fallbacks
+    // are unchanged; the float-local intercepts key off flocals alone.
+    builder.flocals.assign(fn.local_count, nullptr);
+    builder.funboxed.assign(fn.local_count, nullptr);
+    if (fn.shape_map && fn.source_marker != 1) {
+        auto* i8_zero = llvm::ConstantInt::get(llvm::Type::getInt8Ty(local_ctx), 0);
+        for (uint32_t i = 0; i < fn.local_count; ++i) {
+            if (fn.shape_map[i] != SHAPE_FLOAT)
+                continue;
+            builder.flocals[i] = builder.irb->CreateAlloca(llvm::Type::getDoubleTy(local_ctx));
+            builder.funboxed[i] = builder.irb->CreateAlloca(llvm::Type::getInt8Ty(local_ctx));
+            builder.irb->CreateStore(i8_zero, builder.funboxed[i]);
+        }
+    }
+
     // Lower each block
     for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
         auto& fb = fn.blocks[bi];
@@ -3391,6 +3604,24 @@ struct AuraJIT::Impl {
         builder.irb->SetInsertPoint(builder.block_map[fn.entry_block]);
         for (uint32_t i = 0; i < fn.local_count; ++i)
             builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
+
+        // Issue #4522: raw-double shadow slots for SHAPE_FLOAT locals
+        // (named-let float accumulator unboxing). Created only from
+        // profile feedback (fn.shape_map); macro-origin functions (#1610
+        // per-fn marker) never specialize. The i1 flag alloca starts 0
+        // = tagged-slot-authoritative so entry/garbage state is boxed.
+        builder.flocals.assign(fn.local_count, nullptr);
+        builder.funboxed.assign(fn.local_count, nullptr);
+        if (fn.shape_map && fn.source_marker != 1) {
+            auto* i8_zero = llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), 0);
+            for (uint32_t i = 0; i < fn.local_count; ++i) {
+                if (fn.shape_map[i] != SHAPE_FLOAT)
+                    continue;
+                builder.flocals[i] = builder.irb->CreateAlloca(llvm::Type::getDoubleTy(ctx));
+                builder.funboxed[i] = builder.irb->CreateAlloca(llvm::Type::getInt8Ty(ctx));
+                builder.irb->CreateStore(i8_zero, builder.funboxed[i]);
+            }
+        }
 
         // Issue #157 Phase 1b: reserve an extra local slot (at index
         // fn.local_count) for the captured defuse_version_. At function

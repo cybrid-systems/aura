@@ -8,7 +8,9 @@
 #include "../src/compiler/shape_profiler.h"
 #include "../src/compiler/aura_jit.h"
 
+#include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <print>
 #include <string>
@@ -50,6 +52,13 @@ static constexpr std::int64_t kFloatBias = AURA_MAKE_FLOAT(0); // #4502: ImmKind
 // STRING_BIAS_VAL_2 internally; tests need to align with that or the
 // boundary cases (kStringBias + 1) fall into the wrong branch.
 static constexpr std::int64_t kStringBias = AURA_MAKE_STRING(0); // #4502: ImmKind string, idx 0
+
+// Issue #4522: float pool observers (extern "C" in aura_jit_runtime.cpp;
+// also declared in runtime_shared.h). aura_alloc_float counts are the
+// issue's Verify metric: the unboxed loop must allocate ~0 boxes.
+extern "C" std::int64_t aura_alloc_float(double d);
+extern "C" double aura_float_ref(std::int64_t val);
+extern "C" std::size_t aura_jit_pool_size();
 
 // ── Helper: dummy AuraJIT for SpecJITController tests ─────────
 // Defines a minimal mock that captures compilation requests.
@@ -852,6 +861,298 @@ int main() {
         profiler.invalidate(fn);
         TEST("Multi mutate: version 3 after another mutate",
              profiler.current_snapshot(fn).version == 3);
+    }
+
+    // ── Section 9: Issue #4522 — named-let float accumulator unboxing ──
+    //
+    // Builds the TCO'd flat shape of
+    //   (define (sum n) (let loop ((acc 0.0) (i 0))
+    //     (if (= i n) acc (loop (+ acc 0.5) (+ i 1)))))
+    // as one FlatFunction with a Jump back-edge, then compiles it twice:
+    // once with SHAPE_FLOAT feedback on the accumulator chain (the
+    // specialized compile SpecJITController installs after profiling) and
+    // once all-Dynamic (the boxed shape-change recompile). ACs:
+    //   AC1: float-map loop performs exactly ONE aura_alloc_float — the
+    //        loop-exit rebox; the dynamic-map loop allocates 2 per
+    //        iteration (loop-body const + add), i.e. the unboxed path
+    //        removed the per-iteration boxing churn.
+    //   AC2: results bit-identical between the two compiles (rebox is
+    //        bit-exact; only the pool index is fresh).
+    //   AC3: float-known comparisons lower as ordered value fcmp (=, <,
+    //        > over raw doubles; NaN compares false).
+    //   AC4: per-loop wall time printed (informational, no CI-flaky
+    //        timing assert).
+    {
+        std::println("\n--- Section 9: #4522 named-let float accumulator unboxing ---");
+        using aura::jit::FlatBlock;
+        using aura::jit::FlatFunction;
+        using aura::jit::FlatInstruction;
+        // ir.ixx IROpcode is a C++ module this TU does not import; pin the
+        // raw numeric values (order: Nop ConstI64 ConstF64 Local Arg Add Sub
+        // Mul Div Eq Lt Gt Le Ge And Or Not Branch Jump Call Return ...).
+        constexpr std::uint32_t kOpConstI64 = 1, kOpConstF64 = 2, kOpLocal = 3, kOpArg = 4,
+                                kOpAdd = 5, kOpEq = 9, kOpLt = 10, kOpGt = 11, kOpBranch = 17,
+                                kOpJump = 18, kOpReturn = 20;
+        constexpr std::int64_t kIters = 1000;
+        const std::int64_t n_fix = kIters << 1; // fixnum encode
+        constexpr std::uint32_t kLocals = 8;
+        // locals: 0=acc(F) 1=i(I) 2=n(I,arg) 3=half(F,tmp) 4=acc2(F,tmp)
+        //         5=cond(B) 6=one(I,tmp) 7=i2(I,tmp)
+
+        FlatInstruction loop_insts[14] = {};
+        // entry: acc = 0.0; i = 0; n = arg0
+        loop_insts[0].opcode = kOpConstF64;
+        loop_insts[0].ops[0] = 0;
+        loop_insts[0].ops[1] = 0;
+        loop_insts[0].ops[2] = 0;
+        loop_insts[0].ops[3] = 0; // 0.0 = bits 0x0
+        loop_insts[1].opcode = kOpConstI64;
+        loop_insts[1].ops[0] = 1;
+        loop_insts[1].ops[1] = 0;
+        loop_insts[1].ops[2] = 0;
+        loop_insts[1].ops[3] = 0;
+        loop_insts[2].opcode = kOpArg;
+        loop_insts[2].ops[0] = 2;
+        loop_insts[2].ops[1] = 0;
+        loop_insts[2].ops[2] = 0;
+        loop_insts[2].ops[3] = 0;
+        loop_insts[3].opcode = kOpJump;
+        loop_insts[3].ops[0] = 1;
+        loop_insts[3].ops[1] = 0;
+        loop_insts[3].ops[2] = 0;
+        loop_insts[3].ops[3] = 0;
+        // head: if (= i n) exit else body
+        loop_insts[4].opcode = kOpEq;
+        loop_insts[4].ops[0] = 5;
+        loop_insts[4].ops[1] = 1;
+        loop_insts[4].ops[2] = 2;
+        loop_insts[4].ops[3] = 1; // ops[3]=1 → numeric =
+        loop_insts[5].opcode = kOpBranch;
+        loop_insts[5].ops[0] = 5;
+        loop_insts[5].ops[1] = 3;
+        loop_insts[5].ops[2] = 2;
+        loop_insts[5].ops[3] = 0;
+        // body: acc += 0.5; i += 1; back-edge
+        loop_insts[6].opcode = kOpConstF64;
+        loop_insts[6].ops[0] = 3;
+        loop_insts[6].ops[1] = 0;
+        loop_insts[6].ops[2] = 0x3FE00000u;
+        loop_insts[6].ops[3] = 0; // 0.5
+        loop_insts[7].opcode = kOpAdd;
+        loop_insts[7].ops[0] = 4;
+        loop_insts[7].ops[1] = 0;
+        loop_insts[7].ops[2] = 3;
+        loop_insts[7].ops[3] = 0;
+        loop_insts[8].opcode = kOpLocal;
+        loop_insts[8].ops[0] = 0;
+        loop_insts[8].ops[1] = 4;
+        loop_insts[8].ops[2] = 0;
+        loop_insts[8].ops[3] = 0;
+        loop_insts[9].opcode = kOpConstI64;
+        loop_insts[9].ops[0] = 6;
+        loop_insts[9].ops[1] = 1;
+        loop_insts[9].ops[2] = 0;
+        loop_insts[9].ops[3] = 0;
+        loop_insts[10].opcode = kOpAdd;
+        loop_insts[10].ops[0] = 7;
+        loop_insts[10].ops[1] = 1;
+        loop_insts[10].ops[2] = 6;
+        loop_insts[10].ops[3] = 0;
+        loop_insts[11].opcode = kOpLocal;
+        loop_insts[11].ops[0] = 1;
+        loop_insts[11].ops[1] = 7;
+        loop_insts[11].ops[2] = 0;
+        loop_insts[11].ops[3] = 0;
+        loop_insts[12].opcode = kOpJump;
+        loop_insts[12].ops[0] = 1;
+        loop_insts[12].ops[1] = 0;
+        loop_insts[12].ops[2] = 0;
+        loop_insts[12].ops[3] = 0;
+        // exit: return acc
+        loop_insts[13].opcode = kOpReturn;
+        loop_insts[13].ops[0] = 0;
+        loop_insts[13].ops[1] = 0;
+        loop_insts[13].ops[2] = 0;
+        loop_insts[13].ops[3] = 0;
+
+        FlatBlock loop_blks[4] = {{0, &loop_insts[0], 4},
+                                  {1, &loop_insts[4], 2},
+                                  {2, &loop_insts[6], 7},
+                                  {3, &loop_insts[13], 1}};
+
+        // shape feedback: acc/half/acc2 float, i/n/one/i2 int, cond bool
+        const uint8_t map_float[kLocals] = {2, 1, 1, 2, 2, 3, 1, 1};
+        const uint8_t map_dynamic[kLocals] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+        auto compile_loop = [&](aura::jit::AuraJIT& jit, const char* name, const uint8_t* map) {
+            FlatFunction fn{};
+            fn.name = name;
+            fn.entry_block = 0;
+            fn.local_count = kLocals;
+            fn.arg_count = 1;
+            fn.blocks = loop_blks;
+            fn.num_blocks = 4;
+            fn.shape_map = map;
+            return jit.compile(fn);
+        };
+
+        aura::jit::AuraJIT jit_f;
+        aura::jit::AuraJIT jit_d;
+        auto* fn_f = compile_loop(jit_f, "f4522_unboxed", map_float);
+        auto* fn_d = compile_loop(jit_d, "f4522_boxed", map_dynamic);
+        TEST("4522: specialized (float-map) compile succeeded", fn_f != nullptr);
+        TEST("4522: dynamic-map compile succeeded", fn_d != nullptr);
+
+        if (fn_f && fn_d) {
+            std::int64_t args[1] = {n_fix};
+            // aura_jit_pool_size() observes the STRING pool — measure float
+            // allocations with probe boxes instead: the returned tag's payload
+            // is the float pool index (is_float_raw_v2 / float_idx_raw_v2,
+            // #4502 encoding). Consecutive probe indices differ by exactly
+            // (aura_alloc_float calls between the probes) + 1 (the second
+            // probe itself), so allocs = idx_delta - 1 — the issue's Verify
+            // metric (alloc_float count over the loop drops to ~0).
+            namespace types = aura::compiler::types;
+            const auto probe = 1234.5;
+            const auto idx_pre_f = types::float_idx_raw_v2(aura_alloc_float(probe));
+            const auto res_f = fn_f(args, 1);
+            const auto idx_post_f = types::float_idx_raw_v2(aura_alloc_float(probe));
+            const auto allocs_f = idx_post_f - idx_pre_f - 1;
+            const auto idx_pre_d = types::float_idx_raw_v2(aura_alloc_float(probe));
+            const auto res_d = fn_d(args, 1);
+            const auto idx_post_d = types::float_idx_raw_v2(aura_alloc_float(probe));
+            const auto allocs_d = idx_post_d - idx_pre_d - 1;
+
+            std::println("  4522 AC1: aura_alloc_float count over loop: unboxed={} boxed={}",
+                         allocs_f, allocs_d);
+            TEST("4522 AC1: unboxed loop allocates exactly 1 float (exit rebox)", allocs_f == 1);
+            TEST("4522 AC1: boxed loop allocates 2/iter + entry const",
+                 allocs_d == 2 * static_cast<std::uint64_t>(kIters) + 1);
+            TEST("4522 AC1: rebox rate dropped to ~0 (allocs_f << allocs_d)",
+                 allocs_f * 100 < allocs_d);
+
+            // AC2: bit-identical results, valid float tags, exact sum.
+            const bool f_is_float = aura::compiler::types::is_float_raw_v2(res_f);
+            const bool d_is_float = aura::compiler::types::is_float_raw_v2(res_d);
+            TEST("4522 AC2: both results are boxed floats", f_is_float && d_is_float);
+            const double val_f = aura_float_ref(res_f);
+            const double val_d = aura_float_ref(res_d);
+            TEST("4522 AC2: unboxed sum == 500.0", val_f == 500.0);
+            TEST("4522 AC2: reboxed bits identical to boxed-path bits",
+                 std::memcmp(&val_f, &val_d, sizeof(double)) == 0);
+
+            // AC3: float-known comparisons are value fcmp over raw doubles.
+            FlatInstruction lt_insts[4] = {};
+            lt_insts[0].opcode = kOpConstF64;
+            lt_insts[0].ops[0] = 0;
+            lt_insts[0].ops[1] = 0;
+            lt_insts[0].ops[2] = 0x3FF00000u;
+            lt_insts[0].ops[3] = 0; // 1.0
+            lt_insts[1].opcode = kOpConstF64;
+            lt_insts[1].ops[0] = 1;
+            lt_insts[1].ops[1] = 0;
+            lt_insts[1].ops[2] = 0x40000000u;
+            lt_insts[1].ops[3] = 0; // 2.0
+            lt_insts[2].opcode = kOpLt;
+            lt_insts[2].ops[0] = 2;
+            lt_insts[2].ops[1] = 0;
+            lt_insts[2].ops[2] = 1;
+            lt_insts[2].ops[3] = 0;
+            lt_insts[3].opcode = kOpReturn;
+            lt_insts[3].ops[0] = 2;
+            lt_insts[3].ops[1] = 0;
+            lt_insts[3].ops[2] = 0;
+            lt_insts[3].ops[3] = 0;
+            FlatBlock lt_blk[1] = {{0, lt_insts, 4}};
+            const uint8_t map_lt[3] = {2, 2, 3};
+
+            FlatInstruction gt_insts[4] = {};
+            gt_insts[0].opcode = kOpConstF64;
+            gt_insts[0].ops[0] = 0;
+            gt_insts[0].ops[1] = 0;
+            gt_insts[0].ops[2] = 0x3FF00000u;
+            gt_insts[0].ops[3] = 0; // 1.0
+            gt_insts[1].opcode = kOpConstF64;
+            gt_insts[1].ops[0] = 1;
+            gt_insts[1].ops[1] = 0;
+            gt_insts[1].ops[2] = 0x40000000u;
+            gt_insts[1].ops[3] = 0; // 2.0
+            gt_insts[2].opcode = kOpGt;
+            gt_insts[2].ops[0] = 2;
+            gt_insts[2].ops[1] = 0;
+            gt_insts[2].ops[2] = 1;
+            gt_insts[2].ops[3] = 0;
+            gt_insts[3].opcode = kOpReturn;
+            gt_insts[3].ops[0] = 2;
+            gt_insts[3].ops[1] = 0;
+            gt_insts[3].ops[2] = 0;
+            gt_insts[3].ops[3] = 0;
+            FlatBlock gt_blk[1] = {{0, gt_insts, 4}};
+
+            FlatInstruction nan_insts[4] = {};
+            nan_insts[0].opcode = kOpConstF64;
+            nan_insts[0].ops[0] = 0;
+            nan_insts[0].ops[1] = 0;
+            nan_insts[0].ops[2] = 0x7FF80000u;
+            nan_insts[0].ops[3] = 0; // quiet NaN
+            nan_insts[1].opcode = kOpConstF64;
+            nan_insts[1].ops[0] = 1;
+            nan_insts[1].ops[1] = 0;
+            nan_insts[1].ops[2] = 0x7FF80000u;
+            nan_insts[1].ops[3] = 0; // quiet NaN
+            nan_insts[2].opcode = kOpEq;
+            nan_insts[2].ops[0] = 2;
+            nan_insts[2].ops[1] = 0;
+            nan_insts[2].ops[2] = 1;
+            nan_insts[2].ops[3] = 1; // numeric =
+            nan_insts[3].opcode = kOpReturn;
+            nan_insts[3].ops[0] = 2;
+            nan_insts[3].ops[1] = 0;
+            nan_insts[3].ops[2] = 0;
+            nan_insts[3].ops[3] = 0;
+            FlatBlock nan_blk[1] = {{0, nan_insts, 4}};
+
+            auto compile_mini = [&](aura::jit::AuraJIT& jit, const char* name,
+                                    const FlatBlock* blk) {
+                FlatFunction fn{};
+                fn.name = name;
+                fn.entry_block = 0;
+                fn.local_count = 3;
+                fn.arg_count = 0;
+                fn.blocks = blk;
+                fn.num_blocks = 1;
+                fn.shape_map = map_lt;
+                return jit.compile(fn);
+            };
+            auto* fn_lt = compile_mini(jit_f, "f4522_lt", lt_blk);
+            auto* fn_gt = compile_mini(jit_f, "f4522_gt", gt_blk);
+            auto* fn_nan = compile_mini(jit_f, "f4522_naneq", nan_blk);
+            TEST("4522 AC3: float compare compiles", fn_lt && fn_gt && fn_nan);
+            if (fn_lt && fn_gt && fn_nan) {
+                TEST("4522 AC3: (lt 1.0 2.0) → #t (keyword 7)", fn_lt(nullptr, 0) == 7);
+                TEST("4522 AC3: (gt 1.0 2.0) → #f (keyword 3)", fn_gt(nullptr, 0) == 3);
+                TEST("4522 AC3: (= NaN NaN) → #f (ordered fcmp)", fn_nan(nullptr, 0) == 3);
+            }
+
+            // AC4: informational micro-benchmark (no flaky timing assert).
+            constexpr std::int64_t kBenchLoops = 2000;
+            auto bench = [&](aura::jit::ScalarFn f) {
+                std::int64_t a[1] = {n_fix};
+                const auto t0 = std::chrono::steady_clock::now();
+                for (std::int64_t r = 0; r < kBenchLoops; ++r)
+                    (void)f(a, 1);
+                const auto t1 = std::chrono::steady_clock::now();
+                return std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            };
+            (void)fn_f(args, 1); // warm both paths
+            (void)fn_d(args, 1);
+            const auto ns_f = bench(fn_f);
+            const auto ns_d = bench(fn_d);
+            std::println("  4522 AC4: unboxed loop {} ns total vs boxed {} ns total "
+                         "({} loops each)",
+                         ns_f, ns_d, kBenchLoops);
+            TEST("4522 AC4: benchmark ran on both paths", ns_f > 0 && ns_d > 0);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
