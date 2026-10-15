@@ -145,9 +145,9 @@ def main() -> int:
             impl_body = ""
         else:
             brace = arena.find("{", impl_pos)
-            impl_body = arena[brace : brace + 2500] if brace >= 0 else ""
+            impl_body = arena[brace : brace + 4000] if brace >= 0 else ""
     else:
-        impl_body = arena[impl.end() - 1 : impl.end() + 2500]
+        impl_body = arena[impl.end() - 1 : impl.end() + 4000]
     pmr = impl_body.find("resource_.allocate(size, alignment)") if impl_body else -1
     if pmr < 0:
         fails.append("AC2: allocate_raw_impl pmr path not found")

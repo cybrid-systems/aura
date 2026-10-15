@@ -70,7 +70,7 @@ def main() -> int:
     # AC6: Issue #2340 — post-densify ownership-exit scan surface.
     # Closes the residual dual-path stale window under densify × steal
     # by unifying transfer_to / drop with Moving success.
-    must("densify_ownership_scan_total = 0", "AC6", lf)
+    must("densify_ownership_scan_total.store(0", "AC6", lf)
     must("envframe_lifetime_densify_ownership_scan_total", "AC6", lf)
     must("bump_envframe_lifetime_densify_ownership_scan_total", "AC6", lf)
     must("Issue #2340", "AC6", lf)
