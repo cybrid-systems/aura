@@ -76,8 +76,15 @@ def main() -> int:
     must("ac3268_3_tls_noexcept", "AC3 test", test)
 
     must("success_flag_exchange_false(flag_)", "AC4 mark_failed path", ixx)
-    must("success_flag_exchange_false(outermost_mutation_success_flag_)", "AC4 fiber", fib)
-    must("success_flag_load(outermost_mutation_success_flag_)", "AC4 workspace", tree)
+    # #4519-era TSan hardening (559b9d8d2) made the flag an atomic_ref:
+    # call sites now pass outermost_mutation_success_flag_.load(...) and
+    # clang-format may wrap the call — match on the stable fragments.
+    fib_nows = " ".join(fib.split())
+    tree_nows = " ".join(tree.split())
+    must("success_flag_exchange_false(", "AC4 fiber", fib)
+    must("outermost_mutation_success_flag_.load(std::memory_order_acquire)", "AC4 fiber atomic load", fib_nows)
+    must("MutationBoundaryGuard::success_flag_load(", "AC4 workspace", tree)
+    must("outermost_mutation_success_flag_.load(std::memory_order_acquire)", "AC4 workspace atomic load", tree_nows)
     must("ac3268_4_stack_bool_api", "AC4 test", test)
 
     must("ac3268_5_source_and_linter", "AC5 test", test)
