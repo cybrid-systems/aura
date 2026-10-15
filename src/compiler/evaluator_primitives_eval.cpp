@@ -612,8 +612,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto names = ev.get_dependents_fn_(name);
         EvalValue list = make_void();
         for (auto it = names.rbegin(); it != names.rend(); ++it) {
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            const auto sid = static_cast<std::uint64_t>(ev.push_string_heap(*it));
             auto head = make_string(sid);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({head, list});
@@ -910,8 +909,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_string(0);
 
         auto src = aura::ast::unparse_to_string(*flat, *pool, flat->root, uopts);
-        auto id = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(src));
+        const auto id = static_cast<std::uint64_t>(ev.push_string_heap(std::move(src)));
         return make_string(id);
     });
 
@@ -941,8 +939,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         out += "Or (require std/name all:) for bare names\n";
         out += "Try it: (require std/list all:) then (sort (list 3 1 2))\n";
         out += "Metrics facade: (engine:metrics) / (require \"std/engine-metrics\" all:)\n";
-        auto id = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
+        const auto id = static_cast<std::uint64_t>(ev.push_string_heap(std::move(out)));
         return make_string(id);
     });
 
@@ -1203,8 +1200,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             }
             if (!result) {
                 auto msg = result.error().format();
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(msg);
+                const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(msg));
                 return make_string(sidx);
             }
             return *result;
@@ -1237,8 +1233,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 combined = combined + "\n" + captured;
             captured = combined;
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(captured);
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(captured));
         return make_string(sidx);
     });
 
@@ -1254,23 +1249,20 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (aura::messaging::g_eval_async) {
             // Thread pool path: offload to background
             auto result_str = aura::messaging::g_eval_async(code);
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(result_str);
+            const auto idx = static_cast<std::uint64_t>(ev.push_string_heap(result_str));
             return make_string(idx);
         }
         // Fallback: synchronous eval via the existing eval primitive
         auto eval_fn = ev.primitives_.lookup("eval");
         if (!eval_fn)
             return make_void();
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(code);
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(code));
         auto result = (*eval_fn)({make_string(sidx)});
         // Format result as string
         auto formatted =
             aura::compiler::format_value(result, ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
                                          ev.keyword_table(), ev.vector_heap_);
-        auto ris = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(formatted));
+        const auto ris = static_cast<std::uint64_t>(ev.push_string_heap(std::move(formatted)));
         return make_string(ris);
     });
 
@@ -1295,12 +1287,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     add("typecheck-current", [&](const auto&) {
         auto st = run_workspace_typecheck(ev);
         if (!st) {
-            auto eidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("no workspace");
+            const auto eidx = static_cast<std::uint64_t>(ev.push_string_heap("no workspace"));
             return make_string(eidx);
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(st->report);
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(st->report));
         return make_string(sidx);
     });
 
@@ -1322,8 +1312,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_bool(false);
         if (st->ok)
             return make_bool(true);
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(st->report);
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(st->report));
         return make_string(sidx);
     });
 
@@ -1347,8 +1336,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         ev.coverage_counters_[1]++;
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
-            auto eidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("no workspace");
+            const auto eidx = static_cast<std::uint64_t>(ev.push_string_heap("no workspace"));
             return make_string(eidx);
         }
         // Find the most recent mutation record in the workspace's
@@ -1356,15 +1344,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // is the most recent. If empty, no-op.
         const auto& log = ev.workspace_flat_->all_mutations();
         if (log.empty()) {
-            auto ridx = ev.string_heap_.size();
-            ev.string_heap_.push_back("no mutations recorded");
+            const auto ridx =
+                static_cast<std::uint64_t>(ev.push_string_heap("no mutations recorded"));
             return make_string(ridx);
         }
         const auto& rec = log.back();
         if (rec.target_node == aura::ast::NULL_NODE && rec.parent_id == aura::ast::NULL_NODE) {
             // Empty record — no-op.
-            auto ridx = ev.string_heap_.size();
-            ev.string_heap_.push_back("empty mutation record");
+            const auto ridx =
+                static_cast<std::uint64_t>(ev.push_string_heap("empty mutation record"));
             return make_string(ridx);
         }
         // Lazily create persistent type registry (stable TypeIds
@@ -1393,8 +1381,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 out += "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
             }
         }
-        auto ridx = ev.string_heap_.size();
-        ev.string_heap_.push_back(out);
+        const auto ridx = static_cast<std::uint64_t>(ev.push_string_heap(out));
         return make_string(ridx);
     });
 
@@ -1414,8 +1401,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (get-inferred-type node-id)");
         if (!ev.workspace_flat_ || !ev.type_registry_) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("no-typecheck-yet");
+            const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("no-typecheck-yet"));
             return make_string(sidx);
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -1424,26 +1410,22 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // half-solved type (or a pre-Full-audit residual) when export is
         // not truth.
         if (!ev.type_export_authoritative()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
-                                                                : "not-authoritative");
+            const auto sidx = static_cast<std::uint64_t>(
+                ev.push_string_heap(ev.type_export_inflight() ? "in-flight" : "not-authoritative"));
             return make_string(sidx);
         }
         if (node >= flat.size()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("out-of-range");
+            const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("out-of-range"));
             return make_string(sidx);
         }
         auto type_idx = flat.type_id(node);
         if (type_idx == 0) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("unknown");
+            const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("unknown"));
             return make_string(sidx);
         }
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         std::string formatted = treg.format_type(aura::core::TypeId{type_idx, 1});
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(formatted);
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(formatted));
         return make_string(sidx);
     });
 
@@ -1455,8 +1437,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query-type-of name)");
         if (!ev.workspace_flat_ || !ev.workspace_pool_ || !ev.type_registry_) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("no-typecheck-yet");
+            const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("no-typecheck-yet"));
             return make_string(sidx);
         }
         auto idx = as_string_idx(a[0]);
@@ -1469,9 +1450,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto& flat = *ev.workspace_flat_;
         // Issue #3081 / Issue #3237: authority first (same as get-inferred-type).
         if (!ev.type_export_authoritative()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
-                                                                : "not-authoritative");
+            const auto sidx = static_cast<std::uint64_t>(
+                ev.push_string_heap(ev.type_export_inflight() ? "in-flight" : "not-authoritative"));
             return make_string(sidx);
         }
         // Find a Define node with the matching symbol.
@@ -1490,26 +1470,22 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         type_target = v.child(0);
                 }
                 if (!ev.type_export_authoritative()) {
-                    auto sidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
-                                                                        : "not-authoritative");
+                    const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(
+                        ev.type_export_inflight() ? "in-flight" : "not-authoritative"));
                     return make_string(sidx);
                 }
                 auto type_idx = flat.type_id(type_target);
                 if (type_idx == 0) {
-                    auto sidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("unknown");
+                    const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("unknown"));
                     return make_string(sidx);
                 }
                 auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
                 std::string formatted = treg.format_type(aura::core::TypeId{type_idx, 1});
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(formatted);
+                const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(formatted));
                 return make_string(sidx);
             }
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back("not-found");
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("not-found"));
         return make_string(sidx);
     });
 
@@ -1528,8 +1504,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Placeholder: return "Dynamic" with a note. The LLM
         // sees a stable name + a sensible fallback rather than
         // an unbound-variable error.
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back("Dynamic (query-expected-type is scaffold; see #104)");
+        const auto sidx = static_cast<std::uint64_t>(
+            ev.push_string_heap("Dynamic (query-expected-type is scaffold; see #104)"));
         return make_string(sidx);
     });
 
@@ -1542,22 +1518,19 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (suggest-annotation-at node-id)");
         if (!ev.workspace_flat_ || !ev.type_registry_) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("no-typecheck-yet");
+            const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("no-typecheck-yet"));
             return make_string(sidx);
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
         // Issue #3203: do not leak a half-solved TypeId via annotation hints.
         if (!ev.type_export_authoritative()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
-                                                                : "not-authoritative");
+            const auto sidx = static_cast<std::uint64_t>(
+                ev.push_string_heap(ev.type_export_inflight() ? "in-flight" : "not-authoritative"));
             return make_string(sidx);
         }
         if (node >= flat.size()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("out-of-range");
+            const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap("out-of-range"));
             return make_string(sidx);
         }
         auto v = flat.get(node);
@@ -1575,8 +1548,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 suggestion = "(check <expr> " + t + ")";
             }
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(suggestion);
+        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(suggestion));
         return make_string(sidx);
     });
 
@@ -1741,14 +1713,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
             // Push this entry as a triple: (name-line . suggestion)
             // We'll build a flat list of cons cells.
-            auto fname_sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(fname);
+            const auto fname_sidx = static_cast<std::uint64_t>(ev.push_string_heap(fname));
             auto fname_v = make_string(fname_sidx);
-            auto line_sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(v.line));
+            const auto line_sidx =
+                static_cast<std::uint64_t>(ev.push_string_heap(std::to_string(v.line)));
             auto line_v = make_string(line_sidx);
-            auto sugg_sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(sugg);
+            const auto sugg_sidx = static_cast<std::uint64_t>(ev.push_string_heap(sugg));
             auto sugg_v = make_string(sugg_sidx);
 
             // cons: (sugg . (line . (name . ())))
