@@ -49,7 +49,7 @@ def main() -> int:
 
     must("type_export_outermost_success_face_", "AC1 Evaluator flag", ev)
     must("!type_export_outermost_success_face_", "AC1 helper refuse", ev)
-    must("if (!type_export_outermost_success_face_)", "AC1 copy_infer refuse", ev)
+    must("if (!type_export_outermost_success_face_.load(", "AC1 copy_infer refuse", ev)
     must("g_type_export_soft_refuse_observe_total", "AC1 observe counter", aud)
     must("ac3294_1_soft_recovered_solved_refuses", "AC1 test", t)
 
@@ -60,7 +60,7 @@ def main() -> int:
     must("ac3294_2_production_timeout_unchanged", "AC2 test", t)
 
     must("grant_type_export_authority", "AC3 persist grant", mb)
-    must("type_export_outermost_success_face_ = true", "AC3 grant re-arms", ev)
+    must("type_export_outermost_success_face_.store(true, std::memory_order_release)", "AC3 grant re-arms", ev)
     must("ac3294_3_outermost_grant_rearms", "AC3 test", t)
 
     must("Soft observe counter only", "AC4 observe-only doc", aud)
