@@ -3694,6 +3694,123 @@ static void ac4519_checkpoint_heap_lock() {
     }
 }
 
+// Issue #4530: the copy/answer siblings of the #4505 reader gates. Tenant 7
+// mints a string (and a spine holding it); tenant 9 must not receive the
+// bytes through the format / symbol-append / gensym / string-join
+// constructors, nor content answers through the string inequalities,
+// string-index, string->number, or equal?. Same helper contract: one
+// IsolationDeny per denied prim call, source slot unchanged, owner calls
+// still copy.
+static void ac4530_string_gate_siblings() {
+    std::println("\n--- #4530: string gate siblings (format/join/cmp/equal?) ---");
+    using aura::compiler::types::EvalValue;
+    using aura::compiler::types::is_error;
+    using aura::compiler::types::is_string;
+    using aura::compiler::types::make_string;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+    auto lookup = [&](const char* name) { return ev.primitives().lookup(name); };
+    auto list_fn = lookup("list");
+    auto format_fn = lookup("format");
+    auto symapp_fn = lookup("symbol-append");
+    auto gensym_fn = lookup("gensym");
+    auto sjoin_fn = lookup("string-join");
+    auto slt_fn = lookup("string<?");
+    auto sgt_fn = lookup("string>?");
+    auto sle_fn = lookup("string<=?");
+    auto sge_fn = lookup("string>=?");
+    auto sidx_fn = lookup("string-index");
+    auto s2n_fn = lookup("string->number");
+    auto eq_fn = lookup("equal?");
+    CHECK(format_fn && symapp_fn && gensym_fn && sjoin_fn && slt_fn && sgt_fn && sle_fn && sge_fn &&
+              sidx_fn && s2n_fn && eq_fn,
+          "4530: sibling prims present");
+    if (!(format_fn && symapp_fn && gensym_fn && sjoin_fn && slt_fn && sgt_fn && sle_fn && sge_fn &&
+          sidx_fn && s2n_fn && eq_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    EvalValue str7, num7, lst7;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        str7 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("secret")));
+        num7 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("17")));
+        lst7 = (*list_fn)({str7});
+    }
+    CHECK(is_string(str7) && is_string(num7), "4530: tenant 7 mints the strings");
+
+    EvalValue own9, own_secret;
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        own9 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("zz")));
+        own_secret = make_string(static_cast<std::uint64_t>(ev.push_string_heap("secret")));
+    }
+
+    reset_security_event_ring_for_test();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto tmpl9 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("~a")));
+        auto r_fmt = (*format_fn)({tmpl9, str7});
+        auto r_symapp = (*symapp_fn)({str7});
+        auto r_gensym = (*gensym_fn)({str7});
+        auto r_join =
+            (*sjoin_fn)({lst7, make_string(static_cast<std::uint64_t>(ev.push_string_heap("")))});
+        auto r_lt = (*slt_fn)({str7, own9});
+        auto r_gt = (*sgt_fn)({str7, own9});
+        auto r_le = (*sle_fn)({str7, own9});
+        auto r_ge = (*sge_fn)({str7, own9});
+        auto r_sidx = (*sidx_fn)({str7, own_secret});
+        auto r_s2n = (*s2n_fn)({num7});
+        auto r_eq = (*eq_fn)({str7, own_secret});
+        CHECK(is_error(r_fmt), "4530: tenant 9 format of a foreign string denied");
+        CHECK(is_error(r_symapp), "4530: tenant 9 symbol-append of a foreign string denied");
+        CHECK(is_error(r_gensym), "4530: tenant 9 gensym on a foreign prefix denied");
+        CHECK(is_error(r_join), "4530: tenant 9 string-join over a foreign spine denied");
+        CHECK(is_error(r_lt), "4530: tenant 9 string<? denied");
+        CHECK(is_error(r_gt), "4530: tenant 9 string>? denied");
+        CHECK(is_error(r_le), "4530: tenant 9 string<=? denied");
+        CHECK(is_error(r_ge), "4530: tenant 9 string>=? denied");
+        CHECK(is_error(r_sidx), "4530: tenant 9 string-index denied");
+        CHECK(is_error(r_s2n), "4530: tenant 9 string->number on a foreign numeric denied");
+        CHECK(is_error(r_eq), "4530: tenant 9 equal? against a foreign string denied");
+        // The deny results must not smuggle the bytes back as a value.
+        CHECK(!is_string(r_fmt) && !is_string(r_symapp) && !is_string(r_join),
+              "4530: no constructor result string returned on deny");
+        CHECK(ring_isolation_deny_count("format") == 1, "4530: one IsolationDeny format");
+        CHECK(ring_isolation_deny_count("symbol-append") == 1,
+              "4530: one IsolationDeny symbol-append");
+        CHECK(ring_isolation_deny_count("gensym") == 1, "4530: one IsolationDeny gensym");
+        CHECK(ring_isolation_deny_count("string-join") == 1, "4530: one IsolationDeny string-join");
+        CHECK(ring_isolation_deny_count("string<?") == 1, "4530: one IsolationDeny string<?");
+        CHECK(ring_isolation_deny_count("string>?") == 1, "4530: one IsolationDeny string>?");
+        CHECK(ring_isolation_deny_count("string<=?") == 1, "4530: one IsolationDeny string<=?");
+        CHECK(ring_isolation_deny_count("string>=?") == 1, "4530: one IsolationDeny string>=?");
+        CHECK(ring_isolation_deny_count("string-index") == 1,
+              "4530: one IsolationDeny string-index");
+        CHECK(ring_isolation_deny_count("string->number") == 1,
+              "4530: one IsolationDeny string->number");
+        CHECK(ring_isolation_deny_count("equal?") == 1, "4530: one IsolationDeny equal?");
+
+        // Owner calls still copy/answer (t9 on its own strings).
+        auto o_fmt = (*format_fn)({tmpl9, own9});
+        CHECK(!is_error(o_fmt), "4530: owner format still works");
+        auto o_symapp = (*symapp_fn)({own9});
+        CHECK(!is_error(o_symapp), "4530: owner symbol-append still works");
+        auto o_lt = (*slt_fn)({own9, own9});
+        CHECK(!is_error(o_lt), "4530: owner string<? still answers");
+        auto o_eq = (*eq_fn)({own9, own9});
+        CHECK(!is_error(o_eq), "4530: owner equal? still answers");
+    }
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -5389,6 +5506,7 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4505: in-range reader prims tenant gate ──
     ac4505_inrange_reader_prims();
+    ac4530_string_gate_siblings();
 
     // ── Issue #4518: apply / %-encoding / f64 reader tenant gate ──
     ac4518_inrange_apply_encoding_f64_readers();

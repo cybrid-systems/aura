@@ -118,6 +118,13 @@ namespace {
         auto i = as_string_idx(a[0]);
         if (i >= string_heap.size())
             return make_bool(false);
+        // Issue #4530: a foreign numeric string must not answer with its
+        // parsed value; same reader gate as string->list (#4505).
+        if (!ev.inrange_string_tenant_allows(i, /*required_effects=*/0, "string->number"))
+            return make_primitive_error(
+                string_heap, error_values,
+                "string->number: cross-tenant string slot read denied (#4505)",
+                ev.primitive_error_counter_ptr());
         const auto& str = string_heap[i];
         if (str.empty())
             return make_bool(false);
@@ -308,6 +315,14 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             auto delim_idx = as_string_idx(a[1]);
             if (delim_idx >= string_heap.size())
                 return make_bool(false);
+            // Issue #4530: reader gates before any foreign byte is joined —
+            // the delimiter, every visited spine slot, and every element
+            // string. Helpers are lock-free; we hold alloc_storage_lock_.
+            if (!ev.inrange_string_tenant_allows(delim_idx, /*required_effects=*/0, "string-join"))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string-join: cross-tenant string slot read denied (#4505)",
+                    primitive_error_counter);
             auto& delim = string_heap[delim_idx];
             std::string result;
             bool first = true;
@@ -316,10 +331,22 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 auto p = as_pair_idx(v);
                 if (p >= pairs.size())
                     break;
+                if (!ev.inrange_slot_tenant_allows(p, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "string-join"))
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "string-join: cross-tenant pair slot read denied (#4505)",
+                        primitive_error_counter);
                 auto car = pairs[p].car;
                 if (is_string(car)) {
                     auto sidx = as_string_idx(car);
                     if (sidx < string_heap.size()) {
+                        if (!ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0,
+                                                             "string-join"))
+                            return make_primitive_error(
+                                string_heap, error_values,
+                                "string-join: cross-tenant string slot read denied (#4505)",
+                                primitive_error_counter);
                         if (!first)
                             result += delim;
                         result += string_heap[sidx];
@@ -1261,10 +1288,24 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(2, "(string string) -> bool", "String equality."));
     register_prim(
         add, ev, "string<?",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2)
                 return make_bool(false);
-            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+            // Issue #4530: lexicographic compares answer byte facts — same
+            // reader gate as string=? (#4505), one IsolationDeny per call.
+            auto tenant_allows = [&](const EvalValue& v) {
+                if (!is_string(v))
+                    return true;
+                auto idx = as_string_idx(v);
+                return idx >= string_heap.size() ||
+                       ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string<?");
+            };
+            if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string<?: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
                     return (idx < string_heap.size()) ? string_heap[idx] : "";
@@ -1283,10 +1324,23 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
     // "unbound variable: string>?" (aura/orch.aura select-best).
     register_prim(
         add, ev, "string>?",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2)
                 return make_bool(false);
-            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+            // Issue #4530: same reader gate as string<? (#4505).
+            auto tenant_allows = [&](const EvalValue& v) {
+                if (!is_string(v))
+                    return true;
+                auto idx = as_string_idx(v);
+                return idx >= string_heap.size() ||
+                       ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string>?");
+            };
+            if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string>?: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
                     return (idx < string_heap.size()) ? string_heap[idx] : "";
@@ -1300,10 +1354,23 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(2, "(string string) -> bool", "Lexicographic string greater-than."));
     register_prim(
         add, ev, "string>=?",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2)
                 return make_bool(false);
-            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+            // Issue #4530: same reader gate as string<? (#4505).
+            auto tenant_allows = [&](const EvalValue& v) {
+                if (!is_string(v))
+                    return true;
+                auto idx = as_string_idx(v);
+                return idx >= string_heap.size() ||
+                       ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string>=?");
+            };
+            if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string>=?: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
                     return (idx < string_heap.size()) ? string_heap[idx] : "";
@@ -1317,10 +1384,23 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         pure_general(2, "(string string) -> bool", "Lexicographic string greater-or-equal."));
     register_prim(
         add, ev, "string<=?",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2)
                 return make_bool(false);
-            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+            // Issue #4530: same reader gate as string<? (#4505).
+            auto tenant_allows = [&](const EvalValue& v) {
+                if (!is_string(v))
+                    return true;
+                auto idx = as_string_idx(v);
+                return idx >= string_heap.size() ||
+                       ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string<=?");
+            };
+            if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string<=?: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
                     return (idx < string_heap.size()) ? string_heap[idx] : "";
@@ -1344,9 +1424,22 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
 
     register_prim(
         add, ev, "string-index",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2)
                 return make_int(-1);
+            // Issue #4530: gate before haystack/needle bytes are copied.
+            auto tenant_allows = [&](const EvalValue& v) {
+                if (!is_string(v))
+                    return true;
+                auto idx = as_string_idx(v);
+                return idx >= string_heap.size() ||
+                       ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-index");
+            };
+            if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string-index: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
             auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap.size())
                                 ? string_heap[as_string_idx(a[0])]
                                 : "";
