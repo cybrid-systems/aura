@@ -4629,13 +4629,24 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     // reaching synthesize_flat_if's join must not publish a solved
     // Dynamic (the authoritative-Dynamic hole behind `(if p 1 "a")`).
     // The Int/Float promotion above, both Dynamic arms, and the gradual
-    // fallback below are unchanged. A type variable still returns so a
-    // later unify can bind it; any other pair of distinct grounds
-    // reports a hard TypeError and yields void_type() — never a
-    // successful Dynamic. infer_flat demotes the type-export authority
-    // when that error was reported (last_type_export_authoritative_).
+    // fallback below are unchanged. Issue #4515: is_var reads the raw
+    // registry tag, which stays TYPE_VAR for a lambda parameter even
+    // after consistent_unify bound its union-find rep to a ground type
+    // (binding_[root]). Normalize both ids through the constraint
+    // system first — find_var returns binding_[root] — so a bound
+    // representative takes the ground gate exactly like the arithmetic
+    // peel's normalize-before-gate order. An id still a variable after
+    // normalization is genuinely unbound and returns so a later unify
+    // can bind it; any other pair of distinct grounds reports a hard
+    // TypeError and yields void_type() — never a successful Dynamic.
+    // infer_flat demotes the type-export authority when that error was
+    // reported (last_type_export_authoritative_).
     if (aura::compiler::typed_audit::production_hard_face_active() ||
         aura::compiler::typed_audit::production_defaults_active()) {
+        a = cs_.normalize(a);
+        b = cs_.normalize(b);
+        if (a == b)
+            return a;
         if (reg_.is_var(a) || reg_.is_var(b))
             return reg_.dynamic_type(); // later unify binds the variable
         diag_.report(

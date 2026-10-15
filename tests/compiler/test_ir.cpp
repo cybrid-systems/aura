@@ -2935,6 +2935,67 @@ int main() {
                 }
             }
 
+            // ── Issue #4515: lub's production gate must normalize both
+            // ids through the union-find before is_var. A lambda
+            // parameter keeps its TYPE_VAR registry tag after
+            // consistent_unify bound binding_[root] to a ground, so the
+            // raw tag peek published an authoritative Dynamic for
+            // `(if #t x 1)` with a bound rep. ──
+
+            // AC1: bound rep — (string-length x) unifies x's rep with
+            // String, so the if-join is String vs Int: the ground gate
+            // fires and the export authority is demoted (never an
+            // authoritative Dynamic).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x) (begin (string-length x) (if #t x 1)))", treg);
+                if (r.saw_gate_te && !r.authoritative) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4515_1_bound_rep_join_not_authoritative");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4515_1_bound_rep_join_not_authoritative te={} auth={}",
+                                 r.saw_gate_te, r.authoritative);
+                }
+            }
+
+            // AC2: genuinely unbound rep — nothing unifies x, so the
+            // normalized ids are still variables and the join stays
+            // gradual Dynamic (the gate must not over-fire).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x) (if #t x 1))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_gate_te && !r.saw_any_te && ft && ft->ret == treg.dynamic_type()) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4515_2_unbound_rep_join_stays_dynamic");
+                } else {
+                    ++ts_failed;
+                    std::println(
+                        std::cerr,
+                        "TS FAIL: ac4515_2_unbound_rep_join_stays_dynamic te={} ft={} dyn={}",
+                        r.saw_gate_te, ft != nullptr, ft ? ft->ret == treg.dynamic_type() : false);
+                }
+            }
+
+            // AC2 soft: even with the rep bound, the gradual face keeps
+            // the Dynamic join — no gate, no TypeError.
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x) (begin (string-length x) (if #t x 1)))", treg);
+                if (!r.saw_gate_te && !r.saw_any_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4515_3_bound_rep_soft_gradual_dynamic");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4515_3_bound_rep_soft_gradual_dynamic");
+                }
+            }
+
             apply_dev_audit_defaults();
         }
 
