@@ -1100,13 +1100,47 @@ struct LLVMBuilder {
                 metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
             return true;
         };
+        // Issue #4523: shape-specialized tag-check elision for arith
+        // operands. A slot the profiled shape_map pins to SHAPE_FLOAT is a
+        // float WITHOUT executing jit_is_float on it — the same speculative
+        // trust as the #4522 unboxed flocal arith and the L2 unchecked pair
+        // access: a shape violation is a recompile/deopt event via the
+        // existing SpecJITController invalidation (no new guard, no new
+        // counter, no new query key), not an in-loop check. is_flocal is
+        // exactly the "map says SHAPE_FLOAT" predicate for slots (the
+        // shadows are created 1:1 from it), gated on the #1610 hygiene the
+        // flocal intercepts share: MacroIntroduced instructions and
+        // macro-origin functions never specialize. Mixed pairs (one known
+        // float, one unknown) keep the unknown operand's runtime tag tests
+        // and numeric guard — fail-safe, #4482 error surfaces unchanged.
+        auto operand_known_float = [&](uint32_t slot) -> bool {
+            return inst.source_marker != 1 && is_flocal(slot);
+        };
+        // Float-side tagged→double conversion with per-operand elision.
+        // A known-float operand converts via float_ref directly (no tag
+        // test); an unknown operand keeps the runtime select (float ref vs
+        // fixnum sitofp) — bit-identical to the pre-#4523 to_dbl when the
+        // operand is not profiled.
+        auto emit_float_side = [&](llvm::Value* v, bool known_float) -> llvm::Value* {
+            if (known_float)
+                return irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
+                                       llvm::ArrayRef<llvm::Value*>{v});
+            return irb->CreateSelect(jit_is_float(v),
+                                     irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
+                                                     llvm::ArrayRef<llvm::Value*>{v}),
+                                     irb->CreateSIToFP(irb->CreateAShr(v, c64(1)), double_ty));
+        };
         // Issue #4462: tagged add/sub/mul that leaves the fixnum domain
         // promotes to float. A previous promotion is a value <= FLOAT_BIAS,
         // so SHAPE_INT still has to notice it. kind: 0 add, 1 sub, 2 mul.
-        auto emit_fixnum_arith = [&](llvm::Value* a, llvm::Value* b, int kind) -> llvm::Value* {
+        // Issue #4523: a_known_float/b_known_float skip that operand's
+        // jit_is_float (static true folds any_float and the promote
+        // dispatch; the float arm becomes the only arm).
+        auto emit_fixnum_arith = [&](llvm::Value* a, llvm::Value* b, int kind, bool a_known_float,
+                                     bool b_known_float) -> llvm::Value* {
             auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-            auto* a_is_float = jit_is_float(a);
-            auto* b_is_float = jit_is_float(b);
+            auto* a_is_float = a_known_float ? irb->getTrue() : jit_is_float(a);
+            auto* b_is_float = b_known_float ? irb->getTrue() : jit_is_float(b);
             auto* any_float = irb->CreateOr(a_is_float, b_is_float);
             // Add/sub of the tags is the tag of the sum. Mul of the tags is
             // (a*b)<<2, which overflows while a*b still fits, and a product
@@ -1147,14 +1181,8 @@ struct LLVMBuilder {
             irb->CreateBr(bb_done);
 
             irb->SetInsertPoint(bb_flt);
-            auto to_dbl = [&](llvm::Value* v, llvm::Value* is_f) {
-                return irb->CreateSelect(is_f,
-                                         irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                                         llvm::ArrayRef<llvm::Value*>{v}),
-                                         irb->CreateSIToFP(irb->CreateAShr(v, c64(1)), double_ty));
-            };
-            auto* da = to_dbl(a, a_is_float);
-            auto* db = to_dbl(b, b_is_float);
+            auto* da = emit_float_side(a, a_known_float);
+            auto* db = emit_float_side(b, b_known_float);
             llvm::Value* fd = kind == 1   ? irb->CreateFSub(da, db)
                               : kind == 2 ? irb->CreateFMul(da, db)
                                           : irb->CreateFAdd(da, db);
@@ -1174,25 +1202,57 @@ struct LLVMBuilder {
         // Issue #4463: a number is a v2 float or a fixnum above the float
         // bias. Bool, string, and ref tags are not numbers. Bit 0 clear
         // alone is not enough: integer 1 is tagged 2.
+        // Issue #4523 branch hygiene: test fixnum first (the most common
+        // operand), then float. Ordering only — the OR is the same #4482
+        // predicate; the interpreter classify ordering is a separate issue
+        // and is not contracted here.
         auto is_numeric_tag = [&](llvm::Value* v) -> llvm::Value* {
-            return irb->CreateOr(jit_is_float(v), jit_is_fixnum(v)); // #4482
+            return irb->CreateOr(jit_is_fixnum(v), jit_is_float(v)); // #4482
         };
         const auto num_err = c64(types::make_ref(types::RefError, 0));
         // Bad operands store a RefError and join. The numeric arm keeps
         // the existing fixnum/float body, and the next opcode continues
         // at the join.
-        auto guard_numeric_arith = [&](llvm::Value* a, llvm::Value* b, int kind) {
+        auto guard_numeric_arith = [&](int kind) {
+            // Issue #4523: a profiled-SHAPE_FLOAT operand is numeric
+            // without a tag test and reads its raw-double shadow directly
+            // (the emit_flocal_arith trust — no rebox, no flag check, no
+            // float_ref call); the unknown operand keeps the generic
+            // flag-aware load, its runtime tag tests, and the numeric
+            // guard (the RefError surface for bool/string operands is
+            // unchanged).
+            const bool a_f = operand_known_float(inst.ops[1]);
+            const bool b_f = operand_known_float(inst.ops[2]);
+            auto* a = a_f ? nullptr : load(inst.ops[1]);
+            auto* b = b_f ? nullptr : load(inst.ops[2]);
             auto* parent = irb->GetInsertBlock()->getParent();
             auto* bb_bad = llvm::BasicBlock::Create(ctx, "arith_nanum", parent);
             auto* bb_good = llvm::BasicBlock::Create(ctx, "arith_num", parent);
             auto* bb_join = llvm::BasicBlock::Create(ctx, "arith_join", parent);
-            auto* ok = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
+            auto* ok = irb->CreateAnd(a_f ? irb->getTrue() : is_numeric_tag(a),
+                                      b_f ? irb->getTrue() : is_numeric_tag(b));
             irb->CreateCondBr(ok, bb_good, bb_bad);
             irb->SetInsertPoint(bb_bad);
             store(inst.ops[0], num_err);
             irb->CreateBr(bb_join);
             irb->SetInsertPoint(bb_good);
-            store(inst.ops[0], emit_fixnum_arith(a, b, kind));
+            if ((a_f || b_f) && is_flocal(inst.ops[0])) {
+                // Issue #4523: the result is statically float (some operand
+                // is profiled float; the guard above kept the unknown one
+                // numeric) and the result slot has a raw-double shadow —
+                // publish the double directly (storef). This skips the
+                // per-iteration aura_alloc_float + immediate rebox read the
+                // tagged path would do (box → store mirror → unbox).
+                auto* da = a_f ? loadf(inst.ops[1]) : emit_float_side(a, false);
+                auto* db = b_f ? loadf(inst.ops[2]) : emit_float_side(b, false);
+                llvm::Value* fd = kind == 1   ? irb->CreateFSub(da, db)
+                                  : kind == 2 ? irb->CreateFMul(da, db)
+                                              : irb->CreateFAdd(da, db);
+                storef(inst.ops[0], fd);
+            } else {
+                store(inst.ops[0], emit_fixnum_arith(a_f ? load(inst.ops[1]) : a,
+                                                     b_f ? load(inst.ops[2]) : b, kind, a_f, b_f));
+            }
             irb->CreateBr(bb_join);
             irb->SetInsertPoint(bb_join);
         };
@@ -1249,19 +1309,19 @@ struct LLVMBuilder {
                 // Issue #4522: float-known accumulator chain lowers unboxed.
                 if (emit_flocal_arith(inst, 0))
                     return true;
-                guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 0);
+                guard_numeric_arith(0);
                 return true;
             }
             case OpSub: {
                 if (emit_flocal_arith(inst, 1))
                     return true;
-                guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 1);
+                guard_numeric_arith(1);
                 return true;
             }
             case OpMul: {
                 if (emit_flocal_arith(inst, 2))
                     return true;
-                guard_numeric_arith(load(inst.ops[1]), load(inst.ops[2]), 2);
+                guard_numeric_arith(2);
                 return true;
             }
             case OpDiv: {
@@ -1270,13 +1330,24 @@ struct LLVMBuilder {
                 // existing float path).
                 if (emit_flocal_arith(inst, 3))
                     return true;
-                auto dividend = load(inst.ops[1]);
-                auto divisor = load(inst.ops[2]);
+                // Issue #4523: per-operand shape elision — a
+                // profiled-SHAPE_FLOAT operand is numeric without a tag
+                // test; the unknown operand's guard stays (RefError
+                // surface unchanged). raw_f: float-known result slot + a
+                // known float operand takes the raw IEEE quotient (the
+                // integer-specialized arm declines it).
+                const bool a_f = operand_known_float(inst.ops[1]);
+                const bool b_f = operand_known_float(inst.ops[2]);
+                const bool spec_int = (inst_shape(inst) == SHAPE_INT);
+                const bool raw_f = (a_f || b_f) && !spec_int && is_flocal(inst.ops[0]);
+                auto dividend = (raw_f && a_f) ? nullptr : load(inst.ops[1]);
+                auto divisor = (raw_f && b_f) ? nullptr : load(inst.ops[2]);
                 auto* parent = irb->GetInsertBlock()->getParent();
                 auto* bb_bad = llvm::BasicBlock::Create(ctx, "div_nanum", parent);
                 auto* bb_good = llvm::BasicBlock::Create(ctx, "div_num", parent);
                 auto* bb_join = llvm::BasicBlock::Create(ctx, "div_join", parent);
-                auto* ok = irb->CreateAnd(is_numeric_tag(dividend), is_numeric_tag(divisor));
+                auto* ok = irb->CreateAnd(a_f ? irb->getTrue() : is_numeric_tag(dividend),
+                                          b_f ? irb->getTrue() : is_numeric_tag(divisor));
                 irb->CreateCondBr(ok, bb_good, bb_bad);
                 irb->SetInsertPoint(bb_bad);
                 store(inst.ops[0], num_err);
@@ -1285,7 +1356,18 @@ struct LLVMBuilder {
                 // Issue #4461: integer zero is a RefError tag, not fixnum 0.
                 // Float zero is IEEE (no substitute divisor of 1.0).
                 const auto err_tag = num_err;
-                bool spec_int = (inst_shape(inst) == SHAPE_INT);
+                if (raw_f) {
+                    // Issue #4523: raw IEEE quotient into the float-known
+                    // result slot — the known operand reads its shadow, the
+                    // unknown one keeps its runtime conversion (div-by-zero
+                    // stays ±inf); no per-iteration pool box + rebox read.
+                    auto* a_dbl = a_f ? loadf(inst.ops[1]) : emit_float_side(dividend, false);
+                    auto* b_dbl = b_f ? loadf(inst.ops[2]) : emit_float_side(divisor, false);
+                    storef(inst.ops[0], irb->CreateFDiv(a_dbl, b_dbl));
+                    irb->CreateBr(bb_join);
+                    irb->SetInsertPoint(bb_join);
+                    return true;
+                }
                 if (spec_int) {
                     auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                     auto safe_div = irb->CreateSelect(is_zero, c64(2), divisor); // fixnum 1
@@ -1293,19 +1375,16 @@ struct LLVMBuilder {
                     auto tagged = irb->CreateShl(div_result, c64(1));
                     store(inst.ops[0], irb->CreateSelect(is_zero, err_tag, tagged));
                 } else {
-                    auto a_is_float = jit_is_float(dividend); // #4482
-                    auto b_is_float = jit_is_float(divisor);
+                    // Issue #4523: a profiled-float operand skips
+                    // jit_is_float (float_ref direct); the unknown operand
+                    // keeps its runtime select. With any operand known
+                    // float, any_float folds constant and the fixnum arm
+                    // dead-eliminates.
+                    auto* a_is_float = a_f ? irb->getTrue() : jit_is_float(dividend); // #4482
+                    auto* b_is_float = b_f ? irb->getTrue() : jit_is_float(divisor);
                     auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                    auto a_dbl = irb->CreateSelect(
-                        a_is_float,
-                        irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                        llvm::ArrayRef<llvm::Value*>{dividend}),
-                        irb->CreateSIToFP(irb->CreateAShr(dividend, c64(1)), double_ty));
-                    auto b_dbl = irb->CreateSelect(
-                        b_is_float,
-                        irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
-                                        llvm::ArrayRef<llvm::Value*>{divisor}),
-                        irb->CreateSIToFP(irb->CreateAShr(divisor, c64(1)), double_ty));
+                    auto a_dbl = emit_float_side(dividend, a_f);
+                    auto b_dbl = emit_float_side(divisor, b_f);
                     auto fdiv = irb->CreateFDiv(a_dbl, b_dbl);
                     auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
                                                      llvm::ArrayRef<llvm::Value*>{fdiv});
