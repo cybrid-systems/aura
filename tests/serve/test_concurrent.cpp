@@ -2537,8 +2537,7 @@ static bool test_issue_4176_join_wake_protocol() {
           "#4176 AC1: joiner parked on the join (add_joiner + BlockingIO)");
     Fiber* joiner = joiner_f.load(std::memory_order_acquire);
     CHECK(joiner != nullptr, "#4176 AC1: joiner fiber observed");
-    CHECK(joiner != nullptr && joiner->eventfd() >= 0,
-          "#4176 AC1: joiner has a live wake eventfd");
+    CHECK(joiner != nullptr && joiner->eventfd() >= 0, "#4176 AC1: joiner has a live wake eventfd");
 
     // Spurious wake class (stdin-broadcast / recycled wake fd): write 1
     // to the PARKED joiner's eventfd while the child is still running.
@@ -2805,8 +2804,7 @@ static bool test_issue_4230_add_joiner_done_face() {
         Fiber* child = child_f.load(std::memory_order_acquire);
         const bool registered =
             child != nullptr &&
-            sched.add_joiner(static_cast<std::uint64_t>(child->id()),
-                             aura::serve::g_current_fiber);
+            sched.add_joiner(static_cast<std::uint64_t>(child->id()), aura::serve::g_current_fiber);
         register_refused.store(!registered, std::memory_order_release);
         probe_done.store(true, std::memory_order_release);
     });

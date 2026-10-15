@@ -1447,6 +1447,189 @@ static void ac3732_4_send_under_guard_still_bp() {
           "3732 AC4: #3613 defer helper retained");
 }
 
+static void ac4514_1_peer_recv_parks_sibling_runs_first() {
+    std::println("\n--- #4514 AC1: depth-0 peer recv parks; sibling runs before guard exit ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4514 AC1: warm");
+    Evaluator::set_query_evaluator(&cs.evaluator());
+
+    const auto rej0 =
+        g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed);
+
+    // Two workers: holder pinned to 0, peer + Ready sibling pinned to 1.
+    // sched must outlive mb teardown ordering (attachers_ / scheduler_gone_).
+    Scheduler sched(2);
+    MultiFiberMailbox mb(/*high_water=*/8); // stays empty while the Guard is live
+
+    std::atomic<bool> holder_held{false};
+    std::atomic<bool> holder_release{false};
+    std::atomic<bool> holder_done{false};
+    std::atomic<int> holder_reject_delta{0};
+    std::atomic<bool> peer_parking{false};
+    std::atomic<bool> peer_done{false};
+    std::atomic<int> peer_delivered{0};
+    std::atomic<int> peer_held_at_delivery{-1};
+    std::atomic<bool> sibling_done{false};
+    std::atomic<int> sibling_under_hold{-1};
+    std::atomic<int> sibling_saw_peer_done{-1};
+
+    // Holder H (worker 0): outermost Guard live across a spin-wait body.
+    // The ctor stores mutation_boundary_held_ + bumps the process count,
+    // so g_process_mutation_boundary_held_count > 0 while H waits.
+    sched.spawn_with_affinity(
+        [&]() {
+            // Direct ctor (legacy path, cf. #3732 AC1/AC2): try_acquire
+            // runs the #2985 mutation-concurrency-health admit gate, whose
+            // process-wide counters this long suite has already degraded
+            // (e.g. #2903 injected 25ms wait samples) — production-default
+            // admits would reject before the repro even starts.
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+                if (!ok) {
+                    holder_done.store(true, std::memory_order_release);
+                    return;
+                }
+                CHECK(guard.is_outermost(), "4514 AC1: holder outermost Guard");
+                // Holder with this-fiber depth > 0 must STILL be
+                // yield-blocked: returns without swapcontext, bumps the
+                // #2200 reject total.
+                const auto rej_before = Fiber::yield_while_mutation_held_total();
+                Fiber::yield(YieldReason::Explicit);
+                holder_reject_delta.store(
+                    static_cast<int>(Fiber::yield_while_mutation_held_total() - rej_before),
+                    std::memory_order_relaxed);
+                holder_held.store(true, std::memory_order_release);
+                while (!holder_release.load(std::memory_order_acquire))
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            holder_done.store(true, std::memory_order_release);
+        },
+        0);
+
+    // Workers only run fibers once sched.run() starts — start it before
+    // waiting on any fiber-published flag.
+    std::thread io([&sched]() { sched.run(); });
+
+    const auto t_hold = std::chrono::steady_clock::now();
+    while (!holder_held.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() - t_hold < std::chrono::seconds(5))
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(holder_held.load(), "4514 AC1: holder outermost Guard live");
+
+    // Peer P (worker 1): this-fiber depth 0, empty-queue recv(wait=true).
+    // timeout_ms > 0 → Explicit yield path; the BlockingIO path shares the
+    // same gate. Attach so the post-exit push eventfd-wakes the parked
+    // fiber (attachers_ wake protocol).
+    sched.spawn_with_affinity(
+        [&]() {
+            auto* self = aura::serve::g_current_fiber;
+            if (self)
+                mb.attach(self);
+            peer_parking.store(true, std::memory_order_release);
+            bool br = false;
+            auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/5000, /*for_fiber=*/0,
+                               /*stale_handoff=*/nullptr, &br);
+            if (self)
+                mb.detach(self);
+            if (msg && msg->payload == "peer-4514" && !br)
+                peer_delivered.store(1, std::memory_order_relaxed);
+            peer_held_at_delivery.store(aura_process_mutation_boundary_held_count() > 0 ? 1 : 0,
+                                        std::memory_order_relaxed);
+            peer_done.store(true, std::memory_order_release);
+        },
+        1);
+
+    // P is running on worker 1 once peer_parking flips (set inside the
+    // fiber body). From here worker 1 cannot run anything else until P
+    // parks (swapcontext) or finishes.
+    const auto t_park = std::chrono::steady_clock::now();
+    while (!peer_parking.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() - t_park < std::chrono::seconds(5))
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(peer_parking.load(), "4514 AC1: peer reached recv");
+
+    // Ready sibling S on the peer's worker: must run BEFORE the guard
+    // exits and while the peer is still parked in recv.
+    sched.spawn_with_affinity(
+        [&]() {
+            sibling_under_hold.store(aura_process_mutation_boundary_held_count() > 0 ? 1 : 0,
+                                     std::memory_order_relaxed);
+            sibling_saw_peer_done.store(peer_done.load(std::memory_order_acquire) ? 1 : 0,
+                                        std::memory_order_relaxed);
+            sibling_done.store(true, std::memory_order_release);
+        },
+        1);
+
+    const auto t_sib = std::chrono::steady_clock::now();
+    while (!sibling_done.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() - t_sib < std::chrono::seconds(9))
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(sibling_done.load(), "4514 AC1: Ready sibling ran while peer blocked in recv");
+    CHECK(sibling_under_hold.load() == 1, "4514 AC1: sibling ran under live process-held");
+    CHECK(sibling_saw_peer_done.load() == 0,
+          "4514 AC1: peer still parked when sibling ran (no yield busy-loop stall)");
+    CHECK(holder_reject_delta.load() >= 1,
+          "4514 AC1: holder this-fiber yield still rejected (#2200 preserved)");
+
+    // Exit the guard only after the sibling ordering is proven.
+    holder_release.store(true, std::memory_order_release);
+    const auto t_exit = std::chrono::steady_clock::now();
+    while (!holder_done.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() - t_exit < std::chrono::seconds(5))
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(holder_done.load(), "4514 AC1: holder exited Guard");
+
+    // While the Guard was live, push stayed Backpressure (#3692/#3732);
+    // after exit the message is deliverable and eventfd-wakes the parked
+    // peer.
+    MailMessage m;
+    m.payload = "peer-4514";
+    CHECK(mb.push(m) == PushStatus::Ok, "4514 AC1: push Ok after guard exit");
+
+    const auto t_wake = std::chrono::steady_clock::now();
+    while (!peer_done.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() - t_wake < std::chrono::seconds(6))
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(peer_delivered.load() == 1, "4514 AC1: parked peer woke and delivered");
+    CHECK(peer_held_at_delivery.load() == 0, "4514 AC1: delivery observed after guard exit");
+    CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed) ==
+              rej0,
+          "4514 AC1: peer did not bump Policy A reject");
+
+    sched.stop();
+    io.join();
+    Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4514_2_yield_gate_this_fiber_source() {
+    std::println("\n--- #4514 AC2: yield gate is this-fiber only (source) ---");
+    const auto fiber = read_file("src/serve/fiber.cpp");
+    CHECK(fiber.find("Issue #4514") != std::string::npos, "4514 AC2: fiber.cpp cites #4514");
+    const auto gate = fiber.find("bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out)");
+    CHECK(gate != std::string::npos, "4514 AC2: gate helper present");
+    const auto win = gate == std::string::npos ? std::string{} : fiber.substr(gate, 2600);
+    CHECK(win.find("aura_evaluator_mutation_boundary_held()") == std::string::npos,
+          "4514 AC2: gate ignores process-held (this-fiber split, cf. #3694)");
+    CHECK(win.find("aura_evaluator_mutation_boundary_depth() > 0") != std::string::npos,
+          "4514 AC2: gate keeps this-fiber depth arm");
+    CHECK(win.find("g_mutation_boundary_held") != std::string::npos,
+          "4514 AC2: gate keeps this-thread yield-hook trampoline arm");
+    // Process-wide count stays the push Backpressure + force-safepoint
+    // signal (unchanged #3692 / #3694 surfaces).
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("note_mailbox_deferred_under_boundary") != std::string::npos,
+          "4514 AC2: push BP helper retained");
+    // No new query key / no invent.
+    CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp").find("query:4514") ==
+              std::string::npos,
+          "4514 AC2: no new query key");
+    CHECK(read_file("tests/serve/test_issue_4514.cpp").empty(), "4514 AC2: no test_issue_4514.cpp");
+    CHECK(read_file("docs/design/4514-peer-yield-park.md").empty(), "4514 AC2: no docs/design");
+}
+
 static void ac3732_5_no_invent() {
     std::println("\n--- #3732 AC5: no invent ---");
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
@@ -2358,6 +2541,9 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac3732_3_soft_this_fiber_empty_peer_delivers();
     ac3732_4_send_under_guard_still_bp();
     ac3732_5_no_invent();
+    std::println("\n=== Issue #4514: peer fiber yield parks under process-held ===");
+    ac4514_1_peer_recv_parks_sibling_runs_first();
+    ac4514_2_yield_gate_this_fiber_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
