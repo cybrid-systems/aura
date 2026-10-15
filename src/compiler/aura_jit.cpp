@@ -2793,6 +2793,7 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
                       int32_t arg_count, int32_t env_count);
 void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                             int32_t local_count, int32_t arg_count, int32_t env_count);
+void aura_note_ir_func_define(int64_t func_id, const char* name); // Issue #4521
 int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64_t* out_arg_count,
                                int64_t* out_env_count);
 void aura_closure_set_name(int64_t closure_id, const char* name);
@@ -3704,6 +3705,12 @@ struct AuraJIT::Impl {
             aura_register_fn_named(name, func_id, fn_ptr, static_cast<int32_t>(local_count),
                                    static_cast<int32_t>(arg_count),
                                    static_cast<int32_t>(env_count));
+            // Issue #4521: bind the JIT func_id to this define after the
+            // named publish (register_fn_entry erases stale bindings) so
+            // the native drop's #4405 func-id walk sees OpMakeClosure
+            // closures that carry the id with an empty closure name.
+            if (func_id >= 0)
+                aura_note_ir_func_define(func_id, name);
             // Issue #1516: map IR func_id → name for per-function AOT.
             if (func_id >= 0) {
                 std::lock_guard<std::mutex> lock(compile_mtx_);

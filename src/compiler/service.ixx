@@ -16545,11 +16545,33 @@ public:
     // installed ScalarFn first, matching the partial-relower window.
     // The drop takes the closure table then the workspace write lock,
     // so jit_cache_mtx_ is not held across it.
+    // Issue #4521: cache_define stores lowered bundles as name + "#" +
+    // position (mul#0). The bare-name erase left those rows in
+    // jit_cache_; under owner-scoped multi-eval the frozen facade clocks
+    // keep them epoch-hits, so the next try_jit_execute / exec_jit
+    // cache-hits the pre-mutate bundle and republishes its ScalarFn
+    // through aura_register_fn_named. Walk the same name / name# rows
+    // force_ir_cache_dirty_after_abort erases. Caller holds the
+    // jit_cache_mtx_ unique window.
+    void erase_jit_cache_bundle_rows_for_define_(const std::string& name) {
+        const std::string facade_prefix = name + "#";
+        for (auto it = jit_cache_.begin(); it != jit_cache_.end();) {
+            if (it->first == name || it->first.rfind(facade_prefix, 0) == 0) {
+                it = jit_cache_.erase(it);
+                metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     void evict_jit_cache_after_production_facade_(const std::string& name) {
         {
             std::unique_lock cache_write(jit_cache_mtx_);
             if (jit_cache_.erase(name) > 0)
                 metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            // Issue #4521: also erase name#pos bundle rows (abort walk).
+            erase_jit_cache_bundle_rows_for_define_(name);
         }
         aura_drop_jit_fn_native_for_define(name.c_str());
         {
