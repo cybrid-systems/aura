@@ -642,15 +642,25 @@ void Evaluator::compact_mutation_log() noexcept {
 bool Evaluator::ensure_env_frame_dual_path_consistent(EnvId id, const char* /*site*/) noexcept {
     if (id == NULL_ENV_ID)
         return true;
-    if (id >= env_frames_.size()) {
-        // OOB — treat as drift (defensive; callers should not pass OOB).
-        bump_env_frame_version_drift_prevented();
-        return false;
-    }
-    const EnvFrame& fr = env_frames_[id];
-    if (fr.version_ == INVALID_VERSION) {
-        bump_env_frame_version_drift_prevented();
-        return false;
+    // Issue #4529: the range check + version read are authoritative under
+    // the frame's shard lock — restore_panic_checkpoint truncates the
+    // deque under the same shard uniques, and the previous unlocked
+    // check-then-index could assert past the shrunken size on a
+    // background fiber. Lock scope ends before is_env_frame_stale (it
+    // takes the same shard's shared lock itself).
+    {
+        std::shared_lock<std::shared_mutex> rlock(
+            env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+        if (id >= env_frames_.size()) {
+            // OOB — treat as drift (defensive; callers should not pass OOB).
+            bump_env_frame_version_drift_prevented();
+            return false;
+        }
+        const EnvFrame& fr = env_frames_[id];
+        if (fr.version_ == INVALID_VERSION) {
+            bump_env_frame_version_drift_prevented();
+            return false;
+        }
     }
     if (is_env_frame_stale(id)) {
         bump_env_frame_version_drift_prevented();
