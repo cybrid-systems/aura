@@ -1611,10 +1611,13 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             vector_on_freelist_[i] = 1;
             vector_reuse_freelist_.push_back(i);
         }
+        // Issue #4525: capture the burst rate the mark fired on before
+        // the reset — note_live_set uses it to detect allocation bursts.
+        const auto mints_at_mark = file_heap_allocs_since_reclaim_;
         file_heap_allocs_since_reclaim_ = 0;
         // Issue #4474: the mark just walked the heap — scale the next
         // reclaim triggers from the reachable set (live/32, clamped).
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs);
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs, mints_at_mark);
     }
     return true;
 }
@@ -1626,13 +1629,30 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 // alloc-heavy loops. live/32 keeps the amortized mark cost ~3% of the
 // live set; the 128 floor preserves the #4459 small-heap cadence and
 // the 32768 cap bounds garbage between reclaims.
-void Evaluator::note_live_set_for_reclaim_trigger(std::size_t live_objects) noexcept {
+// Issue #4525 spike + burst rebalance: the #4525 measurements showed
+// pure-float loops fire ZERO marks (boxed floats are bump-allocated in
+// the runtime float pool, outside the mark heap, so boxed-scalar
+// allocation is already decoupled from the window), while let/cons
+// burst loops whose objects die young re-fire the mark at the 128
+// floor cadence forever — 1562 marks for a 200k-iteration let-cell
+// loop (~0.38ms each, +15% wall). When the mark fired on the file-heap
+// window and less than half the window's mints survived (live*2 <
+// mints), the loop is allocation-burst-shaped: the next window doubles
+// so mark frequency decouples from the mint rate. The live/32 scaling
+// and the [128, 32768] clamp are unchanged — the ceiling still bounds
+// garbage between reclaims, so the #4474 window contract holds.
+void Evaluator::note_live_set_for_reclaim_trigger(std::size_t live_objects,
+                                                  std::uint64_t mints_since_mark) noexcept {
     const auto scaled =
         static_cast<std::uint64_t>(live_objects) / kReclaimTriggerDivisor + kReclaimTriggerFloor;
-    const auto next =
-        static_cast<std::uint32_t>(std::min<std::uint64_t>(scaled, kReclaimTriggerCeiling));
-    tw_closure_allocs_trigger_ = next;
-    file_heap_allocs_trigger_ = next;
+    auto next = scaled;
+    if (mints_since_mark >= file_heap_allocs_trigger_ &&
+        static_cast<std::uint64_t>(live_objects) * 2 < mints_since_mark)
+        next = std::max(next, static_cast<std::uint64_t>(file_heap_allocs_trigger_) * 2);
+    const auto clamped =
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(next, kReclaimTriggerCeiling));
+    tw_closure_allocs_trigger_ = clamped;
+    file_heap_allocs_trigger_ = clamped;
     // Issue #4474: window invariants (assertion face of the decl-site post).
     contract_assert(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
                     tw_closure_allocs_trigger_ <= kReclaimTriggerCeiling);
@@ -1940,12 +1960,17 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             vector_on_freelist_[i] = 1;
             vector_reuse_freelist_.push_back(i);
         }
+        // Issue #4525: capture the burst rate the mark fired on before
+        // the reset — note_live_set uses it to detect allocation bursts.
+        const auto mints_at_mark = file_heap_allocs_since_reclaim_;
         file_heap_allocs_since_reclaim_ = 0;
         // Issue #4474: the mark just walked the heap — scale the next
         // reclaim triggers from the reachable set (live/32, clamped).
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells);
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells, mints_at_mark);
     }
     tw_closure_allocs_ = 0;
+    // Issue #4525: benchmark observability — a full whole-heap mark ran.
+    ++file_heap_reclaim_runs_;
     return true;
 }
 

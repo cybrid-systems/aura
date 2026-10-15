@@ -4822,7 +4822,14 @@ public:
     // walked (live/32, clamped to the window) so a large live heap
     // amortizes the full-heap mark instead of paying it every 128
     // allocations. Skipped reclaims reset both triggers to the floor.
-    void note_live_set_for_reclaim_trigger(std::size_t live_objects) noexcept
+    // Issue #4525: when the mark fired on the file-heap window and most
+    // of that window's mints died young (allocation-burst shape), the
+    // next window doubles — mark frequency decouples from the mint rate
+    // while the [floor, ceiling] clamp still bounds garbage between
+    // reclaims. Boxed-scalar allocation (floats, post-#4502) is not
+    // counted by the window at all, so numeric loops never drive marks.
+    void note_live_set_for_reclaim_trigger(std::size_t live_objects,
+                                           std::uint64_t mints_since_mark) noexcept
         post(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
              tw_closure_allocs_trigger_ <= kReclaimTriggerCeiling &&
              file_heap_allocs_trigger_ >= kReclaimTriggerFloor &&
@@ -4875,6 +4882,10 @@ public:
         return file_heap_allocs_since_reclaim_;
     }
     void reset_file_heap_allocs_since_reclaim() noexcept { file_heap_allocs_since_reclaim_ = 0; }
+    // Issue #4525: completed file-mode reclaim run count (test/benchmark face).
+    [[nodiscard]] std::uint64_t file_heap_reclaim_runs_for_test() const noexcept {
+        return file_heap_reclaim_runs_;
+    }
 
     void
     set_messaging_callbacks(std::function<bool(const std::string&, const std::string&)>* send_fn,
@@ -7192,6 +7203,9 @@ private:
     std::vector<std::size_t> vector_reuse_freelist_;
     std::vector<std::uint8_t> vector_on_freelist_;
     std::uint32_t file_heap_allocs_since_reclaim_ = 0;
+    // Issue #4525: file-mode reclaim run count (spike/benchmark observability;
+    // counts completed whole-heap marks in reclaim_tw_unreachable).
+    std::uint64_t file_heap_reclaim_runs_ = 0;
     // Issue #4459: tree-walker Lambda / named-let allocations since
     // the last file-mode sweep. alloc_cell also bumps the heap counter.
     std::uint32_t tw_closure_allocs_ = 0;
@@ -9247,6 +9261,9 @@ public:
     // Issue #2001: public pairs_ size getter (companion to string_heap_size)
     // for tests + observability. Live pair count post-compact.
     [[nodiscard]] std::size_t pairs_size() const noexcept { return pairs_.size(); }
+    // Issue #4525: public cells_ size getter (companion to pairs_size) so
+    // burst-reclaim ACs can bound the garbage a loop leaves between marks.
+    [[nodiscard]] std::size_t cells_size() const noexcept { return cells_.size(); }
     // Issue #2084: public closures_ size getter (companion to pairs_size)
     // so the GC size-provider callback can size the closure MarkBitVector
     // to the actual current closure count rather than the max root index.
