@@ -1012,26 +1012,37 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             }
 
             std::int64_t result_i = 0;
-            double result_f = 0.0;
 
-            if (marshalled.any_float) {
-                auto f_fn =
-                    reinterpret_cast<double (*)(double, double, double, double, double, double)>(
-                        fn_ptr);
-                result_f = f_fn(d6[0], d6[1], d6[2], d6[3], d6[4], d6[5]);
-                if (ret_type == 2)
-                    return types::make_float(result_f);
-                if (ret_type == 1)
-                    return types::make_int(static_cast<std::int64_t>(result_f));
-                return types::make_float(result_f);
-            } else {
-                auto i_fn =
-                    reinterpret_cast<std::int64_t (*)(std::int64_t, std::int64_t, std::int64_t,
-                                                      std::int64_t, std::int64_t, std::int64_t)>(
-                        fn_ptr);
-                result_i = i_fn(i6[0], i6[1], i6[2], i6[3], i6[4], i6[5]);
-                if (ret_type == 2)
-                    return types::make_float(std::bit_cast<double>(result_i));
+            // Issue #4531: marshal per DECLARED slot class — integer-class
+            // slots (Int / String / Opaque) go to the integer registers in
+            // declared order, Float slots to the SSE registers in declared
+            // order; the result register follows the declared return type
+            // (xmm0 for Float, rax otherwise). The old any_float switch
+            // either dropped the Float args (int trampoline) or sent
+            // String/Int slots through xmm (double trampoline), and a Float
+            // return without a Float argument read rax.
+            std::array<std::int64_t, 6> ffi_ic{};
+            std::array<double, 6> ffi_dc{};
+            int ffi_ni = 0, ffi_nd = 0;
+            for (std::size_t fi = 0; fi < args.size() && fi < 6; ++fi) {
+                const int ffi_slot = fi < arg_types.size() ? arg_types[fi] : 1;
+                if (ffi_slot == 2) {
+                    ffi_dc[ffi_nd++] = marshalled.d_vals[fi];
+                } else if (ffi_slot == 3) {
+                    ffi_ic[ffi_ni++] = marshalled.s_vals[fi]
+                                           ? reinterpret_cast<std::int64_t>(marshalled.s_vals[fi])
+                                           : marshalled.i_vals[fi];
+                } else {
+                    ffi_ic[ffi_ni++] = marshalled.i_vals[fi];
+                }
+            }
+            if (ret_type == 2) {
+                return types::make_float(aura::compiler::pure::ffi_call_by_class<double>(
+                    fn_ptr, ffi_ic.data(), ffi_dc.data(), ffi_ni, ffi_nd));
+            }
+            {
+                result_i = aura::compiler::pure::ffi_call_by_class<std::int64_t>(
+                    fn_ptr, ffi_ic.data(), ffi_dc.data(), ffi_ni, ffi_nd);
                 if (ret_type == 3 && result_i != 0) {
                     // String return: char* → string_heap
                     auto s = reinterpret_cast<const char*>(static_cast<std::intptr_t>(result_i));

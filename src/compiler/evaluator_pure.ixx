@@ -222,6 +222,138 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
     return out;
 }
 
+// ffi_call_by_class — Issue #4531: call a foreign fn through a prototype
+// matching its DECLARED slot classes. SysV assigns integer args (rdi, rsi,
+// rdx, rcx, r8, r9) and SSE args (xmm0..7) independently per class, so an
+// int-first prototype is register-compatible with any interleaving of the
+// same (ni, nd) shape: the i-th integer slot lands in the i-th integer
+// register and the j-th Float slot in xmm(j), whatever the declared order.
+// A Float result lives in xmm0 and an integer result in rax regardless of
+// the argument classes. ni and nd must both be in [0, 6] with ni + nd <= 6
+// (the marshaler caps total args at 6); anything else returns R{}.
+export template <typename R>
+inline R ffi_call_by_class(void* fn, const std::int64_t* ic, const double* dc, int ni, int nd) {
+    switch (ni * 16 + nd) {
+        case 0 * 16 + 0: {
+            using F = R (*)();
+            return reinterpret_cast<F>(fn)();
+        }
+        case 0 * 16 + 1: {
+            using F = R (*)(double);
+            return reinterpret_cast<F>(fn)(dc[0]);
+        }
+        case 0 * 16 + 2: {
+            using F = R (*)(double, double);
+            return reinterpret_cast<F>(fn)(dc[0], dc[1]);
+        }
+        case 0 * 16 + 3: {
+            using F = R (*)(double, double, double);
+            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2]);
+        }
+        case 0 * 16 + 4: {
+            using F = R (*)(double, double, double, double);
+            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2], dc[3]);
+        }
+        case 0 * 16 + 5: {
+            using F = R (*)(double, double, double, double, double);
+            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2], dc[3], dc[4]);
+        }
+        case 0 * 16 + 6: {
+            using F = R (*)(double, double, double, double, double, double);
+            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2], dc[3], dc[4], dc[5]);
+        }
+        case 1 * 16 + 0: {
+            using F = R (*)(std::int64_t);
+            return reinterpret_cast<F>(fn)(ic[0]);
+        }
+        case 1 * 16 + 1: {
+            using F = R (*)(std::int64_t, double);
+            return reinterpret_cast<F>(fn)(ic[0], dc[0]);
+        }
+        case 1 * 16 + 2: {
+            using F = R (*)(std::int64_t, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1]);
+        }
+        case 1 * 16 + 3: {
+            using F = R (*)(std::int64_t, double, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1], dc[2]);
+        }
+        case 1 * 16 + 4: {
+            using F = R (*)(std::int64_t, double, double, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1], dc[2], dc[3]);
+        }
+        case 1 * 16 + 5: {
+            using F = R (*)(std::int64_t, double, double, double, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1], dc[2], dc[3], dc[4]);
+        }
+        case 2 * 16 + 0: {
+            using F = R (*)(std::int64_t, std::int64_t);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1]);
+        }
+        case 2 * 16 + 1: {
+            using F = R (*)(std::int64_t, std::int64_t, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0]);
+        }
+        case 2 * 16 + 2: {
+            using F = R (*)(std::int64_t, std::int64_t, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0], dc[1]);
+        }
+        case 2 * 16 + 3: {
+            using F = R (*)(std::int64_t, std::int64_t, double, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0], dc[1], dc[2]);
+        }
+        case 2 * 16 + 4: {
+            using F = R (*)(std::int64_t, std::int64_t, double, double, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0], dc[1], dc[2], dc[3]);
+        }
+        case 3 * 16 + 0: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2]);
+        }
+        case 3 * 16 + 1: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], dc[0]);
+        }
+        case 3 * 16 + 2: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], dc[0], dc[1]);
+        }
+        case 3 * 16 + 3: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, double, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], dc[0], dc[1], dc[2]);
+        }
+        case 4 * 16 + 0: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3]);
+        }
+        case 4 * 16 + 1: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], dc[0]);
+        }
+        case 4 * 16 + 2: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, double, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], dc[0], dc[1]);
+        }
+        case 5 * 16 + 0: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], ic[4]);
+        }
+        case 5 * 16 + 1: {
+            using F =
+                R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t, double);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], ic[4], dc[0]);
+        }
+        case 6 * 16 + 0: {
+            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t,
+                            std::int64_t);
+            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], ic[4], ic[5]);
+        }
+        default:
+            break;
+    }
+    return R{};
+}
+
 // ── Macro expansion (Issue #146 Phase 6 sub-extract) ────────
 //
 // `macro_expand_all` is a 500+ line stateful function — too
