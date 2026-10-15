@@ -802,6 +802,56 @@ static void ac2718_6_no_docs_design() {
 
 } // namespace
 
+// Issue #4533: goals are noted under the AST mutation-log id (the
+// InferenceEngine's active_mutation_id_ on the reanalyze path), but the
+// persist rows must join the session audit mid — rehydrate with
+// preferred_mid == session mid used to skip every row. The restamp
+// (production/Full only) rewrites non-zero source ids to the session mid
+// inside maybe_persist_occurrence_snapshot.
+static void ac4533_restamp_persist_mid() {
+    std::println("\n--- AC4533: restamp occurrence goals to the session mid ---");
+    UnitCs u;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    u.cs.set_active_mutation_id(7); // the AST mutation-log id (small, monotonic)
+    u.cs.set_active_blame_context(/*pred=*/9, /*affected=*/3);
+    u.cs.set_current_epoch(2);
+
+    auto v1 = u.cs.fresh_var();
+    u.cs.mark_touched_on_delta(v1, /*occurrence_narrow=*/true);
+    auto v2 = u.cs.fresh_var();
+    u.cs.mark_touched_on_delta(v2, /*occurrence_narrow=*/true);
+    const auto& goals = u.cs.occurrence_goals_for_test();
+    CHECK(goals.size() == 2, "4533.1: two goals noted");
+    CHECK(goals[0].source_mutation_id == 7 && goals[1].source_mutation_id == 7,
+          "4533.2: goals noted under the AST log id");
+
+    // Restamp onto the session audit mid (the maybe_persist path).
+    const std::uint64_t session_mid = 0xABCDE;
+    u.cs.restamp_occurrence_goals_for_persist(session_mid);
+    CHECK(goals[0].source_mutation_id == session_mid && goals[1].source_mutation_id == session_mid,
+          "4533.3: live goals restamped to the session mid");
+    CHECK(u.cs.append_occurrence_snapshot(session_mid) == 2, "4533.4: persist wrote both rows");
+    CHECK(u.cs.occurrence_persist_log_size() == 2, "4533.5: persist log carries both rows");
+
+    // Soft face: the restamp is a no-op (zero-extra path).
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    UnitCs soft;
+    soft.cs.set_active_mutation_id(7);
+    soft.cs.set_active_blame_context(/*pred=*/9, /*affected=*/3);
+    auto v = soft.cs.fresh_var();
+    soft.cs.mark_touched_on_delta(v, /*occurrence_narrow=*/true);
+    soft.cs.restamp_occurrence_goals_for_persist(0xABCDE);
+    CHECK(soft.cs.occurrence_goals_for_test()[0].source_mutation_id == 7,
+          "4533.6: soft face keeps the AST log id (zero-extra path)");
+
+    // mid == 0: restamp refuses (the append fallback owns zero-source rows).
+    u.cs.restamp_occurrence_goals_for_persist(0);
+    CHECK(goals[0].source_mutation_id == session_mid, "4533.7: mid==0 restamp is a no-op");
+
+    // Restore the dev face for later members.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 int run_test_occurrence_goal_epoch_table() {
     std::println(
         "=== Issue #2278 + #2307 + #2321: OccurrenceGoal table + sole-authority + drift gate ===");
@@ -816,6 +866,7 @@ int run_test_occurrence_goal_epoch_table() {
     ac8_2321_counter_initialized();
     ac9_2321_schema_sentinels();
     ac10_2321_gradual_dynamic_no_drift();
+    ac4533_restamp_persist_mid();
 
     std::println("\n=== Issue #2696: query:occurrence-goals-live (Agent-visible live goals) ===");
     ac2696_1_live_count_queryable();

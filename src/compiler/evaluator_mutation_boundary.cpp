@@ -864,9 +864,13 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     const bool defer_green = aura::compiler::typed_audit::production_defaults_active() ||
                              aura::compiler::typed_audit::get_strategy() ==
                                  aura::compiler::typed_audit::AuditStrategy::Full;
+    // Issue #4533: the first parameter is the EPOCH slot
+    // (p.defuse_or_epoch_stamp / g_last_type_linear_commit_proof_stamp) —
+    // feed the workspace mutation epoch, not the session audit mid (the
+    // #3964 session mid is deliberately unequal to the process epoch).
     (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live(
-        mutation_id, truth.live_goal_count, truth.goal_fingerprint, truth.from_cs,
-        /*publish_green_face=*/!defer_green);
+        ::aura::core::current_mutation_epoch(), truth.live_goal_count, truth.goal_fingerprint,
+        truth.from_cs, /*publish_green_face=*/!defer_green);
     // Issue #3346 AC1: last-look inside the builder can still reject if
     // fingerprint / live_goal_count / linear_root_count drifted or
     // mid_abort_authority is outstanding. Do not grant query:type on a

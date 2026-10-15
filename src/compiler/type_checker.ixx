@@ -1406,6 +1406,11 @@ public:
     [[nodiscard]] static std::size_t occurrence_persist_cap() noexcept;
     // Returns number of entries written (0 when disabled / empty goals).
     std::size_t append_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept;
+    // Issue #4533: restamp live occurrence goals onto the session audit mid
+    // before the persist snapshot — goals are noted under the AST
+    // mutation-log id (set_active_mutation_id), and the persist rows must
+    // join the session mid. Production/Full only; non-zero ids only.
+    void restamp_occurrence_goals_for_persist(std::uint64_t mid) noexcept;
     // Issue #3170: clear the long-lived occurrence persist buffer
     // (occurrence_persist_log_) without touching live occurrence_goals_.
     // Called on abort / nested / force-rollback paths and when the
@@ -2998,6 +3003,9 @@ export struct TypeChecker {
     std::size_t maybe_persist_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept {
         if (metrics_)
             solve_delta_cs_.set_metrics(metrics_);
+        // Issue #4533: restamp live goals onto the session mid before the
+        // snapshot (see restamp_occurrence_goals_for_persist).
+        solve_delta_cs_.restamp_occurrence_goals_for_persist(mutation_id);
         return solve_delta_cs_.append_occurrence_snapshot(mutation_id);
     }
     // Issue #3170: outermost-success fingerprint guard — clear the long-lived
