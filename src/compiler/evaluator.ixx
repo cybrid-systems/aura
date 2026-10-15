@@ -4847,6 +4847,12 @@ public:
     void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
+    // Issue #4481: TW-side in-flight roots (call-env bindings, pinned arg
+    // vectors, live results) for reclaim_file_mode_unreachable — an IR
+    // instruction boundary can run nested inside a live TW evaluation, and
+    // without these roots the sweep erases runtime closures that TW pair
+    // chains still reference.
+    void collect_tw_inflight_roots(std::vector<types::EvalValue>& out);
     // Issue #4480: RAII root for a host-side EvalValue vector that must
     // stay reachable across nested tree-walker evals (primitive apply
     // loops accumulate results into locals the mark phase cannot see).

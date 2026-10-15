@@ -887,6 +887,52 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     (void)reclaim_tw_unreachable(envs, held);
 }
 
+void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
+    // Issue #4481: TW-side in-flight roots for reclaim_file_mode_unreachable.
+    // The IR-loop sweep runs at instruction boundaries that can be nested
+    // inside a live TW evaluation (e.g. aot:reload / c-load under
+    // hot-strategy:register!), and its extra_roots covered only IR
+    // call_stack_ locals/args — TW call envs and pinned arg vectors were
+    // invisible, so runtime-created closures referenced only from a TW pair
+    // chain were treated as unreachable and erased ("cannot call: value",
+    // #4481 reopen). Same-thread roots only, mirroring
+    // maybe_reclaim_tw_unreachable's collection.
+    for (const auto& fr : g_tw_frames) {
+        if (fr.current && *fr.current) {
+            for (const auto& b : (*fr.current)->bindings())
+                out.push_back(b.second);
+            for (const auto& b : (*fr.current)->bindings_symid())
+                out.push_back(b.second);
+        }
+        if (fr.tail && fr.tail->has_value()) {
+            for (const auto& b : (**fr.tail).bindings())
+                out.push_back(b.second);
+            for (const auto& b : (**fr.tail).bindings_symid())
+                out.push_back(b.second);
+        }
+        if (!fr.pinned)
+            continue;
+        for (const auto& p : *fr.pinned) {
+            if (!p)
+                continue;
+            for (const auto& b : p->bindings())
+                out.push_back(b.second);
+            for (const auto& b : p->bindings_symid())
+                out.push_back(b.second);
+        }
+    }
+    for (const EvalResult* r : g_tw_results) {
+        if (r && *r)
+            out.push_back(**r);
+    }
+    for (const auto* many : g_tw_vecs) {
+        if (!many)
+            continue;
+        for (const auto& v : *many)
+            out.push_back(v);
+    }
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #4467: drop a message left by a caller that did not take it.
