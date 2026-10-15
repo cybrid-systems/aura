@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <execinfo.h>
 #include <cstring>
+#include <atomic>
 #include <cstdio>
 #include <dirent.h>
 #include <fstream>
@@ -2485,13 +2486,15 @@ static bool test_issue_4176_join_wake_protocol() {
     std::atomic<bool> child_done{false};
     std::atomic<bool> joiner_finished{false};
     std::atomic<int> joiner_parks{0};
-    Fiber* child_f = nullptr;
-    Fiber* joiner_f = nullptr;
+    // TSan: Fiber* publication across worker threads needs release/acquire
+    // (plain Fiber* raced child write vs joiner/main reads — stack of main).
+    std::atomic<Fiber*> child_f{nullptr};
+    std::atomic<Fiber*> joiner_f{nullptr};
 
     // Child: parks on a flag via Explicit yields (cooperative wait),
     // then completes — its eventfd is closed by on_fiber_done (#4176).
     sched.spawn([&]() {
-        child_f = aura::serve::g_current_fiber;
+        child_f.store(aura::serve::g_current_fiber, std::memory_order_release);
         while (!child_go.load(std::memory_order_acquire)) {
             Fiber::yield(YieldReason::Explicit);
         }
@@ -2502,21 +2505,23 @@ static bool test_issue_4176_join_wake_protocol() {
     // shape): predicate re-checked after EVERY wake; spurious wakes
     // re-register and re-park. Escapes: done / reclaimed.
     sched.spawn([&]() {
-        joiner_f = aura::serve::g_current_fiber;
         // Issue #4176: capture the joiner fiber ONCE (migration-invariant).
         // Re-reading thread_local g_current_fiber after a BlockingIO park
         // can hit a compiler-cached TLS base and observe the wrong worker's
         // null — add_joiner(..., nullptr) then returns false and the loop
-        // starves the worker. `joiner_f` was captured at body start.
+        // starves the worker. Publish via atomic for cross-thread AC1 checks.
+        Fiber* self = aura::serve::g_current_fiber;
+        joiner_f.store(self, std::memory_order_release);
         while (!child_done.load(std::memory_order_acquire)) {
-            if (child_f == nullptr || joiner_f == nullptr) {
+            Fiber* child = child_f.load(std::memory_order_acquire);
+            if (child == nullptr || self == nullptr) {
                 Fiber::yield(YieldReason::Explicit);
                 continue;
             }
-            if (sched.add_joiner(child_f->id(), joiner_f)) {
+            if (sched.add_joiner(child->id(), self)) {
                 joiner_parks.fetch_add(1, std::memory_order_relaxed);
                 Fiber::yield(YieldReason::BlockingIO);
-                sched.remove_joiner(child_f->id(), joiner_f);
+                sched.remove_joiner(child->id(), self);
             } else {
                 // Target vanished / done between the predicate check and the
                 // register: re-check cooperatively instead of busy-spinning
@@ -2530,14 +2535,15 @@ static bool test_issue_4176_join_wake_protocol() {
     std::thread t([&sched]() { sched.run(); });
     CHECK(wait_for_atomic(joiner_parks, 1),
           "#4176 AC1: joiner parked on the join (add_joiner + BlockingIO)");
-    CHECK(joiner_f != nullptr, "#4176 AC1: joiner fiber observed");
-    CHECK(joiner_f != nullptr && joiner_f->eventfd() >= 0,
+    Fiber* joiner = joiner_f.load(std::memory_order_acquire);
+    CHECK(joiner != nullptr, "#4176 AC1: joiner fiber observed");
+    CHECK(joiner != nullptr && joiner->eventfd() >= 0,
           "#4176 AC1: joiner has a live wake eventfd");
 
     // Spurious wake class (stdin-broadcast / recycled wake fd): write 1
     // to the PARKED joiner's eventfd while the child is still running.
     uint64_t one = 1;
-    const ssize_t w = (joiner_f != nullptr) ? ::write(joiner_f->eventfd(), &one, sizeof(one)) : -1;
+    const ssize_t w = (joiner != nullptr) ? ::write(joiner->eventfd(), &one, sizeof(one)) : -1;
     CHECK(w == static_cast<ssize_t>(sizeof(one)), "#4176 AC1: spurious wake write armed");
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     CHECK(!child_done.load(), "#4176 AC1: child still running at spurious wake");
@@ -2553,7 +2559,8 @@ static bool test_issue_4176_join_wake_protocol() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     CHECK(joiner_finished.load(),
           "#4176 AC1: joiner finished after child done (joiner wake post child-fd close)");
-    CHECK(child_f != nullptr && child_f->is_done(), "#4176 AC1: child observed done");
+    Fiber* child = child_f.load(std::memory_order_acquire);
+    CHECK(child != nullptr && child->is_done(), "#4176 AC1: child observed done");
 
     sched.stop();
     t.join();
@@ -2766,22 +2773,27 @@ static bool test_issue_4230_add_joiner_done_face() {
     std::thread t([&sched]() { sched.run(); });
 
     std::atomic<bool> child_started{false};
-    Fiber* child_f = nullptr;
+    std::atomic<Fiber*> child_f{nullptr};
     sched.spawn([&]() {
-        child_f = aura::serve::g_current_fiber;
+        child_f.store(aura::serve::g_current_fiber, std::memory_order_release);
         child_started.store(true, std::memory_order_release);
         // Return immediately — the worker stores Done and on_fiber_done's
         // notify pass runs right after.
     });
     CHECK(wait_for_atomic(child_started, true), "#4230 AC1: child started");
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (child_f == nullptr && std::chrono::steady_clock::now() < deadline)
+    Fiber* child_obs = child_f.load(std::memory_order_acquire);
+    while (child_obs == nullptr && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    CHECK(child_f != nullptr, "#4230 AC1: child fiber observed");
+        child_obs = child_f.load(std::memory_order_acquire);
+    }
+    CHECK(child_obs != nullptr, "#4230 AC1: child fiber observed");
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (child_f != nullptr && !child_f->is_done() && std::chrono::steady_clock::now() < deadline)
+    while (child_obs != nullptr && !child_obs->is_done() &&
+           std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    CHECK(child_f != nullptr && child_f->is_done(), "#4230 AC1: child done before the join probe");
+    CHECK(child_obs != nullptr && child_obs->is_done(),
+          "#4230 AC1: child done before the join probe");
 
     // Prober: mirrors the messaging fiber:join caller — probe first, then
     // register. The child is ALREADY done, so the register call must be
@@ -2790,8 +2802,11 @@ static bool test_issue_4230_add_joiner_done_face() {
     std::atomic<bool> probe_done{false};
     std::atomic<bool> register_refused{false};
     sched.spawn([&]() {
-        const bool registered = sched.add_joiner(static_cast<std::uint64_t>(child_f->id()),
-                                                 aura::serve::g_current_fiber);
+        Fiber* child = child_f.load(std::memory_order_acquire);
+        const bool registered =
+            child != nullptr &&
+            sched.add_joiner(static_cast<std::uint64_t>(child->id()),
+                             aura::serve::g_current_fiber);
         register_refused.store(!registered, std::memory_order_release);
         probe_done.store(true, std::memory_order_release);
     });
