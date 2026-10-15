@@ -3588,6 +3588,46 @@ static void ac2995_2_production_face_one_shot_recover() {
     reset_occurrence_commit_health_for_test();
 }
 
+// Issue #4533: goals are noted under the AST mutation-log id (the
+// InferenceEngine's active_mutation_id_ on the reanalyze path), but the
+// persist rows must join the session audit mid — rehydrate with
+// preferred_mid == session mid used to skip every row. The restamp
+// (production/Full only) rewrites non-zero source ids to the session mid
+// inside maybe_persist_occurrence_snapshot.
+static void ac4533_restamp_persist_mid() {
+    std::println("\n--- AC4533: occurrence rows join the session mid ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    auto& cs = tc.constraint_system();
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    // source_mutation_id 7 = the AST mutation-log id (the reanalyze
+    // active_mutation_id_), NOT the session audit mid.
+    cs.note_occurrence_goal(v, reg.int_type(), 7, 7, 1);
+    CHECK(cs.occurrence_goals_for_test()[0].source_mutation_id == 7,
+          "4533.1: goal noted under the AST log id");
+    const std::uint64_t session_mid = 99;
+    CHECK(tc.maybe_persist_occurrence_snapshot(session_mid) >= 1, "4533.2: persist wrote");
+    // The restamp joins the live goal onto the session mid.
+    CHECK(cs.occurrence_goals_for_test()[0].source_mutation_id == session_mid,
+          "4533.3: live goal restamped to the session mid by persist");
+
+    // Soft face: the restamp is a no-op (zero-extra path).
+    apply_dev_audit_defaults();
+    TypeRegistry reg2;
+    TypeChecker tc2(reg2);
+    auto& cs2 = tc2.constraint_system();
+    cs2.set_current_epoch(1);
+    auto v2 = cs2.fresh_var();
+    cs2.note_occurrence_goal(v2, reg2.int_type(), 7, 7, 1);
+    (void)tc2.maybe_persist_occurrence_snapshot(session_mid);
+    CHECK(cs2.occurrence_goals_for_test()[0].source_mutation_id == 7,
+          "4533.4: soft face keeps the AST log id");
+    apply_production_audit_defaults();
+}
+
 static void ac2995_4_fingerprint_after_persist() {
     std::println("\n--- #2995 AC4: post-persist fingerprint matches live goals ---");
     aura::compiler::lock_order::reset_tls_for_test();
@@ -3788,6 +3828,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2995_1_soft_empty_pure_loads();
     ac2995_2_production_face_one_shot_recover();
     ac2995_4_fingerprint_after_persist();
+    ac4533_restamp_persist_mid();
     ac2995_5_fence_same_ensure();
     ac2995_6_query_keys();
     ac2995_7_source_cite();

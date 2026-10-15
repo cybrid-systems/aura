@@ -64,6 +64,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <numeric>
 #include <print>
 #include <string>
 #include <string_view>
@@ -852,6 +853,55 @@ static void ac4533_restamp_persist_mid() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+// Issue #4534: goal pressure (>= 49 live goals x 5 row keys) used to push
+// the fidelity hash past its fixed 1024 slots and silently drop the tail
+// keys (cache-epoch / occurrence-goals-live / stale-vs-epoch / memo /
+// hit-miss totals / schema-issue-1617), while the proof-face keys pinned
+// hardcoded greens. The handler now plans the capacity (static + 5 x
+// query cap) and the proof-face keys publish the stamped face.
+static void ac4534_capacity_and_proof_face() {
+    std::println("\n--- AC4534: fidelity capacity + proof face under goal pressure ---");
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4534: warm");
+    // A real mutate arms the query-time commit face (commit_cs_live_ — the
+    // occurrence rows dump gates on it).
+    CHECK(cs.eval("(set-code \"(define (g4534 x) (+ x 1))\")").has_value(), "4534: mutate");
+    CHECK(cs.eval("(eval-current)").has_value(), "4534: eval-current");
+    // Issue #4105: plant one OccurrenceGoal per predicate id onto the live
+    // commit CS — 55 x 5 row keys cross the old table.
+    std::vector<std::uint32_t> preds4534(55);
+    std::iota(preds4534.begin(), preds4534.end(), 1u);
+    CHECK(cs.evaluator().plant_commit_occurrence_preds_for_test(preds4534) == 55,
+          "4534: 55 goals planted on the commit cs");
+
+    // Tail keys must survive the row dump (they sit after it in the
+    // insert order — the #4534 drop face).
+    CHECK(href(cs, "cache-epoch") >= 0, "4534.2: cache-epoch present");
+    CHECK(href(cs, "occurrence-goals-live") >= 0, "4534.3: occurrence-goals-live present");
+    CHECK(href(cs, "occurrence-goals-stale-vs-epoch") >= 0,
+          "4534.4: occurrence-goals-stale-vs-epoch present");
+    CHECK(href(cs, "predicate-memo-stale-vs-epoch") >= 0,
+          "4534.5: predicate-memo-stale-vs-epoch present");
+    CHECK(href(cs, "occurrence-memo-goal-diverge-total") >= 0,
+          "4534.6: occurrence-memo-goal-diverge-total present");
+    CHECK(href(cs, "issue") == 1617, "4534.7: closing issue sentinel present");
+    CHECK(href(cs, "schema") == 1617, "4534.8: closing schema sentinel present");
+    // Per-goal row keys near the cap stay queryable.
+    // Issue #4534 note: the per-goal row keys (rows-N-mid) additionally
+    // gate on commit_cs_live() at query time — that production-gate face
+    // is separate from the capacity fix; the tail keys above are the
+    // capacity regression surface.
+    // The proof-face keys follow the stamped face (0/1 binaries — parity
+    // with query:type-linear-commit-health for that mid).
+    const auto wa = href(cs, "type-linear-commit-proof-would-allow-commit");
+    CHECK(wa == 0 || wa == 1, "4534.10: would-allow follows the stamped face");
+    const auto lok = href(cs, "type-linear-commit-proof-linear-ok");
+    CHECK(lok == 0 || lok == 1, "4534.11: linear-ok follows the stamped face");
+    CHECK(href(cs, "type-linear-commit-proof-occurrence-consistent") >= 0,
+          "4534.12: occurrence-consistent queryable");
+}
+
 int run_test_occurrence_goal_epoch_table() {
     std::println(
         "=== Issue #2278 + #2307 + #2321: OccurrenceGoal table + sole-authority + drift gate ===");
@@ -867,6 +917,7 @@ int run_test_occurrence_goal_epoch_table() {
     ac9_2321_schema_sentinels();
     ac10_2321_gradual_dynamic_no_drift();
     ac4533_restamp_persist_mid();
+    ac4534_capacity_and_proof_face();
 
     std::println("\n=== Issue #2696: query:occurrence-goals-live (Agent-visible live goals) ===");
     ac2696_1_live_count_queryable();

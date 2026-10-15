@@ -1725,6 +1725,21 @@ inline std::atomic<std::uint8_t> g_remount_last_zero_strip_face{0};
 }
 inline constexpr std::int64_t kRemountLastZeroForceReasonCode = 17;
 inline std::atomic<std::uint8_t> g_last_proof_linear_ok{0};
+// Issue #4534: last stamped proof face scalars for the fidelity stats
+// handler (readiness bp / force reason code / occurrence consistency).
+// Stored at the builder end alongside the epoch stamp.
+inline std::atomic<std::int64_t> g_last_proof_readiness_bp{10000};
+inline std::atomic<std::int64_t> g_last_proof_force_reason_code{0};
+inline std::atomic<std::uint8_t> g_last_proof_occurrence_consistent{1};
+[[nodiscard]] inline std::int64_t last_proof_readiness_bp_v_read() noexcept {
+    return g_last_proof_readiness_bp.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::int64_t last_proof_force_reason_code_v_read() noexcept {
+    return g_last_proof_force_reason_code.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint8_t last_proof_occurrence_consistent_v_read() noexcept {
+    return g_last_proof_occurrence_consistent.load(std::memory_order_relaxed);
+}
 // Issue #3416: last-proof stamper eval identity (TLS Evaluator pointer).
 // Production IR/JIT treats the face as unbound unless this matches the
 // current TLS eval. Soft/Off does not store or consult (AC4).
@@ -3812,9 +3827,23 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     } else {
         publish_last_proof_face(p.would_allow_commit, p.linear_ok);
     }
+    // Issue #4534: stamp the proof face scalars for the fidelity stats
+    // handler (readiness bp / force reason code / occurrence consistent).
+    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
+                                         std::memory_order_relaxed);
+    g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
+                                             std::memory_order_relaxed);
     // Issue #3346: stamp-site TLS is not valid after this builder returns
     // (stack TypeCheckers in tests). Rejected flag stays for outermost.
     g_tls_stamp_last_look_tc = nullptr;
+    // Issue #4534: stamp the proof face scalars for the fidelity stats
+    // handler (readiness bp / force reason code / occurrence consistent).
+    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
+                                         std::memory_order_relaxed);
+    g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
+                                             std::memory_order_relaxed);
     return p;
 }
 
@@ -3891,7 +3920,20 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
     publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    // Issue #4534: stamp the proof face scalars (see the live builder).
+    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
+                                         std::memory_order_relaxed);
+    g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
+                                             std::memory_order_relaxed);
     g_tls_stamp_last_look_tc = nullptr;
+    // Issue #4534: stamp the proof face scalars (same face as the live
+    // path — explicit outcome overrides included).
+    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
+                                         std::memory_order_relaxed);
+    g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
+                                             std::memory_order_relaxed);
     return p;
 }
 
