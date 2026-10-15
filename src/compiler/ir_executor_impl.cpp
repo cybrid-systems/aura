@@ -891,7 +891,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
     auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v) -> bool {
         const auto detail =
             aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
-        std::println(std::cerr, "error: {}", detail);
+        // Issue #4535: no legacy stderr line here — the prim error VALUE is
+        // stored and propagates, so a try/catch upstream catches it silently
+        // (top-level path parity). Uncaught errors surface through the
+        // runner's error face instead.
         if (!context_.evaluator)
             return false;
         locals[slot] = context_.evaluator->make_arith_type_error(detail);
