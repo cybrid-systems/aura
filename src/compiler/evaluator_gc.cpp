@@ -579,6 +579,9 @@ bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
     const std::uint64_t live = cl_roots.size() + env_roots.size();
 
     bool ok = true;
+    // Serialize prev_* + ring publish across fibers sharing one Evaluator
+    // (TSan: chaos soak concurrent run_linear_gc_root_audit).
+    std::lock_guard<std::mutex> audit_lock(linear_gc_root_audit_mu_);
     // Monotonicity vs previous audit snapshot.
     if (reg < linear_gc_root_audit_prev_reg_ || stale < linear_gc_root_audit_prev_stale_ ||
         viol < linear_gc_root_audit_prev_viol_ || resync < linear_gc_root_audit_prev_resync_) {

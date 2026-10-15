@@ -471,9 +471,9 @@ bool Evaluator::restore_panic_checkpoint() {
 // restore_panic_checkpoint_on_arena_compact_if_needed() + _on_hot_swap_
 // below via the shared run_post_restore_lifecycle_close() helper.
 void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
-    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
+    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_.load(std::memory_order_acquire))
         return;
-    if (MutationBoundaryGuard::success_flag_load(outermost_mutation_success_flag_))
+    if (MutationBoundaryGuard::success_flag_load(outermost_mutation_success_flag_.load(std::memory_order_acquire)))
         return;
     if (!panic_auto_rollback_)
         return;
@@ -491,7 +491,7 @@ void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
 // compact without leaving env_frames_ / closures_ in a state where a
 // later guard dtor commits against the wrong snapshot.
 void Evaluator::restore_panic_checkpoint_on_arena_compact_if_needed() noexcept {
-    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
+    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_.load(std::memory_order_acquire))
         return;
     if (!panic_auto_rollback_)
         return;
@@ -507,7 +507,7 @@ void Evaluator::restore_panic_checkpoint_on_arena_compact_if_needed() noexcept {
 // post_hot_swap_checkpoint_restore_total so re-deopt + recover
 // sequences are observable without conflating with steal/compact.
 void Evaluator::restore_panic_checkpoint_on_hot_swap_if_needed() noexcept {
-    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
+    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_.load(std::memory_order_acquire))
         return;
     if (!panic_auto_rollback_)
         return;
