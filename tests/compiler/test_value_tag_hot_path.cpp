@@ -7,11 +7,16 @@
 //   AC3: AURA_HOT_CONTRACT on as_* (debug fail-closed; release elided)
 //   AC4: value_tag_hot_path_total + schema-2259 metrics
 //   AC5: Semantic parity — existing is_int/as_int behavior under eval
-
+//   AC6 (#4524): fixnum-first single-branch hot tests match the cold
+//   classifier (is_fixnum_hot bit0 form; is_float_hot low8 kind form)
+//   AC7 (#4524): interpreter float micro-loop — literal intern + TCO
+//   backedge float-local step fast path: aura_alloc_float count over a
+//   named-let float loop drops (~2/iter → ~1/iter), results identical
 #include "test_harness.hpp"
 #include "compiler/value_tags.h"
 #include "compiler/shape_profiler.h"
 
+#include <chrono>
 #include <cstdint>
 #include <print>
 #include <string>
@@ -21,21 +26,35 @@ import std;
 import aura.compiler.value;
 import aura.compiler.service;
 
+// Issue #4524: the float pool is the runtime-side box allocator
+// (lib/aura_value_abi.h encoding; defined next to aura_float_ref).
+// Pool-index probes measure aura_alloc_float traffic across an eval.
+extern "C" std::int64_t aura_alloc_float(double d);
+
 namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::shape::inline_shape_of;
 using aura::compiler::shape::SHAPE_INT;
+namespace types = aura::compiler::types;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::classify_eval_value_tag;
 using aura::compiler::types::classify_eval_value_tag_consteval;
 using aura::compiler::types::EvalValueTag;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_fixnum_hot;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_float_hot;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_ref_hot;
 using aura::compiler::types::is_string;
 using aura::compiler::types::is_string_v2_hot;
+using aura::compiler::types::kSpecialFalse;
+using aura::compiler::types::kSpecialTrue;
+using aura::compiler::types::kSpecialUnspecified;
+using aura::compiler::types::kSpecialVoid;
+using aura::compiler::types::make_float;
 using aura::compiler::types::make_int;
 using aura::compiler::types::make_string;
 using aura::compiler::types::note_value_tag_hot_path;
@@ -168,6 +187,162 @@ static void ac5_eval_semantics() {
     CHECK(f.has_value() && is_int(*f) && as_int(*f) == 42, "mul");
 }
 
+// ── Issue #4524: classify order + interpreter float-local slots ─────
+
+static void ac6_classify_order_4524() {
+    std::println("\n--- AC6 (#4524): fixnum-first single-branch hot tests match classify ---");
+    // Static: the single-branch forms agree with the classifier at the
+    // canonical encodings (the header carries more static_asserts).
+    static_assert(is_fixnum_hot(0) && is_fixnum_hot(2) && is_fixnum_hot(-2));
+    static_assert(!is_fixnum_hot(1) && !is_fixnum_hot(kSpecialFalse));
+    static_assert(is_float_hot(types::make_float_raw_v2(0)) &&
+                  is_float_hot(types::make_float_raw_v2(123456)));
+    static_assert(!is_float_hot(types::make_string_raw_v2(7)) && !is_float_hot(0) &&
+                  !is_float_hot(1) && !is_float_hot(kSpecialTrue));
+
+    // Dynamic: full equivalence across every tag class.
+    const std::vector<std::int64_t> samples = {
+        0,
+        2,
+        -2,
+        1 << 6,
+        -(1 << 6),
+        1,            // ref low2=01
+        1 | (5 << 6), // ref Pair idx 5
+        kSpecialFalse,
+        kSpecialTrue,
+        kSpecialVoid,
+        kSpecialUnspecified,
+        types::make_float_raw_v2(0),
+        types::make_float_raw_v2(7),
+        types::make_float_raw_v2(123456789),
+        types::make_string_raw_v2(0),
+        types::make_string_raw_v2(31),
+        types::make_string_raw_v2(123456789),
+    };
+    for (const auto v : samples) {
+        const auto cls = classify_eval_value_tag_consteval(v);
+        CHECK(is_fixnum_hot(v) == (cls == EvalValueTag::Fixnum), "fixnum-hot ≡ classify");
+        CHECK(is_float_hot(v) == (cls == EvalValueTag::Float), "float-hot ≡ classify");
+    }
+
+    // Roundtrips through the real constructors classify identically.
+    for (int i = 0; i < 64; ++i) {
+        const auto iv = make_int(i);
+        CHECK(is_int(iv) && is_fixnum_hot(iv.val), "make_int fixnum-hot");
+        CHECK(!is_float(iv), "int not float");
+    }
+    auto fv = make_float(2.5);
+    CHECK(is_float(fv) && is_float_hot(fv.val), "make_float float-hot");
+    CHECK(!is_int(fv), "float not int");
+    CHECK(as_float(fv) == 2.5, "float roundtrip");
+}
+
+// Float-pool traffic probe: allocs attributable to `body` = idx delta - 1
+// (the pre-probe itself occupies one slot).
+static std::int64_t float_pool_probe_pre(double probe) {
+    return types::float_idx_raw_v2(aura_alloc_float(probe));
+}
+static std::int64_t float_pool_allocs_since(double probe, std::int64_t pre) {
+    return types::float_idx_raw_v2(aura_alloc_float(probe)) - pre - 1;
+}
+
+static void ac7_float_local_loop_4524() {
+    std::println("\n--- AC7 (#4524): interpreter float micro-loop alloc churn ---");
+    CompilerService cs;
+    // Top-level named-let expressions run the eval_flat interpreter TCO
+    // backedge (service eval -> evaluator_.eval_flat) - the path this
+    // issue optimizes.
+    const char* floop = "(let lp ((acc 0.0) (i 0)) (if (< i 1000) (lp (+ acc 1.0) (+ i 1)) acc))";
+    const char* floop_big =
+        "(let lp ((acc 0.0) (i 0)) (if (< i 200000) (lp (+ acc 1.0) (+ i 1)) acc))";
+    const char* floop_var =
+        "(let lp ((acc 0.0) (i 0)) (if (< i 1000) (lp (+ acc 1.1) (+ i 1)) acc))";
+    const char* sloop = "(let lp ((acc 10.0) (i 0)) (if (< i 4) (lp (- acc 1.5) (+ i 1)) acc))";
+    const char* ploop = "(let lp ((acc 1.1) (i 0)) (if (< i 3) (lp (* acc 2.0) (+ i 1)) acc))";
+    const char* iloop = "(let lp ((acc 0) (i 0)) (if (< i 100) (lp (+ acc 1) (+ i 1)) acc))";
+    // Escape rebox: mid-loop cons snapshots of acc must keep the value the
+    // boxed path froze - the boxes are fresh and immutable per iteration.
+    const char* eloop = "(let lp ((acc 0.0) (i 0) (snap '()))"
+                        " (if (< i 5) (lp (+ acc 1.0) (+ i 1) (cons acc snap))"
+                        "    (let sum ((l snap) (t 0.0))"
+                        "      (if (null? l) t (sum (cdr l) (+ t (car l)))))))";
+
+    // AC7.1 literal-intern + float-local step: the boxed baseline allocated
+    // a fresh pool slot for the 1.0 literal AND the step result every
+    // iteration (~2N); interning the literal and riding the raw step
+    // through the armed backedge fast path leaves ~1 materialization per
+    // iteration (the fresh immutable box bound in the loop env).
+    {
+        const auto pre = float_pool_probe_pre(1234.5);
+        auto r = cs.eval(floop);
+        const auto allocs = float_pool_allocs_since(1234.5, pre);
+        std::println("    floop 1000: aura_alloc_float count = {}", allocs);
+        CHECK(r.has_value() && is_float(*r) && as_float(*r) == 1000.0, "floop sum 1000.0");
+        CHECK(allocs < 1500, "float loop churn below 1.5/iter (baseline ~2/iter)");
+    }
+
+    // AC7.2 results stay exact across + - * and mixed promotion.
+    {
+        auto s = cs.eval(sloop);
+        CHECK(s.has_value() && is_float(*s) && as_float(*s) == 4.0, "sub loop 10.0-4*1.5");
+        auto p = cs.eval(ploop);
+        const double expect = (1.1 * 2.0) * 2.0 * 2.0;
+        CHECK(p.has_value() && is_float(*p) && as_float(*p) == expect, "mul loop parity");
+        auto m = cs.eval(floop_var);
+        double mv = 0.0;
+        for (int i = 0; i < 1000; ++i)
+            mv = 0.0 + mv + 1.1;
+        CHECK(m.has_value() && is_float(*m) && as_float(*m) == mv, "variable-step parity");
+    }
+
+    // AC7.3 pure-fixnum loop: no float pool traffic at all.
+    {
+        const auto pre = float_pool_probe_pre(7.5);
+        auto r = cs.eval(iloop);
+        const auto allocs = float_pool_allocs_since(7.5, pre);
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 100, "int loop sum");
+        CHECK(allocs == 0, "fixnum loop allocates zero float boxes");
+    }
+
+    // AC7.4 escape rebox: snapshot cons cells hold pre-increment acc
+    // values 0..4; an in-place-mutated step box would come out 20.0
+    // (5 x final) instead of 10.0.
+    {
+        auto e = cs.eval(eloop);
+        CHECK(e.has_value() && is_float(*e) && as_float(*e) == 10.0,
+              "escape snapshot values frozen (0+1+2+3+4)");
+    }
+
+    // AC7.5 generic + - * semantics unchanged where the fast path is not
+    // taken: overflow errors, non-numbers reject, promotions stable.
+    {
+        auto of = cs.eval("(+ 4611686018427387903 4611686018427387903)");
+        CHECK(of.has_value() && is_error(*of), "fixnum overflow still errors");
+        auto tn = cs.eval("(+ 1.0 2)");
+        CHECK(tn.has_value() && is_float(*tn) && as_float(*tn) == 3.0, "int+float promote");
+        auto bad = cs.eval("(+ 1.0 \"s\")");
+        CHECK(bad.has_value() && is_error(*bad), "non-number still errors");
+        auto e1 = cs.eval("(eq? 1.0 1.0)");
+        CHECK(e1.has_value(), "float literal eq? evaluable");
+    }
+
+    // AC7.6 steady-state timing (indicative; counts above are the metric).
+    {
+        (void)cs.eval(floop); // warm intern caches
+        double best_ns = 1e18;
+        for (int rep = 0; rep < 3; ++rep) {
+            const auto t0 = std::chrono::steady_clock::now();
+            auto r = cs.eval(floop_big);
+            const auto t1 = std::chrono::steady_clock::now();
+            CHECK(r.has_value() && is_float(*r) && as_float(*r) == 200000.0, "big loop sum");
+            const double ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count() / 200000.0;
+            best_ns = ns < best_ns ? ns : best_ns;
+        }
+        std::println("    floop steady-state: {:.1f} ns/iter (best of 3)", best_ns);
+    }
+}
 
 } // namespace
 
@@ -178,6 +353,8 @@ int run_test_value_tag_hot_path() {
     ac3_contracts_present();
     ac4_metrics();
     ac5_eval_semantics();
+    ac6_classify_order_4524();
+    ac7_float_local_loop_4524();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
