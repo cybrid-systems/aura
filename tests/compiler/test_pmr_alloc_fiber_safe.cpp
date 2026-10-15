@@ -34,10 +34,12 @@ namespace {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
@@ -438,7 +440,7 @@ static void ac4474_dynamic_reclaim_trigger() {
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
-        ev.note_live_set_for_reclaim_trigger(100000000);
+        ev.note_live_set_for_reclaim_trigger(100000000, /*mints_since_mark=*/0);
         CHECK(ev.file_heap_allocs_trigger_for_test() == 32768,
               "4474 AC4: trigger clamps at the 32768 ceiling");
     }
@@ -538,6 +540,129 @@ static void ac4492_nested_map_filter_pinned() {
           "4492 AC3: filter holds a TwVecPin root over its snapshot/accumulator");
 }
 
+// ── Issue #4525: float allocation pressure vs #4474 whole-heap reclaim ──
+// Spike verdict (see close comment): boxed floats are bump-allocated in
+// lib/runtime.c's float_pool — OUTSIDE the mark heap — so pure float loops
+// fire zero whole-heap marks (M1/M4: 200k iters → marks=0) and a float
+// nursery would need float-liveness roots that do not exist (the pool is
+// process-global across evaluators). The real burst cost is let/cons
+// garbage re-firing the mark at the 128 floor cadence (M5: 200k-iter
+// let-cell loop → 1562 marks ≈ +15% wall). Landed shape: the issue's
+// minimum — a burst-escalating #4474 window (double when <half the
+// window's mints survived), same [128, 32768] clamp and live/32 scaling.
+static void ac4525_burst_rebalance() {
+    std::println("\n--- #4525: burst-escalating reclaim window ---");
+    using clock = std::chrono::steady_clock;
+    const auto ms = [](clock::duration d) {
+        return std::chrono::duration_cast<std::chrono::microseconds>(d).count() / 1000.0;
+    };
+
+    // AC1: pure float loop drives ZERO whole-heap marks — boxed-scalar
+    // allocation is decoupled from the #4474 window (post-#4502 float
+    // pool). Pins the decoupling: a future change that counts float
+    // boxes against the window trips this AC.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        (void)ev.reclaim_tw_unreachable({}, {});
+        const auto m0 = ev.file_heap_reclaim_runs_for_test();
+        const auto t0 = clock::now();
+        const auto r =
+            cs.eval("(begin (define (lp i acc) (if (< i 50000) (lp (+ i 1) (+ acc 1.0)) acc))"
+                    " (lp 0 0.0))");
+        const auto wall = ms(clock::now() - t0);
+        const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
+        CHECK(r.has_value() && is_float(*r) && as_float(*r) == 50000.0,
+              "4525 AC1: pure float loop returns 50000.0");
+        CHECK(marks == 0, "4525 AC1: float loop fires zero whole-heap marks (got " +
+                              std::to_string(marks) + ")");
+        CHECK(ev.file_heap_allocs_since_reclaim() <= 4,
+              "4525 AC1: float boxes do not advance the reclaim window (got " +
+                  std::to_string(ev.file_heap_allocs_since_reclaim()) + " mints for 50k boxes)");
+        std::println("    4525 AC1: 50k-iter float loop wall={:.1f}ms marks={}", wall, marks);
+    }
+
+    // AC2: burst escalation — a young-garbage let-cell loop re-fires the
+    // mark at the floor cadence today (2000 mints ≈ 15 marks); the
+    // #4525 window doubling cuts the mark count to ~4 while garbage
+    // between reclaims stays bounded by the (doubled) trigger window.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        (void)ev.reclaim_tw_unreachable({}, {});
+        const auto m0 = ev.file_heap_reclaim_runs_for_test();
+        const auto c0 = ev.cells_size();
+        const auto t0 = clock::now();
+        const auto r = cs.eval(
+            "(begin (define (lp i acc) (if (< i 2000) (lp (+ i 1) (let ((x (+ acc 1.0))) x))"
+            " acc)) (lp 0 0.0))");
+        const auto wall = ms(clock::now() - t0);
+        const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
+        const auto grown = ev.cells_size() - c0;
+        CHECK(r.has_value() && is_float(*r) && as_float(*r) == 2000.0,
+              "4525 AC2: let-cell burst loop returns 2000.0");
+        CHECK(marks <= 8, "4525 AC2: burst loop mark count drops (got " + std::to_string(marks) +
+                              ", floor cadence would be ~15)");
+        CHECK(ev.file_heap_allocs_trigger_for_test() >= 512,
+              "4525 AC2: window escalated past the floor (got " +
+                  std::to_string(ev.file_heap_allocs_trigger_for_test()) + ")");
+        CHECK(grown <= 2560,
+              "4525 AC2: garbage stays ~one trigger window (grew " + std::to_string(grown) + ")");
+        std::println("    4525 AC2: 2k-iter let-cell loop wall={:.1f}ms marks={} grown={}", wall,
+                     marks, grown);
+    }
+
+    // AC3: escalation clamps at the #4474 ceiling — a long burst loop's
+    // window saturates at 32768 and garbage between reclaims stays
+    // bounded (the #4474 cap still bounds the nursery-ward garbage).
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        (void)ev.reclaim_tw_unreachable({}, {});
+        const auto m0 = ev.file_heap_reclaim_runs_for_test();
+        const auto c0 = ev.cells_size();
+        const auto r = cs.eval(
+            "(begin (define (lp i acc) (if (< i 100000) (lp (+ i 1) (let ((x (+ acc 1.0))) x))"
+            " acc)) (lp 0 0.0))");
+        const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
+        const auto grown = ev.cells_size() - c0;
+        CHECK(r.has_value() && is_float(*r) && as_float(*r) == 100000.0,
+              "4525 AC3: 100k-iter burst loop returns 100000.0");
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 32768,
+              "4525 AC3: escalation clamps at the 32768 ceiling");
+        CHECK(marks <= 20, "4525 AC3: ceiling window amortizes the mark (got " +
+                               std::to_string(marks) + ", floor cadence would be ~781)");
+        CHECK(grown <= 34816, "4525 AC3: garbage bounded by the 32768 ceiling (grew " +
+                                  std::to_string(grown) + ")");
+    }
+
+    // AC4: live-dominant loops keep the plain #4474 scaling — no burst
+    // doubling when the mark finds most of the window's mints alive.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto fill = cs.eval("(begin (define v (make-vector 48000 0))"
+                            "(define (f i) (if (< i 48000)"
+                            "(begin (vector-set! v i (cons i i)) (f (+ i 1))) #f)) (f 0))");
+        CHECK(fill.has_value(), "4525 AC4: 48k-pair live fill evals");
+        (void)ev.reclaim_tw_unreachable({}, {});
+        const auto trig0 = ev.file_heap_allocs_trigger_for_test();
+        CHECK(trig0 >= 1400,
+              "4525 AC4: scaled window from the 48k live set (got " + std::to_string(trig0) + ")");
+        const auto m0 = ev.file_heap_reclaim_runs_for_test();
+        const auto r = cs.eval(
+            "(begin (define (lp i acc) (if (< i 3000) (lp (+ i 1) (let ((x (+ acc 1.0))) x))"
+            " acc)) (lp 0 0.0))");
+        const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
+        CHECK(r.has_value() && is_float(*r) && as_float(*r) == 3000.0,
+              "4525 AC4: live-dominant burst loop returns 3000.0");
+        CHECK(marks == 1, "4525 AC4: live-dominant loop marks at the scaled cadence (got " +
+                              std::to_string(marks) + ", want 1)");
+        CHECK(ev.file_heap_allocs_trigger_for_test() < 2 * trig0,
+              "4525 AC4: no burst doubling when the live set dominates");
+    }
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -552,6 +677,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4474_dynamic_reclaim_trigger();
     ac4480_map_accumulator_pinned();
     ac4492_nested_map_filter_pinned();
+    ac4525_burst_rebalance();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
