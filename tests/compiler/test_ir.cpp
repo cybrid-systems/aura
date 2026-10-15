@@ -2999,6 +2999,149 @@ int main() {
             apply_dev_audit_defaults();
         }
 
+        // ── Issue #4527: a preserve_cs partial boundary that reports the
+        // production ground-join TypeError must demote the sticky export
+        // authority (so the Evaluator early return fires) and must not
+        // leave the join committed as a clean cached Void that a
+        // hard-gate full recheck would cache-hit into an empty
+        // diagnostic. Leafish repro: a mutation record targeting the
+        // IfExpr inside a Begin makes affected_subtree_from_mutation
+        // skip the IfExpr (ancestor Begin in affected) and infer only
+        // the Begin at ai > 0 → engine.infer_flat(preserve_cs=true). ──
+        {
+            using aura::compiler::TypeChecker;
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::compiler::typed_audit::clear_occurrence_partial_drift_grant_refuse;
+            using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+            using aura::core::TypeRegistry;
+            using aura::diag::ErrorKind;
+
+            struct ProdScope4527 {
+                ProdScope4527() { apply_production_audit_defaults(); }
+                ~ProdScope4527() { apply_dev_audit_defaults(); }
+            };
+
+            struct Run4527 {
+                bool saw_gate_te_partial = false;
+                bool authoritative_after_partial = true;
+                bool full_recheck_reports_te = false;
+            };
+
+            // Fresh TC over `(begin (define p #t) (if p 1 "a"))` + one
+            // leafish mutation record (target = IfExpr, parent = Begin).
+            auto run4527 = []() -> Run4527 {
+                Run4527 r;
+                TypeRegistry treg;
+                TypeChecker tc(treg);
+                tc.set_strict(false);
+                aura::diag::DiagnosticCollector diag;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr =
+                    aura::parser::parse_to_flat("(begin (define p #t) (if p 1 \"a\"))", flat, pool);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE)
+                    return r;
+                flat.root = pr.root;
+                aura::ast::NodeId if_id = aura::ast::NULL_NODE;
+                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    if (flat.get(id).tag == aura::ast::NodeTag::IfExpr) {
+                        if_id = id;
+                        break;
+                    }
+                }
+                if (if_id == aura::ast::NULL_NODE)
+                    return r;
+                const auto begin_id = flat.parent_of(if_id);
+                if (begin_id == aura::ast::NULL_NODE || begin_id >= flat.size())
+                    return r;
+                aura::ast::MutationRecord rec{};
+                rec.target_node = if_id;
+                rec.parent_id = begin_id;
+                rec.mutation_id = 1;
+                (void)tc.infer_flat_partial(flat, pool, rec, diag);
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind == ErrorKind::TypeError &&
+                        d.message.find("incompatible ground types") != std::string::npos)
+                        r.saw_gate_te_partial = true;
+                }
+                r.authoritative_after_partial = tc.last_type_export_authoritative();
+                // The hard-gate full recheck on the same checker/flat:
+                // a boundary-cleaned subtree must not cache-hit the join
+                // into an empty collector.
+                aura::diag::DiagnosticCollector full_diag;
+                tc.infer_flat(flat, pool, flat.root, full_diag);
+                for (const auto& d : full_diag.diagnostics())
+                    if (d.kind == ErrorKind::TypeError)
+                        r.full_recheck_reports_te = true;
+                return r;
+            };
+
+            // AC1: the preserve_cs boundary reports the ground-join
+            // TypeError AND demotes the export authority (sticky AND —
+            // run_post_mutate_typecheck_no_lock's production early
+            // return now fires before the cache-hit recheck).
+            {
+                ProdScope4527 prod;
+                reset_pending_full_solve_residual_for_test();
+                clear_occurrence_partial_drift_grant_refuse();
+                auto r = run4527();
+                reset_pending_full_solve_residual_for_test();
+                if (r.saw_gate_te_partial && !r.authoritative_after_partial) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4527_1_preserve_cs_te_demotes_authority");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4527_1_preserve_cs_te_demotes_authority te={} auth={}",
+                                 r.saw_gate_te_partial, r.authoritative_after_partial);
+                }
+            }
+
+            // AC2: the same boundary must not commit the incompatible
+            // join as a clean cached Void — the hard-gate full recheck
+            // still reports the TypeError instead of cache-hitting empty.
+            {
+                ProdScope4527 prod;
+                reset_pending_full_solve_residual_for_test();
+                clear_occurrence_partial_drift_grant_refuse();
+                auto r = run4527();
+                reset_pending_full_solve_residual_for_test();
+                if (r.saw_gate_te_partial && r.full_recheck_reports_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4527_2_full_recheck_still_reports_te");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4527_2_full_recheck_still_reports_te te={} full_te={}",
+                                 r.saw_gate_te_partial, r.full_recheck_reports_te);
+                }
+            }
+
+            // AC3 soft: historical pass — gradual Dynamic join, no ground
+            // gate TypeError, authority stays green through partial +
+            // full recheck.
+            {
+                apply_dev_audit_defaults();
+                reset_pending_full_solve_residual_for_test();
+                clear_occurrence_partial_drift_grant_refuse();
+                auto r = run4527();
+                if (!r.saw_gate_te_partial && r.authoritative_after_partial) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4527_3_soft_historical_pass");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac4527_3_soft_historical_pass te={} auth={}",
+                                 r.saw_gate_te_partial, r.authoritative_after_partial);
+                }
+            }
+
+            apply_dev_audit_defaults();
+            reset_pending_full_solve_residual_for_test();
+        }
+
         // ── Issue #3662: Production is_coercible(Dynamic, T) matches unify
         // reject — check_flat must not insert CastOp after #3622. ──
         {

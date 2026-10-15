@@ -5169,24 +5169,39 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
             cs_.mark_clean();
     }
     last_solve_status_ = solve_status;
-    if (!preserve_cs) {
-        // Issue #4107: under the production face a synthesis-reported
-        // TypeError (lub ground join / arith peel) is not an
-        // authoritative type export — the existing
-        // last_type_export_authoritative_ store carries the demotion.
-        // Soft keeps the historical export face unchanged.
-        bool synth_type_error = false;
-        if (aura::compiler::typed_audit::production_defaults_active() ||
-            aura::compiler::typed_audit::production_hard_face_active()) {
-            const auto diags_after = diag_.diagnostics();
-            for (std::size_t i = diag_count_before_synthesis; i < diags_after.size(); ++i) {
-                if (diags_after[i].kind == ErrorKind::TypeError) {
-                    synth_type_error = true;
-                    break;
-                }
+    // Issue #4107: under the production face a synthesis-reported
+    // TypeError (lub ground join / arith peel) is not an
+    // authoritative type export — the existing
+    // last_type_export_authoritative_ store carries the demotion.
+    // Soft keeps the historical export face unchanged.
+    // Issue #4527: the scan is not !preserve_cs-only. For a leafish
+    // primary the partial skips the mutated node itself (ancestor
+    // dedupe) and infers only the affected parent at ai > 0, i.e.
+    // preserve_cs=true — the production ground-join TypeError is
+    // reported by THIS call. The engine contract for the flag is
+    // sticky-false AND across the preserve_cs multi-node partial, so
+    // a TypeError here must demote it; otherwise
+    // Evaluator::run_post_mutate_typecheck_no_lock keeps returning
+    // success and the hard-gate full recheck cache-hits the join this
+    // boundary committed.
+    bool synth_type_error = false;
+    if (aura::compiler::typed_audit::production_defaults_active() ||
+        aura::compiler::typed_audit::production_hard_face_active()) {
+        const auto diags_after = diag_.diagnostics();
+        for (std::size_t i = diag_count_before_synthesis; i < diags_after.size(); ++i) {
+            if (diags_after[i].kind == ErrorKind::TypeError) {
+                synth_type_error = true;
+                break;
             }
         }
+    }
+    if (!preserve_cs) {
         last_type_export_authoritative_ = !synth_type_error;
+    } else if (synth_type_error) {
+        // Issue #4527: sticky AND — once a preserve_cs partial node
+        // reports the production TypeError, the boundary export stays
+        // demoted (first false wins; later green nodes cannot re-grant).
+        last_type_export_authoritative_ = false;
     }
     if (solve_status != SolveResult::SOLVED) {
         // Issue #3081 / #3360: TIMEOUT / CONFLICT (including Soft +
@@ -5287,6 +5302,15 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
         return synth_result;
     }
     auto normalized = cs_.normalize(result);
+    // Issue #4527: a production TypeError synthesized by this
+    // preserve_cs boundary node must not be committed as a cached
+    // Void join. Return without set_type / clear_dirty so the node
+    // stays dirty — the hard-gate full walk re-derives (and
+    // re-reports) instead of cache-hitting a subtree this boundary
+    // just cleaned. Soft/Off: synth_type_error is never set, commit
+    // is unchanged.
+    if (synth_type_error && preserve_cs)
+        return normalized;
     // Update the root's cached type with the final resolved type after solving.
     // Individual sub-nodes' caches are updated during their synthesize_flat calls.
     // Those may store TYPE_VARs that get resolved here; next incremental pass
@@ -10360,6 +10384,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
 
     std::size_t re_inferred = 0;
     std::uint32_t max_narrow_evidence = 0;
+    // Issue #4527: roots actually re-inferred by this boundary (after
+    // the ancestor dedupe). If the boundary demotes the production
+    // export authority, these are exactly the subtrees that must not
+    // survive clean-cached (see the re-dirty below).
+    std::vector<aura::ast::NodeId> boundary_inferred_roots;
     for (std::size_t ai = 0; ai < affected.size(); ++ai) {
         const auto id = affected[ai];
         if (id == aura::ast::NULL_NODE || id >= flat.size())
@@ -10403,6 +10432,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // nodes; first node full-solves + mark_clean, subsequent
         // nodes add_delta + solve_delta with touched-root reverify.
         engine.set_incremental_delta_mode(true, ai > 0);
+        boundary_inferred_roots.push_back(id);
         auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id,
                                       /*preserve_cs=*/ai > 0);
         max_narrow_evidence = std::max(max_narrow_evidence, engine.last_narrowing_evidence());
@@ -10445,6 +10475,25 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
         if (production_adt_fail)
             last_type_export_authoritative_ = false;
+    }
+
+    // Issue #4527: a production-face boundary that demoted the engine
+    // type-export authority (the preserve_cs ground-join TypeError —
+    // sticky AND — a first-node synthesis TypeError, or not-SOLVED)
+    // must not leave the subtrees it just cleaned as cacheable types.
+    // The hard-gate full recheck would otherwise cache-hit the join
+    // committed in this same boundary (Void for the ground gate) and
+    // drop the diagnostic as an empty collector. Re-dirty every
+    // inferred root so the full walk re-derives and re-reports.
+    // Soft/Off: engine authority is never demoted by the production
+    // scans and the face guard keeps this a no-op (historical pass).
+    if ((aura::compiler::typed_audit::production_defaults_active() ||
+         aura::compiler::typed_audit::production_hard_face_active()) &&
+        !engine.last_type_export_authoritative()) {
+        for (auto root_id : boundary_inferred_roots) {
+            if (root_id != aura::ast::NULL_NODE && root_id < flat.size())
+                flat.mark_subtree_dirty(root_id);
+        }
     }
 
     // Issue #2516 phase 2 complete: re-infer finished; type_dep re-recorded
