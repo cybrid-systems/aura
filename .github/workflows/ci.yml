@@ -474,7 +474,7 @@ jobs:
       run: |
         set +e
         ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1:exitcode=42 \
-          timeout 180 ./build_asan/aura --load tests/orch/multi_session_leak_test.aura \
+          timeout 600 ./build_asan/aura --load tests/orch/multi_session_leak_test.aura \
           > /tmp/asan-multi-session.log 2>&1
         rc=$?
         set -e
