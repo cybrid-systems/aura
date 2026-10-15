@@ -50,6 +50,11 @@
 //        mrec (mutation-WAL provenance) / overflow fills copy op into
 //        last-se-op like the ring arm (#4303); last-se-reason stays the
 //        reason cut, se-mid-miss stays the ring miss, no new query key.
+//   #4520: default AURA_WAL_MAX_SEGMENTS retention (prune-oldest at the
+//        cap on rotate + first enable, prune counters bumping), bounded
+//        newest→oldest startup replay stopping at kSecurityEventRingSize
+//        records, and the legacy oversized-dir upgrade prune; env
+//        override (=size, 0 = opt-out) intact; no new query key.
 
 #include "test_harness.hpp"
 
@@ -2397,6 +2402,156 @@ static void ac4445_hydrate_keeps_wal_seq() {
     CHECK(read_file("docs/design/4445-se-hydrate-seq.md").empty(), "4445: no design doc");
 }
 
+// ── #4520: default retention + bounded startup replay ──────
+static void ac4520_default_retention_bounded_replay() {
+    std::println("\n--- #4520: default retention + bounded startup replay ---");
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::SecurityEventWalRecord;
+    using aura::core::wal_slo::kWalDefaultMaxSegments;
+    using aura::core::wal_slo::wal_max_segments_retention;
+    namespace fs = std::filesystem;
+
+    // AC1: unset AURA_WAL_MAX_SEGMENTS now defaults to the cap; env
+    // override (sizing) and opt-out (=0) stay.
+    reset_all();
+    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    CHECK(wal_max_segments_retention() == kWalDefaultMaxSegments,
+          "4520 AC1: unset retention = default cap (was 0 = no prune)");
+    ::setenv("AURA_WAL_MAX_SEGMENTS", "0", 1);
+    CHECK(wal_max_segments_retention() == 0, "4520 AC1: env =0 opts out (legacy unbounded)");
+    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+
+    // AC2: default-face writes keep the dir at the cap; prune counter bumps.
+    reset_all();
+    const auto dir = fresh_wal_dir_3603("4520-rotate");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(ev.enable_security_event_wal(dir.string()), "4520 AC2: enable SE WAL");
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(SecurityEventWalRecord) * 4);
+    const auto ts = now_ms_3603();
+    for (std::uint64_t i = 0; i < 80; ++i)
+        CHECK(persist_se_3603(452000 + i, "test:4520", "4520-fill", ts),
+              "4520 AC2: fill persisted");
+    std::error_code fs_ec;
+    int se_files = 0;
+    for (const auto& ent : fs::directory_iterator(dir, fs_ec))
+        if (ent.path().filename().string().rfind("security-event-", 0) == 0)
+            ++se_files;
+    CHECK(se_files <= static_cast<int>(kWalDefaultMaxSegments),
+          "4520 AC2: default retention keeps disk segments ≤ cap");
+    CHECK(aura::core::security_event_wal::snapshot_security_event_wal_stats().segment_prune_total >=
+              1,
+          "4520 AC2: security_event_wal_segment_prune_total bumps by default");
+    ev.disable_security_event_wal();
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        aura::core::security_event_wal::kDefaultRotateBytes);
+    fs::remove_all(dir, fs_ec);
+
+    // AC3: bounded startup replay + upgrade prune on a legacy oversized
+    // dir (2000 synthetic segments × 8 records; newest record must be
+    // the last replayed row and the dir must end at the cap).
+    reset_all();
+    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    const auto dir2 = fresh_wal_dir_3603("4520-replay");
+    constexpr std::uint32_t kLegacySegments = 2000;
+    constexpr std::uint64_t kRecsPerSeg = 8;
+    for (std::uint32_t s = 0; s < kLegacySegments; ++s) {
+        const auto p = dir2 / (std::string("security-event-") + std::to_string(s) + ".wal");
+        std::FILE* f = std::fopen(p.c_str(), "wb");
+        CHECK(f != nullptr, "4520 AC3: seed segment file");
+        if (!f)
+            continue;
+        std::fwrite(aura::core::security_event_wal::kSecurityEventWalMagic, 1, 8, f);
+        const std::uint32_t ver4520 = aura::core::security_event_wal::kSecurityEventWalVersion;
+        std::fwrite(&ver4520, sizeof(ver4520), 1, f);
+        for (std::uint64_t r = 0; r < kRecsPerSeg; ++r) {
+            SecurityEventWalRecord rec{};
+            rec.seq = static_cast<std::uint64_t>(s) * kRecsPerSeg + r + 1;
+            rec.mutation_id = 0x452000000000ull + rec.seq;
+            rec.kind = static_cast<std::uint8_t>(SecurityEventKind::EffectAllow);
+            std::memcpy(rec.op, "legacy-4520", 11);
+            std::memcpy(rec.reason, "upgrade", 7);
+            std::fwrite(&rec, 1, sizeof(rec), f);
+        }
+        std::fclose(f);
+    }
+    std::vector<SecurityEventWalRecord> replayed4520;
+    CHECK(aura::core::security_event_wal::g_security_event_wal().enable(
+              dir2.string(), &replayed4520, kSecurityEventRingSize),
+          "4520 AC3: enable on legacy oversized dir");
+    CHECK(replayed4520.size() == kSecurityEventRingSize,
+          "4520 AC3: replay collects exactly the newest ring-size window");
+    const auto newest_seq = replayed4520.back().seq;
+    CHECK(newest_seq == static_cast<std::uint64_t>(kLegacySegments) * kRecsPerSeg,
+          "4520 AC3: newest record replayed last (oldest→newest)");
+    CHECK(replayed4520.front().seq == newest_seq - kSecurityEventRingSize + 1,
+          "4520 AC3: walk stops once ring-size records are collected");
+    se_files = 0;
+    for (const auto& ent : fs::directory_iterator(dir2, fs_ec))
+        if (ent.path().filename().string().rfind("security-event-", 0) == 0)
+            ++se_files;
+    CHECK(se_files <= static_cast<int>(kWalDefaultMaxSegments),
+          "4520 AC3: oversized legacy dir pruned to cap on first enable (upgrade path)");
+    CHECK(aura::core::security_event_wal::snapshot_security_event_wal_stats().segment_prune_total >=
+              static_cast<std::int64_t>(kLegacySegments - kWalDefaultMaxSegments),
+          "4520 AC3: prune counter counts the upgrade deletions");
+    // Newest ring records still hydrate (#3460 replay semantics stay).
+    aura::core::security_event_wal::hydrate_security_event_ring_from_wal_replay(replayed4520);
+    const auto newest_mid = 0x452000000000ull + newest_seq;
+    bool found_newest = false;
+    {
+        auto& ring = aura::core::security_event::g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        for (std::uint64_t i = 0; i < head && i < kSecurityEventRingSize; ++i)
+            if (ring.ring[i % kSecurityEventRingSize].mutation_id == newest_mid)
+                found_newest = true;
+    }
+    CHECK(found_newest, "4520 AC3: newest legacy record hydrates into the SE ring");
+    aura::core::security_event_wal::g_security_event_wal().disable();
+    fs::remove_all(dir2, fs_ec);
+
+    // AC4: mutation audit writer prunes by default too (lockstep).
+    reset_all();
+    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    const auto dir3 = fresh_wal_dir_3603("4520-mut");
+    CHECK(ev.enable_mutation_audit_wal(dir3.string()), "4520 AC4: enable mutation WAL");
+    aura::core::audit_wal::g_mutation_audit_wal().set_rotate_bytes(
+        sizeof(aura::core::audit_wal::AuditWalRecord) * 4);
+    for (int i = 0; i < 80; ++i) {
+        aura::core::audit_wal::AuditWalRecord rec{};
+        rec.seq = static_cast<std::uint64_t>(i + 1);
+        rec.tenant_id = 7;
+        (void)aura::core::audit_wal::g_mutation_audit_wal().append(rec);
+    }
+    int audit_files = 0;
+    for (const auto& ent : fs::directory_iterator(dir3, fs_ec)) {
+        const auto name = ent.path().filename().string();
+        if (name.rfind("audit-", 0) == 0 && name.ends_with(".wal"))
+            ++audit_files;
+    }
+    CHECK(audit_files <= static_cast<int>(kWalDefaultMaxSegments),
+          "4520 AC4: disk audit segments ≤ default cap");
+    CHECK(aura::core::audit_wal::snapshot_audit_wal_stats().segment_prune_total >= 1,
+          "4520 AC4: audit_wal_segment_prune_total bumps by default");
+    ev.disable_mutation_audit_wal();
+    aura::core::audit_wal::g_mutation_audit_wal().set_rotate_bytes(
+        aura::core::audit_wal::kDefaultRotateBytes);
+    fs::remove_all(dir3, fs_ec);
+    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+
+    // Source-cite: default cap + bounded replay named at the fix sites.
+    const auto slo4520 = read_file("src/core/wal_append_fail_slo.h");
+    CHECK(slo4520.find("kWalDefaultMaxSegments = 16") != std::string::npos,
+          "4520: default cap constant present");
+    const auto sew4520 = read_file("src/core/security_event_wal.hh");
+    CHECK(sew4520.find("bounded startup replay") != std::string::npos,
+          "4520: bounded replay cited at the enable path");
+    CHECK(read_file("tests/core/test_issue_4520.cpp").empty(), "4520: no test_issue_4520.cpp");
+    CHECK(read_file("docs/design/4520-wal-default-retention.md").empty(), "4520: no design doc");
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -2432,6 +2587,7 @@ int run_test_audit_replay_join() {
     ac4508_mwal_fallback_keeps_op();
     ac4508_overflow_fill_keeps_op();
     ac4445_hydrate_keeps_wal_seq();
+    ac4520_default_retention_bounded_replay();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
