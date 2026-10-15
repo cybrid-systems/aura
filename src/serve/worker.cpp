@@ -253,8 +253,8 @@ void WorkerThread::enqueue(Fiber* fiber) {
         inject_queue_.push_back(fiber);
     }
 
-    if (worker_metrics_) {
-        worker_metrics_->local_pushes.fetch_add(1, std::memory_order_relaxed);
+    if (auto* m = worker_metrics_.load(std::memory_order_acquire)) {
+        m->local_pushes.fetch_add(1, std::memory_order_relaxed);
     }
     if (wake_evfd_ >= 0) {
         uint64_t val = 1;
@@ -604,7 +604,7 @@ void WorkerThread::run() {
     ctx_.gc_state = &gc_state_; // link GC state for safepoint check
 
     // Grab metrics pointer (set by scheduler before start)
-    auto* my_metrics = worker_metrics_;
+    auto* my_metrics = worker_metrics_.load(std::memory_order_acquire);
 
     const size_t MAX_ITER_PER_ROUND = 1000;
 

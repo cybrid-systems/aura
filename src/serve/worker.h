@@ -255,8 +255,12 @@ public:
     WorkerGCState& gc_state() { return gc_state_; }
 
     // ── Metrics access ──────────────────────────────
-    void set_metrics(metrics::WorkerMetrics* m) { worker_metrics_ = m; }
-    metrics::WorkerMetrics* worker_metrics() const { return worker_metrics_; }
+    void set_metrics(metrics::WorkerMetrics* m) {
+        worker_metrics_.store(m, std::memory_order_release);
+    }
+    metrics::WorkerMetrics* worker_metrics() const {
+        return worker_metrics_.load(std::memory_order_acquire);
+    }
 
 private:
     // The main loop
@@ -307,7 +311,9 @@ private:
     std::atomic<size_t> pending_{0};
 
     // Metrics pointer (set by scheduler, never null during run)
-    metrics::WorkerMetrics* worker_metrics_ = nullptr;
+    // Atomic: Scheduler::run set_metrics races main-thread spawn/enqueue
+    // (TSan in #4230 AC1 — publish before workers accept remote inject).
+    std::atomic<metrics::WorkerMetrics*> worker_metrics_{nullptr};
 
     // Issue #119: per-worker fiber registry for fiber:join.
     // Holds pointers to all fibers this worker currently knows
