@@ -16,6 +16,16 @@
 //   AC4: existing query keys only; soak moves impact / should_relower
 //   AC5: production soak asserts IR rewrite / lookup==1, not skip-only
 //   AC6: linter; no docs/design/3484-*; no test_issue_3484.cpp
+//
+// Issue #4528 — a missing ir_cache_v2_ row must not let the orphan
+// ir_cache_ callee body store as a clean generation.
+//   AC1: eviction dirty arm drops the victim v1 / bridge / strings rows
+//   AC2: eviction LRU arm same-generation invalidate
+//   AC3: cache_define walker refuses an orphan v1 hit (production)
+//   AC4: relower hit loop refuses; caller stays dirty / unstored until
+//        a lower that did not embed the orphan
+//   AC5: Soft keeps the observe-only consult contract
+//   AC6: source cites; no new counter; no stray issue test file
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -907,7 +917,9 @@ int run_test_cascade_relower_silent_skip() {
         const auto at = svc.find("Issue #4436");
         CHECK(at != std::string::npos, "4436 cite present");
         if (at != std::string::npos) {
-            const auto win = svc.substr(at, 1100);
+            // Window widened by #4528: the orphan-v1 refuse arm extends
+            // the same block before the latch checks.
+            const auto win = svc.substr(at, 2200);
             CHECK(win.find("production_defaults_active()") != std::string::npos,
                   "4436 cite: production gate");
             CHECK(win.find("content_stored_this_epoch") != std::string::npos,
@@ -1126,6 +1138,294 @@ int run_test_cascade_relower_silent_skip() {
             CHECK(win.find("UntrustedCalleeScan4513") != std::string::npos,
                   "4513 AC7: body scan present");
             CHECK(win.find("embed_safe") != std::string::npos, "4513 AC7: cone exemption kept");
+        }
+    }
+
+    // Issue #4528 AC4: the relower full arm's hit loop treats a v1 cache
+    // hit whose v2 row is absent as untrusted (same predicate family as a
+    // dirty row): the store is refused, the caller stays dirty with
+    // content_stored_this_epoch == false, and after the callee's v2 trust
+    // row is restored the next full lower stores again (no deadlock).
+    // Cache setup runs on the dev face (workspace populate is
+    // set-code-driven and observe-only there); the consult under test
+    // reads the live face at every site, so the orphan phase arms
+    // production.
+    {
+        std::println("\n--- #4528 AC4: relower hit loop refuses a v1 hit with no v2 row ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f4528 (lambda () 1))\")").has_value(),
+              "4528 AC4: set-code f");
+        CHECK(cs.eval("(eval-current)").has_value(), "4528 AC4: eval f");
+        CHECK(cs.get_define_v2("f4528") != nullptr, "4528 AC4: f v2 cached");
+        CHECK(cs.has_cached_function("f4528"), "4528 AC4: f v1 present");
+        CHECK(cs.eval("(set-code \"(define g4528 (lambda () (f4528)))\")").has_value(),
+              "4528 AC4: set-code g");
+        CHECK(cs.eval("(eval-current)").has_value(), "4528 AC4: eval g");
+        CHECK(cs.get_define_v2("g4528") != nullptr, "4528 AC4: g v2 cached");
+        cs.public_record_dependency("g4528", "f4528");
+        // Orphan phase: production arms the freshness consults.
+        apply_production_audit_defaults();
+        // Orphan the v1 row: erase ONLY f's v2 row (what pre-#4528
+        // eviction did to its victim). v1 keeps the lowered body.
+        CHECK(cs.erase_ir_cache_v2_row_for_test("f4528"), "4528 AC4: f v2 row erased");
+        CHECK(cs.get_define_v2("f4528") == nullptr, "4528 AC4: f v2 gone");
+        CHECK(cs.has_cached_function("f4528"), "4528 AC4: orphan v1 survives");
+        cs.public_mark_define_dirty("g4528");
+        // #4228 leaves the callee as a value cell; drop the cells to reach
+        // the v1 copy face.
+        cs.clear_ir_value_cells_for_test();
+        const bool direct4528 = cs.relower_current_define_full_for_test("g4528");
+        CHECK(!direct4528, "4528 AC4: full relower refuses the orphan v1 embed");
+        const auto* g4528 = cs.get_define_v2("g4528");
+        CHECK(g4528 != nullptr, "4528 AC4: g row survives the refuse");
+        if (g4528 != nullptr) {
+            CHECK(cs.lookup_define_v2("g4528", g4528->source_hash) != 0,
+                  "4528 AC4: lookup stays needs-relower");
+            CHECK(g4528->dirty && !g4528->content_stored_this_epoch,
+                  "4528 AC4: caller dirty with content_stored_this_epoch == false");
+        }
+        // Convergence: restore f's v2 trust row (#3117 AC3 planting
+        // pattern) — the next full lower trusts the pair and stores.
+        {
+            aura::ir::IRFunction top4528;
+            top4528.id = 0;
+            top4528.name = "__top__";
+            top4528.blocks.push_back({0, {}, {}});
+            std::vector<aura::ir::IRFunction> irs4528;
+            irs4528.push_back(std::move(top4528));
+            cs.store_define_v2("f4528", "(define f4528 (lambda () 1))", std::move(irs4528), {}, {},
+                               cs.public_mutation_epoch());
+        }
+        {
+            const auto* f4528 = cs.get_define_v2("f4528");
+            CHECK(f4528 != nullptr && !f4528->dirty && f4528->content_stored_this_epoch,
+                  "4528 AC4: f v2 trust row restored");
+        }
+        cs.clear_ir_value_cells_for_test();
+        CHECK(cs.relower_current_define_full_for_test("g4528"),
+              "4528 AC4: g full relower stores after f is trusted again");
+        const auto* g_after4528 = cs.get_define_v2("g4528");
+        CHECK(g_after4528 != nullptr && !g_after4528->dirty &&
+                  g_after4528->content_stored_this_epoch,
+              "4528 AC4: g stored as a clean generation");
+        if (g_after4528 != nullptr) {
+            CHECK(cs.lookup_define_v2("g4528", g_after4528->source_hash) == 0,
+                  "4528 AC4: lookup hits after convergence");
+            auto bundle_has4528 = [](const CompilerService::IRCacheEntry& e, std::uint32_t imm) {
+                for (const auto& fn : e.irs) {
+                    for (const auto& b : fn.blocks) {
+                        for (const auto& ins : b.instructions) {
+                            if (ins.opcode == aura::ir::IROpcode::ConstI64 &&
+                                ins.operands[1] == imm)
+                                return true;
+                        }
+                    }
+                }
+                return false;
+            };
+            CHECK(bundle_has4528(*g_after4528, 1), "4528 AC4: stored g embeds the restored f body");
+        }
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4528 AC3: cache_define's LambdaBodyWalker refuses a v1
+    // callee hit whose v2 row is absent (production) — the eval /
+    // cache_define-only cousin where no store_define_v2 of the callee has
+    // ever run. The caller fails closed to eval_flat and no generation is
+    // stored over the orphan bytes, before or after the callee mutates.
+    {
+        std::println("\n--- #4528 AC3: cache_define refuses an orphan v1 callee hit ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(define z4528c (lambda () 0))").has_value(), "4528 AC3: anchor z");
+        CHECK(cs.eval("(define _f4528c (lambda () 1))").has_value(), "4528 AC3: direct define f");
+        CHECK(cs.has_cached_function("_f4528c"), "4528 AC3: f v1 present");
+        CHECK(cs.get_define_v2("_f4528c") == nullptr,
+              "4528 AC3: f has no v2 row (orphan producer)");
+        cs.clear_ir_value_cells_for_test(); // #4228: reach the copy face.
+        CHECK(cs.eval("(define d4528c (lambda () 0 (_f4528c)))").has_value(),
+              "4528 AC3: first d define drives cache_define");
+        CHECK(!cs.has_cached_function("d4528c"),
+              "4528 AC3: d v1 refused — orphan v1 hit not embedded");
+        // Redefine f (cache_define-only again — still no v2 row): the
+        // orphan persists across the callee redefinition and the refuse
+        // must persist with it — trust requires the v2 row, not a
+        // fresh-looking v1.
+        CHECK(cs.eval("(define _f4528c (lambda () 2))").has_value(),
+              "4528 AC3: redefine f (v1 refresh, still no v2 row)");
+        CHECK(cs.get_define_v2("_f4528c") == nullptr, "4528 AC3: f still has no v2 row");
+        cs.clear_ir_value_cells_for_test();
+        CHECK(cs.eval("(define d4528c (lambda () 7 (_f4528c)))").has_value(),
+              "4528 AC3: redefine d drives cache_define");
+        CHECK(!cs.has_cached_function("d4528c"), "4528 AC3: d v1 refused again after the mutation");
+        CHECK(cs.get_define_v2("d4528c") == nullptr,
+              "4528 AC3: no d generation stored over the orphan");
+        auto call4528 = cs.eval("(d4528c)");
+        CHECK(call4528 && aura::compiler::types::is_int(*call4528) &&
+                  aura::compiler::types::as_int(*call4528) == 2,
+              "4528 AC3: d runs the live f body, not the orphan");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4528 AC5: Soft / Off keeps the observe-only consult
+    // contract — the walker consult is production-gated, so a v1 hit
+    // whose v2 row is absent stays trusted under Soft.
+    {
+        std::println("\n--- #4528 AC5: Soft keeps the v1-hit consult off ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(define z4528e (lambda () 0))").has_value(), "4528 AC5: anchor z");
+        CHECK(cs.eval("(define _f4528e (lambda () 1))").has_value(), "4528 AC5: direct define f");
+        CHECK(cs.get_define_v2("_f4528e") == nullptr, "4528 AC5: f has no v2 row");
+        cs.clear_ir_value_cells_for_test();
+        CHECK(cs.eval("(define d4528e (lambda () 0 (_f4528e)))").has_value(),
+              "4528 AC5: define d under Soft");
+        CHECK(cs.has_cached_function("d4528e"),
+              "4528 AC5: Soft trusts the v1 hit (observe-only consult off)");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4528 AC1: the eviction dirty arm drops the victim's
+    // ir_cache_ / ir_cache_bridge_ / ir_cache_strings_ rows in the same
+    // erase as ir_cache_v2_. A surviving v1 row let a later caller lower
+    // copy the pre-mutate body and store_define_v2 republish it as a
+    // clean generation.
+    {
+        std::println("\n--- #4528 AC1: dirty eviction drops the victim v1 row family ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(define z4528 (lambda () 0))").has_value(), "4528 AC1: anchor z");
+        CHECK(cs.eval("(define _f4528 (lambda () 1))").has_value(), "4528 AC1: direct define f");
+        CHECK(cs.has_cached_function("_f4528"), "4528 AC1: f v1 present");
+        {
+            aura::ir::IRFunction top4528;
+            top4528.id = 0;
+            top4528.name = "__top__";
+            top4528.blocks.push_back({0, {}, {}});
+            aura::ir::IRFunction body4528;
+            body4528.id = 1;
+            body4528.name = "_f4528#0";
+            body4528.blocks.push_back({0, {}, {}});
+            std::vector<aura::ir::IRFunction> irs4528;
+            irs4528.push_back(std::move(top4528));
+            irs4528.push_back(std::move(body4528));
+            cs.store_define_v2("_f4528", "(define _f4528 (lambda () 1))", std::move(irs4528), {},
+                               {}, cs.public_mutation_epoch());
+        }
+        CHECK(cs.get_define_v2("_f4528") != nullptr, "4528 AC1: f v2 row planted");
+        cs.public_mark_define_dirty("_f4528");
+        {
+            const auto* f4528 = cs.get_define_v2("_f4528");
+            CHECK(f4528 != nullptr && f4528->dirty, "4528 AC1: f dirty before the fill");
+        }
+        // Grow ir_cache_v2_ past kIRCacheV2MaxEntries (2048): the final
+        // filler store runs the eviction, which takes the dirty victim
+        // first. Only the victim is dirty, so no LRU pass runs.
+        for (int i = 0; i < 2048; ++i) {
+            const auto nm = "filler4528_" + std::to_string(i);
+            aura::ir::IRFunction ftop;
+            ftop.id = 0;
+            ftop.name = "__top__";
+            ftop.blocks.push_back({0, {}, {}});
+            std::vector<aura::ir::IRFunction> irs;
+            irs.push_back(std::move(ftop));
+            cs.store_define_v2(nm, "(define " + nm + " (lambda () 0))", std::move(irs), {}, {},
+                               cs.public_mutation_epoch());
+        }
+        CHECK(cs.get_define_v2("_f4528") == nullptr, "4528 AC1: dirty victim v2 row evicted");
+        CHECK(!cs.has_cached_function("_f4528"), "4528 AC1: victim v1 dropped in the same erase");
+        CHECK(cs.get_define_v2("filler4528_2047") != nullptr,
+              "4528 AC1: clean filler rows survive the dirty arm");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4528 AC2: the LRU arm performs the same-generation
+    // invalidate — a clean victim's v1 row goes with its v2 row.
+    {
+        std::println("\n--- #4528 AC2: LRU eviction drops the victim v1 row family ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(define z4528b (lambda () 0))").has_value(), "4528 AC2: anchor z");
+        CHECK(cs.eval("(define _l4528 (lambda () 1))").has_value(), "4528 AC2: direct define l");
+        {
+            aura::ir::IRFunction top4528;
+            top4528.id = 0;
+            top4528.name = "__top__";
+            top4528.blocks.push_back({0, {}, {}});
+            aura::ir::IRFunction body4528;
+            body4528.id = 1;
+            body4528.name = "_l4528#0";
+            body4528.blocks.push_back({0, {}, {}});
+            std::vector<aura::ir::IRFunction> irs4528;
+            irs4528.push_back(std::move(top4528));
+            irs4528.push_back(std::move(body4528));
+            cs.store_define_v2("_l4528", "(define _l4528 (lambda () 1))", std::move(irs4528), {},
+                               {}, cs.public_mutation_epoch());
+        }
+        {
+            const auto* l4528 = cs.get_define_v2("_l4528");
+            CHECK(l4528 != nullptr && !l4528->dirty, "4528 AC2: l planted clean");
+        }
+        // No dirty rows anywhere: the eviction falls through to LRU and
+        // the oldest stamp is the victim planted before the fill.
+        for (int i = 0; i < 2048; ++i) {
+            const auto nm = "fillerl4528_" + std::to_string(i);
+            aura::ir::IRFunction ftop;
+            ftop.id = 0;
+            ftop.name = "__top__";
+            ftop.blocks.push_back({0, {}, {}});
+            std::vector<aura::ir::IRFunction> irs;
+            irs.push_back(std::move(ftop));
+            cs.store_define_v2(nm, "(define " + nm + " (lambda () 0))", std::move(irs), {}, {},
+                               cs.public_mutation_epoch());
+        }
+        CHECK(cs.get_define_v2("_l4528") == nullptr, "4528 AC2: LRU victim v2 row evicted");
+        CHECK(!cs.has_cached_function("_l4528"),
+              "4528 AC2: LRU victim v1 dropped in the same erase");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #4528 AC6: source cites + no new counters + no stray issue
+    // test file. Query keys and the C-bridge / defuse / table epoch are
+    // untouched (the fix adds no epoch bumps and renames no keys).
+    {
+        const auto svc4528 = read_file("src/compiler/service.ixx");
+        CHECK(read_file("tests/compiler/test_issue_4528.cpp").empty(),
+              "4528 AC6: no tests/issues/test_issue_4528.cpp");
+        CHECK(svc4528.find("4528_total") == std::string::npos, "4528 AC6: no new metrics counter");
+        const auto e1 = svc4528.find("Issue #4528: same-generation invalidate");
+        CHECK(e1 != std::string::npos, "4528 AC6: eviction cite present");
+        if (e1 != std::string::npos) {
+            const auto win = svc4528.substr(e1, 900);
+            CHECK(win.find("ir_cache_.erase") != std::string::npos, "4528 AC6: v1 drop");
+            CHECK(win.find("ir_cache_bridge_.erase") != std::string::npos, "4528 AC6: bridge drop");
+            CHECK(win.find("ir_cache_strings_.erase") != std::string::npos,
+                  "4528 AC6: strings drop");
+        }
+        const auto e2 = svc4528.find("Issue #4528: a v1 cache hit whose v2 row is absent");
+        CHECK(e2 != std::string::npos, "4528 AC6: relower hit-loop cite present");
+        if (e2 != std::string::npos) {
+            const auto win = svc4528.substr(e2, 1000);
+            CHECK(win.find("content_stored_this_epoch") != std::string::npos,
+                  "4528 AC6: content latch left false");
+            CHECK(win.find("embed_safe") != std::string::npos, "4528 AC6: cone exemption kept");
+        }
+        const auto e3 = svc4528.find("Issue #4528: a v1 hit with NO v2");
+        CHECK(e3 != std::string::npos, "4528 AC6: walker consult cite present");
+        if (e3 != std::string::npos) {
+            const auto win = svc4528.substr(e3, 1000);
+            CHECK(win.find("refused_callee_4513 = true") != std::string::npos,
+                  "4528 AC6: walker refuse latched");
+        }
+        const auto e4 = svc4528.find("Issue #4528: distinguish a missing v2 row");
+        CHECK(e4 != std::string::npos, "4528 AC6: relower scan cite present");
+        if (e4 != std::string::npos) {
+            const auto win = svc4528.substr(e4, 700);
+            CHECK(win.find("ir_cache_v1.count") != std::string::npos,
+                  "4528 AC6: scan v1 tie-break");
+            CHECK(win.find("untrusted = true") != std::string::npos,
+                  "4528 AC6: scan refuses the orphan");
         }
     }
 

@@ -5801,6 +5801,16 @@ public:
             if (it->second.dirty) {
                 // Issue #4091: drop the FnKey → name side index row.
                 shape_fnkey_names_.erase(shape::make_fn_key(session_id_, it->first));
+                // Issue #4528: same-generation invalidate — drop the
+                // victim's v1 / bridge / strings rows in the same erase.
+                // A surviving v1 row keeps the pre-mutate body lowerable:
+                // lower_to_ir_with_cache_tracked copies it into the next
+                // caller and store_define_v2 republishes those bytes as a
+                // clean generation (the freshness consults only refused a
+                // v2 row that is PRESENT and dirty, not one that is gone).
+                ir_cache_.erase(it->first);
+                ir_cache_bridge_.erase(it->first);
+                ir_cache_strings_.erase(it->first);
                 it = ir_cache_v2_.erase(it);
                 metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -5820,6 +5830,10 @@ public:
             }
             // Issue #4091: drop the FnKey → name side index row.
             shape_fnkey_names_.erase(shape::make_fn_key(session_id_, victim->first));
+            // Issue #4528: same-generation invalidate (see the dirty arm).
+            ir_cache_.erase(victim->first);
+            ir_cache_bridge_.erase(victim->first);
+            ir_cache_strings_.erase(victim->first);
             ir_cache_v2_.erase(victim);
             metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
             metrics_.ir_cache_v2_lru_evictions_total.fetch_add(1, std::memory_order_relaxed);
@@ -7878,8 +7892,24 @@ public:
                 if (hit == name)
                     continue;
                 const auto cit = ir_cache_v2_.find(hit);
-                if (cit == ir_cache_v2_.end())
+                if (cit == ir_cache_v2_.end()) {
+                    // Issue #4528: a v1 cache hit whose v2 row is absent is
+                    // the same orphan family as a dirty row (eviction used to
+                    // erase only the v2 row, and cache_define fills v1 with no
+                    // store_define_v2 at all). Refuse the store — leave the
+                    // caller dirty / unstored until a lower that did not
+                    // embed the orphan v1. embed_safe keeps its cone
+                    // exemption.
+                    const bool embed_safe_orphan4528 =
+                        std::find(embed_safe_callees_4436_.begin(), embed_safe_callees_4436_.end(),
+                                  hit) != embed_safe_callees_4436_.end();
+                    if (!embed_safe_orphan4528) {
+                        it->second.dirty = true;
+                        it->second.content_stored_this_epoch = false;
+                        return false;
+                    }
                     continue;
+                }
                 const auto& ce = cit->second;
                 if (ce.dirty || ce.dirty_block_count() > 0 || ce.abort_map_invalid ||
                     !ce.content_stored_this_epoch) {
@@ -7932,6 +7962,12 @@ public:
                         const std::unordered_map<std::string, IRCacheEntry,
                                                  aura::core::TransparentStringHash,
                                                  std::equal_to<>>& ir_cache_v2;
+                        // Issue #4528: tie-break a missing v2 row — a name
+                        // that still holds a v1 bundle is a define whose v2
+                        // row is gone, not an unknown face.
+                        const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                                 aura::core::TransparentStringHash,
+                                                 std::equal_to<>>& ir_cache_v1;
                         const std::vector<std::string>& embed_safe;
                         std::unordered_set<std::string> let_bound;
                         bool untrusted = false;
@@ -7967,8 +8003,18 @@ public:
                                     embed_safe.end())
                                     return; // #4436 cone exemption.
                                 const auto cit = ir_cache_v2.find(var_name);
-                                if (cit == ir_cache_v2.end())
+                                if (cit == ir_cache_v2.end()) {
+                                    // Issue #4528: distinguish a missing v2 row
+                                    // for a name that still holds a v1 bundle —
+                                    // an eviction / cache_define-only orphan in
+                                    // the same untrusted family as a dirty v2
+                                    // row — from a name that is not a define at
+                                    // all (the lowerer emits ConstI64 0 for
+                                    // those: nothing is embedded).
+                                    if (ir_cache_v1.count(var_name) > 0)
+                                        untrusted = true;
                                     return; // not a define — unknown face, no embed.
+                                }
                                 const auto& ce = cit->second;
                                 if (ce.dirty || ce.dirty_block_count() > 0 ||
                                     ce.abort_map_invalid || !ce.content_stored_this_epoch)
@@ -7979,10 +8025,10 @@ public:
                                 walk(c);
                         }
                     };
-                    UntrustedCalleeScan4513 scan4513{*lower_flat,  *lower_pool,
-                                                     name,         scan_params,
-                                                     evaluator_,   ir_value_cell_bindings_,
-                                                     ir_cache_v2_, embed_safe_callees_4436_};
+                    UntrustedCalleeScan4513 scan4513{
+                        *lower_flat,  *lower_pool, name,
+                        scan_params,  evaluator_,  ir_value_cell_bindings_,
+                        ir_cache_v2_, ir_cache_,   embed_safe_callees_4436_};
                     scan4513.walk(scan_lv.children.empty() ? aura::ast::NULL_NODE
                                                            : scan_lv.child(0));
                     if (scan4513.untrusted) {
@@ -9804,6 +9850,14 @@ public:
     // the cells to reach that copy.
     void clear_ir_value_cells_for_test() { ir_value_cell_bindings_.clear(); }
 
+    // Issue #4528: simulate the orphan producer — erase ONLY the name's
+    // ir_cache_v2_ row (what pre-#4528 eviction did), leaving the v1 /
+    // bridge / strings rows holding the pre-mutate body. Returns true if
+    // a row was erased.
+    bool erase_ir_cache_v2_row_for_test(const std::string& name) {
+        return ir_cache_v2_.erase(name) > 0;
+    }
+
     // Issue #3484 test: persist-empty / body-only mark missed. Keep the
     // cache entry so #3381 still unions the caller into dirty_names, but
     // drop irs so mark_caller_body_dirty hits the empty-irs path and
@@ -11231,6 +11285,19 @@ public:
                                                     skip = true;
                                                     refused_callee_4513 = true;
                                                 }
+                                            } else {
+                                                // Issue #4528: a v1 hit with NO v2
+                                                // row is the same orphan family —
+                                                // eviction dropped the v2 row while
+                                                // v1 kept the pre-mutate body, or
+                                                // cache_define filled v1 before any
+                                                // store_define_v2 of the callee.
+                                                // Refuse like a dirty v2 row: the
+                                                // embed would freeze the orphan
+                                                // bytes into the caller's next
+                                                // clean generation.
+                                                skip = true;
+                                                refused_callee_4513 = true;
                                             }
                                         }
                                         return;
