@@ -4243,7 +4243,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             if (m)
                 m->workspace_global_exclusive_total.fetch_add(1, std::memory_order_relaxed);
         }
-        ev_->outermost_mutation_success_flag_ = flag_;
+        ev_->outermost_mutation_success_flag_.store(flag_, std::memory_order_release);
         ev_->bind_yield_hook_evaluator();
         // Issue #354: set the atomic flag so
         // Fiber::yield can detect "yield while
@@ -6131,6 +6131,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (workspace_released)
                 return;
             workspace_released = true;
+            // Clear bool* before unlock so Guard ctor cannot race the store.
+            ev_->outermost_mutation_success_flag_.store(nullptr, std::memory_order_release);
             // Issue #2121: unlock matching acquire mode.
             if (region_mode_) {
                 if (region_lock_.owns_lock()) {
@@ -6150,7 +6152,6 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 ev_->drain_cascade_bfs_invalidate();
             else
                 ev_->clear_cascade_bfs_invalidate();
-            ev_->outermost_mutation_success_flag_ = nullptr;
         };
         if (!aura::ast::moving_compact_enabled()) {
             // Issue #3955: sticky densify-off blinds Moving so Phase-5
@@ -8253,6 +8254,8 @@ Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region
 // be lasting void** slots). RootRemapPass + slot + pin stay the only
 // remap mechanisms (no second registry).
 std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
+    // Serialize vs set_flat_pool / set_current_* (densify reads *slot).
+    std::lock_guard<std::mutex> mutate_targets_lock(mutate_target_mu_);
     if (!arena_group_)
         return 0;
     using aura::compiler::root_remap_registered_slots_snapshot;

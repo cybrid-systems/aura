@@ -2017,6 +2017,9 @@ public:
     bool gc_module(const std::string& path);
     // Set current FlatAST/Pool for mutation primitives
     void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) {
+        // Serialize vs densify known-root registration (TSan: chaos soak
+        // concurrent eval set_flat_pool vs register_known_moving_densify_root_slots).
+        std::lock_guard<std::mutex> lock(mutate_target_mu_);
         mutate_target_flat_ = f;
         mutate_target_pool_ = p;
     }
@@ -3836,8 +3839,14 @@ public:
     // CompilerService::eval / eval_ir / exec_jit right after parsing the
     // script, before any user code runs. See dual-workspace design (archived:
     // docs-archive-pre-2026-06) for the dual-workspace rationale.
-    void set_current_flat(ast::FlatAST* f) { current_flat_ = f; }
-    void set_current_pool(ast::StringPool* p) { current_pool_ = p; }
+    void set_current_flat(ast::FlatAST* f) {
+        std::lock_guard<std::mutex> lock(mutate_target_mu_);
+        current_flat_ = f;
+    }
+    void set_current_pool(ast::StringPool* p) {
+        std::lock_guard<std::mutex> lock(mutate_target_mu_);
+        current_pool_ = p;
+    }
     ast::FlatAST* current_flat() const { return current_flat_; }
     ast::StringPool* current_pool() const { return current_pool_; }
 
@@ -4146,9 +4155,9 @@ public:
         // Issue #3294: durable type export requires an outermost success
         // face. Soft local SOLVED after a TIMEOUT / nested face must not
         // re-open authority (residual of #3203/#3237 under Agent canary).
-        if (!type_export_outermost_success_face_)
+        if (!type_export_outermost_success_face_.load(std::memory_order_acquire))
             return false;
-        if (!type_export_authoritative_)
+        if (!type_export_authoritative_.load(std::memory_order_acquire))
             return false;
         if (!aura::compiler::typed_audit::type_export_residual_faces_clear())
             return false;
@@ -4159,7 +4168,9 @@ public:
     }
     // Issue #3004: Production infer SOLVED but persist+Full audit not yet
     // committed. query:type signals "in-flight" (not durable authority).
-    [[nodiscard]] bool type_export_inflight() const noexcept { return type_export_inflight_; }
+    [[nodiscard]] bool type_export_inflight() const noexcept {
+        return type_export_inflight_.load(std::memory_order_acquire);
+    }
     void note_infer_solve_solved(bool solved) noexcept { last_type_solve_solved_ = solved; }
     void grant_type_export_authority() noexcept {
         // Issue #3203: never stamp durable authority over TIMEOUT/CONFLICT
@@ -4187,26 +4198,26 @@ public:
                              aura::compiler::typed_audit::pending_full_solve_residual_face_hit() ||
                              !aura::compiler::typed_audit::type_export_residual_faces_stable() ||
                              aura_residual_castop_undermark_pending()))) {
-            type_export_authoritative_ = false;
-            type_export_inflight_ = false;
-            type_export_outermost_success_face_ = false;
+            type_export_authoritative_.store(false, std::memory_order_release);
+            type_export_inflight_.store(false, std::memory_order_release);
+            type_export_outermost_success_face_.store(false, std::memory_order_release);
             return;
         }
-        type_export_authoritative_ = true;
-        type_export_inflight_ = false;
+        type_export_authoritative_.store(true, std::memory_order_release);
+        type_export_inflight_.store(false, std::memory_order_release);
         // Issue #3294: only the outermost success persist face re-opens
         // durable authority (called from the outermost grant helper).
-        type_export_outermost_success_face_ = true;
+        type_export_outermost_success_face_.store(true, std::memory_order_release);
     }
     void clear_type_export_authority() noexcept {
-        type_export_authoritative_ = false;
-        type_export_inflight_ = false;
-        type_export_outermost_success_face_ = false;
+        type_export_authoritative_.store(false, std::memory_order_release);
+        type_export_inflight_.store(false, std::memory_order_release);
+        type_export_outermost_success_face_.store(false, std::memory_order_release);
     }
     void note_type_export_inflight() noexcept {
-        type_export_authoritative_ = false;
-        type_export_inflight_ = true;
-        type_export_outermost_success_face_ = false;
+        type_export_authoritative_.store(false, std::memory_order_release);
+        type_export_inflight_.store(true, std::memory_order_release);
+        type_export_outermost_success_face_.store(false, std::memory_order_release);
     }
     // Issue #3082: typecheck / Soft infer must not promote a mid/nested
     // MutationBoundary occurrence to query:type authority. Nested enter
@@ -4222,18 +4233,18 @@ public:
         // legacy single-eval MVP path; SSOT via boundary_depth_ssot for type
         // export authority stays correct on-fiber via active_mutation_stack).
         const auto depth = mutation_boundary_depth_slot_value(/*fiber_id=*/0);
-        if (depth > 1 || (type_export_inflight_ && depth != 0)) {
+        if (depth > 1 || (type_export_inflight_.load(std::memory_order_acquire) && depth != 0)) {
             note_type_export_inflight();
             return;
         }
-        if (type_export_inflight_ && depth == 0) {
+        if (type_export_inflight_.load(std::memory_order_acquire) && depth == 0) {
             // Leftover inflight from a finished nested typecheck. Soft
             // TIMEOUT clears inflight (copy_infer(false)); this is not
             // that path. Restore the Quiet outermost face so SOLVED
             // grants instead of observing a stale nested drop.
-            type_export_inflight_ = false;
+            type_export_inflight_.store(false, std::memory_order_release);
             if (infer_authoritative)
-                type_export_outermost_success_face_ = true;
+                type_export_outermost_success_face_.store(true, std::memory_order_release);
         }
         if (infer_authoritative) {
             // Issue #3294: Soft local SOLVED must not re-open durable
@@ -4241,14 +4252,14 @@ public:
             // Soft TIMEOUT "recovered" by a later local SOLVED). Only the
             // outermost persist grant helper re-arms the face. Quiet path
             // (face still true from last outermost success) grants as today.
-            if (!type_export_outermost_success_face_) {
+            if (!type_export_outermost_success_face_.load(std::memory_order_acquire)) {
                 // Soft observe only: refuse durable TypeId, no hard reject.
                 // Dedicated Soft observe counter (AC4: Soft observe counters
                 // only; zero extra on quiet SOLVED).
                 aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
                     1, std::memory_order_relaxed);
-                type_export_authoritative_ = false;
-                type_export_inflight_ = false;
+                type_export_authoritative_.store(false, std::memory_order_release);
+                type_export_inflight_.store(false, std::memory_order_release);
                 return;
             }
             grant_type_export_authority();
@@ -6967,7 +6978,9 @@ private:
     // cross-thread migration / yield desync during an active boundary.
     // Issue #3268: same fiber-local bool* as Guard::flag_; accesses
     // go through MutationBoundaryGuard::success_flag_* (atomic_ref).
-    bool* outermost_mutation_success_flag_ = nullptr;
+    // atomic: Guard ctor store vs dtor clear can overlap across fibers
+    // after workspace unlock races (TSan chaos).
+    std::atomic<bool*> outermost_mutation_success_flag_{nullptr};
     // (#10) Track mutation-affected symbols for targeted index rebuild
     // Mutation primitives push affected sym names here; ensure_defuse
     // uses them to avoid full rebuild when only a few symbols changed.
@@ -7384,10 +7397,14 @@ private:
     std::atomic<std::uint64_t> linear_gc_root_audit_seq_{0};
     std::atomic<std::uint64_t> linear_gc_root_audit_total_{0};
     // Last-seen counter snapshots for monotonicity checks across audits.
+    // Guarded by linear_gc_root_audit_mu_ (multi-fiber shared Evaluator).
+    std::mutex linear_gc_root_audit_mu_;
     std::uint64_t linear_gc_root_audit_prev_reg_{0};
     std::uint64_t linear_gc_root_audit_prev_stale_{0};
     std::uint64_t linear_gc_root_audit_prev_viol_{0};
     std::uint64_t linear_gc_root_audit_prev_resync_{0};
+    // Guards mutate_target_flat_/pool_ vs densify known-root slot listing.
+    mutable std::mutex mutate_target_mu_;
     // Issue #1568: linear violation provenance audit ring.
     std::array<LinearViolationAuditEntry, kLinearViolationAuditRingSize>
         linear_violation_audit_ring_{};
@@ -17006,8 +17023,8 @@ private:
     bool commit_cs_live_ = false;
     // Issue #3003 / #3004: type-export authority (default true = pre-#3003).
     // Production: false until persist + Full audit success (#3004).
-    bool type_export_authoritative_ = true;
-    bool type_export_inflight_ = false;
+    std::atomic<bool> type_export_authoritative_{true};
+    std::atomic<bool> type_export_inflight_{false};
     // Issue #3203: last infer face was SOLVED (default true = quiet path).
     // TIMEOUT/CONFLICT stays false so persist grant cannot override.
     bool last_type_solve_solved_ = true;
@@ -17015,7 +17032,7 @@ private:
     // persist grant helper succeeds (or quiet initial state). Cleared on
     // TIMEOUT/CONFLICT/nested/mid so a Soft local SOLVED cannot re-open
     // durable query:type authority without an outermost Full face.
-    bool type_export_outermost_success_face_ = true;
+    std::atomic<bool> type_export_outermost_success_face_{true};
     // Issue #3170 / #3512: staged occurrence-persist fingerprint (0 = unstaged).
     std::uint64_t expected_occurrence_fp_ = 0;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.

@@ -1236,7 +1236,7 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         bump_mutation_boundary_recovery_failure();
         bump_mutation_boundary_rollback();
         bump_guard_panic_reflect_boundary_violation_prevented();
-        (void)MutationBoundaryGuard::success_flag_exchange_false(outermost_mutation_success_flag_);
+        (void)MutationBoundaryGuard::success_flag_exchange_false(outermost_mutation_success_flag_.load(std::memory_order_acquire));
         // Issue #1260: transfer pending panic checkpoint across steal/resume
         // mismatch so panic signals survive fiber migration.
         if (pending_panic_checkpoint()) {
@@ -1253,7 +1253,7 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
             // Force rollback path via success flag so Guard dtor restores.
             if (panic_auto_rollback_)
                 (void)MutationBoundaryGuard::success_flag_exchange_false(
-                    outermost_mutation_success_flag_);
+                    outermost_mutation_success_flag_.load(std::memory_order_acquire));
         } else if (cp.had_active_boundary) {
             // Had boundary but lost checkpoint — record lost-on-steal.
             bump_panic_checkpoint_lost_on_steal();
@@ -1492,7 +1492,7 @@ extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept {
 }
 
 void Evaluator::mark_outermost_mutation_failed() noexcept {
-    (void)MutationBoundaryGuard::success_flag_exchange_false(outermost_mutation_success_flag_);
+    (void)MutationBoundaryGuard::success_flag_exchange_false(outermost_mutation_success_flag_.load(std::memory_order_acquire));
     // Issue #3048: abort / force-cancel path — revoke session grants
     // bound to this fiber's captured outermost mid even if Guard dtor
     // never runs. Second call (Guard dtor #2944) is a no-op (AC3).
