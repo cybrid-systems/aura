@@ -1334,7 +1334,9 @@ int run_test_security_audit_unify() {
               "3338 AC: wal-mid-lookup-segments on audit-wal-stats");
         auto ret = cs.eval(
             "(hash-ref (engine:metrics \"query:audit-wal-stats\") \"wal-max-segments-retention\")");
-        CHECK(ret && is_int(*ret) && as_int(*ret) == 0, "3338 AC3: unset retention = 0 (no prune)");
+        // Issue #4520: unset retention is now the default cap (was 0 = no prune).
+        CHECK(ret && is_int(*ret) && as_int(*ret) >= 1,
+              "4520/3338 AC3: unset retention defaults to the cap (prune on)");
         const auto se_wal = read_file("src/core/security_event_wal.hh");
         CHECK(se_wal.find("max_segments = 2") != std::string::npos,
               "3338 AC4: #3205 default max_segments=2 retained");

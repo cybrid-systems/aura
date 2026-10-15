@@ -258,6 +258,10 @@ struct SecurityEventWal {
     // Issue #4446: last rotate could not open the next segment. fp is
     // null while enabled stays true. Not a metric and not a query key.
     bool rotate_open_fail_ = false;
+    // Issue #4520: prune high-water mark. Retention is on by default now,
+    // so prune_old_segments_unlocked runs on every rotate; indices below
+    // this were already unlinked in this dir session (enable resets it).
+    std::uint32_t pruned_upto_ = 0;
     static constexpr std::uint32_t kFlushEvery = 32;
 
     ~SecurityEventWal() { close_unlocked(); }
@@ -314,12 +318,20 @@ struct SecurityEventWal {
         const auto cap = ::aura::core::wal_slo::wal_max_segments_retention();
         if (cap == 0)
             return;
-        if (segment_index + 1 <= cap)
+        const std::uint64_t total = static_cast<std::uint64_t>(segment_index) + 1;
+        if (total <= cap)
             return;
-        const std::uint32_t first_keep = segment_index + 1 - cap;
+        const std::uint32_t first_keep = static_cast<std::uint32_t>(total - cap);
+        // Issue #4520: high-water start — this runs on every rotate now
+        // that retention is default-on; never re-stat pruned indices
+        // (amortized O(1) per rotate instead of O(segment_index)).
+        if (first_keep <= pruned_upto_)
+            return;
+        const std::uint32_t first = pruned_upto_;
+        pruned_upto_ = first_keep;
         namespace fs = std::filesystem;
         std::error_code ec;
-        for (std::uint32_t i = 0; i < first_keep; ++i) {
+        for (std::uint32_t i = first; i < first_keep; ++i) {
             const auto p =
                 (fs::path(dir) / ("security-event-" + std::to_string(i) + ".wal")).string();
             if (fs::remove(p, ec)) {
@@ -372,6 +384,7 @@ struct SecurityEventWal {
         close_unlocked();
         dir.assign(persist_dir);
         enabled = false;
+        pruned_upto_ = 0;
         if (dir.empty()) {
             g_security_event_wal_metrics().security_event_wal_enabled.store(
                 0, std::memory_order_relaxed);
@@ -381,6 +394,9 @@ struct SecurityEventWal {
         std::error_code ec;
         std::uint32_t max_seg = 0;
         bool any = false;
+        // Issue #4520: collected indices double as the enable-time upgrade
+        // prune list (exact, hole-tolerant) — no extra directory pass.
+        std::vector<std::uint32_t> seg_indices;
         if (fs::exists(dir, ec)) {
             for (auto& ent : fs::directory_iterator(dir, ec)) {
                 if (!ent.is_regular_file(ec))
@@ -392,6 +408,7 @@ struct SecurityEventWal {
                 const auto mid = name.substr(15, name.size() - 15 - 4); // strip prefix + ".wal"
                 try {
                     const auto n = static_cast<std::uint32_t>(std::stoul(mid));
+                    seg_indices.push_back(n);
                     if (!any || n > max_seg) {
                         max_seg = n;
                         any = true;
@@ -402,16 +419,24 @@ struct SecurityEventWal {
         }
         if (out_replay) {
             out_replay->clear();
-            std::vector<SecurityEventWalRecord> all;
-            for (std::uint32_t s = 0; s <= max_seg && any; ++s) {
+            // Issue #4520: bounded startup replay. Walk segments
+            // newest→oldest and stop once max_replay records are
+            // collected (every caller passes kSecurityEventRingSize);
+            // the enable path must never read the whole directory — a
+            // legacy default dir with 6655 segments (~6.5 GB) spun
+            // restricted startup on `(display "hi")` past timeout 15.
+            std::vector<SecurityEventWalRecord> newest_first;
+            for (std::uint32_t s = max_seg + 1; any && newest_first.size() < max_replay && s > 0;
+                 --s) {
                 const auto path =
-                    (fs::path(dir) / ("security-event-" + std::to_string(s) + ".wal")).string();
+                    (fs::path(dir) / ("security-event-" + std::to_string(s - 1) + ".wal")).string();
                 auto part = read_segment_file(path);
-                all.insert(all.end(), part.begin(), part.end());
+                newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
             }
-            if (all.size() > max_replay)
-                all.erase(all.begin(), all.end() - static_cast<std::ptrdiff_t>(max_replay));
-            *out_replay = std::move(all);
+            if (newest_first.size() > max_replay)
+                newest_first.resize(max_replay);
+            std::reverse(newest_first.begin(), newest_first.end());
+            *out_replay = std::move(newest_first);
             g_security_event_wal_metrics().security_event_wal_replay_count.fetch_add(
                 1, std::memory_order_relaxed);
             if (!out_replay->empty())
@@ -422,6 +447,32 @@ struct SecurityEventWal {
             g_security_event_wal_metrics().security_event_wal_enabled.store(
                 0, std::memory_order_relaxed);
             return false;
+        }
+        // Issue #4520: upgrade path — a dir oversized by older versions
+        // (retention defaulted to 0) is pruned to the cap on first
+        // enable, from the dirent list collected above (exact indices,
+        // tolerates holes) instead of being fully scanned by replay.
+        {
+            const auto cap = ::aura::core::wal_slo::wal_max_segments_retention();
+            if (cap > 0 && seg_indices.size() > cap) {
+                const std::uint64_t total = static_cast<std::uint64_t>(max_seg) + 1;
+                const std::uint64_t floor64 = total > cap ? total - cap : 0;
+                for (const auto n : seg_indices) {
+                    if (static_cast<std::uint64_t>(n) >= floor64)
+                        continue;
+                    const auto p =
+                        (fs::path(dir) / ("security-event-" + std::to_string(n) + ".wal")).string();
+                    if (fs::remove(p, ec)) {
+                        g_security_event_wal_metrics()
+                            .security_event_wal_segment_prune_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    ec.clear();
+                }
+            }
+            const std::uint64_t total_now = static_cast<std::uint64_t>(segment_index) + 1;
+            pruned_upto_ =
+                cap > 0 && total_now > cap ? static_cast<std::uint32_t>(total_now - cap) : 0;
         }
         enabled = true;
         rotate_open_fail_ = false;
@@ -435,6 +486,7 @@ struct SecurityEventWal {
         close_unlocked();
         enabled = false;
         rotate_open_fail_ = false;
+        pruned_upto_ = 0;
         dir.clear();
         g_security_event_wal_metrics().security_event_wal_enabled.store(0,
                                                                         std::memory_order_relaxed);
@@ -625,6 +677,11 @@ struct SecurityEventWal {
         segment_index = 0;
         current_bytes = 0;
         rotate_open_fail_ = false;
+        // Issue #4520: reset the full writer state — a stale tiny
+        // rotate_bytes from a prior test used to leak into the next one,
+        // which now also drags default retention pruning along.
+        rotate_bytes = kDefaultRotateBytes;
+        pruned_upto_ = 0;
     }
 };
 

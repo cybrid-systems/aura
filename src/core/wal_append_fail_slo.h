@@ -370,9 +370,22 @@ inline constexpr std::uint32_t kWalMidLookupSegmentsProduction = 8;
                                                         : kWalMidLookupSegmentsSoft;
 }
 
-// 0 = no prune (unset env keeps today's unbounded files).
+// Issue #4520: default retention cap for the shared WAL dir segment
+// families (security-event-N / audit-N + typed-summary-N). Unset
+// AURA_WAL_MAX_SEGMENTS used to mean 0 = no prune — the default
+// $TMPDIR/aura-audit dir grew to 6.5 GB / 6655 segments over ~6 days
+// and every restricted startup replayed all of it. 16 × ~1 MiB
+// kDefaultRotateBytes segments ≈ 16 MiB per family and stays ≥ 2× the
+// #3338 production wal_mid_lookup_segments() window (8), so full-scan
+// mid joins keep coverage. AURA_WAL_MAX_SEGMENTS=0 still opts out
+// (legacy unbounded); non-zero sizes the cap.
+inline constexpr std::uint32_t kWalDefaultMaxSegments = 16;
+
+// Retention cap for prune_old_segments_unlocked (rotate + enable).
+// Default kWalDefaultMaxSegments (#4520; was 0 = no prune); env
+// AURA_WAL_MAX_SEGMENTS overrides (sizing) or opts out (=0).
 [[nodiscard]] inline std::uint32_t wal_max_segments_retention() noexcept {
-    return wal_env_u32("AURA_WAL_MAX_SEGMENTS", 0);
+    return wal_env_u32("AURA_WAL_MAX_SEGMENTS", kWalDefaultMaxSegments);
 }
 
 // Issue #3970: production/Full explicit-mid continuation past the cheap
