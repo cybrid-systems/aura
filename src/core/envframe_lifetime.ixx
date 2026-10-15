@@ -196,8 +196,7 @@ inline std::uint64_t envframe_lifetime_hold_gen_mismatch_total() noexcept {
 }
 inline std::uint64_t envframe_lifetime_site_constructs(EnvFrameLifetimeSite site) noexcept {
     const auto i = static_cast<std::uint8_t>(site);
-    return i < 3 ? g_envframe_lifetime_stats.site_constructs[i].load(std::memory_order_relaxed)
-                 : 0;
+    return i < 3 ? g_envframe_lifetime_stats.site_constructs[i].load(std::memory_order_relaxed) : 0;
 }
 
 // Issue #2340: post-densify ownership-exit scan counter accessor.
@@ -305,8 +304,8 @@ public:
         const std::uint64_t now =
             host_.hold_generation ? host_.hold_generation(host_.ctx) : compact_generation();
         if (now != hold_gen_at_enter_)
-            g_envframe_lifetime_stats.hold_gen_mismatch_total.fetch_add(
-                1, std::memory_order_relaxed);
+            g_envframe_lifetime_stats.hold_gen_mismatch_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
         // Drop depth after scan so compact waiters see depth==0 only
         // once skip-freed has returned.
         auto cur = g_envframe_active_guard_depth().load(std::memory_order_relaxed);
@@ -393,8 +392,7 @@ inline EnvFrameLifetimeProof snapshot_envframe_lifetime_proof() noexcept {
     p.densify_scan_total =
         g_envframe_lifetime_stats.densify_ownership_scan_total.load(std::memory_order_relaxed);
     p.densify_scan_fail =
-        g_envframe_lifetime_stats.densify_ownership_scan_fail_total.load(
-            std::memory_order_relaxed);
+        g_envframe_lifetime_stats.densify_ownership_scan_fail_total.load(std::memory_order_relaxed);
     p.hold_gen_mismatch_total =
         g_envframe_lifetime_stats.hold_gen_mismatch_total.load(std::memory_order_relaxed);
     const bool fail_densify = (p.densify_scan_fail > 0);
