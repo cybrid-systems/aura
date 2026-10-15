@@ -46,6 +46,22 @@ extern "C" int aura_aot_last_table_bump_owner_scoped(void);
 extern "C" int aura_aot_peer_jit_name_is_soft_stale(const char* name);
 extern "C" int aura_jit_is_deopt_pending(const char* name);
 extern "C" std::uint64_t aura_jit_deopt_pending_count(void);
+// Issue #4521: C-runtime ScalarFn world (strong defs in aura_jit_runtime.cpp).
+extern "C" void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                                 int32_t local_count, int32_t arg_count, int32_t env_count);
+extern "C" void aura_register_fn_named(const char* name, int64_t func_id,
+                                       int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
+                                       int32_t arg_count, int32_t env_count);
+extern "C" void aura_note_ir_func_define(int64_t func_id, const char* name);
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
+extern "C" int64_t aura_alloc_closure(int64_t func_id);
+extern "C" void aura_free_closure(int64_t closure_id);
+extern "C" void aura_closure_set_name(int64_t closure_id, const char* name);
+extern "C" int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc);
+extern "C" int aura_closure_get_must_deopt(int64_t closure_id);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+extern "C" std::size_t aura_closure_slot_count(void);
+extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 
 namespace {
 
@@ -1197,6 +1213,233 @@ static void ac3749_production_facade_evicts_jit_cache() {
     }
 }
 
+// ── Issue #4521: production facade bundle-row erase + pre-drop publish
+// posture. #3749 erased only the bare jit_cache_ name; cache_define
+// stores lowered bundles as name + "#" + position (mul#0), and under
+// owner-scoped multi-eval the frozen facade clocks kept those rows
+// epoch-hits — the next try_jit_execute / exec_jit cache-hit republished
+// the pre-mutate ScalarFn through aura_register_fn_named. The
+// publish→note window let a peer dispatch run it with MustDeopt 0, the
+// #4418 owner exclusion left name-matching closures healable by the
+// quiet residual tick, and the #4405 func-id walk never saw JIT ids
+// (OpMakeClosure closures are unnamed, register_fn_func never bound).
+//   AC1: facade eviction erases name AND name#pos rows from both callers
+//        without over-matching (Fx / other defines survive); Soft parity.
+//   AC2: the drop MustDeopts the unnamed JIT closure (func-id binding);
+//        an unnamed pre-drop reinstall is not healed by the quiet tick;
+//        a named pre-drop republish waives the owner exclusion; dispatch
+//        never enters the restored pre-mutate ScalarFn; a post-store
+//        reemit (new ScalarFn) is reachable again.
+//   AC3: the register note runs under the table unique + workspace write
+//        locks (MustDeopt visible before the workspace write lock
+//        drops) and register_fn_func binds the JIT func_id.
+//   AC4: no new query key, no test_issue_4521.cpp, no docs/design.
+static int64_t ac4521_fn_a(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 452101;
+}
+static int64_t ac4521_fn_b(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 452102;
+}
+
+static void ac4521_facade_bundle_erase_predrop_publish() {
+    std::println("\n--- #4521: facade bundle-row erase + pre-drop publish posture ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+
+    // AC1 source: the facade helper calls the name / name# bundle-row
+    // walk in the same jit_cache_mtx_ window; the #3749 bare erase and
+    // the callers stay.
+    CHECK(ixx.find("Issue #4521") != std::string::npos, "4521: service.ixx cites the issue");
+    {
+        const auto hpos = ixx.find("void evict_jit_cache_after_production_facade_");
+        CHECK(hpos != std::string::npos, "4521 AC1: facade evict helper present");
+        const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 1200);
+        CHECK(hwin.find("erase_jit_cache_bundle_rows_for_define_(name)") != std::string::npos,
+              "4521 AC1: evict helper erases the name#pos bundle rows");
+        CHECK(hwin.find("jit_cache_.erase(name)") != std::string::npos,
+              "4521 AC1: #3749 bare-name erase kept");
+        CHECK(hwin.find("jit_.invalidate_prefix(name.c_str())") != std::string::npos,
+              "4521 AC1: AuraJIT prefix invalidate kept");
+        const auto bpos = ixx.find("void erase_jit_cache_bundle_rows_for_define_");
+        CHECK(bpos != std::string::npos, "4521 AC1: bundle-row walk helper defined");
+        const auto bwin = (bpos == std::string::npos) ? std::string{} : ixx.substr(bpos, 900);
+        CHECK(bwin.find("facade_prefix") != std::string::npos &&
+                  bwin.find("jit_cache_.erase(it)") != std::string::npos,
+              "4521 AC1: same name / name# walk shape as the abort path");
+    }
+    CHECK(svc.find("evict_jit_cache_after_production_facade_(name)") != std::string::npos,
+          "4521 AC1: both service_dirty callers kept");
+
+    // AC3 source: register takes the table unique before the workspace
+    // write lock and runs the #4418 slot note in-lock (owner exclusion
+    // waivable); register_fn_func binds the JIT func_id after publish.
+    {
+        const auto rpos = rt.find("void aura_register_fn_named(const char* name");
+        CHECK(rpos != std::string::npos, "4521 AC3: register_fn_named present");
+        const auto rend = rt.find("\nvoid ", rpos + 1);
+        const auto rwin = rt.substr(rpos, (rend == std::string::npos) ? 5200 : rend - rpos);
+        const auto tlock = rwin.find("table_lock.lock()");
+        const auto wslock = rwin.find("aura_lock_workspace_write()");
+        CHECK(tlock != std::string::npos && wslock != std::string::npos && tlock < wslock,
+              "4521 AC3: table unique taken before the workspace write lock");
+        const auto note = rwin.find("note_jit_slot_installed_for_define_locked(");
+        const auto last_unlock = rwin.rfind("aura_unlock_workspace_write()");
+        CHECK(note != std::string::npos && last_unlock != std::string::npos && note < last_unlock,
+              "4521 AC3: slot note runs before the workspace write lock drops");
+        CHECK(rwin.find("!fn_is_define_dropped_locked(fn)") != std::string::npos,
+              "4521 AC3: owner exclusion waived for a pre-drop publish");
+        CHECK(rwin.find("aura_note_jit_slot_installed_for_define(func_id, name)") ==
+                  std::string::npos,
+              "4521 AC3: post-unlock flag window removed");
+    }
+    {
+        const auto bpos = jit.find("void register_fn_func(int64_t func_id, ScalarFn fn_ptr");
+        CHECK(bpos != std::string::npos, "4521 AC3: register_fn_func present");
+        const auto bend = jit.find("\n    void ", bpos + 1);
+        const auto bwin = jit.substr(bpos, (bend == std::string::npos) ? 3000 : bend - bpos);
+        const auto reg = bwin.find("aura_register_fn_named(name, func_id, fn_ptr");
+        const auto note = bwin.find("aura_note_ir_func_define(func_id, name)");
+        CHECK(reg != std::string::npos && note != std::string::npos && note > reg,
+              "4521 AC3: register_fn_func binds the JIT func_id after publish");
+    }
+    CHECK(rt.find("note_define_dropped_fns_locked(dropped)") != std::string::npos &&
+              rt.find("g_define_dropped_fns") != std::string::npos,
+          "4521 AC2: drop records the removed ScalarFn pointers");
+    CHECK(rt.find("!jit_slot_fn_is_define_dropped_unlocked(cid)") != std::string::npos,
+          "4521 AC2: quiet remount keeps MustDeopt while pre-drop fn installed");
+
+    // AC1 behavior: production face — both callers, negative controls.
+    apply_production_audit_defaults();
+    CHECK(aura_production_defaults_active_probe() != 0, "4521: production face");
+    {
+        CompilerService cs;
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_F");
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_F#0");
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_F#1");
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_Fx");
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_G#0");
+        cs.public_invalidate_function("ac4521_F");
+        CHECK(!cs.public_jit_cache_contains("ac4521_F"),
+              "4521 AC1: bare name evicted (invalidate_function)");
+        CHECK(!cs.public_jit_cache_contains("ac4521_F#0") &&
+                  !cs.public_jit_cache_contains("ac4521_F#1"),
+              "4521 AC1: bundle rows evicted (invalidate_function)");
+        CHECK(cs.public_jit_cache_contains("ac4521_Fx") &&
+                  cs.public_jit_cache_contains("ac4521_G#0"),
+              "4521 AC1: walk does not over-match other keys");
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_H");
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_H#0");
+        cs.public_mark_define_dirty("ac4521_H");
+        CHECK(!cs.public_jit_cache_contains("ac4521_H") &&
+                  !cs.public_jit_cache_contains("ac4521_H#0"),
+              "4521 AC1: mark_define_dirty erases name and bundle rows");
+    }
+    apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        cs.public_jit_cache_insert_dummy_for_test("ac4521_soft");
+        cs.public_invalidate_function("ac4521_soft");
+        CHECK(!cs.public_jit_cache_contains("ac4521_soft"),
+              "4521 AC1: Soft invalidate bare erase unchanged (#3749 AC3 parity)");
+    }
+
+    // AC2 behavior: C-runtime ScalarFn world (same shape as #4510 / #4405).
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "4521 AC2: warm");
+        constexpr int64_t kF = 452100;
+        aura_register_fn_named("ac4521_L#0", kF, ac4521_fn_a, 1, 0, 0);
+        // Production order mirror: register_fn_func binds the JIT id
+        // right after the named publish (#4521 AC3).
+        aura_note_ir_func_define(kF, "ac4521_L#0");
+        const auto cid_own = aura_alloc_closure(kF);
+        aura_closure_set_name(cid_own, "ac4521_L#0");
+        const auto cid_anon = aura_alloc_closure(kF);
+        CHECK(cid_own >= 0 && cid_anon >= 0, "4521 AC2: live closures allocated");
+        // Established bracket (test_remount_force_deopt pattern): the
+        // residual tick remounts every live slot process-wide, so earlier
+        // ACs' synthetic closures must not be left live here. Free all but
+        // this AC's own slots — freed slots are skipped by the drop, the
+        // tick, and dispatch.
+        {
+            const auto nslots = aura_closure_slot_count();
+            for (std::size_t i = 0; i < nslots; ++i) {
+                const auto cid = static_cast<int64_t>(i);
+                if (cid == cid_own || cid == cid_anon)
+                    continue;
+                aura_free_closure(cid);
+            }
+        }
+
+        aura_drop_jit_fn_native_for_define("ac4521_L");
+        CHECK(aura_closure_get_must_deopt(cid_own) == 1,
+              "4521 AC2: drop MustDeopts the owner-named closure");
+        CHECK(aura_closure_get_must_deopt(cid_anon) == 1,
+              "4521 AC2: func-id walk sees the bound JIT id — unnamed closure MustDeopt");
+        CHECK(aura_jit_fn_ptr_for_test(kF) == 0, "4521 AC2: dropped slot is cleared");
+
+        // R5 isolation: an UNNAMED re-install runs no #4418 note (the
+        // closures stay not-foreign), yet the installed pointer is the
+        // pre-drop ScalarFn — the quiet residual tick must not heal.
+        aura_register_fn(kF, ac4521_fn_a, 1, 0, 0);
+        aura_residual_live_closure_remount_tick(8);
+        CHECK(aura_closure_get_must_deopt(cid_own) == 1,
+              "4521 AC2: quiet tick keeps MustDeopt while pre-drop fn installed (named)");
+        CHECK(aura_closure_get_must_deopt(cid_anon) == 1,
+              "4521 AC2: quiet tick keeps MustDeopt while pre-drop fn installed (anon)");
+
+        // R4: the named stale republish of the SAME (pre-drop) ScalarFn
+        // must not owner-exclude the name-matching closure — MustDeopt
+        // and the foreign mark stay, and the tick cannot wash them.
+        aura_register_fn_named("ac4521_L#0", kF, ac4521_fn_a, 1, 0, 0);
+        CHECK(aura_closure_get_must_deopt(cid_own) == 1,
+              "4521 AC2: pre-drop republish does not owner-exclude the named closure");
+        CHECK(aura_closure_get_must_deopt(cid_anon) == 1,
+              "4521 AC2: anon closure stays MustDeopt after the stale republish");
+        aura_residual_live_closure_remount_tick(8);
+        CHECK(aura_closure_get_must_deopt(cid_own) == 1,
+              "4521 AC2: quiet tick cannot heal the pre-drop republish (named)");
+        std::int64_t args[1] = {0};
+        CHECK(aura_closure_call(cid_own, args, 0) != 452101,
+              "4521 AC2: dispatch never enters the restored pre-mutate ScalarFn");
+        CHECK(aura_closure_call(cid_anon, args, 0) != 452101,
+              "4521 AC2: dispatch never enters the restored ScalarFn (anon)");
+
+        // Leave native UNTIL a post-store reemit installs a new ScalarFn:
+        // the fresh pointer is not a drop-removed fn, so the new install
+        // is reachable (native reachability is env-conditional — same
+        // posture as the #4510 synthetic-entry probe).
+        aura_register_fn_named("ac4521_L#0", kF, ac4521_fn_b, 1, 0, 0);
+        const auto cid_new = aura_alloc_closure(kF);
+        CHECK(cid_new >= 0, "4521 AC2: post-reemit closure allocated");
+        if (aura_closure_call(cid_new, args, 0) == 452102) {
+            CHECK(true, "4521 AC2: post-store ScalarFn reachable");
+        } else {
+            std::println("  [4521] synthetic native not reachable post-reemit in this env");
+        }
+        aura_free_closure(cid_new);
+        aura_free_closure(cid_own);
+        aura_free_closure(cid_anon);
+    }
+    apply_dev_audit_defaults();
+
+    // AC4: hygiene.
+    CHECK(ixx.find("schema-4521") == std::string::npos &&
+              rt.find("schema-4521") == std::string::npos,
+          "4521 AC4: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4521.cpp").empty(),
+          "4521 AC4: no test_issue_4521.cpp");
+    CHECK(read_file("docs/design/4521-facade-bundle-erase.md").empty(),
+          "4521 AC4: no docs/design/4521-*");
+}
+
 // ── Issue #3975: owner-scoped freeze leaves expire_stale_live_closures_
 // vacuous. Name-precise MustDeopt + poison + TLS apply-epoch bump so
 // owner apply_closure(F) cannot eval_flat the pre-mutate body. Peer G
@@ -1881,6 +2124,13 @@ int run_test_issue_3112() {
     // facade-invalidated root lose jit_cache_/native too (owner-scoped
     // MustDeopt by name); Soft / Off unchanged.
     ac4146_production_facade_cone_jit_drop();
+
+    // Issue #4521: production facade erases name#pos bundle rows; the
+    // register note is visible before the workspace write lock drops; a
+    // pre-drop ScalarFn publish waives the #4418 owner exclusion and the
+    // quiet residual tick keeps MustDeopt until a post-store reemit
+    // installs a new ScalarFn.
+    ac4521_facade_bundle_erase_predrop_publish();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {

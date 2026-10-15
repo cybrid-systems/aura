@@ -1392,6 +1392,14 @@ static void stamp_closure_table_epoch_locked(size_t cid) noexcept {
         g_closure_table_epochs[cid] = aura_aot_func_table_epoch();
 }
 
+// Issue #4521: pre-drop ScalarFn posture. Defined with the ScalarFn
+// registry below: fn_is_define_dropped_locked reports whether a pointer
+// is one a define drop removed; the slot variant resolves the closure's
+// live fn first. Readers hold the closure-table unique (quiet residual
+// tick) or the workspace write lock (register publish).
+static bool fn_is_define_dropped_locked(int64_t (*fn)(int64_t*, uint32_t)) noexcept;
+static bool jit_slot_fn_is_define_dropped_unlocked(std::size_t cid) noexcept;
+
 // Issue #3503: capture remount success restamps env_gen only. Clear
 // MustDeopt iff dual-fresh already holds on the unstamped C-bridge /
 // defuse / table (otherwise residual tick would wash leave-native).
@@ -1417,7 +1425,13 @@ static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
         // Issue #4417: a fresh remount heals remount-fail. Issue #4418: a
         // foreign jit slot stays MustDeopt and keeps the overflow fence.
         closure_remount_fail_sticky_clear_unlocked(cid);
-        if (!closure_slot_foreign_unlocked(cid)) {
+        // Issue #4521: an unnamed pre-drop reinstall publishes without a
+        // #4418 note, so the slot is not foreign — but the installed
+        // pointer is still a drop-removed (pre-mutate) ScalarFn. The
+        // quiet residual tick must not heal MustDeopt while that pointer
+        // sits in the slot; a post-store reemit installs a different fn
+        // and heals normally.
+        if (!closure_slot_foreign_unlocked(cid) && !jit_slot_fn_is_define_dropped_unlocked(cid)) {
             if (cid < g_closure_must_deopt.size())
                 g_closure_must_deopt[cid] = 0;
             // Issue #3323: remount heal with dual-fresh green disarms the
@@ -4646,6 +4660,68 @@ static JitScalarFn jit_live_fn_for_id(const int64_t func_id) noexcept {
     return nullptr;
 }
 
+// Issue #4521: ScalarFn pointers removed by define drops. A later
+// publish of one of these is the pre-mutate restore, not a post-store
+// reemit: the #4418 owner exclusion is waived for it and the quiet
+// residual tick keeps MustDeopt while it sits in a slot. The set has its
+// own mutex — record runs under the drop's workspace window, readers
+// hold the closure-table unique (tick) or the workspace write lock
+// (register). Dedup + bounded; drops are rare.
+static constexpr std::size_t kMaxDefineDroppedFns = 256;
+static std::vector<int64_t (*)(int64_t*, uint32_t)> g_define_dropped_fns;
+static std::mutex g_define_dropped_fns_mtx;
+
+static void
+note_define_dropped_fns_locked(const std::vector<int64_t (*)(int64_t*, uint32_t)>& dropped) {
+    std::lock_guard<std::mutex> lock(g_define_dropped_fns_mtx);
+    for (auto fn : dropped) {
+        if (!fn)
+            continue;
+        bool seen = false;
+        for (auto p : g_define_dropped_fns) {
+            if (p == fn) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen)
+            g_define_dropped_fns.push_back(fn);
+    }
+    if (g_define_dropped_fns.size() > kMaxDefineDroppedFns)
+        g_define_dropped_fns.erase(g_define_dropped_fns.begin(),
+                                   g_define_dropped_fns.end() -
+                                       static_cast<std::ptrdiff_t>(kMaxDefineDroppedFns));
+}
+
+static bool fn_is_define_dropped_locked(int64_t (*fn)(int64_t*, uint32_t)) noexcept {
+    if (!fn)
+        return false;
+    std::lock_guard<std::mutex> lock(g_define_dropped_fns_mtx);
+    for (auto p : g_define_dropped_fns) {
+        if (p == fn)
+            return true;
+    }
+    return false;
+}
+
+// Issue #4521: resolves the closure slot's live fn through the same
+// primary / overflow registry the drop cleared, then checks the
+// dropped-pointer set. Caller holds the closure-table unique.
+static bool jit_slot_fn_is_define_dropped_unlocked(std::size_t cid) noexcept {
+    if (cid >= g_closure_func_ids.size())
+        return false;
+    const auto fid = g_closure_func_ids[cid];
+    int64_t (*fn)(int64_t*, uint32_t) = nullptr;
+    if (jit_id_in_primary(fid)) {
+        fn = g_jit_fns[fid].fn;
+    } else if (fid >= kJitPrimaryFnSlots) {
+        auto it = g_jit_fns_overflow.find(fid);
+        if (it != g_jit_fns_overflow.end())
+            fn = it->second.fn;
+    }
+    return fn_is_define_dropped_locked(fn);
+}
+
 // Issue #4388: a try_jit cache hit samples these, then aura_register_fn*
 // runs after the workspace write lock. A Workspace-held facade skips
 // mutate_mtx_ and can bump the mutation epoch and drop native before
@@ -4748,6 +4824,11 @@ void aura_note_ir_func_define(int64_t func_id, const char* name) {
     aura_unlock_workspace_write();
 }
 
+// Issue #4521: locked body of the #4418 note; defined next to the
+// register publish that now calls it in-lock. Caller holds the
+// g_closure_table_mtx unique.
+static void note_jit_slot_installed_for_define_locked(int64_t slot, const char* name);
+
 // Issue #4418: slot is the jit index (or stable id) just installed for
 // `name`. Every live closure whose g_closure_func_ids is that slot, and
 // whose own name is not `name`, MustDeopts. Name equality is the owner
@@ -4757,19 +4838,7 @@ void aura_note_jit_slot_installed_for_define(int64_t slot, const char* name) {
     if (slot < 0 || name == nullptr || name[0] == '\0')
         return;
     std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
-    const auto n = g_closure_func_ids.size();
-    if (g_closure_must_deopt.size() < n)
-        g_closure_must_deopt.resize(n, 0);
-    for (std::size_t cid = 0; cid < n; ++cid) {
-        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
-            continue;
-        if (g_closure_func_ids[cid] != slot)
-            continue;
-        if (cid < g_closure_names.size() && g_closure_names[cid] == name)
-            continue;
-        g_closure_must_deopt[cid] = 1;
-        closure_slot_foreign_note_unlocked(cid);
-    }
+    note_jit_slot_installed_for_define_locked(slot, name);
 }
 
 // Issue #660 Option 1: register a function by both id AND name.
@@ -4778,6 +4847,15 @@ void aura_note_jit_slot_installed_for_define(int64_t slot, const char* name) {
 // is used as a cross-module identifier.
 void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                             int32_t local_count, int32_t arg_count, int32_t env_count) {
+    // Issue #4521: hold the closure-table unique across the publish.
+    // aura_closure_dispatch_native_checked takes the shared table lock
+    // from entry through the native call; the #4418 note must set
+    // MustDeopt while we still hold the unique, so a peer call in the
+    // publish→note window cannot observe MustDeopt 0 and invoke the
+    // restored ScalarFn. Table before workspace — the same order the
+    // native drop uses when it owns both.
+    std::unique_lock<std::shared_mutex> table_lock(g_closure_table_mtx, std::defer_lock);
+    table_lock.lock();
     aura_lock_workspace_write();
     // Issue #4388: same refuse as aura_register_fn. Do not write the
     // pre-mutate ScalarFn back and do not clear name soft-stale.
@@ -4804,12 +4882,38 @@ void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int
         // peer register; Soft/Off zero-cost when the table is empty).
         aura_aot_clear_peer_jit_name_soft_stale(name);
     }
-    aura_unlock_workspace_write();
-    // Issue #4418: flag after the write lock drops. A refused republish
-    // and a staged reload return above without publishing, so they do
-    // not flag. The table lock is not taken under the workspace lock.
+    // Issue #4418 note moved in-lock (#4521): MustDeopt and the foreign
+    // bit are visible to dispatch before the workspace write lock drops.
+    // A refused republish and a staged reload return above without
+    // publishing, so they do not flag.
     if (name && *name)
-        aura_note_jit_slot_installed_for_define(func_id, name);
+        note_jit_slot_installed_for_define_locked(func_id, name);
+    aura_unlock_workspace_write();
+}
+
+// Issue #4521: locked body of the #4418 note. Caller holds the
+// g_closure_table_mtx unique. Resolves the just-published fn from the
+// slot so the owner exclusion can be waived when the published pointer
+// is still a define-dropped (pre-mutate) ScalarFn — a closure named
+// exactly `name` is not the owner of a restored pre-drop fn.
+static void note_jit_slot_installed_for_define_locked(int64_t slot, const char* name) {
+    if (slot < 0 || name == nullptr || name[0] == '\0')
+        return;
+    const auto n = g_closure_func_ids.size();
+    if (g_closure_must_deopt.size() < n)
+        g_closure_must_deopt.resize(n, 0);
+    const auto fn = jit_live_fn_for_id(slot);
+    const bool owner_exclusion = !fn_is_define_dropped_locked(fn);
+    for (std::size_t cid = 0; cid < n; ++cid) {
+        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+            continue;
+        if (g_closure_func_ids[cid] != slot)
+            continue;
+        if (owner_exclusion && cid < g_closure_names.size() && g_closure_names[cid] == name)
+            continue;
+        g_closure_must_deopt[cid] = 1;
+        closure_slot_foreign_note_unlocked(cid);
+    }
 }
 
 // Issue #4405: caller holds the workspace write lock. Fill define_name on
@@ -5119,6 +5223,11 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
         if (holds(g_closure_cache[i].fn))
             clear_closure_cache_entry(g_closure_cache[i]);
     }
+    // Issue #4521: record the removed ScalarFn pointers. A later publish
+    // of one of these is the pre-mutate restore — the #4418 owner
+    // exclusion is waived for it and the quiet residual tick keeps
+    // MustDeopt while it sits in a slot.
+    note_define_dropped_fns_locked(dropped);
     // Issue #4388: publishers that sampled this generation before the
     // drop must not write the cleared ScalarFn back.
     g_jit_define_drop_gen.fetch_add(1, std::memory_order_release);
