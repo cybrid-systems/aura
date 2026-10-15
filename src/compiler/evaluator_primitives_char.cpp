@@ -172,6 +172,18 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             auto idx = as_pair_idx(v);
             if (idx >= ev.pairs_.size())
                 break;
+            // Issue #4518: kEffectNone inference means dispatch never choked
+            // a foreign list here. Compare the mint stamp BEFORE any car is
+            // copied into the UTF-8 accumulator; the helper records the
+            // IsolationDeny, Soft/Off / record 0 / short stamps stay allow,
+            // and the source list is unchanged. Same reader contract as
+            // string->list (#4505).
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "list->string"))
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "list->string: cross-tenant pair slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
             auto car = ev.pairs_[idx].car;
             if (is_int(car))
                 utf8_append(result, as_int(car)); // Issue #4472
@@ -275,6 +287,15 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto idx = types::as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
+        // Issue #4518: the % names infer kEffectNone (#4500), so dispatch
+        // never choked a foreign string ref. Compare the intern stamp BEFORE
+        // any string_heap_ byte is encoded; the helper records the
+        // IsolationDeny, Soft/Off / record 0 / short stamps stay allow.
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%base64-encode"))
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "%base64-encode: cross-tenant string slot read denied (#4505)",
+                ev.primitive_error_counter_ptr());
         static const char kAlphabet[] =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         const std::string& data = ev.string_heap_[idx];
@@ -317,6 +338,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto idx = types::as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
+        // Issue #4518: same reader gate as %base64-encode — fail closed
+        // before any foreign byte is decoded into the new string.
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%base64-decode"))
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "%base64-decode: cross-tenant string slot read denied (#4505)",
+                ev.primitive_error_counter_ptr());
         const std::string& in = ev.string_heap_[idx];
         auto b64val = [](unsigned char c) -> int {
             if (c >= 'A' && c <= 'Z')
@@ -359,6 +387,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto idx = types::as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
+        // Issue #4518: same reader gate as the base64 pair — fail closed
+        // before any foreign byte is hex-encoded (#4500: % names stay
+        // kEffectNone, so the stamp compare lives in the body).
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%hex-encode"))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "%hex-encode: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
         static const char kHex[] = "0123456789abcdef";
         const std::string& data = ev.string_heap_[idx];
         std::string out;
@@ -378,6 +413,12 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto idx = types::as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
+        // Issue #4518: same reader gate — fail closed before any foreign
+        // byte is hex-decoded into the new string.
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%hex-decode"))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "%hex-decode: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
         const std::string& in = ev.string_heap_[idx];
         auto hexval = [](unsigned char c) -> int {
             if (c >= '0' && c <= '9')
@@ -480,8 +521,18 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             std::memcpy(bytes.data() + i * 8, &fill, 8);
         return new_f64(std::move(bytes));
     });
-    add("f64vector-length", [f64err, f64slot](std::span<const EvalValue> a) -> EvalValue {
-        const auto bytes = a.empty() ? -1 : f64slot(a[0]);
+    add("f64vector-length", [f64err, &ev, f64slot](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return f64err("f64vector-length: expected an f64vector");
+        // Issue #4518: the slot size is payload metadata (an f64vector is a
+        // string slot), so compare the intern stamp before f64slot reads it.
+        // kEffectNone inference means dispatch never choked a foreign ref;
+        // the helper records the IsolationDeny and record 0 / short stamps /
+        // Soft-Off stay allow. f64vector-set! keeps its own Mutate gate.
+        const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-length"))
+            return f64err("f64vector-length: cross-tenant string slot read denied (#4505)");
+        const auto bytes = f64slot(a[0]);
         if (bytes < 0)
             return f64err("f64vector-length: expected an f64vector");
         return make_int(bytes / 8);
@@ -496,6 +547,11 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
         if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
             return f64err("f64vector-ref: expected (f64vector index)");
+        // Issue #4518: the returned double is the payload — compare the
+        // intern stamp under the storage lock (same shape as the #4428
+        // f64vector-set! gate) before any byte is copied out.
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-ref"))
+            return f64err("f64vector-ref: cross-tenant string slot read denied (#4505)");
         const auto& s = ev.string_heap_[idx];
         const auto n = static_cast<std::int64_t>(s.size() / 8);
         if (i < 0 || i >= n)
@@ -536,6 +592,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         if (xidx >= ev.string_heap_.size() || ev.string_heap_[xidx].size() % 8 != 0 ||
             yidx >= ev.string_heap_.size() || ev.string_heap_[yidx].size() % 8 != 0)
             return f64err("f64vector-dot: expected two f64vectors");
+        // Issue #4518: the MAC result leaks element values, so both slots
+        // need the intern-stamp compare before any byte is scanned (same
+        // locked-region shape as f64vector-set! / f64vector-ref).
+        if (!ev.inrange_string_tenant_allows(xidx, /*required_effects=*/0, "f64vector-dot"))
+            return f64err("f64vector-dot: cross-tenant string slot read denied (#4505)");
+        if (!ev.inrange_string_tenant_allows(yidx, /*required_effects=*/0, "f64vector-dot"))
+            return f64err("f64vector-dot: cross-tenant string slot read denied (#4505)");
         const auto& x = ev.string_heap_[xidx];
         const auto& y = ev.string_heap_[yidx];
         const auto nx = static_cast<std::int64_t>(x.size() / 8);
@@ -601,6 +664,10 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
             if (idx >= ev.string_heap_.size())
                 return f64err("bytes->f64vector: expected a byte string");
+            // Issue #4518: the snapshot IS the payload copy — stamp compare
+            // first, exactly like the f64vector-set! write gate (#4428).
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "bytes->f64vector"))
+                return f64err("bytes->f64vector: cross-tenant string slot read denied (#4505)");
             src = ev.string_heap_[idx];
         }
         return from_bytes(a, src, 8, "bytes->f64vector");
@@ -616,16 +683,27 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
                 if (idx >= ev.string_heap_.size())
                     return f64err("f32-bytes->f64vector: expected a byte string");
+                // Issue #4518: same snapshot gate as bytes->f64vector.
+                if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
+                                                     "f32-bytes->f64vector"))
+                    return f64err(
+                        "f32-bytes->f64vector: cross-tenant string slot read denied (#4505)");
                 src = ev.string_heap_[idx];
             }
             return from_bytes(a, src, 4, "f32-bytes->f64vector");
         });
     // (bytes-i32-ref str byte-offset) — little-endian int32 (checkpoint headers).
     add("bytes-i32-ref", [&ev, f64err](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]) ||
-            types::as_string_idx(a[0]) >= ev.string_heap_.size())
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return f64err("bytes-i32-ref: expected (string byte-offset)");
-        const auto& s = ev.string_heap_[types::as_string_idx(a[0])];
+        const auto idx = types::as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return f64err("bytes-i32-ref: expected (string byte-offset)");
+        // Issue #4518: the four copied bytes are the payload — compare the
+        // intern stamp before any byte is copied out.
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "bytes-i32-ref"))
+            return f64err("bytes-i32-ref: cross-tenant string slot read denied (#4505)");
+        const auto& s = ev.string_heap_[idx];
         const auto off = as_int(a[1]);
         if (off < 0 || static_cast<std::size_t>(off) + 4 > s.size())
             return f64err("bytes-i32-ref: offset out of range");

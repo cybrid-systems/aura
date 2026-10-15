@@ -3064,6 +3064,333 @@ static void ac4505_inrange_reader_prims() {
     ev.set_effect_sandbox_mode(0);
 }
 
+// Issue #4518: the kEffectNone reader bypass. apply copies pairs_[idx].car
+// into the callee arg vector; list->string walks the spine; %base64-encode /
+// %base64-decode / %hex-encode / %hex-decode copy string_heap_ bytes
+// (#4500: % names stay kEffectNone); f64vector-length / -ref / -dot and
+// bytes->f64vector / f32-bytes->f64vector / bytes-i32-ref read the string
+// slot that backs an f64vector (#4509 lock is the UAF fix, not a stamp
+// compare). infer_required_effects_from_name returns kEffectNone for every
+// one, so dispatch never choked a foreign mailbox ref. Same-Evaluator
+// Restricted+MT: tenant 7 mints, tenant 9 reads — each listed prim must
+// consult the existing helper (required_effects=0, its own name) BEFORE any
+// car / byte is copied, deny with the #4505 error shape, leave the source
+// slot unchanged, and record exactly one IsolationDeny. f64vector-set! is
+// the already-gated #4428 sibling and stays on kEffectMutate. Record 0 /
+// short stamp arrays / Soft-Off stay allow; no Effect bit, no second body
+// require_effect, no new query key.
+static void ac4518_inrange_apply_encoding_f64_readers() {
+    std::println("\n--- #4518: apply / %-encoding / f64 reader tenant gate ---");
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_error_idx;
+    using aura::compiler::types::as_float;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::EvalValue;
+    using aura::compiler::types::is_float;
+    using aura::compiler::types::is_string;
+    using aura::compiler::types::make_float;
+    using aura::compiler::types::make_string;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+    auto lookup = [&](const char* name) { return ev.primitives().lookup(name); };
+    auto apply_fn = lookup("apply");
+    auto l2s_fn = lookup("list->string");
+    auto b64e_fn = lookup("%base64-encode");
+    auto b64d_fn = lookup("%base64-decode");
+    auto hexe_fn = lookup("%hex-encode");
+    auto hexd_fn = lookup("%hex-decode");
+    auto f64len_fn = lookup("f64vector-length");
+    auto f64ref_fn = lookup("f64vector-ref");
+    auto f64dot_fn = lookup("f64vector-dot");
+    auto b2f64_fn = lookup("bytes->f64vector");
+    auto f32b2f64_fn = lookup("f32-bytes->f64vector");
+    auto i32ref_fn = lookup("bytes-i32-ref");
+    auto f64set_fn = lookup("f64vector-set!");
+    auto cons_fn = lookup("cons");
+    auto list_fn = lookup("list");
+    auto car_fn = lookup("car");
+    CHECK(apply_fn && l2s_fn && b64e_fn && b64d_fn && hexe_fn && hexd_fn && f64len_fn &&
+              f64ref_fn && f64dot_fn && b2f64_fn && f32b2f64_fn && i32ref_fn && f64set_fn &&
+              cons_fn && list_fn && car_fn,
+          "4518: reader prims present");
+    if (!(apply_fn && l2s_fn && b64e_fn && b64d_fn && hexe_fn && hexd_fn && f64len_fn &&
+          f64ref_fn && f64dot_fn && b2f64_fn && f32b2f64_fn && i32ref_fn && f64set_fn && cons_fn &&
+          list_fn && car_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    const EvalValue car_prim = [&] {
+        auto v = cs.eval("car"); // prim value for the apply fn slot
+        return v ? *v : make_void();
+    }();
+    CHECK(aura::compiler::types::is_primitive(car_prim), "4518: car prim value resolvable");
+
+    auto err_msg = [&](const aura::compiler::types::EvalValue& r) -> std::string {
+        if (!is_error(r))
+            return {};
+        const auto eidx = static_cast<std::size_t>(as_error_idx(r));
+        if (eidx >= ev.error_values_.size() || !is_string(ev.error_values_[eidx]))
+            return {};
+        return ev.copy_string_heap_at(
+            static_cast<std::size_t>(as_string_idx(ev.error_values_[eidx])));
+    };
+
+    // Tenant 7 mints the shared payloads (real stamps: tenant+1, non-zero).
+    // arglist7 = ((42 . 1)) — apply spreads its elements, so car receives the
+    // pair. cps7 = (104 105) — list->string UTF-8-encodes code points "hi".
+    EvalValue lst7, str7, f647, bytes7, arglist7, cps7;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        lst7 = (*list_fn)({make_int(10), make_int(20), make_int(30)});
+        str7 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("hello")));
+        f647 = (*lookup("make-f64vector"))({make_int(2), make_float(1.5)});
+        bytes7 = make_string(static_cast<std::uint64_t>(
+            ev.push_string_heap(std::string("\x00\x00\x00\x00\x00\x00\xf0\x3f", 8))));
+        const auto p7 = (*cons_fn)({make_int(42), make_int(1)});
+        arglist7 = (*list_fn)({p7});
+        cps7 = (*list_fn)({make_int(104), make_int(105)});
+    }
+    CHECK(!is_error(lst7) && is_string(str7) && !is_error(f647) && is_string(bytes7) &&
+              !is_error(arglist7) && !is_error(cps7),
+          "4518: tenant 7 mints the shared payloads");
+    if (!(!is_error(lst7) && is_string(str7) && !is_error(f647) && is_string(bytes7) &&
+          !is_error(arglist7) && !is_error(cps7))) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        return;
+    }
+
+    // One denied call per prim; each op must audit exactly one
+    // IsolationDeny, return the #4505 deny shape, and leak no payload.
+    reset_security_event_ring_for_test();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto r_apply = (*apply_fn)({car_prim, lst7});
+        auto r_l2s = (*l2s_fn)({lst7});
+        auto r_b64e = (*b64e_fn)({str7});
+        auto r_b64d = (*b64d_fn)({str7});
+        auto r_hexe = (*hexe_fn)({str7});
+        auto r_hexd = (*hexd_fn)({str7});
+        auto r_len = (*f64len_fn)({f647});
+        auto r_ref = (*f64ref_fn)({f647, make_int(0)});
+        auto r_dot = (*f64dot_fn)({f647, f647});
+        auto r_b2f = (*b2f64_fn)({bytes7});
+        auto r_f32b = (*f32b2f64_fn)({bytes7});
+        auto r_i32 = (*i32ref_fn)({bytes7, make_int(0)});
+        auto r_set = (*f64set_fn)({f647, make_int(0), make_float(9.0)});
+        CHECK(is_error(r_apply), "4518: tenant 9 apply denied (args never built)");
+        CHECK(is_error(r_l2s), "4518: tenant 9 list->string denied");
+        CHECK(is_error(r_b64e), "4518: tenant 9 %base64-encode denied");
+        CHECK(is_error(r_b64d), "4518: tenant 9 %base64-decode denied");
+        CHECK(is_error(r_hexe), "4518: tenant 9 %hex-encode denied");
+        CHECK(is_error(r_hexd), "4518: tenant 9 %hex-decode denied");
+        CHECK(is_error(r_len), "4518: tenant 9 f64vector-length denied");
+        CHECK(is_error(r_ref), "4518: tenant 9 f64vector-ref denied");
+        CHECK(is_error(r_dot), "4518: tenant 9 f64vector-dot denied");
+        CHECK(is_error(r_b2f), "4518: tenant 9 bytes->f64vector denied");
+        CHECK(is_error(r_f32b), "4518: tenant 9 f32-bytes->f64vector denied");
+        CHECK(is_error(r_i32), "4518: tenant 9 bytes-i32-ref denied");
+        CHECK(is_error(r_set), "4518: tenant 9 f64vector-set! still denied (#4428 sibling)");
+        // Deny shape: exact #4505 texts, no payload bytes in the message.
+        CHECK(err_msg(r_apply) == "apply: cross-tenant pair slot read denied (#4505)",
+              "4518: apply deny shape exact");
+        CHECK(err_msg(r_l2s) == "list->string: cross-tenant pair slot read denied (#4505)",
+              "4518: list->string deny shape exact, list bytes absent");
+        CHECK(err_msg(r_ref) == "f64vector-ref: cross-tenant string slot read denied (#4505)",
+              "4518: f64vector-ref deny shape exact, double absent");
+        CHECK(err_msg(r_i32) == "bytes-i32-ref: cross-tenant string slot read denied (#4505)",
+              "4518: bytes-i32-ref deny shape exact, word absent");
+        CHECK(err_msg(r_b64e).find("aGVsbG8") == std::string::npos &&
+                  err_msg(r_b64e).find("denied (#4505)") != std::string::npos,
+              "4518: %base64-encode denies with the deny shape, no encoding leak");
+        CHECK(err_msg(r_hexe).find("68656c6c6f") == std::string::npos,
+              "4518: %hex-encode leaks no hex payload");
+        CHECK(err_msg(r_set).find("#4428") != std::string::npos,
+              "4518: f64vector-set! keeps its #4428 write-deny shape");
+        // One IsolationDeny row per denied prim, op = the prim name.
+        CHECK(ring_isolation_deny_count("apply") == 1, "4518: one IsolationDeny apply");
+        CHECK(ring_isolation_deny_count("list->string") == 1,
+              "4518: one IsolationDeny list->string");
+        CHECK(ring_isolation_deny_count("%base64-encode") == 1,
+              "4518: one IsolationDeny %base64-encode");
+        CHECK(ring_isolation_deny_count("%base64-decode") == 1,
+              "4518: one IsolationDeny %base64-decode");
+        CHECK(ring_isolation_deny_count("%hex-encode") == 1, "4518: one IsolationDeny %hex-encode");
+        CHECK(ring_isolation_deny_count("%hex-decode") == 1, "4518: one IsolationDeny %hex-decode");
+        CHECK(ring_isolation_deny_count("f64vector-length") == 1,
+              "4518: one IsolationDeny f64vector-length");
+        CHECK(ring_isolation_deny_count("f64vector-ref") == 1,
+              "4518: one IsolationDeny f64vector-ref");
+        CHECK(ring_isolation_deny_count("f64vector-dot") == 1,
+              "4518: one IsolationDeny f64vector-dot (x slot denies first)");
+        CHECK(ring_isolation_deny_count("bytes->f64vector") == 1,
+              "4518: one IsolationDeny bytes->f64vector");
+        CHECK(ring_isolation_deny_count("f32-bytes->f64vector") == 1,
+              "4518: one IsolationDeny f32-bytes->f64vector");
+        CHECK(ring_isolation_deny_count("bytes-i32-ref") == 1,
+              "4518: one IsolationDeny bytes-i32-ref");
+        CHECK(ring_isolation_deny_count("f64vector-set!") == 1,
+              "4518: one IsolationDeny f64vector-set! (gated sibling)");
+    }
+
+    // Owner still reads its own mints; the denied reads left every source
+    // slot unchanged (readers, not stores).
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto car0 = (*apply_fn)({car_prim, arglist7});
+        CHECK(aura::compiler::types::is_int(car0) && as_int(car0) == 42,
+              "4518: owner apply spreads the arg list into car");
+        auto l2s = (*l2s_fn)({cps7});
+        CHECK(is_string(l2s) &&
+                  ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(l2s))) == "hi",
+              "4518: owner list->string builds the full string");
+        auto b64 = (*b64e_fn)({str7});
+        CHECK(is_string(b64) && ev.copy_string_heap_at(
+                                    static_cast<std::size_t>(as_string_idx(b64))) == "aGVsbG8=",
+              "4518: owner %base64-encode encodes");
+        auto b64d = (*b64d_fn)({b64});
+        CHECK(is_string(b64d) &&
+                  ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(b64d))) == "hello",
+              "4518: owner %base64-decode roundtrips");
+        auto hexe = (*hexe_fn)({str7});
+        CHECK(is_string(hexe) && ev.copy_string_heap_at(
+                                     static_cast<std::size_t>(as_string_idx(hexe))) == "68656c6c6f",
+              "4518: owner %hex-encode encodes");
+        auto hexd = (*hexd_fn)({hexe});
+        CHECK(is_string(hexd) &&
+                  ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(hexd))) == "hello",
+              "4518: owner %hex-decode roundtrips");
+        auto len = (*f64len_fn)({f647});
+        CHECK(aura::compiler::types::is_int(len) && as_int(len) == 2,
+              "4518: owner f64vector-length");
+        auto e0 = (*f64ref_fn)({f647, make_int(0)});
+        auto e1 = (*f64ref_fn)({f647, make_int(1)});
+        CHECK(is_float(e0) && is_float(e1) && as_float(e0) == 1.5 && as_float(e1) == 1.5,
+              "4518: owner f64vector-ref reads; denied reads changed nothing");
+        auto dot = (*f64dot_fn)({f647, f647});
+        CHECK(is_float(dot) && as_float(dot) == 4.5, "4518: owner f64vector-dot MACs");
+        auto b2f = (*b2f64_fn)({bytes7});
+        CHECK(is_string(b2f), "4518: owner bytes->f64vector mints an f64vector");
+        if (is_string(b2f)) {
+            auto d = (*f64ref_fn)({b2f, make_int(0)});
+            CHECK(is_float(d) && as_float(d) == 1.0, "4518: owner snapshot decodes 1.0");
+        }
+        auto f32b = (*f32b2f64_fn)({bytes7});
+        if (is_string(f32b)) {
+            auto d = (*f64ref_fn)({f32b, make_int(0)});
+            CHECK(is_float(d) && as_float(d) == 0.0, "4518: owner f32 widen of the zero bytes");
+        }
+        auto w0 = (*i32ref_fn)({bytes7, make_int(0)});
+        CHECK(aura::compiler::types::is_int(w0) && as_int(w0) == 0,
+              "4518: owner bytes-i32-ref reads; source bytes unchanged");
+        CHECK(ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(str7))) == "hello",
+              "4518: tenant 7 string unchanged after the denies");
+        CHECK(ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(bytes7))).size() == 8,
+              "4518: tenant 7 byte string unchanged after the denies");
+        // The #4428 sibling gate still allows the owner write.
+        auto setok = (*f64set_fn)({f647, make_int(1), make_float(2.5)});
+        CHECK(!is_error(setok), "4518: owner f64vector-set! lands");
+        auto e1b = (*f64ref_fn)({f647, make_int(1)});
+        CHECK(is_float(e1b) && as_float(e1b) == 2.5, "4518: owner write is visible to the owner");
+    }
+
+    // Record 0 / short stamp array: the helper is already source-cited for
+    // the documented allow (#4428/#4431 windows below and above); Soft-Off
+    // proves the not-prod arm behaviorally — foreign reads copy the payload
+    // and record no IsolationDeny.
+    reset_security_event_ring_for_test();
+    ev.set_effect_sandbox_mode(0);
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto car0 = (*apply_fn)({car_prim, arglist7});
+        CHECK(aura::compiler::types::is_int(car0) && as_int(car0) == 42,
+              "4518: Off apply copies the payload");
+        auto l2s = (*l2s_fn)({cps7});
+        CHECK(is_string(l2s) &&
+                  ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(l2s))) == "hi",
+              "4518: Off list->string copies");
+        auto b64 = (*b64e_fn)({str7});
+        CHECK(is_string(b64) && ev.copy_string_heap_at(
+                                    static_cast<std::size_t>(as_string_idx(b64))) == "aGVsbG8=",
+              "4518: Off %base64-encode copies");
+        auto e0 = (*f64ref_fn)({f647, make_int(0)});
+        CHECK(is_float(e0) && as_float(e0) == 1.5, "4518: Off f64vector-ref copies");
+        auto w0 = (*i32ref_fn)({bytes7, make_int(0)});
+        CHECK(aura::compiler::types::is_int(w0) && as_int(w0) == 0,
+              "4518: Off bytes-i32-ref copies");
+        CHECK(!ring_has_isolation_deny("apply") && !ring_has_isolation_deny("list->string") &&
+                  !ring_has_isolation_deny("%base64-encode") &&
+                  !ring_has_isolation_deny("f64vector-ref") &&
+                  !ring_has_isolation_deny("bytes-i32-ref"),
+              "4518: Off records no reader IsolationDeny");
+    }
+
+    // Source-cite windows: every new gate lives in the prim body, ahead of
+    // any copy, and none of them add a require_effect choke.
+    const auto rt_src = read_file("src/compiler/evaluator_primitives_runtime.cpp");
+    const auto apos = rt_src.find("add(\"apply\"");
+    CHECK(apos != std::string::npos, "4518: apply body located");
+    if (apos != std::string::npos) {
+        const auto win = rt_src.substr(apos, 2200);
+        const auto gate = win.find("inrange_slot_tenant_allows");
+        const auto copy = win.find("args.push_back");
+        CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
+              "4518: apply gate precedes the arg-vector build");
+        CHECK(win.find("require_effect") == std::string::npos, "4518: apply stays body-choke-free");
+    }
+    CHECK(rt_src.find("apply: cross-tenant pair slot read denied (#4505)") != std::string::npos,
+          "4518: apply deny shape present");
+    const auto char_src = read_file("src/compiler/evaluator_primitives_char.cpp");
+    for (const auto* name : {"list->string", "%base64-encode", "%base64-decode", "%hex-encode",
+                             "%hex-decode", "f64vector-length", "f64vector-ref", "f64vector-dot",
+                             "bytes->f64vector", "f32-bytes->f64vector", "bytes-i32-ref"}) {
+        const auto p = char_src.find(std::format("add(\"{}\"", name));
+        CHECK(p != std::string::npos, std::format("4518: {} body located", name));
+        if (p == std::string::npos)
+            continue;
+        const auto win = char_src.substr(p, 1600);
+        CHECK(win.find("inrange_string_tenant_allows") != std::string::npos ||
+                  win.find("inrange_slot_tenant_allows") != std::string::npos,
+              std::format("4518: {} consults the tenant stamp", name));
+        CHECK(win.find("require_effect") == std::string::npos,
+              std::format("4518: {} stays body-choke-free", name));
+    }
+    {
+        const auto p = char_src.find("add(\"list->string\"");
+        if (p != std::string::npos) {
+            const auto win = char_src.substr(p, 1600);
+            const auto gate = win.find("inrange_slot_tenant_allows");
+            const auto copy = win.find(".car");
+            CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
+                  "4518: list->string gate precedes the car copy");
+        }
+        const auto sp = char_src.find("add(\"f64vector-set!\"");
+        CHECK(sp != std::string::npos, "4518: f64vector-set! body located");
+        if (sp != std::string::npos) {
+            const auto win = char_src.substr(sp, 1000);
+            CHECK(win.find("kEffectMutate") != std::string::npos,
+                  "4518: f64vector-set! keeps its Mutate gate");
+        }
+    }
+    CHECK(char_src.find("list->string: cross-tenant pair slot read denied (#4505)") !=
+              std::string::npos,
+          "4518: list->string deny shape present");
+    CHECK(char_src.find("bytes-i32-ref: cross-tenant string slot read denied (#4505)") !=
+              std::string::npos,
+          "4518: bytes-i32-ref deny shape present");
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
@@ -4755,6 +5082,9 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4505: in-range reader prims tenant gate ──
     ac4505_inrange_reader_prims();
+
+    // ── Issue #4518: apply / %-encoding / f64 reader tenant gate ──
+    ac4518_inrange_apply_encoding_f64_readers();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

@@ -510,6 +510,18 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             auto idx = as_pair_idx(current);
             if (idx >= ev.pairs_.size())
                 break;
+            // Issue #4518: apply copies pairs_[idx].car into the callee arg
+            // vector, but infer_required_effects_from_name infers kEffectNone
+            // for it, so dispatch never choked a foreign mailbox ref. Compare
+            // the mint stamp BEFORE any car is copied and before the arg
+            // vector is built; the helper records the IsolationDeny and
+            // Soft/Off / record 0 / short stamps stay allow. Same reader
+            // contract as list-ref (#4505); source slot unchanged.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, "apply"))
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "apply: cross-tenant pair slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
             args.push_back(ev.pairs_[idx].car);
             current = ev.pairs_[idx].cdr;
         }
