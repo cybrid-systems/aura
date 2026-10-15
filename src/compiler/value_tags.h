@@ -80,6 +80,24 @@ inline constexpr std::uint64_t kClosureIdSpaceMask = kClosureIdHighBit - 1;
 static_assert(is_ir_closure_id(make_ir_closure_id(0)) && !is_ir_closure_id(kClosureIdSpaceMask),
               "#4502: closure id namespace bit");
 
+// Issue #4532: FFI (c-func) closure ids are their own namespace. The old
+// tag (1ULL << 63) died in make_ref's pool shift — bit 63 of the id
+// shifted out of the closure payload, leaving the raw ffi index to collide
+// with tree-walker closure ids; once func_count() grew past a TW closure's
+// id, apply_closure dispatched that closure into the C function.
+inline constexpr std::uint64_t kFFIClosureIdHighBit = 1ULL << 49;
+[[nodiscard]] inline constexpr bool is_ffi_closure_id(std::uint64_t cid) noexcept {
+    return (cid & kFFIClosureIdHighBit) != 0;
+}
+[[nodiscard]] inline constexpr std::uint64_t make_ffi_closure_id(std::uint64_t n) noexcept {
+    return kFFIClosureIdHighBit | (n & kClosureIdSpaceMask);
+}
+[[nodiscard]] inline constexpr std::uint64_t ffi_closure_id_index(std::uint64_t cid) noexcept {
+    return cid & kClosureIdSpaceMask;
+}
+static_assert(is_ffi_closure_id(make_ffi_closure_id(0)) && !is_ffi_closure_id(kClosureIdSpaceMask),
+              "#4532: ffi closure id namespace bit");
+
 // ── Special sentinels (#902): low bits == 11 (tag Special) ────────
 //   #f = 3, #t = 7, void = 11  (must match lib/runtime.c)
 inline constexpr std::int64_t kSpecialFalse = AURA_V_FALSE;

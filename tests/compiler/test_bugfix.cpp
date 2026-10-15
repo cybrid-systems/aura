@@ -3,6 +3,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/value_tags.h" // Issue #4532: ffi closure id namespace helpers
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -16,8 +18,16 @@ import aura.compiler.evaluator_pure;
 
 using aura::compiler::CompilerService;
 using aura::compiler::FFIRuntime;
+using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
+using aura::compiler::types::EvalValue;
+using aura::compiler::types::is_closure;
+using aura::compiler::types::is_error;
+using aura::compiler::types::is_ffi_closure_id;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
+using aura::compiler::types::make_int;
+using aura::compiler::types::make_string;
 
 // Issue #4531 fixtures: local C functions standing in for c-func targets.
 static double ffi4531_si(const char* p, std::int64_t n) {
@@ -133,6 +143,54 @@ int run_test_bugfix() {
                                                   1, 0) == 65,
                   "4531: String slot passes a live pointer");
         }
+    }
+
+    // Issue #4532: c-func ids used bit 63, which make_ref's pool shift
+    // strips — the raw ffi index then collided with TW closure ids and
+    // apply_closure's `cid < func_count()` stole small-id closures into
+    // the C function once enough c-funcs were registered. FFI ids now
+    // carry their own namespace bit and dispatch tests the bit explicitly.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(define f4532 (lambda (x) (* x 2)))").has_value(),
+              "4532: early TW closure defined");
+        auto f4532 = cs.eval("f4532");
+        CHECK(is_closure(*f4532), "4532: closure value resolvable");
+        CHECK(!is_ffi_closure_id(as_closure_id(*f4532)),
+              "4532: TW closure is outside the ffi namespace");
+
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "4532: require std/ffi");
+        auto cfunc_fn = ev.primitives().lookup("c-func");
+        auto list_fn = ev.primitives().lookup("list");
+        auto apply_fn = ev.primitives().lookup("apply");
+        CHECK(cfunc_fn && list_fn && apply_fn, "4532: c-func/list/apply present");
+        auto name_s = make_string(static_cast<std::uint64_t>(ev.push_string_heap("strlen")));
+        auto sig_s =
+            make_string(static_cast<std::uint64_t>(ev.push_string_heap("(String) -> Int")));
+        EvalValue proc4532;
+        bool registered = true;
+        for (int i = 0; i < 200 && registered; ++i) {
+            auto r = (*cfunc_fn)({make_int(-1), name_s, sig_s});
+            if (is_error(r) || !is_closure(r))
+                registered = false;
+            else
+                proc4532 = r;
+        }
+        CHECK(registered, "4532: 200 c-func procedures registered");
+        CHECK(is_closure(proc4532) && is_ffi_closure_id(as_closure_id(proc4532)),
+              "4532: ffi namespace bit survives make_ref");
+        // The small-id TW closure must still dispatch as a TW closure after
+        // func_count() blew past its id.
+        auto r42 = cs.eval("(f4532 21)");
+        CHECK(r42 && is_int(*r42) && as_int(*r42) == 42,
+              "4532: small-id closure survives 200 c-funcs");
+        // The registered FFI proc still dispatches natively.
+        auto arg_s = make_string(static_cast<std::uint64_t>(ev.push_string_heap("abcd")));
+        auto arglist = (*list_fn)({arg_s});
+        auto r_len = (*apply_fn)({proc4532, arglist});
+        CHECK(is_int(r_len) && as_int(r_len) == 4,
+              "4532: registered ffi proc still dispatches natively");
     }
 
     if (::aura::test::g_failed)
