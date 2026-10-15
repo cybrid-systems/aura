@@ -4400,7 +4400,6 @@ public:
         {
             std::lock_guard<std::mutex> lock(stats_mu_);
             stats_.used += size;
-            stats_.allocation_count++;
         }
         // Issue #3214: pmr / large / small-pool-fallback allocate joins
         // the same cover triad as the small-pool hit path (maybe_note
