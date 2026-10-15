@@ -9,6 +9,7 @@
 #include "../src/compiler/aura_jit.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -1152,6 +1153,259 @@ int main() {
                          "({} loops each)",
                          ns_f, ns_d, kBenchLoops);
             TEST("4522 AC4: benchmark ran on both paths", ns_f > 0 && ns_d > 0);
+        }
+    }
+
+    // ── Section 10: Issue #4523 — shape-specialized tag-check elision ──
+    //
+    // Mixed-shape arith: one operand slot SHAPE_FLOAT-profiled (a #4522
+    // flocal with a raw-double shadow), the other Dynamic (an arg slot).
+    // Pre-#4523 the pair ran the full checked path: 3 tag tests touching
+    // the known operand (guard is_float + is_fixnum, emit is_float) plus a
+    // box → store-mirror → unbox round trip on the float result. Now the
+    // known operand is numeric without a tag test and reads its shadow
+    // directly; a float-known result slot takes the raw double. ACs:
+    //   AC1: mixed (+) loop performs exactly ONE aura_alloc_float (exit
+    //        rebox) vs kIters+1 for the all-Dynamic control — the per-
+    //        iteration boxing churn is gone (probe-index measurement).
+    //   AC2: mixed vs control results bit-identical, exact 250.0, valid
+    //        float tags.
+    //   AC3: error surface unchanged — a non-numeric unknown operand
+    //        (keyword #f) yields the identical RefError tag in both
+    //        compiles (the guard on the unknown operand stayed).
+    //   AC4: fixnum unknown operand keeps its runtime conversion — mixed
+    //        and control bit-identical over a fixnum arg (7000.0).
+    //   AC5: mixed (/) takes the raw IEEE quotient (exact 0.25, bit-
+    //        identical; div-by-zero → +inf in both compiles).
+    //   AC6: mixed arith into a DYNAMIC result slot stays boxed and
+    //        correct (fail-safe else branch).
+    //   AC7: informational per-loop wall time (no timing assert).
+    {
+        std::println("\n--- Section 10: #4523 shape-specialized tag-check elision ---");
+        using aura::jit::FlatBlock;
+        using aura::jit::FlatFunction;
+        using aura::jit::FlatInstruction;
+        namespace types = aura::compiler::types;
+        // ir.ixx IROpcode raw values (same pinning as Section 9; order:
+        // Nop ConstI64 ConstF64 Local Arg Add Sub Mul Div Eq Lt Gt Le Ge
+        // And Or Not Branch Jump Call Return).
+        constexpr std::uint32_t kOpConstI64 = 1, kOpConstF64 = 2, kOpLocal = 3, kOpArg = 4,
+                                kOpAdd = 5, kOpDiv = 8, kOpEq = 9, kOpBranch = 17, kOpJump = 18,
+                                kOpReturn = 20;
+        auto set_op = [](FlatInstruction& I, std::uint32_t op, std::uint32_t d0, std::uint32_t d1,
+                         std::uint32_t d2, std::uint32_t d3) {
+            I.opcode = op;
+            I.ops[0] = d0;
+            I.ops[1] = d1;
+            I.ops[2] = d2;
+            I.ops[3] = d3;
+        };
+        constexpr std::int64_t kIters = 1000;
+        const std::int64_t n_fix = kIters << 1; // fixnum encode
+        constexpr std::uint32_t kLocals = 7;
+        // locals: 0=acc(F) 1=i(I) 2=n(I,arg) 3=x(DYNAMIC,arg) 4=cond(B)
+        //         5=one(I,tmp) 6=i2(I,tmp)
+
+        FlatInstruction mix_insts[13] = {};
+        // entry: acc = 0.0; i = 0; n = arg0; x = arg1
+        set_op(mix_insts[0], kOpConstF64, 0, 0, 0, 0); // 0.0
+        set_op(mix_insts[1], kOpConstI64, 1, 0, 0, 0);
+        set_op(mix_insts[2], kOpArg, 2, 0, 0, 0);
+        set_op(mix_insts[3], kOpArg, 3, 1, 0, 0);
+        set_op(mix_insts[4], kOpJump, 1, 0, 0, 0);
+        // head: if (= i n) exit else body
+        set_op(mix_insts[5], kOpEq, 4, 1, 2, 1); // ops[3]=1 → numeric =
+        set_op(mix_insts[6], kOpBranch, 4, 3, 2, 0);
+        // body: acc = (+ acc x)  ← the MIXED arith (a: F-profiled flocal,
+        //       b: Dynamic arg slot); i = (+ i 1)
+        set_op(mix_insts[7], kOpAdd, 0, 0, 3, 0);
+        set_op(mix_insts[8], kOpConstI64, 5, 1, 0, 0);
+        set_op(mix_insts[9], kOpAdd, 6, 1, 5, 0);
+        set_op(mix_insts[10], kOpLocal, 1, 6, 0, 0);
+        set_op(mix_insts[11], kOpJump, 1, 0, 0, 0);
+        // exit: return acc
+        set_op(mix_insts[12], kOpReturn, 0, 0, 0, 0);
+
+        FlatBlock mix_blks[4] = {{0, &mix_insts[0], 5},
+                                 {1, &mix_insts[5], 2},
+                                 {2, &mix_insts[7], 5},
+                                 {3, &mix_insts[12], 1}};
+
+        // mixed feedback: acc/half-chain float, i/n/one/i2 int, cond bool,
+        // x stays DYNAMIC (slot 3 = 0) — exactly one float-known operand.
+        const uint8_t map_mixed[kLocals] = {2, 1, 1, 0, 3, 1, 1};
+        const uint8_t map_dyn[kLocals] = {0, 0, 0, 0, 0, 0, 0};
+
+        auto compile_mix = [&](aura::jit::AuraJIT& jit, const char* name, const uint8_t* map) {
+            FlatFunction fn{};
+            fn.name = name;
+            fn.entry_block = 0;
+            fn.local_count = kLocals;
+            fn.arg_count = 2;
+            fn.blocks = mix_blks;
+            fn.num_blocks = 4;
+            fn.shape_map = map;
+            return jit.compile(fn);
+        };
+
+        aura::jit::AuraJIT jit_m;
+        aura::jit::AuraJIT jit_c;
+        auto* fn_m = compile_mix(jit_m, "f4523_mixed", map_mixed);
+        auto* fn_c = compile_mix(jit_c, "f4523_dynamic", map_dyn);
+        TEST("4523: mixed-shape compile succeeded", fn_m != nullptr);
+        TEST("4523: dynamic control compile succeeded", fn_c != nullptr);
+
+        if (fn_m && fn_c) {
+            // Probe-index alloc measurement (Section 9 technique): two
+            // probe boxes around the run, allocs = idx_delta - 1.
+            namespace types = aura::compiler::types;
+            const auto probe = 1234.5;
+            auto run_counting = [&](aura::jit::ScalarFn f, std::int64_t x_tag) {
+                std::int64_t args[2] = {n_fix, x_tag};
+                const auto pre = types::float_idx_raw_v2(aura_alloc_float(probe));
+                const auto r = f(args, 2);
+                const auto post = types::float_idx_raw_v2(aura_alloc_float(probe));
+                return std::pair<std::int64_t, std::int64_t>{
+                    static_cast<std::int64_t>(post - pre - 1), r};
+            };
+
+            // AC1/AC2: happy-path float arg.
+            const auto [allocs_m, res_m] = run_counting(fn_m, aura_alloc_float(0.25));
+            const auto [allocs_c, res_c] = run_counting(fn_c, aura_alloc_float(0.25));
+            std::println("  4523 AC1: aura_alloc_float count over loop: mixed={} control={}",
+                         allocs_m, allocs_c);
+            TEST("4523 AC1: mixed loop allocates exactly 1 float (exit rebox)", allocs_m == 1);
+            TEST("4523 AC1: control allocates 1/iter + entry const", allocs_c == kIters + 1);
+            TEST("4523 AC2: both results are boxed floats",
+                 types::is_float_raw_v2(res_m) && types::is_float_raw_v2(res_c));
+            const double vm = aura_float_ref(res_m);
+            const double vc = aura_float_ref(res_c);
+            TEST("4523 AC2: mixed sum == 250.0", vm == 250.0);
+            TEST("4523 AC2: mixed bits identical to control bits",
+                 std::memcmp(&vm, &vc, sizeof(double)) == 0);
+
+            // AC3: non-numeric unknown operand → identical RefError tag in
+            // both compiles (the unknown operand's numeric guard stayed).
+            const std::int64_t err_tag =
+                static_cast<std::int64_t>(types::make_ref(types::RefError, 0));
+            const auto [eallocs_m, err_m] = run_counting(fn_m, 3); // keyword #f
+            const auto [eallocs_c, err_c] = run_counting(fn_c, 3);
+            TEST("4523 AC3: mixed compile: (+ acc #f) → RefError", err_m == err_tag);
+            TEST("4523 AC3: control compile: (+ acc #f) → RefError", err_c == err_tag);
+
+            // AC4: fixnum unknown operand keeps its runtime sitofp
+            // conversion (mixed and control agree over a fixnum arg).
+            const auto [fallocs_m, res_fm] = run_counting(fn_m, 7 << 1);
+            const auto [fallocs_c, res_fc] = run_counting(fn_c, 7 << 1);
+            (void)fallocs_m;
+            (void)fallocs_c;
+            TEST("4523 AC4: fixnum operand: mixed result boxed float",
+                 types::is_float_raw_v2(res_fm));
+            TEST("4523 AC4: fixnum operand: mixed sum == 7000.0", aura_float_ref(res_fm) == 7000.0);
+            const double vf_m = aura_float_ref(res_fm);
+            const double vf_c = aura_float_ref(res_fc);
+            TEST("4523 AC4: fixnum operand: bits identical",
+                 std::memcmp(&vf_m, &vf_c, sizeof(double)) == 0);
+
+            // AC5: mixed (/) takes the raw IEEE quotient (float-known
+            // result slot + float-known dividend, Dynamic divisor).
+            FlatInstruction div_insts[4] = {};
+            set_op(div_insts[0], kOpArg, 2, 0, 0, 0);               // x = arg0 (Dynamic)
+            set_op(div_insts[1], kOpConstF64, 0, 0, 0x3FF00000, 0); // a = 1.0 (F)
+            set_op(div_insts[2], kOpDiv, 1, 0, 2, 0);               // q = (/ a x), q F
+            set_op(div_insts[3], kOpReturn, 1, 0, 0, 0);
+            FlatBlock div_blk[1] = {{0, div_insts, 4}};
+            const uint8_t map_div_mixed[3] = {2, 2, 0};
+            const uint8_t map_div_dyn[3] = {0, 0, 0};
+            auto compile_div = [&](aura::jit::AuraJIT& jit, const char* name, const uint8_t* map) {
+                FlatFunction fn{};
+                fn.name = name;
+                fn.entry_block = 0;
+                fn.local_count = 3;
+                fn.arg_count = 1;
+                fn.blocks = div_blk;
+                fn.num_blocks = 1;
+                fn.shape_map = map;
+                return jit.compile(fn);
+            };
+            auto* fn_dm = compile_div(jit_m, "f4523_div_mixed", map_div_mixed);
+            auto* fn_dc = compile_div(jit_c, "f4523_div_dynamic", map_div_dyn);
+            TEST("4523 AC5: mixed div compile succeeded", fn_dm != nullptr);
+            TEST("4523 AC5: control div compile succeeded", fn_dc != nullptr);
+            if (fn_dm && fn_dc) {
+                std::int64_t a4[1] = {aura_alloc_float(4.0)};
+                const auto qm = fn_dm(a4, 1);
+                const auto qc = fn_dc(a4, 1);
+                TEST("4523 AC5: mixed quotient boxed float", types::is_float_raw_v2(qm));
+                TEST("4523 AC5: mixed quotient == 0.25", aura_float_ref(qm) == 0.25);
+                const double qm_d = aura_float_ref(qm);
+                const double qc_d = aura_float_ref(qc);
+                TEST("4523 AC5: quotient bits identical",
+                     std::memcmp(&qm_d, &qc_d, sizeof(double)) == 0);
+                std::int64_t a0[1] = {aura_alloc_float(0.0)}; // +0.0 → IEEE +inf
+                const auto inf_m = fn_dm(a0, 1);
+                const auto inf_c = fn_dc(a0, 1);
+                TEST("4523 AC5: div-by-zero → +inf (mixed, raw IEEE path)",
+                     std::isinf(aura_float_ref(inf_m)));
+                TEST("4523 AC5: div-by-zero → +inf (control)", std::isinf(aura_float_ref(inf_c)));
+            }
+
+            // AC6: mixed arith into a DYNAMIC result slot stays boxed and
+            // correct (the fail-safe else branch — no raw store).
+            FlatInstruction box_insts[4] = {};
+            set_op(box_insts[0], kOpArg, 2, 0, 0, 0);               // x = arg0 (Dynamic)
+            set_op(box_insts[1], kOpConstF64, 0, 0, 0x3FF00000, 0); // a = 1.0 (F)
+            set_op(box_insts[2], kOpAdd, 1, 0, 2, 0);               // r = (+ a x), r Dynamic
+            set_op(box_insts[3], kOpReturn, 1, 0, 0, 0);
+            FlatBlock box_blk[1] = {{0, box_insts, 4}};
+            const uint8_t map_box_mixed[3] = {2, 0, 0};
+            auto compile_box = [&](aura::jit::AuraJIT& jit, const char* name, const uint8_t* map) {
+                FlatFunction fn{};
+                fn.name = name;
+                fn.entry_block = 0;
+                fn.local_count = 3;
+                fn.arg_count = 1;
+                fn.blocks = box_blk;
+                fn.num_blocks = 1;
+                fn.shape_map = map;
+                return jit.compile(fn);
+            };
+            auto* fn_bm = compile_box(jit_m, "f4523_boxres_mixed", map_box_mixed);
+            auto* fn_bc = compile_box(jit_c, "f4523_boxres_dynamic", map_dyn);
+            TEST("4523 AC6: dynamic-result mixed compile succeeded", fn_bm != nullptr);
+            TEST("4523 AC6: dynamic-result control compile succeeded", fn_bc != nullptr);
+            if (fn_bm && fn_bc) {
+                std::int64_t a25[1] = {aura_alloc_float(2.5)};
+                const auto rm = fn_bm(a25, 1);
+                const auto rc = fn_bc(a25, 1);
+                TEST("4523 AC6: dynamic-result mixed stays boxed float",
+                     types::is_float_raw_v2(rm));
+                TEST("4523 AC6: dynamic-result mixed == 3.5", aura_float_ref(rm) == 3.5);
+                const double rm_d = aura_float_ref(rm);
+                const double rc_d = aura_float_ref(rc);
+                TEST("4523 AC6: dynamic-result bits identical",
+                     std::memcmp(&rm_d, &rc_d, sizeof(double)) == 0);
+            }
+
+            // AC7: informational micro-benchmark (no flaky timing assert).
+            constexpr std::int64_t kBenchLoops = 2000;
+            auto bench = [&](aura::jit::ScalarFn f) {
+                std::int64_t args[2] = {n_fix, aura_alloc_float(0.25)};
+                const auto t0 = std::chrono::steady_clock::now();
+                for (std::int64_t r = 0; r < kBenchLoops; ++r)
+                    (void)f(args, 2);
+                const auto t1 = std::chrono::steady_clock::now();
+                return std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            };
+            std::int64_t warm[2] = {n_fix, aura_alloc_float(0.25)};
+            (void)fn_m(warm, 2);
+            (void)fn_c(warm, 2);
+            const auto ns_m = bench(fn_m);
+            const auto ns_c = bench(fn_c);
+            std::println("  4523 AC7: mixed loop {} ns total vs control {} ns total "
+                         "({} loops each)",
+                         ns_m, ns_c, kBenchLoops);
+            TEST("4523 AC7: benchmark ran on both paths", ns_m > 0 && ns_c > 0);
         }
     }
 
