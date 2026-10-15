@@ -2271,7 +2271,10 @@ public:
         // Issue #1546: quota reject → nullptr (no construct).
         if (!raw)
             return nullptr;
-        ++stats_.allocation_count;
+        {
+            std::lock_guard<std::mutex> lock(stats_mu_);
+            ++stats_.allocation_count;
+        }
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
         // Issue #2166: record size/align for opt-in Moving densify remap.
         // Issue #3456: index ptr→slot so destroy is O(1) not O(live).
@@ -2297,7 +2300,10 @@ public:
         void* raw = allocate_raw(sizeof(T), alignof(T), cover_slot, cover_reason);
         if (!raw)
             return nullptr;
-        ++stats_.allocation_count;
+        {
+            std::lock_guard<std::mutex> lock(stats_mu_);
+            ++stats_.allocation_count;
+        }
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
         note_dtor_entry_(result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T));
         if (cover_slot != nullptr) {
@@ -2362,9 +2368,13 @@ public:
         run_destructors();
         small_pool_.reset();
         resource_.release();
-        stats_.used = 0;
-        stats_.allocation_count = 0;
-        stats_.wasted = 0;
+        used_bytes_.store(0, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(stats_mu_);
+            stats_.used = 0;
+            stats_.allocation_count = 0;
+            stats_.wasted = 0;
+        }
         last_object_remap_.clear(); // Issue #2166
     }
 
@@ -2375,9 +2385,16 @@ public:
 
     // Snapshot of current memory statistics
     [[nodiscard]] ArenaStats stats() const noexcept {
-        auto s = stats_;
+        // Serialize POD accounting snapshot vs compact/alloc bumps of stats_
+        // (used_bytes_ is atomic and overlaid below). Fiber-transition probes
+        // call stats() while another fiber may compact the same arena.
+        ArenaStats s;
+        {
+            std::lock_guard<std::mutex> lock(stats_mu_);
+            s = stats_;
+        }
         s.capacity = buffer_.size() + small_pool_.capacity();
-        s.used = stats_.used + small_pool_.allocated();
+        s.used = used_bytes_.load(std::memory_order_relaxed) + small_pool_.allocated();
         s.peak_used = std::max(s.peak_used, s.used);
         // Issue #2381: concurrent-safe counters live as atomics; snapshot here.
         s.shape_inval_on_compact = shape_inval_on_compact_.load(std::memory_order_relaxed);
@@ -2399,7 +2416,7 @@ public:
 
     // Bytes consumed so far
     [[nodiscard]] std::size_t used() const noexcept {
-        return stats_.used + small_pool_.allocated();
+        return used_bytes_.load(std::memory_order_relaxed) + small_pool_.allocated();
     }
 
     // Total buffer capacity
@@ -2426,7 +2443,7 @@ public:
     // buffer-shrinking variant.
     [[nodiscard]] std::size_t compact_estimate() const noexcept {
         std::size_t cap = buffer_.size();
-        std::size_t u = stats_.used;
+        std::size_t u = used_bytes_.load(std::memory_order_relaxed);
         return cap > u ? cap - u : 0;
     }
 
@@ -2460,21 +2477,30 @@ public:
         // Heal used()>size drift before shrink (can appear after
         // remaps / dual-resource paths); better than aborting the
         // self-modify loop (#1457 unblock).
-        if (stats_.used > buffer_.size())
-            stats_.used = buffer_.size();
+        {
+            auto u_now = used_bytes_.load(std::memory_order_relaxed);
+            if (u_now > buffer_.size()) {
+                used_bytes_.store(buffer_.size(), std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.used = buffer_.size();
+            }
+        }
         // Issue #604: fiber-context coordination. When compact()
         // runs inside a scheduled fiber, bump the yield-check
         // counter and hit the GC safepoint so a long compaction
         // cooperates with the scheduler/GC instead of trimming
         // the buffer with no chance for the collector to run.
         if (aura::gc_hooks::fiber_active()) {
-            stats_.compaction_yield_checks++;
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.compaction_yield_checks++;
+            }
             aura::gc_hooks::safepoint_check();
             aura::core::arena_policy::record_defrag_fiber_safe_hit();
             aura::gc_hooks::notify_fiber_safe_compact();
         }
         std::size_t before = buffer_.size();
-        std::size_t u = stats_.used;
+        std::size_t u = used_bytes_.load(std::memory_order_relaxed);
         if (u == 0) {
             // Empty arena: shrink to 1KB (preserve some headroom for
             // future small allocations).
@@ -2505,9 +2531,12 @@ public:
         // Issue #1519: compact never grows the buffer.
         contract_assert(after <= before);
         if (saved > 0) {
-            stats_.compaction_count++;
-            stats_.last_compaction_saved = saved;
-            stats_.total_compaction_saved += saved;
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.compaction_count++;
+                stats_.last_compaction_saved = saved;
+                stats_.total_compaction_saved += saved;
+            }
             invoke_compact_hook_();
         }
         return saved;
@@ -2551,7 +2580,10 @@ public:
         AURA_HOT_RECORD(); // Issue #1519 / #2142
         // Issue #604: same fiber-context coordination as compact().
         if (aura::gc_hooks::fiber_active()) {
-            stats_.compaction_yield_checks++;
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.compaction_yield_checks++;
+            }
             aura::gc_hooks::safepoint_check();
             aura::core::arena_policy::record_defrag_fiber_safe_hit();
             aura::gc_hooks::notify_fiber_safe_compact();
@@ -2569,7 +2601,7 @@ public:
             defrag_requested_.store(false, std::memory_order_release);
         }
         std::size_t before = buffer_.size();
-        std::size_t u = stats_.used;
+        std::size_t u = used_bytes_.load(std::memory_order_relaxed);
         if (u == 0) {
             buffer_.resize(1024);
             rebuild_resource_();
@@ -3618,7 +3650,8 @@ public:
     // geometric buffer expansion. No-op if buffer is already at
     // initial size.
     void shrink_to_fit() noexcept {
-        if (buffer_.size() > initial_size_ && stats_.used < initial_size_) {
+        if (buffer_.size() > initial_size_ &&
+            used_bytes_.load(std::memory_order_relaxed) < initial_size_) {
             std::size_t before = buffer_.size();
             buffer_.resize(initial_size_);
             rebuild_resource_();
@@ -3627,9 +3660,12 @@ public:
             // its buffer moved; clamp hardens try_allocate against stale ends.
             small_pool_.rebind_tiers();
             std::size_t saved = before - initial_size_;
-            stats_.compaction_count++;
-            stats_.last_compaction_saved = saved;
-            stats_.total_compaction_saved += saved;
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.compaction_count++;
+                stats_.last_compaction_saved = saved;
+                stats_.total_compaction_saved += saved;
+            }
         }
     }
 
@@ -3845,7 +3881,11 @@ private:
                     // Should be rare: freelist held recycled slots. Fall back pmr.
                     try {
                         neu = resource_.allocate(p.size, p.align);
-                        stats_.used += p.size;
+                        used_bytes_.fetch_add(p.size, std::memory_order_relaxed);
+                        {
+                            std::lock_guard<std::mutex> lock(stats_mu_);
+                            stats_.used += p.size;
+                        }
                     } catch (...) {
                         neu = nullptr;
                     }
@@ -3903,7 +3943,11 @@ private:
                         if (!fresh) {
                             try {
                                 fresh = resource_.allocate(p.size, p.align);
-                                stats_.used += p.size;
+                                used_bytes_.fetch_add(p.size, std::memory_order_relaxed);
+                        {
+                            std::lock_guard<std::mutex> lock(stats_mu_);
+                            stats_.used += p.size;
+                        }
                             } catch (...) {
                                 fresh = nullptr;
                             }
@@ -4352,7 +4396,12 @@ public:
         // Allocate from main pmr buffer
         void* ptr = resource_.allocate(size, alignment);
         contract_assert(ptr != nullptr); // Issue #1519
-        stats_.used += size;
+        used_bytes_.fetch_add(size, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(stats_mu_);
+            stats_.used += size;
+            stats_.allocation_count++;
+        }
         // Issue #3214: pmr / large / small-pool-fallback allocate joins
         // the same cover triad as the small-pool hit path (maybe_note
         // is a single required-active load on Soft / Off).
@@ -4420,12 +4469,18 @@ public:
         (void)aura::core::arena_policy::consume_jit_deopt_pressure();
 
         if (fiber) {
-            stats_.compaction_yield_checks++;
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.compaction_yield_checks++;
+            }
             aura::gc_hooks::safepoint_check();
             aura::core::arena_policy::record_defrag_fiber_safe_hit();
             aura::gc_hooks::notify_fiber_safe_compact();
         } else {
-            stats_.compaction_yield_checks++;
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.compaction_yield_checks++;
+            }
         }
         const double frag_before = snap.fragmentation_ratio();
         std::size_t saved = 0;
@@ -4720,6 +4775,11 @@ public:
     SmallObjectPool small_pool_;
     // GUARDED_BY(per-arena compact serial) — see ArenaStats #2381 contract.
     ArenaStats stats_;
+    // Concurrent-safe used-bytes (fiber steal probes stats() while another
+    // fiber allocate/compact mutates). Snapshotted into ArenaStats::used.
+    // Keeps the #2381 POD snapshot contract for the returned struct.
+    std::atomic<std::size_t> used_bytes_{0};
+    mutable std::mutex stats_mu_; // POD stats_ snapshot vs alloc/compact bumps
     // Issue #2381: concurrent-safe counters (Option B). Snapshotted into
     // ArenaStats by stats(); never plain-++ under concurrent hook invoke.
     std::atomic<std::size_t> shape_inval_on_compact_{0};
