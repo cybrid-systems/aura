@@ -29,6 +29,7 @@ module;
 
 // Include BEFORE import std — GCC 16 modules otherwise attach following
 // decls to namespace std (breaks EnvFrameLifetimeGuard member lookup).
+#include <atomic>
 #include "core/workspace_epoch.hh" // #2711 current_mutation_epoch() for proof
 
 export module aura.core.envframe_lifetime;
@@ -78,32 +79,35 @@ struct EnvFrameLifetimeHost {
 // Process-wide stats struct + global accumulator. Defined BEFORE the
 // guard class so its methods can ++g_envframe_lifetime_stats counters
 // at construction / destruction time.
+// Counters are atomic: EnvFrameLifetimeGuard runs on every fiber worker
+// under shared Evaluators (chaos soak / steal). Plain ++ raced across
+// TSan (guards_constructed / scans_run / site_constructs).
 struct EnvFrameLifetimeStats {
-    std::uint64_t guards_constructed = 0;
-    std::uint64_t guards_destructed = 0;
-    std::uint64_t scans_run = 0;
+    std::atomic<std::uint64_t> guards_constructed{0};
+    std::atomic<std::uint64_t> guards_destructed{0};
+    std::atomic<std::uint64_t> scans_run{0};
     // Issue #2164: compact_env_frames deferred because a Guard is live.
-    std::uint64_t blocked_compact_while_guard_held = 0;
+    std::atomic<std::uint64_t> blocked_compact_while_guard_held{0};
     // Per-site construct counts (BoundaryExit / FiberSteal / CompactSweep).
-    std::uint64_t site_constructs[3] = {0, 0, 0};
+    std::atomic<std::uint64_t> site_constructs[3]{};
     // Issue #2164 Phase 2b: hold generation advanced under a live Guard
     // (should stay 0 when compact gate is correct).
-    std::uint64_t hold_gen_mismatch_total = 0;
+    std::atomic<std::uint64_t> hold_gen_mismatch_total{0};
     // Issue #2340: post-densify ownership-exit scan runs that
     // iterate live EnvFrameRef set + transfer_to / drop those
     // pointing into densified addresses (after Moving success in
     // live_compact / Phase 5). Distinct from `scans_run` (the
     // Guard's mandatory scan_skip_freed exit scan) — counts
     // explicit per-call-site densify scans, not Guard dtor scans.
-    std::uint64_t densify_ownership_scan_total = 0;
+    std::atomic<std::uint64_t> densify_ownership_scan_total{0};
     // Issue #2361: densify ownership scan failures (ref transfer/drop
     // miss, dual-path lag, or test inject). Gates
     // DensifyConsistencyReport.envframe_ok fail-closed.
-    std::uint64_t densify_ownership_scan_fail_total = 0;
+    std::atomic<std::uint64_t> densify_ownership_scan_fail_total{0};
     // Issue #3535 / #3741: discriminator mismatch (expected != ctx).
     // Append END per #2906. Soft / unset expected never increments.
     // #3741 still runs scan_skip_freed(expected) and bumps scans_run.
-    std::uint64_t cross_evaluator_skip_total = 0;
+    std::atomic<std::uint64_t> cross_evaluator_skip_total{0};
 };
 
 inline EnvFrameLifetimeStats g_envframe_lifetime_stats{};
@@ -152,34 +156,48 @@ inline void note_compact_generation_bump() noexcept {
 
 // Call when compact_env_frames defers due to live Guard. Returns new total.
 inline std::uint64_t note_blocked_compact_while_guard_held() noexcept {
-    return ++g_envframe_lifetime_stats.blocked_compact_while_guard_held;
+    return g_envframe_lifetime_stats.blocked_compact_while_guard_held.fetch_add(
+               1, std::memory_order_relaxed) +
+           1;
 }
 
 inline void reset_envframe_lifetime_stats() noexcept {
-    g_envframe_lifetime_stats = {};
+    auto z = std::memory_order_relaxed;
+    g_envframe_lifetime_stats.guards_constructed.store(0, z);
+    g_envframe_lifetime_stats.guards_destructed.store(0, z);
+    g_envframe_lifetime_stats.scans_run.store(0, z);
+    g_envframe_lifetime_stats.blocked_compact_while_guard_held.store(0, z);
+    for (auto& c : g_envframe_lifetime_stats.site_constructs)
+        c.store(0, z);
+    g_envframe_lifetime_stats.hold_gen_mismatch_total.store(0, z);
+    g_envframe_lifetime_stats.densify_ownership_scan_total.store(0, z);
+    g_envframe_lifetime_stats.densify_ownership_scan_fail_total.store(0, z);
+    g_envframe_lifetime_stats.cross_evaluator_skip_total.store(0, z);
     g_envframe_active_guard_depth().store(0, std::memory_order_relaxed);
     // Leave compact_generation monotonic (do not reset) so hold stamps remain
     // comparable across test resets of construct counters only.
 }
 
 inline std::uint64_t envframe_lifetime_guards_constructed() noexcept {
-    return g_envframe_lifetime_stats.guards_constructed;
+    return g_envframe_lifetime_stats.guards_constructed.load(std::memory_order_relaxed);
 }
 inline std::uint64_t envframe_lifetime_guards_destructed() noexcept {
-    return g_envframe_lifetime_stats.guards_destructed;
+    return g_envframe_lifetime_stats.guards_destructed.load(std::memory_order_relaxed);
 }
 inline std::uint64_t envframe_lifetime_scans_run() noexcept {
-    return g_envframe_lifetime_stats.scans_run;
+    return g_envframe_lifetime_stats.scans_run.load(std::memory_order_relaxed);
 }
 inline std::uint64_t envframe_lifetime_blocked_compact_total() noexcept {
-    return g_envframe_lifetime_stats.blocked_compact_while_guard_held;
+    return g_envframe_lifetime_stats.blocked_compact_while_guard_held.load(
+        std::memory_order_relaxed);
 }
 inline std::uint64_t envframe_lifetime_hold_gen_mismatch_total() noexcept {
-    return g_envframe_lifetime_stats.hold_gen_mismatch_total;
+    return g_envframe_lifetime_stats.hold_gen_mismatch_total.load(std::memory_order_relaxed);
 }
 inline std::uint64_t envframe_lifetime_site_constructs(EnvFrameLifetimeSite site) noexcept {
     const auto i = static_cast<std::uint8_t>(site);
-    return i < 3 ? g_envframe_lifetime_stats.site_constructs[i] : 0;
+    return i < 3 ? g_envframe_lifetime_stats.site_constructs[i].load(std::memory_order_relaxed)
+                 : 0;
 }
 
 // Issue #2340: post-densify ownership-exit scan counter accessor.
@@ -188,7 +206,7 @@ inline std::uint64_t envframe_lifetime_site_constructs(EnvFrameLifetimeSite site
 // scan_skip_freed exit scan bumps `scans_run`; this is a distinct
 // counter that measures the explicit per-call-site densify scan.
 inline std::uint64_t envframe_lifetime_densify_ownership_scan_total() noexcept {
-    return g_envframe_lifetime_stats.densify_ownership_scan_total;
+    return g_envframe_lifetime_stats.densify_ownership_scan_total.load(std::memory_order_relaxed);
 }
 
 // Issue #2340: bump helper for the post-densify ownership-exit scan
@@ -196,15 +214,17 @@ inline std::uint64_t envframe_lifetime_densify_ownership_scan_total() noexcept {
 // helper + densify success path) can bump without a function call
 // boundary; matches the existing site_constructs[] bump pattern.
 inline void bump_envframe_lifetime_densify_ownership_scan_total() noexcept {
-    ++g_envframe_lifetime_stats.densify_ownership_scan_total;
+    g_envframe_lifetime_stats.densify_ownership_scan_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2361: densify ownership scan fail counter (gates envframe_ok).
 [[nodiscard]] inline std::uint64_t envframe_lifetime_densify_ownership_scan_fail_total() noexcept {
-    return g_envframe_lifetime_stats.densify_ownership_scan_fail_total;
+    return g_envframe_lifetime_stats.densify_ownership_scan_fail_total.load(
+        std::memory_order_relaxed);
 }
 inline void bump_envframe_lifetime_densify_ownership_scan_fail_total() noexcept {
-    ++g_envframe_lifetime_stats.densify_ownership_scan_fail_total;
+    g_envframe_lifetime_stats.densify_ownership_scan_fail_total.fetch_add(
+        1, std::memory_order_relaxed);
 }
 // Test inject: force one ownership-scan fail so Phase 5 envframe_ok
 // goes false without needing a real densify + live EnvFrameRef set.
@@ -213,7 +233,7 @@ inline void inject_densify_ownership_scan_fail_for_test() noexcept {
 }
 
 [[nodiscard]] inline std::uint64_t envframe_lifetime_cross_evaluator_skip_total() noexcept {
-    return g_envframe_lifetime_stats.cross_evaluator_skip_total;
+    return g_envframe_lifetime_stats.cross_evaluator_skip_total.load(std::memory_order_relaxed);
 }
 
 // Build a host from raw function pointers. Use when the wire-up site
@@ -238,10 +258,10 @@ public:
     EnvFrameLifetimeGuard(EnvFrameLifetimeHost host, EnvFrameLifetimeSite site) noexcept
         : host_(host)
         , site_(site) {
-        ++g_envframe_lifetime_stats.guards_constructed;
+        g_envframe_lifetime_stats.guards_constructed.fetch_add(1, std::memory_order_relaxed);
         const auto si = static_cast<std::uint8_t>(site_);
         if (si < 3)
-            ++g_envframe_lifetime_stats.site_constructs[si];
+            g_envframe_lifetime_stats.site_constructs[si].fetch_add(1, std::memory_order_relaxed);
         // Issue #2157 / #2164: publish hold so compact / Force can hard-mutex.
         g_envframe_active_guard_depth().fetch_add(1, std::memory_order_acq_rel);
         // Issue #2164 Phase 2b: stamp hold generation at enter.
@@ -257,7 +277,7 @@ public:
         g_envframe_last_hold_gen_at_enter().store(hold_gen_at_enter_, std::memory_order_release);
     }
     ~EnvFrameLifetimeGuard() noexcept {
-        ++g_envframe_lifetime_stats.guards_destructed;
+        g_envframe_lifetime_stats.guards_destructed.fetch_add(1, std::memory_order_relaxed);
         // Issue #3908: scan BEFORE dropping process-wide depth so
         // concurrent Force / Moving / CompactSweep that soft-gate on
         // active_guard_depth()==0 cannot admit mid-scan. Throughput
@@ -269,22 +289,24 @@ public:
         // skip-freed walk. Do not scan ctx (stale / swapped). Soft
         // expected==nullptr: one compare, then existing scan(ctx).
         if (host_.expected_evaluator_id != nullptr && host_.expected_evaluator_id != host_.ctx) {
-            ++g_envframe_lifetime_stats.cross_evaluator_skip_total;
+            g_envframe_lifetime_stats.cross_evaluator_skip_total.fetch_add(
+                1, std::memory_order_relaxed);
             if (host_.scan_skip_freed) {
                 host_.scan_skip_freed(host_.expected_evaluator_id, site_);
-                ++g_envframe_lifetime_stats.scans_run;
+                g_envframe_lifetime_stats.scans_run.fetch_add(1, std::memory_order_relaxed);
             }
         } else if (host_.scan_skip_freed && host_.ctx) {
             // Mandatory exit scan (do not remove — #2003 / #2164 safety net).
             host_.scan_skip_freed(host_.ctx, site_);
-            ++g_envframe_lifetime_stats.scans_run;
+            g_envframe_lifetime_stats.scans_run.fetch_add(1, std::memory_order_relaxed);
         }
         // Issue #2164 Phase 2b: fail-closed observability if compact gen advanced
         // under the hold (should not happen when compact gate is correct).
         const std::uint64_t now =
             host_.hold_generation ? host_.hold_generation(host_.ctx) : compact_generation();
         if (now != hold_gen_at_enter_)
-            ++g_envframe_lifetime_stats.hold_gen_mismatch_total;
+            g_envframe_lifetime_stats.hold_gen_mismatch_total.fetch_add(
+                1, std::memory_order_relaxed);
         // Drop depth after scan so compact waiters see depth==0 only
         // once skip-freed has returned.
         auto cur = g_envframe_active_guard_depth().load(std::memory_order_relaxed);
@@ -367,10 +389,14 @@ inline EnvFrameLifetimeProof snapshot_envframe_lifetime_proof() noexcept {
     p.compact_gen = compact_generation();
     // mutation_epoch from workspace_epoch.hh (#2388 process-global atomic).
     p.mutation_epoch = ::aura::core::current_mutation_epoch();
-    p.scans_run = g_envframe_lifetime_stats.scans_run;
-    p.densify_scan_total = g_envframe_lifetime_stats.densify_ownership_scan_total;
-    p.densify_scan_fail = g_envframe_lifetime_stats.densify_ownership_scan_fail_total;
-    p.hold_gen_mismatch_total = g_envframe_lifetime_stats.hold_gen_mismatch_total;
+    p.scans_run = g_envframe_lifetime_stats.scans_run.load(std::memory_order_relaxed);
+    p.densify_scan_total =
+        g_envframe_lifetime_stats.densify_ownership_scan_total.load(std::memory_order_relaxed);
+    p.densify_scan_fail =
+        g_envframe_lifetime_stats.densify_ownership_scan_fail_total.load(
+            std::memory_order_relaxed);
+    p.hold_gen_mismatch_total =
+        g_envframe_lifetime_stats.hold_gen_mismatch_total.load(std::memory_order_relaxed);
     const bool fail_densify = (p.densify_scan_fail > 0);
     const bool fail_mismatch = (p.hold_gen_mismatch_total > 0);
     p.would_allow_commit = !(fail_densify || fail_mismatch);
