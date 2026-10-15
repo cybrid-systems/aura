@@ -5,6 +5,7 @@
 #ifndef AURA_CORE_MUTATION_AUDIT_WAL_HH
 #define AURA_CORE_MUTATION_AUDIT_WAL_HH
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -143,6 +144,10 @@ struct MutationAuditWal {
     // Issue #4446: last rotate could not open the next segment. fp is
     // null while enabled stays true. Not a metric and not a query key.
     bool rotate_open_fail_ = false;
+    // Issue #4520: prune high-water mark. Retention is on by default now,
+    // so prune_old_segments_unlocked runs on every rotate; indices below
+    // this were already unlinked in this dir session (enable resets it).
+    std::uint32_t pruned_upto_ = 0;
     // Issue #3242: typed-summary sidecar (paired segment index; own FILE*).
     std::FILE* typed_fp = nullptr;
     std::string typed_path;
@@ -269,12 +274,20 @@ struct MutationAuditWal {
         const auto cap = ::aura::core::wal_slo::wal_max_segments_retention();
         if (cap == 0)
             return;
-        if (segment_index + 1 <= cap)
+        const std::uint64_t total = static_cast<std::uint64_t>(segment_index) + 1;
+        if (total <= cap)
             return;
-        const std::uint32_t first_keep = segment_index + 1 - cap;
+        const std::uint32_t first_keep = static_cast<std::uint32_t>(total - cap);
+        // Issue #4520: high-water start — this runs on every rotate now
+        // that retention is default-on; never re-stat pruned indices
+        // (amortized O(1) per rotate instead of O(segment_index)).
+        if (first_keep <= pruned_upto_)
+            return;
+        const std::uint32_t first = pruned_upto_;
+        pruned_upto_ = first_keep;
         namespace fs = std::filesystem;
         std::error_code ec;
-        for (std::uint32_t i = 0; i < first_keep; ++i) {
+        for (std::uint32_t i = first; i < first_keep; ++i) {
             bool any = false;
             const auto audit_p = (fs::path(dir) / ("audit-" + std::to_string(i) + ".wal")).string();
             if (fs::remove(audit_p, ec))
@@ -322,6 +335,7 @@ struct MutationAuditWal {
         close_unlocked();
         dir.assign(persist_dir);
         enabled = false;
+        pruned_upto_ = 0;
         if (dir.empty()) {
             g_audit_wal_metrics().audit_wal_enabled.store(0, std::memory_order_relaxed);
             return false;
@@ -331,6 +345,9 @@ struct MutationAuditWal {
         std::error_code ec;
         std::uint32_t max_seg = 0;
         bool any = false;
+        // Issue #4520: collected indices double as the enable-time upgrade
+        // prune list (exact, hole-tolerant) — no extra directory pass.
+        std::vector<std::uint32_t> seg_indices;
         if (fs::exists(dir, ec)) {
             for (auto& ent : fs::directory_iterator(dir, ec)) {
                 if (!ent.is_regular_file(ec))
@@ -342,6 +359,7 @@ struct MutationAuditWal {
                 const auto mid = name.substr(6, name.size() - 6 - 4);
                 try {
                     const auto n = static_cast<std::uint32_t>(std::stoul(mid));
+                    seg_indices.push_back(n);
                     if (!any || n > max_seg) {
                         max_seg = n;
                         any = true;
@@ -350,20 +368,24 @@ struct MutationAuditWal {
                 }
             }
         }
-        // Replay all segments first (crash recovery).
+        // Replay segments newest→oldest (#4520 bounded startup replay):
+        // stop once max_replay records are collected — never read the
+        // whole directory.
         if (out_replay) {
             out_replay->clear();
-            std::vector<AuditWalRecord> all;
-            for (std::uint32_t s = 0; s <= max_seg && any; ++s) {
+            std::vector<AuditWalRecord> newest_first;
+            for (std::uint32_t s = max_seg + 1; any && newest_first.size() < max_replay && s > 0;
+                 --s) {
                 const auto path =
-                    (fs::path(dir) / ("audit-" + std::to_string(s) + ".wal")).string();
+                    (fs::path(dir) / ("audit-" + std::to_string(s - 1) + ".wal")).string();
                 auto part = read_segment_file(path);
-                all.insert(all.end(), part.begin(), part.end());
+                newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
             }
-            // Keep last max_replay
-            if (all.size() > max_replay)
-                all.erase(all.begin(), all.end() - static_cast<std::ptrdiff_t>(max_replay));
-            *out_replay = std::move(all);
+            // Keep last max_replay (oldest→newest).
+            if (newest_first.size() > max_replay)
+                newest_first.resize(max_replay);
+            std::reverse(newest_first.begin(), newest_first.end());
+            *out_replay = std::move(newest_first);
             g_audit_wal_metrics().audit_wal_replay_count.fetch_add(1, std::memory_order_relaxed);
             if (!out_replay->empty())
                 g_audit_wal_metrics().audit_crash_recovery_success.fetch_add(
@@ -374,6 +396,39 @@ struct MutationAuditWal {
             return false;
         }
         (void)open_typed_segment_unlocked(any ? max_seg : 0);
+        // Issue #4520: upgrade path — a dir oversized by older versions
+        // (retention defaulted to 0) is pruned to the cap on first
+        // enable, from the dirent list collected above (exact indices,
+        // tolerates holes) instead of being fully scanned by replay.
+        {
+            const auto cap = ::aura::core::wal_slo::wal_max_segments_retention();
+            if (cap > 0 && seg_indices.size() > cap) {
+                const std::uint64_t total = static_cast<std::uint64_t>(max_seg) + 1;
+                const std::uint64_t floor64 = total > cap ? total - cap : 0;
+                for (const auto n : seg_indices) {
+                    if (static_cast<std::uint64_t>(n) >= floor64)
+                        continue;
+                    bool any_removed = false;
+                    const auto audit_p =
+                        (fs::path(dir) / ("audit-" + std::to_string(n) + ".wal")).string();
+                    if (fs::remove(audit_p, ec))
+                        any_removed = true;
+                    ec.clear();
+                    const auto typed_p =
+                        (fs::path(dir) / ("typed-summary-" + std::to_string(n) + ".wal")).string();
+                    if (fs::remove(typed_p, ec))
+                        any_removed = true;
+                    ec.clear();
+                    if (any_removed) {
+                        g_audit_wal_metrics().audit_wal_segment_prune_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
+            const std::uint64_t total_now = static_cast<std::uint64_t>(segment_index) + 1;
+            pruned_upto_ =
+                cap > 0 && total_now > cap ? static_cast<std::uint32_t>(total_now - cap) : 0;
+        }
         enabled = true;
         rotate_open_fail_ = false;
         g_audit_wal_metrics().audit_wal_enabled.store(1, std::memory_order_relaxed);
@@ -385,6 +440,7 @@ struct MutationAuditWal {
         close_unlocked();
         enabled = false;
         rotate_open_fail_ = false;
+        pruned_upto_ = 0;
         dir.clear();
         g_audit_wal_metrics().audit_wal_enabled.store(0, std::memory_order_relaxed);
     }
@@ -641,6 +697,12 @@ struct MutationAuditWal {
         segment_index = 0;
         current_bytes = 0;
         rotate_open_fail_ = false;
+        // Issue #4520: reset the full writer state — a stale tiny
+        // rotate_bytes from a prior test used to leak into the next one,
+        // which now also drags default retention pruning along.
+        rotate_bytes = kDefaultRotateBytes;
+        typed_bytes = 0;
+        pruned_upto_ = 0;
     }
 };
 
