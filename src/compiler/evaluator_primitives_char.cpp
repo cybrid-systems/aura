@@ -564,7 +564,15 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             if (a.size() < 3 || f64slot(a[0]) < 0 || !is_int(a[1]) || !as_real(a[2], x))
                 return f64err("f64vector-set!: expected (f64vector index number)");
             std::lock_guard lock(ev.alloc_storage_lock_);
-            const auto idx = types::as_string_idx(a[0]);
+            const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+            // Issue #4519: f64slot validated under its own critical section
+            // and released the lock; a concurrent restore_panic_checkpoint
+            // shrink can drop the slot before this second critical section
+            // re-acquires. Refuse when idx is past the (shrunk) heap — or
+            // the slot no longer holds a %8 payload — before operator[];
+            // inrange_string_tenant_allows does not check the heap length.
+            if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+                return f64err("f64vector-set!: expected (f64vector index number)");
             if (!ev.inrange_string_tenant_allows(idx, aura::compiler::security::kEffectMutate,
                                                  "f64vector-set!"))
                 return f64err("f64vector-set!: cross-tenant slot write denied (#4428)");

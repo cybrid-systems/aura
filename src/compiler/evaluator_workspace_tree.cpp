@@ -301,12 +301,25 @@ bool Evaluator::save_panic_checkpoint() {
     if (!types::is_string(src))
         return false;
     auto idx = types::as_string_idx(src);
-    if (idx >= string_heap_.size())
-        return false;
-    // Issue #3850: bump live-CP depth only on empty→live transition
-    // (re-save of an already-live checkpoint must not double-count).
-    const bool newly_live = panic_safe_source_.empty();
-    panic_safe_source_ = string_heap_[idx];
+    // Issue #4519: fiber:spawn shares the Evaluator, so another fiber's
+    // push_string_heap (heap realloc) or restore_panic_checkpoint (heap
+    // shrink) can land between the idx check and the slot copy — the same
+    // unlocked-read UAF face #4509 closed for the f64 readers. Hold
+    // alloc_storage_lock_ across the string_heap_ bounds check, the slot
+    // copy, and the size snapshot. The live-CP note is an atomic bump and
+    // the cells_/pairs_/env_frames_ snapshots do not touch the heap, so
+    // they stay outside the lock.
+    bool newly_live = false;
+    {
+        std::lock_guard alloc_lock(alloc_storage_lock_);
+        if (idx >= string_heap_.size())
+            return false;
+        // Issue #3850: bump live-CP depth only on empty→live transition
+        // (re-save of an already-live checkpoint must not double-count).
+        newly_live = panic_safe_source_.empty();
+        panic_safe_source_ = string_heap_[idx];
+        panic_safe_string_heap_size_ = string_heap_.size();
+    }
     if (newly_live)
         aura::gc_hooks::note_panic_checkpoint_live();
     // Issue #242 / #1360: snapshot append-only arena sizes so
@@ -314,7 +327,6 @@ bool Evaluator::save_panic_checkpoint() {
     // env_frames_ — append-only EnvId keeps pre-checkpoint ids valid).
     panic_safe_cells_size_ = cells_.size();
     panic_safe_pairs_size_ = pairs_.size();
-    panic_safe_string_heap_size_ = string_heap_.size();
     panic_safe_env_frames_size_ = env_frames_.size();
     // Issue #1489: arm process-wide GC defer for the recovery window
     // (commit/restore releases). Protects pinned COW / StableNodeRef /
@@ -349,8 +361,17 @@ bool Evaluator::restore_panic_checkpoint() {
     } panic_reinstall_scope;
     // Issue #1583: high-resolution recovery latency (stall budget SLO).
     const auto t0 = std::chrono::steady_clock::now();
-    auto idx = string_heap_.size();
-    string_heap_.push_back(panic_safe_source_);
+    // Issue #4519: the size read + push_back must be atomic under
+    // alloc_storage_lock_ — an unlocked reservation can interleave with
+    // another fiber's push_string_heap (idx lands on a foreign slot) and
+    // the push itself reallocates the pmr::vector under concurrent
+    // readers (f64vector-ref/-dot hold const refs into the heap).
+    std::size_t idx = 0;
+    {
+        std::lock_guard alloc_lock(alloc_storage_lock_);
+        idx = string_heap_.size();
+        string_heap_.push_back(panic_safe_source_);
+    }
     auto result = (*set_fn)({make_string(idx)});
     bool ok = types::is_bool(result) && types::as_bool(result);
     // Issue #548: bump the lifecycle counters regardless of
@@ -379,6 +400,12 @@ bool Evaluator::restore_panic_checkpoint() {
         // resize string_heap_ to idx+1 (= pre-save size + 1) so
         // the source string is preserved while everything added
         // AFTER the save (idx+1 onwards) is truncated away.
+        // Issue #4519: the resize reallocates/frees the heap tail, so it
+        // must hold alloc_storage_lock_ — a concurrent reader holding a
+        // const ref into the heap (f64vector-ref / f64vector-dot) would
+        // otherwise walk the vector mid-shrink. string_slot_tenants_ is
+        // parallel to the heap and its writers hold the same lock (#4428).
+        std::lock_guard alloc_lock_resize(alloc_storage_lock_);
         std::size_t new_string_heap_size = idx + 1;
         if (new_string_heap_size <= string_heap_.size()) {
             string_heap_.resize(new_string_heap_size);
@@ -471,9 +498,11 @@ bool Evaluator::restore_panic_checkpoint() {
 // restore_panic_checkpoint_on_arena_compact_if_needed() + _on_hot_swap_
 // below via the shared run_post_restore_lifecycle_close() helper.
 void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
-    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_.load(std::memory_order_acquire))
+    if (!has_panic_checkpoint() ||
+        !outermost_mutation_success_flag_.load(std::memory_order_acquire))
         return;
-    if (MutationBoundaryGuard::success_flag_load(outermost_mutation_success_flag_.load(std::memory_order_acquire)))
+    if (MutationBoundaryGuard::success_flag_load(
+            outermost_mutation_success_flag_.load(std::memory_order_acquire)))
         return;
     if (!panic_auto_rollback_)
         return;
@@ -491,7 +520,8 @@ void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
 // compact without leaving env_frames_ / closures_ in a state where a
 // later guard dtor commits against the wrong snapshot.
 void Evaluator::restore_panic_checkpoint_on_arena_compact_if_needed() noexcept {
-    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_.load(std::memory_order_acquire))
+    if (!has_panic_checkpoint() ||
+        !outermost_mutation_success_flag_.load(std::memory_order_acquire))
         return;
     if (!panic_auto_rollback_)
         return;
@@ -507,7 +537,8 @@ void Evaluator::restore_panic_checkpoint_on_arena_compact_if_needed() noexcept {
 // post_hot_swap_checkpoint_restore_total so re-deopt + recover
 // sequences are observable without conflating with steal/compact.
 void Evaluator::restore_panic_checkpoint_on_hot_swap_if_needed() noexcept {
-    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_.load(std::memory_order_acquire))
+    if (!has_panic_checkpoint() ||
+        !outermost_mutation_success_flag_.load(std::memory_order_acquire))
         return;
     if (!panic_auto_rollback_)
         return;

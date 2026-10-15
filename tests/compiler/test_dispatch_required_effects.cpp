@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
@@ -51,6 +52,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unistd.h>
 
 import std;
@@ -3374,7 +3376,9 @@ static void ac4518_inrange_apply_encoding_f64_readers() {
         const auto sp = char_src.find("add(\"f64vector-set!\"");
         CHECK(sp != std::string::npos, "4518: f64vector-set! body located");
         if (sp != std::string::npos) {
-            const auto win = char_src.substr(sp, 1000);
+            // #4519 widened: the body now also carries the second-section
+            // bounds check between the gate and the slot write.
+            const auto win = char_src.substr(sp, 1800);
             CHECK(win.find("kEffectMutate") != std::string::npos,
                   "4518: f64vector-set! keeps its Mutate gate");
         }
@@ -3389,6 +3393,290 @@ static void ac4518_inrange_apply_encoding_f64_readers() {
     aura::core::provenance::set_multi_tenant_env_active(false);
     set_mode(SandboxMode::Off);
     ev.set_effect_sandbox_mode(0);
+}
+
+// Issue #4519: the panic checkpoint mutator raced the shared string heap.
+// fiber:spawn shares one Evaluator, so another fiber's push_string_heap
+// (pmr::vector realloc) or restore_panic_checkpoint truncation could free
+// the buffer under save_panic_checkpoint's unlocked slot copy, under
+// restore's unlocked push_back / resize, and under f64vector-set!'s second
+// critical section (f64slot validated then released; a shrink between the
+// sections made string_heap_[idx] an OOB write). The fix is the existing
+// alloc_storage_lock_ only — no pin registry, no LifetimePin row, no new
+// query key, no moving-window-green change.
+static void ac4519_source_cite() {
+    std::println("\n--- #4519 cite: checkpoint heap lock + set! second-section bounds ---");
+    const auto wt = read_file("src/compiler/evaluator_workspace_tree.cpp");
+    const auto save_fn = wt.find("bool Evaluator::save_panic_checkpoint()");
+    const auto restore_fn = wt.find("bool Evaluator::restore_panic_checkpoint()");
+    CHECK(save_fn != std::string::npos && restore_fn != std::string::npos && save_fn < restore_fn,
+          "4519 cite: save/restore located in workspace tree");
+    if (save_fn != std::string::npos && restore_fn != std::string::npos && save_fn < restore_fn) {
+        const auto win = wt.substr(save_fn, restore_fn - save_fn);
+        const auto bounds = win.find("if (idx >= string_heap_.size())");
+        const auto lock1 = win.find("std::lock_guard alloc_lock(alloc_storage_lock_");
+        const auto copy = win.find("panic_safe_source_ = string_heap_[idx]");
+        CHECK(bounds != std::string::npos && lock1 != std::string::npos &&
+                  copy != std::string::npos && lock1 < bounds && bounds < copy,
+              "4519 cite: save bounds-check + slot copy inside alloc_storage_lock_");
+        CHECK(win.find("panic_safe_string_heap_size_ = string_heap_.size()") != std::string::npos,
+              "4519 cite: save snapshots the heap size in the locked region");
+    }
+    if (restore_fn != std::string::npos) {
+        const auto win = wt.substr(restore_fn, 9000);
+        const auto lockp = win.find("std::lock_guard alloc_lock(alloc_storage_lock_");
+        const auto push = win.find("string_heap_.push_back(panic_safe_source_)");
+        const auto setcall = win.find("(*set_fn)({make_string(idx)})");
+        CHECK(push != std::string::npos && lockp != std::string::npos &&
+                  setcall != std::string::npos && lockp < push && push < setcall,
+              "4519 cite: restore size-read + push_back atomic under the lock");
+        const auto lockr = win.find("std::lock_guard alloc_lock_resize(alloc_storage_lock_");
+        const auto rsz = win.find("string_heap_.resize(new_string_heap_size)");
+        CHECK(rsz != std::string::npos && lockr != std::string::npos && lockr < rsz,
+              "4519 cite: restore resize holds alloc_storage_lock_");
+        CHECK(win.find("string_slot_tenants_.resize(string_heap_.size())") != std::string::npos,
+              "4519 cite: tenant stamps shrink beside the heap resize");
+    }
+    // The MBG dtor path (phase 2-3) is a caller of the now-locked restore:
+    // the auto-rollback arm must still route through it unchanged.
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto auto_rb = mb.find("ev_->panic_auto_rollback_");
+    const auto dtor_restore = mb.find("(void)ev_->restore_panic_checkpoint();");
+    CHECK(auto_rb != std::string::npos && dtor_restore != std::string::npos &&
+              auto_rb < dtor_restore,
+          "4519 cite: MBG dtor auto-rollback path calls the locked restore");
+    const auto pc = read_file("src/compiler/evaluator_primitives_char.cpp");
+    const auto sp = pc.find("add(\"f64vector-set!\"");
+    CHECK(sp != std::string::npos, "4519 cite: f64vector-set! body located");
+    if (sp != std::string::npos) {
+        const auto win = pc.substr(sp, 2400);
+        const auto lock2 = win.find("std::lock_guard lock(ev.alloc_storage_lock_)");
+        const auto bounds2 = win.find("idx >= ev.string_heap_.size()");
+        const auto slot = win.find("auto& s = ev.string_heap_[idx]");
+        CHECK(lock2 != std::string::npos && bounds2 != std::string::npos &&
+                  slot != std::string::npos && lock2 < bounds2 && bounds2 < slot,
+              "4519 cite: second section bounds-checks before operator[]");
+        CHECK(win.find("inrange_string_tenant_allows") != std::string::npos &&
+                  win.find("kEffectMutate") != std::string::npos,
+              "4519 cite: #4428 tenant gate retained after the bounds check");
+    }
+}
+
+static void ac4519_f64set_second_section_bounds() {
+    std::println("\n--- #4519: f64vector-set! second critical section bounds ---");
+    using aura::compiler::types::as_float;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_error;
+    using aura::compiler::types::is_string;
+    using aura::compiler::types::make_float;
+    using aura::compiler::types::make_int;
+    using aura::compiler::types::make_string;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto set_fn = ev.primitives().lookup("f64vector-set!");
+    auto ref_fn = ev.primitives().lookup("f64vector-ref");
+    auto mk_fn = ev.primitives().lookup("make-f64vector");
+    CHECK(set_fn && ref_fn && mk_fn, "4519: f64 prims present");
+    if (!(set_fn && ref_fn && mk_fn))
+        return;
+    auto err_msg = [&](const aura::compiler::types::EvalValue& r) -> std::string {
+        if (!is_error(r))
+            return {};
+        const auto eidx = static_cast<std::size_t>(aura::compiler::types::as_error_idx(r));
+        if (eidx >= ev.error_values_.size() ||
+            !aura::compiler::types::is_string(ev.error_values_[eidx]))
+            return {};
+        return ev.copy_string_heap_at(
+            static_cast<std::size_t>(aura::compiler::types::as_string_idx(ev.error_values_[eidx])));
+    };
+
+    // AC1: owner set! still lands (regression).
+    auto f64 = (*mk_fn)({make_int(2), make_float(1.5)});
+    CHECK(!is_error(f64) && is_string(f64), "4519 AC1: make-f64vector ok");
+    auto w = (*set_fn)({f64, make_int(1), make_float(2.25)});
+    CHECK(!is_error(w), "4519 AC1: in-range set lands");
+    auto r = (*ref_fn)({f64, make_int(1)});
+    CHECK(!is_error(r) && as_float(r) == 2.25, "4519 AC1: set/ref roundtrip");
+
+    // AC2: a stale slot handle (idx past the heap — the face a concurrent
+    // restore-shrink presents) refuses with the arg-validation error instead
+    // of writing OOB; the second-section bounds check itself is pinned by
+    // the source-cite AC and exercised by the AC4 stress.
+    auto w2 = (*set_fn)({make_string(999999), make_int(0), make_float(9.0)});
+    CHECK(is_error(w2), "4519 AC2: stale slot refused");
+    CHECK(err_msg(w2) == "f64vector-set!: expected (f64vector index number)",
+          "4519 AC2: refuse shape is the arg-validation error");
+
+    // AC3: a slot whose payload is not %8 keeps refusing.
+    auto notf64 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("abc")));
+    auto w3 = (*set_fn)({notf64, make_int(0), make_float(1.0)});
+    CHECK(is_error(w3), "4519 AC3: non-%8 slot refused");
+
+    // AC4: bounded adversarial stress — a rollback thread drives the only
+    // public shrinker (save/restore_panic_checkpoint: restore's truncate
+    // resize drops slots pushed mid-restore) plus a mint thread forcing
+    // reallocations, while the main thread mints + set!s. The re-acquired
+    // second section bounds-checks, so the worst case is a clean refuse,
+    // never an OOB write through string_heap_[idx].
+    std::atomic<bool> stop{false};
+    std::thread rollbacker([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (ev.save_panic_checkpoint()) {
+                if (!ev.restore_panic_checkpoint()) {
+                    // set-code result shape can vary; a failed restore must
+                    // not stack a second reinstall on the same workspace.
+                    if (ev.has_panic_checkpoint())
+                        ev.commit_panic_checkpoint();
+                    break;
+                }
+                if (ev.has_panic_checkpoint())
+                    ev.commit_panic_checkpoint(); // release the GC defer arm
+            }
+            std::this_thread::yield();
+        }
+    });
+    std::thread pusher([&] {
+        while (!stop.load(std::memory_order_relaxed))
+            (void)ev.push_string_heap(std::string(8, '\0'));
+    });
+    for (int i = 0; i < 256; ++i) {
+        auto v = (*mk_fn)({make_int(2), make_float(0.5)});
+        if (!is_error(v))
+            (void)(*set_fn)({v, make_int(1), make_float(1.0)});
+    }
+    stop.store(true, std::memory_order_relaxed);
+    rollbacker.join();
+    pusher.join();
+    CHECK(true, "4519 AC4: set! stress completed without OOB");
+    // Heap still serviceable after the stress.
+    const auto ping = ev.push_string_heap("ping4519");
+    CHECK(ping >= 0, "4519 AC4: heap mints after stress");
+    if (ev.has_panic_checkpoint())
+        ev.commit_panic_checkpoint();
+}
+
+static void ac4519_checkpoint_heap_lock() {
+    std::println("\n--- #4519: panic checkpoint save/restore under the heap lock ---");
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(
+        cs.eval("(set-code \"(define (g4519 x) (+ x 1)) (define w4519 (g4519 41))\")").has_value(),
+        "4519: set-code seeds workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "4519: eval-current");
+
+    // AC1: save snapshots the workspace source (live checkpoint).
+    CHECK(ev.save_panic_checkpoint(), "4519 AC1: save ok");
+    CHECK(ev.has_panic_checkpoint(), "4519 AC1: checkpoint live");
+
+    // AC2a: concurrent push_string_heap (pmr::vector realloc) while save
+    // snapshots the source. The bounds check + slot copy + size snapshot
+    // are atomic under alloc_storage_lock_, so the copied source never
+    // straddles a reallocation and idx never lands past the end. Commit
+    // (not restore) clears each round — restore re-enters set-code, and a
+    // full workspace reinstall racing mints cross-thread is not a
+    // supported face; AC2b/AC3 cover the restore critical sections.
+    std::atomic<bool> stop{false};
+    std::atomic<int> push_ok{0};
+    auto pusher = [&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (ev.push_string_heap(std::string(8, '\0')) >= 0)
+                push_ok.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    int saves = 0;
+    {
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 3; ++t)
+            threads.emplace_back(pusher);
+        for (int i = 0; i < 256; ++i) {
+            if (ev.save_panic_checkpoint())
+                ++saves;
+            if (ev.has_panic_checkpoint())
+                ev.commit_panic_checkpoint(); // release the GC defer arm
+        }
+        stop.store(true, std::memory_order_relaxed);
+        for (auto& th : threads)
+            th.join();
+    }
+    CHECK(saves > 0, "4519 AC2a: saves under concurrent heap realloc");
+    CHECK(push_ok.load(std::memory_order_relaxed) > 0, "4519 AC2a: concurrent pushes landed");
+    if (ev.has_panic_checkpoint())
+        ev.commit_panic_checkpoint();
+    CHECK(!ev.has_panic_checkpoint(), "4519 AC2a: no checkpoint leak");
+    CHECK(cs.eval("(eval-current)").has_value(), "4519 AC2a: evaluator usable after stress");
+
+    // AC2b: one save/restore round on a fresh evaluator (the serve-suite
+    // pattern) — the locked size-read + push_back reservation and the
+    // locked truncate resize on a heap the stress grew. A failed restore
+    // (set-code result shape varies) commits the fallback, as the GC-defer
+    // suites do.
+    {
+        CompilerService cs1;
+        auto& ev1 = cs1.evaluator();
+        CHECK(cs1.eval("(set-code \"(define s4519 5)\")").has_value(), "4519 AC2b: seed");
+        CHECK(cs1.eval("(eval-current)").has_value(), "4519 AC2b: eval-current");
+        CHECK(ev1.save_panic_checkpoint(), "4519 AC2b: save ok");
+        (void)ev1.push_string_heap(std::string(8, '\0'));
+        const bool restored1 = ev1.restore_panic_checkpoint();
+        if (!restored1 && ev1.has_panic_checkpoint())
+            ev1.commit_panic_checkpoint();
+        CHECK(restored1 || !ev1.has_panic_checkpoint(),
+              "4519 AC2b: restored or fallback-committed");
+        CHECK(cs1.eval("(eval-current)").has_value(), "4519 AC2b: evaluator usable");
+    }
+
+    // AC3: deterministic truncate shape (single thread). The locked push
+    // reserves idx = size-at-restore and the locked resize keeps the heap
+    // at idx+1: the re-pushed source survives, post-save pushes stay.
+    {
+        CompilerService cs2;
+        auto& ev2 = cs2.evaluator();
+        CHECK(cs2.eval("(set-code \"(define z4519 7)\")").has_value(), "4519 AC3: seed");
+        CHECK(cs2.eval("(eval-current)").has_value(), "4519 AC3: eval-current");
+        CHECK(ev2.save_panic_checkpoint(), "4519 AC3: save ok");
+        CHECK(ev2.panic_safe_string_heap_size() == ev2.string_heap_size(),
+              "4519 AC3: save snapshot equals the live heap size");
+        const auto at_save = ev2.string_heap_size();
+        (void)ev2.push_string_heap("extra-a-4519");
+        (void)ev2.push_string_heap("extra-b-4519");
+        CHECK(ev2.string_heap_size() == at_save + 2, "4519 AC3: two pushes landed");
+        const bool restored3 = ev2.restore_panic_checkpoint();
+        if (!restored3 && ev2.has_panic_checkpoint())
+            ev2.commit_panic_checkpoint();
+        CHECK(restored3, "4519 AC3: restore ok");
+        CHECK(ev2.string_heap_size() == at_save + 3,
+              "4519 AC3: heap keeps source + post-save pushes at idx+1");
+        CHECK(!ev2.has_panic_checkpoint(), "4519 AC3: checkpoint cleared");
+    }
+
+    // AC4: restore rolls the workspace back to the checkpoint source —
+    // post-restore the pre-save define still evaluates and the post-save
+    // define is gone (the locked push + truncate keep the re-pushed source
+    // coherent at idx).
+    {
+        CompilerService cs4;
+        auto& ev4 = cs4.evaluator();
+        CHECK(cs4.eval("(set-code \"(define keep4519 11)\")").has_value(), "4519 AC4: seed A");
+        CHECK(cs4.eval("(eval-current)").has_value(), "4519 AC4: eval A");
+        CHECK(ev4.save_panic_checkpoint(), "4519 AC4: save ok");
+        CHECK(cs4.eval("(set-code \"(define drop4519 22)\")").has_value(), "4519 AC4: mutate B");
+        const bool restored4 = ev4.restore_panic_checkpoint();
+        if (!restored4 && ev4.has_panic_checkpoint())
+            ev4.commit_panic_checkpoint();
+        CHECK(restored4, "4519 AC4: restore rolls back");
+        const auto keep = cs4.eval("(+ keep4519 0)");
+        CHECK(keep.has_value() && is_int(*keep) && as_int(*keep) == 11,
+              "4519 AC4: pre-save define survives restore");
+        const auto drop = cs4.eval("(+ drop4519 0)");
+        CHECK(!drop.has_value() || !is_int(*drop) || as_int(*drop) != 22,
+              "4519 AC4: post-save define rolled back");
+        if (ev4.has_panic_checkpoint())
+            ev4.commit_panic_checkpoint();
+    }
 }
 
 int run_test_dispatch_required_effects() {
@@ -5085,6 +5373,11 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4518: apply / %-encoding / f64 reader tenant gate ──
     ac4518_inrange_apply_encoding_f64_readers();
+    // ── Issue #4519: checkpoint heap lock + f64vector-set! bounds ──
+    ac4519_source_cite();
+    ac4519_f64set_second_section_bounds();
+    ac4519_checkpoint_heap_lock();
+
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
