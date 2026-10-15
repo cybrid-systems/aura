@@ -11,6 +11,7 @@ module;
 
 #include <dlfcn.h>
 #include "compiler/ffi_hot_path.hh"
+#include "compiler/value_tags.h" // Issue #4532: ffi closure id namespace
 #include "compiler/typed_mutation_audit.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h" // Issue #2005: ffi_pin_defer_active + arm/release
@@ -198,7 +199,10 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         }
         auto fidx = funcs_.size();
         funcs_.push_back({fn_ptr, name, ret_type, std::move(arg_types)});
-        auto closure_id = static_cast<std::uint64_t>(fidx) | (1ULL << 63);
+        // Issue #4532: FFI ids carry their own namespace bit. The old
+        // (1ULL << 63) tag died in the closure payload's pool shift — the
+        // raw index then collided with TW closure ids in apply_closure.
+        auto closure_id = types::make_ffi_closure_id(static_cast<std::uint64_t>(fidx));
         return types::make_closure(closure_id);
     });
 

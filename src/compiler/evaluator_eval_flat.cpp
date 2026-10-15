@@ -967,13 +967,15 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
     }
 #endif
-    // Check for foreign function closure (cid < ffi_runtime_.func_count())
-    if (cid < ffi_runtime_.func_count()) {
+    // Check for foreign function closure (Issue #4532: the FFI namespace
+    // bit — the old raw `cid < func_count()` space collided with TW
+    // closure ids once func_count() passed a TW closure's id).
+    if (types::is_ffi_closure_id(cid)) {
         if (compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
             m->closure_ffi_calls.fetch_add(1, std::memory_order_relaxed);
         }
-        auto fidx = cid;
+        const auto fidx = types::ffi_closure_id_index(cid);
         if (fidx < ffi_runtime_.func_count()) {
             auto& ff = ffi_runtime_.func_at(static_cast<std::size_t>(fidx));
             void* fn_ptr = ff.fn_ptr;
@@ -6608,8 +6610,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     TwPinResult pin_fn(fn);
                     if (is_closure(*fn)) {
                         auto cid = as_closure_id(*fn);
-                        // Check for foreign function (high bit set)
-                        if (cid < ffi_runtime_.func_count()) {
+                        // Check for foreign function (Issue #4532: the FFI
+                        // namespace bit; see apply_closure).
+                        if (types::is_ffi_closure_id(cid)) {
                             // Dispatch FFI through apply_closure
                             // (Issue #252: apply_closure increments
                             // closure_calls_total + closure_ffi_calls
