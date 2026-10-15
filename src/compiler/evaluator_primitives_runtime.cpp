@@ -80,6 +80,51 @@ namespace {
         return is_void(v);
     }
     // Format a value to string (same formatting as io_print_val but returns string)
+    // Issue #4530: gate every string slot reachable from a format payload
+    // (pairs / vectors) before fmt_val_to_string reads a byte. Returns true
+    // on the FIRST foreign slot (the helper already recorded the one
+    // IsolationDeny); the caller converts to the primitive error.
+    static bool fmt_payload_denied(Evaluator& ev, std::span<const std::string> heap,
+                                   std::span<const Pair> pairs,
+                                   std::span<const std::vector<EvalValue>> vectors,
+                                   const EvalValue& v, int depth) {
+        if (depth > 64)
+            return false;
+        if (is_string(v)) {
+            auto idx = as_string_idx(v);
+            return idx < heap.size() &&
+                   !ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "format");
+        }
+        if (is_pair(v)) {
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs.size())
+                return false;
+            if (fmt_payload_denied(ev, heap, pairs, vectors, pairs[idx].car, depth + 1))
+                return true;
+            auto cdr = pairs[idx].cdr;
+            while (is_pair(cdr)) {
+                auto nidx = as_pair_idx(cdr);
+                if (nidx >= pairs.size())
+                    break;
+                if (fmt_payload_denied(ev, heap, pairs, vectors, pairs[nidx].car, depth + 1))
+                    return true;
+                cdr = pairs[nidx].cdr;
+            }
+            if (!is_end_of_list(cdr))
+                return fmt_payload_denied(ev, heap, pairs, vectors, cdr, depth + 1);
+            return false;
+        }
+        if (is_vector(v)) {
+            auto idx = as_vector_idx(v);
+            if (idx >= vectors.size())
+                return false;
+            for (const auto& el : vectors[idx])
+                if (fmt_payload_denied(ev, heap, pairs, vectors, el, depth + 1))
+                    return true;
+        }
+        return false;
+    }
+
     static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
                                          std::span<const Pair> pairs, bool quote, int depth,
                                          std::span<const std::vector<EvalValue>> vectors) {
@@ -412,6 +457,9 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
 
         struct EqCheck {
             Evaluator& e;
+            // Issue #4530: set on the first cross-tenant denial; one
+            // IsolationDeny per denied equal? call (latch skips re-emits).
+            mutable bool denied = false;
             bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
                 if (depth > 64)
                     return true;
@@ -436,15 +484,41 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto xi = as_string_idx(x), yi = as_string_idx(y);
                     if (xi == yi)
                         return true;
-                    if (xi < e.string_heap_.size() && yi < e.string_heap_.size())
+                    if (xi < e.string_heap_.size() && yi < e.string_heap_.size()) {
+                        // Issue #4530: content compare answers byte facts —
+                        // gate both operands before the compare.
+                        if (!denied &&
+                            !e.inrange_string_tenant_allows(xi, /*required_effects=*/0, "equal?")) {
+                            denied = true;
+                            return false;
+                        }
+                        if (!denied &&
+                            !e.inrange_string_tenant_allows(yi, /*required_effects=*/0, "equal?")) {
+                            denied = true;
+                            return false;
+                        }
+                        if (denied)
+                            return false;
                         return e.string_heap_[xi] == e.string_heap_[yi];
+                    }
                     return false;
                 }
                 if (is_pair(x) && is_pair(y)) {
                     auto xi = as_pair_idx(x), yi = as_pair_idx(y);
-                    if (xi < e.pairs_.size() && yi < e.pairs_.size())
+                    if (xi < e.pairs_.size() && yi < e.pairs_.size()) {
+                        // Issue #4530: the spine walk answers structural
+                        // facts — gate the visited slots like string-join.
+                        if (!denied &&
+                            (!e.inrange_slot_tenant_allows(xi, /*vector_heap=*/false,
+                                                           /*required_effects=*/0, "equal?") ||
+                             !e.inrange_slot_tenant_allows(yi, /*vector_heap=*/false,
+                                                           /*required_effects=*/0, "equal?"))) {
+                            denied = true;
+                            return false;
+                        }
                         return (*this)(e.pairs_[xi].car, e.pairs_[yi].car, depth + 1) &&
                                (*this)(e.pairs_[xi].cdr, e.pairs_[yi].cdr, depth + 1);
+                    }
                     return false;
                 }
                 if (is_vector(x) && is_vector(y)) {
@@ -467,7 +541,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         };
 
-        return make_bool(EqCheck{ev}(a[0], a[1], 0));
+        EqCheck eq{ev};
+        const bool eq_res = eq(a[0], a[1], 0);
+        if (eq.denied)
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "equal?: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
+        return make_bool(eq_res);
     });
 
 
@@ -476,6 +556,14 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         auto id = gs_counter_.fetch_add(1, std::memory_order_relaxed);
         std::string prefix = "G__";
         if (a.size() >= 1 && is_string(a[0])) {
+            // Issue #4530: same reader gate as string-append — a foreign
+            // prefix must not leak its bytes into a fresh gensym symbol.
+            auto gpidx = as_string_idx(a[0]);
+            if (gpidx < ev.string_heap_.size() &&
+                !ev.inrange_string_tenant_allows(gpidx, /*required_effects=*/0, "gensym"))
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "gensym: cross-tenant string slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
             // Issue #2652: snapshot under lock (multi-fiber).
             prefix = ev.copy_string_heap_at(as_string_idx(a[0]));
             if (!prefix.empty())
@@ -491,9 +579,18 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #2652: lock string growth (same class as string-append).
         std::string result;
         for (auto& v : a) {
-            if (is_string(v))
-                result += ev.copy_string_heap_at(as_string_idx(v));
-            else if (is_int(v))
+            if (is_string(v)) {
+                // Issue #4530: reader gate before the concatenation copy
+                // (same contract as string-append, #4505).
+                auto sidx = as_string_idx(v);
+                if (sidx < ev.string_heap_.size() &&
+                    !ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0, "symbol-append"))
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "symbol-append: cross-tenant string slot read denied (#4505)",
+                        ev.primitive_error_counter_ptr());
+                result += ev.copy_string_heap_at(sidx);
+            } else if (is_int(v))
                 result += std::to_string(as_int(v));
         }
         return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(result))));
@@ -648,6 +745,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("format", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
+        // Issue #4530: reader gate before the template bytes are copied.
+        auto ftidx = as_string_idx(a[0]);
+        if (ftidx < ev.string_heap_.size() &&
+            !ev.inrange_string_tenant_allows(ftidx, /*required_effects=*/0, "format"))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "format: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
         // Issue #2652: snapshot template under lock; push result via locked helper.
         auto tmpl = ev.copy_string_heap_at(as_string_idx(a[0]));
         std::string result;
@@ -659,9 +763,25 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                         if (arg_idx < a.size()) {
                             auto val = a[arg_idx++];
                             if (is_string(val)) {
+                                // Issue #4530: gate before the snapshot copy.
+                                auto fvidx = as_string_idx(val);
+                                if (fvidx < ev.string_heap_.size() &&
+                                    !ev.inrange_string_tenant_allows(fvidx,
+                                                                     /*required_effects=*/0,
+                                                                     "format"))
+                                    return make_primitive_error(
+                                        ev.string_heap_, ev.error_values_,
+                                        "format: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
                                 // Snapshot string args (avoid UAF during format).
-                                result += ev.copy_string_heap_at(as_string_idx(val));
+                                result += ev.copy_string_heap_at(fvidx);
                             } else {
+                                if (fmt_payload_denied(ev, ev.string_heap_, ev.pairs_,
+                                                       ev.vector_heap_, val, 0))
+                                    return make_primitive_error(
+                                        ev.string_heap_, ev.error_values_,
+                                        "format: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false,
                                                             0, ev.vector_heap_);
                             }
@@ -672,7 +792,17 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                         if (arg_idx < a.size()) {
                             auto val = a[arg_idx++];
                             if (is_string(val)) {
-                                auto s = ev.copy_string_heap_at(as_string_idx(val));
+                                // Issue #4530: gate before the snapshot copy.
+                                auto fvidx = as_string_idx(val);
+                                if (fvidx < ev.string_heap_.size() &&
+                                    !ev.inrange_string_tenant_allows(fvidx,
+                                                                     /*required_effects=*/0,
+                                                                     "format"))
+                                    return make_primitive_error(
+                                        ev.string_heap_, ev.error_values_,
+                                        "format: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
+                                auto s = ev.copy_string_heap_at(fvidx);
                                 result += '"';
                                 for (unsigned char c : s) {
                                     if (c == 0)
@@ -686,6 +816,12 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                                 }
                                 result += '"';
                             } else {
+                                if (fmt_payload_denied(ev, ev.string_heap_, ev.pairs_,
+                                                       ev.vector_heap_, val, 0))
+                                    return make_primitive_error(
+                                        ev.string_heap_, ev.error_values_,
+                                        "format: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true,
                                                             0, ev.vector_heap_);
                             }
