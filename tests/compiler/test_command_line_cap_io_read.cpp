@@ -20,6 +20,14 @@
 //   AC10: (command-line) behavior unchanged in the production face
 //   AC11: read deny does not consume stdin
 //   AC12: source cites #4504 + deny_io(kCapIoRead) in both prims
+//
+// Issue #4517 — read-line / read-byte / char-ready? fail closed behind
+// the same io-read fence in the production face.
+//
+//   AC13: read-line denied without io-read; stdin line unconsumed
+//   AC14: read-byte denied without io-read; byte unconsumed
+//   AC15: char-ready? denied without io-read; neither polls nor consumes
+//   AC16: source cites #4517 + deny_io(kCapIoRead) in all three prims
 
 #include "test_harness.hpp"
 
@@ -109,6 +117,16 @@ static aura::compiler::EvalResult invoke_read(CompilerService& cs) {
     if (p)
         return aura::compiler::EvalResult((*p)({}));
     return cs.eval("(read)");
+}
+
+// #4517: read-line / read-byte / char-ready? are register_char_primitives
+// members; invoke the deny_io body directly like invoke_read above.
+static aura::compiler::EvalResult invoke_char_prim(CompilerService& cs, const char* name) {
+    auto& ev = cs.evaluator();
+    auto p = ev.primitives().lookup(name);
+    if (p)
+        return aura::compiler::EvalResult((*p)({}));
+    return cs.eval(std::string("(") + name + ")");
 }
 
 // #4504 Verify face: Restricted + AURA_MULTI_TENANT + production defaults.
@@ -436,6 +454,158 @@ static void ac12_source_4504() {
     }
 }
 
+// ── #4517 AC13: read-line deny leaves stdin unconsumed ──
+static void ac13_read_line_deny_preserves_stdin() {
+    std::println("\n--- #4517 AC13: read-line deny leaves stdin unconsumed ---");
+    reset_eval_face();
+    arm_production_face();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);       // Restricted
+    ev.set_capability_tenant_id(451701); // no io-read grant yet
+    CHECK(ev.sandbox_mode(), "AC13: sandbox active");
+
+    int fds[2];
+    CHECK(::pipe(fds) == 0, "AC13: stdin pipe");
+    const std::string payload = "aura-4517-line\n";
+    CHECK(::write(fds[1], payload.data(), payload.size()) == static_cast<ssize_t>(payload.size()),
+          "AC13: payload written");
+    ::close(fds[1]);
+    const int saved_stdin = ::dup(STDIN_FILENO);
+    CHECK(saved_stdin >= 0, "AC13: stdin saved");
+    CHECK(::dup2(fds[0], STDIN_FILENO) >= 0, "AC13: stdin redirected");
+    ::close(fds[0]);
+    std::cin.clear();
+
+    // Deny: no io-read — the fence fires before getline, stdin untouched.
+    const auto den0 = ev.capability_denial_count();
+    auto r = invoke_char_prim(cs, "read-line");
+    CHECK(r.has_value() && is_error(*r), "AC13: read-line denied without io-read");
+    CHECK(ev.capability_denial_count() > den0, "AC13: denial counter bumped");
+
+    // Grant: the payload line must still be there (nothing was consumed).
+    grant_io_cap(cs, kCapIoRead);
+    auto r2 = invoke_char_prim(cs, "read-line");
+    CHECK(r2.has_value() && is_string(*r2), "AC13: read-line allowed after grant");
+    if (r2 && is_string(*r2)) {
+        const auto idx = as_string_idx(*r2);
+        const auto heap = ev.string_heap();
+        CHECK(idx < heap.size() && heap[idx] == "aura-4517-line",
+              "AC13: denied read-line did not consume stdin");
+    }
+
+    ::dup2(saved_stdin, STDIN_FILENO);
+    ::close(saved_stdin);
+    std::cin.clear();
+    disarm_multi_tenant_env();
+}
+
+// ── #4517 AC14: read-byte deny leaves the byte unconsumed ──
+static void ac14_read_byte_deny_preserves_stdin() {
+    std::println("\n--- #4517 AC14: read-byte deny leaves stdin unconsumed ---");
+    reset_eval_face();
+    arm_production_face();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);       // Restricted
+    ev.set_capability_tenant_id(451702); // no io-read grant yet
+
+    int fds[2];
+    CHECK(::pipe(fds) == 0, "AC14: stdin pipe");
+    const std::string payload = "B";
+    CHECK(::write(fds[1], payload.data(), payload.size()) == static_cast<ssize_t>(payload.size()),
+          "AC14: payload written");
+    ::close(fds[1]);
+    const int saved_stdin = ::dup(STDIN_FILENO);
+    CHECK(saved_stdin >= 0, "AC14: stdin saved");
+    CHECK(::dup2(fds[0], STDIN_FILENO) >= 0, "AC14: stdin redirected");
+    ::close(fds[0]);
+    std::cin.clear();
+
+    const auto den0 = ev.capability_denial_count();
+    auto r = invoke_char_prim(cs, "read-byte");
+    CHECK(r.has_value() && is_error(*r), "AC14: read-byte denied without io-read");
+    CHECK(ev.capability_denial_count() > den0, "AC14: denial counter bumped");
+
+    grant_io_cap(cs, kCapIoRead);
+    auto r2 = invoke_char_prim(cs, "read-byte");
+    CHECK(r2.has_value() && is_int(*r2), "AC14: read-byte allowed after grant");
+    if (r2 && is_int(*r2))
+        CHECK(as_int(*r2) == 66, "AC14: byte 'B' intact after the denied read");
+
+    ::dup2(saved_stdin, STDIN_FILENO);
+    ::close(saved_stdin);
+    std::cin.clear();
+    disarm_multi_tenant_env();
+}
+
+// ── #4517 AC15: char-ready? deny does not poll or consume ──
+static void ac15_char_ready_deny_does_not_poll() {
+    std::println("\n--- #4517 AC15: char-ready? deny neither polls nor consumes ---");
+    reset_eval_face();
+    arm_production_face();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);       // Restricted
+    ev.set_capability_tenant_id(451703); // no io-read grant yet
+
+    int fds[2];
+    CHECK(::pipe(fds) == 0, "AC15: stdin pipe");
+    const std::string payload = "x";
+    CHECK(::write(fds[1], payload.data(), payload.size()) == static_cast<ssize_t>(payload.size()),
+          "AC15: payload written");
+    ::close(fds[1]);
+    const int saved_stdin = ::dup(STDIN_FILENO);
+    CHECK(saved_stdin >= 0, "AC15: stdin saved");
+    CHECK(::dup2(fds[0], STDIN_FILENO) >= 0, "AC15: stdin redirected");
+    ::close(fds[0]);
+    std::cin.clear();
+
+    const auto den0 = ev.capability_denial_count();
+    auto r = invoke_char_prim(cs, "char-ready?");
+    CHECK(r.has_value() && is_error(*r), "AC15: char-ready? denied without io-read");
+    CHECK(ev.capability_denial_count() > den0, "AC15: denial counter bumped");
+
+    // Grant: still readable (#t), and the byte is untouched — read-byte
+    // consumes it AFTER the poll, proving the denied poll consumed nothing.
+    grant_io_cap(cs, kCapIoRead);
+    auto rdy = invoke_char_prim(cs, "char-ready?");
+    CHECK(rdy.has_value() && is_bool(*rdy) && as_bool(*rdy), "AC15: readable after grant (#t)");
+    auto rb = invoke_char_prim(cs, "read-byte");
+    CHECK(rb.has_value() && is_int(*rb), "AC15: read-byte after ready");
+    if (rb && is_int(*rb))
+        CHECK(as_int(*rb) == 120, "AC15: denied char-ready? did not consume the byte");
+
+    ::dup2(saved_stdin, STDIN_FILENO);
+    ::close(saved_stdin);
+    std::cin.clear();
+    disarm_multi_tenant_env();
+}
+
+// ── #4517 AC16: source cites ──
+static void ac16_source_4517() {
+    std::println("\n--- #4517 AC16: source cites gate ---");
+    auto src = read_file("src/compiler/evaluator_primitives_char.cpp");
+    CHECK(!src.empty(), "AC16: read evaluator_primitives_char.cpp");
+    const std::pair<const char*, const char*> prims[] = {
+        {"add(\"read-line\"", "std::getline"},
+        {"add(\"char-ready?\"", "::poll"},
+        {"add(\"read-byte\"", "read_stdin_byte"},
+    };
+    for (const auto& [decl, host_call] : prims) {
+        auto pos = src.find(decl);
+        CHECK(pos != std::string::npos, "AC16: prim present");
+        if (pos == std::string::npos)
+            continue;
+        auto win = src.substr(pos, 700);
+        CHECK(win.find("4517") != std::string::npos, "AC16: cites #4517");
+        CHECK(win.find("deny_io") != std::string::npos, "AC16: deny_io fence present");
+        CHECK(win.find("kCapIoRead") != std::string::npos, "AC16: kCapIoRead");
+        CHECK(win.find("io-read required") != std::string::npos, "AC16: denial message");
+        CHECK(win.find(host_call) != std::string::npos, "AC16: host call after the fence");
+    }
+}
+
 int run_test_command_line_cap_io_read() {
     std::println("=== Issue #2478: command-line kCapIoRead capability gate ===");
     ac1_denied_without_cap();
@@ -453,6 +623,11 @@ int run_test_command_line_cap_io_read() {
     ac10_command_line_unchanged();
     ac11_read_deny_preserves_stdin();
     ac12_source_4504();
+    std::println("\n=== Issue #4517: read-line / read-byte / char-ready? io-read fence ===");
+    ac13_read_line_deny_preserves_stdin();
+    ac14_read_byte_deny_preserves_stdin();
+    ac15_char_ready_deny_does_not_poll();
+    ac16_source_4517();
 
     // #4504 teardown: restore the process-global dev/test face for the
     // later members of this batch. Production defaults arm Hard globals
@@ -468,7 +643,8 @@ int run_test_command_line_cap_io_read() {
     ::unsetenv("AURA_MULTI_TENANT");
     aura::core::capability::reset_capability_effects_for_test();
 
-    std::println("\n=== #2478 + #4504 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2478 + #4504 + #4517 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
