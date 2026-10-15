@@ -112,10 +112,10 @@ def run_checks() -> list[str]:
         failures.append(f"3602 AC1: expected >=2 helper refs (def + call), found {count}")
 
     # AC1: the FFI-arm call sits after the marshal and before the native
-    # dispatch (any_float branch) - same #3217 ordering contract: refuse
-    # precedes any native call / workspace effect.
+    # dispatch (the #4531 class-split ffi_call_by_class call) - same #3217
+    # ordering contract: refuse precedes any native call / workspace effect.
     marshal_pos = flat.find("ffi_marshal_args_pure(")
-    dispatch_pos = flat.find("if (marshalled.any_float)", marshal_pos + 1)
+    dispatch_pos = flat.find("ffi_call_by_class<", marshal_pos + 1)
     call_pos = flat.find("production_ffi_apply_densify_hard_refuse(arena_", marshal_pos + 1)
     if marshal_pos == -1 or dispatch_pos == -1 or call_pos == -1:
         failures.append("3602 AC1: FFI arm anchors not found (marshal/dispatch/call)")
