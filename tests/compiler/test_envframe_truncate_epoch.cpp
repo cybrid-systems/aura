@@ -846,6 +846,97 @@ void ac3021_envframe_apply_protocol() {
           "AC3021: Soft apply path is not a Guard");
 }
 
+// Issue #4529: restore_panic_checkpoint / truncate_env_frames_to_checkpoint
+// resize the env_frames_ deque while background fibers index it — the
+// unlocked check-then-index walker faces (resolve_env_frame*,
+// is_env_frame_stale/_invalid, cap_snap, materialize fences,
+// lookup_by_symid_chain fences, walk_env_frames) could assert past the
+// shrunken size (libstdc++ deque operator[] __n < size(), SIGABRT in
+// test_type_txn_misc_batch). The fix pins the #3900 shard-lock + in-lock
+// size re-check contract on every walker face; the resize side is already
+// serialized (alloc_storage_lock_ + shard uniques + env_frames_mtx_).
+// This stress hammers the walker family from worker threads while the main
+// thread loops grow + truncate — no abort, graceful OOB faces only.
+static void ac4529_walker_truncate_stress() {
+    std::println("\n--- #4529 AC: concurrent walker faces vs truncate resize ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    for (int i = 0; i < 4; ++i)
+        (void)ev.alloc_env_frame();
+    const std::size_t base = ev.env_frames_size();
+    CHECK(base >= 4, "4529: base frames allocated");
+    ev.set_panic_safe_env_frames_size_for_test(base);
+
+    std::atomic<bool> stop{false};
+    std::atomic<long> walker_iters{0};
+    auto walker_body = [&]() {
+        while (!stop.load(std::memory_order_relaxed)) {
+            for (aura::compiler::EnvId id = 0; id < static_cast<aura::compiler::EnvId>(base);
+                 ++id) {
+                // Every walker face the #4529 audit covered; each must be
+                // size-safe against the concurrent truncate.
+                (void)ev.is_env_frame_stale(id);
+                (void)ev.is_env_frame_invalid(id);
+                (void)ev.resolve_env_frame(id);
+                (void)ev.resolve_env_frame_detailed(id);
+                (void)ev.lookup_by_symid_chain(id, 0, nullptr);
+                (void)ev.env_depth(id);
+                walker_iters.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    };
+    std::thread walker_a(walker_body);
+    std::thread walker_b(walker_body);
+    for (int round = 0; round < 400; ++round) {
+        for (int k = 0; k < 4; ++k)
+            (void)ev.alloc_env_frame();               // grow past the checkpoint
+        (void)ev.truncate_env_frames_to_checkpoint(); // shrink to base
+    }
+    stop.store(true, std::memory_order_relaxed);
+    walker_a.join();
+    walker_b.join();
+    CHECK(walker_iters.load() > 0, "4529: walker threads progressed");
+    CHECK(ev.env_frames_size() == base, "4529: deque back at checkpoint size");
+
+    // Pin the contract: the walker faces cite the issue and the
+    // locked-caller face exists (source-cite, per repo convention).
+    const auto env_src = read_file("src/compiler/evaluator_env.cpp");
+    const auto ixx_src = read_file("src/compiler/evaluator.ixx");
+    const auto wt_src = read_file("src/compiler/evaluator_workspace_tree.cpp");
+    CHECK(env_src.find("Issue #4529") != std::string::npos,
+          "4529: walker locks cite the issue in evaluator_env.cpp");
+    CHECK(ixx_src.find("walk_env_frames_locked_caller") != std::string::npos &&
+              ixx_src.find("resolve_env_frame_detailed_assume_env_frame_locks") !=
+                  std::string::npos,
+          "4529: locked-caller walk/resolve faces pinned in evaluator.ixx");
+    CHECK(wt_src.find("Issue #4529") != std::string::npos,
+          "4529: ensure_env_frame_dual_path_consistent cites the issue");
+
+    // Issue #4529 deterministic face: an Env parked across the truncate
+    // carries a parent_id_ chain the shrink invalidated — the SoA lookup
+    // walk must skip the stale tail instead of asserting in the unchecked
+    // env_frame() accessor (the exact abort backtrace: Env::lookup →
+    // Evaluator::env_frame → deque operator[]).
+    {
+        CompilerService cs2;
+        auto& ev2 = cs2.evaluator();
+        for (int i = 0; i < 3; ++i)
+            (void)ev2.alloc_env_frame();
+        const std::size_t base2 = ev2.env_frames_size();
+        ev2.set_panic_safe_env_frames_size_for_test(base2);
+        const auto doomed = ev2.alloc_env_frame(); // id == base2 → OOB after shrink
+        CHECK(doomed == static_cast<aura::compiler::EnvId>(base2),
+              "4529b: doomed parent id is the first truncated slot");
+        aura::compiler::Env stale_env;
+        stale_env.set_owner(&ev2);
+        stale_env.set_parent_id(doomed);
+        (void)ev2.truncate_env_frames_to_checkpoint(); // shrink under the parked Env
+        CHECK(ev2.env_frames_size() == base2, "4529b: deque shrank under the parked Env");
+        const auto miss = stale_env.lookup("no-such-binding-4529");
+        CHECK(!miss.has_value(), "4529b: stale-chain lookup misses gracefully (no assert)");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -901,8 +992,10 @@ int main() {
     }
     ac2360_6_source_cite();
     ac3021_envframe_apply_protocol();
+    ac4529_walker_truncate_stress();
     std::println(
-        "\n=== #1889 + #2251 + #2268 + #2295 + #2340 + #2360 + #3021: {} passed, {} failed ===",
+        "\n=== #1889 + #2251 + #2268 + #2295 + #2340 + #2360 + #3021 + #4529: {} passed, {} "
+        "failed ===",
         g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

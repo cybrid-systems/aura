@@ -399,6 +399,16 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         const aura::ast::SymId hop_sym = pool_ ? ensure_interned() : aura::ast::INVALID_SYM;
         while (cur != NULL_ENV_ID && hops < MAX_ENV_DEPTH) {
             ++hops;
+            // Issue #4529: the chain ids here are stale-prone —
+            // restore_panic_checkpoint shrinks env_frames_ while Envs with
+            // dangling parent_id_ chains stay parked on fiber stacks or
+            // across set-code restores, and the unchecked env_frame()
+            // accessor then asserts (deque operator[] past size, SIGABRT
+            // in test_type_txn_misc_batch). The shard array held above
+            // excludes a CONCURRENT shrink, so the size is stable for the
+            // whole walk — this guard catches already-stale chains.
+            if (static_cast<std::size_t>(cur) >= owner_->env_frames_size())
+                break;
             const EnvFrame& pfr = owner_->env_frame(cur);
             // Walk the frame's bindings (string-keyed). REVERSE match:
             // a TCO call frame accumulates copied ancestor bindings (via
@@ -1295,6 +1305,11 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
     {
         std::shared_lock<std::shared_mutex> rlock(
             env_frame_shards_[env_frame_shard_index(frame_id)].mu);
+        // Issue #4529: re-check under the shard lock — the unlocked check
+        // above is only a fast path; restore_panic_checkpoint can shrink
+        // the deque before we acquire the shard (index past size asserts).
+        if (frame_id >= env_frames_.size())
+            return nullptr;
         const EnvFrame& cfr = env_frames_[frame_id];
         bool has_linear = false;
         for (auto st : cfr.bindings_linear_ownership_state_)
@@ -1362,6 +1377,11 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >= env_frames_.size())
             return false;
         std::shared_lock<std::shared_mutex> rlock(env_frame_shards_[env_frame_shard_index(id)].mu);
+        // Issue #4529: re-check under the shard lock — restore_panic_checkpoint
+        // can truncate the deque between the unlocked fast-path check and the
+        // lock acquire; indexing past the shrunken size asserts (SIGABRT).
+        if (static_cast<std::size_t>(id) >= env_frames_.size())
+            return false;
         const EnvFrame& fr = env_frames_[id];
         return fr.bindings_.size() != fr.bindings_symid_.size() ||
                fr.bindings_linear_ownership_state_.size() != fr.bindings_symid_.size();
@@ -1411,6 +1431,23 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // Empty-Env safe fallback (same shape as bridge-stale path)
     // + bump env_gen_fence_reject_total so dashboards can observe.
     if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
+        // Issue #4529: the fence read is authoritative under the frame's
+        // shard lock, with an in-lock size re-check — the unlocked range
+        // test above is only a fast path; restore_panic_checkpoint can
+        // truncate the deque between it and the index (operator[] past
+        // size → libstdc++ assert on a background fiber).
+        std::shared_lock<std::shared_mutex> fence_rlock(
+            env_frame_shards_[env_frame_shard_index(cl.env_id)].mu); // Issue #3900
+        if (cl.env_id >= env_frames_.size()) {
+            // Truncated between the fast path and the lock (#4529):
+            // foreign-generation face — same empty-Env safe fallback.
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            Env empty_ne;
+            empty_ne.set_owner(this);
+            empty_ne.set_parent_id(NULL_ENV_ID);
+            return empty_ne;
+        }
         const auto& fr = env_frames_[cl.env_id];
         if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
@@ -1773,6 +1810,18 @@ std::optional<EnvFrameRef> Evaluator::materialize_call_env_ref(const Closure& cl
     // back to empty Env, which still keeps the use-site safe
     // but the Ref-returning overload cannot return an empty
     // Ref so it std::nullopts).
+    // Issue #4529: the fence read + index are authoritative under the
+    // frame's shard lock with an in-lock size re-check — the unlocked
+    // range check above is only a fast path; restore_panic_checkpoint
+    // can truncate the deque between it and the index (operator[] past
+    // size → libstdc++ assert on a background fiber).
+    std::shared_lock<std::shared_mutex> fence_rlock(
+        env_frame_shards_[env_frame_shard_index(cl.env_id)].mu); // Issue #3900
+    if (static_cast<std::size_t>(cl.env_id) >= env_frames_.size()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
     const auto& fr = env_frames_[cl.env_id];
     if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
@@ -2070,6 +2119,11 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
     // shared_lock keeps the frame alive across the load.
     std::shared_lock<std::shared_mutex> rlock(
         env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+    // Issue #4529: size re-check under the shard lock — the unlocked
+    // is_env_frame_invalid_id pre-filter raced restore_panic_checkpoint's
+    // truncate (index past the shrunken size asserts / SIGABRT).
+    if (id >= env_frames_.size())
+        return false;
     return env_frames_[id].version_ < defuse_version_.load(std::memory_order_acquire);
 }
 
@@ -2436,7 +2490,7 @@ void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint6
 // the current defuse_version_ and can be self-healing); an
 // invalid frame is terminal — never refreshable.
 bool Evaluator::is_env_frame_invalid(EnvId id) const {
-    if (id == NULL_ENV_ID || id >= env_frames_.size())
+    if (id == NULL_ENV_ID)
         return true;
     // Shared lock to keep the frame reference alive across the
     // load (consistent with is_env_frame_stale). The version_
@@ -2444,6 +2498,11 @@ bool Evaluator::is_env_frame_invalid(EnvId id) const {
     // guards against an alloc_env_frame concurrent reallocation.
     std::shared_lock<std::shared_mutex> rlock(
         env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+    // Issue #4529: size re-check under the shard lock — the unlocked
+    // range check raced restore_panic_checkpoint's truncate (index
+    // past the shrunken size asserts / SIGABRT on a background fiber).
+    if (id >= env_frames_.size())
+        return true;
     return env_frames_[id].version_ == INVALID_VERSION;
 }
 
@@ -2699,14 +2758,29 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
 // Issue #1360: stable resolve — nullptr only for NULL / OOB (BC).
 // Terminal INVALID_VERSION still returns a live pointer; callers use
 // is_env_frame_invalid / resolve_env_frame_detailed for that case.
+// Issue #4529: resolve under the frame's shard lock with an in-lock
+// size re-check — the unlocked range check raced
+// restore_panic_checkpoint's truncate (deque operator[] past size →
+// libstdc++ assert on a background fiber). Same shard-lock + re-check
+// contract as is_env_frame_stale / linear_post_mutate_enforce. The
+// returned pointer is still governed by the documented #1360 SoA
+// lifetime model (use-site revalidation), not by this lock.
 const EnvFrame* Evaluator::resolve_env_frame(EnvId id) const noexcept {
-    if (id == NULL_ENV_ID || id >= env_frames_.size())
+    if (id == NULL_ENV_ID)
+        return nullptr;
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+    if (id >= env_frames_.size())
         return nullptr;
     return &env_frames_[id];
 }
 
 EnvFrame* Evaluator::resolve_env_frame_mut(EnvId id) noexcept {
-    if (id == NULL_ENV_ID || id >= env_frames_.size())
+    if (id == NULL_ENV_ID)
+        return nullptr;
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+    if (id >= env_frames_.size())
         return nullptr;
     return &env_frames_[id];
 }
@@ -2717,7 +2791,27 @@ EnvFrame* Evaluator::resolve_env_frame_mut(EnvId id) noexcept {
 // - frame non-null for OK and STALE_VERSION (refreshable live slot)
 // - frame null for NULL_ID / OOB / INVALID_VERSION (no usable walk)
 // Every call bumps envframe_invalid_vs_stale_distinguished_total (#1890).
+//
+// Issue #4529: public face takes the frame's shard lock around the
+// range check + index so the resolve is mutually exclusive with
+// restore_panic_checkpoint's truncate / compact's deque swap. Walkers
+// that ALREADY hold the env-frame shard locks (walk_env_frames
+// contract: Env::lookup_cell_ptr / Env::lookup_cell_index /
+// lookup_by_symid_chain_ref hold the full array) must call
+// resolve_env_frame_detailed_assume_env_frame_locks instead —
+// re-entering a shared_mutex deadlocks under a waiting writer.
 EnvFrameResolveResult Evaluator::resolve_env_frame_detailed(EnvId id) const noexcept {
+    if (id == NULL_ENV_ID)
+        return resolve_env_frame_detailed_assume_env_frame_locks(id);
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+    return resolve_env_frame_detailed_assume_env_frame_locks(id);
+}
+
+// Issue #4529: unlocked core — caller holds the env-frame shard locks
+// (full array), so the size check + index below are authoritative.
+EnvFrameResolveResult
+Evaluator::resolve_env_frame_detailed_assume_env_frame_locks(EnvId id) const noexcept {
     auto note_distinguished = [this]() noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->envframe_invalid_vs_stale_distinguished_total.fetch_add(1,
@@ -2757,6 +2851,11 @@ EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noe
         note_distinguished();
         return {nullptr, EnvFrameResolveStatus::NULL_ID};
     }
+    // Issue #4529: shard lock around the range check + index — same
+    // contract as resolve_env_frame_detailed's public face (no separate
+    // locked-caller core: no current caller holds the shard locks).
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
     if (id >= env_frames_.size()) {
         note_distinguished();
         return {nullptr, EnvFrameResolveStatus::OOB};
@@ -3190,15 +3289,6 @@ Evaluator::lookup_by_symid_chain(EnvId start, aura::ast::SymId s,
     // restamped mid-walk). Empty-Env safe fallback: return
     // std::nullopt (caller treats as unbound). No silent use of
     // foreign-generation bindings.
-    if (start != NULL_ENV_ID && start < env_frames_.size()) {
-        const auto& fr = env_frames_[start];
-        if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
-            return std::nullopt;
-        }
-    }
-
     std::optional<types::EvalValue> result;
     const auto version_snap = defuse_version_.load(std::memory_order_acquire);
     // Hold the shared lock across the walk so frame refs stay
@@ -3208,6 +3298,23 @@ Evaluator::lookup_by_symid_chain(EnvId start, aura::ast::SymId s,
     for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
         rlock[ef_i] =
             std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
+    // Issue #2251: env_gen fence on parent walks. If the start
+    // frame has a non-zero stamp that does NOT match current
+    // env_gen, treat as foreign-generation (sibling region parent
+    // restamped mid-walk). Empty-Env safe fallback: return
+    // std::nullopt (caller treats as unbound). No silent use of
+    // foreign-generation bindings.
+    // Issue #4529: the fence read now lives UNDER the shard locks —
+    // the unlocked fence read raced restore_panic_checkpoint's deque
+    // truncate (operator[] past size asserts on a background fiber).
+    if (start != NULL_ENV_ID && start < env_frames_.size()) {
+        const auto& fr = env_frames_[start];
+        if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
+    }
     // Issue #4072: do not use walk_env_frames here. That helper treats
     // INVALID_VERSION as !OK and aborts the chain, and a visitor that
     // only checks version_ < snap never sees INVALID_VERSION (uint64
@@ -3273,9 +3380,16 @@ Evaluator::lookup_by_symid_chain(EnvId start, aura::ast::SymId s,
 // is the one taken under the lock.
 std::optional<EnvFrameRef> Evaluator::lookup_by_symid_chain_ref(EnvId start,
                                                                 aura::ast::SymId s) const {
+    std::optional<EnvFrameRef> result;
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        rlock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     // Issue #2251: env_gen fence on parent walks. Same as
     // lookup_by_symid_chain — start-frame stamp mismatch
     // yields std::nullopt (no foreign-generation Ref).
+    // Issue #4529: moved UNDER the shard locks — the unlocked fence
+    // read raced restore_panic_checkpoint's deque truncate.
     if (start != NULL_ENV_ID && start < env_frames_.size()) {
         const auto& fr = env_frames_[start];
         if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
@@ -3284,12 +3398,9 @@ std::optional<EnvFrameRef> Evaluator::lookup_by_symid_chain_ref(EnvId start,
             return std::nullopt;
         }
     }
-    std::optional<EnvFrameRef> result;
-    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
-    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
-        rlock[ef_i] =
-            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
-    walk_env_frames(start, [&](EnvId cur, const EnvFrame& fr) {
+    // Issue #4529: locked-caller face — this walk holds the full shard
+    // array; per-hop re-locking would deadlock under a waiting writer.
+    walk_env_frames_locked_caller(start, [&](EnvId cur, const EnvFrame& fr) {
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
             result = EnvFrameRef(cur, fr.env_gen_stamp_);
@@ -3965,7 +4076,9 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
         for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
             rlock[ef_i] = std::shared_lock<std::shared_mutex>(
                 owner_->env_frame_shard_mu(ef_i)); // Issue #3900
-        owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
+        // Issue #4529: locked-caller face — the full shard array is held
+        // above; per-hop re-locking would deadlock under a waiting writer.
+        owner_->walk_env_frames_locked_caller(parent_id_, [&](EnvId cur, const EnvFrame& f) {
             // Skip frames stamped before the current mutation epoch.
             if (f.version_ < version_snap) {
                 // Issue #355: refresh the stale frame (bump
@@ -4079,7 +4192,9 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
         for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
             rlock[ef_i] = std::shared_lock<std::shared_mutex>(
                 owner_->env_frame_shard_mu(ef_i)); // Issue #3900
-        owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
+        // Issue #4529: locked-caller face — the full shard array is held
+        // above; per-hop re-locking would deadlock under a waiting writer.
+        owner_->walk_env_frames_locked_caller(parent_id_, [&](EnvId cur, const EnvFrame& f) {
             // Issue #355: record a behind frame. lookup_by_symid_chain
             // still skips it (#4099). This walk must not.
             // Issue #4122: set-car! / vector-set! / hash-set! bump
