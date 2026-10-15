@@ -1727,32 +1727,40 @@ namespace {
     }
 
     // why: 1 = held flag, 2 = depth>0 (defense in depth)
+    // Issue #4514: this gate is THIS-FIBER truth only. The #2849 process-wide
+    // held count (aura_evaluator_mutation_boundary_held) stays the push
+    // Backpressure signal (note_mailbox_deferred_under_boundary) and the
+    // eventfd wake force-safepoint signal (Scheduler epoll path) — it must
+    // NOT gate Fiber::yield. Treating another fiber's outermost Guard as
+    // this fiber's hold made a depth-0 peer return from yield without
+    // swapcontext, so an empty MultiFiberMailbox::recv busy-looped its
+    // worker and starved Ready siblings until the holder exited. Same
+    // this-fiber split as the #3694 safepoint fail-closed ABI (which
+    // ignores process-held and returns 0 at this-fiber depth 0).
     [[nodiscard]] bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out) noexcept {
+        const bool hook_held = aura::messaging::g_mutation_boundary_held &&
+                               aura::messaging::g_mutation_boundary_held();
+        const bool this_fiber_depth = aura_evaluator_mutation_boundary_depth() > 0;
         // Soft orch agent-body window (#2118 / #1881) does not hold
         // workspace_mtx_. Steal/GC still see depth via fiber mirrors.
         // Blocking yield here busy-loops keepalive / join-fail bodies
         // (#3208 / #2161) and starves cancel.
         if (g_current_fiber && g_current_fiber->orch_agent_boundary_active()) {
-            const bool hard_held = (aura::messaging::g_mutation_boundary_held &&
-                                    aura::messaging::g_mutation_boundary_held()) ||
-                                   aura_evaluator_mutation_boundary_held() != 0;
-            if (!hard_held)
+            if (!hook_held && !this_fiber_depth)
                 return false;
         }
         // Prefer messaging bridge (set while Evaluator yield-hook is live).
-        if (aura::messaging::g_mutation_boundary_held &&
-            aura::messaging::g_mutation_boundary_held()) {
+        // This-thread trampoline: reads only yield_hook_evaluator() on the
+        // calling thread, so peer fibers correctly observe false (#4514).
+        if (hook_held) {
             if (why_out)
                 *why_out = 1;
             return true;
         }
-        // C-linkage held (covers held_ + depth fallback in evaluator_fiber_mutation).
-        if (aura_evaluator_mutation_boundary_held() != 0) {
-            if (why_out)
-                *why_out = 1;
-            return true;
-        }
-        if (aura_evaluator_mutation_boundary_depth() > 0) {
+        // This fiber's own mutation stack depth (per-fiber mirror via
+        // g_current_fiber). Covers the held_ + depth fallback window when
+        // the yield hook is unbound mid-teardown.
+        if (this_fiber_depth) {
             if (why_out)
                 *why_out = 2;
             return true;
