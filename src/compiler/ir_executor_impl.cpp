@@ -2666,6 +2666,13 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     }
     for (const auto& entry : empty_env_closure_by_func_)
         roots.push_back(make_closure(entry.second));
+    // Issue #4481: absorb TW-side in-flight roots (call-env bindings,
+    // pinned arg vectors, live results). This sweep fires at IR instruction
+    // boundaries that can be nested inside a live TW evaluation; without
+    // the TW side, runtime-created closures referenced only from TW call-env
+    // pairs were treated as unreachable and erased ("cannot call: value",
+    // #4481 reopen).
+    ev->collect_tw_inflight_roots(roots);
 
     std::vector<std::uint64_t> live_ir;
     std::vector<std::uint8_t> live_cells;
