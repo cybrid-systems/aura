@@ -729,30 +729,40 @@ void FlatAST::mark_subtree_dirty(NodeId id, std::uint8_t reasons, std::uint8_t p
 
 // --- FlatAST::clear_dirty ---
 void FlatAST::clear_dirty(NodeId id) {
+    if (type_face_journal_depth_ != 0) [[unlikely]]
+        note_type_face_dirty_write(id, /*ppa=*/false);
     if (id < dirty_.size())
         dirty_[id] = 0;
 }
 
 // --- FlatAST::clear_dirty_for ---
 void FlatAST::clear_dirty_for(NodeId id, std::uint8_t reason_mask) {
+    if (type_face_journal_depth_ != 0) [[unlikely]]
+        note_type_face_dirty_write(id, /*ppa=*/false);
     if (id < dirty_.size())
         dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
 }
 
 // --- FlatAST::clear_ppa_dirty ---
 void FlatAST::clear_ppa_dirty(NodeId id) {
+    if (type_face_journal_depth_ != 0) [[unlikely]]
+        note_type_face_dirty_write(id, /*ppa=*/true);
     if (id < ppa_dirty_.size())
         ppa_dirty_[id] = 0;
 }
 
 // --- FlatAST::clear_ppa_dirty_for ---
 void FlatAST::clear_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) {
+    if (type_face_journal_depth_ != 0) [[unlikely]]
+        note_type_face_dirty_write(id, /*ppa=*/true);
     if (id < ppa_dirty_.size())
         ppa_dirty_[id] &= static_cast<std::uint8_t>(~ppa_mask);
 }
 
 // --- FlatAST::clear_dirty_for_subtree ---
 void FlatAST::clear_dirty_for_subtree(NodeId id, std::uint8_t reason_mask) {
+    if (type_face_journal_depth_ != 0) [[unlikely]]
+        note_type_face_dirty_write(id, /*ppa=*/false);
     if (id < dirty_.size())
         dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
     auto v = get(id);

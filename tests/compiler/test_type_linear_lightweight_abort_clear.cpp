@@ -202,8 +202,9 @@ int run_test_type_linear_lightweight_abort_clear() {
         // early-out under Soft/Off — see #3281 / #3158 / #3116 for the
         // per-helper production gate). The #3382 fix does NOT add new
         // production/Soft gating — it just calls the existing helpers.
+        // Window drift: the full abort arm sits ~10k chars into the body.
         const auto exit_body = find_fn_body(
-            emb, "Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(", 8000);
+            emb, "Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(", 16000);
         const auto block_pos = exit_body.find("Issue #3382");
         if (block_pos != std::string::npos) {
             const auto block_scope = exit_body.substr(block_pos, 2500);

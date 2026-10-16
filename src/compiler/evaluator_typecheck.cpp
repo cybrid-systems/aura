@@ -2901,6 +2901,9 @@ void* Evaluator::ensure_typechecker() noexcept {
         tc->set_cache_epoch(defuse_version_.load(std::memory_order_relaxed));
         // Issue #4397: every ensure caller typechecks against live primitives.
         tc->set_registered_prim_probe(&prim_name_registered, &primitives_);
+        // Issue #4540: an open lightweight checkpoint copies this checker's
+        // CS high-water before infer writes it (once per checker).
+        capture_lightweight_abort_cs(persistent_typechecker_opaque_);
         return persistent_typechecker_opaque_;
     } catch (...) {
         // [SILENCE-PRIM] ensure is best-effort; callers fall back to stack TC.
