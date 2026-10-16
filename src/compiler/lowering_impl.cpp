@@ -222,6 +222,42 @@ static void emit_int_const(LoweringState& state, std::uint32_t slot, std::int64_
                static_cast<std::uint32_t>(bits >> 32));
 }
 
+// Issue #4552: a non-tail body form that produced an error value leaves
+// the body the way the tree walker's begin does (#2570): into the
+// innermost try handler of this IR function, else out as the function's
+// result. Normal values continue in a fresh block.
+static void emit_error_escape(LoweringState& state, std::uint32_t value_slot) {
+    auto is_err = state.alloc_local();
+    state.emit(IROpcode::IsError, is_err, value_slot);
+    auto escape_blk = state.alloc_block();
+    auto cont_blk = state.alloc_block();
+    state.emit(IROpcode::Branch, is_err, escape_blk, cont_blk);
+    state.cur_block = escape_blk;
+    if (!state.err_escapes.empty()) {
+        const auto target = state.err_escapes.back();
+        state.emit(IROpcode::Local, target.slot, value_slot);
+        state.emit(IROpcode::Jump, target.block);
+    } else {
+        state.emit(IROpcode::Return, value_slot);
+    }
+    state.cur_block = cont_blk;
+}
+
+// Issue #4552: forms whose value can never be an error value.
+static bool form_cannot_be_error(const FlatAST& flat, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return true;
+    switch (flat.get(id).tag) {
+        case NodeTag::LiteralInt:
+        case NodeTag::LiteralString:
+        case NodeTag::Lambda:
+        case NodeTag::Quote:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static std::uint32_t lower_flat_expr(
     LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
@@ -736,15 +772,26 @@ static std::uint32_t lower_flat_expr(
                         state.emit(IROpcode::ConstI64, slot, 0, 0);
                         return slot;
                     }
+                    // Issue #4552: non-tail error values inside the body
+                    // escape to this handler with the error in err_value_slot.
+                    auto err_value_slot = state.alloc_local();
+                    auto handler_blk = state.alloc_block();
+                    state.err_escapes.push_back({handler_blk, err_value_slot});
                     auto body_slot =
                         lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    state.err_escapes.pop_back();
                     auto is_err_slot = state.alloc_local();
                     state.emit(IROpcode::IsError, is_err_slot, body_slot);
 
-                    auto handler_blk = state.alloc_block();
+                    auto body_err_blk = state.alloc_block();
                     auto continue_blk = state.alloc_block();
                     auto end_blk = state.alloc_block();
-                    state.emit(IROpcode::Branch, is_err_slot, handler_blk, continue_blk);
+                    state.emit(IROpcode::Branch, is_err_slot, body_err_blk, continue_blk);
+
+                    // Body value is an error: hand it to the handler.
+                    state.cur_block = body_err_blk;
+                    state.emit(IROpcode::Local, err_value_slot, body_slot);
+                    state.emit(IROpcode::Jump, handler_blk);
 
                     // Continue block: body succeeded, pass through
                     state.cur_block = continue_blk;
@@ -779,7 +826,7 @@ static std::uint32_t lower_flat_expr(
                                         }
                                         // Allocate slot and bind error value
                                         auto err_slot = state.alloc_local();
-                                        state.emit(IROpcode::Local, err_slot, body_slot);
+                                        state.emit(IROpcode::Local, err_slot, err_value_slot);
                                         // Ensure a scope exists for the error variable binding
                                         if (state.scopes.empty()) {
                                             state.scopes.push_back({});
@@ -800,7 +847,7 @@ static std::uint32_t lower_flat_expr(
                     }
                     if (!caught) {
                         // No catch clause: re-raise by passing error through
-                        state.emit(IROpcode::Local, phi_slot, body_slot);
+                        state.emit(IROpcode::Local, phi_slot, err_value_slot);
                     }
                     state.emit(IROpcode::Jump, end_blk);
 
@@ -1384,6 +1431,11 @@ static std::uint32_t lower_flat_expr(
             auto saved_fv_map = std::move(state.free_var_map);
             auto saved_self_func_id = state.self_func_id;
             auto saved_self_func_active = state.self_func_active;
+            // Issue #4552: an enclosing try handler is a block of the
+            // parent function, not of this lambda.
+            auto saved_err_escapes = std::move(state.err_escapes);
+            state.err_escapes.clear();
+            ++state.lambda_depth;
 
             // Issue #2292: pre-allocate function id so self-references inside
             // the body can emit MakeClosure(self_func_id) before add_function.
@@ -1477,6 +1529,8 @@ static std::uint32_t lower_flat_expr(
             state.free_var_map = std::move(saved_fv_map);
             state.self_func_id = saved_self_func_id;
             state.self_func_active = saved_self_func_active;
+            state.err_escapes = std::move(saved_err_escapes);
+            --state.lambda_depth;
 
             func.free_vars = free_vars;
             if (!state.current_flat)
@@ -1639,9 +1693,17 @@ static std::uint32_t lower_flat_expr(
                 }
             }
             // Second pass: lower all children — defines find their pre-bound cells
+            // Issue #4552: an error value from a non-tail child leaves the
+            // body (tree-walker begin parity, #2570). Inside a lambda body,
+            // or a try body at any level.
+            const bool escape_errors = state.lambda_depth > 0 || !state.err_escapes.empty();
             std::uint32_t last_slot = 0;
-            for (auto c : v.children)
+            for (std::size_t bi = 0; bi < v.children.size(); ++bi) {
+                const auto c = v.child(bi);
                 last_slot = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
+                if (escape_errors && bi + 1 < v.children.size() && !form_cannot_be_error(flat, c))
+                    emit_error_escape(state, last_slot);
+            }
             if (!v.children.empty())
                 return last_slot;
             auto slot = state.alloc_local();

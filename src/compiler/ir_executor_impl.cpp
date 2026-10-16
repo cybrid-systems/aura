@@ -894,6 +894,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
     // stderr line. False means there is no evaluator; the caller returns
     // a TypeError diagnostic.
     auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v) -> bool {
+        // Issue #4552: an Error operand (a callee's (error ...) returned as a
+        // value) propagates unchanged, like a tree-walker primitive argument
+        // (evaluator_eval_flat.cpp prim-arg propagation). Minting a fresh
+        // "expected Int, got Error" hid the callee's message.
+        if (is_error(v) && !is_string(v)) {
+            locals[slot] = v;
+            return true;
+        }
         const auto detail =
             aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
         // Issue #4535: an Error operand (fail-soft f64vector-ref OOB feeding

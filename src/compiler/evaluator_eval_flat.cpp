@@ -7610,6 +7610,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                       : eval_flat(*f, *p, val_id, eval_env);
                         if (!vv)
                             return vv;
+                        // Issue #4546: the RHS can re-key this env to another
+                        // pool (set-code / eval-current walking a workspace).
+                        // bind_symid mirrors the name through pool_, so re-key
+                        // back to this define's pool first.
+                        if (p)
+                            me.set_pool(p);
                         auto ci = alloc_cell(*vv);
                         if (v.sym_id != aura::ast::INVALID_SYM)
                             me.bind_symid(v.sym_id, make_cell(ci));
@@ -7628,6 +7634,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         me.bind(std::string(name), make_cell(ci));
                     auto vv = eval_flat(*f, *p, val_id, eval_env);
                     if (!vv) {
+                        // Issue #4546: unbind by this define's SymId only
+                        // under its own pool.
+                        if (p)
+                            me.set_pool(p);
                         // Roll back so name is unbound (not void cell).
                         if (v.sym_id != aura::ast::INVALID_SYM)
                             me.unbind_local_symid(v.sym_id);
