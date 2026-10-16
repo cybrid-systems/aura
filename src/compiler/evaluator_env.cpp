@@ -2913,6 +2913,11 @@ std::size_t Evaluator::compact_env_frames() {
         (void)n;
         return 0; // busy / no reclaim
     }
+    // Issue #4576: do not move-assign env_frames_ while Moving densify has
+    // published &EnvFrame::pool_. Phase-5 and auto-arm set the bit before
+    // that publish. Soft / Off never arm it, so the probe stays false.
+    if (aura::core::densify_consistency::densify_in_flight_for(this))
+        return 0;
     // Issue #1401: acquire the interlock FIRST so we serialize with
     // load_module_file. compact_env_frames rewrites Closure::env_id
     // via remap; without the interlock, a concurrent load_module_file

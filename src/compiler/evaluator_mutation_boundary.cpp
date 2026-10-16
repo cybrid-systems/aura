@@ -6432,7 +6432,6 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // reaches here → zero extra work (AC5). Truly foreign
             // pointers stay unregistered → hard fail-closed preserved
             // (AC2). Additive counters only (AC4).
-            (void)ev_->register_known_moving_densify_root_slots();
             // Issue #3185 AC1: consult last LifetimeConsistencyProof before
             // Moving densify entry. Production/Full only (Soft/Off zero-cost
             // per AC4 — stamped_total stays 0 in quiet path → present=false →
@@ -6457,12 +6456,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
             }
             aura::ast::AdaptiveCompactResult compact_r{};
+            // Issue #4576: arm before the pool_ slot publish.
             // Issue #3894: compact under workspace_mtx_ + densify-in-flight.
-            // Issue #4304: armed before the LCP skip so the synthetic publish
-            // is inside the same guard as compact. Held until after publish.
+            // Issue #4304: armed before the LCP skip. Held through publish.
             phase5_densify_inflight =
                 std::make_unique<aura::core::densify_consistency::DensifyInFlightGuard>(
                     static_cast<const void*>(ev_));
+            (void)ev_->register_known_moving_densify_root_slots();
             if (!densify_entry_lcp_blocked) {
                 compact_r = ev_->arena_group_ ? ev_->arena_group_->compact_all_moving_pinned()
                                               : aura::ast::AdaptiveCompactResult{};

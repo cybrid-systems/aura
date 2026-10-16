@@ -7389,6 +7389,86 @@ static void ac4329_2_collision_no_slot_mirror_destroy() {
           "4329 AC2: the remaining 3 identities dtor exactly once each (no alias)");
 }
 
+// Issue #4576: EnvFrame::pool_ is published as a densify slot. Arm the
+// existing in-flight bit before that publish (Phase-5 and auto-arm) so
+// compact_env_frames cannot move-assign the deque mid-Moving. Recover
+// is unchanged. No new pin, query key, or moving-window-green edit.
+static void ac4576_inflight_blocks_env_compact() {
+    std::println("\n--- #4576: in-flight bit blocks env-frame compact ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto cite = mb.find("Issue #3894: compact under workspace_mtx_");
+    CHECK(cite != std::string::npos, "4576: #3894 cite remains");
+    if (cite != std::string::npos) {
+        const auto pre = mb.rfind("Issue #4576: arm before the pool_ slot publish.", cite);
+        CHECK(pre != std::string::npos && cite - pre < 200, "4576: arm cite sits before #3894");
+        const auto hwin = mb.substr(cite, 1600);
+        const auto gpos = hwin.find("DensifyInFlightGuard");
+        const auto reg = hwin.find("register_known_moving_densify_root_slots");
+        const auto skip = hwin.find("if (!densify_entry_lcp_blocked)");
+        CHECK(gpos != std::string::npos && reg != std::string::npos && gpos < reg && reg < skip,
+              "4576: Phase-5 arms before the pool_ slot publish");
+    }
+    const auto moving = mb.find("if (aura::ast::moving_compact_enabled())");
+    const auto reg_call = mb.find("ev_->register_known_moving_densify_root_slots();");
+    CHECK(moving != std::string::npos && reg_call != std::string::npos && moving < reg_call,
+          "4576: Phase-5 publish stays inside moving_compact_enabled");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto arm = arena.find("should_production_auto_arm_moving(frag_before)");
+    CHECK(arm != std::string::npos, "4576: auto-arm site present");
+    if (arm != std::string::npos) {
+        const auto win = arena.substr(arm, 6500);
+        const auto armed = win.find("arm_densify_in_flight");
+        const auto hook = win.find("invoke_known_roots_hook()");
+        const auto moving_c = win.find("live_compact(LiveCompactMode::Moving)");
+        CHECK(armed != std::string::npos && hook != std::string::npos &&
+                  moving_c != std::string::npos && armed < hook && hook < moving_c,
+              "4576: auto-arm sets the bit before the hook and before Moving");
+        CHECK(win.find("arm_densify_in_flight", armed + 1) == std::string::npos,
+              "4576: auto-arm does not arm twice");
+    }
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    const auto fn = env.find("std::size_t Evaluator::compact_env_frames()");
+    CHECK(fn != std::string::npos, "4576: compact_env_frames present");
+    if (fn != std::string::npos) {
+        const auto body = env.substr(fn, 20000);
+        const auto probe = body.find("densify_in_flight_for(this)");
+        const auto lock = body.find("compact_env_frames_lock_");
+        const auto move = body.find("env_frames_ = std::move");
+        CHECK(probe != std::string::npos && lock != std::string::npos && probe < lock,
+              "4576: in-flight probe returns before the compact lock");
+        CHECK(move != std::string::npos && probe < move,
+              "4576: in-flight probe is before the deque move");
+        CHECK(body.find("note_blocked_compact_while_guard_held") < probe,
+              "4576: probe is not the #2164 guard metric");
+    }
+    const auto rec = mb.find("Evaluator::recover_moving_sticky_densify_off");
+    if (rec != std::string::npos) {
+        const auto recwin = mb.substr(rec, 800);
+        CHECK(recwin.find("register_known_moving_densify_root_slots()") != std::string::npos,
+              "4576: recover still re-registers at entry");
+    }
+    CHECK(mb.find("query:4576") == std::string::npos &&
+              arena.find("query:4576") == std::string::npos,
+          "4576: no query key");
+    CHECK(read_file("tests/core/test_issue_4576.cpp").empty(), "4576: no invent test");
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.alloc_env_frame();
+    const auto gen0 = ev.env_generation();
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard guard(static_cast<const void*>(&ev));
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(&ev),
+              "4576: guard arms this evaluator");
+        CHECK(ev.compact_env_frames() == 0, "4576: compact returns 0 while the bit is set");
+        CHECK(ev.env_generation() == gen0, "4576: generation stays while the bit is set");
+    }
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(&ev),
+          "4576: guard clear drops the bit");
+    (void)ev.compact_env_frames();
+    CHECK(ev.env_generation() == gen0 + 1, "4576: compact proceeds once the bit is clear");
+}
+
 // Issue #4304: Phase-5 DensifyInFlightGuard spans compact through
 // publish_last_moving_densify_window, including the LCP-blocked synthetic
 // publish. FFI refuse reads densify_in_flight_for before seq-skip.
@@ -9307,6 +9387,8 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Issue #4304: Phase-5 in-flight spans publish; FFI reads it ===");
     ac4304_phase5_inflight_spans_publish();
+    std::println("\n=== Issue #4576: arm densify-in-flight before pool_ publish ===");
+    ac4576_inflight_blocks_env_compact();
 
     std::println("\n=== Issue #4386: unstable densify slots remap under the writer locks ===");
     ac4386_sibling_realloc_rewrites_moved();
