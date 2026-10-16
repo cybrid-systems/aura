@@ -7612,6 +7612,121 @@ public:
         return n;
     }
 
+    // ── Issue #4540: lightweight type-face undo journal ──
+    // A lightweight (render hot path / region) checkpoint copies no type
+    // columns. While a production/Full lightweight boundary is open, the
+    // type setters and the dirty clears append the value they overwrite
+    // here. Abort replays the tail in reverse, zeros type columns of nodes
+    // added after the mark and bumps type_cache_generation_ once, which
+    // is what restore_type_columns does for the full copy (#4310). The
+    // cost is one load + branch per setter when no journal is armed, and
+    // O(writes) when one is.
+    struct TypeFaceJournalMark {
+        bool armed = false;
+        std::size_t entries = 0;
+        std::size_t type_nodes = 0;
+    };
+    [[nodiscard]] TypeFaceJournalMark begin_type_face_journal() noexcept {
+        TypeFaceJournalLock lk(*this);
+        ++type_face_journal_depth_;
+        return TypeFaceJournalMark{true, type_face_journal_.size(), type_id_.size()};
+    }
+    // Replay entries above `mark`. Idempotent: a second call finds the tail
+    // already truncated. Returns the number of entries replayed.
+    std::size_t rollback_type_face_journal(const TypeFaceJournalMark& mark) noexcept {
+        if (!mark.armed)
+            return 0;
+        TypeFaceJournalLock lk(*this);
+        std::size_t n = 0;
+        while (type_face_journal_.size() > mark.entries) {
+            const auto e = type_face_journal_.back();
+            type_face_journal_.pop_back();
+            ++n;
+            switch (e.kind) {
+                case TypeFaceUndo::kType:
+                    if (e.id < type_id_.size())
+                        type_id_[e.id] = e.v0;
+                    if (e.id < type_cache_gen_.size())
+                        type_cache_gen_[e.id] = e.v1;
+                    if (e.id < type_cache_binding_gen_.size())
+                        type_cache_binding_gen_[e.id] = e.v2;
+                    if (e.id < schema_cache_.size())
+                        schema_cache_[e.id] = e.v3;
+                    break;
+                case TypeFaceUndo::kDirty:
+                    if (e.id < dirty_.size())
+                        dirty_[e.id] = static_cast<std::uint8_t>(e.v0);
+                    break;
+                case TypeFaceUndo::kPpaDirty:
+                    if (e.id < ppa_dirty_.size())
+                        ppa_dirty_[e.id] = static_cast<std::uint8_t>(e.v0);
+                    break;
+            }
+        }
+        // Nodes appended inside the boundary carry no pre-image.
+        auto zero_tail = [&](auto& col) {
+            for (std::size_t i = mark.type_nodes; i < col.size(); ++i)
+                col[i] = 0;
+        };
+        const auto added = type_id_.size() > mark.type_nodes;
+        zero_tail(type_id_);
+        zero_tail(type_cache_gen_);
+        zero_tail(type_cache_binding_gen_);
+        zero_tail(schema_cache_);
+        if (n > 0 || added)
+            bump_type_cache_generation();
+        type_face_journal_rollback_total_.fetch_add(1, std::memory_order_relaxed);
+        return n;
+    }
+    // Close one armed boundary. The outermost close drops the journal;
+    // an inner success keeps its entries for the enclosing boundary.
+    void end_type_face_journal(const TypeFaceJournalMark& mark) noexcept {
+        if (!mark.armed)
+            return;
+        TypeFaceJournalLock lk(*this);
+        if (type_face_journal_depth_ > 0)
+            --type_face_journal_depth_;
+        if (type_face_journal_depth_ == 0)
+            type_face_journal_.clear();
+    }
+    [[nodiscard]] std::uint32_t type_face_journal_depth() const noexcept {
+        return type_face_journal_depth_;
+    }
+    [[nodiscard]] std::size_t type_face_journal_size() const noexcept {
+        return type_face_journal_.size();
+    }
+    [[nodiscard]] std::uint64_t type_face_journal_rollback_total() const noexcept {
+        return type_face_journal_rollback_total_.load(std::memory_order_relaxed);
+    }
+    void note_type_face_dirty_write(NodeId id, bool ppa) noexcept {
+        TypeFaceJournalLock lk(*this);
+        const auto& col = ppa ? ppa_dirty_ : dirty_;
+        if (id >= col.size())
+            return;
+        type_face_journal_.push_back(TypeFaceUndo{
+            id, ppa ? TypeFaceUndo::kPpaDirty : TypeFaceUndo::kDirty, col[id], 0, 0, 0});
+    }
+
+private:
+    void note_type_face_type_write(NodeId id) noexcept {
+        TypeFaceJournalLock lk(*this);
+        auto at = [&](const auto& col) -> std::uint32_t { return id < col.size() ? col[id] : 0u; };
+        type_face_journal_.push_back(TypeFaceUndo{id, TypeFaceUndo::kType, at(type_id_),
+                                                  at(type_cache_gen_), at(type_cache_binding_gen_),
+                                                  at(schema_cache_)});
+    }
+    // Region writers share this FlatAST; keep the vector itself intact.
+    struct TypeFaceJournalLock {
+        FlatAST& f;
+        explicit TypeFaceJournalLock(FlatAST& flat) noexcept
+            : f(flat) {
+            while (f.type_face_journal_lock_.test_and_set(std::memory_order_acquire)) {
+            }
+        }
+        ~TypeFaceJournalLock() { f.type_face_journal_lock_.clear(std::memory_order_release); }
+    };
+
+public:
     [[nodiscard]] bool render_lightweight_active() const noexcept {
         return render_lightweight_active_;
     }
@@ -9792,6 +9907,8 @@ public:
             // Issue #1620 / #4427: type stamp probe is sampled (period 256).
             aura::core::cpp26::record_hotpath_invariant_hit_sampled();
             contract_assert(id < tag_.size());
+            if (type_face_journal_depth_ != 0) [[unlikely]]
+                note_type_face_type_write(id);
             type_id_[id] = tid;
         }
         // Issue #412: stamp the cache entry with the current
@@ -9828,6 +9945,8 @@ public:
     void set_type_with_gen(NodeId id, std::uint32_t tid, std::uint32_t gen) {
         if (id >= type_id_.size() || id >= type_cache_gen_.size())
             return;
+        if (type_face_journal_depth_ != 0) [[unlikely]]
+            note_type_face_type_write(id);
         type_id_[id] = tid;
         type_cache_gen_[id] = gen;
     }
@@ -9902,6 +10021,8 @@ public:
     void set_schema_cache(aura::ast::NodeId id, std::uint32_t tid) {
         if (id >= schema_cache_.size())
             schema_cache_.resize(id + 1, 0);
+        if (type_face_journal_depth_ != 0) [[unlikely]]
+            note_type_face_type_write(id);
         schema_cache_[id] = tid;
     }
     // Issue #413: invalidation trace accessors. The
@@ -9948,6 +10069,8 @@ public:
         if (id >= type_id_.size() || id >= type_cache_gen_.size() ||
             id >= type_cache_binding_gen_.size())
             return;
+        if (type_face_journal_depth_ != 0) [[unlikely]]
+            note_type_face_type_write(id);
         type_id_[id] = tid;
         type_cache_gen_[id] = global_gen;
         type_cache_binding_gen_[id] = binding_gen_val;
@@ -10189,6 +10312,17 @@ public:
     // Not part of durable mutation_log_; committed frames are discarded.
     std::vector<std::vector<MutationRecord>> lightweight_frames_;
     bool render_lightweight_active_ = false;
+    // Issue #4540: lightweight type-face undo journal (see begin_type_face_journal).
+    struct TypeFaceUndo {
+        enum Kind : std::uint8_t { kType, kDirty, kPpaDirty };
+        NodeId id;
+        Kind kind;
+        std::uint32_t v0, v1, v2, v3;
+    };
+    std::vector<TypeFaceUndo> type_face_journal_;
+    std::uint32_t type_face_journal_depth_ = 0;
+    std::atomic_flag type_face_journal_lock_;
+    mutable std::atomic<std::uint64_t> type_face_journal_rollback_total_{0};
 
     // Issue #250: atomic-batch state. Placed at the end of the
     // class (after `root`) to preserve the SoA field ordering

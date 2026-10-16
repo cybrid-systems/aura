@@ -68,6 +68,7 @@ using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -344,6 +345,409 @@ static void ac4310_abort_restores_type_columns_and_cs() {
         }
         CHECK(ws_soft->type_id(lit_s) == 0x4310, "4310: soft abort does not restore columns");
         (void)soft_before;
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4540: render-hotpath / region lightweight checkpoints copy no
+// type columns. The failed post-mutate infer's set_type / clear_dirty /
+// solve_delta_cs_ writes must still go back on abort (FlatAST undo
+// journal + lazy CS high-water from ensure_typechecker), and the face
+// must not read SOLVED until the next infer.
+struct Lw4540Pre {
+    aura::ast::NodeId lit = aura::ast::NULL_NODE;
+    aura::ast::NodeId call = aura::ast::NULL_NODE;
+    std::uint32_t type0 = 0, call_type0 = 0, gen_col0 = 0, bind0 = 0, schema0 = 0;
+    std::uint8_t call_dirty0 = 0;
+    std::uint32_t cache_gen0 = 0;
+    std::size_t cs_n0 = 0, uf0 = 0, adt0 = 0, pending0 = 0, touched0 = 0, occ_pri0 = 0, let0 = 0,
+                size0 = 0;
+};
+
+static Lw4540Pre lw4540_capture(aura::ast::FlatAST& ws, TypeChecker& tc) {
+    Lw4540Pre p;
+    p.lit = find_literal_int(ws, 1);
+    p.call = find_first_tag(ws, aura::ast::NodeTag::Call);
+    if (p.call != aura::ast::NULL_NODE)
+        ws.mark_dirty(p.call);
+    p.type0 = ws.type_id(p.lit);
+    p.call_type0 = ws.type_id(p.call);
+    p.gen_col0 = ws.type_cache_gen(p.lit);
+    p.bind0 = ws.type_cache_binding_gen(p.lit);
+    p.schema0 = ws.schema_cache(p.lit);
+    p.call_dirty0 = ws.dirty_reasons(p.call);
+    p.cache_gen0 = ws.type_cache_generation();
+    p.size0 = ws.size();
+    auto& c = tc.constraint_system();
+    p.cs_n0 = c.constraints_size();
+    p.uf0 = c.union_find_size();
+    p.adt0 = c.adt_match_goals_size();
+    p.pending0 = c.pending_full_solve_roots_size();
+    p.touched0 = c.touched_roots_size();
+    p.occ_pri0 = c.occurrence_priority_roots_size();
+    p.let0 = c.let_poly_dirty_roots_size();
+    return p;
+}
+
+// What InferenceEngine::infer_flat + solve_delta do before a TypeError:
+// stamp types, clear dirty, grow the long-lived CS.
+static void lw4540_failed_infer_writes(Evaluator& ev, aura::ast::FlatAST& ws, TypeChecker& tc,
+                                       const Lw4540Pre& p) {
+    ws.set_type(p.lit, 0x4540);
+    ws.set_schema_cache(p.lit, 0x4540);
+    ws.set_type_with_binding_gen(p.lit, 0x4540, 0x4540, 0x4540);
+    ws.set_type(p.call, 0x4541);
+    ws.set_type(p.call, 0x4542); // second write: replay must reach the enter value
+    ws.clear_dirty(p.call);
+    auto& c = tc.constraint_system();
+    aura::compiler::Constraint k;
+    k.kind = aura::compiler::Constraint::EQUAL;
+    c.add(k);
+    c.note_adt_match_goal(7, 8, 9);
+    c.seed_pending_full_solve_root_for_test(4540);
+    c.seed_abort_priority_roots_for_test(4541);
+    c.grow_union_find_for_test();
+    ev.note_infer_solve_solved(true);
+}
+
+static void lw4540_check_restored(const char* arm, aura::ast::FlatAST& ws, TypeChecker& tc,
+                                  Evaluator& ev, const Lw4540Pre& p) {
+    auto tag = [&](const char* what) { return std::format("4540 {}: {}", arm, what); };
+    CHECK(ws.type_id(p.lit) == p.type0, tag("literal type restored").c_str());
+    CHECK(ws.type_id(p.call) == p.call_type0, tag("call type restored").c_str());
+    CHECK(ws.type_cache_gen(p.lit) == p.gen_col0, tag("cache gen column restored").c_str());
+    CHECK(ws.type_cache_binding_gen(p.lit) == p.bind0, tag("binding gen restored").c_str());
+    CHECK(ws.schema_cache(p.lit) == p.schema0, tag("schema cache restored").c_str());
+    CHECK(ws.dirty_reasons(p.call) == p.call_dirty0, tag("cleared dirty bit restored").c_str());
+    CHECK(ws.type_cache_generation() > p.cache_gen0, tag("cache generation bumped").c_str());
+    auto& c = tc.constraint_system();
+    CHECK(c.constraints_size() == p.cs_n0, tag("constraints truncated").c_str());
+    CHECK(c.union_find_size() == p.uf0, tag("union-find restored").c_str());
+    CHECK(c.adt_match_goals_size() == p.adt0, tag("adt goals truncated").c_str());
+    CHECK(c.pending_full_solve_roots_size() == p.pending0, tag("pending roots restored").c_str());
+    CHECK(c.touched_roots_size() == p.touched0, tag("touched roots restored").c_str());
+    CHECK(c.occurrence_priority_roots_size() == p.occ_pri0,
+          tag("occurrence priority restored").c_str());
+    CHECK(c.let_poly_dirty_roots_size() == p.let0, tag("let-poly restored").c_str());
+    CHECK(!ev.last_type_solve_solved(), tag("face not SOLVED before re-infer").c_str());
+    CHECK(!ev.type_export_authoritative(), tag("no query:type authority").c_str());
+    CHECK(ws.type_face_journal_depth() == 0, tag("journal disarmed").c_str());
+    CHECK(ws.type_face_journal_size() == 0, tag("journal dropped").c_str());
+}
+
+static bool lw4540_seed(CompilerService& cs) {
+    return cs.eval("(+ 1 1)").has_value() &&
+           cs.eval("(set-code \"(define f (+ 1 2))\")").has_value() &&
+           cs.eval("(eval-current)").has_value() && cs.eval("(typecheck-current)").has_value();
+}
+
+static void ac4540_render_hotpath_abort_restores_type_face() {
+    std::println("\n--- #4540: render-hotpath lightweight abort restores type face ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(lw4540_seed(cs), "4540 render: seed");
+    auto* ws = ev.workspace_flat();
+    auto* tc0 = static_cast<TypeChecker*>(ev.ensure_typechecker());
+    CHECK(ws && tc0, "4540 render: workspace + persistent checker");
+    if (!ws || !tc0) {
+        apply_dev_audit_defaults();
+        reset_for_test();
+        return;
+    }
+    const auto pre = lw4540_capture(*ws, *tc0);
+    CHECK(pre.lit != aura::ast::NULL_NODE && pre.call != aura::ast::NULL_NODE,
+          "4540 render: literal + call");
+    const auto rb0 = ws->type_face_journal_rollback_total();
+    ev.enter_render_hotpath();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(ws->render_lightweight_active(), "4540 render: checkpoint is lightweight");
+        CHECK(ws->type_face_journal_depth() == 1, "4540 render: journal armed");
+        auto* tc = static_cast<TypeChecker*>(ev.ensure_typechecker());
+        CHECK(tc == tc0, "4540 render: infer gets the same persistent checker");
+        if (tc)
+            lw4540_failed_infer_writes(ev, *ws, *tc, pre);
+        CHECK(ws->type_face_journal_size() >= 6, "4540 render: writes journaled");
+        ok = false;
+    }
+    ev.exit_render_hotpath();
+    CHECK(ws->type_face_journal_rollback_total() > rb0, "4540 render: journal replayed");
+    lw4540_check_restored("render", *ws, *tc0, ev, pre);
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4540_region_abort_restores_type_face() {
+    std::println("\n--- #4540: region lightweight abort restores type face ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(lw4540_seed(cs), "4540 region: seed");
+    ev.set_workspace_region_concurrency_enabled(true);
+    ev.set_concurrent_mutation_policy(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
+    auto* ws = ev.workspace_flat();
+    auto* tc0 = static_cast<TypeChecker*>(ev.ensure_typechecker());
+    CHECK(ws && tc0, "4540 region: workspace + persistent checker");
+    if (!ws || !tc0) {
+        apply_dev_audit_defaults();
+        reset_for_test();
+        return;
+    }
+    const auto pre = lw4540_capture(*ws, *tc0);
+    bool ok = true;
+    {
+        const auto key = Evaluator::workspace_region_key_from_name("define-f-4540");
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok);
+        CHECK(gr.has_value() && *gr, "4540 region: region acquire");
+        if (gr && *gr) {
+            CHECK((*gr)->is_region_mode(), "4540 region: region mode");
+            CHECK(ws->render_lightweight_active(), "4540 region: checkpoint is lightweight");
+            CHECK(ws->type_face_journal_depth() == 1, "4540 region: journal armed");
+            auto* tc = static_cast<TypeChecker*>(ev.ensure_typechecker());
+            CHECK(tc == tc0, "4540 region: same persistent checker");
+            if (tc)
+                lw4540_failed_infer_writes(ev, *ws, *tc, pre);
+            ok = false;
+        }
+    }
+    lw4540_check_restored("region", *ws, *tc0, ev, pre);
+    ev.set_concurrent_mutation_policy(Evaluator::ConcurrentMutationPolicy::SingleWriter);
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Success keeps the writes, nested inner success keeps its entries for the
+// outer abort, and Soft never arms the journal.
+static void ac4540_success_nested_and_soft() {
+    std::println("\n--- #4540: lightweight success / nested / Soft ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(lw4540_seed(cs), "4540 success: seed");
+        auto* ws = ev.workspace_flat();
+        const auto lit = ws ? find_literal_int(*ws, 1) : aura::ast::NULL_NODE;
+        if (ws && lit != aura::ast::NULL_NODE) {
+            // Nested: inner lightweight success, outer lightweight abort.
+            ws->set_type(lit, 0x4543);
+            ev.enter_render_hotpath();
+            bool outer_ok = true;
+            {
+                Evaluator::MutationBoundaryGuard outer(ev, &outer_ok);
+                bool inner_ok = true;
+                {
+                    Evaluator::MutationBoundaryGuard inner(ev, &inner_ok);
+                    CHECK(ws->type_face_journal_depth() == 2, "4540 nested: two frames armed");
+                    ws->set_type(lit, 0x4544);
+                }
+                CHECK(ws->type_id(lit) == 0x4544, "4540 nested: inner success keeps the write");
+                CHECK(ws->type_face_journal_depth() == 1 && ws->type_face_journal_size() >= 1,
+                      "4540 nested: inner success keeps entries for the outer");
+                outer_ok = false;
+            }
+            CHECK(ws->type_id(lit) == 0x4543, "4540 nested: outer abort undoes inner write");
+            CHECK(ws->type_face_journal_depth() == 0, "4540 nested: disarmed");
+            // Outermost success: no replay, journal dropped. (Outermost
+            // success may densify, so node ids are not compared here.)
+            const auto rb0 = ws->type_face_journal_rollback_total();
+            const auto lwrb0 = ws->lightweight_rollback_total();
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(ev, &ok);
+                ws->set_type(lit, 0x4546);
+                CHECK(ws->type_face_journal_size() >= 1, "4540 success: write journaled");
+            }
+            ev.exit_render_hotpath();
+            auto* ws2 = ev.workspace_flat();
+            CHECK(ws2 && ws2->type_face_journal_depth() == 0 && ws2->type_face_journal_size() == 0,
+                  "4540 success: journal dropped");
+            // Production may still flip an outermost "success" into the
+            // persist-reject restore; the journal replays only then.
+            const bool rolled = ws2 && ws2->lightweight_rollback_total() != lwrb0;
+            const bool replayed = ws2 && ws2->type_face_journal_rollback_total() != rb0;
+            std::println("  4540 success: lightweight rolled back={} journal replayed={}", rolled,
+                         replayed);
+            CHECK(!replayed || rolled, "4540 success: journal replays only on a rollback");
+        }
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(lw4540_seed(cs), "4540 soft: seed");
+        auto* ws = ev.workspace_flat();
+        const auto lit = ws ? find_literal_int(*ws, 1) : aura::ast::NULL_NODE;
+        if (ws && lit != aura::ast::NULL_NODE) {
+            ev.enter_render_hotpath();
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(ev, &ok);
+                CHECK(ws->type_face_journal_depth() == 0, "4540 soft: no journal");
+                ws->set_type(lit, 0x4545);
+                ok = false;
+            }
+            ev.exit_render_hotpath();
+            CHECK(ws->type_id(lit) == 0x4545, "4540 soft: Soft keeps today's behavior");
+        }
+    }
+    reset_for_test();
+}
+
+// Real path: a typed rebind inside the render hot path whose post-mutate
+// infer fails. Every pre-existing node keeps its enter type id.
+static void ac4540_render_rebind_type_error() {
+    std::println("\n--- #4540: render-hotpath rebind with failing infer ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(cs.eval("(set-code \"(define (g x) (+ x 1)) (define y (g 2))\")").has_value(),
+          "4540 rebind: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4540 rebind: eval");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "4540 rebind: typecheck");
+    auto* ws = ev.workspace_flat();
+    auto* tc0 = static_cast<TypeChecker*>(ev.ensure_typechecker());
+    CHECK(ws && tc0, "4540 rebind: workspace + checker");
+    if (!ws || !tc0) {
+        apply_dev_audit_defaults();
+        reset_for_test();
+        return;
+    }
+    const auto n0 = ws->size();
+    std::vector<std::uint32_t> types0(n0);
+    for (aura::ast::NodeId id = 0; id < n0; ++id)
+        types0[id] = ws->type_id(id);
+    const auto cs_n0 = tc0->constraint_system().constraints_size();
+    const auto lw0 = ws->lightweight_rollback_total();
+    ev.enter_render_hotpath();
+    auto r = cs.eval("(mutate:rebind \"g\" \"(lambda (x) (+ x \\\"a\\\"))\" \"issue-4540\")");
+    ev.exit_render_hotpath();
+    const bool rejected = !r.has_value() || is_error(*r) || (is_bool(*r) && !as_bool(*r)) ||
+                          !ev.last_mutate_error().empty();
+    std::println("  4540 rebind: rejected={} err='{}' lw_rollbacks {}->{}", rejected,
+                 ev.last_mutate_error(), lw0, ws->lightweight_rollback_total());
+    CHECK(rejected, "4540 rebind: ill-typed rebind rejected in production");
+    CHECK(ws->type_face_journal_depth() == 0, "4540 rebind: journal disarmed");
+    std::size_t drift = 0;
+    const auto n_now = std::min<std::size_t>(n0, ws->size());
+    for (aura::ast::NodeId id = 0; id < n_now; ++id) {
+        if (ws->is_live_node(id) && ws->type_id(id) != types0[id])
+            ++drift;
+    }
+    CHECK(drift == 0, std::format("4540 rebind: no type column drift ({} nodes)", drift).c_str());
+    auto* tc_now = static_cast<TypeChecker*>(ev.persistent_typechecker());
+    if (tc_now == tc0)
+        CHECK(tc0->constraint_system().constraints_size() == cs_n0,
+              "4540 rebind: long-lived CS back at its high-water");
+    CHECK(!ev.type_export_authoritative(), "4540 rebind: no query:type authority after abort");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4540_source_cites() {
+    std::println("\n--- #4540: source cites ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tcs = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto helper = emb.find("void Evaluator::abort_lightweight_type_face");
+    CHECK(helper != std::string::npos, "4540: lightweight abort helper present");
+    const auto win = brace_block_after(emb, helper);
+    CHECK(win.find("restore_abort_type_face(cp)") != std::string::npos,
+          "4540: lightweight abort reuses the #4310 helper");
+    CHECK(win.find("clear_type_export_authority") != std::string::npos,
+          "4540: no export authority before re-infer");
+    CHECK(emb.find("abort_lightweight_type_face(cp);") != std::string::npos,
+          "4540: wired into the lightweight !success arm");
+    CHECK(tcs.find("capture_lightweight_abort_cs(") != std::string::npos,
+          "4540: ensure_typechecker captures the CS high-water");
+    CHECK(ast.find("begin_type_face_journal") != std::string::npos, "4540: journal on FlatAST");
+    CHECK(read_file("tests/compiler/test_issue_4540.cpp").empty(), "4540: no test_issue file");
+}
+
+// Overhead probe (printed, not gated): one lightweight production boundary
+// with a typed rebind, and the extra copy the fix adds per boundary.
+static void ac4540_overhead_probe() {
+    std::println("\n--- #4540: lightweight overhead probe ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    std::string src;
+    for (int i = 0; i < 200; ++i)
+        src += std::format("(define (h{} x) (+ x {})) ", i, i);
+    CHECK(cs.eval(std::format("(set-code \"{}\")", src)).has_value(), "4540 probe: set-code");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(typecheck-current)");
+    constexpr int kIters = 200;
+    ev.enter_render_hotpath();
+    const auto t0 = std::chrono::steady_clock::now();
+    int ok_n = 0;
+    for (int i = 0; i < kIters; ++i) {
+        auto r = cs.eval(std::format("(mutate:rebind \"h7\" \"(lambda (x) (+ x {}))\" \"p\")", i));
+        if (r.has_value())
+            ++ok_n;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    ev.exit_render_hotpath();
+    const auto per_us =
+        std::chrono::duration<double, std::micro>(t1 - t0).count() / static_cast<double>(kIters);
+    double snap_us = 0;
+    if (auto* tc = static_cast<TypeChecker*>(ev.ensure_typechecker())) {
+        const auto s0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kIters; ++i) {
+            auto h = tc->constraint_system().snapshot_abort_high_water();
+            if (!h.captured)
+                std::println("unreachable");
+        }
+        snap_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - s0)
+                      .count() /
+                  static_cast<double>(kIters);
+    }
+    std::println("  4540 probe: render rebind {:.1f} us/op (ok {}/{}), CS high-water copy "
+                 "{:.2f} us, flat nodes {}",
+                 per_us, ok_n, kIters, snap_us,
+                 ev.workspace_flat() ? ev.workspace_flat()->size() : 0);
+    CHECK(ok_n > 0, "4540 probe: rebinds commit");
+    // Per-write cost: set_type unarmed vs armed (journaled), and the replay.
+    if (auto* ws = ev.workspace_flat(); ws && ws->size() > 0) {
+        constexpr int kW = 200000;
+        const auto n = static_cast<std::uint32_t>(ws->size());
+        auto run = [&](std::uint32_t salt) {
+            const auto a0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < kW; ++i)
+                ws->set_type(static_cast<aura::ast::NodeId>(static_cast<std::uint32_t>(i) % n),
+                             salt + static_cast<std::uint32_t>(i));
+            return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - a0)
+                       .count() /
+                   kW;
+        };
+        const double cold_ns = run(1);
+        const double unarmed_ns = run(2);
+        double armed_ns = 0, replay_us = 0;
+        ev.enter_render_hotpath();
+        bool okw = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &okw);
+            armed_ns = run(3);
+            const auto r0 = std::chrono::steady_clock::now();
+            (void)ws->rollback_type_face_journal(
+                aura::ast::FlatAST::TypeFaceJournalMark{true, 0, ws->size()});
+            replay_us =
+                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - r0)
+                    .count();
+            okw = false;
+        }
+        ev.exit_render_hotpath();
+        std::println("  4540 probe: set_type unarmed {:.2f} ns (cold {:.2f}), armed {:.2f} ns, "
+                     "replay of {} writes {:.0f} us",
+                     unarmed_ns, cold_ns, armed_ns, kW, replay_us);
     }
     apply_dev_audit_defaults();
     reset_for_test();
@@ -1321,6 +1725,12 @@ int run_test_outermost_persist_fail_closed() {
     }
 
     ac4310_abort_restores_type_columns_and_cs();
+    ac4540_render_hotpath_abort_restores_type_face();
+    ac4540_region_abort_restores_type_face();
+    ac4540_success_nested_and_soft();
+    ac4540_render_rebind_type_error();
+    ac4540_source_cites();
+    ac4540_overhead_probe();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

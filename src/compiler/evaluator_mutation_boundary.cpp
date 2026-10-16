@@ -997,12 +997,29 @@ void Evaluator::restore_abort_type_face(MutationCheckpoint& cp) noexcept {
         return;
     if (workspace_flat_ && cp.type_column_snapshot.captured)
         workspace_flat_->restore_type_columns(std::move(cp.type_column_snapshot));
+    // Issue #4540: a lightweight checkpoint undoes its journal tail instead
+    // (same columns, same single generation bump). A swapped flat is not
+    // the one that recorded the journal; leave it alone.
+    if (workspace_flat_ && cp.type_face_journal.armed &&
+        cp.type_face_journal_flat == static_cast<void*>(workspace_flat_))
+        (void)workspace_flat_->rollback_type_face_journal(cp.type_face_journal);
     // Issue #4310: infer writes the persistent TypeChecker's solve_delta_cs_.
     // The commit handle is that same object once stashed, or a second copy.
     // Restore both when they differ. Do not create a checker here.
     if (cp.cs_high_water.captured) {
         auto* persistent = static_cast<TypeChecker*>(persistent_typechecker());
         auto* commit = static_cast<TypeChecker*>(commit_type_checker_handle());
+        // Issue #4540: the lazy lightweight copy came from cs_owner. Put it
+        // back only into that checker, and only while it is still live.
+        if (cp.cs_owner) {
+            if (cp.cs_owner == static_cast<void*>(persistent) &&
+                cp.cs_owner_gen == persistent_tc_create_total_)
+                static_cast<TypeChecker*>(cp.cs_owner)
+                    ->constraint_system()
+                    .restore_abort_high_water(std::move(cp.cs_high_water));
+            cp.type_face_restored = true;
+            return;
+        }
         if (persistent)
             persistent->constraint_system().restore_abort_high_water(
                 ConstraintSystem::AbortCsHighWater{cp.cs_high_water});
@@ -1010,6 +1027,64 @@ void Evaluator::restore_abort_type_face(MutationCheckpoint& cp) noexcept {
             commit->constraint_system().restore_abort_high_water(std::move(cp.cs_high_water));
     }
     cp.type_face_restored = true;
+}
+
+// Issue #4540: called from ensure_typechecker. Every open lightweight
+// production/Full checkpoint on this fiber copies the CS high-water of the
+// checker infer is about to write, once per checker. A checker rebuilt
+// later in the boundary (flat generation moved) is copied fresh, so abort
+// never writes one checker's arrays into another.
+void Evaluator::capture_lightweight_abort_cs(void* type_checker_opaque) noexcept {
+    if (!type_checker_opaque)
+        return;
+    auto& stk = active_mutation_stack();
+    for (auto& cp : stk) {
+        if (!cp.lightweight || !cp.type_face_captured || cp.type_face_restored ||
+            (cp.cs_owner == type_checker_opaque && cp.cs_owner_gen == persistent_tc_create_total_))
+            continue;
+        try {
+            cp.cs_high_water = static_cast<TypeChecker*>(type_checker_opaque)
+                                   ->constraint_system()
+                                   .snapshot_abort_high_water();
+            cp.cs_owner = type_checker_opaque;
+            cp.cs_owner_gen = persistent_tc_create_total_;
+        } catch (...) {
+            // [SILENCE-PRIM] no copy: abort falls back to the fail-closed
+            // authority clear in abort_lightweight_type_face.
+            cp.cs_high_water = {};
+            cp.cs_owner = nullptr;
+        }
+    }
+}
+
+// Issue #4540: lightweight !success arm. Same restore helper as the
+// GlobalExclusive abort (#4310). If the boundary wrote type columns or a
+// checker's CS, the face must not read SOLVED / exported until the next
+// infer runs, so the persist grant cannot reuse the failed infer's verdict.
+void Evaluator::abort_lightweight_type_face(MutationCheckpoint& cp) noexcept {
+    if (cp.type_face_captured && !cp.type_face_restored &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        const bool journal_live =
+            workspace_flat_ && cp.type_face_journal.armed &&
+            cp.type_face_journal_flat == static_cast<void*>(workspace_flat_) &&
+            workspace_flat_->type_face_journal_size() > cp.type_face_journal.entries;
+        const bool wrote = journal_live || cp.cs_owner != nullptr;
+        restore_abort_type_face(cp);
+        if (wrote) {
+            note_infer_solve_solved(false);
+            clear_type_export_authority();
+        }
+    }
+    end_lightweight_type_face_journal(cp);
+}
+
+void Evaluator::end_lightweight_type_face_journal(MutationCheckpoint& cp) noexcept {
+    if (!cp.type_face_journal.armed)
+        return;
+    if (workspace_flat_ && cp.type_face_journal_flat == static_cast<void*>(workspace_flat_))
+        workspace_flat_->end_type_face_journal(cp.type_face_journal);
+    cp.type_face_journal.armed = false;
 }
 
 void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
@@ -1255,6 +1330,16 @@ void Evaluator::enter_mutation_boundary() {
             cp.cs_high_water = tc->constraint_system().snapshot_abort_high_water();
         cp.type_face_captured = true;
     }
+    // Issue #4540: lightweight production/Full journals type writes and
+    // dirty clears instead of copying columns; the CS high-water is copied
+    // when infer first asks for the persistent checker (ensure_typechecker).
+    if (lightweight && workspace_flat_ &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        cp.type_face_journal = workspace_flat_->begin_type_face_journal();
+        cp.type_face_journal_flat = static_cast<void*>(workspace_flat_);
+        cp.type_face_captured = true;
+    }
     // Issue #3379: outermost enter — note the current Evaluator for
     // commit_readiness_live_policy to fill solve_status / linear_ok /
     // blame_ok / cs_has_work / truncated_reverify from live TC.
@@ -1443,7 +1528,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     if (stack.empty())
         return {0, 0};
     const bool nested_boundary = stack.size() > 1;
-    auto cp = stack.back();
+    // Issue #4540: move, not copy — the checkpoint is popped right here and
+    // its column / CS snapshots can be large.
+    auto cp = std::move(stack.back());
     stack.pop_back();
     if (!nested_boundary) {
         // Issue #3918: hash-set! / vector-set! / set-car! / agent-bump!
@@ -1538,6 +1625,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             workspace_flat_->commit_render_lightweight_checkpoint();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->mutation_lightweight_commit_total.fetch_add(1, std::memory_order_relaxed);
+            end_lightweight_type_face_journal(cp); // Issue #4540
         } else {
             const auto n = workspace_flat_->rollback_render_lightweight_checkpoint();
             // Also undo any durable log entries (structural ops fall through).
@@ -1566,6 +1654,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             (void)aura::compiler::coerced_nodes_tracker_take(); // discard
             aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
             aura_clear_occurrence_persist_buffer(this);
+            // Issue #4540: type columns, dirty clears and the CS high-water
+            // written by the failed infer go back through #4310's helper.
+            abort_lightweight_type_face(cp);
             defuse_index_ = nullptr;
         }
     } else if (!success && workspace_flat_) {

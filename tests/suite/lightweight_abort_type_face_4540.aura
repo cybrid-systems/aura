@@ -1,0 +1,71 @@
+; Issue #4540 — a mutate:rebind whose post-mutate typecheck fails must not
+; leave the failed infer's type face behind. The white-box arms (render
+; hotpath / region force_lightweight checkpoints, journal replay, CS
+; high-water, production-audit type error) live in
+; tests/compiler/test_outermost_persist_fail_closed.cpp; this pins the
+; user-visible contract on the suite (Soft audit) face: after a rebind the
+; post-mutate typecheck rejects (arity / unbound), the old body, its callers
+; and the whole-program typecheck read exactly as before, repeated rejections
+; do not accumulate stale constraints, and a later good rebind typechecks
+; clean against the restored face. --load never opens the render/region
+; lightweight checkpoint, so this file also passes on pre-fix builds; the
+; fail-before coverage is the C++ ac4540_* arms.
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(set-code "(define (f4540 x) (+ x 1)) (define (g4540 y) (* (f4540 y) 2))")
+(eval-current)
+(define tc-before (typecheck-current))
+(assert! (= (g4540 3) 8) "baseline g")
+
+; "accepted" = mutate:rebind returned #t; rejections come back as a
+; ("mutation-failed" msg . pos) triple (or raise).
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (rejected? r) (not (eq? r #t)))
+(define (typecheck-reject? r)
+  (and (pair? r) (equal? (car r) "mutation-failed")))
+
+(define (check-rejected label body)
+  (define r (rebind "f4540" body label))
+  (assert! (rejected? r) (string-append label ": rebind rejected"))
+  (assert! (typecheck-reject? r)
+           (string-append label ": rejected by post-mutate typecheck"))
+  (assert! (= (try (f4540 3) (catch (e) -1)) 4)
+           (string-append label ": old f body survives"))
+  (assert! (= (try (g4540 3) (catch (e) -1)) 8)
+           (string-append label ": caller unchanged"))
+  (assert! (equal? (typecheck-current) tc-before)
+           (string-append label ": typecheck face identical to pre-rebind")))
+
+; Arity change breaks the caller's (f4540 y) call.
+(check-rejected "arity" "(lambda (x z) (+ x z))")
+; Unbound free variable in the new body.
+(check-rejected "unbound" "(lambda (x) (+ x nope-4540))")
+; Repeat both: rejections must not accumulate stale constraints.
+(check-rejected "arity-again" "(lambda (x z w) (+ x z w))")
+(check-rejected "unbound-again" "(lambda (x) (* x also-nope-4540))")
+
+; A well-typed rebind still lands and typechecks against the restored face.
+(assert! (eq? (rebind "f4540" "(lambda (x) (+ x 10))" "good-4540") #t)
+         "good rebind accepted")
+(assert! (= (g4540 3) 26) "caller sees good rebind")
+(assert! (equal? (typecheck-current) tc-before)
+         "typecheck face after good rebind matches clean program")
+
+(if (= *fails* 0)
+    (display "OK-4540 lightweight abort type face\n")
+    (begin
+      (display "FAIL-4540 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

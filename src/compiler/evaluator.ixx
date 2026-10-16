@@ -15308,6 +15308,14 @@ public:
         bool type_face_restored = false;
         aura::ast::FlatAST::TypeColumnSnapshot type_column_snapshot;
         ConstraintSystem::AbortCsHighWater cs_high_water;
+        // Issue #4540: lightweight production/Full checkpoints journal type
+        // writes on the FlatAST (no column copy) and capture cs_high_water
+        // from the first persistent checker handed out in the boundary.
+        // cs_owner names that checker; abort restores only into it.
+        aura::ast::FlatAST::TypeFaceJournalMark type_face_journal;
+        void* type_face_journal_flat = nullptr;
+        void* cs_owner = nullptr;
+        std::uint64_t cs_owner_gen = 0; // persistent_tc_create_total_ at capture (ABA)
         // Issue #3918: exit pipeline pushes this after the real checkpoint
         // is popped. flush must not treat its mutation_log_size (0) as the
         // boundary's enter size.
@@ -15400,6 +15408,14 @@ public:
     // Issue #4310: after dual-topology restore, put type columns and the
     // CS high-water back. Idempotent. Soft/Off (uncaptured) is a no-op.
     void restore_abort_type_face(MutationCheckpoint& cp) noexcept;
+    // Issue #4540: lightweight (render hot path / region) checkpoints copy
+    // no columns at enter. Production/Full arms a FlatAST undo journal for
+    // type writes and dirty clears, and the first persistent TypeChecker
+    // handed out inside the boundary has its CS high-water captured here
+    // (ensure_typechecker calls it). Abort reuses restore_abort_type_face.
+    void capture_lightweight_abort_cs(void* type_checker_opaque) noexcept;
+    void abort_lightweight_type_face(MutationCheckpoint& cp) noexcept;
+    void end_lightweight_type_face_journal(MutationCheckpoint& cp) noexcept;
 
     // Wave 4: bodies live in evaluator_mutation_boundary.cpp (with Guard).
     void enter_mutation_boundary();
