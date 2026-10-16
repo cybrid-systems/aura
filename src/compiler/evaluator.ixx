@@ -1030,6 +1030,10 @@ export enum class EnvFrameResolveStatus : std::uint8_t {
 export struct EnvFrameResolveResult {
     const EnvFrame* frame = nullptr;
     EnvFrameResolveStatus status = EnvFrameResolveStatus::NULL_ID;
+    // Issue #4536: version copied under the frame's shard lock — consumers
+    // that only need the version must not deref `frame` after the lock
+    // (compact's deque move invalidates it).
+    std::uint64_t version = 0;
     [[nodiscard]] explicit operator bool() const noexcept {
         return status == EnvFrameResolveStatus::OK && frame != nullptr;
     }
@@ -5205,6 +5209,11 @@ public:
     // matters (materialize / GC / diagnostics).
     [[nodiscard]] const EnvFrame* resolve_env_frame(EnvId id) const noexcept;
     [[nodiscard]] EnvFrame* resolve_env_frame_mut(EnvId id) noexcept;
+    // Issue #4536: ensure_dual_path_consistent under the frame's shard
+    // lock — the resolve_env_frame_mut pointer escapes that lock on
+    // return, and compact's deque move (steal repair) invalidates it
+    // before the ensure derefs.
+    void ensure_env_frame_dual_path_consistent(EnvId id) noexcept;
     // Issue #1756: distinguish NULL / OOB / INVALID_VERSION / OK.
     [[nodiscard]] EnvFrameResolveResult resolve_env_frame_detailed(EnvId id) const noexcept;
     [[nodiscard]] EnvFrameResolveResultMut resolve_env_frame_mut_detailed(EnvId id) noexcept;
@@ -5464,6 +5473,10 @@ public:
     // signature yields a clear diagnostic (and the constraint is
     // not solely a C++20 concept gate). Project build is C++26
     // (CMAKE_CXX_STANDARD 26); zero runtime cost.
+    // Issue #4536: face for callers that hold NO env-frame locks — take
+    // the full shard array for the walk (same shape as
+    // lookup_by_symid_chain_ref) so compact's deque move waits for the
+    // walk, and use the assume-locks face per hop.
     template <typename F> void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
         // Issue #1753: explicit invocable+bool-return check.
         static_assert(std::is_invocable_v<F, EnvId, const EnvFrame&>,
@@ -5471,6 +5484,10 @@ public:
         static_assert(std::is_convertible_v<std::invoke_result_t<F, EnvId, const EnvFrame&>, bool>,
                       "walk_env_frames: F must return a type convertible to bool "
                       "(true=continue, false=stop)");
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock4536;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            rlock4536[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         // Issue #4529: per-hop resolve under the frame's shard lock —
         // external callers (tests, env_depth, introspection) hold no
         // env-frame locks, so each hop re-validates the range against
@@ -5478,7 +5495,7 @@ public:
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
             // Issue #1360 / #1756: skip on NULL/OOB/INVALID_VERSION
-            const auto r = resolve_env_frame_detailed(cur);
+            const auto r = resolve_env_frame_detailed_assume_env_frame_locks(cur);
             if (!r)
                 return;
             if (!std::forward<F>(f)(cur, *r.frame))

@@ -2834,11 +2834,11 @@ Evaluator::resolve_env_frame_detailed_assume_env_frame_locks(EnvId id) const noe
     const auto cur = defuse_version_.load(std::memory_order_acquire);
     if (cur != 0 && fr.version_ < cur) {
         note_distinguished();
-        return {&fr, EnvFrameResolveStatus::STALE_VERSION};
+        return {&fr, EnvFrameResolveStatus::STALE_VERSION, fr.version_};
     }
     note_distinguished();
     // GENERATION_MISMATCH reserved for free-list reuse (#1360 follow-up).
-    return {&fr, EnvFrameResolveStatus::OK};
+    return {&fr, EnvFrameResolveStatus::OK, fr.version_};
 }
 
 EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noexcept {
@@ -3458,6 +3458,20 @@ std::optional<EnvFrame const*> EnvFrameRef::resolve_if_valid(Evaluator const& ev
     return std::nullopt;
 }
 
+// Issue #4536: run the dual-path consistency update under the frame's
+// shard lock — resolve_env_frame_mut's pointer escapes that lock on
+// return, and compact's deque move (steal repair, no MBG) invalidates it
+// before ensure_dual_path_consistent() derefs.
+void Evaluator::ensure_env_frame_dual_path_consistent(EnvId id) noexcept {
+    if (id == NULL_ENV_ID)
+        return;
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
+    if (id >= env_frames_.size())
+        return;
+    (void)env_frames_[id].ensure_dual_path_consistent();
+}
+
 // Issue #2295: ownership transfer protocol.
 // transfer_to restamps dst from the live env_generation_, moves the
 // index, clears *this. Prefer this over a silent generation bump when
@@ -3480,8 +3494,10 @@ void EnvFrameRef::transfer_to(Evaluator& ev, EnvFrameRef& dst) noexcept {
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
         m->envframe_ownership_transfer_total.fetch_add(1, std::memory_order_relaxed);
     // Dual-path update on the live frame (string/SymId parity).
-    if (EnvFrame* fr = ev.resolve_env_frame_mut(moved))
-        (void)fr->ensure_dual_path_consistent();
+    // Issue #4536: under the frame's shard lock — the resolve_mut pointer
+    // escapes the lock on return; compact's deque move must not race the
+    // ensure.
+    ev.ensure_env_frame_dual_path_consistent(moved);
 }
 
 // drop: tombstone the source Ref, bump drop metric, run a skip-freed
