@@ -4,6 +4,7 @@
 module;
 #include <atomic>
 #include <bit>
+#include <cstdio>
 #include <cstdlib> // #2988 AURA_MUTATE_INVALIDATE_COARSE
 
 #include "runtime_shared.h"
@@ -4697,7 +4698,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // root is a full Define form, extract its value child
                 // first so we never nest a Define as a Lambda body
                 // (silent semantic corruption → void returns).
-                aura::ast::NodeId env_refresh_node = aura::ast::NULL_NODE;
                 {
                     auto pr_root_v = flat.get(pr.root);
                     aura::ast::NodeId body_to_set = pr.root;
@@ -4735,16 +4735,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
                         flat.set_child(id, 0, body_to_set);
-                        env_refresh_node = body_to_set;
                     } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
                         flat.set_child(lambda_id, 0, body_to_set);
-                        env_refresh_node = lambda_id;
                     } else {
                         // No existing lambda; treat as
                         // "replace whole Define child" for
                         // consistency with the Lambda branch.
                         flat.set_child(id, 0, body_to_set);
-                        env_refresh_node = body_to_set;
                     }
                     if (allow_macro_set_body && was_macro_set_body)
                         propagate_macro_introduced_marker(ev, flat, body_to_set);
@@ -4855,8 +4852,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // Issue #2730 / #3918: public rebind refreshes top_env
                 // from the live new value. set-body only dirtied IR, so
                 // (k 1) kept the pre-mutate closure until eval-current.
-                if (ev.workspace_pool_ && env_refresh_node != aura::ast::NULL_NODE &&
-                    env_refresh_node < flat.size()) {
+                if (ev.workspace_pool_ && id != aura::ast::NULL_NODE && id < flat.size()) {
                     // Issue #4369: same caller-pool restore as mutate:rebind.
                     struct RestoreTopPool {
                         Env& top;
@@ -4869,9 +4865,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 top.set_pool(saved);
                         }
                     } restore_top_pool(ev.top_env());
-                    flat.force_align_subtree_gen(env_refresh_node);
-                    auto refreshed =
-                        ev.eval_flat(flat, *ev.workspace_pool_, env_refresh_node, ev.top_env());
+                    // Issue #4541: mirror rebind's refresh — eval the whole
+                    // Define node (full sym binding + closure registration).
+                    // Refreshing only the body/lambda subtree stored a bare
+                    // lambda pair in the env cell (no closure registration),
+                    // so TW call sites failed to apply the fresh body, and a
+                    // clean Define handed eval_flat the cached pre-mutate
+                    // closure back. mark_subtree_dirty first, or the cache
+                    // wins.
+                    flat.mark_subtree_dirty(id);
+                    flat.force_align_subtree_gen(id);
+                    auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, id, ev.top_env());
                     if (refreshed) {
                         auto& tenv = ev.top_env();
                         std::size_t ci = 0;
