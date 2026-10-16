@@ -582,11 +582,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                          aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals)) {
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
-            const auto fp_overflow_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    fp_overflow_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                    /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                     /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -608,11 +607,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         if (hard && expected == 0 && live_truth.live_goal_count > 0) {
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
-            const auto unstaged_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    unstaged_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                    /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                     /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -643,11 +641,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0) {
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             aura::compiler::typed_audit::bump_occurrence_persist_reject_expected_fp_zero_total();
-            const auto expected_fp_zero_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    expected_fp_zero_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                    /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                     /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -672,10 +669,9 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // depth==0) if we just return. Stamp reject proof (force_reason 16
         // — fingerprint drift is an abort-class face) + clear the
         // previous green proof + drop any stale query:type grant.
-        const auto fp_mismatch_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
         (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-            fp_mismatch_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-            aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+            /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
             /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -698,8 +694,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             ev->bump_occurrence_persist_fingerprint_mismatch();
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    join_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                    /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                     /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -750,7 +746,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 ev->clear_type_export_authority();
                 (void)aura::compiler::typed_audit::
                     build_type_linear_commit_proof_from_live_with_outcome(
-                        mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                        ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                        /*linear_ok=*/false,
                         aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                         /*goal_fingerprint=*/0, /*from_cs=*/false,
                         /*force_reason=*/16);
@@ -796,8 +793,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             ev->clear_type_export_authority();
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                    /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                     /*goal_fingerprint=*/0, /*from_cs=*/false,
                     /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
@@ -828,8 +825,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             ev->clear_type_export_authority();
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                    /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
                     /*goal_fingerprint=*/0, /*from_cs=*/false,
                     /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
@@ -902,8 +899,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         aura::compiler::typed_audit::drop_deferred_outermost_green_proof();
         ev->clear_type_export_authority();
         (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-            mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
-            aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+            /*linear_ok=*/false, aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
             /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -1842,8 +1839,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             typed_audit::clear_coercion_commit_readiness_on_abort();
             aura_clear_occurrence_persist_buffer(this);
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                cp.audit_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                typed_audit::kProofLiveGoalCountHintAuto, /*goal_fingerprint=*/0,
+                ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
+                /*goal_fingerprint=*/0,
                 /*from_cs=*/false, /*force_reason=*/16);
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);
@@ -2194,6 +2192,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             nodes_changed = post_size - cp.mutation_log_size;
         }
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
+        // Issue #4564: typed before/after are the Mutation epoch at the
+        // stamp. The mutation-impact ring keeps this defuse surrogate.
+        const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
         const std::uint64_t epoch_delta = epoch_after - cp.version;
         // Surrogate reasons mask: bit 0 = any node was
         // touched (kGeneralDirty equivalent).
@@ -2284,7 +2285,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // Issue #2814: intentional skip of invariant suite (frame budget).
                 typed_audit::note_invariant_enforcement_skipped(mid);
                 typed_audit::record_boundary_outcome(
-                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
                     static_cast<std::uint32_t>(audit_target),
                     static_cast<std::uint32_t>(nodes_changed), fid);
                 // Issue #3322: production/Full still drop stale defuse/IR so
@@ -2300,7 +2301,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 clear_txn_dirty();
                 typed_audit::note_invariant_enforcement_skipped(mid);
                 typed_audit::record_boundary_outcome(
-                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
                     static_cast<std::uint32_t>(audit_target),
                     static_cast<std::uint32_t>(nodes_changed), fid);
                 invalidate_defuse_index_for_nested();
@@ -2411,11 +2412,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     typed_audit::record_boundary_deny_after_restore(
                         mid,
                         composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
-                        cp.version, epoch_after, static_cast<std::uint32_t>(audit_target), 0, fid);
+                        audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target), 0, fid);
                     if (strict_sandbox)
                         typed_audit::capture_audit_event_forced(
                             mid, "strict-linear-synth-denied",
-                            typed_audit::MutationKind::Structural, cp.version, epoch_after,
+                            typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
                             typed_audit::AuditOutcome::Error,
                             static_cast<std::uint32_t>(audit_target), 0, fid, 0,
                             static_cast<std::uint32_t>(capability_tenant_id()));
@@ -2446,8 +2447,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         typed_audit::note_stamp_last_look_tc(tc_handle);
                         const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
                         (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                            cp.version, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                            truth.live_goal_count, truth.goal_fingerprint, truth.from_cs,
+                            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                            /*linear_ok=*/false, truth.live_goal_count, truth.goal_fingerprint,
+                            truth.from_cs,
                             /*force_reason=*/3);
                         typed_audit::publish_type_linear_proof_outcome(
                             typed_audit::kTypeLinearProofOutcomeReject);
@@ -2502,8 +2504,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
                             log_delta, std::memory_order_relaxed);
                         inv_ok = composite_txn_commit(
-                            mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
-                            epoch_after, nested_boundary, batch_active, &ccr);
+                            mid, audit_op, static_cast<std::uint32_t>(audit_target), audit_epoch,
+                            audit_epoch, nested_boundary, batch_active, &ccr);
                         // Reset pending log_delta after composite_txn_commit
                         // returns so subsequent non-composite boundaries
                         // don't see stale value. composite_txn_commit body
@@ -2525,8 +2527,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // Fall through to force-rollback path below.
                         } else {
                             inv_ok = run_typed_mutation_invariant_audit(
-                                mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
-                                epoch_after,
+                                mid, audit_op, static_cast<std::uint32_t>(audit_target),
+                                audit_epoch, audit_epoch,
                                 /*composite_mode=*/false, &first);
                         }
                         (void)proof_trunc;
@@ -2590,7 +2592,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         typed_audit::InvariantAuditResult after{};
                         inv_ok = run_typed_mutation_invariant_audit(
                             mid, "full-partial-recover", static_cast<std::uint32_t>(audit_target),
-                            cp.version, epoch_after,
+                            audit_epoch, audit_epoch,
                             /*composite_mode=*/false, &after);
                         if (inv_ok) {
                             recovered = true;
@@ -2800,13 +2802,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 mid,
                                 composite ? "composite-invariant-force-rollback"
                                           : "invariant-force-rollback",
-                                cp.version, epoch_after, static_cast<std::uint32_t>(audit_target),
+                                audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target),
                                 0, fid);
                             // Strict trail: Error outcome for Agent dashboards.
                             if (strict_sandbox)
                                 typed_audit::capture_audit_event_forced(
                                     mid, "strict-invariant-denied",
-                                    typed_audit::MutationKind::Structural, cp.version, epoch_after,
+                                    typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
                                     typed_audit::AuditOutcome::Error,
                                     static_cast<std::uint32_t>(audit_target), 0, fid, 0);
                             // Issue #3281: mid-bound authority post-clear check —
@@ -2823,7 +2825,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 aura_clear_occurrence_persist_buffer(this);
                                 (void)typed_audit::
                                     build_type_linear_commit_proof_from_live_with_outcome(
-                                        cp.audit_mid, /*would_allow_commit=*/false,
+                                        ::aura::core::current_mutation_epoch(),
+                                        /*would_allow_commit=*/false,
                                         /*linear_ok=*/false,
                                         typed_audit::kProofLiveGoalCountHintAuto,
                                         /*goal_fingerprint=*/0, /*from_cs=*/false,
@@ -2842,7 +2845,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         if (!nested_boundary)
                             clear_txn_dirty();
                         typed_audit::record_boundary_outcome(
-                            mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                            mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
                             static_cast<std::uint32_t>(audit_target),
                             static_cast<std::uint32_t>(nodes_changed), fid);
                     }
@@ -2853,7 +2856,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     if (!nested_boundary)
                         clear_txn_dirty();
                     typed_audit::record_boundary_outcome(
-                        mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                        mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
                         static_cast<std::uint32_t>(audit_target),
                         static_cast<std::uint32_t>(nodes_changed), fid);
                 }
@@ -2980,8 +2983,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     const std::uint64_t mid = cp.audit_mid;
                     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                     typed_audit::record_boundary_deny_after_restore(
-                        mid, "guard-reflect-validate-force-rollback", cp.version,
-                        defuse_version_.load(std::memory_order_acquire), 0, 0, fid);
+                        mid, "guard-reflect-validate-force-rollback", audit_epoch, audit_epoch, 0,
+                        0, fid);
                     // Issue #3281: mid-bound authority post-clear check —
                     // same shape as the main abort site. If a concurrent
                     // densify/steal bumped the mid authority version during
@@ -2995,8 +2998,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         typed_audit::clear_coercion_commit_readiness_on_abort();
                         aura_clear_occurrence_persist_buffer(this);
                         (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                            cp.audit_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                            typed_audit::kProofLiveGoalCountHintAuto, /*goal_fingerprint=*/0,
+                            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                            /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
+                            /*goal_fingerprint=*/0,
                             /*from_cs=*/false, /*force_reason=*/16);
                         typed_audit::publish_type_linear_proof_outcome(
                             typed_audit::kTypeLinearProofOutcomeReject);
@@ -3011,13 +3015,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Issue #1589: TypedMutationAudit rollback trail.
         // Issue #4403: a deny belt that never emitted its own SE leaves a
         // first-wins gate token. Absent token stays the ungated rollback.
-        // Stamp stays after restore (#3217). epoch_after stays defuse.
-        const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
+        // Stamp stays after restore (#3217).
+        // Issue #4564: before/after are the Mutation epoch. mid stays
+        // cp.audit_mid. SE.epoch is restamped inside emit_invariant_deny_se.
+        const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
         const std::uint64_t mid = cp.audit_mid;
         const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
         const char* deny_op = typed_audit::take_boundary_deny_op();
-        typed_audit::record_boundary_deny_after_restore(mid, deny_op, cp.version, epoch_after, 0, 0,
-                                                        fid);
+        typed_audit::record_boundary_deny_after_restore(mid, deny_op, audit_epoch, audit_epoch, 0,
+                                                        0, fid);
     }
     // Issue #2690: unified PendingRecovery drain. Boundary exit routes
     // through the same single-owner drain as `maybe_storm_clear_health_pass`
@@ -7057,9 +7063,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Prefer CS truth (#2842). Soft: helper false.
             const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
                 densify_goal_truth_2842.live_goal_count);
-            // Issue #3778: densify TypeLinear proof stamp mid joins the same
-            // SSOT as Occurrence / Typed / SE (session_mid / join helper).
-            // Soft/Off keep defuse_version_ as observe stamp (#2717 drift).
+            // Issue #3778: densify join mid joins the same SSOT as
+            // Occurrence / Typed / SE (session_mid / join helper).
+            // Soft/Off still load defuse into densify_stamp_mid_3778
+            // (#2717). Issue #4564 does not pass that mid as the proof epoch.
             const bool densify_hard_3778 =
                 typed_audit::production_defaults_active() ||
                 typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
@@ -7071,6 +7078,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const std::uint64_t densify_stamp_mid_3778 =
                 densify_hard_3778 ? densify_join_mid_3778
                                   : ev_->defuse_version_.load(std::memory_order_acquire);
+            // Issue #4564: proof epoch slot is the Mutation epoch.
+            // densify_stamp_mid_3778 stays the #3778 session join mid;
+            // the builder stamps audit_mid from the TLS boundary note.
+            (void)densify_stamp_mid_3778;
+            const auto densify_epoch_4564 = ::aura::core::current_mutation_epoch();
             if (reject_path_2854 || empty_fence_2981 || densify_abort_outstanding_3346) {
                 // Mismatch detected → force_linear_rollback bumps
                 // linear_densify_scan_mismatch_total and sets
@@ -7082,7 +7094,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 if (reject_path_2854)
                     ev_->force_linear_rollback("densify-phase5-linear-scan");
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    densify_stamp_mid_3778,
+                    densify_epoch_4564,
                     /*would_allow_commit=*/false, /*linear_ok=*/false,
                     densify_goal_truth_2842.live_goal_count,
                     densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs,
@@ -7122,7 +7134,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         densify_goal_truth_2842.goal_fingerprint);
                 const auto densify_proof_3346 =
                     typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                        densify_stamp_mid_3778,
+                        densify_epoch_4564,
                         /*would_allow_commit=*/true, /*linear_ok=*/true,
                         densify_goal_truth_2842.live_goal_count,
                         densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
@@ -7161,7 +7173,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // counter so dashboards see the ordered stamp.
                 const auto densify_soft_proof_3346 =
                     typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                        densify_stamp_mid_3778,
+                        densify_epoch_4564,
                         /*would_allow_commit=*/true, /*linear_ok=*/true,
                         densify_goal_truth_2842.live_goal_count,
                         densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
@@ -7869,9 +7881,11 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
                 void* tc_handle = commit_type_checker_handle();
                 typed_audit::note_stamp_last_look_tc(tc_handle);
                 const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
+                // Issue #4564: quiet-path proof epoch is the Mutation epoch,
+                // not the hygiene defuse snapshot.
                 (void)typed_audit::build_type_linear_commit_proof_from_live(
-                    cp.saved_defuse_version, truth.live_goal_count, truth.goal_fingerprint,
-                    truth.from_cs);
+                    ::aura::core::current_mutation_epoch(), truth.live_goal_count,
+                    truth.goal_fingerprint, truth.from_cs);
             }
         }
         // Non-Quiet (Reject / Stamped) → Phase-5 already stamped with

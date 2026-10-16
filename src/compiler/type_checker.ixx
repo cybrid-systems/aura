@@ -2958,9 +2958,12 @@ export struct TypeChecker {
                 // trail Success so Agents cannot hold a green proof with
                 // empty goals. Later densify/steal stamps re-check CS truth.
                 if (hard) {
+                    // Issue #4564: proof epoch slot is the Mutation epoch.
+                    // new_epoch stays the occurrence/cache fence above.
                     (void)aura::compiler::typed_audit::
                         build_type_linear_commit_proof_from_live_with_outcome(
-                            new_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                            ::aura::core::current_mutation_epoch(),
+                            /*would_allow_commit=*/false, /*linear_ok=*/false,
                             /*live_goal_count_hint=*/0, /*goal_fingerprint=*/0,
                             /*goal_truth_from_cs=*/true, /*force_reason=*/11);
                     aura::compiler::typed_audit::g_type_linear_proof_reject_empty_after_fence_total

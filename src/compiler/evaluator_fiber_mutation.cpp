@@ -2875,19 +2875,24 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         if (steal_abort_outstanding_3346)
             typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-        // Issue #3778: steal TypeLinear proof stamp mid joins SSOT
-        // (join_audit_and_se_mid) under production/Full — never invent
-        // defuse_version_ as the Agent join key. Soft/Off keep defuse
-        // observe stamp (#2717 drift).
+        // Issue #3778: steal join mid joins SSOT under production/Full —
+        // never invent defuse_version_ as the Agent join key. Soft/Off
+        // still load defuse into steal_stamp_mid_3778 (#2717). Issue
+        // #4564 does not pass that mid as the proof epoch.
         const bool steal_hard_3778 =
             typed_audit::production_defaults_active() ||
             typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
         const std::uint64_t steal_stamp_mid_3778 =
             steal_hard_3778 ? typed_audit::join_audit_and_se_mid(0)
                             : defuse_version_.load(std::memory_order_acquire);
+        // Issue #4564: proof epoch slot is the Mutation epoch.
+        // steal_stamp_mid_3778 stays the #3778 session join mid;
+        // the builder stamps audit_mid from the TLS boundary note.
+        (void)steal_stamp_mid_3778;
+        const auto steal_epoch_4564 = ::aura::core::current_mutation_epoch();
         if (steal_rebind_fail_2854 || empty_fence_2981 || steal_abort_outstanding_3346) {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                steal_stamp_mid_3778,
+                steal_epoch_4564,
                 /*would_allow_commit=*/false, /*linear_ok=*/false,
                 steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
                 steal_goal_truth_2910.from_cs,
@@ -2915,7 +2920,7 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         } else {
             const auto steal_proof_3346 =
                 typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    steal_stamp_mid_3778,
+                    steal_epoch_4564,
                     /*would_allow_commit=*/true, /*linear_ok=*/true,
                     steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
                     steal_goal_truth_2910.from_cs);

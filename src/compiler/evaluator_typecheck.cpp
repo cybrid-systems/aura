@@ -2504,7 +2504,8 @@ bool Evaluator::force_linear_rollback(std::string_view op,
         ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
     }
     const std::uint64_t mid = stamp_boundary_audit_mid();
-    const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
+    // Issue #4564: typed trail epoch is the Mutation epoch, not defuse.
+    const std::uint64_t epoch = ::aura::core::current_mutation_epoch();
     // Issue #2814 M7 audit: close audit_enforcement_gap_total.
     note_invariant_enforcement_ran(mid);
     capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0, 0,
@@ -2615,7 +2616,8 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
             ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
         }
         const std::uint64_t mid0 = stamp_boundary_audit_mid();
-        const std::uint64_t epoch0 = defuse_version_.load(std::memory_order_relaxed);
+        // Issue #4564: typed trail epoch is the Mutation epoch, not defuse.
+        const std::uint64_t epoch0 = ::aura::core::current_mutation_epoch();
         // Issue #2814 M7 audit: missing invariant enforcement link
         // before trail write. Call note_invariant_enforcement_ran(mid0)
         // (with the actual mutation_id from this scope, not nchg) before
@@ -2635,7 +2637,8 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         return false;
     }
     const std::uint64_t mid = stamp_boundary_audit_mid();
-    const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
+    // Issue #4564: typed trail epoch is the Mutation epoch, not defuse.
+    const std::uint64_t epoch = ::aura::core::current_mutation_epoch();
     InvariantAuditResult r{};
     // Always run type + linear suite under hard gate (not Sampled-gated).
     const bool inv_ok = run_typed_mutation_invariant_audit(mid, op, 0, epoch, epoch,
