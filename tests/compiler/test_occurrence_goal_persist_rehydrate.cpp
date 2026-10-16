@@ -1859,6 +1859,70 @@ static void ac2981_1_prod_miss_rejects_proof() {
     clear_occurrence_empty_after_fence_for_test();
 }
 
+// Issue #4564: fence / boundary / densify / steal proof epoch is the
+// Mutation epoch. The #3778 join mid stays a mid, not that stamp.
+static void ac4564_epoch_axis_is_mutation_epoch() {
+    std::println("\n--- #4564: proof epoch is the Mutation epoch ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    typed_audit::set_strategy(typed_audit::AuditStrategy::Full);
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    const auto saved = ::aura::core::current_mutation_epoch();
+    constexpr std::uint64_t kEpoch = 4564001;
+    constexpr std::uint64_t kMid = 4564002;
+    ::aura::core::store_workspace_epoch(::aura::core::WorkspaceEpochKind::Mutation, kEpoch);
+    typed_audit::composite_txn_exit();
+    typed_audit::pin_composite_batch_join_mid(kMid);
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, kMid, /*epoch=*/1);
+    const auto rej0 = typed_audit::type_linear_proof_reject_empty_after_fence_total_v_read();
+    CHECK(tc.note_steal_or_densify_epoch_fence(2) >= 1, "4564: fence dropped goals");
+    CHECK(typed_audit::type_linear_proof_reject_empty_after_fence_total_v_read() > rej0,
+          "4564: fence stamped a reject proof");
+    CHECK(typed_audit::last_type_linear_commit_proof_stamp_v_read() == kEpoch,
+          "4564: proof stamp is the Mutation epoch");
+    CHECK(typed_audit::last_type_linear_commit_proof_stamp_v_read() != 2,
+          "4564: proof stamp is not the cache fence");
+    CHECK(typed_audit::last_type_linear_commit_proof_stamp_v_read() != kMid,
+          "4564: proof stamp is not the session mid");
+
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(mb.find("epoch_after = defuse_version_.load") != std::string::npos,
+          "4564: mutation-impact epoch_after stays the defuse surrogate");
+    CHECK(mb.find("audit_epoch, audit_epoch") != std::string::npos,
+          "4564: boundary trail before/after are the Mutation epoch");
+    CHECK(mb.find("fp_overflow_mid") == std::string::npos,
+          "4564: persist reject does not stamp a session-mid local");
+    CHECK(mb.find("densify_hard_3778 ? densify_join_mid_3778") != std::string::npos,
+          "4564: #3778 densify join-mid ternary stays");
+    CHECK(mb.find("densify_epoch_4564") != std::string::npos,
+          "4564: densify proof epoch is the Mutation epoch");
+    CHECK(efm.find("steal_hard_3778 ? typed_audit::join_audit_and_se_mid(0)") != std::string::npos,
+          "4564: #3778 steal join-mid ternary stays");
+    CHECK(efm.find("steal_epoch_4564") != std::string::npos,
+          "4564: steal proof epoch is the Mutation epoch");
+    CHECK(mb.find("query:4564") == std::string::npos, "4564: no query:4564");
+    CHECK(read_file("tests/compiler/test_issue_4564.cpp").empty(), "4564: no test_issue_4564.cpp");
+
+    typed_audit::composite_txn_exit();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    ::aura::core::store_workspace_epoch(::aura::core::WorkspaceEpochKind::Mutation, saved);
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+}
+
 static void ac2981_2_soft_observe_only() {
     std::println("\n--- #2981 AC2: Soft + miss → soft counter; proof may allow ---");
     unsetenv("AURA_OCCURRENCE_PERSIST");
@@ -3819,6 +3883,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2938_6_linter_and_no_design();
     std::println("\n=== #2981 same-txn proof bind on empty-after-fence miss ===");
     ac2981_1_prod_miss_rejects_proof();
+    ac4564_epoch_axis_is_mutation_epoch();
     ac2981_2_soft_observe_only();
     ac2981_3_quiet_zero_extra();
     ac2981_4_same_txn_order();
