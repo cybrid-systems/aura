@@ -61,6 +61,16 @@
 // Scheduler reap_orphans_now order:
 //   orphan_mutex_ → wait_map_mutex_ → joiner_map_mutex_ → owned_fibers_mutex_
 //
+// Issue #4542 — Evaluator closures vs env-frame families. The numeric
+// rank above puts EnvFrames (4) before Closures (12), but the code-level
+// order for these families is the reverse and is the one that holds:
+//     closures_shards_[*].mu → env_frame_shards_[*].mu → env_frames_mtx_
+// (apply / scan_live_closures / GC probe / truncate / compact all follow
+// it; see the EnvFramesShard comment in evaluator.ixx). No audited site
+// nests Level::Closures with Level::EnvFrames, so the rank table is not
+// consulted for this pair; do not add such a nesting under AuditScope
+// without first giving Closures a rank below EnvFrames.
+//
 // Forbidden inversions (rank check fail → record metric or abort under
 // canary / audit hard mode):
 //   - Acquiring lower rank while any higher rank is held

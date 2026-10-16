@@ -2834,6 +2834,12 @@ set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FR
 
 
 
+# Issue #1664 / #4542: closures shards → env shards → env_frames_mtx_ lock
+# order (scan / probes / truncate / compact). TSan face for #4542.
+aura_add_issue_test(test_lock_order_closures_env)
+aura_issue_test_link_llvm_jit(test_lock_order_closures_env)
+add_dependencies(all_test_issue_targets test_lock_order_closures_env)
+
 # Issue #1665 / #2164: scan_skip_freed + EnvFrameLifetimeGuard hold-pin.
 # Source: tests/compiler/test_scan_skip_freed_closures.cpp (resolved by name).
 aura_add_issue_test(test_scan_skip_freed_closures)

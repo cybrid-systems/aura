@@ -2623,9 +2623,24 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // mark_invalid=true, only_if_moved=false → also NULL_ENV_ID force Drop.
     (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
                                                  /*only_if_moved=*/false);
-    // Issue #3900: shard barrier FIRST (index order) — shard readers
-    // no longer hold env_frames_mtx_, and taking the structure mutex
-    // before the shards would AB-BA against in-flight walkers.
+    // Issue #4542: canonical order is closures shards → env shards →
+    // env_frames_mtx_ (see the EnvFramesShard comment in evaluator.ixx).
+    // The doomed-closure restamp below used to take the closures shards
+    // while this function still held the env shard barrier + the
+    // structure mutex — the env→closures edge that inverted against
+    // scan_live_closures_for_linear_captures (closures→env) and TSan
+    // reported as a potential deadlock on the MutationBoundaryGuard dtor
+    // path. Take every closures shard FIRST (ascending, #3867) and keep
+    // it across the barrier so the doomed restamp stays atomic with the
+    // resize without ever acquiring closures under an env lock.
+    std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_hold;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        cl_hold[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+    bump_closures_apply_epoch(); // Issue #3832
+    // Issue #3900: shard barrier (index order) before the structure mutex —
+    // shard readers no longer hold env_frames_mtx_, and taking the
+    // structure mutex before the shards would AB-BA against in-flight
+    // walkers.
     std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
     for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i) {
         ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
@@ -2692,25 +2707,13 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
             fr.version_ = defuse_version_.load(std::memory_order_acquire);
     }
     bump_envframe_truncate(dropped);
-    // Issue #1739 / #1889 / #1927 / #1955: bump bridge_epoch so cross-COW /
-    // cross-evaluator closure freshness checks (is_bridge_stale /
-    // aura_closure_call) observe that post-checkpoint EnvIds are no
-    // longer valid. Same hook used by compact_env_frames (#1510) and
-    // commit_panic_checkpoint (#1728). No-op when service not bound.
-    if (bridge_epoch_bump_fn_ && compiler_service_) {
-        bridge_epoch_bump_fn_(compiler_service_);
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->bridge_epoch_bump_on_truncate_total.fetch_add(1, std::memory_order_relaxed);
-    }
     // Issue #1889 / #1927: defense-in-depth — force dual-check stale for
     // any Closure still holding an env_id past the checkpoint (OOB after
     // resize). bridge_epoch=0 is STALE under active tracking (#1365).
     std::size_t doomed = 0;
+    // Issue #4542: runs under the closures shards taken BEFORE the env
+    // barrier above (closures → env order); never re-acquire them here.
     {
-        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
-        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
-            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-        bump_closures_apply_epoch(); // Issue #3832
         for (auto& cl_sh : closures_shards_)
             for (auto& kv : cl_sh.map) {
                 const auto id = kv.second.env_id;
@@ -2724,6 +2727,21 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
                     ++doomed;
                 }
             }
+    }
+    // Issue #4542: closures shards are done — release them before the
+    // bridge-epoch hook (it fans out to HotUpdateRegistry listeners, which
+    // must not run under the closures locks).
+    for (auto& cl_l : cl_hold)
+        cl_l.unlock();
+    // Issue #1739 / #1889 / #1927 / #1955: bump bridge_epoch so cross-COW /
+    // cross-evaluator closure freshness checks (is_bridge_stale /
+    // aura_closure_call) observe that post-checkpoint EnvIds are no
+    // longer valid. Same hook used by compact_env_frames (#1510) and
+    // commit_panic_checkpoint (#1728). No-op when service not bound.
+    if (bridge_epoch_bump_fn_ && compiler_service_) {
+        bridge_epoch_bump_fn_(compiler_service_);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->bridge_epoch_bump_on_truncate_total.fetch_add(1, std::memory_order_relaxed);
     }
     if (doomed > 0) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
@@ -2881,12 +2899,14 @@ EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noe
 // stale bridge_epoch snapshot re-bridges via closure_bridge_.
 //
 // Algorithm:
-//   1. unique_lock(env_frames_mtx_)
-//   2. shared_lock(closures_shards_[closures_shard_index(id)].mu) — build referenced set
+//   1. unique_lock ALL closures shards (ascending), then the env shard
+//      barrier, then unique_lock(env_frames_mtx_) (#4542 canonical order)
+//   2. build referenced set from the closures map (shards already held)
 //   3. live[i] = (version_ >= defuse_version_) || referenced[i]
 //   4. Build new_env_frames + remap[old -> new or -1]
-//   5. unique_lock(closures_shards_[closures_shard_index(id)].mu) — rewrite Closure::env_id
-//   6. swap env_frames_, defuse_version_.fetch_add(1)
+//   5. rewrite Closure::env_id (same hold), release the closures shards
+//   6. swap env_frames_, defuse_version_.fetch_add(1), ride survivors,
+//      release barrier; drop env_frames_mtx_ before the closures restamp
 //
 // Issue #4448: the #4350 cap_snap_cache_ is cleared in the same critical
 // section as the env_generation_ bump (EnvIds are renumbered here, so
@@ -2894,12 +2914,34 @@ EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noe
 // frame). The ctor-allocated root frame (top_'s parent) is pinned into
 // the referenced set and top_.parent_id remapped, so the live top
 // parent chain never dangles across a reclaim.
-// Locking order: env_frames_mtx_ -> closures_mtx_ (consistent
-// with apply_closure path which takes closures_mtx_ first then
-// materializes from env_frames_ under no env_frames_mtx_ hold —
-// a fiber holding shared closures_mtx_ blocks our unique take,
-// avoiding the classic upgrade deadlock).
+// Locking order (Issue #4542, global): closures shards → env shards →
+// env_frames_mtx_, never the reverse. The pre-#4542 comment here
+// documented env_frames_mtx_ -> closures_mtx_, which inverted against
+// scan_live_closures_for_linear_captures / apply (closures first) and
+// TSan flagged it as a potential deadlock. A fiber holding a shared
+// closures shard still blocks our unique take (no upgrade deadlock).
 std::size_t Evaluator::compact_env_frames() {
+    // Issue #4542 (found by the AC8 stress): the post-compact tail calls
+    // refresh_stale_frames_after_steal(), which calls compact_env_frames()
+    // again whenever some closure still names an OOB env_id (truncate
+    // deliberately leaves doomed closures OOB) or an INVALID frame (never
+    // reclaimed: INVALID_VERSION >= any defuse). Neither is changed by a
+    // second compact, so the pair recursed until the stack overflowed.
+    // A nested compact on the same thread can never make progress — the
+    // outer one already did the reclaim — so it is a no-op.
+    static thread_local int compact_depth = 0;
+    if (compact_depth > 0)
+        return 0;
+    struct CompactDepthScope {
+        int& d;
+        explicit CompactDepthScope(int& depth) noexcept
+            : d(depth) {
+            ++d;
+        }
+        ~CompactDepthScope() { --d; }
+        CompactDepthScope(const CompactDepthScope&) = delete;
+        CompactDepthScope& operator=(const CompactDepthScope&) = delete;
+    } compact_depth_scope(compact_depth);
     // Issue #2164: hold-pin gate — defer reclaim while any EnvFrameLifetimeGuard
     // is live (process-wide depth). Exit scan remains mandatory on Guard
     // dtor; this closes the post-facto window where compact rewrites env_id
@@ -2948,15 +2990,29 @@ std::size_t Evaluator::compact_env_frames() {
         (void)linear_post_mutate_enforce_all();
     }
     compact_gc_coord.enter_cascade();
-    // Issue #3900: shard barrier FIRST (index order) — shard readers
-    // no longer hold env_frames_mtx_, and taking the structure mutex
-    // before the shards would AB-BA against in-flight walkers.
+    // Issue #4542: closures shards FIRST (ascending, #3867), then the env
+    // shard barrier, then env_frames_mtx_ — the canonical order. Steps 2
+    // and 5 below used to take the closures shards under the barrier
+    // (env→closures, inverted vs scan_live_closures_for_linear_captures).
+    // Held unique through Step 5 only (released before the IR remap hook).
+    std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_hold;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        cl_hold[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+    bump_closures_apply_epoch(); // Issue #3832
+    // Issue #3900: shard barrier (index order) before the structure mutex —
+    // shard readers no longer hold env_frames_mtx_, and taking the
+    // structure mutex before the shards would AB-BA against in-flight
+    // walkers.
     std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
     for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
         ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();
     if (orig_size == 0) {
+        // Issue #4542: no closure rewrite on an empty arena — drop the
+        // closures shards before the hook / notify fan-out.
+        for (auto& cl_l : cl_hold)
+            cl_l.unlock();
         // Still bump defuse_version_ so the caller sees a
         // post-compact epoch marker (consistency with the
         // non-empty path). Issue #1510/#1526: also bump bridge_epoch
@@ -3011,9 +3067,7 @@ std::size_t Evaluator::compact_env_frames() {
     if (top_parent_in_range)
         referenced[top_parent_frame] = true;
     {
-        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
-        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
-            cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+        // Issue #4542: closures shards already held (taken before the barrier).
         for (const auto& cl_sh : closures_shards_)
             for (const auto& kv : cl_sh.map) {
                 const auto id = kv.second.env_id;
@@ -3068,10 +3122,8 @@ std::size_t Evaluator::compact_env_frames() {
     std::size_t rewritten = 0;
     std::vector<std::int64_t> remapped_cids;
     {
-        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
-        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
-            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-        bump_closures_apply_epoch(); // Issue #3832
+        // Issue #4542: closures shards already held unique since before the
+        // env barrier — Steps 2..5 see one consistent closure map.
         std::size_t cl_total = 0;
         for (auto& cl_sh : closures_shards_)
             cl_total += cl_sh.map.size();
@@ -3093,6 +3145,11 @@ std::size_t Evaluator::compact_env_frames() {
                 }
             }
     }
+
+    // Issue #4542: Step 5 was the last closures-map access under the env
+    // locks. Release before the IR remap hook (service-owned state).
+    for (auto& cl_l : cl_hold)
+        cl_l.unlock();
 
     // Issue #1510: optional IR / external env_id remap (runtime_closures_).
     // Still under compact_env_frames_lock_ (interlock held). Restamp of
@@ -3132,17 +3189,6 @@ std::size_t Evaluator::compact_env_frames() {
     if (reclaimed > 0 || !env_id_remap_.empty())
         aura::core::envframe_lifetime::note_compact_generation_bump();
 
-    // Issue #3900: the shard barrier's job is done — the env_frames_
-    // rewrite completed above. The downstream tail (bridge publish,
-    // restamp callbacks, targeted cache invalidate, epoch notify) relies
-    // on the interlock / env_frames_mtx_ and takes closures locks in
-    // canonical order; entering those with the env shard uniques still
-    // held is the env-to-closures inversion (#1664) and same-thread
-    // EDEADLKs any env shard re-acquisition (observed in run_2017).
-    // Release before the dual-epoch/publish tail.
-    for (auto& ef_b : ef_barrier)
-        ef_b.unlock();
-
     // Issue #1510 / #1526: atomic dual-epoch pair under interlock —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure
     // is_bridge_stale) + AOT table epoch (via service bump hook).
@@ -3180,10 +3226,32 @@ std::size_t Evaluator::compact_env_frames() {
     // reclaims, it does not re-define), so #2579 module captures survive
     // a reclaim that kept them referenced. Survivors' cell ids stay valid
     // (#2579 premise); reclaimed frames are gone with NULL_ENV_ID
-    // closures. Barrier was released above — this takes its own.
-    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire),
-                                defuse_version_.load(std::memory_order_acquire),
-                                workspace_flat_ ? workspace_flat_->all_mutations().size() : 0);
+    // closures. Issue #4542: ridden inline under the barrier this function
+    // still holds. restamp_live_capture_frames() takes its own shard
+    // barrier, and calling it after the release (with env_frames_mtx_
+    // still held) was a structure-mutex → shard inversion vs every
+    // shards → structure op (alloc / truncate). compact passes an empty
+    // invalidation window (log_from == log size), so the ride is exactly
+    // "every non-INVALID behind frame → cur defuse".
+    {
+        const auto cur_defuse = defuse_version_.load(std::memory_order_acquire);
+        for (auto& fr : env_frames_) {
+            if (fr.version_ != INVALID_VERSION && fr.version_ < cur_defuse)
+                fr.version_ = cur_defuse;
+        }
+    }
+    // Issue #3900: the shard barrier's job is done — the env_frames_
+    // rewrite completed above. The downstream tail (bridge publish,
+    // restamp callbacks, targeted cache invalidate, epoch notify) relies
+    // on the interlock / env_frames_mtx_ and takes closures locks in
+    // canonical order; entering those with the env shard uniques still
+    // held is the env-to-closures inversion (#1664) and same-thread
+    // EDEADLKs any env shard re-acquisition (observed in run_2017).
+    // Release after the dual-epoch bump + frame restamps (#4542: those
+    // write frames and now run under the barrier) and before the
+    // publish/hook tail.
+    for (auto& ef_b : ef_barrier)
+        ef_b.unlock();
     // Issue #2091 / #3267: publish under the unique_lock already
     // held here. env_frames_mtx_ is non-recursive — do not call
     // publish_live_env_linear_to_bridge() (takes shared_lock).
@@ -3191,6 +3259,12 @@ std::size_t Evaluator::compact_env_frames() {
     const bool bumped_via_hook = bridge_epoch_bump_fn_ && compiler_service_;
     if (bumped_via_hook)
         bridge_epoch_bump_fn_(compiler_service_);
+
+    // Issue #4542: env_frames_ is fully rewritten, restamped and published.
+    // Drop the structure mutex BEFORE re-taking the closures shards for the
+    // bridge restamp — closures under env_frames_mtx_ is the env→closures
+    // inversion. The compact interlock stays held for the tail.
+    env_lock.unlock();
 
     // Issue #1526: restamp tree-walker Closure::bridge_epoch → current.
     std::size_t restamped = 0;
@@ -3259,9 +3333,8 @@ std::size_t Evaluator::compact_env_frames() {
                                                                       std::memory_order_relaxed);
         }
     }
-    // Drop env_frames exclusive lock before #1543 audit (audit collect
-    // only needs closures_mtx_; avoid holding exclusive while auditing).
-    env_lock.unlock();
+    // env_frames exclusive lock already dropped above (#4542) — the #1543
+    // audit only needs the closures shards.
     (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
     // Issue #2131: PostAudit after compact root audit.
     compact_gc_coord.after_cascade();
