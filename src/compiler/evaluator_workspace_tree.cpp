@@ -86,8 +86,7 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
         auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
         if (fp == 0xFF)
             fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-        auto kidx = string_heap_.size();
-        string_heap_.push_back(k);
+        auto kidx = string_heap_.mint(k);
         EvalValue key_ev = make_string(kidx);
         bool inserted = false;
         for (std::size_t at = 0; at < cap; ++at) {
@@ -129,8 +128,7 @@ Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalV
         auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
         if (fp == 0xFF)
             fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-        auto kidx = string_heap_.size();
-        string_heap_.push_back(k);
+        auto kidx = string_heap_.mint(k);
         EvalValue key_ev = make_string(kidx);
         bool inserted = false;
         for (std::size_t at = 0; at < cap; ++at) {
@@ -369,8 +367,7 @@ bool Evaluator::restore_panic_checkpoint() {
     std::size_t idx = 0;
     {
         std::lock_guard alloc_lock(alloc_storage_lock_);
-        idx = string_heap_.size();
-        string_heap_.push_back(panic_safe_source_);
+        idx = string_heap_.mint(panic_safe_source_);
     }
     auto result = (*set_fn)({make_string(idx)});
     bool ok = types::is_bool(result) && types::as_bool(result);

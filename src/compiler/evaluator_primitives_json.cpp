@@ -3,6 +3,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "prim_heap_quota.hh" // Issue #2916 / #2997
@@ -60,7 +61,7 @@ using types::make_vector;
 using types::make_void;
 
 void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                              std::pmr::vector<std::string>& string_heap,
+                              ::aura::compiler::LockedStringHeap& string_heap,
                               std::vector<EvalValue>& error_values,
                               std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     using aura::compiler::pure_general;
@@ -83,8 +84,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
                         primitive_error_counter);
                 }
-                auto sid = string_heap.size();
-                string_heap.push_back("null");
+                auto sid = string_heap.mint("null");
                 return types::make_string(sid);
             }
 
@@ -189,8 +189,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
                     primitive_error_counter);
             }
-            auto sid = string_heap.size();
-            string_heap.push_back(result);
+            auto sid = string_heap.mint(result);
             return types::make_string(sid);
         },
         pure_general(1, "(any) -> string", "Encode an Aura value as a JSON string."));
@@ -237,8 +236,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     result += json[i];
                 }
             }
-            auto sid = string_heap.size();
-            string_heap.push_back(result);
+            auto sid = string_heap.mint(result);
             return types::make_string(sid);
         },
         pure_general(2, "(any string) -> string", "Lookup a string field from JSON/hash."));
@@ -358,8 +356,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
                         primitive_error_counter);
                 }
-                auto sid = string_heap.size();
-                string_heap.push_back(result);
+                auto sid = string_heap.mint(result);
                 return types::make_string(sid);
             };
 

@@ -75,8 +75,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                              const std::string& fix, const std::string& data,
                              const std::string& expl) -> EvalValue {
             auto push = [&](const std::string& s) -> std::uint64_t {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(s);
+                auto sidx = ev.string_heap_.mint(s);
                 return sidx;
             };
             auto nil = EvalValue(0);
@@ -306,8 +305,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.bump_verify_tool_stable_ref_hit();
             ev.bump_verify_tool_dirty_propagation();
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
+        auto sidx = ev.string_heap_.mint(result);
         return make_string(sidx);
     });
 
@@ -426,8 +424,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.note_agent_recovery_attempt();
 
         auto push_str = [&](const std::string& s) -> EvalValue {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(s);
+            auto sidx = ev.string_heap_.mint(s);
             return make_string(sidx);
         };
         auto make_result = [&](bool ok, std::int64_t status, const std::string& cause,
@@ -521,8 +518,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             (void)0; // counted below on result
 
         // Diagnose (inline reuse of diagnose by constructing a string value).
-        auto err_sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(err_msg);
+        auto err_sidx = ev.string_heap_.mint(err_msg);
         // Call diagnose logic via the primitive if present; else fail closed.
         auto diag_slot = ev.primitives().slot_for_name("diagnose");
         EvalValue diagnosis = make_bool(false);
@@ -538,8 +534,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         auto fix_slot = ev.primitives().slot_for_name("apply-fix");
         EvalValue fixed = make_bool(false);
         if (auto fn = ev.primitives().slot_lookup_fast(fix_slot)) {
-            auto code_sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(code);
+            auto code_sidx = ev.string_heap_.mint(code);
             fixed = (*fn)({make_string(code_sidx), diagnosis});
         }
         if (!is_string(fixed)) {

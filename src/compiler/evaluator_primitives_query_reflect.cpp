@@ -2,6 +2,7 @@
 // Issue #2914 peel of query primitives.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "compiler/evaluator_primitives_query_shared.hh"
@@ -161,7 +162,7 @@ extern std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total;
 extern std::atomic<std::uint32_t> g_occurrence_goals_live_wired;
 
 void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                       std::pmr::vector<std::string>& string_heap,
+                                       ::aura::compiler::LockedStringHeap& string_heap,
                                        void*& type_registry, ModulePathResolver resolve_module_path,
                                        Evaluator& ev) {
     (void)pairs;
@@ -196,8 +197,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -881,8 +881,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -901,11 +900,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        auto vidx = string_heap.size();
-                        string_heap.push_back(std::string(v_str));
+                        auto vidx = string_heap.mint(std::string(v_str));
                         vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
                         ht->size++;
                         return;
@@ -1066,8 +1063,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1086,11 +1082,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        auto vidx = string_heap.size();
-                        string_heap.push_back(std::string(v_str));
+                        auto vidx = string_heap.mint(std::string(v_str));
                         vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
                         ht->size++;
                         return;
@@ -1251,8 +1245,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         auto idx = ((h >> 1) + at) & (hcap - 1);
                         if (meta[idx] == 0xFF) {
                             meta[idx] = fp;
-                            auto kidx = string_heap.size();
-                            string_heap.push_back(k_str);
+                            auto kidx = string_heap.mint(k_str);
                             keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                             vals[idx] = make_int(v).val;
                             ht->size++;
@@ -1272,11 +1265,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         auto idx = ((h >> 1) + at) & (hcap - 1);
                         if (meta[idx] == 0xFF) {
                             meta[idx] = fp;
-                            auto kidx = string_heap.size();
-                            string_heap.push_back(k_str);
+                            auto kidx = string_heap.mint(k_str);
                             keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                            auto vidx = string_heap.size();
-                            string_heap.push_back(std::string(v_str));
+                            auto vidx = string_heap.mint(std::string(v_str));
                             vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
                             ht->size++;
                             return;
@@ -1524,8 +1515,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         auto idx = ((h >> 1) + at) & (hcap - 1);
                         if (meta[idx] == 0xFF) {
                             meta[idx] = fp;
-                            auto kidx = string_heap.size();
-                            string_heap.push_back(k_str);
+                            auto kidx = string_heap.mint(k_str);
                             keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                             vals[idx] = make_int(v).val;
                             ht->size++;
@@ -1545,11 +1535,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         auto idx = ((h >> 1) + at) & (hcap - 1);
                         if (meta[idx] == 0xFF) {
                             meta[idx] = fp;
-                            auto kidx = string_heap.size();
-                            string_heap.push_back(k_str);
+                            auto kidx = string_heap.mint(k_str);
                             keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                            auto vidx = string_heap.size();
-                            string_heap.push_back(std::string(v_str));
+                            auto vidx = string_heap.mint(std::string(v_str));
                             vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
                             ht->size++;
                             return;
@@ -1725,8 +1713,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1865,8 +1852,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     Evaluator::linear_gc_root_audit_path_name(entry.path), entry.ok,
                     entry.registrations, entry.stale_hits, entry.violations_prevented,
                     entry.env_version_resync, entry.live_roots);
-                auto sidx = string_heap.size();
-                string_heap.push_back(std::move(line));
+                auto sidx = string_heap.mint(std::move(line));
                 auto pid = pairs.size();
                 pairs.push_back({make_string(sidx), log_list});
                 log_list = make_pair(pid);
@@ -1886,8 +1872,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = string_heap.size();
-                string_heap.push_back(k_str);
+                auto kidx = string_heap.mint(k_str);
                 EvalValue key_ev = make_string(kidx);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto slot = ((h >> 1) + at) & (hcap - 1);
@@ -1904,8 +1889,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("log-size", make_int(static_cast<std::int64_t>(total)));
             insert_kv("last-path", make_int(last_path));
             {
-                auto sidx = string_heap.size();
-                string_heap.push_back(last_path_name);
+                auto sidx = string_heap.mint(last_path_name);
                 insert_kv("last-path-name", make_string(sidx));
             }
             insert_kv("last-ok", make_int(last_ok));
@@ -2009,8 +1993,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     std::format("seq={} path={} reason={} epoch={} defuse={} env={} closure={}",
                                 e.seq, Evaluator::linear_gc_root_audit_path_name(e.path), e.reason,
                                 e.epoch, e.defuse_version, e.env_id, e.closure_id);
-                auto sidx = string_heap.size();
-                string_heap.push_back(std::move(line));
+                auto sidx = string_heap.mint(std::move(line));
                 auto pid = pairs.size();
                 pairs.push_back({make_string(sidx), viol_log});
                 viol_log = make_pair(pid);
@@ -2030,8 +2013,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = string_heap.size();
-                string_heap.push_back(k_str);
+                auto kidx = string_heap.mint(k_str);
                 EvalValue key_ev = make_string(kidx);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto slot = ((h >> 1) + at) & (hcap - 1);
@@ -2184,8 +2166,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -2349,8 +2330,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -2527,8 +2507,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -2745,8 +2724,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 auto idx = ((h >> 1) + at) & (hcap - 1);
                 if (meta[idx] == 0xFF) {
                     meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
+                    auto kidx = string_heap.mint(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[idx] = make_int(v).val;
                     ht->size++;
@@ -2960,8 +2938,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 auto idx = ((h >> 1) + at) & (hcap - 1);
                 if (meta[idx] == 0xFF) {
                     meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
+                    auto kidx = string_heap.mint(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[idx] = make_int(v).val;
                     ht->size++;

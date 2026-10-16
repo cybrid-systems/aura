@@ -256,8 +256,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         // Build list from BACK to FRONT (append to head)
         EvalValue result = make_void(); // '()
         for (int i = static_cast<int>(caps.size()) - 1; i >= 0; --i) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(caps[i]);
+            auto sidx = ev.string_heap_.mint(caps[i]);
             auto new_pair_idx = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(new_pair_idx);

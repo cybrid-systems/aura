@@ -13,6 +13,7 @@
 // (same as FFIRuntime).
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -54,7 +55,7 @@ public:
     // 5.2 hygiene: signature now matches ffi exactly (string_heap + opaque + coverage counters)
     // for consistency; last two nullable for tests / partial wiring.
     void register_primitives(RegisterFn add_primitive,
-                             std::pmr::vector<std::string>* string_heap = nullptr,
+                             ::aura::compiler::LockedStringHeap* string_heap = nullptr,
                              std::vector<void*>* opaque_heap = nullptr,
                              std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 

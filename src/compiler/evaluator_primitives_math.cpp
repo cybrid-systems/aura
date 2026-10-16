@@ -8,6 +8,7 @@
 // See docs/m4.md.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "primitives_detail.h"
 #include "runtime_shared.h"
@@ -187,7 +188,7 @@ namespace {
 } // namespace
 
 void register_math_regex_and_arithmetic_primitives(
-    PrimRegistrar add, std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs, ::aura::compiler::LockedStringHeap& string_heap,
     std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
     Evaluator& ev) {
     using aura::compiler::mutate_general;
@@ -323,8 +324,7 @@ void register_math_regex_and_arithmetic_primitives(
                 return handle_regex_status(st, "regex-find");
             if (!out.found)
                 return make_void();
-            auto id = string_heap.size();
-            string_heap.push_back(std::move(out.match));
+            auto id = string_heap.mint(std::move(out.match));
             return make_string(id);
         },
         pure_general(2, "(string string) -> any", "First regex match or empty."));
@@ -351,8 +351,7 @@ void register_math_regex_and_arithmetic_primitives(
                 regex_to_ms);
             if (st != RegexRunStatus::Ok)
                 return handle_regex_status(st, "regex-replace");
-            auto id = string_heap.size();
-            string_heap.push_back(std::move(result));
+            auto id = string_heap.mint(std::move(result));
             return make_string(id);
         },
         pure_general(3, "(string string string) -> string", "Replace regex matches."));
@@ -385,8 +384,7 @@ void register_math_regex_and_arithmetic_primitives(
                 return handle_regex_status(st, "regex-split");
             EvalValue result = make_void();
             for (auto it2 = parts.rbegin(); it2 != parts.rend(); ++it2) {
-                auto sid = string_heap.size();
-                string_heap.push_back(*it2);
+                auto sid = string_heap.mint(*it2);
                 auto pid = pairs.size();
                 pairs.push_back({make_string(sid), result});
                 result = make_pair(pid);

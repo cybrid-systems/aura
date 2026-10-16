@@ -3426,7 +3426,9 @@ static void ac4519_source_cite() {
     if (restore_fn != std::string::npos) {
         const auto win = wt.substr(restore_fn, 9000);
         const auto lockp = win.find("std::lock_guard alloc_lock(alloc_storage_lock_");
-        const auto push = win.find("string_heap_.push_back(panic_safe_source_)");
+        // Issue #4543: the restore mint is LockedStringHeap::mint (locked
+        // size-read + append in one call); the outer lock is retained.
+        const auto push = win.find("string_heap_.mint(panic_safe_source_)");
         const auto setcall = win.find("(*set_fn)({make_string(idx)})");
         CHECK(push != std::string::npos && lockp != std::string::npos &&
                   setcall != std::string::npos && lockp < push && push < setcall,

@@ -8,6 +8,7 @@
 // multiple evaluators with independent FFI state.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include <dlfcn.h>
 #include "compiler/ffi_hot_path.hh"
@@ -110,7 +111,7 @@ struct FfiRenderHotpathGuard {
     return true;
 }
 
-void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
+void FFIRuntime::register_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* string_heap,
                                      std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
     // Issue #3176: Evaluator ctor wraps `add` so c-* names go to

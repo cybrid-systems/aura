@@ -139,6 +139,14 @@ Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
     top_.set_owner(this);
     top_.set_parent_id(alloc_env_frame(NULL_ENV_ID /* no parent */, &primitives_));
+    // Issue #4543 / #4428: every mint stamps the tenant record under
+    // alloc_storage_lock_ (LockedStringHeap::mint runs the hook in its
+    // critical section).
+    string_heap_.set_mint_hook(
+        [](void* ctx, std::size_t idx) noexcept {
+            static_cast<Evaluator*>(ctx)->note_inrange_string_mint(idx);
+        },
+        this);
     primitives_.set_string_heap(&string_heap_);
     primitives_.set_error_sink(&error_values_, &primitive_error_count_);
     // Issue #2652: reserve string_heap_[0] as immortal empty string so

@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
@@ -88,7 +89,7 @@ namespace {
 } // namespace
 
 void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                          std::pmr::vector<std::string>& string_heap,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
                                           std::vector<std::string>& keyword_table,
                                           void*& type_registry) {
 
@@ -96,8 +97,7 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
         if (a.empty())
             return make_int(0);
         auto type_name = infer_type_name(a[0]);
-        auto id = string_heap.size();
-        string_heap.push_back(type_name);
+        auto id = string_heap.mint(type_name);
         return make_string(id);
     });
 
@@ -116,7 +116,6 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
             if (!ty.valid())
                 return make_void();
             std::vector<EvalValue> out;
-            auto kind_idx = string_heap.size();
             std::string kind;
             switch (treg->tag_of(ty)) {
                 case aura::core::TypeTag::MODULE:
@@ -141,20 +140,17 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
                     kind = "scalar";
                     break;
             }
-            string_heap.push_back(kind);
+            const auto kind_idx = string_heap.mint(kind);
             out.push_back(make_string(kind_idx));
-            auto name_idx = string_heap.size();
-            string_heap.push_back(name);
+            auto name_idx = string_heap.mint(name);
             out.push_back(make_string(name_idx));
             if (treg->tag_of(ty) == aura::core::TypeTag::MODULE) {
                 auto* mt = treg->module_of(ty);
                 if (mt) {
                     for (auto& [mname, mtype] : mt->members) {
-                        auto mname_idx = string_heap.size();
-                        string_heap.push_back(mname);
+                        auto mname_idx = string_heap.mint(mname);
                         auto mtype_name = std::string(treg->name_of(mtype));
-                        auto mtype_idx = string_heap.size();
-                        string_heap.push_back(mtype_name);
+                        auto mtype_idx = string_heap.mint(mtype_name);
                         auto pid = pairs.size();
                         pairs.push_back({make_string(mname_idx), make_string(mtype_idx)});
                         out.push_back(make_pair(pid));
@@ -164,11 +160,9 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 auto* rt = treg->record_of(ty);
                 if (rt) {
                     for (auto& [fname, ftype] : rt->fields) {
-                        auto fname_idx = string_heap.size();
-                        string_heap.push_back(fname);
+                        auto fname_idx = string_heap.mint(fname);
                         auto ftype_name = std::string(treg->name_of(ftype));
-                        auto ftype_idx = string_heap.size();
-                        string_heap.push_back(ftype_name);
+                        auto ftype_idx = string_heap.mint(ftype_name);
                         auto pid = pairs.size();
                         pairs.push_back({make_string(fname_idx), make_string(ftype_idx)});
                         out.push_back(make_pair(pid));
@@ -229,10 +223,8 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
             }
             EvalValue lst = make_void();
             for (auto it = members.rbegin(); it != members.rend(); ++it) {
-                auto nidx = string_heap.size();
-                string_heap.push_back(it->first);
-                auto tidx = string_heap.size();
-                string_heap.push_back(it->second);
+                auto nidx = string_heap.mint(it->first);
+                auto tidx = string_heap.mint(it->second);
                 auto pid = pairs.size();
                 pairs.push_back({make_string(nidx), make_string(tidx)});
                 auto ppid = pairs.size();
@@ -263,8 +255,7 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 return make_void();
             EvalValue lst = make_void();
             for (auto it = mt->members.rbegin(); it != mt->members.rend(); ++it) {
-                auto nidx = string_heap.size();
-                string_heap.push_back(it->first);
+                auto nidx = string_heap.mint(it->first);
                 auto pid = pairs.size();
                 auto pid2 = pairs.size();
                 pairs.push_back({make_string(nidx), lst});
@@ -297,8 +288,7 @@ void register_reflect_and_type_primitives(PrimRegistrar add, std::pmr::vector<Pa
             return make_void();
         auto kw = keyword_table[kidx];
         auto sname = kw.substr(1);
-        auto sid = string_heap.size();
-        string_heap.push_back(sname);
+        auto sid = string_heap.mint(sname);
         return make_string(sid);
     });
 

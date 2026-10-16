@@ -1314,12 +1314,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
 // Issue #909: shared helper (was local lambda in register_eval; used across peels).
 EvalValue ObservabilityPrims::meta_to_pair(Evaluator& ev, const PrimMeta& m) {
     // Issue #926: include perf_tier + security_level for Agent discovery.
-    auto schema_idx = ev.string_heap_.size();
-    ev.string_heap_.push_back(m.schema);
-    auto cat_idx = ev.string_heap_.size();
-    ev.string_heap_.push_back(m.category);
-    auto doc_idx = ev.string_heap_.size();
-    ev.string_heap_.push_back(m.doc);
+    auto schema_idx = ev.string_heap_.mint(m.schema);
+    auto cat_idx = ev.string_heap_.mint(m.category);
+    auto doc_idx = ev.string_heap_.mint(m.doc);
     auto pid0 = ev.pairs_.size();
     ev.pairs_.push_back({make_string(cat_idx), make_string(schema_idx)});
     auto pid1 = ev.pairs_.size();
@@ -1609,8 +1606,7 @@ EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
     auto make_name_list = [&](const std::vector<std::string>& names) -> EvalValue {
         EvalValue result = make_void();
         for (auto it = names.rbegin(); it != names.rend(); ++it) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            auto sidx = ev.string_heap_.mint(*it);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(pid);
@@ -1656,8 +1652,7 @@ EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
         for (char c : k)
             h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
         auto fp = ::aura::compiler::hash::fingerprint(h);
-        auto kidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(k);
+        auto kidx = ev.string_heap_.mint(k);
         EvalValue key_ev = make_string(kidx);
         bool inserted = false;
         for (std::size_t at = 0; at < hcap; ++at) {

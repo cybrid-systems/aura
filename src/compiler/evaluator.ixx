@@ -5,6 +5,7 @@
 // std includes in persistent_child_vector.hh don't conflict
 // with `import std;`.
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp decls in evaluator
@@ -385,7 +386,7 @@ public:
         auto it = table_.find(name);
         return it != table_.end() ? std::optional(it->second) : std::nullopt;
     }
-    void set_string_heap(std::pmr::vector<std::string>* h) { string_heap_ = h; }
+    void set_string_heap(::aura::compiler::LockedStringHeap* h) { string_heap_ = h; }
     // Issue #4461: integer `/` by zero becomes an error value, not 0.
     void set_error_sink(std::vector<types::EvalValue>* errs,
                         std::atomic<std::uint64_t>* counter) noexcept {
@@ -393,7 +394,7 @@ public:
         primitive_error_counter_ = counter;
     }
     std::span<const std::string> string_heap() const { return *string_heap_; }
-    std::pmr::vector<std::string>& string_heap() { return *string_heap_; }
+    ::aura::compiler::LockedStringHeap& string_heap() { return *string_heap_; }
     // Slot-based lookup for primitive values
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
     // Issue #914: string_view (transparent reverse index).
@@ -546,7 +547,7 @@ private:
     // the same monotonic arena as the underlying EvalValue /
     // Pair storage; std::string char buffers still heap-allocate
     // (Phase 2.4.1 will move string contents inline).
-    std::pmr::vector<std::string>* string_heap_ = nullptr;
+    ::aura::compiler::LockedStringHeap* string_heap_ = nullptr;
     // Issue #4461: wired by Evaluator before any eval. Null means no sink.
     std::vector<types::EvalValue>* error_values_ = nullptr;
     std::atomic<std::uint64_t>* primitive_error_counter_ = nullptr;
@@ -1479,8 +1480,7 @@ namespace primitives_detail {
         auto keys = ht->keys();
         auto vals = ht->values();
         const auto hcap = ht->capacity;
-        const auto kidx = string_heap.size();
-        string_heap.push_back(std::string(k));
+        const auto kidx = string_heap.mint(std::string(k));
         const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
         const auto val_ev = types::make_int(v);
         for (std::size_t at = 0; at < hcap; ++at) {
@@ -1514,11 +1514,9 @@ namespace primitives_detail {
         auto keys = ht->keys();
         auto vals = ht->values();
         const auto hcap = ht->capacity;
-        const auto kidx = string_heap.size();
-        string_heap.push_back(std::string(k));
+        const auto kidx = string_heap.mint(std::string(k));
         const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
-        const auto vidx = string_heap.size();
-        string_heap.push_back(std::string(v));
+        const auto vidx = string_heap.mint(std::string(v));
         const auto val_ev = types::make_string(static_cast<std::uint64_t>(vidx));
         for (std::size_t at = 0; at < hcap; ++at) {
             const auto idx = ((h >> 1) + at) & (hcap - 1);
@@ -1548,8 +1546,7 @@ namespace primitives_detail {
         auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
         if (fp == 0xFF)
             fp = 0xFE;
-        const auto kidx = string_heap.size();
-        string_heap.push_back("overflow");
+        const auto kidx = string_heap.mint("overflow");
         const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
         const auto val_ev = types::make_int(1);
         for (std::size_t i = 0; i < ht->capacity; ++i) {
@@ -1589,11 +1586,10 @@ namespace primitives_detail {
     }
 
     export inline types::EvalValue
-    make_primitive_error(std::pmr::vector<std::string>& string_heap,
+    make_primitive_error(::aura::compiler::LockedStringHeap& string_heap,
                          std::vector<types::EvalValue>& error_values, std::string_view msg,
                          std::atomic<std::uint64_t>* error_counter = nullptr) {
-        auto sidx = string_heap.size();
-        string_heap.emplace_back(msg);
+        auto sidx = string_heap.mint(msg);
         auto eidx = error_values.size();
         error_values.push_back(types::make_string(sidx));
         if (error_counter) {
@@ -1607,44 +1603,44 @@ namespace primitives_detail {
     void register_type_and_char_primitives(std::function<void(std::string, PrimFn)> add);
     void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)> add,
                                              Evaluator& ev, std::pmr::vector<Pair>& pairs,
-                                             std::pmr::vector<std::string>& string_heap,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
                                              std::vector<EvalValue>& error_values,
                                              std::atomic<std::uint64_t>* primitive_error_counter);
     void register_json_primitives(std::function<void(std::string, PrimFn)> add,
                                   std::pmr::vector<Pair>& pairs,
-                                  std::pmr::vector<std::string>& string_heap,
+                                  ::aura::compiler::LockedStringHeap& string_heap,
                                   std::vector<EvalValue>& error_values,
                                   std::atomic<std::uint64_t>* primitive_error_counter,
                                   Evaluator& ev);
     void register_list_primitives(std::function<void(std::string, PrimFn)> add,
                                   std::pmr::vector<Pair>& pairs,
-                                  std::pmr::vector<std::string>& string_heap,
+                                  ::aura::compiler::LockedStringHeap& string_heap,
                                   std::vector<EvalValue>& error_values, Evaluator& ev);
     void register_vector_and_hash_primitives(std::function<void(std::string, PrimFn)> add,
                                              std::pmr::vector<Pair>& pairs,
-                                             std::pmr::vector<std::string>& string_heap,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
                                              std::vector<EvalValue>& error_values,
                                              std::vector<std::vector<EvalValue>>& vector_heap,
                                              std::atomic<std::uint64_t>* primitive_error_counter,
                                              Evaluator& ev);
     void register_math_regex_and_arithmetic_primitives(
         std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-        std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+        ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
         std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev);
     void register_reflect_and_type_primitives(std::function<void(std::string, PrimFn)> add,
                                               std::pmr::vector<Pair>& pairs,
-                                              std::pmr::vector<std::string>& string_heap,
+                                              ::aura::compiler::LockedStringHeap& string_heap,
                                               std::vector<std::string>& keyword_table,
                                               void*& type_registry);
     void register_query_primitives(
         std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-        std::pmr::vector<std::string>& string_heap, void*& type_registry,
+        ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
         std::function<std::string(const std::string&)> resolve_module_path, Evaluator& ev);
     void register_workspace_query_primitives(
         std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
         aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
         void*& type_registry, std::vector<std::string>& keyword_table,
-        std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
+        std::pmr::vector<Pair>& pairs, ::aura::compiler::LockedStringHeap& string_heap,
         aura::ast::ASTArena*& temp_arena,
         std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
         // Issue #371: shared_mutex protecting `tag_arity_index`.
@@ -1660,7 +1656,7 @@ namespace primitives_detail {
     void register_defuse_query_primitives(
         std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
         aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
-        std::pmr::vector<std::string>& string_heap, std::function<void*()> ensure_defuse,
+        ::aura::compiler::LockedStringHeap& string_heap, std::function<void*()> ensure_defuse,
         std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
         std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
         std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
@@ -1892,7 +1888,7 @@ export class Evaluator {
                                                     Evaluator& ev);
     friend void primitives_detail::register_list_primitives(
         std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-        std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+        ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
         Evaluator& ev);
 
 public:
@@ -2077,7 +2073,7 @@ public:
     std::span<const std::string> string_heap() const { return string_heap_; }
     // Phase 2.4: mut accessor returns pmr::vector reference
     // (matches the underlying storage type).
-    std::pmr::vector<std::string>& string_heap_mut() { return string_heap_; }
+    ::aura::compiler::LockedStringHeap& string_heap_mut() { return string_heap_; }
     // Issue #4468: result printing walks elements. The slot index is not
     // the vector's external representation.
     [[nodiscard]] std::span<const std::vector<types::EvalValue>> vector_heap() const noexcept {
@@ -7158,7 +7154,7 @@ private:
     // std::string char buffers still heap-allocate per string
     // (Phase 2.4.1 / Phase 2.5 will inline string contents
     // into the arena).
-    std::pmr::vector<std::string> string_heap_{&runtime_resource_};
+    ::aura::compiler::LockedStringHeap string_heap_{&runtime_resource_, &alloc_storage_lock_};
     // Issue #4428: owner record parallel to string_heap_. Same encoding as
     // pair_slot_tenants_ (0 = never stamped, else tenant+1). Writers hold
     // alloc_storage_lock_ (push_string_heap and the user string constructors).
@@ -8059,6 +8055,11 @@ public:
         if (string_slot_tenants_.size() <= idx)
             string_slot_tenants_.resize(idx + 1, 0);
         string_slot_tenants_[idx] = capability_tenant_id_ + 1;
+    }
+    // Issue #4543: test read of the #4428 owner record (0 = never stamped).
+    [[nodiscard]] std::uint64_t string_slot_tenant_record_for_test(std::size_t idx) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return idx < string_slot_tenants_.size() ? string_slot_tenants_[idx] : 0;
     }
     // Issue #4428: stamp a tree-walker ClosureId before the map insert.
     // Do not call while holding a closures shard lock.
@@ -9418,22 +9419,17 @@ public:
         apply_closure_mtx_lookup_total_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #2651 / #1397: always serialize string_heap_ growth.
+    // Issue #4543: string_heap_ is a LockedStringHeap — mint() takes
+    // alloc_storage_lock_, appends, runs the #4428 tenant stamp hook and
+    // returns the index in one critical section; raw push_back is gone.
     // Multi-fiber orch fanout (overnight agents) races unlocked
     // push_back → pmr::vector / monotonic_buffer_resource corruption
     // (SIGSEGV in allocate/deallocate / construct_at — H9).
     std::int32_t push_string_heap(const std::string& s) {
-        std::lock_guard lock(alloc_storage_lock_);
-        const auto idx = static_cast<std::int32_t>(string_heap_.size());
-        string_heap_.push_back(s);
-        note_inrange_string_mint(static_cast<std::size_t>(idx)); // Issue #4428
-        return idx;
+        return static_cast<std::int32_t>(string_heap_.mint(s));
     }
     std::int32_t push_string_heap(std::string&& s) {
-        std::lock_guard lock(alloc_storage_lock_);
-        const auto idx = static_cast<std::int32_t>(string_heap_.size());
-        string_heap_.push_back(std::move(s));
-        note_inrange_string_mint(static_cast<std::size_t>(idx)); // Issue #4428
-        return idx;
+        return static_cast<std::int32_t>(string_heap_.mint(std::move(s)));
     }
     // Issue #2652: snapshot string under alloc_storage_lock_ so concurrent
     // push_back cannot reallocate while display/hash/compare holds a ref.

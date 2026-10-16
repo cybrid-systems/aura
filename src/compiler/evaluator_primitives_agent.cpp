@@ -1328,8 +1328,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                         // with every other fiber using this Evaluator's heap.
                         std::lock_guard lock(ev.alloc_storage_lock_);
                         if (probe_slot >= ev.string_heap_.size()) {
-                            probe_slot = ev.string_heap_.size();
-                            ev.string_heap_.push_back(call_src);
+                            probe_slot = ev.string_heap_.mint(call_src);
                         } else {
                             ev.string_heap_[probe_slot] = call_src;
                         }
@@ -1802,8 +1801,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // monotonic resource.
                 std::lock_guard lock(ev.alloc_storage_lock_);
                 if (slot >= ev.string_heap_.size()) {
-                    slot = ev.string_heap_.size();
-                    ev.string_heap_.push_back(s);
+                    slot = ev.string_heap_.mint(s);
                 } else {
                     ev.string_heap_[slot] = s;
                 }
@@ -1824,10 +1822,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         break;
                     }
                 }
-                if (fresh == ev.string_heap_.size()) {
-                    std::string copy = s;
-                    ev.string_heap_.push_back(std::move(copy));
-                }
+                if (fresh == ev.string_heap_.size())
+                    fresh = ev.string_heap_.mint(std::string(s)); // Issue #4543
             }
             return types::make_string(fresh);
         };

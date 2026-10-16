@@ -89,8 +89,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 EvalValue val_ev = make_int(v);
                 auto meta = ht->metadata();
@@ -221,8 +220,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
+            auto kidx = ev.string_heap_.mint(k);
             EvalValue key_ev = make_string(kidx);
             EvalValue val_ev = make_int(v);
             auto meta = ht->metadata();
@@ -518,8 +516,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -551,10 +548,8 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         // Pre-compute the EvalValue for last-operator (string).
         // Push key string first, then value string, so we can
         // build correct key/val EvalValues.
-        std::size_t last_op_key_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back("last-operator");
-        std::size_t last_op_val_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(last_op);
+        std::size_t last_op_key_idx = ev.string_heap_.mint("last-operator");
+        std::size_t last_op_val_idx = ev.string_heap_.mint(last_op);
         EvalValue last_op_key_ev = make_string(last_op_key_idx);
         EvalValue last_op_val_ev = make_string(last_op_val_idx);
 
@@ -589,8 +584,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -677,20 +671,13 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             // Push the key + value strings first.
             std::string op_str = rec.operator_name;
             std::string sum_str = rec.summary;
-            std::size_t op_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(op_str);
-            std::size_t sum_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(sum_str);
-            std::size_t k_id = ev.string_heap_.size();
-            ev.string_heap_.push_back("mutation-id");
-            std::size_t k_op = ev.string_heap_.size();
-            ev.string_heap_.push_back("operator");
-            std::size_t k_tgt = ev.string_heap_.size();
-            ev.string_heap_.push_back("target-node");
-            std::size_t k_st = ev.string_heap_.size();
-            ev.string_heap_.push_back("status");
-            std::size_t k_sum = ev.string_heap_.size();
-            ev.string_heap_.push_back("summary");
+            std::size_t op_idx = ev.string_heap_.mint(op_str);
+            std::size_t sum_idx = ev.string_heap_.mint(sum_str);
+            std::size_t k_id = ev.string_heap_.mint("mutation-id");
+            std::size_t k_op = ev.string_heap_.mint("operator");
+            std::size_t k_tgt = ev.string_heap_.mint("target-node");
+            std::size_t k_st = ev.string_heap_.mint("status");
+            std::size_t k_sum = ev.string_heap_.mint("summary");
             // 8-slot capacity is enough for 5 fields.
             auto* ht = FlatHashTable::create(8);
             if (!ht)
@@ -833,8 +820,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1050,8 +1036,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1106,8 +1091,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;

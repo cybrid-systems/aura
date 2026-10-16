@@ -597,8 +597,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         arena_group_->reset_module(resolved);
         // First-class error so (require)/(import) can signal failure
         // (void was indistinguishable from empty success in some paths).
-        auto sid = string_heap_.size();
-        string_heap_.push_back(std::string("module-load-failed: ") + resolved + ": " + why);
+        auto sid = string_heap_.mint(std::string("module-load-failed: ") + resolved + ": " + why);
         auto eidx = error_values_.size();
         error_values_.push_back(types::make_string(sid));
         return types::make_error(eidx);

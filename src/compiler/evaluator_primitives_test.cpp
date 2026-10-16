@@ -162,8 +162,7 @@ void register_test_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string summary = std::to_string(total_suites) +
                               " suites: " + std::to_string(total_passed) + " passed, " +
                               std::to_string(total_failed) + " failed";
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(summary);
+        auto sidx = ev.string_heap_.mint(summary);
         return make_string(sidx);
     });
 }

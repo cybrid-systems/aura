@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "typed_mutation_audit.h" // Issue #4106: production gate
@@ -78,7 +79,7 @@ template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
 
 void register_defuse_query_primitives(
     PrimRegistrar add, std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
-    aura::ast::StringPool*& workspace_pool, std::pmr::vector<std::string>& string_heap,
+    aura::ast::StringPool*& workspace_pool, ::aura::compiler::LockedStringHeap& string_heap,
     std::function<void*()> ensure_defuse,
     std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
     std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,

@@ -6,6 +6,7 @@
 // Registration uses PrimRegistrar + heap refs (FFI/adt_runtime pattern).
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 
 #include "runtime_shared.h"
@@ -110,7 +111,7 @@ namespace {
     // values past 2^53 stay exact and [2^62, 2^63) does not abort (#4462).
     // Parse failure stays #f ([SILENCE-PRIM-#615]). A radix outside 2..36
     // is an error, not a silent decimal parse.
-    EvalValue parse_string_number(Evaluator& ev, std::pmr::vector<std::string>& string_heap,
+    EvalValue parse_string_number(Evaluator& ev, ::aura::compiler::LockedStringHeap& string_heap,
                                   std::vector<EvalValue>& error_values,
                                   std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
@@ -180,7 +181,7 @@ namespace {
 
 void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                                          std::pmr::vector<Pair>& pairs,
-                                         std::pmr::vector<std::string>& string_heap,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
                                          std::vector<EvalValue>& error_values,
                                          std::atomic<std::uint64_t>* primitive_error_counter) {
     using aura::compiler::mutate_general;
@@ -297,9 +298,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                         std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
                         primitive_error_counter);
                 }
-                auto sidx = string_heap.size();
-                string_heap.push_back(std::move(result));
-                ev.note_inrange_string_mint(sidx); // Issue #4428
+                auto sidx = string_heap.mint(std::move(result));
                 return make_string(sidx);
             }
         },
@@ -361,9 +360,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
                     primitive_error_counter);
             }
-            auto sidx = string_heap.size();
-            string_heap.push_back(std::move(result));
-            ev.note_inrange_string_mint(sidx); // Issue #4428
+            auto sidx = string_heap.mint(std::move(result));
             return make_string(sidx);
         },
         pure_general(2, "(list string) -> string", "Join string list with a separator."));
@@ -1149,9 +1146,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
                     primitive_error_counter);
             }
-            auto id = string_heap.size();
-            string_heap.push_back(std::move(result));
-            ev.note_inrange_string_mint(id); // Issue #4428
+            auto id = string_heap.mint(std::move(result));
             return make_string(id);
         },
         pure_general(255, "(...strings) -> string", "Concatenate strings."));

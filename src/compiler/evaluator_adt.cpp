@@ -54,10 +54,8 @@ EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
     // pairs_ push_backs; the two-pair construction (mp / kp) must
     // see consistent indices across fiber:spawn workers.
     std::lock_guard lock(alloc_storage_lock_);
-    auto mi = string_heap_.size();
-    string_heap_.push_back(m);
-    auto ki = string_heap_.size();
-    string_heap_.push_back(k);
+    auto mi = string_heap_.mint(m);
+    auto ki = string_heap_.mint(k);
     auto mp = make_pair(pairs_.size());
     pairs_.push_back({make_string(mi), EvalValue(0)});
     auto kp = make_pair(pairs_.size());

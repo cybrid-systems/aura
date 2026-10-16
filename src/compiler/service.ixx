@@ -360,8 +360,7 @@ static std::int64_t convert_str_for_eval(std::int64_t val,
             return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(i));
         }
     }
-    auto new_idx = eval_heap.size();
-    eval_heap.push_back(content);
+    auto new_idx = eval_heap.mint(content);
     g_jit_idx_to_eval_idx[idx] = new_idx;
     return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(new_idx));
 }
@@ -4546,8 +4545,7 @@ public:
                                         auto* str_content = aura_jit_string_content(raw_result);
                                         if (str_content) {
                                             auto& sh = evaluator_.primitives().string_heap();
-                                            auto new_idx = sh.size();
-                                            sh.push_back(str_content);
+                                            auto new_idx = sh.mint(str_content);
                                             ev_result = types::make_string(new_idx);
                                         } else {
                                             ev_result = types::EvalValue(raw_result);
@@ -14012,8 +14010,7 @@ private:
             case aura::ast::NodeTag::LiteralString: {
                 // Push string to heap at compile time
                 auto str = std::string(pool.resolve(v.sym_id));
-                auto sid = evaluator_.primitives().string_heap().size();
-                evaluator_.primitives().string_heap().push_back(str);
+                auto sid = evaluator_.primitives().string_heap().mint(str);
                 return types::make_string(sid);
             }
             case aura::ast::NodeTag::Call: {
@@ -17626,8 +17623,7 @@ public:
                                     auto* str_content = aura_jit_string_content(raw_result);
                                     if (str_content) {
                                         auto& sh = evaluator_.primitives().string_heap();
-                                        auto new_idx = sh.size();
-                                        sh.push_back(str_content);
+                                        auto new_idx = sh.mint(str_content);
                                         result_type = types::make_string(new_idx);
                                     } else {
                                         result_type = types::EvalValue(raw_result);
@@ -18352,8 +18348,7 @@ extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t jit_key) {
     if (!content)
         return 0;
     // Push into evaluator string heap
-    auto new_idx = sh.size();
-    sh.push_back(content ? content : "");
+    auto new_idx = sh.mint(content ? content : "");
     return make_string_raw_v2(static_cast<std::uint64_t>(new_idx));
 }
 

@@ -564,8 +564,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 continue;
             auto& n = (*wt).nodes_[static_cast<std::size_t>(i)];
             auto active_flag = (u == wt->active_idx());
-            auto name_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(n.name);
+            auto name_idx = ev.string_heap_.mint(n.name);
             auto name_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_string(name_idx), make_int(active_flag ? 1 : 0)});
             auto entry_pair = ev.pairs_.size();
@@ -921,14 +920,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         if (sym_name == "display" || sym_name == "cons" || sym_name == "car")
             return make_bool(false);
 
-        auto ci = ev.string_heap_.size();
-        ev.string_heap_.push_back(code);
-        auto ni = ev.string_heap_.size();
-        ev.string_heap_.push_back(sym_name);
+        auto ci = ev.string_heap_.mint(code);
+        auto ni = ev.string_heap_.mint(sym_name);
         auto summary = std::string("workspace:sync-from #") + std::to_string(src_id) + " " +
                        sym_name + " (#2784)";
-        auto si = ev.string_heap_.size();
-        ev.string_heap_.push_back(summary);
+        auto si = ev.string_heap_.mint(summary);
         // (mutate:rebind name code-string summary)
         auto result = (*rebind_fn)({make_string(ni), make_string(ci), make_string(si)});
         if (is_bool(result) && as_bool(result)) {
@@ -1078,8 +1074,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             // ── Apply merged source via set-code ──
             // set-code updates the active node's flat (via update_shared_tree_root fix)
             // so parent.flat now points to the merged workspace.
-            auto mi = ev.string_heap_.size();
-            ev.string_heap_.push_back(merged);
+            auto mi = ev.string_heap_.mint(merged);
             bool ok = false;
             if (auto set_fn2 = ev.primitives_.lookup("set-code")) {
                 auto r = (*set_fn2)({make_string(mi)});
@@ -1096,8 +1091,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 first = false;
             }
             result += ")";
-            auto ri = ev.string_heap_.size();
-            ev.string_heap_.push_back(result);
+            auto ri = ev.string_heap_.mint(result);
 
             // Keep the new merged flat active (set-code already set ev.workspace_flat_
             // to the new arena-allocated flat, and update_shared_tree_root updated
@@ -1186,8 +1180,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             std::sort(conflicts.begin(), conflicts.end());
             EvalValue result = make_void();
             for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(*it);
+                auto sidx = ev.string_heap_.mint(*it);
                 auto pidx = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(sidx), result});
                 result = make_pair(pidx);
@@ -1240,8 +1233,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         tree->set_active(base_id);
         ev.workspace_flat_ = tree->nodes_[base_id].flat;
         ev.workspace_pool_ = tree->nodes_[base_id].pool;
-        auto mi = ev.string_heap_.size();
-        ev.string_heap_.push_back(merged);
+        auto mi = ev.string_heap_.mint(merged);
         if (auto set_fn = ev.primitives_.lookup("set-code")) {
             auto r = (*set_fn)({make_string(mi)});
             return is_bool(r) ? r : make_bool(false);

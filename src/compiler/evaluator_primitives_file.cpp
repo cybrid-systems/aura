@@ -96,8 +96,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         std::getline(std::cin, line);
         if (line.empty())
             return make_void();
-        auto id = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(line));
+        auto id = ev.string_heap_.mint(std::move(line));
         return make_string(id);
     });
 
@@ -151,8 +150,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         while (std::size_t n = ::fread(buf, 1, sizeof(buf), fp))
             content.append(buf, n);
         ::fclose(fp); // also closes fd
-        auto id = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(content));
+        auto id = ev.string_heap_.mint(std::move(content));
         return make_string(id);
     });
 
@@ -241,8 +239,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         EvalValue result = make_void();
         for (auto it = items.rbegin(); it != items.rend(); ++it) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            auto sidx = ev.string_heap_.mint(*it);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(pid);
@@ -544,8 +541,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(result));
+            auto sid = ev.string_heap_.mint(std::move(result));
             return make_string(sid);
         });
 
@@ -578,8 +574,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                    std::string name(entry->d_name);
                                    if (name == "." || name == "..")
                                        continue;
-                                   auto sid = ev.string_heap_.size();
-                                   ev.string_heap_.push_back(name);
+                                   auto sid = ev.string_heap_.mint(name);
                                    auto pid = ev.pairs_.size();
                                    ev.pairs_.push_back({make_string(sid), result});
                                    result = make_pair(pid);

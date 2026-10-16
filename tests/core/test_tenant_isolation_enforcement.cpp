@@ -1097,7 +1097,7 @@ static void ac4414_module_reader_host_path() {
         auto call1 = [&](auto& fn, const std::string& arg) {
             if (!fn)
                 return aura::compiler::types::make_void();
-            heap_w.push_back(arg);
+            (void)heap_w.mint(arg);
             return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
         };
         auto exports_have = [&](aura::compiler::types::EvalValue v, std::string_view name) {
@@ -1294,7 +1294,7 @@ static void ac4414_module_reader_host_path() {
             using aura::compiler::types::is_void;
             using aura::compiler::types::make_string;
             auto call1 = [&](auto& fn, const std::string& arg) {
-                heap_w.push_back(arg);
+                (void)heap_w.mint(arg);
                 return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
             };
             auto exports_have = [&](aura::compiler::types::EvalValue v, std::string_view name) {
@@ -1363,7 +1363,7 @@ static void ac4414_module_reader_host_path() {
             CHECK(qex.has_value(), "4414: single-tenant query registered");
             bool saw_leaked = false;
             if (qex) {
-                heap_w.push_back(mod);
+                (void)heap_w.mint(mod);
                 auto v = (*qex)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
                 for (int guard = 0; guard < 64 && is_pair(v); ++guard) {
                     const auto ix = static_cast<std::size_t>(as_pair_idx(v));
@@ -6505,7 +6505,7 @@ int main() {
         ev.set_effect_sandbox_mode(0);
         (void)ev.ensure_std_host_prims("std/process");
         auto& heap_w = ev.string_heap_mut();
-        heap_w.push_back("exit 7");
+        (void)heap_w.mint("exit 7");
         auto sh = ev.primitives().lookup("shell");
         CHECK(sh.has_value(), "4233 AC2: shell prim registered after install");
         if (sh) {
@@ -6513,7 +6513,7 @@ int main() {
             const auto rr = (*sh)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
             CHECK(is_int(rr) && as_int(rr) == 7, "4233 AC2: shell prim keeps exit codes");
         }
-        heap_w.push_back("echo -n aura-4233-passthrough");
+        (void)heap_w.mint("echo -n aura-4233-passthrough");
         auto co = ev.primitives().lookup("command-output");
         CHECK(co.has_value(), "4233 AC2: command-output prim registered after install");
         if (co) {
@@ -6896,7 +6896,7 @@ int main() {
         // the shared IsolationDeny row (op git-stage).
         auto gst = ev.primitives().lookup("git-stage");
         CHECK(gst.has_value(), "4381 AC1: git-stage registered");
-        heap_w.push_back("zz.txt");
+        (void)heap_w.mint("zz.txt");
         int stage_rc = -99;
         if (gst) {
             using aura::compiler::types::make_string;
@@ -6907,7 +6907,7 @@ int main() {
         }
         CHECK(stage_rc == 0, "4381 AC1: relative git-stage succeeds under the jail");
         for (const char* escape : {"/etc/passwd", "../one.txt"}) {
-            heap_w.push_back(escape);
+            (void)heap_w.mint(escape);
             const auto se_base = ring.seq.load(std::memory_order_acquire);
             int rc = 0;
             if (gst) {
@@ -7099,7 +7099,7 @@ int main() {
         auto& heap_w = ev.string_heap_mut();
         auto hg = ev.primitives().lookup("http-get");
         CHECK(hg.has_value(), "4382 AC1: http-get registered");
-        heap_w.push_back("file:///etc/passwd");
+        (void)heap_w.mint("file:///etc/passwd");
         {
             const auto se_base = ring.seq.load(std::memory_order_acquire);
             bool denied = false;
@@ -7114,8 +7114,8 @@ int main() {
         }
         auto hp = ev.primitives().lookup("http-post");
         CHECK(hp.has_value(), "4382 AC1: http-post registered");
-        heap_w.push_back("file:///etc/passwd");
-        heap_w.push_back("{}");
+        (void)heap_w.mint("file:///etc/passwd");
+        (void)heap_w.mint("{}");
         {
             const auto se_base = ring.seq.load(std::memory_order_acquire);
             bool denied = false;
@@ -7259,7 +7259,7 @@ int main() {
         auto call1 = [&](auto& fn, const std::string& arg) -> EvalValue {
             if (!fn)
                 return make_void();
-            heap_w.push_back(arg);
+            (void)heap_w.mint(arg);
             return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
         };
 
@@ -7325,8 +7325,8 @@ int main() {
         {
             auto wf = ev.primitives().lookup("write-file");
             CHECK(wf.has_value(), "4399 AC1: write-file still registered");
-            heap_w.push_back(deny_bin);
-            heap_w.push_back("x");
+            (void)heap_w.mint(deny_bin);
+            (void)heap_w.mint("x");
             if (wf) {
                 using aura::compiler::types::make_string;
                 const auto r = (*wf)({make_string(static_cast<std::uint64_t>(heap_w.size() - 2)),
@@ -7418,7 +7418,7 @@ int main() {
             using aura::compiler::types::make_string;
             auto ser = ev.primitives().lookup("serialize-workspace");
             CHECK(ser.has_value(), "4399 AC2: serialize-workspace registered");
-            heap_w.push_back(soul);
+            (void)heap_w.mint(soul);
             if (ser) {
                 const auto r = (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
                 CHECK(is_bool(r) && as_bool(r), "4399 AC2: Off serialize-workspace still writes");
@@ -7426,7 +7426,7 @@ int main() {
             CHECK(slurp(soul).starts_with("AURASOUL"), "4399 AC2: Off serialize blob landed");
             auto import = ev.primitives().lookup("import");
             CHECK(import.has_value(), "4399 AC2: import registered");
-            heap_w.push_back(outside);
+            (void)heap_w.mint(outside);
             if (import) {
                 const auto r =
                     (*import)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
@@ -7437,7 +7437,7 @@ int main() {
             CHECK(called && is_int(*called) && as_int(*called) == 2,
                   "4399 AC2: Off import still binds helper");
             auto gen = ev.primitives().lookup("generate-type-sigs");
-            heap_w.push_back(outside);
+            (void)heap_w.mint(outside);
             if (gen) {
                 const auto r = (*gen)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
                 CHECK(is_bool(r) && as_bool(r), "4399 AC2: Off generate-type-sigs still writes");
@@ -7462,7 +7462,7 @@ int main() {
             auto& heap_w = ev.string_heap_mut();
             using aura::compiler::types::make_string;
             auto ser = ev.primitives().lookup("serialize-workspace");
-            heap_w.push_back(soul_st);
+            (void)heap_w.mint(soul_st);
             if (ser) {
                 const auto r = (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
                 CHECK(is_bool(r) && as_bool(r),
@@ -7471,7 +7471,7 @@ int main() {
             CHECK(slurp(soul_st).starts_with("AURASOUL"),
                   "4399 AC2: single-tenant serialize blob landed outside any tenant root");
             auto import = ev.primitives().lookup("import");
-            heap_w.push_back(outside);
+            (void)heap_w.mint(outside);
             if (import) {
                 const auto r =
                     (*import)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
@@ -7581,7 +7581,7 @@ int main() {
                   "4400 setup: Off set-code marker");
             CHECK(crafter.eval("(eval-current)").has_value(), "4400 setup: Off eval-current");
             auto& heap_w = ev.string_heap_mut();
-            heap_w.push_back(crafted);
+            (void)heap_w.mint(crafted);
             auto ser = ev.primitives().lookup("serialize-workspace");
             CHECK(ser.has_value(), "4400 setup: serialize-workspace registered");
             if (ser) {
@@ -7634,7 +7634,7 @@ int main() {
         };
         {
             const auto se_base = ring.seq.load(std::memory_order_acquire);
-            heap_w.push_back(missing);
+            (void)heap_w.mint(missing);
             const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
             CHECK(is_bool(r) && !as_bool(r), "4400 AC1: missing outside path returns #f");
             CHECK(saw_escape(se_base),
@@ -7642,7 +7642,7 @@ int main() {
         }
         {
             const auto se_base = ring.seq.load(std::memory_order_acquire);
-            heap_w.push_back(victim);
+            (void)heap_w.mint(victim);
             const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
             CHECK(is_bool(r) && !as_bool(r), "4400 AC1: outside victim returns #f");
             CHECK(slurp(victim) == "SECRET4400", "4400 AC1: victim bytes unchanged");
@@ -7694,7 +7694,7 @@ int main() {
         CHECK(deser.has_value(), "4400 AC2: deserialize-workspace registered");
         const auto& ring = g_security_event_ring();
         const auto se_base = ring.seq.load(std::memory_order_acquire);
-        heap_w.push_back(crafted);
+        (void)heap_w.mint(crafted);
         const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
         CHECK(is_error(r), "4400 AC2: in-root deserialize without Mutate is an error");
         const auto msg = ev.soft_error_message(r);
@@ -7711,7 +7711,7 @@ int main() {
               "4400 AC2: marker was not installed");
         auto find = ev.primitives().lookup("workspace:find-define");
         CHECK(find.has_value(), "4400 AC2: workspace:find-define registered");
-        heap_w.push_back("marker");
+        (void)heap_w.mint("marker");
         if (find) {
             const auto fr = (*find)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
             CHECK(!(is_int(fr) && as_int(fr) == 2),
@@ -7732,7 +7732,7 @@ int main() {
         const auto se_rel = ring.seq.load(std::memory_order_acquire);
         const auto flat_after = ev.workspace_flat();
         const auto log_after = flat_after ? flat_after->all_mutations().size() : 0;
-        heap_w.push_back("crafted.bin");
+        (void)heap_w.mint("crafted.bin");
         const auto rel = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
         CHECK(is_error(rel), "4400 AC2: in-root relative deserialize without Mutate is an error");
         const auto rel_msg = ev.soft_error_message(rel);
@@ -7781,14 +7781,14 @@ int main() {
         using aura::compiler::types::make_string;
         auto deser = ev.primitives().lookup("deserialize-workspace");
         CHECK(deser.has_value(), "4400 AC3: deserialize-workspace registered");
-        heap_w.push_back(crafted);
+        (void)heap_w.mint(crafted);
         const auto r = (*deser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
         CHECK(is_bool(r) && as_bool(r), "4400 AC3: Off deserialize returns #t");
         auto called = cs.eval("(marker)");
         CHECK(called && is_int(*called) && as_int(*called) == 7,
               "4400 AC3: Off (marker) returns 7");
         auto find = ev.primitives().lookup("workspace:find-define");
-        heap_w.push_back("marker");
+        (void)heap_w.mint("marker");
         if (find) {
             const auto fr = (*find)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
             CHECK(is_int(fr), "4400 AC3: Off find-define marker is an integer");
@@ -7957,7 +7957,7 @@ int main() {
             return std::string((std::istreambuf_iterator<char>(in)), {});
         };
         auto call1 = [&](auto& fn, const std::string& arg) {
-            heap_w.push_back(arg);
+            (void)heap_w.mint(arg);
             return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
         };
         auto saw_escape = [&](std::uint64_t se_base, std::uint64_t expect_mid) {
@@ -8100,10 +8100,10 @@ int main() {
             auto ser = ev.primitives().lookup("serialize-workspace");
             auto info = ev.primitives().lookup("workspace-persist-info");
             CHECK(ser.has_value() && info.has_value(), "4560 AC2: persist prims registered");
-            heap_w.push_back(soul);
+            (void)heap_w.mint(soul);
             if (ser)
                 (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
-            heap_w.push_back(soul);
+            (void)heap_w.mint(soul);
             if (info) {
                 const auto r =
                     (*info)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
@@ -8128,10 +8128,10 @@ int main() {
             using aura::compiler::types::make_string;
             auto ser = ev.primitives().lookup("serialize-workspace");
             auto info = ev.primitives().lookup("workspace-persist-info");
-            heap_w.push_back(soul_st);
+            (void)heap_w.mint(soul_st);
             if (ser)
                 (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
-            heap_w.push_back(soul_st);
+            (void)heap_w.mint(soul_st);
             if (info) {
                 const auto r =
                     (*info)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
@@ -8263,7 +8263,7 @@ int main() {
 
             if (cfd >= 0 && raw >= 0) {
                 auto& heap_a = ev_a.string_heap_mut();
-                heap_a.push_back("ping");
+                (void)heap_a.mint("ping");
                 const auto sent = (*send_a)(
                     {make_int(cfd), make_string(static_cast<std::uint64_t>(heap_a.size() - 1))});
                 CHECK(is_int(sent) && as_int(sent) == 4, "4561: owner tcp-send writes its socket");
@@ -8273,7 +8273,7 @@ int main() {
                       "4561: owner payload arrived");
 
                 auto& heap_b = ev_b.string_heap_mut();
-                heap_b.push_back("nope");
+                (void)heap_b.mint("nope");
                 const auto se_send = ring.seq.load(std::memory_order_acquire);
                 const auto foreign_send = (*send_b)(
                     {make_int(cfd), make_string(static_cast<std::uint64_t>(heap_b.size() - 1))});
@@ -8314,7 +8314,7 @@ int main() {
             CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0, "4561: unminted socketpair");
             if (sv[0] >= 0) {
                 auto& heap_a = ev_a.string_heap_mut();
-                heap_a.push_back("raw");
+                (void)heap_a.mint("raw");
                 const auto se_raw = ring.seq.load(std::memory_order_acquire);
                 const auto raw_send = (*send_a)(
                     {make_int(sv[0]), make_string(static_cast<std::uint64_t>(heap_a.size() - 1))});
@@ -8344,7 +8344,7 @@ int main() {
         CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, soft_sv) == 0, "4561: soft socketpair");
         if (soft_sv[0] >= 0 && send_a) {
             auto& heap_a = ev_a.string_heap_mut();
-            heap_a.push_back("soft");
+            (void)heap_a.mint("soft");
             const auto se_soft = ring.seq.load(std::memory_order_acquire);
             const auto soft_sent = (*send_a)(
                 {make_int(soft_sv[0]), make_string(static_cast<std::uint64_t>(heap_a.size() - 1))});

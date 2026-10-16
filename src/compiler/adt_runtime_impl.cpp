@@ -10,6 +10,7 @@
 // will be moved here in follow-on wiring (2.3). This keeps the step small.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 module aura.compiler.adt_runtime;
 import std;
@@ -20,7 +21,7 @@ namespace aura::compiler {
 using EvalValue = types::EvalValue;
 using namespace aura::compiler::types;
 
-void AdtRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
+void AdtRuntime::register_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* string_heap,
                                      std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
     // Static adt:* primitives (if any) register here. Dynamic define-type

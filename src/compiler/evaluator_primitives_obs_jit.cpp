@@ -264,14 +264,10 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
     // pre-#1672 name; (stats:get "compile:jit-stats") must not
     // return empty when the JIT hook is live.
     auto jit_stats_line = [&ev](const auto&) -> EvalValue {
-        auto sidx = ev.string_heap_.size();
-        if (!ev.get_jit_stats_fn_) {
-            ev.string_heap_.push_back("");
-        } else {
-            const char* s = ev.get_jit_stats_fn_();
-            ev.string_heap_.push_back(s ? std::string(s) : std::string());
-        }
-        return make_string(sidx);
+        if (!ev.get_jit_stats_fn_)
+            return make_string(ev.string_heap_.mint(std::string()));
+        const char* s = ev.get_jit_stats_fn_();
+        return make_string(ev.string_heap_.mint(s ? std::string(s) : std::string()));
     };
     ObservabilityPrims::register_stats_impl("query:jit-stats", jit_stats_line);
     ObservabilityPrims::register_stats_impl("compile:jit-stats", jit_stats_line);
@@ -350,8 +346,7 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -424,8 +419,7 @@ void ObservabilityPrims::register_jit_p2(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -502,8 +496,7 @@ void ObservabilityPrims::register_jit_p3(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -574,8 +567,7 @@ void ObservabilityPrims::register_jit_p4(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -640,8 +632,7 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -823,8 +814,7 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1401,8 +1391,7 @@ void ObservabilityPrims::register_jit_p7(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1571,8 +1560,7 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1654,8 +1642,7 @@ void ObservabilityPrims::register_jit_p9(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1735,8 +1722,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
                 fmt_arena(short_name.c_str(), stats.used, stats.capacity);
             }
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(out);
+        auto sidx = ev.string_heap_.mint(out);
         return types::make_string(sidx);
     });
 
@@ -1804,8 +1790,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 // Intern the key as a String EvalValue.
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -1839,8 +1824,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
             result.push_back(build_hash(kv));
         }
         for (auto& s : snaps) {
-            auto name_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(s.name);
+            auto name_idx = ev.string_heap_.mint(s.name);
             std::vector<std::pair<std::string, EvalValue>> kv;
             kv.push_back({"name", make_string(name_idx)});
             kv.push_back({"used", make_float(s.used)});
@@ -1929,8 +1913,7 @@ static bool engine_metrics_hash_try_insert(FlatHashTable* ht, Evaluator& ev, std
     auto vals = ht->values();
     const auto hcap = ht->capacity;
     auto& sh = ev.string_heap_mut();
-    const auto kidx = sh.size();
-    sh.push_back(std::string(k));
+    const auto kidx = sh.mint(std::string(k));
     const EvalValue key_ev = make_string(kidx);
     for (std::size_t at = 0; at < hcap; ++at) {
         const auto idx = ((h >> 1) + at) & (hcap - 1);
@@ -1960,8 +1943,7 @@ static void engine_metrics_hash_force_overflow_sentinel(FlatHashTable* ht, Evalu
         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
     const auto fp = ::aura::compiler::hash::fingerprint(h);
     auto& sh = ev.string_heap_mut();
-    const auto kidx = sh.size();
-    sh.push_back("overflow");
+    const auto kidx = sh.mint("overflow");
     const EvalValue key_ev = make_string(kidx);
     const EvalValue val_ev = make_int(1);
     for (std::size_t i = 0; i < ht->capacity; ++i) {
@@ -2034,8 +2016,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         const auto& stats = ObservabilityPrims::stats_primitives();
         EvalValue result = make_void();
         for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            auto sidx = ev.string_heap_.mint(*it);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(pid);
@@ -2164,10 +2145,8 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             // consumers keep their exact keys). Schema stamp follows the
             // #3531 facade family per the issue sketch.
             const std::string miss_name = name; // copy: string_heap_ may grow
-            const auto st_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back("not-found");
-            const auto nm_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(miss_name);
+            const auto st_idx = ev.string_heap_.mint("not-found");
+            const auto nm_idx = ev.string_heap_.mint(miss_name);
             const std::vector<std::pair<std::string, EvalValue>> miss_kv = {
                 {"ok", make_bool(false)},
                 {"status", make_string(st_idx)},
@@ -2207,8 +2186,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 kv.reserve(64);
                 kv.push_back({"schema", make_int(2)});
                 kv.push_back({"prefix", make_string([&] {
-                                  auto i = ev.string_heap_.size();
-                                  ev.string_heap_.push_back(prefix);
+                                  auto i = ev.string_heap_.mint(prefix);
                                   return i;
                               }())});
                 // Stats catalog names matching prefix (values when registered).
@@ -2272,8 +2250,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         {
             EvalValue names_list = make_void();
             for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(*it);
+                auto sidx = ev.string_heap_.mint(*it);
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(sidx), names_list});
                 names_list = make_pair(pid);
@@ -2365,8 +2342,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 matched.push_back(n);
         }
         for (auto it = matched.rbegin(); it != matched.rend(); ++it) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            auto sidx = ev.string_heap_.mint(*it);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(pid);
@@ -2481,8 +2457,7 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2601,8 +2576,7 @@ void ObservabilityPrims::register_jit_p12(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2737,8 +2711,7 @@ void ObservabilityPrims::register_jit_p13(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2888,8 +2861,7 @@ void ObservabilityPrims::register_jit_p14(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3044,8 +3016,7 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3249,8 +3220,7 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3428,8 +3398,7 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3627,8 +3596,7 @@ void ObservabilityPrims::register_jit_p18(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3778,8 +3746,7 @@ void ObservabilityPrims::register_jit_p19(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3928,8 +3895,7 @@ void ObservabilityPrims::register_jit_p20(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4066,8 +4032,7 @@ void ObservabilityPrims::register_jit_p21(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4208,8 +4173,7 @@ void ObservabilityPrims::register_jit_p22(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4359,8 +4323,7 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4554,8 +4517,7 @@ void ObservabilityPrims::register_jit_p24(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4701,8 +4663,7 @@ void ObservabilityPrims::register_jit_p25(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4906,8 +4867,7 @@ void ObservabilityPrims::register_jit_p26(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5051,8 +5011,7 @@ void ObservabilityPrims::register_jit_p27(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5221,8 +5180,7 @@ void ObservabilityPrims::register_jit_p28(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5413,8 +5371,7 @@ void ObservabilityPrims::register_jit_p29(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5587,8 +5544,7 @@ void ObservabilityPrims::register_jit_p30(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5741,8 +5697,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5841,8 +5796,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k);
+                        auto kidx = ev.string_heap_.mint(k);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6061,8 +6015,7 @@ void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6236,8 +6189,7 @@ void ObservabilityPrims::register_jit_p33(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6410,8 +6362,7 @@ void ObservabilityPrims::register_jit_p34(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6578,8 +6529,7 @@ void ObservabilityPrims::register_jit_p35(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6758,8 +6708,7 @@ void ObservabilityPrims::register_jit_p36(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6929,8 +6878,7 @@ void ObservabilityPrims::register_jit_p37(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7116,8 +7064,7 @@ void ObservabilityPrims::register_jit_p38(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7181,8 +7128,7 @@ void ObservabilityPrims::register_jit_p39(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7285,8 +7231,7 @@ void ObservabilityPrims::register_jit_p40(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7344,8 +7289,7 @@ void ObservabilityPrims::register_jit_p41(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7406,8 +7350,7 @@ void ObservabilityPrims::register_jit_p42(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7465,8 +7408,7 @@ void ObservabilityPrims::register_jit_p43(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7558,8 +7500,7 @@ void ObservabilityPrims::register_jit_p44(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7622,8 +7563,7 @@ void ObservabilityPrims::register_jit_p45(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7693,8 +7633,7 @@ void ObservabilityPrims::register_jit_p46(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -7756,8 +7695,7 @@ void ObservabilityPrims::register_jit_p47(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8316,8 +8254,7 @@ void ObservabilityPrims::register_jit_p56(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8380,8 +8317,7 @@ void ObservabilityPrims::register_jit_p57(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8449,8 +8385,7 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8512,8 +8447,7 @@ void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8572,8 +8506,7 @@ void ObservabilityPrims::register_jit_p60(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8633,8 +8566,7 @@ void ObservabilityPrims::register_jit_p61(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8693,8 +8625,7 @@ void ObservabilityPrims::register_jit_p62(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8753,8 +8684,7 @@ void ObservabilityPrims::register_jit_p63(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8854,8 +8784,7 @@ void ObservabilityPrims::register_jit_p64(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8913,8 +8842,7 @@ void ObservabilityPrims::register_jit_p65(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -8973,8 +8901,7 @@ void ObservabilityPrims::register_jit_p66(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9032,8 +8959,7 @@ void ObservabilityPrims::register_jit_p67(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9095,8 +9021,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9325,8 +9250,7 @@ void ObservabilityPrims::register_jit_p69(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9384,8 +9308,7 @@ void ObservabilityPrims::register_jit_p70(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9443,8 +9366,7 @@ void ObservabilityPrims::register_jit_p71(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10257,8 +10179,7 @@ void ObservabilityPrims::register_jit_p88(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10317,8 +10238,7 @@ void ObservabilityPrims::register_jit_p89(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10377,8 +10297,7 @@ void ObservabilityPrims::register_jit_p90(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10441,8 +10360,7 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10725,8 +10643,7 @@ void ObservabilityPrims::register_jit_p92(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10784,8 +10701,7 @@ void ObservabilityPrims::register_jit_p93(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10843,8 +10759,7 @@ void ObservabilityPrims::register_jit_p94(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10903,8 +10818,7 @@ void ObservabilityPrims::register_jit_p95(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11006,8 +10920,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11084,8 +10997,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11316,8 +11228,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11389,8 +11300,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11492,8 +11402,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11609,8 +11518,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12073,8 +11981,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12368,8 +12275,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12605,8 +12511,7 @@ void ObservabilityPrims::register_jit_p98(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12664,8 +12569,7 @@ void ObservabilityPrims::register_jit_p99(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12724,8 +12628,7 @@ void ObservabilityPrims::register_jit_p100(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12784,8 +12687,7 @@ void ObservabilityPrims::register_jit_p101(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12844,8 +12746,7 @@ void ObservabilityPrims::register_jit_p102(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12904,8 +12805,7 @@ void ObservabilityPrims::register_jit_p103(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13004,8 +12904,7 @@ void ObservabilityPrims::register_jit_p104(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13064,8 +12963,7 @@ void ObservabilityPrims::register_jit_p105(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13124,8 +13022,7 @@ void ObservabilityPrims::register_jit_p106(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13184,8 +13081,7 @@ void ObservabilityPrims::register_jit_p107(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13243,8 +13139,7 @@ void ObservabilityPrims::register_jit_p108(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13303,8 +13198,7 @@ void ObservabilityPrims::register_jit_p109(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13362,8 +13256,7 @@ void ObservabilityPrims::register_jit_p110(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -13421,8 +13314,7 @@ void ObservabilityPrims::register_jit_p111(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;

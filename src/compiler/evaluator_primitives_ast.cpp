@@ -171,8 +171,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             if (kw_idx == ev.keyword_table_.size())
                 ev.keyword_table_.push_back(kw_str);
 
-            auto line_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(line);
+            auto line_idx = ev.string_heap_.mint(line);
             auto line_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_keyword(kw_idx), make_string(line_idx)});
             auto cons_pair = ev.pairs_.size();
@@ -409,8 +408,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // Build the result list:
         //   (defuse-version . (dirty ...) . (all ...))
         auto str_idx = [&](const std::string& s) -> EvalValue {
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(s);
+            auto idx = ev.string_heap_.mint(s);
             return make_string(idx);
         };
         // Build (all ...) and (dirty ...) lists as nested pairs.
@@ -463,8 +461,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             auto name_str = std::string(ev.workspace_pool_->resolve(v.sym_id));
             if (name_str.empty())
                 continue;
-            auto name_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(name_str);
+            auto name_idx = ev.string_heap_.mint(name_str);
             // (name . id) pair
             auto entry_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_string(name_idx), make_int(static_cast<std::int64_t>(id))});
@@ -523,8 +520,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     ObservabilityPrims::register_stats_impl("ast:list-snapshots", [&ev](const auto&) -> EvalValue {
         EvalValue result = make_void();
         for (int i = static_cast<int>(ev.snapshot_sources_.size()) - 1; i >= 0; --i) {
-            auto name_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
+            auto name_idx = ev.string_heap_.mint(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
                                                                     : ev.snapshot_names_[i]);
             // Pair: (id . name)
             auto entry_pair = ev.pairs_.size();
@@ -688,8 +684,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // unique_lock inside set-code; we must not be holding ours
         // (we released above by scope).
         auto& source = ev.snapshot_sources_[id];
-        auto source_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(source);
+        auto source_idx = ev.string_heap_.mint(source);
 
         auto set_fn = ev.primitives_.lookup("set-code");
         if (!set_fn)
@@ -735,8 +730,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     auto str_list_to_pairs = [&ev](std::span<const std::string> items) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = items.rbegin(); it != items.rend(); ++it) {
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            auto idx = ev.string_heap_.mint(*it);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(idx), list});
             list = make_pair(pid);
@@ -883,8 +877,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 sorted_tags.push_back({name, count});
             std::sort(sorted_tags.begin(), sorted_tags.end());
             for (auto it = sorted_tags.rbegin(); it != sorted_tags.rend(); ++it) {
-                auto name_idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(it->first);
+                auto name_idx = ev.string_heap_.mint(it->first);
                 auto entry_pair = ev.pairs_.size();
                 ev.pairs_.push_back(
                     {make_string(name_idx), make_int(static_cast<std::int64_t>(it->second))});
@@ -895,16 +888,14 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
             // Build full result as alist: ((:key value) ...)
             auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-                auto key_idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(key);
+                auto key_idx = ev.string_heap_.mint(key);
                 auto entry_pair = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(key_idx), val});
                 return entry_pair;
             };
 
             auto cvt = [&](std::uint64_t n) -> EvalValue {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::to_string(n));
+                auto idx = ev.string_heap_.mint(std::to_string(n));
                 return make_string(idx);
             };
             std::uint64_t entry_ids[7];
@@ -956,8 +947,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (ownership_bindings.empty()) {
             // Build entry manually (add_entry lambda is defined later)
             auto mk_entry = [&](const std::string& k, EvalValue v) -> std::uint64_t {
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 auto ep = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(kidx), v});
                 return ep;
@@ -981,8 +971,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // Build result alist
         // ((:pass true/false) (:notes ((:node N :message M :kind K) ...)))
         auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-            auto key_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(key);
+            auto key_idx = ev.string_heap_.mint(key);
             auto entry_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_string(key_idx), val});
             return entry_pair;
@@ -992,12 +981,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         EvalValue notes_list = make_void();
         for (auto it = notes.rbegin(); it != notes.rend(); ++it) {
             auto& note = *it;
-            auto node_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(note.node));
-            auto msg_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(note.message);
-            auto kind_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(note.kind);
+            auto node_idx = ev.string_heap_.mint(std::to_string(note.node));
+            auto msg_idx = ev.string_heap_.mint(note.message);
+            auto kind_idx = ev.string_heap_.mint(note.kind);
 
             // Build note alist: ((:node N :message M :kind K))
             auto entry_node = add_entry(":node", make_string(node_idx));
@@ -1043,8 +1029,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
         // Build alist: ((:pass . #t/#f) (:total . N) (:errors . ...))
         auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-            auto key_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(key);
+            auto key_idx = ev.string_heap_.mint(key);
             auto entry_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_string(key_idx), val});
             return entry_pair;
@@ -1054,10 +1039,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         EvalValue errors_list = make_void();
         for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
             auto& e = *it;
-            auto node_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(e.node));
-            auto msg_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(e.message);
+            auto node_idx = ev.string_heap_.mint(std::to_string(e.node));
+            auto msg_idx = ev.string_heap_.mint(e.message);
 
             auto pair_msg = ev.pairs_.size();
             ev.pairs_.push_back({make_string(msg_idx), make_void()});
@@ -1069,10 +1052,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         }
 
         auto val_pass = add_entry(":pass", make_bool(count == 0));
-        auto val_total_k = ev.string_heap_.size();
-        ev.string_heap_.push_back(":total");
-        auto val_total_v = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::to_string(count));
+        auto val_total_k = ev.string_heap_.mint(":total");
+        auto val_total_v = ev.string_heap_.mint(std::to_string(count));
         auto entry_total = ev.pairs_.size();
         ev.pairs_.push_back({make_string(val_total_k), make_string(val_total_v)});
         auto entry_errors = add_entry(":errors", errors_list);
@@ -1222,8 +1203,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         std::uint8_t buf[aura::ast::FlatAST::kStableRefSerializedSize];
         auto n = ev.workspace_flat_->serialize_stable_ref(ref, buf);
         std::string s(reinterpret_cast<const char*>(buf), n);
-        std::size_t sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(s);
+        std::size_t sidx = ev.string_heap_.mint(s);
         return types::make_string(sidx);
     });
 

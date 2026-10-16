@@ -413,8 +413,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             std::uint32_t sidx = 0;
             {
                 std::lock_guard lock(ev.alloc_storage_lock_);
-                sidx = static_cast<std::uint32_t>(ev.string_heap_.size());
-                ev.string_heap_.push_back(blob.source);
+                sidx = static_cast<std::uint32_t>(ev.string_heap_.mint(blob.source));
             }
             auto set_fn = ev.primitives_.lookup("set-code");
             if (!set_fn)
@@ -545,8 +544,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             // size() + push_back() out of an inner block so `kidx` is
             // visible to the `make_string(kidx).val` call below.
             std::lock_guard lock(ev.alloc_storage_lock_);
-            const std::size_t kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
+            const std::size_t kidx = ev.string_heap_.mint(k);
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();

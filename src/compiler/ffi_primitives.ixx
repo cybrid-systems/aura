@@ -14,6 +14,7 @@
 // the evaluator partition by extracting focused modules.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -144,7 +145,7 @@ public:
     // Evaluator owns them; this module just borrows).
     // The coverage_counters pointer is the Evaluator's
     // coverage array; nullable for tests.
-    void register_primitives(RegisterFn add_primitive, std::pmr::vector<std::string>* string_heap,
+    void register_primitives(RegisterFn add_primitive, ::aura::compiler::LockedStringHeap* string_heap,
                              std::vector<void*>* opaque_heap,
                              std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 

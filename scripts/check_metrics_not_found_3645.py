@@ -58,7 +58,7 @@ def _rows(obs: str, test: str, stats_aura: str, build: str) -> list[str]:
     must('{"ok", make_bool(false)}', "AC1 ok=#f", obs)
     must('{"name", make_string(nm_idx)}', "AC1 name echo", obs)
     must("return build_hash(miss_kv);", "AC1 routed through #3018 builder", obs)
-    must("ev.string_heap_.push_back(miss_name);", "AC1 name interned post-copy", obs)
+    must("ev.string_heap_.mint(miss_name);", "AC1 name interned post-copy (#4543 locked mint)", obs)
 
     # AC2 — success shapes unchanged (schema 2 on :all / :prefix; no ok key).
     must('kv.push_back({"schema", make_int(2)});', "AC2 :all/:prefix schema 2 intact", obs)

@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
@@ -79,7 +80,7 @@ struct WorkspaceQueryState {
     void*& type_registry;
     std::vector<std::string>& keyword_table;
     std::pmr::vector<Pair>& pairs;
-    std::pmr::vector<std::string>& string_heap;
+    ::aura::compiler::LockedStringHeap& string_heap;
     aura::ast::ASTArena*& temp_arena;
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index;
     // Issue #371: pair with tag_arity_index_mtx_ on Evaluator.
@@ -196,7 +197,7 @@ void register_workspace_query_primitives(
     PrimRegistrar add, std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
     aura::ast::StringPool*& workspace_pool, void*& type_registry,
     std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
+    ::aura::compiler::LockedStringHeap& string_heap, aura::ast::ASTArena*& temp_arena,
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
     // Issue #371: shared_mutex around tag_arity_index. See
     // WorkspaceQueryState::tag_arity_index_mtx above.
@@ -298,8 +299,7 @@ void register_workspace_query_primitives(
                 auto i = ((h >> 1) + at) & (hcap - 1);
                 if (meta[i] == 0xFF) {
                     meta[i] = fp;
-                    auto kidx = ws.string_heap.size();
-                    ws.string_heap.push_back(k_str);
+                    auto kidx = ws.string_heap.mint(k_str);
                     keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[i] = v.val;
                     ht->size++;
@@ -1132,8 +1132,7 @@ void register_workspace_query_primitives(
                 result = make_pair(pid);
             } else if (v.sym_id != aura::ast::INVALID_SYM) {
                 auto sym_name = std::string(ws.workspace_pool->resolve(v.sym_id));
-                auto sid = ws.string_heap.size();
-                ws.string_heap.push_back(sym_name);
+                auto sid = ws.string_heap.mint(sym_name);
                 pid = ws.pairs.size();
                 ws.push_stamped_pair({make_string(sid), result});
                 result = make_pair(pid);
@@ -1305,8 +1304,7 @@ void register_workspace_query_primitives(
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ws.string_heap.size();
-                        ws.string_heap.push_back(k_str);
+                        auto kidx = ws.string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1455,8 +1453,7 @@ void register_workspace_query_primitives(
                 auto idx = ((h >> 1) + at) & (hcap - 1);
                 if (meta[idx] == 0xFF) {
                     meta[idx] = fp;
-                    auto kidx = ws.string_heap.size();
-                    ws.string_heap.push_back(k_str);
+                    auto kidx = ws.string_heap.mint(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[idx] = make_int(v).val;
                     ht->size++;
@@ -1752,8 +1749,7 @@ void register_workspace_query_primitives(
         auto text = ev.authoritative_workspace_source();
         if (text.empty())
             return mev("no-workspace", "no workspace source loaded");
-        ws.string_heap.push_back(std::move(text));
-        return make_string(static_cast<std::uint64_t>(ws.string_heap.size() - 1));
+        return make_string(ws.string_heap.mint(std::move(text)));
     });
 
     // Issue #4345: (query:node-types) — census of NodeTag kinds in the
@@ -1788,9 +1784,7 @@ void register_workspace_query_primitives(
                 const auto& name = aura::ast::kNodeTagNames[static_cast<std::size_t>(tag)];
                 if (name.empty())
                     continue;
-                ws.string_heap.push_back(std::string(name));
-                const auto namev =
-                    make_string(static_cast<std::uint64_t>(ws.string_heap.size() - 1));
+                const auto namev = make_string(ws.string_heap.mint(std::string(name)));
                 const auto p1 = ws.pairs.size();
                 ws.push_stamped_pair({namev, make_int(count)});
                 const auto rec = make_pair(p1);
@@ -1909,8 +1903,7 @@ void register_workspace_query_primitives(
         // Issue #1070: reuse the existing keyword index (no duplicate
         // keyword_table push). Predicate is (field-keyword . value-string);
         // drop dead val_sym intern that was never consumed.
-        auto val_string_idx = ws.string_heap.size();
-        ws.string_heap.push_back(value);
+        auto val_string_idx = ws.string_heap.mint(value);
 
         auto val_pair = ws.pairs.size();
         ws.push_stamped_pair({make_keyword(field_idx), make_string(val_string_idx)});
@@ -2446,8 +2439,7 @@ void register_workspace_query_primitives(
                 name = "BoolLiteral";
                 break;
         }
-        auto idx = ws.string_heap.size();
-        ws.string_heap.push_back(name);
+        auto idx = ws.string_heap.mint(name);
         return make_string(idx);
     });
 
@@ -2490,8 +2482,7 @@ void register_workspace_query_primitives(
 
             EvalValue result = make_void();
             auto append_field = [&](const std::string& fname, EvalValue val) {
-                auto nidx = ws.string_heap.size();
-                ws.string_heap.push_back(fname);
+                auto nidx = ws.string_heap.mint(fname);
                 auto entry = ws.pairs.size();
                 ws.push_stamped_pair({make_string(nidx), val});
                 auto cons = ws.pairs.size();
@@ -2560,14 +2551,12 @@ void register_workspace_query_primitives(
             };
 
             append_field("tag-name", [&]() {
-                auto tidx = ws.string_heap.size();
-                ws.string_heap.push_back(std::string(aura::ast::meta(v.tag).name));
+                auto tidx = ws.string_heap.mint(std::string(aura::ast::meta(v.tag).name));
                 return make_string(tidx);
             }());
             append_field("tag-id", make_int(static_cast<std::int64_t>(v.tag)));
             append_field("marker", [&]() {
-                auto midx = ws.string_heap.size();
-                ws.string_heap.push_back(marker_name);
+                auto midx = ws.string_heap.mint(marker_name);
                 return make_string(midx);
             }());
             append_field("type-id", make_int(static_cast<std::int64_t>(flat.type_id(node))));
@@ -2576,8 +2565,7 @@ void register_workspace_query_primitives(
 
             if (v.has_name()) {
                 auto sym = std::string(ws.workspace_pool->resolve(v.sym_id));
-                auto sidx = ws.string_heap.size();
-                ws.string_heap.push_back(sym);
+                auto sidx = ws.string_heap.mint(sym);
                 append_field("sym", make_string(sidx));
             }
             if (v.has_int() && v.tag == aura::ast::NodeTag::LiteralInt) {
@@ -3121,8 +3109,7 @@ void register_workspace_query_primitives(
                     auto i = ((h >> 1) + at) & (hcap - 1);
                     if (meta[i] == 0xFF) {
                         meta[i] = fp;
-                        auto kidx = ws.string_heap.size();
-                        ws.string_heap.push_back(k_str);
+                        auto kidx = ws.string_heap.mint(k_str);
                         keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[i] = make_int(v).val;
                         ht->size++;
@@ -3209,8 +3196,7 @@ void register_workspace_query_primitives(
                 auto i = ((h >> 1) + at) & (hcap - 1);
                 if (meta[i] == 0xFF) {
                     meta[i] = fp;
-                    auto kidx = ws.string_heap.size();
-                    ws.string_heap.push_back(k_str);
+                    auto kidx = ws.string_heap.mint(k_str);
                     keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[i] = make_int(v).val;
                     ht->size++;
@@ -3469,8 +3455,7 @@ void register_workspace_query_primitives(
             if (type_name.empty())
                 type_name = "<unnamed>";
             // Build the pair: (NodeId . type-name)
-            auto name_idx = ws.string_heap.size();
-            ws.string_heap.push_back(type_name);
+            auto name_idx = ws.string_heap.mint(type_name);
             auto name_ev = make_string(name_idx);
             auto pid = ws.pairs.size();
             ws.push_stamped_pair({make_int(static_cast<std::int64_t>(id)), name_ev});
@@ -4151,9 +4136,12 @@ void register_workspace_query_primitives(
             auto* ht = FlatHashTable::create(16);
             if (!ht)
                 continue;
+            // Issue #4543: mint first; size()/size()+1 guessed the indices.
+            const auto pred_idx = ws.string_heap.mint(rec.predicate_src);
+            const auto rtype_idx = ws.string_heap.mint(rec.refined_type_str);
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"predicate", make_string(ws.string_heap.size())},
-                {"refined-type", make_string(ws.string_heap.size() + 1)},
+                {"predicate", make_string(pred_idx)},
+                {"refined-type", make_string(rtype_idx)},
                 {"if-node", make_int(static_cast<std::int64_t>(rec.if_node))},
                 {"cond-node", make_int(static_cast<std::int64_t>(rec.cond_node))},
                 {"is-negation", make_bool(rec.is_negation)},
@@ -4162,9 +4150,6 @@ void register_workspace_query_primitives(
                 {"record-id", make_int(static_cast<std::int64_t>(rec.record_id))},
                 {"stale", make_bool(rec.stale)},
             };
-            // Push the strings to the heap.
-            ws.string_heap.push_back(rec.predicate_src);
-            ws.string_heap.push_back(rec.refined_type_str);
             // Insert into the hash.
             auto meta = ht->metadata();
             auto keys = ht->keys();
@@ -4178,8 +4163,7 @@ void register_workspace_query_primitives(
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ws.string_heap.size();
-                ws.string_heap.push_back(k);
+                auto kidx = ws.string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -4243,8 +4227,7 @@ void register_workspace_query_primitives(
         // application order.
         EvalValue result = make_void();
         for (auto it = names.rbegin(); it != names.rend(); ++it) {
-            std::size_t sidx = ws.string_heap.size();
-            ws.string_heap.push_back(*it);
+            std::size_t sidx = ws.string_heap.mint(*it);
             auto cons_pair = ws.pairs.size();
             ws.push_stamped_pair({make_string(sidx), result});
             result = make_pair(cons_pair);
@@ -4285,18 +4268,12 @@ void register_workspace_query_primitives(
                 if (rec.capture_epoch > target_mid)
                     continue;
                 // Build a hash with :record-id + :predicate + :var.
-                std::size_t sidx_v = ws.string_heap.size();
-                ws.string_heap.push_back(rec.var_name);
-                std::size_t sidx_p = ws.string_heap.size();
-                ws.string_heap.push_back(rec.predicate_src);
-                std::size_t k_id = ws.string_heap.size();
-                ws.string_heap.push_back("record-id");
-                std::size_t k_v = ws.string_heap.size();
-                ws.string_heap.push_back("var");
-                std::size_t k_p = ws.string_heap.size();
-                ws.string_heap.push_back("predicate");
-                std::size_t k_e = ws.string_heap.size();
-                ws.string_heap.push_back("capture-epoch");
+                std::size_t sidx_v = ws.string_heap.mint(rec.var_name);
+                std::size_t sidx_p = ws.string_heap.mint(rec.predicate_src);
+                std::size_t k_id = ws.string_heap.mint("record-id");
+                std::size_t k_v = ws.string_heap.mint("var");
+                std::size_t k_p = ws.string_heap.mint("predicate");
+                std::size_t k_e = ws.string_heap.mint("capture-epoch");
                 auto* ht = FlatHashTable::create(8);
                 if (!ht)
                     continue;
@@ -4650,8 +4627,7 @@ void register_workspace_query_primitives(
                 auto i = ((h >> 1) + at) & (hcap - 1);
                 if (meta[i] == 0xFF) {
                     meta[i] = fp;
-                    auto kidx = ws.string_heap.size();
-                    ws.string_heap.push_back(k_str);
+                    auto kidx = ws.string_heap.mint(k_str);
                     keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[i] = make_int(v).val;
                     ht->size++;

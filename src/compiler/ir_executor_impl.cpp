@@ -1173,12 +1173,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     while (string_heap_.size() < prim_heap.size())
                         string_heap_.push_back({});
                     while (prim_heap.size() < string_heap_.size())
-                        prim_heap.push_back({});
-                    const auto idx = prim_heap.size();
+                        (void)prim_heap.mint(std::string{});
                     const std::string content = (pool_idx < module_.string_pool.size())
                                                     ? module_.string_pool[pool_idx]
                                                     : std::string{};
-                    prim_heap.push_back(content);
+                    // Issue #4543: the evaluator heap only grows via mint()
+                    // (locked, returns the real index). Keep the IR-local
+                    // mirror index-aligned with it.
+                    const auto idx = prim_heap.mint(content);
+                    while (string_heap_.size() < idx)
+                        string_heap_.push_back({});
                     string_heap_.push_back(content);
                     auto val = make_string(idx);
                     const_string_cache_.emplace(pool_idx, val);

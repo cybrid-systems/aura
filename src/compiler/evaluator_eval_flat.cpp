@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "core/atomic_fence_port.h"
@@ -1052,8 +1053,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     // (fiber:spawn shares Evaluator across threads).
                     {
                         std::lock_guard lock(alloc_storage_lock_);
-                        auto sidx = string_heap_.size();
-                        string_heap_.emplace_back(s ? s : "");
+                        auto sidx = string_heap_.mint(s ? s : "");
                         return types::make_string(sidx);
                     }
                 }
@@ -1726,10 +1726,11 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                 }
             }
             // Cache key must use name before move (empty-key bug #2568).
-            const auto idx = static_cast<std::int32_t>(string_heap_.size());
-            if (name.size() <= 6)
-                short_str_cache_[name] = make_string(static_cast<std::int64_t>(idx));
-            string_heap_.push_back(std::move(name));
+            const bool cache_short = name.size() <= 6;
+            std::string key = cache_short ? name : std::string();
+            const auto idx = static_cast<std::int32_t>(string_heap_.mint(std::move(name)));
+            if (cache_short)
+                short_str_cache_[key] = make_string(static_cast<std::int64_t>(idx));
             return make_string(static_cast<std::int64_t>(idx));
         }
         case ast::NodeTag::Call: {
@@ -2955,7 +2956,7 @@ static std::string type_tag_name(aura::core::TypeTag tag) {
 // interface; new code can use `coerce_value_pure` directly
 // for monadic composition.
 static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::core::TypeTag to,
-                         std::pmr::vector<std::string>& heap) {
+                         ::aura::compiler::LockedStringHeap& heap) {
     return aura::compiler::pure::coerce_value_pure(val, from, to, heap).has_value();
 }
 
@@ -5485,7 +5486,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                 }
                 case aura::ast::NodeTag::LiteralString: {
                     // Issue #3401: happy-path string intern. std::string
-                    // construction + string_heap_.push_back happen only on
+                    // construction + push_string_heap (locked mint, #4543) happen only on
                     // the first encounter of a unique literal.
                     // Issue #3457: lookup by v.sym_id (dense), not hashed
                     // string_view into the pool.

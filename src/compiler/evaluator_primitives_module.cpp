@@ -103,8 +103,7 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         EvalValue result = make_void();
         auto& bindings = ev.modules_[mod_idx]->bindings();
         for (auto it = bindings.rbegin(); it != bindings.rend(); ++it) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(it->first);
+            auto sidx = ev.string_heap_.mint(it->first);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(pid);

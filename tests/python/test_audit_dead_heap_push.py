@@ -57,6 +57,30 @@ class TestDeadHeapPushAudit(unittest.TestCase):
         kinds = [h[2] for h in hits]
         self.assertIn("unused-index", kinds, hits)
 
+    def test_mint_used_clean_4543(self):
+        hits = self._scan_src(
+            """
+            void f(Evaluator& ev) {
+                auto idx = ev.string_heap_.mint("hello");
+                return make_string(idx);
+            }
+            """
+        )
+        self.assertEqual(hits, [], hits)
+
+    def test_mint_unused_dead_4543(self):
+        hits = self._scan_src(
+            """
+            void f(Evaluator& ev) {
+                const auto idx = static_cast<std::uint64_t>(ev.string_heap_.mint(std::to_string(n)));
+                (void)idx;  // warning silence only
+                return make_int(n);
+            }
+            """
+        )
+        kinds = [h[2] for h in hits]
+        self.assertIn("unused-mint", kinds, hits)
+
     def test_bare_push_dead(self):
         hits = self._scan_src(
             """

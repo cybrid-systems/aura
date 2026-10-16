@@ -2,6 +2,7 @@
 // Issue #2914 peel of query primitives.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "compiler/evaluator_primitives_query_shared.hh"
@@ -161,7 +162,7 @@ extern std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total;
 extern std::atomic<std::uint32_t> g_occurrence_goals_live_wired;
 
 void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                    std::pmr::vector<std::string>& string_heap,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
                                     void*& type_registry, ModulePathResolver resolve_module_path,
                                     Evaluator& ev) {
     (void)pairs;
@@ -468,8 +469,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -610,8 +610,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -907,8 +906,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                 aura_cross_workspace_reject_reason_string(cw_last_reason_u8);
             const std::string reason_str =
                 cw_last_reason_symbol ? std::string(cw_last_reason_symbol) : std::string("unknown");
-            const auto reason_kidx = string_heap.size();
-            string_heap.push_back(reason_str);
+            const auto reason_kidx = string_heap.mint(reason_str);
 
             auto* ht = FlatHashTable::create(32);
             if (!ht)
@@ -928,8 +926,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = v.val;
                         ht->size++;
@@ -1093,8 +1090,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
         schema += ", \"type\": \"" +
                   std::string(treg->tag_of(ty) == aura::core::TypeTag::MODULE ? "object" : "any") +
                   "\"}";
-        auto sidx = string_heap.size();
-        string_heap.push_back(schema);
+        auto sidx = string_heap.mint(schema);
         return make_string(sidx);
     });
 
@@ -1163,13 +1159,10 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                                                      violation_field)) {
                 // Build (list "schema-violation" <reason> <field>) pair
                 // in string_heap_ + pairs_.
-                auto reason_idx = string_heap.size();
-                string_heap.push_back(violation_reason);
-                auto field_idx = string_heap.size();
-                string_heap.push_back(violation_field);
+                auto reason_idx = string_heap.mint(violation_reason);
+                auto field_idx = string_heap.mint(violation_field);
                 // ("schema-violation" reason field)
-                auto reason_kw_idx = string_heap.size();
-                string_heap.push_back(std::string("schema-violation"));
+                auto reason_kw_idx = string_heap.mint(std::string("schema-violation"));
                 // ... but keyword encoding goes through make_keyword in
                 // a more complex path. We build the pair as a string-
                 // tagged list (s-expression) and return it as a string
@@ -1177,8 +1170,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                 // self-contained without needing a full keyword path.
                 std::string repr =
                     "(schema-violation \"" + violation_reason + "\" \"" + violation_field + "\")";
-                auto repr_idx = string_heap.size();
-                string_heap.push_back(repr);
+                auto repr_idx = string_heap.mint(repr);
                 return make_string(repr_idx);
             }
             return make_bool(true);
@@ -1482,8 +1474,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
