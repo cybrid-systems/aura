@@ -1,0 +1,24 @@
+;; expect: seq=raised:boom-seq let=raised:boom-let tail=raised:boom-tail arg=raised:boom-tail inner=caught ok=5
+; #4552: in a define loaded with set-code + eval-current (IR interpreter),
+; a non-tail (error ...) was dropped and a callee's error value flowed on
+; as data ("expected Int, got Error"). Tree-walker parity: a non-tail
+; error leaves the body (into an enclosing try in the same function), and
+; an Error operand to arithmetic propagates unchanged.
+(set-code "(define w-seq (lambda (x) (if (> x 0) #t (error \"boom-seq\")) 5))
+(define w-let (lambda (x) (let* ((a 1)) (if (> x 0) #t (error \"boom-let\")) (+ a 1))))
+(define w-tail (lambda (x) (if (> x 0) 1 (error \"boom-tail\"))))
+(define w-arg (lambda (x) (+ 1 (w-tail x))))
+(define w-inner (lambda () (try (begin (error \"inner\") 5) (catch (e) \"caught\"))))")
+(eval-current)
+(define (t name th)
+  (display name)
+  (display "=")
+  (display (try (th) (catch (e) (string-append "raised:" e))))
+  (display " "))
+(t "seq" (lambda () (w-seq 0)))
+(t "let" (lambda () (w-let 0)))
+(t "tail" (lambda () (w-tail 0)))
+(t "arg" (lambda () (w-arg 0)))
+(display "inner=") (display (w-inner)) (display " ")
+(display "ok=") (display (w-seq 1))
+(newline)

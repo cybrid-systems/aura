@@ -248,6 +248,24 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                                                 ev.capability_tenant_id(), "set-code"),
                                             ev.primitive_error_counter_ptr());
             }
+            // Issue #4546: pre_cache (cache_define tree-walks a define whose
+            // body stays off IR, e.g. a recursive letrec) re-keys top_ to the
+            // new workspace pool via the Define arm's set_pool. Restore the
+            // caller's pool on every exit, as eval-current does (#3915).
+            // Otherwise a host (define a (f src)) whose initializer runs
+            // set-code binds `a` by its script SymId under the workspace pool
+            // — no string mirror for "a", so `a` reads as unbound.
+            struct RestoreTopPool {
+                Env& top;
+                const aura::ast::StringPool* saved;
+                explicit RestoreTopPool(Env& t)
+                    : top(t)
+                    , saved(t.pool()) {}
+                ~RestoreTopPool() {
+                    if (saved && saved != top.pool())
+                        top.set_pool(saved);
+                }
+            } restore_top_pool(ev.top_env());
             // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
             // defuse_version_ + rollback. The Guard's dtor bumps
             // version exactly once on successful exit and rolls back

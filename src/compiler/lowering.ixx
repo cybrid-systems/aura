@@ -156,6 +156,21 @@ export struct LoweringState {
         return self_func_active ? self_func_id : static_cast<std::uint32_t>(-1);
     }
 
+    // Issue #4552: where an error value from a non-tail body form goes.
+    // The tree walker aborts a begin on the first non-string error value
+    // (#2570), so (if bad (error ...)) before more body forms raises. IR
+    // used to discard the value. Innermost entry is the try handler of the
+    // try body being lowered in this IR function (the error lands in
+    // `slot`, then jumps to `block`); empty means Return the error.
+    struct ErrEscape {
+        std::uint32_t block = 0;
+        std::uint32_t slot = 0;
+    };
+    std::vector<ErrEscape> err_escapes;
+    // Issue #4552: >0 while lowering a Lambda body. The top-level entry
+    // function keeps its historical statement semantics outside try.
+    std::uint32_t lambda_depth = 0;
+
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;
 

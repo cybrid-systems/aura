@@ -1,0 +1,18 @@
+;; expect: start a=42 b=5 c=43 g=42
+; #4546: a top-level define whose initializer runs set-code (+ eval-current)
+; of a workspace with a recursive letrec stayed unbound. set-code's
+; pre-cache tree-walked that define and left top_ keyed to the workspace
+; StringPool, so the host define bound its script SymId under the wrong pool.
+(define (load-ws s) (set-code s) (eval-current) 42)
+(define (load-only s) (set-code s) 43)
+(display "start")
+(define a (load-ws "(define w (lambda (n) (letrec ((loop (lambda (i) (if (< i n) (loop (+ i 1)) i)))) (loop 0))))"))
+(display " a=") (display (try a (catch (e) "UNBOUND")))
+(define b 5)
+(display " b=") (display (try b (catch (e) "UNBOUND")))
+(define c (load-only "(define w2 (lambda (n) (letrec ((lp (lambda (i) (if (< i n) (lp (+ i 1)) i)))) (lp 0))))"))
+(display " c=") (display (try c (catch (e) "UNBOUND")))
+(define (g) (load-ws "(define w3 (lambda (n) (letrec ((lq (lambda (i) (if (< i n) (lq (+ i 1)) i)))) (lq 0))))"))
+(define gv (g))
+(display " g=") (display (try gv (catch (e) "UNBOUND")))
+(newline)
