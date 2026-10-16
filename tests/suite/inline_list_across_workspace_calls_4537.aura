@@ -1,0 +1,33 @@
+;; expect: START ok ok ok ok ok END
+; #4537: a host list held only by a caller's argument (never bound to a
+; top-level define) must survive many calls into an eval-current workspace
+; define. The IR-loop file-mode reclaim fired mid-form and could not see the
+; TW call-env pairs, so after ~100 workspace calls the list came back as
+; (()), a 1-element tail, or a self-nested chain. Fixed by 2ef8e8986
+; (collect_tw_inflight_roots absorbed into the IR sweep's extra roots).
+(display "START ")
+(set-code "(define vsum (lambda (v n) (letrec ((loop (lambda (i s) (if (< i n) (loop (+ i 1) (+ s (f64vector-ref v i))) s)))) (loop 0 0.0))))")
+(eval-current)
+(define va (make-f64vector 500))
+(define (bench probe reps)
+  (let loop ((i 0)) (if (< i reps) (begin (probe 500) (loop (+ i 1))) 0)))
+(define (go xs probe reps) (bench probe reps) xs)
+(define (chk r expect)
+  (if (equal? r expect)
+      (display "ok ")
+      (begin (display "BAD:") (write r) (display " "))))
+(chk (go (list 7 8 9 "s" (list 1 2)) (lambda (k) (vsum va k)) 100) (list 7 8 9 "s" (list 1 2)))
+(chk (go (list 7 8 9 "s" (list 1 2)) (lambda (k) (vsum va k)) 300) (list 7 8 9 "s" (list 1 2)))
+(chk (go (list 7 8 9 "s" (list 1 2)) (lambda (k) (vsum va k)) 1000) (list 7 8 9 "s" (list 1 2)))
+; nested: the inline list holds other heap values built in an enclosing frame
+(define (outer n)
+  (let ((a (list 1 2 3)) (b (vector 4 5)))
+    (go (list a b n) (lambda (k) (vsum va k)) 400)))
+(chk (outer 9) (list (list 1 2 3) (vector 4 5) 9))
+; control: a host-defined twin never corrupted the list
+(define (hsum v n)
+  (letrec ((loop (lambda (i s) (if (< i n) (loop (+ i 1) (+ s (f64vector-ref v i))) s))))
+    (loop 0 0.0)))
+(chk (go (list 7 8 9) (lambda (k) (hsum va k)) 100) (list 7 8 9))
+(display "END")
+(newline)
