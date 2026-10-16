@@ -7923,6 +7923,253 @@ int main() {
         CHECK(!invent.good(), "4400 AC5: no tests/core/test_issue_4400.cpp (forbidden)");
     }
 
+    // ── Issue #4560: workspace-persist-info host-path fence ──
+    {
+        std::println(
+            "\n--- #4560 AC1: Restricted+MT denies persist-info outside the tenant root ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4560-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        std::error_code rm_ec;
+        std::filesystem::remove_all(base, rm_ec);
+        std::filesystem::create_directories(root_a);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.host_path_policy_active(), "4560 AC1: Restricted+MT arms host-path policy");
+        const auto& ring = g_security_event_ring();
+        auto& heap_w = ev.string_heap_mut();
+        using aura::compiler::types::make_string;
+
+        auto slurp = [](const std::string& p) {
+            std::ifstream in(p);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        auto call1 = [&](auto& fn, const std::string& arg) {
+            heap_w.push_back(arg);
+            return (*fn)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+        };
+        auto saw_escape = [&](std::uint64_t se_base, std::uint64_t expect_mid) {
+            bool saw = false;
+            const auto expect_epoch = aura::core::current_mutation_epoch();
+            const auto expect_fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.op) != "workspace-persist-info")
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 7, "4560 AC1: IsolationDeny tenant is the caller");
+                CHECK(e.epoch == expect_epoch,
+                      "4560 AC1: IsolationDeny epoch is the Mutation epoch");
+                CHECK(e.mutation_id == expect_mid,
+                      "4560 AC1: IsolationDeny mid matches the sibling serialize stamp");
+                CHECK(e.fiber_id == expect_fiber,
+                      "4560 AC1: IsolationDeny fiber is the caller fiber");
+                CHECK(e.denied, "4560 AC1: IsolationDeny row is denied");
+            }
+            return saw;
+        };
+
+        auto ser = ev.primitives().lookup("serialize-workspace");
+        auto info = ev.primitives().lookup("workspace-persist-info");
+        CHECK(ser.has_value(), "4560 AC1: serialize-workspace registered");
+        CHECK(info.has_value(), "4560 AC1: workspace-persist-info registered");
+        if (ser && info) {
+            const auto wrote = call1(ser, "good.soul");
+            CHECK(is_bool(wrote) && as_bool(wrote), "4560 AC1: in-root serialize writes");
+            CHECK(slurp(root_a + "/good.soul").starts_with("AURASOUL"),
+                  "4560 AC1: soul lives under the tenant root");
+            std::filesystem::copy_file(root_a + "/good.soul", base + "/outside.soul",
+                                       std::filesystem::copy_options::overwrite_existing, rm_ec);
+            CHECK(!rm_ec, "4560 AC1: copied a valid soul outside the tenant root");
+
+            // Sibling serialize deny uses the same check_tenant_host_path mid.
+            // Do not re-sample aura_isolation_deny_se_mid() after the emit:
+            // the test TU's weak decl can disagree with the strong stamp.
+            const auto se_ser = ring.seq.load(std::memory_order_acquire);
+            const auto ser_denied = call1(ser, base + "/outside.soul");
+            CHECK(is_bool(ser_denied) && !as_bool(ser_denied),
+                  "4560 AC1: sibling serialize outside the root returns #f");
+            std::uint64_t sibling_mid = 0;
+            bool sibling_mid_found = false;
+            for (std::uint64_t s = se_ser; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.op) != "serialize-workspace")
+                    continue;
+                sibling_mid = e.mutation_id;
+                sibling_mid_found = true;
+            }
+            CHECK(sibling_mid_found, "4560 AC1: sibling serialize IsolationDeny recorded a mid");
+
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto denied = call1(info, base + "/outside.soul");
+            CHECK(is_bool(denied) && !as_bool(denied),
+                  "4560 AC1: outside persist-info returns #f (metadata does not come back)");
+            CHECK(!is_hash(denied), "4560 AC1: outside persist-info is not a hash");
+            CHECK(ev.last_mutate_error().find("workspace-persist-info: tenant-path-escape") !=
+                      std::string::npos,
+                  "4560 AC1: deny reason is tenant-path-escape");
+            CHECK(saw_escape(se_base, sibling_mid),
+                  "4560 AC1: IsolationDeny SE op workspace-persist-info");
+            CHECK(slurp(base + "/outside.soul").starts_with("AURASOUL"),
+                  "4560 AC1: outside soul bytes unchanged");
+
+            const auto se_ok = ring.seq.load(std::memory_order_acquire);
+            const auto opened = call1(info, "good.soul");
+            CHECK(is_hash(opened),
+                  "4560 AC1: relative persist-info opens the resolved in-root soul");
+            CHECK(ring.seq.load(std::memory_order_acquire) == se_ok,
+                  "4560 AC1: in-root persist-info emits no IsolationDeny");
+            const auto abs = call1(info, root_a + "/good.soul");
+            CHECK(is_hash(abs), "4560 AC1: in-root absolute persist-info opens the soul");
+
+            const auto se_miss = ring.seq.load(std::memory_order_acquire);
+            const auto missing = call1(info, "missing.soul");
+            CHECK(is_bool(missing) && !as_bool(missing),
+                  "4560 AC1: missing in-root soul returns #f");
+            CHECK(ring.seq.load(std::memory_order_acquire) == se_miss,
+                  "4560 AC1: a missing in-root file is not a path escape");
+
+            const auto se_esc = ring.seq.load(std::memory_order_acquire);
+            const auto esc = call1(info, "../outside.soul");
+            CHECK(is_bool(esc) && !as_bool(esc), "4560 AC1: ../ persist-info returns #f");
+            CHECK(saw_escape(se_esc, sibling_mid), "4560 AC1: ../ escape emits IsolationDeny");
+        }
+
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        std::filesystem::remove_all(base, rm_ec);
+    }
+
+    {
+        std::println("\n--- #4560 AC2: Off and single-tenant Restricted keep passthrough ---");
+        reset_all();
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4560-ac2";
+        std::error_code rm_ec;
+        std::filesystem::remove_all(base, rm_ec);
+        std::filesystem::create_directories(base);
+        const std::string soul = base + "/passthrough.soul";
+        auto path_escape_since = [](std::uint64_t se_base) {
+            bool path_escape = false;
+            const auto& ring = g_security_event_ring();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos)
+                    path_escape = true;
+            }
+            return path_escape;
+        };
+
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            ev.set_effect_sandbox_mode(0);
+            CHECK(!ev.host_path_policy_active(), "4560 AC2: Off does not arm host-path policy");
+            const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+            auto& heap_w = ev.string_heap_mut();
+            using aura::compiler::types::make_string;
+            auto ser = ev.primitives().lookup("serialize-workspace");
+            auto info = ev.primitives().lookup("workspace-persist-info");
+            CHECK(ser.has_value() && info.has_value(), "4560 AC2: persist prims registered");
+            heap_w.push_back(soul);
+            if (ser)
+                (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            heap_w.push_back(soul);
+            if (info) {
+                const auto r =
+                    (*info)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(is_hash(r), "4560 AC2: Off persist-info still reads an absolute path");
+            }
+            CHECK(!path_escape_since(se_base),
+                  "4560 AC2: Off passthrough emits no tenant-path-escape");
+        }
+
+        {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            ev.set_effect_sandbox_mode(1);
+            ev.set_capability_tenant_id(7);
+            CHECK(!ev.host_path_policy_active(),
+                  "4560 AC2: single-tenant Restricted does not arm host-path policy");
+            const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+            const std::string soul_st = base + "/single-tenant.soul";
+            auto& heap_w = ev.string_heap_mut();
+            using aura::compiler::types::make_string;
+            auto ser = ev.primitives().lookup("serialize-workspace");
+            auto info = ev.primitives().lookup("workspace-persist-info");
+            heap_w.push_back(soul_st);
+            if (ser)
+                (*ser)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+            heap_w.push_back(soul_st);
+            if (info) {
+                const auto r =
+                    (*info)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
+                CHECK(
+                    is_hash(r),
+                    "4560 AC2: single-tenant Restricted persist-info still reads an absolute path");
+            }
+            CHECK(!path_escape_since(se_base),
+                  "4560 AC2: single-tenant passthrough emits no tenant-path-escape");
+        }
+        std::filesystem::remove_all(base, rm_ec);
+    }
+
+    {
+        std::println(
+            "\n--- #4560 AC3: wiring cite; no EXEMPT growth, no new query, no invent test ---");
+        const auto persist = read_file("src/compiler/evaluator_primitives_persist.cpp");
+        const auto exempt =
+            read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        const auto path_gate =
+            persist.find("check_tenant_host_path(path, resolved, \"workspace-persist-info\")");
+        const auto info_at = persist.find("add(\"workspace-persist-info\"");
+        const auto load_at = info_at == std::string::npos
+                                 ? info_at
+                                 : persist.find("load_blob(resolved, blob, &err)", info_at);
+        CHECK(path_gate != std::string::npos && load_at != std::string::npos && path_gate < load_at,
+              "4560 AC3: workspace-persist-info gates before load_blob(resolved)");
+        CHECK(persist.find("load_blob(ev.string_heap_") == std::string::npos,
+              "4560 AC3: persist-info no longer opens the raw caller path");
+        CHECK(exempt.find("\"workspace-persist-info\"") == std::string::npos,
+              "4560 AC3: workspace-persist-info not added to EXEMPT_2ARG_OPS");
+        CHECK(exempt.find("len(EXEMPT_2ARG_OPS) != 7") != std::string::npos,
+              "4560 AC3: EXEMPT_2ARG_OPS count guard stays 7");
+        CHECK(persist.find("query:4560") == std::string::npos, "4560 AC3: no new query key");
+        std::ifstream invent("tests/core/test_issue_4560.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4560.cpp");
+        CHECK(!invent.good(), "4560 AC3: no tests/core/test_issue_4560.cpp (forbidden)");
+    }
+
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
     ac4133_1_target_ta_non_ta_caller_denied();
     ac4133_2_caller_ta_mint_foreign_target_lands();

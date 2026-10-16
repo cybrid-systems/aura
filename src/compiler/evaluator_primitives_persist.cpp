@@ -518,9 +518,17 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto pidx = as_string_idx(a[0]);
         if (pidx >= ev.string_heap_.size())
             return make_bool(false);
+        const std::string path = ev.string_heap_[pidx];
+        // Issue #4560: same host-path fence as serialize-workspace /
+        // deserialize-workspace. Deny → #f, no load_blob, IsolationDeny
+        // tenant-path-escape. Open the resolved path (tenant root when the
+        // policy is active; the caller string on Soft/Off / single-tenant).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "workspace-persist-info"))
+            return make_bool(false);
         PersistBlob blob;
         std::string err;
-        if (!load_blob(ev.string_heap_[pidx], blob, &err))
+        if (!load_blob(resolved, blob, &err))
             return make_bool(false);
 
         auto* ht = FlatHashTable::create(16);
