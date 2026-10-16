@@ -1704,6 +1704,141 @@ int run_test_mailbox_bp_admit() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #4563: one agent_send BP charges one admit gauge ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::agent_export_handoff;
+        using aura::orch::agent_import_handoff;
+        using aura::orch::agent_send;
+        using aura::orch::kBpScopeProcessBucket;
+        using aura::orch::load_mailbox_bp_recent;
+        using aura::orch::reset_scope_bp_map_for_test;
+
+        const char* sb_prev = std::getenv("AURA_SANDBOX");
+        const bool had_sb = sb_prev != nullptr;
+        const std::string sb_prev_val = had_sb ? sb_prev : "";
+        auto fill_ok = [](MultiFiberMailbox& mb) {
+            MailMessage m;
+            m.payload = "fill";
+            return mb.push(std::move(m)) == PushStatus::Ok;
+        };
+
+        std::println("\n--- #4563: same-scope agent_send charges the named gauge once ---");
+        ::unsetenv("AURA_SANDBOX");
+        apply_production_audit_defaults();
+        CHECK(aura::orch::production_defaults_active(), "4563: production probe on");
+        (void)reset_scope_bp_map_for_test();
+        const auto proc0 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        mb->set_bp_scope_id("tenant-a");
+        CHECK(fill_ok(*mb), "4563: mailbox filled to high water");
+        AgentHandle h;
+        h.ok = true;
+        h.id = 4563;
+        h.mailbox = mb;
+        h.bp_scope_id = "tenant-a";
+        MailMessage same;
+        same.payload = "bp";
+        same.from_fiber = 4563;
+        CHECK(agent_send(h, std::move(same)) == PushStatus::Backpressure,
+              "4563: same-scope send BP");
+        CHECK(load_mailbox_bp_recent("tenant-a") == 1, "4563: named gauge +1 not +2");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) == proc0,
+              "4563: process bucket unchanged on same-scope send");
+
+        std::println("\n--- #4563: production proxy notes the mailbox, not the process bucket ---");
+        (void)reset_scope_bp_map_for_test();
+        const auto proc1 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto shared = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        shared->set_bp_scope_id("tenant-a");
+        CHECK(fill_ok(*shared), "4563: proxy mailbox filled");
+        Scheduler sched(1);
+        Fiber* raw = sched.spawn([] {});
+        CHECK(raw != nullptr, "4563: fiber for the import proxy");
+        AgentHandle src;
+        src.ok = true;
+        src.id = raw->id();
+        src.fiber = raw;
+        src.mailbox = shared;
+        src.bp_scope_id = "tenant-a";
+        auto proxy = agent_import_handoff(agent_export_handoff(src), nullptr, sched);
+        CHECK(proxy.ok && proxy.import_proxy, "4563: proxy stamped");
+        CHECK(proxy.bp_scope_id.empty(), "4563: import does not copy bp_scope_id");
+        CHECK(proxy.mailbox && proxy.mailbox->bp_scope_id() == "tenant-a",
+              "4563: shared mailbox scope stays tenant-a");
+        MailMessage pmsg;
+        pmsg.payload = "proxy";
+        pmsg.from_fiber = 77;
+        CHECK(agent_send(proxy, std::move(pmsg)) == PushStatus::Backpressure,
+              "4563: proxy send BP");
+        CHECK(load_mailbox_bp_recent("tenant-a") == 1, "4563: proxy charges the named gauge once");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) == proc1,
+              "4563: proxy does not charge the process bucket");
+
+        std::println("\n--- #4563: explicit \"-\" still opts into the process bucket ---");
+        (void)reset_scope_bp_map_for_test();
+        const auto proc2 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto dashed = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        dashed->set_bp_scope_id("tenant-a");
+        CHECK(fill_ok(*dashed), "4563: dash mailbox filled");
+        AgentHandle hd;
+        hd.ok = true;
+        hd.id = 9;
+        hd.mailbox = dashed;
+        hd.bp_scope_id = std::string{kBpScopeProcessBucket};
+        MailMessage dmsg;
+        dmsg.payload = "dash";
+        CHECK(agent_send(hd, std::move(dmsg)) == PushStatus::Backpressure,
+              "4563: dash-scope send BP");
+        CHECK(load_mailbox_bp_recent("tenant-a") == 1,
+              "4563: dash handle still notes the named mailbox once");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc2 + 1,
+              "4563: explicit \"-\" still bumps the process bucket");
+
+        std::println("\n--- #4563: Soft empty agent_send still moves the process bucket ---");
+        apply_dev_audit_defaults();
+        ::setenv("AURA_SANDBOX", "off", 1);
+        CHECK(!aura::orch::production_defaults_active(), "4563: soft probe off");
+        (void)reset_scope_bp_map_for_test();
+        const auto proc3 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        auto empty_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        CHECK(fill_ok(*empty_mb), "4563: soft mailbox filled");
+        AgentHandle hs;
+        hs.ok = true;
+        hs.id = 3;
+        hs.mailbox = empty_mb;
+        MailMessage smsg;
+        smsg.payload = "soft";
+        CHECK(agent_send(hs, std::move(smsg)) == PushStatus::Backpressure,
+              "4563: soft empty send BP");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) ==
+                  proc3 + 1,
+              "4563: soft empty charges the process bucket once");
+
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn.find("note_mailbox_bp_recent_event(h.bp_scope_id,") != std::string::npos,
+              "4563: handle-scope note call site retained");
+        CHECK(spawn.find("clear_mailbox_bp_self_noted()") != std::string::npos,
+              "4563: clear self-noted before push");
+        CHECK(spawn.find("!serve::mf_mailbox::mailbox_bp_self_noted()") != std::string::npos,
+              "4563: mutation-hold still notes when push did not");
+        CHECK(spawn.find("query:4563") == std::string::npos, "4563: no query:4563");
+        CHECK(read_file("tests/orch/test_issue_4563.cpp").empty(), "4563: no test_issue_4563.cpp");
+
+        (void)reset_scope_bp_map_for_test();
+        apply_dev_audit_defaults();
+        if (had_sb)
+            ::setenv("AURA_SANDBOX", sb_prev_val.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+
     // ── Issue #3632: BP sender attribution sketch ──
     {
         std::println("\n--- #3632: BP sender attribution sketch ---");
