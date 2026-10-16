@@ -125,6 +125,25 @@ static void ac3_category_counters() {
           "boundary consistency");
 }
 
+// Issue #4539: the Full partial recovery re-runs the invariant audit on
+// the same log — the visitor's bare skip on stamped records LOST the
+// first pass's Warnings verdict and flipped type_ok green on the re-run
+// (a failed mutate persisted as success). The visitor must carry the
+// stamped Warnings into worst_.
+static void ac4539_stamped_warnings_carry() {
+    std::println("\n--- AC4539: stamped Warnings carry on re-audit ---");
+    auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(ixx.find("Issue #4539") != std::string::npos, "4539: visitor cites #4539");
+    const auto vm_pos = ixx.find("void visit_mutation");
+    CHECK(vm_pos != std::string::npos, "4539: visit_mutation present");
+    const auto vwin = (vm_pos == std::string::npos) ? std::string{} : ixx.substr(vm_pos, 1600);
+    CHECK(vwin.find("invariant_status != aura::ast::InvariantStatus::NotChecked") !=
+              std::string::npos,
+          "4539: stamped skip present");
+    CHECK(vwin.find("worst_ = aura::ast::InvariantStatus::Warnings") != std::string::npos,
+          "4539: stamped Warnings carry into worst_");
+}
+
 static void ac4_success_fail_soundness() {
     std::println("\n--- AC4: success/fail totals + re-audit soundness ---");
     auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -198,13 +217,16 @@ static void ac7_service_smoke() {
     CHECK(load_u64(g_typed_mutation_audit_counters.invariant_audits) >= 0, "audits observed");
 }
 
+
 } // namespace
 
 int main() {
     ac1_source();
     ac2_always_attempt_not_only_composite();
     ac3_category_counters();
+    ac4539_stamped_warnings_carry();
     ac4_success_fail_soundness();
+    ac4539_stamped_warnings_carry();
     ac5_query_schema();
     ac6_provenance_restamp_path();
     ac7_service_smoke();
