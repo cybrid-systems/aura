@@ -528,7 +528,9 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
         if (cl.env_id != kNullEnv2) {
             // Prefer live frame version when available. Issue #4536: the
             // detailed resolve copies version under the shard lock — the
-            // bare pointer deref raced compact's deque move.
+            // bare pointer deref raced compact's deque move. In-range
+            // INVALID (tombstone) frames keep their version (the pre-4536
+            // escaped-pointer read did).
             const auto eid = static_cast<EnvId>(cl.env_id);
             if (!ev->is_env_frame_invalid(eid)) {
                 const auto r = ev->resolve_env_frame_detailed(eid);
