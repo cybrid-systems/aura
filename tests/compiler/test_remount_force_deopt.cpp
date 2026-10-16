@@ -1772,7 +1772,9 @@ static void ac4418_foreign_slot_stays_off_native() {
     CHECK(named != std::string::npos, "4418: named register present");
     if (named != std::string::npos) {
         const auto body = rt.substr(named, 2500);
-        CHECK(body.find("aura_note_jit_slot_installed_for_define") != std::string::npos,
+        // #4521 calls the locked helper while the table unique is held.
+        // The public aura_note_* wrapper is not in this body.
+        CHECK(body.find("note_jit_slot_installed_for_define_locked") != std::string::npos,
               "4418: named publish flags the slot");
     }
     const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
