@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <new>
 #include <vector>
 
 // JIT runtime registers the real lock/top-cell clearer. Null when JIT
@@ -34,17 +35,284 @@ extern "C" void aura_clear_evaluator_runtime_hooks(void* user) {
 }
 
 // ── Pair storage (JIT runtime + evaluator car/cdr fallback) ──
-std::vector<PairSlot*> g_pair_slots;
+// Issue #898: fixed directory of segments. A segment is never relocated.
+// 1024 slots × 65536 segments = 2^26 pairs. The directory is 512KB of
+// atomics, zero-initialized, and does not grow.
+namespace {
+constexpr std::size_t kPairSegSlots = 1024;
+constexpr std::size_t kPairMaxSegs = 1u << 16;
 
-// Heap-owned pair slots (subset of g_pair_slots allocated via malloc).
-// Process-exit cleanup frees them; arena-owned slots are not listed here.
+struct PairSegment {
+    std::atomic<PairSlot*> slots[kPairSegSlots];
+    std::atomic<std::uint64_t> tenants[kPairSegSlots];
+    PairSegment() {
+        for (std::size_t i = 0; i < kPairSegSlots; ++i) {
+            slots[i].store(nullptr, std::memory_order_relaxed);
+            tenants[i].store(0, std::memory_order_relaxed);
+        }
+    }
+};
+
+std::atomic<PairSegment*>* pair_seg_dir() {
+    static std::atomic<PairSegment*> table[kPairMaxSegs];
+    return table;
+}
+
+PairSegment* pair_segment(std::size_t id, bool create) {
+    const std::size_t seg_index = id / kPairSegSlots;
+    if (seg_index >= kPairMaxSegs)
+        return nullptr;
+    std::atomic<PairSegment*>& cell = pair_seg_dir()[seg_index];
+    if (PairSegment* existing = cell.load(std::memory_order_acquire))
+        return existing;
+    if (!create)
+        return nullptr;
+    auto* fresh = new PairSegment();
+    PairSegment* expected = nullptr;
+    if (cell.compare_exchange_strong(expected, fresh, std::memory_order_release,
+                                     std::memory_order_acquire))
+        return fresh;
+    delete fresh;
+    return expected;
+}
+
+// Thread-local cons slabs (#898). Linked once so process exit can free
+// them without a per-cons vector push under the workspace write lock.
+struct PairSlab {
+    PairSlab* next;
+    std::uint32_t cap;
+    PairSlot slots[];
+};
+constexpr std::uint32_t kPairSlabCap = 64;
+std::atomic<PairSlab*> g_pair_slabs{nullptr};
+std::atomic<std::uint64_t> g_pair_slab_publishes{0};
+
+struct TlsPairBump {
+    PairSlab* slab = nullptr;
+    std::uint32_t used = 0;
+};
+thread_local TlsPairBump tls_pair_bump{};
+
+// One shared fetch_add per cons does not scale: 8 threads on one cache
+// line were slower than a single thread (~0.06× aggregate). Claim a
+// segment-sized run (1024) so the cons hot path pays that atomic once
+// per batch. Unpublished ids in the run stay nullptr; readers treat
+// them as absent. clear() bumps the epoch so a thread drops a stale run
+// instead of republishing into the pre-reset index space.
+constexpr std::uint64_t kPairIdBatch = 1024;
+std::atomic<std::uint64_t> g_pair_claim_epoch{1};
+
+struct TlsPairIds {
+    std::uint64_t next = 0;
+    std::uint64_t end = 0;
+    std::uint64_t epoch = 0;
+};
+thread_local TlsPairIds tls_pair_ids{};
+} // namespace
+
+PairSlotTable g_pair_slots;
+
+// IR MakePair mirror still records one malloc per interpreter cons.
+// Arena slots and JIT slabs are not listed here.
 std::vector<PairSlot*> g_owned_pair_slots_;
 
 // Issue #4057: owner-principal stamps parallel to g_pair_slots — same SSOT
-// placement so the evaluator partition TUs and the JIT SOs share one array
+// placement so the evaluator partition TUs and the JIT SOs share one table
 // (a definition living only in aura_jit_runtime.cpp would repeat the
 // g_pair_slots undefined-symbol load-order failure this TU exists for).
-std::vector<std::uint64_t> g_pair_slot_tenants;
+PairTenantTable g_pair_slot_tenants;
+
+PairSlot* PairSlotTable::operator[](std::size_t id) {
+    if (id >= high_water_.load(std::memory_order_acquire))
+        return nullptr;
+    PairSegment* seg = pair_segment(id, /*create=*/true);
+    if (!seg)
+        return nullptr;
+    return seg->slots[id % kPairSegSlots].load(std::memory_order_acquire);
+}
+
+std::size_t PairSlotTable::size() const {
+    return static_cast<std::size_t>(high_water_.load(std::memory_order_acquire));
+}
+
+std::int64_t PairSlotTable::push_back(PairSlot* slot) {
+    const auto limit = static_cast<std::uint64_t>(kPairMaxSegs) * kPairSegSlots;
+    for (;;) {
+        const std::uint64_t ep = g_pair_claim_epoch.load(std::memory_order_acquire);
+        if (tls_pair_ids.epoch != ep) {
+            tls_pair_ids.next = 0;
+            tls_pair_ids.end = 0;
+            tls_pair_ids.epoch = ep;
+        }
+        if (tls_pair_ids.next >= tls_pair_ids.end) {
+            const std::uint64_t hw = high_water_.load(std::memory_order_relaxed);
+            if (hw >= limit)
+                return -1;
+            const std::uint64_t base =
+                high_water_.fetch_add(kPairIdBatch, std::memory_order_acq_rel);
+            if (base >= limit)
+                return -1;
+            std::uint64_t end = base + kPairIdBatch;
+            if (end > limit)
+                end = limit;
+            tls_pair_ids.next = base;
+            tls_pair_ids.end = end;
+            tls_pair_ids.epoch = ep;
+        }
+        const std::uint64_t id = tls_pair_ids.next++;
+        if (id >= limit)
+            return -1;
+        PairSegment* seg = pair_segment(static_cast<std::size_t>(id), /*create=*/true);
+        if (!seg)
+            return -1;
+        const std::size_t off = static_cast<std::size_t>(id) % kPairSegSlots;
+        // Interpreter MakePair calls push_back(nullptr) only to advance
+        // size() past its pairs_ index. Leave the cell empty so store()
+        // can install there; do not publish a null pointer.
+        if (slot == nullptr)
+            return static_cast<std::int64_t>(id);
+        // Drop a stale stamp before the pointer is visible (#4057 reset).
+        // A lost CAS (mirror installed this hole) must not be retried with
+        // a plain store — that would clobber the mirror. The next id in
+        // this thread's run is still ours.
+        seg->tenants[off].store(0, std::memory_order_release);
+        PairSlot* expected = nullptr;
+        if (seg->slots[off].compare_exchange_strong(expected, slot, std::memory_order_release,
+                                                    std::memory_order_acquire))
+            return static_cast<std::int64_t>(id);
+    }
+}
+
+void PairSlotTable::store(std::size_t id, PairSlot* slot) {
+    PairSegment* seg = pair_segment(id, /*create=*/true);
+    if (!seg)
+        return;
+    // Install only into an empty cell. A hot-path publisher may already
+    // own this index; a plain store would overwrite that pair.
+    auto& cell = seg->slots[id % kPairSegSlots];
+    PairSlot* expected = nullptr;
+    cell.compare_exchange_strong(expected, slot, std::memory_order_release,
+                                 std::memory_order_acquire);
+}
+
+void PairSlotTable::clear() {
+    const std::uint64_t n = high_water_.exchange(0, std::memory_order_acq_rel);
+    g_pair_claim_epoch.fetch_add(1, std::memory_order_release);
+    // Quiescent reset (aura_reset_runtime). Zero the cells the next claim
+    // will reuse so publish can CAS from nullptr, and drop any stamp that
+    // would otherwise reattach to the recycled index (#4057).
+    if (n == 0)
+        return;
+    const auto limit = static_cast<std::uint64_t>(kPairMaxSegs) * kPairSegSlots;
+    const std::uint64_t upto = n < limit ? n : limit;
+    const std::uint64_t segs = (upto + kPairSegSlots - 1) / kPairSegSlots;
+    std::atomic<PairSegment*>* dir = pair_seg_dir();
+    for (std::uint64_t s = 0; s < segs; ++s) {
+        PairSegment* seg = dir[s].load(std::memory_order_acquire);
+        if (!seg)
+            continue;
+        const std::uint64_t begin = s * kPairSegSlots;
+        const std::uint64_t end = (begin + kPairSegSlots < upto) ? begin + kPairSegSlots : upto;
+        for (std::uint64_t id = begin; id < end; ++id) {
+            const std::size_t off = static_cast<std::size_t>(id - begin);
+            seg->slots[off].store(nullptr, std::memory_order_relaxed);
+            seg->tenants[off].store(0, std::memory_order_relaxed);
+        }
+    }
+}
+
+void PairSlotTable::stamp_tenant(std::size_t id, std::uint64_t tenant) {
+    PairSegment* seg = pair_segment(id, /*create=*/true);
+    if (!seg)
+        return;
+    seg->tenants[id % kPairSegSlots].store(tenant, std::memory_order_release);
+}
+
+std::uint64_t PairSlotTable::load_tenant(std::size_t id) const {
+    if (id >= high_water_.load(std::memory_order_acquire))
+        return 0;
+    PairSegment* seg = pair_segment(id, /*create=*/false);
+    if (!seg)
+        return 0;
+    return seg->tenants[id % kPairSegSlots].load(std::memory_order_acquire);
+}
+
+PairTenantTable::Ref PairTenantTable::operator[](std::size_t id) {
+    const std::uint64_t snap =
+        (id < size_.load(std::memory_order_acquire)) ? g_pair_slots.load_tenant(id) : 0;
+    return Ref(this, id, snap);
+}
+
+std::size_t PairTenantTable::size() const {
+    return static_cast<std::size_t>(size_.load(std::memory_order_acquire));
+}
+
+void PairTenantTable::push_back(std::uint64_t tenant) {
+    const std::size_t id = static_cast<std::size_t>(size_.fetch_add(1, std::memory_order_acq_rel));
+    g_pair_slots.stamp_tenant(id, tenant);
+}
+
+void PairTenantTable::resize(std::size_t n, std::uint64_t /*fill*/) {
+    // Grow-only. Cells already read as 0 until stamped. A shrink would
+    // hide a stamp another cons just published.
+    std::uint64_t cur = size_.load(std::memory_order_relaxed);
+    while (cur < n &&
+           !size_.compare_exchange_weak(cur, static_cast<std::uint64_t>(n),
+                                        std::memory_order_release, std::memory_order_relaxed)) {
+    }
+}
+
+void PairTenantTable::clear() {
+    size_.store(0, std::memory_order_release);
+}
+
+PairTenantTable::Ref& PairTenantTable::Ref::operator=(std::uint64_t tenant) {
+    g_pair_slots.stamp_tenant(id_, tenant);
+    // The logical tenant table must cover this index or a later read
+    // treats it as short (unstamped). Grow-only, same as resize.
+    std::uint64_t cur = table_->size_.load(std::memory_order_relaxed);
+    const auto need = static_cast<std::uint64_t>(id_) + 1;
+    while (cur < need && !table_->size_.compare_exchange_weak(cur, need, std::memory_order_release,
+                                                              std::memory_order_relaxed)) {
+    }
+    snap_ = tenant;
+    return *this;
+}
+
+extern "C" PairSlot* aura_pair_tls_bump() {
+    if (!tls_pair_bump.slab || tls_pair_bump.used >= tls_pair_bump.slab->cap) {
+        const std::size_t bytes = sizeof(PairSlab) + sizeof(PairSlot) * kPairSlabCap;
+        auto* slab = static_cast<PairSlab*>(std::malloc(bytes));
+        if (!slab)
+            return nullptr;
+        slab->cap = kPairSlabCap;
+        slab->next = nullptr;
+        PairSlab* head = g_pair_slabs.load(std::memory_order_relaxed);
+        do {
+            slab->next = head;
+        } while (!g_pair_slabs.compare_exchange_weak(head, slab, std::memory_order_release,
+                                                     std::memory_order_relaxed));
+        g_pair_slab_publishes.fetch_add(1, std::memory_order_relaxed);
+        tls_pair_bump.slab = slab;
+        tls_pair_bump.used = 0;
+    }
+    return &tls_pair_bump.slab->slots[tls_pair_bump.used++];
+}
+
+extern "C" std::uint64_t aura_pair_slab_publish_count() {
+    return g_pair_slab_publishes.load(std::memory_order_relaxed);
+}
+
+namespace {
+void free_pair_slabs() {
+    PairSlab* slab = g_pair_slabs.exchange(nullptr, std::memory_order_acquire);
+    while (slab) {
+        PairSlab* next = slab->next;
+        std::free(slab);
+        slab = next;
+    }
+}
+} // namespace
 
 // Arena allocation flag (CLI --no-arena / runtime bridges).
 bool g_use_arena = true;
@@ -422,6 +690,8 @@ struct PairSlotCleanup {
             std::free(p);
         }
         g_owned_pair_slots_.clear();
+        // Issue #898: JIT cons slabs are not on g_owned_pair_slots_.
+        free_pair_slabs();
     }
 };
 [[maybe_unused]] PairSlotCleanup g_pair_slot_cleanup;

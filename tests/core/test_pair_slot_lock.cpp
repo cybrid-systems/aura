@@ -6,23 +6,22 @@
 // (process-exit walker) and concurrent sibling bridge-hook writes
 // (aura_make_pair at line 1330+) cannot race the push.
 //
-// The runtime gate exercises functional correctness: many make-pair
-// cycles via the IR executor must succeed and g_owned_pair_slots_ must
-// grow exactly by 1 per call (no lost slots from the race). Concurrent
-// threads doing make-pairs verify the slot count invariant under
-// contention. The linter (scripts/coverage/checks/check_owned_pair_slots_lock_coverage.py)
-// is the structural CI gate for the lock-around-push invariant.
+// The runtime gate exercises functional correctness. `(car (cons …))`
+// is NON_ESCAPING, so MakePair mirrors it with the arena and must not
+// push that pointer onto g_owned_pair_slots_ (PairSlotCleanup free()s
+// the vector). Heap cons (ESCAPED) still take the locked push (#1998).
+// The linter (scripts/coverage/checks/check_owned_pair_slots_lock_coverage.py)
+// is the structural CI gate: the IR owned push stays inside the write
+// lock, and aura_alloc_pair does not take that lock (#898).
 //
 // AC1: simple `(cons 1 2)` via CompilerService returns car=1, cdr=2
 //      (basic functional check that the fix didn't break the path).
-// AC2: 100 sequential `(cons i i+1)` calls succeed; g_owned_pair_slots_
-//      grows by 100 (no lost slots).
+// AC2: 100 sequential `(car (cons i i+1))` calls succeed;
+//      g_owned_pair_slots_ does not grow (arena mirror).
 // AC3: concurrent threads (4 threads x 250 make-pairs each) finish
-//      with g_owned_pair_slots_ having grown by exactly 1000 (no lost
-//      slots under contention; this is the primary race regression gate).
-// AC4: linter self-test passes (structurally verifies the lock around
-//      g_owned_pair_slots_.push_back in both ir_executor_impl.cpp and
-//      aura_jit_runtime.cpp).
+//      with g_owned_pair_slots_ still flat and every car matching.
+// AC4: linter self-test passes (IR lock around the owned push; no
+//      workspace write lock inside aura_alloc_pair).
 // AC5: g_owned_pair_slots_ size is monotonic non-decreasing during
 //      push operations (regression guard for the realloc mid-walk race
 //      that would invalidate the destructor's iterator).
@@ -51,6 +50,10 @@ using std::size_t;
 // against race-conditioned shrinkage).
 struct PairSlot;
 extern "C" size_t aura_g_owned_pair_slots_size();
+extern "C" int64_t aura_alloc_pair(int64_t car, int64_t cdr);
+extern "C" int64_t aura_pair_car(int64_t pair_val);
+extern "C" int64_t aura_pair_cdr(int64_t pair_val);
+extern "C" std::uint64_t aura_pair_slab_publish_count();
 
 namespace {
 
@@ -105,9 +108,12 @@ int main() {
         check_eq_i64(cdr, 2, "AC1: (cdr (cons 1 2)) = 2");
     }
 
-    // AC2: 100 sequential (cons i i+1) calls. g_owned_pair_slots_
-    // grows by exactly 100 (no lost slots). Each cons pushes 1 slot
-    // (per the B-024-fix wrapped push).
+    // AC2: 100 sequential (car (cons i i+1)). Escape analysis marks that
+    // pair NON_ESCAPING (the only consumer is car), so MakePair mirrors
+    // it with tl_arena_alloc and must not push the pointer onto
+    // g_owned_pair_slots_. PairSlotCleanup free()s that vector; an arena
+    // pointer there is an invalid free. Heap cons (ESCAPED) still take
+    // the locked push (#1998). This expression is the arena case.
     {
         const size_t before = aura_g_owned_pair_slots_size();
         for (int i = 0; i < 100; ++i) {
@@ -116,14 +122,14 @@ int main() {
             check_eq_i64(car, i, "AC2: (car (cons i i+1)) = i");
         }
         const size_t after = aura_g_owned_pair_slots_size();
-        check_eq_i64(static_cast<int64_t>(after - before), 100,
-                     "AC2: g_owned_pair_slots_ grew by 100 (no lost slots)");
+        check_eq_i64(static_cast<int64_t>(after - before), 0,
+                     "AC2: non-escaping cons does not enter g_owned_pair_slots_");
     }
 
-    // AC3: 4 concurrent threads x 250 make-pairs each. Total expected
-    // growth = 1000. The B-024 lock fix is what prevents lost slots
-    // (the static PairSlotCleanup destructor at process exit + sibling
-    // bridge-hook pushes cannot race the wrapped push_back).
+    // AC3: 4 concurrent threads x 250 non-escaping make-pairs. Same arena
+    // mirror as AC2: the owned vector must stay flat (no arena pointer
+    // recorded) and every car must match. The locked heap push stays on
+    // the ESCAPED arm; AC4 is the structural check for that lock.
     //
     // Issue #2333: CompilerService::eval() holds eval_mutex_ across
     // the full parse+typecheck+eval pipeline (recursive_mutex,
@@ -132,10 +138,8 @@ int main() {
     // eval calls into single-threaded execution (~700ms/call observed
     // with full parse+typecheck+eval pipeline), pushing AC3 well past
     // the 90s timeout. Fix: give each worker its own CompilerService.
-    // The B-024 lock intent is preserved -- g_owned_pair_slots_ is
-    // process-global, and aura_lock_workspace_write() around its
-    // push_back (src/compiler/ir_executor_impl.cpp + aura_jit_runtime.cpp)
-    // is exercised 1000 times across 4 independent workers.
+    // The owned vector is process-global. These pairs are the arena
+    // arm, so the vector stays flat; the locked heap push is AC4.
     //
     // Note: we avoid std::vector<std::thread> here because GCC 16's C++20
     // std module implementation does not export the implementation-detail
@@ -173,8 +177,8 @@ int main() {
         t3.join();
         check_eq_i64(errors.load(), 0, "AC3: 0 car() mismatches across 1000 concurrent make-pairs");
         const size_t after = aura_g_owned_pair_slots_size();
-        check_eq_i64(static_cast<int64_t>(after - before), 1000,
-                     "AC3: g_owned_pair_slots_ grew by 1000 (no lost slots under contention)");
+        check_eq_i64(static_cast<int64_t>(after - before), 0,
+                     "AC3: non-escaping cons does not enter g_owned_pair_slots_");
     }
 
     // AC4: linter self-test -- structurally verifies the lock-around-push
@@ -206,6 +210,98 @@ int main() {
             snapshot = now;
         }
         check_true(monotonic, "AC5: g_owned_pair_slots_ is monotonic non-decreasing during push");
+    }
+
+    // AC6 (#898): cons hot path is a TLS slab + release publish. One thread
+    // and eight threads run the same per-thread alloc count. Aggregate
+    // throughput of 8 threads must be at least 5× the single thread when
+    // the machine has 8 hardware threads. Slab publishes stay far below
+    // the alloc count (batched malloc, not one malloc per cons).
+    {
+        constexpr int kOps = 1000000;
+        auto run = [](int nthreads) -> double {
+            std::atomic<int> bad{0};
+            auto worker = [&bad]() {
+                int64_t prev = 0;
+                for (int i = 0; i < kOps; ++i)
+                    prev = aura_alloc_pair(i + 1, i + 2);
+                if (prev == 0 || aura_pair_car(prev) != kOps || aura_pair_cdr(prev) != kOps + 1)
+                    bad.fetch_add(1, std::memory_order_relaxed);
+            };
+            const auto t0 = std::chrono::steady_clock::now();
+            if (nthreads == 1) {
+                worker();
+            } else {
+                std::thread ts[8];
+                for (int i = 0; i < nthreads; ++i)
+                    ts[i] = std::thread(worker);
+                for (int i = 0; i < nthreads; ++i)
+                    ts[i].join();
+            }
+            const auto t1 = std::chrono::steady_clock::now();
+            if (bad.load(std::memory_order_relaxed) != 0)
+                return -1.0;
+            return std::chrono::duration<double>(t1 - t0).count();
+        };
+        // Warm the segment directory and the slab allocator before timing.
+        for (int i = 0; i < 4096; ++i)
+            (void)aura_alloc_pair(1, 2);
+        const auto slabs0 = aura_pair_slab_publish_count();
+        const double t1 = run(1);
+        const double t8 = run(8);
+        const auto slabs1 = aura_pair_slab_publish_count();
+        check_true(t1 > 0.0 && t8 > 0.0, "AC6: 1-thread and 8-thread cons runs stay well-formed");
+        const double speedup = (t1 > 0.0 && t8 > 0.0) ? (8.0 * t1 / t8) : 0.0;
+        std::println("  AC6: 8-thread cons speedup {:.2f}× (t1={:.3f}s t8={:.3f}s)", speedup, t1,
+                     t8);
+        const unsigned hc = std::thread::hardware_concurrency();
+        if (hc >= 8)
+            check_true(speedup >= 5.0, "AC6: 8-thread cons aggregate throughput ≥ 5× one thread");
+        else
+            check_true(speedup >= 1.5, "AC6: cons scales on this host (fewer than 8 cpus)");
+        const auto allocs = static_cast<std::uint64_t>(kOps) * 9;
+        const auto slabs = slabs1 - slabs0;
+        check_true(slabs > 0 && slabs * 32 < allocs,
+                   "AC6: slab publishes are batched (well under one malloc per cons)");
+    }
+
+    // AC7 (#898): a publisher thread release-stores pair ids while other
+    // threads car/cdr them. The segment cell is an acquire load, so this
+    // does not take the workspace lock. Every observed pair keeps cdr == car+1.
+    {
+        std::atomic<int64_t> published{0};
+        std::atomic<int> stop{0};
+        std::atomic<int> bad{0};
+        std::atomic<int> seen{0};
+        auto reader = [&]() {
+            while (stop.load(std::memory_order_acquire) == 0) {
+                const int64_t p = published.load(std::memory_order_acquire);
+                if (p == 0)
+                    continue;
+                const int64_t car = aura_pair_car(p);
+                const int64_t cdr = aura_pair_cdr(p);
+                if (cdr != car + 1)
+                    bad.fetch_add(1, std::memory_order_relaxed);
+                else
+                    seen.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
+        std::thread r0(reader);
+        std::thread r1(reader);
+        std::thread r2(reader);
+        std::thread writer([&]() {
+            for (int i = 0; i < 200000; ++i) {
+                const int64_t p = aura_alloc_pair(i + 1, i + 2);
+                published.store(p, std::memory_order_release);
+            }
+            stop.store(1, std::memory_order_release);
+        });
+        writer.join();
+        r0.join();
+        r1.join();
+        r2.join();
+        check_eq_i64(bad.load(), 0, "AC7: concurrent car/cdr matched the published pair");
+        check_true(seen.load() > 0, "AC7: readers observed a published pair");
     }
 
     std::println("test_pair_slot_lock: {}/{} passed", passed, total);
