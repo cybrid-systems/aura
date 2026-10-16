@@ -5187,9 +5187,10 @@ public:
     // (no "fresh JIT epoch + dangling env_id" race).
     //
     // Returns the number of frames reclaimed (0 if nothing was
-    // stale). Locking: compact_env_frames_lock_ first, then
-    // env_frames_mtx_ unique; briefly takes closures_mtx_
-    // (shared then unique) to read references + rewrite env_id.
+    // stale). Locking: compact_env_frames_lock_ first, then ALL
+    // closures shards unique, then the env shard barrier, then
+    // env_frames_mtx_ unique (#4542 canonical order — closures are
+    // never acquired under an env lock).
     //
     // Concurrency contract: caller should serialize at the
     // workspace level — concurrent apply_closure is NOT fully safe
@@ -6041,6 +6042,16 @@ public:
     // Lock order (#1664) UNCHANGED: any closures shard then any env
     // shard (closures first); env shards in index order among
     // themselves; env shards BEFORE env_frames_mtx_, never after.
+    //
+    // Issue #4542 — GLOBAL order for these three families (every path):
+    //     closures_shards_[*].mu  →  env_frame_shards_[*].mu  →  env_frames_mtx_
+    // (each multi-shard hold ascending by index). A path that needs the
+    // closures map while it owns an env lock must take the closures shards
+    // BEFORE its env locks (truncate_env_frames_to_checkpoint /
+    // compact_env_frames do), or drop every env lock first. Taking a
+    // closures shard while holding an env shard or env_frames_mtx_ is the
+    // inversion TSan reported against scan_live_closures_for_linear_captures.
+    // Likewise, never take an env shard while holding env_frames_mtx_.
     struct EnvFramesShard {
         mutable std::shared_mutex mu;
     };
@@ -6072,9 +6083,10 @@ public:
     // AFTER this one. Canonical order is mutate → workspace →
     // env_frames → dep_graph. Reverse order is NOT allowed.
     //
-    // Issue #1664 — when held together with closures_mtx_:
-    // always take closures_mtx_ FIRST, then env_frames_mtx_
-    // (see closures_mtx_ comment). Solo env_frames acquires OK.
+    // Issue #1664 / #4542 — when held together with the closures shards:
+    // always take the closures shards FIRST, then env shards, then
+    // env_frames_mtx_ (see the EnvFramesShard comment). Solo env_frames
+    // acquires OK.
     mutable std::shared_mutex env_frames_mtx_;
     // Issue #2360 / #2362: live EnvFrameRef ownership slots for
     // densify + fiber-steal transfer_to / drop protocol. deque so

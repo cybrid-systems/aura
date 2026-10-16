@@ -10,10 +10,30 @@
 //   AC4: concurrent scan + GC probe + fiber steal (no hang)
 //   AC5: concurrent with apply_closure (no hang)
 //   AC6: stress 4 threads × 500 ops completes quickly
+//
+// Issue #4542 — global order closures shards → env shards → env_frames_mtx_.
+// truncate_env_frames_to_checkpoint / compact_env_frames used to take the
+// closures shards while holding the env shard barrier + env_frames_mtx_
+// (env→closures), inverting against scan_live_closures (closures→env);
+// TSan reported it 17/17 on the MutationBoundaryGuard dtor path.
+//   AC7: single-thread scan → truncate → compact → scan (TSan lock graph
+//        face: the pre-fix build reports lock-order-inversion here);
+//        doomed closure still forced to bridge_epoch 0, compact still
+//        remaps env_id
+//   AC8: concurrent truncate+compact (+ Guard-dtor enforce) vs scan vs
+//        closure registration — watchdog fails (instead of hanging) on deadlock
+//   AC10: truncate leaves a doomed closure OOB, then compact — the compact
+//        tail's refresh_stale_frames_after_steal used to re-enter compact
+//        forever (stack overflow); must return
+//   AC9: source cite — closures shards acquired before the env barrier in
+//        truncate + compact; no closures acquisition under env locks
 
 #include "test_harness.hpp"
 
 #include <atomic>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <chrono>
 #include <cstdint>
 #include <print>
@@ -31,6 +51,7 @@ namespace {
 using aura::ast::SymId;
 using aura::compiler::Closure;
 using aura::compiler::CompilerService;
+using aura::compiler::EnvId;
 using aura::compiler::Evaluator;
 using aura::compiler::NULL_ENV_ID;
 using aura::compiler::types::make_int;
@@ -197,6 +218,211 @@ static void ac6_stress() {
     CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(8), "stress under 8s");
 }
 
+
+// ── Issue #4542 ────────────────────────────────────────────────────────
+
+static std::string read_src_4542(const char* rel) {
+    for (const auto& base :
+         {std::string(AURA_SOURCE_DIR) + "/", std::string(), std::string("../")}) {
+        std::ifstream in(base + rel);
+        if (in) {
+            std::stringstream ss;
+            ss << in.rdbuf();
+            return ss.str();
+        }
+    }
+    return {};
+}
+
+static void ac7_truncate_compact_order() {
+    std::println("\n--- AC7 (#4542): scan → truncate → compact → scan, one thread ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    seed_moved_closure(ev);
+    // closures → env (scan) first, so a reverse edge later closes a cycle
+    // in the TSan lock graph.
+    (void)ev.scan_live_closures_for_linear_captures(true, false);
+
+    for (int i = 0; i < 2; ++i)
+        (void)ev.alloc_env_frame();
+    const std::size_t base = ev.env_frames_size();
+    ev.set_panic_safe_env_frames_size_for_test(base);
+    const EnvId doomed_env = ev.alloc_env_frame();
+    Closure cl;
+    cl.name = "doomed4542";
+    cl.env_id = doomed_env;
+    cl.bridge_epoch = 42;
+    const auto doomed_id = ev.register_active_closure(std::move(cl));
+    CHECK(ev.truncate_env_frames_to_checkpoint() >= 1, "4542 AC7: truncate dropped ≥1");
+    const auto snap = ev.find_active_closure(doomed_id);
+    CHECK(snap.has_value(), "4542 AC7: doomed closure still registered");
+    CHECK(snap && snap->bridge_epoch == 0,
+          "4542 AC7: doomed bridge_epoch forced 0 (restamp kept under closures-first hold)");
+
+    // compact: a referenced frame behind a reclaimable one must be remapped.
+    const EnvId dead = ev.alloc_env_frame();
+    const EnvId live = ev.alloc_env_frame();
+    (void)dead;
+    Closure keep;
+    keep.name = "keep4542";
+    keep.env_id = live;
+    const auto keep_id = ev.register_active_closure(std::move(keep));
+    (void)ev.compact_env_frames();
+    const auto ksnap = ev.find_active_closure(keep_id);
+    CHECK(ksnap.has_value(), "4542 AC7: compact keeps the referencing closure");
+    CHECK(ksnap && (ksnap->env_id == NULL_ENV_ID || ksnap->env_id < ev.env_frames_size()),
+          "4542 AC7: compact leaves env_id in range (remapped)");
+    CHECK(ksnap && ksnap->env_id != NULL_ENV_ID && ev.resolve_env_frame(ksnap->env_id) != nullptr,
+          "4542 AC7: remapped env_id resolves");
+    (void)ev.scan_live_closures_for_linear_captures(true, false);
+    (void)ev.enforce_linear_boundary_consistency(0, true);
+    CHECK(true, "4542 AC7: sequence completed");
+}
+
+static void ac8_concurrent_truncate_compact_vs_scan() {
+    std::println("\n--- AC8 (#4542): truncate/compact vs scan/enforce vs register ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    for (int i = 0; i < 8; ++i)
+        seed_moved_closure(ev);
+
+    std::atomic<bool> stop{false};
+    std::atomic<int> finished{0};
+    std::atomic<std::uint64_t> structure_ops{0};
+    std::atomic<std::uint64_t> scan_ops{0};
+    std::atomic<std::uint64_t> reg_ops{0};
+
+    // Structure thread: grows the arena past a checkpoint, truncates back,
+    // and compacts — both take the closures shards + the env barrier.
+    std::thread structure([&]() {
+        int round = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            const std::size_t base = ev.env_frames_size();
+            ev.set_panic_safe_env_frames_size_for_test(base);
+            for (int i = 0; i < 4; ++i)
+                (void)ev.alloc_env_frame();
+            (void)ev.truncate_env_frames_to_checkpoint();
+            if ((++round % 4) == 0)
+                (void)ev.compact_env_frames();
+            structure_ops.fetch_add(1, std::memory_order_relaxed);
+        }
+        finished.fetch_add(1, std::memory_order_relaxed);
+    });
+    // Scan thread: the issue's closures → env path (scan + boundary enforce).
+    std::thread scanner([&]() {
+        while (!stop.load(std::memory_order_relaxed)) {
+            // (enforce_linear_boundary_consistency → scan is the issue's
+            // stack; the structure thread's free-standing truncate already
+            // runs it via its MutationBoundaryGuard dtor. Calling it here
+            // too would add a second writer to the linear audit ring —
+            // a separate pre-existing race, not this lock-order face.)
+            (void)ev.scan_live_closures_for_linear_captures(true, false);
+            (void)ev.scan_live_closures_for_linear_captures(true, true);
+            scan_ops.fetch_add(1, std::memory_order_relaxed);
+        }
+        finished.fetch_add(1, std::memory_order_relaxed);
+    });
+    // Registration thread (the only registering thread — next_id() is not
+    // atomic): single-shard closures writes. Half carry an env_id past any
+    // checkpoint so truncate's doomed-closure restamp has work to do.
+    std::thread registrar([&]() {
+        std::uint64_t n = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            Closure c;
+            c.env_id = (++n & 1) ? NULL_ENV_ID : static_cast<EnvId>(1u << 20);
+            c.bridge_epoch = 7;
+            (void)ev.register_active_closure(std::move(c));
+            reg_ops.fetch_add(1, std::memory_order_relaxed);
+        }
+        finished.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    using namespace std::chrono;
+    const auto t0 = steady_clock::now();
+    const auto run_for = milliseconds(1500);
+    while (steady_clock::now() - t0 < run_for)
+        std::this_thread::sleep_for(milliseconds(5));
+    stop.store(true, std::memory_order_relaxed);
+    // Watchdog: a lock-order deadlock parks two threads forever. Fail loudly
+    // instead of hanging the runner.
+    const auto deadline = steady_clock::now() + seconds(60);
+    while (finished.load(std::memory_order_relaxed) < 3 && steady_clock::now() < deadline)
+        std::this_thread::sleep_for(milliseconds(10));
+    if (finished.load(std::memory_order_relaxed) < 3) {
+        std::println("FAIL: 4542 AC8: workers wedged (structure={} scan={} reg={}) — "
+                     "closures/env lock-order deadlock",
+                     structure_ops.load(), scan_ops.load(), reg_ops.load());
+        std::fflush(stdout);
+        std::_Exit(1);
+    }
+    structure.join();
+    scanner.join();
+    registrar.join();
+    CHECK(structure_ops.load() > 0,
+          std::format("4542 AC8: truncate/compact rounds ran (got {})", structure_ops.load()));
+    CHECK(scan_ops.load() > 0, std::format("4542 AC8: scans ran (got {})", scan_ops.load()));
+    CHECK(reg_ops.load() > 0, std::format("4542 AC8: registrations ran (got {})", reg_ops.load()));
+    CHECK(true, "4542 AC8: all workers drained (no deadlock)");
+}
+
+static void ac10_compact_after_truncate_no_recursion() {
+    std::println("\n--- AC10 (#4542): truncate → compact with an OOB doomed closure ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.alloc_env_frame();
+    const std::size_t base = ev.env_frames_size();
+    ev.set_panic_safe_env_frames_size_for_test(base);
+    for (int i = 0; i < 3; ++i) {
+        Closure c;
+        c.env_id = ev.alloc_env_frame();
+        c.bridge_epoch = 9;
+        (void)ev.register_active_closure(std::move(c));
+    }
+    CHECK(ev.truncate_env_frames_to_checkpoint() >= 3, "4542 AC10: truncate dropped the tail");
+    (void)ev.compact_env_frames();
+    (void)ev.compact_env_frames();
+    CHECK(true, "4542 AC10: compact returned (no compact ⇄ refresh recursion)");
+}
+
+static void ac9_source_cite() {
+    std::println("\n--- AC9 (#4542): closures-first acquisition in truncate + compact ---");
+    const auto src = read_src_4542("src/compiler/evaluator_env.cpp");
+    CHECK(!src.empty(), "4542 AC9: read evaluator_env.cpp");
+    const auto cl_take =
+        std::string("std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);");
+    const auto ef_take = std::string(
+        "ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);");
+    for (const char* fn : {"std::size_t Evaluator::truncate_env_frames_to_checkpoint() {",
+                           "std::size_t Evaluator::compact_env_frames() {"}) {
+        const auto pos = src.find(fn);
+        CHECK(pos != std::string::npos, std::format("4542 AC9: located {}", fn));
+        if (pos == std::string::npos)
+            continue;
+        auto end = src.find("\n}\n", pos);
+        const auto body = src.substr(pos, end == std::string::npos ? 30000 : end - pos);
+        const auto first_cl = body.find(cl_take);
+        const auto barrier = body.find(ef_take);
+        CHECK(first_cl != std::string::npos && barrier != std::string::npos && first_cl < barrier,
+              std::format("4542 AC9: closures shards precede the env barrier in {}", fn));
+        // Exactly one closures acquisition before the barrier release; any
+        // later one must come after every env lock is dropped.
+        const auto second_cl = body.find(cl_take, first_cl + 1);
+        if (second_cl != std::string::npos) {
+            const auto env_unlock = body.rfind("env_lock.unlock();", second_cl);
+            CHECK(env_unlock != std::string::npos && env_unlock > barrier,
+                  std::format("4542 AC9: later closures take follows env unlock in {}", fn));
+        } else {
+            CHECK(true, std::format("4542 AC9: single closures hold in {}", fn));
+        }
+        CHECK(body.find("#4542") != std::string::npos,
+              std::format("4542 AC9: cites #4542 in {}", fn));
+    }
+    const auto ixx = read_src_4542("src/compiler/evaluator.ixx");
+    CHECK(ixx.find("closures_shards_[*].mu  →  env_frame_shards_[*].mu  →  env_frames_mtx_") !=
+              std::string::npos,
+          "4542 AC9: global order documented in evaluator.ixx");
+}
+
 } // namespace
 
 int main() {
@@ -207,6 +433,10 @@ int main() {
     ac4_concurrent_probes();
     ac5_with_apply();
     ac6_stress();
+    ac7_truncate_compact_order();
+    ac8_concurrent_truncate_compact_vs_scan();
+    ac10_compact_after_truncate_no_recursion();
+    ac9_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

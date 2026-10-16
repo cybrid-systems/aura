@@ -908,7 +908,7 @@ static void ac3267_1_publish_takes_env_frames_lock() {
     CHECK(env.find("non-recursive") != std::string::npos, "3267 AC1: non-recursive documented");
     auto tpos = env.find("Evaluator::truncate_env_frames_to_checkpoint()");
     CHECK(tpos != std::string::npos, "3267 AC1: truncate def");
-    auto twin = env.substr(tpos, 5000);
+    auto twin = env.substr(tpos, 7000); // #4542: truncate grew (closures-first hold comments)
     CHECK(twin.find("publish_live_env_linear_to_bridge_holding_env_lock()") != std::string::npos,
           "3267 AC1: truncate uses holding sibling");
     CHECK(twin.find("publish_live_env_linear_to_bridge();") == std::string::npos,

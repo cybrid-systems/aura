@@ -405,56 +405,66 @@ bool Evaluator::restore_panic_checkpoint() {
         // const ref into the heap (f64vector-ref / f64vector-dot) would
         // otherwise walk the vector mid-shrink. string_slot_tenants_ is
         // parallel to the heap and its writers hold the same lock (#4428).
-        std::lock_guard alloc_lock_resize(alloc_storage_lock_);
-        std::size_t new_string_heap_size = idx + 1;
-        if (new_string_heap_size <= string_heap_.size()) {
-            string_heap_.resize(new_string_heap_size);
-            // Issue #4428: a reused index must not keep the truncated slot's owner.
-            if (string_slot_tenants_.size() > string_heap_.size())
-                string_slot_tenants_.resize(string_heap_.size());
+        // Issue #4542: alloc_storage_lock_ is scoped to the arena resizes
+        // only. truncate_env_frames_to_checkpoint() below runs a nested
+        // MutationBoundaryGuard whose dtor takes mutate_target_mu_ and then
+        // (densify fill) alloc_storage_lock_ — holding alloc_storage_lock_
+        // across it closed an alloc_storage_lock_ ⇄ mutate_target_mu_ cycle
+        // (TSan lock-order-inversion, exposed once the closures/env cycle
+        // was fixed). The truncate touches env frames + closures, not the
+        // value arenas.
+        {
+            std::lock_guard alloc_lock_resize(alloc_storage_lock_);
+            std::size_t new_string_heap_size = idx + 1;
+            if (new_string_heap_size <= string_heap_.size()) {
+                string_heap_.resize(new_string_heap_size);
+                // Issue #4428: a reused index must not keep the truncated slot's owner.
+                if (string_slot_tenants_.size() > string_heap_.size())
+                    string_slot_tenants_.resize(string_heap_.size());
+            }
+            if (panic_safe_cells_size_ > 0 && panic_safe_cells_size_ <= cells_.size()) {
+                cells_.resize(panic_safe_cells_size_);
+            }
+            if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
+                pairs_.resize(panic_safe_pairs_size_);
+                // Issue #4298: a reused index must not keep the truncated slot's owner.
+                if (pair_slot_tenants_.size() > pairs_.size())
+                    pair_slot_tenants_.resize(pairs_.size());
+            }
+            // Issue #425: post-truncate size verification. The
+            // mutation stack may have been re-entered between save
+            // and restore (e.g. fiber yield + nested Guard stack),
+            // in which case the cells_/pairs_ sizes recorded at
+            // save time might be deeper than the current values
+            // (truncating past 0 would corrupt the arena). Bump a
+            // observability counter when the recorded size exceeds
+            // the current size — this signals that the snapshot was
+            // taken in a different transactional state than the
+            // restore. The fix is a future issue (likely: capture
+            // a (snapshot_id, generation) pair at save and refuse
+            // restore if generation drift exceeds a threshold).
+            // For now: don't truncate past current size; bump a
+            // counter for observability.
+            if (panic_safe_cells_size_ > cells_.size()) {
+                bump_panic_checkpoint_size_mismatch();
+            }
+            if (panic_safe_pairs_size_ > pairs_.size()) {
+                bump_panic_checkpoint_size_mismatch();
+            }
+            // Issue #592: post-restore arena size assert — after a
+            // successful truncate the live arena sizes must match the
+            // checkpoint snapshot (partial state would break hygiene /
+            // reflection invariants on fiber resume).
+            if (panic_safe_cells_size_ > 0 && cells_.size() != panic_safe_cells_size_) {
+                bump_panic_checkpoint_size_mismatch();
+            }
+            if (panic_safe_pairs_size_ > 0 && pairs_.size() != panic_safe_pairs_size_) {
+                bump_panic_checkpoint_size_mismatch();
+            }
+            // Issue #4459: resize drops the tail. Freelist ids past the new
+            // sizes would mint into the truncated buffer.
+            note_file_heap_truncated(pairs_.size(), cells_.size());
         }
-        if (panic_safe_cells_size_ > 0 && panic_safe_cells_size_ <= cells_.size()) {
-            cells_.resize(panic_safe_cells_size_);
-        }
-        if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
-            pairs_.resize(panic_safe_pairs_size_);
-            // Issue #4298: a reused index must not keep the truncated slot's owner.
-            if (pair_slot_tenants_.size() > pairs_.size())
-                pair_slot_tenants_.resize(pairs_.size());
-        }
-        // Issue #425: post-truncate size verification. The
-        // mutation stack may have been re-entered between save
-        // and restore (e.g. fiber yield + nested Guard stack),
-        // in which case the cells_/pairs_ sizes recorded at
-        // save time might be deeper than the current values
-        // (truncating past 0 would corrupt the arena). Bump a
-        // observability counter when the recorded size exceeds
-        // the current size — this signals that the snapshot was
-        // taken in a different transactional state than the
-        // restore. The fix is a future issue (likely: capture
-        // a (snapshot_id, generation) pair at save and refuse
-        // restore if generation drift exceeds a threshold).
-        // For now: don't truncate past current size; bump a
-        // counter for observability.
-        if (panic_safe_cells_size_ > cells_.size()) {
-            bump_panic_checkpoint_size_mismatch();
-        }
-        if (panic_safe_pairs_size_ > pairs_.size()) {
-            bump_panic_checkpoint_size_mismatch();
-        }
-        // Issue #592: post-restore arena size assert — after a
-        // successful truncate the live arena sizes must match the
-        // checkpoint snapshot (partial state would break hygiene /
-        // reflection invariants on fiber resume).
-        if (panic_safe_cells_size_ > 0 && cells_.size() != panic_safe_cells_size_) {
-            bump_panic_checkpoint_size_mismatch();
-        }
-        if (panic_safe_pairs_size_ > 0 && pairs_.size() != panic_safe_pairs_size_) {
-            bump_panic_checkpoint_size_mismatch();
-        }
-        // Issue #4459: resize drops the tail. Freelist ids past the new
-        // sizes would mint into the truncated buffer.
-        note_file_heap_truncated(pairs_.size(), cells_.size());
         // Issue #1360: actually truncate env_frames_ (was mark-only
         // INVALID_VERSION in #356 — leaked ~8MB/day under panic load).
         // truncate_env_frames_to_checkpoint also soft-marks doomed
