@@ -1542,12 +1542,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                     &g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
                                 slot->car = locals[ops[1]].val;
                                 slot->cdr = locals[ops[2]].val;
-                                g_pair_slots[idx] = slot;
+                                g_pair_slots.store(static_cast<std::size_t>(idx), slot);
                             } else {
                                 auto* slot = (PairSlot*)std::malloc(sizeof(PairSlot));
                                 slot->car = locals[ops[1]].val;
                                 slot->cdr = locals[ops[2]].val;
-                                g_pair_slots[idx] = slot;
+                                g_pair_slots.store(static_cast<std::size_t>(idx), slot);
                                 // Track heap allocation for process-exit
                                 // cleanup (see g_owned_pair_slots_ in
                                 // aura_jit_runtime.cpp). Without this,

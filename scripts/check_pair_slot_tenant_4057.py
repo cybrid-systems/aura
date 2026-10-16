@@ -102,6 +102,10 @@ def main() -> int:
             "aura_unlock_workspace_write()"
         ):
             fails.append(f"AC1: {anchor} stamps after the unlock (race window)")
+        # Issue #898: cons publish is a release store into a non-moving
+        # segment. The workspace write lock is not on this path.
+        if "aura_lock_workspace_write()" in win:
+            fails.append(f"#898: {anchor} still takes the workspace write lock")
 
     # ── AC2: set-car!/set-cdr! gate before the process-slot write ──
     pair = _strip_cpp_comments(_read("src/compiler/evaluator_primitives_pair.cpp"))
@@ -164,17 +168,19 @@ def main() -> int:
 
     # ── AC5: declaration + SSOT definition ──
     rsh = _read("src/compiler/runtime_shared.h")
-    if "extern std::vector<std::uint64_t> g_pair_slot_tenants;" not in rsh:
+    if "extern PairTenantTable g_pair_slot_tenants;" not in rsh:
         fails.append("AC5: runtime_shared.h does not declare g_pair_slot_tenants")
     if "#4057" not in rsh:
         fails.append("AC5: runtime_shared.h declaration lacks the #4057 citation")
     ssot = _strip_cpp_comments(_read("src/compiler/runtime_ssot.cpp"))
-    if "std::vector<std::uint64_t> g_pair_slot_tenants;" not in ssot:
+    if "PairTenantTable g_pair_slot_tenants;" not in ssot:
         fails.append("AC5: runtime_ssot.cpp does not define g_pair_slot_tenants")
-    gpos = ssot.find("std::vector<PairSlot*> g_pair_slots;")
-    tpos = ssot.find("std::vector<std::uint64_t> g_pair_slot_tenants;")
+    # Issue #898: the slot table is segmented, not a reallocating vector.
+    # The tenant table is still defined after it in this TU.
+    gpos = ssot.find("PairSlotTable g_pair_slots;")
+    tpos = ssot.find("PairTenantTable g_pair_slot_tenants;")
     if gpos == -1 or tpos == -1 or tpos < gpos:
-        fails.append("AC5: tenant array is not defined beside g_pair_slots in the SSOT TU")
+        fails.append("AC5: tenant table is not defined beside g_pair_slots in the SSOT TU")
 
     # ── AC6: reset clears the stamps with the slots ──
     clear = rt.find("g_pair_slots.clear();")

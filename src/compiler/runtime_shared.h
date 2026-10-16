@@ -9,12 +9,75 @@
 
 // ── PairSlot: unified pair storage format ──
 // Replaces separate g_pair_cars/g_pair_cdrs or evaluator's Pair struct.
-// Phase 1: stores in vector<PairSlot>.
-// Future: stores PairSlot* for arena/heap selection.
+// Issue #898: the process table is a segmented, non-moving index of
+// PairSlot* (arena or heap). Readers acquire-load one cell. cons does
+// not take the workspace write lock.
 struct PairSlot {
     int64_t car;
     int64_t cdr;
 };
+
+// Fixed segment table (#898). Published PairSegment objects never move,
+// so car/cdr does not take the workspace lock to protect against realloc.
+// Tenant stamps share the segment. Soft/Off still does not load them
+// (#4093); the face probe stays in front of the stamp load.
+class PairTenantTable;
+
+class PairSlotTable {
+public:
+    PairSlot* operator[](std::size_t id);
+    std::size_t size() const;
+    // Claim the next index, clear a stale tenant, release-publish slot.
+    // Returns the index, or -1 if the segment directory is exhausted.
+    std::int64_t push_back(PairSlot* slot);
+    // Release-store into an index the caller already claimed.
+    void store(std::size_t id, PairSlot* slot);
+    void clear();
+    void stamp_tenant(std::size_t id, std::uint64_t tenant);
+    std::uint64_t load_tenant(std::size_t id) const;
+
+private:
+    friend class PairTenantTable;
+    std::atomic<std::uint64_t> high_water_{0};
+};
+
+// Parallel owner stamps (#4057). Same index space as PairSlotTable.
+// operator[] returns a proxy so `g_pair_slot_tenants[id] = tenant` still
+// compiles, and a read converts to the stamped uint64_t (0 if short).
+class PairTenantTable {
+public:
+    class Ref {
+    public:
+        Ref(PairTenantTable* table, std::size_t id, std::uint64_t snap) noexcept
+            : table_(table)
+            , id_(id)
+            , snap_(snap) {}
+        operator std::uint64_t() const noexcept { return snap_; }
+        Ref& operator=(std::uint64_t tenant);
+
+    private:
+        PairTenantTable* table_;
+        std::size_t id_;
+        std::uint64_t snap_;
+    };
+
+    Ref operator[](std::size_t id);
+    std::size_t size() const;
+    void push_back(std::uint64_t tenant);
+    // Grow-only. New indices read as 0 (segment cells start at 0).
+    // Does not shrink: a shrink would hide a concurrent stamp (#898).
+    void resize(std::size_t n, std::uint64_t fill);
+    void clear();
+
+private:
+    std::atomic<std::uint64_t> size_{0};
+};
+
+// Issue #898: thread-local PairSlot slab. One malloc per slab, linked
+// once for process-exit free. The cons hot path does not push each
+// slot onto g_owned_pair_slots_.
+extern "C" PairSlot* aura_pair_tls_bump();
+extern "C" std::uint64_t aura_pair_slab_publish_count();
 
 // ── TL Arena (thread-local bump allocator) ──
 // Issue #1359: default was 64MB *eager* malloc per thread → 100 fibers = 6.4GB.
@@ -37,13 +100,12 @@ struct TLarena {
 extern __thread TLarena g_tl_arena;
 
 // ── Shared pair storage (used by JIT runtime + IR interpreter) ──
-// Stores pointers to pairs allocated on arena (non-escaping) or heap (escaping).
-// Evaluator's car/cdr primitives check this as fallback.
-extern std::vector<PairSlot*> g_pair_slots;
-// Heap-owned pair slots (subset of g_pair_slots allocated via malloc).
-// Process-exit cleanup frees them; see PairSlotCleanup in
-// aura_jit_runtime.cpp. Without this, escape-analyzed pairs that fall
-// back to heap allocation leak silently.
+// Segmented non-moving index (#898). Evaluator's car/cdr primitives check
+// this as fallback when the id is past the evaluator-local pairs_ vector.
+extern PairSlotTable g_pair_slots;
+// Heap-owned pair slots from the IR MakePair mirror (one pointer per
+// interpreter cons). Process-exit cleanup frees them. The JIT cons hot
+// path does not push here; its slabs are aura_pair_tls_bump() (#898).
 extern std::vector<PairSlot*> g_owned_pair_slots_;
 
 // Issue #4057: owner-principal stamps parallel to g_pair_slots (entry i is
@@ -51,10 +113,10 @@ extern std::vector<PairSlot*> g_owned_pair_slots_;
 // aura_alloc_pair_arena; 0 = unstamped legacy slot). Definition lives in
 // runtime_ssot.cpp next to g_pair_slots (same SSOT link-order class:
 // readers in libaura_test_objects.so and the JIT SOs must resolve the same
-// array). set-car!/set-cdr! compare this stamp against the caller principal
+// table). set-car!/set-cdr! compare this stamp against the caller principal
 // under the production face before touching the process-level slot;
-// index-guarded reads treat a short array as unstamped (fail-closed).
-extern std::vector<std::uint64_t> g_pair_slot_tenants;
+// index-guarded reads treat a short table as unstamped (fail-closed).
+extern PairTenantTable g_pair_slot_tenants;
 
 // Issue #4093: owner-principal stamps parallel to g_hash_tables (entry i is
 // the capability tenant that allocated g_hash_tables[i]; 0 = unstamped
@@ -115,17 +177,14 @@ extern "C" void aura_register_aot_slot_c_abi(std::size_t (*count_behind)(void),
                                              std::uint64_t (*map_size)(void));
 
 // ── Bridge-hook workspace write lock (Issue #1998 / B-024) ──
-// Acquiring before push to file-scope g_owned_pair_slots_ (and other
-// shared runtime state) prevents races with the static
-// PairSlotCleanup destructor at aura_jit_runtime.cpp:425 and with
-// concurrent sibling bridge-hook writes (aura_make_pair at line 1330+).
-// Without this lock, a vector push_back can reallocate the backing
-// storage mid-iteration by the destructor (UAF on iterator) or by a
-// sibling writer that copied the iteration state (lost slot / host
-// accounting leak). The functions are trampolines into host-registered
-// hook fns via g_lock_hooks (aura_jit_runtime.cpp:389/394) -- if the
-// host hasn't registered hooks, the calls are no-ops (host has its own
-// locking discipline) and the assertion is on the IR-executor path only.
+// The IR MakePair mirror still acquires this before push to file-scope
+// g_owned_pair_slots_ so PairSlotCleanup's destructor walk cannot race
+// that vector. Issue #898: aura_alloc_pair does not take this lock.
+// Pair memory for that path is a thread-local slab linked once. The
+// functions are trampolines into host-registered hook fns via g_lock_hooks
+// (aura_jit_runtime.cpp) -- if the host hasn't registered hooks, the
+// calls are no-ops (host has its own locking discipline) and the
+// assertion is on the IR-executor path only.
 extern "C" void aura_lock_workspace_write();
 extern "C" void aura_unlock_workspace_write();
 

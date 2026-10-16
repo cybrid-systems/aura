@@ -6300,27 +6300,27 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
 // ESCAPED: PairSlot allocated from global heap
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
-    // Issue #898 Phase 1: allocate PairSlot *outside* the global write
-    // lock; only the vector publish is critical. Reduces lock hold time
-    // vs malloc-under-lock (full TLS free-list is Phase 2).
-    auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
+    // Issue #898: thread-local slab (one malloc per 64 pairs) and a
+    // release publish into the non-moving segment table. No workspace
+    // write lock on this path. The slab is linked once for process-exit
+    // free; it is not pushed onto g_owned_pair_slots_.
+    auto* slot = aura_pair_tls_bump();
     if (!slot)
         return 0;
     slot->car = car;
     slot->cdr = cdr;
-    aura_lock_workspace_write();
-    int64_t id = static_cast<int64_t>(g_pair_slots.size());
-    g_pair_slots.push_back(slot);
-    g_owned_pair_slots_.push_back(slot);
+    const int64_t id = g_pair_slots.push_back(slot);
+    if (id < 0)
+        return 0;
     // Issue #4057: stamp the owning principal parallel to the slot — the same
     // owner hook the closure table stamps (#4036). set-car!/set-cdr! compare
     // this stamp against the caller principal under the production face
     // before writing the process-level slot (index space is process-shared,
     // so a foreign tenant's JIT pair can land at idx >= pairs_.size()).
+    // push_back already cleared a stale stamp to 0 before the pointer store.
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
-    aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
 
@@ -6344,21 +6344,21 @@ int64_t aura_pair_cdr(int64_t pair_val) {
 // Arena-based pair allocation (for NON_ESCAPING pairs, Phase 2)
 // Allocates PairSlot from TL arena instead of global heap.
 int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
-    // Issue #898: arena alloc outside lock; only publish under lock.
+    // Issue #898: arena memory stays on the TL arena (not the heap slab).
+    // Publish is the same lock-free segment store as aura_alloc_pair.
     auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
     if (!slot)
         return 0;
     slot->car = car;
     slot->cdr = cdr;
-    aura_lock_workspace_write();
-    int64_t id = static_cast<int64_t>(g_pair_slots.size());
-    g_pair_slots.push_back(slot);
+    const int64_t id = g_pair_slots.push_back(slot);
+    if (id < 0)
+        return 0;
     // Issue #4057: same owner-principal stamp as aura_alloc_pair — the arena
     // path publishes into the same process-shared index space.
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
-    aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
 
@@ -6368,30 +6368,30 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
 // publish + g_pair_slot_tenants stamp point as aura_alloc_pair; not a
 // second capability model.
 extern "C" int64_t aura_alloc_pair_tenant(int64_t car, int64_t cdr, int64_t owner_tenant) {
-    auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
+    // Same slab + segment publish as aura_alloc_pair (#898). The explicit
+    // owner replaces the hook stamp; this is not a second capability model.
+    auto* slot = aura_pair_tls_bump();
     if (!slot)
         return 0;
     slot->car = car;
     slot->cdr = cdr;
-    aura_lock_workspace_write();
-    int64_t id = static_cast<int64_t>(g_pair_slots.size());
-    g_pair_slots.push_back(slot);
-    g_owned_pair_slots_.push_back(slot);
+    const int64_t id = g_pair_slots.push_back(slot);
+    if (id < 0)
+        return 0;
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = static_cast<std::uint64_t>(owner_tenant);
-    aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
 
 // L2 specialization: "unchecked" pair access (shape already verified).
 //
-// Issue #1710 (P0): former NO-LOCK raw index into g_pair_slots was a
-// silent UAF under concurrent alloc_pair realloc / free when the JIT
-// L2 defuse check was skipped or raced. Always:
+// Issue #1710 (P0): a raw index into a reallocating vector was a silent
+// UAF when alloc_pair grew g_pair_slots under a reader. Issue #898 makes
+// the table segmented and non-moving: the slot cell is an acquire load,
+// so this path does not take the workspace read lock. Still:
 //   1) optional TLS stamp vs live defuse_version drift → fallback metric
-//   2) workspace read lock (sync with aura_alloc_pair publish)
-//   3) bounds + null-slot check before dereference
+//   2) bounds + null-slot check before dereference
 // On OOB/null, return 0 (same as aura_pair_car) and bump fallback.
 //
 // The shape check (SHAPE_PAIR) is still required at the call site —
@@ -6425,20 +6425,14 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
 // owner hooks. Same pair_field_locked body as the L2 fast path.
 extern "C" int64_t aura_pair_car_checked(int64_t pair_val, std::uint64_t caller_tenant,
                                          int sandbox_mode) {
-    aura_lock_workspace_read();
-    const int64_t result =
-        pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #898: acquire-load of a non-moving segment cell. No read lock.
+    return pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
 }
 
 extern "C" int64_t aura_pair_cdr_checked(int64_t pair_val, std::uint64_t caller_tenant,
                                          int sandbox_mode) {
-    aura_lock_workspace_read();
-    const int64_t result =
-        pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr", caller_tenant, sandbox_mode);
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #898: same lock-free acquire load as aura_pair_car_checked.
+    return pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr", caller_tenant, sandbox_mode);
 }
 
 // Issue #4093: explicit-context unchecked pair field read (#4036 seam shape
@@ -6453,11 +6447,8 @@ extern "C" int64_t aura_pair_car_unchecked_checked(int64_t pair_val, std::uint64
         if (cur != g_tls_pair_l2_defuse_stamp)
             g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
     }
-    aura_lock_workspace_read();
-    const int64_t result =
-        pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #898: segment cell is an acquire load; no workspace read lock.
+    return pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
 }
 
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
@@ -6469,12 +6460,9 @@ int64_t aura_pair_car_unchecked(int64_t pair_val) {
         if (cur != g_tls_pair_l2_defuse_stamp)
             g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
     }
-    aura_lock_workspace_read();
-    const int64_t result =
-        pair_field_locked(pair_val, /*want_car=*/true, "pair-car",
-                          aura_jit_owner_capability_tenant(), aura_jit_owner_sandbox_mode());
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #898: segment cell is an acquire load; no workspace read lock.
+    return pair_field_locked(pair_val, /*want_car=*/true, "pair-car",
+                             aura_jit_owner_capability_tenant(), aura_jit_owner_sandbox_mode());
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
@@ -6484,12 +6472,9 @@ int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
         if (cur != g_tls_pair_l2_defuse_stamp)
             g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
     }
-    aura_lock_workspace_read();
-    const int64_t result =
-        pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr",
-                          aura_jit_owner_capability_tenant(), aura_jit_owner_sandbox_mode());
-    aura_unlock_workspace_read();
-    return result;
+    // Issue #898: segment cell is an acquire load; no workspace read lock.
+    return pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr",
+                             aura_jit_owner_capability_tenant(), aura_jit_owner_sandbox_mode());
 }
 
 // === Primitive call bridge ===
