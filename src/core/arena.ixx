@@ -4511,7 +4511,8 @@ public:
                     // Evaluator still holds in unregistered void** slots.
                     if (has_known_roots_hook()) {
                         // Issue #4396: arm before relocate; clear after publish.
-                        void* inflight_owner = nullptr;
+                        // Issue #4576: arm before the hook publishes pool_ slots.
+                        void* inflight_owner = arena_owner();
                         struct AutoArmInFlight {
                             void*& owner;
                             ~AutoArmInFlight() {
@@ -4519,6 +4520,8 @@ public:
                                     aura::core::densify_consistency::clear_densify_in_flight(owner);
                             }
                         } auto_arm_inflight{inflight_owner};
+                        if (inflight_owner)
+                            aura::core::densify_consistency::arm_densify_in_flight(inflight_owner);
                         invoke_known_roots_hook();
                         // Issue #3884: densify-entry LCP consult before Moving.
                         LiveCompactResult r{};
@@ -4531,10 +4534,6 @@ public:
                             r.moving_blocked_precondition = true;
                             r.pin_contract_held = false;
                         } else {
-                            inflight_owner = arena_owner();
-                            if (inflight_owner)
-                                aura::core::densify_consistency::arm_densify_in_flight(
-                                    inflight_owner);
                             r = live_compact(LiveCompactMode::Moving);
                         }
                         // Issue #4386: rewrite unstable containers before publish.
