@@ -1500,6 +1500,112 @@ static void ac4452_aot_reload_ffi_choke() {
     }
 }
 
+// Issue #4565: reload audit before/after are the Mutation epoch.
+// g_aot_table_epoch stays the registry counter (g_aot_last_commit_epoch).
+// Mid stays join_audit_and_se_mid(0). Soft failure still writes the trail;
+// the deny SE stays the existing production/Full gate.
+static void ac4565_reload_audit_uses_mutation_epoch() {
+    std::println("\n--- #4565: reload audit epoch is the Mutation epoch ---");
+    using aura::compiler::typed_audit::AuditOutcome;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::clear_invariant_deny_se_tls;
+    using aura::compiler::typed_audit::composite_txn_exit;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::join_audit_and_se_mid;
+    using aura::compiler::typed_audit::MutationKind;
+    using aura::compiler::typed_audit::pin_composite_batch_join_mid;
+    using aura::compiler::typed_audit::set_strategy;
+    using aura::compiler::typed_audit::trail_latest;
+    using aura::compiler::typed_audit::TypedMutationAuditEvent;
+    using aura::core::current_mutation_epoch;
+    using aura::core::store_workspace_epoch;
+    using aura::core::WorkspaceEpochKind;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::SecurityEventKind;
+
+    const auto saved_epoch = current_mutation_epoch();
+    const auto saved_strategy = get_strategy();
+    const auto table = aura_aot_func_table_epoch();
+    std::uint64_t mut = 4565001;
+    if (mut == table)
+        mut = table + 17;
+    store_workspace_epoch(WorkspaceEpochKind::Mutation, mut);
+    set_strategy(AuditStrategy::Full);
+    clear_invariant_deny_se_tls();
+    composite_txn_exit();
+    constexpr std::uint64_t kMid = 4565002;
+    CHECK(pin_composite_batch_join_mid(kMid) == kMid, "4565: composite mid pinned");
+    CHECK(join_audit_and_se_mid(0) == kMid, "4565: reload mid join stays the session pin");
+
+    const int saved_retry = aura_aot_reload_auto_retry_enabled();
+    aura_set_aot_reload_auto_retry(0);
+    const auto se_base = g_security_event_ring().seq.load(std::memory_order_acquire);
+    const bool ok = aura_reload_aot_module(nullptr, 0);
+    CHECK(!ok, "4565: null path reload fails");
+    CHECK(aura_aot_func_table_epoch() == table,
+          "4565: null path does not bump the AOT table epoch");
+    CHECK(current_mutation_epoch() == mut, "4565: reload does not bump the Mutation epoch");
+
+    TypedMutationAuditEvent ev{};
+    CHECK(trail_latest(ev), "4565: failure trail row present");
+    CHECK(std::string_view(ev.name) == "aot-hotupdate-null-path", "4565: null-path audit reason");
+    CHECK(ev.kind == MutationKind::AotHotUpdate, "4565: kind AotHotUpdate");
+    CHECK(ev.outcome == AuditOutcome::Error, "4565: outcome Error");
+    CHECK(ev.mutation_id == kMid, "4565: trail mid is join_audit_and_se_mid(0)");
+    CHECK(ev.before_epoch == mut && ev.after_epoch == mut,
+          "4565: audit before/after are the Mutation epoch");
+    CHECK(ev.before_epoch != table, "4565: audit epoch is not the AOT table epoch");
+
+    bool saw = false;
+    const auto& ring = g_security_event_ring();
+    for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.kind != SecurityEventKind::InvariantFail)
+            continue;
+        if (std::string_view(e.op) != "aot-hotupdate-null-path")
+            continue;
+        saw = true;
+        CHECK(e.mutation_id == kMid, "4565: deny SE mid is the session pin");
+        CHECK(e.epoch == mut, "4565: deny SE epoch is the Mutation epoch");
+        CHECK(e.epoch != table, "4565: deny SE epoch is not the AOT table epoch");
+    }
+    CHECK(saw, "4565: Full + pinned mid emits InvariantFail");
+
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto once = br.find("static bool aura_reload_aot_module_for_eval_once");
+    const auto next = br.find("extern \"C\" bool aura_reload_aot_module_for_eval", once);
+    CHECK(once != std::string::npos && next != std::string::npos && next > once,
+          "4565: once-function located");
+    if (once != std::string::npos && next > once) {
+        const auto body = br.substr(once, next - once);
+        CHECK(body.find("current_mutation_epoch()") != std::string::npos,
+              "4565: once-function stamps the Mutation epoch");
+        CHECK(body.find("epoch_before, g_aot_table_epoch") == std::string::npos,
+              "4565: audit no longer takes the table epoch as before");
+        CHECK(body.find("epoch_before, g_aot_last_commit_epoch") == std::string::npos,
+              "4565: success audit no longer takes g_aot_last_commit_epoch");
+        CHECK(body.find("g_aot_last_commit_epoch = g_aot_table_epoch.load") != std::string::npos,
+              "4565: last-commit stats still sample the AOT table epoch");
+        CHECK(body.find("query:4565") == std::string::npos &&
+                  body.find("query:aot-hotupdate-stats") == std::string::npos,
+              "4565: no new or renamed hot-update query key in the reload body");
+    }
+    CHECK(br.find("const std::uint64_t epoch_before = g_aot_table_epoch.load") != std::string::npos,
+          "4565: reemit still samples the table epoch (not this call)");
+    std::ifstream invent("tests/compiler/test_issue_4565.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_4565.cpp");
+    CHECK(!invent.good(), "4565: no tests/compiler/test_issue_4565.cpp (forbidden)");
+
+    aura_set_aot_reload_auto_retry(saved_retry);
+    composite_txn_exit();
+    clear_invariant_deny_se_tls();
+    set_strategy(saved_strategy);
+    store_workspace_epoch(WorkspaceEpochKind::Mutation, saved_epoch);
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -2398,6 +2504,7 @@ int main() {
     ac4387_rollback_restores_previous_jit_fn();
     ac4387_owner_scoped_success_drops_old_cache();
     ac4433_live_mirror_refuses_stale_reload();
+    ac4565_reload_audit_uses_mutation_epoch();
 
     if (::aura::test::g_failed)
         return 1;
