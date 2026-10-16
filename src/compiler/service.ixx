@@ -15439,6 +15439,12 @@ public:
     // for the dirty ∪ relocated cone (#3455) — the same trampoline the
     // production compact drives.
     void public_on_arena_compact_notify() noexcept { on_arena_compact_notify(); }
+    // Issue #4578: fire the ArenaCompact arm for one define. The cone
+    // notify only reaches defines whose IR row is block-dirty.
+    void public_arena_compact_deopt_for_test(const std::string& name) noexcept {
+        on_shape_deopt_hook(shape::make_fn_key(session_id_, name), /*version=*/0,
+                            shape::kShapeDirtyScopeArenaCompact);
+    }
     // Issue #3758: light-link / no-LLVM get_function_ptr is null. Seed a
     // named jit_cache_ hit + counting ScalarFn override so try_jit_execute
     // reaches the execute catalog. Returns how many times ScalarFn ran.
@@ -16630,6 +16636,29 @@ public:
                 ++it;
             }
         }
+    }
+
+    // Issue #4578: shape deopt resolves the bare define (ir_cache_v2_ is
+    // searched first) while the live row is name#pos. A resolved bundle
+    // key (trailing "#<digits>") strips back to the define so this walk
+    // covers both. The native drop takes the closure table then the
+    // workspace write lock, so this window is released before demote.
+    void erase_shape_deopt_bundle_rows_(const std::string& resolved) {
+        std::string bare = resolved;
+        const auto hash = resolved.rfind('#');
+        if (hash != std::string::npos && hash > 0 && hash + 1 < resolved.size()) {
+            bool digits = true;
+            for (std::size_t i = hash + 1; i < resolved.size(); ++i) {
+                if (resolved[i] < '0' || resolved[i] > '9') {
+                    digits = false;
+                    break;
+                }
+            }
+            if (digits)
+                bare.resize(hash);
+        }
+        std::unique_lock cache_write(jit_cache_mtx_);
+        erase_jit_cache_bundle_rows_for_define_(bare);
     }
 
     void evict_jit_cache_after_production_facade_(const std::string& name) {
@@ -18044,6 +18073,11 @@ public:
                     // define. This arm must not return before the native
                     // drop (it previously returned right after the bare
                     // bump, before jit_.invalidate and any drop).
+                    // Issue #4578: name and name# rows go before the drop.
+                    // A surviving row is an epoch hit (this arm does not
+                    // move the mutation epoch) and try_jit republishes
+                    // the dropped ScalarFn. Lock is not held across demote.
+                    erase_shape_deopt_bundle_rows_(name);
                     demote_jit_native_owner_scoped_for_shape_deopt_(name);
                     metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
                     shape_jit_pass::record_incremental_recompile_hit();
@@ -18071,15 +18105,11 @@ public:
                 // Issue #4510: drop the installed ScalarFn BEFORE the
                 // AuraJIT teardown (#4100 — AuraJIT::invalidate erases
                 // fn_trackers_ but does not clear g_jit_fns), and publish
-                // no process C-bridge / Mutation bump. jit_cache_.erase
-                // matches the #3749 facade window (no cache-hit return of
-                // the pre-hook ScalarFn); the drop bumps the define drop
-                // generation so a #4388 cache-hit republish refuses.
-                {
-                    std::unique_lock cache_write(jit_cache_mtx_);
-                    if (jit_cache_.erase(name) > 0)
-                        metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
-                }
+                // no process C-bridge / Mutation bump. The bundle erase
+                // (#4578) drops name and name# so a bare-key miss cannot
+                // leave name#pos epoch-fresh; the drop bumps the define
+                // drop generation so a #4388 cache-hit republish refuses.
+                erase_shape_deopt_bundle_rows_(name);
                 demote_jit_native_owner_scoped_for_shape_deopt_(name);
                 {
                     std::unique_lock cache_write(jit_cache_mtx_);
@@ -18107,11 +18137,9 @@ public:
                 metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
                 shape_jit_pass::record_incremental_recompile_hit();
                 evaluator_.bump_incremental_closure_jit_sync();
-                {
-                    std::unique_lock cache_write(jit_cache_mtx_);
-                    if (jit_cache_.erase(name) > 0)
-                        metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
-                }
+                // Issue #4578: same name / name# walk. The dual-epoch
+                // bump above stays (zero-cost Soft / Off contract).
+                erase_shape_deopt_bundle_rows_(name);
             }
         }
     }

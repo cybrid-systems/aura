@@ -975,6 +975,158 @@ static void ac4510_production_shape_deopt_owner_scoped() {
           "#4510: arena-compact arm test entry present");
 } // ac4510_production_shape_deopt_owner_scoped
 
+// ── Issue #4578: production shape deopt drops name and name# rows ──
+//   ArenaCompact demote left jit_cache_ in place. last_seen_epoch_ still
+//   matched, !has_shape_map hid the version bump, and try_jit republished
+//   the dropped ScalarFn. The production arms bundle-erase before demote.
+//   Soft ArenaCompact still prefers mark-dirty and keeps the dual-epoch bump.
+//   No process C-bridge / table / defuse / mutation bump.
+static int64_t ac4578_F_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 457801;
+}
+static int64_t ac4578_G_fn(int64_t* locals, uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 457802;
+}
+
+static void ac4578_shape_deopt_erases_jit_bundle() {
+    std::println("\n--- #4578: shape deopt erases jit_cache_ bundle rows ---");
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(aura_production_defaults_active_probe() != 0, "4578: production face");
+        cs.public_jit_cache_insert_dummy_for_test("f4578");
+        cs.public_jit_cache_insert_dummy_for_test("f4578#0");
+        cs.public_jit_cache_insert_dummy_for_test("f4578x");
+        cs.public_jit_cache_insert_dummy_for_test("g4578");
+        cs.public_jit_cache_insert_dummy_for_test("g4578#0");
+        CHECK(cs.public_jit_cache_contains("f4578") && cs.public_jit_cache_contains("f4578#0"),
+              "4578: bare and name# rows seeded");
+
+        constexpr int64_t kF = 457810;
+        constexpr int64_t kG = 457820;
+        aura_register_fn(kF, ac4578_F_fn, 1, 0, 0);
+        aura_note_ir_func_define(kF, "f4578");
+        aura_register_fn(kG, ac4578_G_fn, 1, 0, 0);
+        aura_note_ir_func_define(kG, "g4578");
+        const auto cid_f = aura_alloc_closure(kF);
+        CHECK(cid_f >= 0, "4578: live F closure allocated");
+        const bool f_installed = aura_jit_fn_ptr_for_test(kF) != 0;
+        const bool g_installed = aura_jit_fn_ptr_for_test(kG) != 0;
+        if (!f_installed || !g_installed)
+            std::println("  [4578] synthetic native not installed pre-hook (f={} g={})",
+                         f_installed, g_installed);
+
+        const auto bridge0 = aura_get_current_bridge_epoch();
+        const auto table0 = aura_aot_func_table_epoch();
+        const auto defuse0 = aura_get_aot_defuse_version();
+        const auto epoch0 = cs.public_mutation_epoch();
+
+        // Explicit invalidate rides the stability arm (scope 2).
+        cs.invalidate_shape("f4578");
+        CHECK(!cs.public_jit_cache_contains("f4578"), "#4578: explicit arm drops the bare row");
+        CHECK(!cs.public_jit_cache_contains("f4578#0"), "#4578: explicit arm drops the name# row");
+        CHECK(cs.public_jit_cache_contains("f4578x"), "#4578: a longer name is not a bundle row");
+        CHECK(cs.public_jit_cache_contains("g4578"), "#4578: peer bare row stays");
+        CHECK(cs.public_jit_cache_contains("g4578#0"), "#4578: peer name# row stays");
+        if (f_installed) {
+            CHECK(aura_jit_fn_ptr_for_test(kF) == 0, "#4578: explicit arm drops the ScalarFn");
+            CHECK(aura_closure_get_must_deopt(cid_f) == 1, "#4578: live F closure is MustDeopt");
+            std::int64_t args[1] = {0};
+            CHECK(aura_closure_call(cid_f, args, 0) != 457801,
+                  "#4578: post-hook call does not enter the dropped ScalarFn");
+        }
+        if (g_installed)
+            CHECK(aura_jit_fn_ptr_for_test(kG) != 0, "#4578: peer ScalarFn stays installed");
+        CHECK(aura_get_current_bridge_epoch() == bridge0, "#4578: explicit arm freezes C-bridge");
+        CHECK(aura_aot_func_table_epoch() == table0, "#4578: explicit arm freezes the table");
+        CHECK(aura_get_aot_defuse_version() == defuse0, "#4578: explicit arm freezes defuse");
+        CHECK(cs.public_mutation_epoch() == epoch0,
+              "#4578: explicit arm freezes the mutation epoch");
+
+        // ArenaCompact arm. Re-seed after the explicit erase, then fire
+        // scope 3. Rows must be gone again and the ScalarFn must not
+        // come back through the cache.
+        aura_register_fn(kF, ac4578_F_fn, 1, 0, 0);
+        aura_note_ir_func_define(kF, "f4578");
+        cs.public_jit_cache_insert_dummy_for_test("f4578");
+        cs.public_jit_cache_insert_dummy_for_test("f4578#0");
+        CHECK(cs.public_jit_cache_contains("f4578#0"), "4578: name# row re-seeded");
+        const bool f_reinstalled = aura_jit_fn_ptr_for_test(kF) != 0;
+        cs.public_arena_compact_deopt_for_test("f4578");
+        CHECK(!cs.public_jit_cache_contains("f4578"), "#4578: ArenaCompact drops the bare row");
+        CHECK(!cs.public_jit_cache_contains("f4578#0"), "#4578: ArenaCompact drops the name# row");
+        CHECK(cs.public_jit_cache_contains("g4578"), "#4578: compact leaves the peer bare row");
+        CHECK(cs.public_jit_cache_contains("g4578#0"), "#4578: compact leaves the peer name# row");
+        CHECK(cs.public_jit_cache_contains("f4578x"), "#4578: compact leaves the longer name");
+        if (f_reinstalled) {
+            CHECK(aura_jit_fn_ptr_for_test(kF) == 0,
+                  "#4578: ArenaCompact drops the ScalarFn and does not republish it");
+            const auto cid_f2 = aura_alloc_closure(kF);
+            CHECK(cid_f2 >= 0, "4578: post-compact closure allocated");
+            std::int64_t args[1] = {0};
+            CHECK(aura_closure_call(cid_f2, args, 0) != 457801,
+                  "#4578: a closure allocated after compact does not enter the dropped ScalarFn");
+            aura_free_closure(cid_f2);
+        }
+        if (g_installed)
+            CHECK(aura_jit_fn_ptr_for_test(kG) != 0, "#4578: compact leaves the peer ScalarFn");
+        CHECK(aura_get_current_bridge_epoch() == bridge0, "#4578: compact freezes C-bridge");
+        CHECK(aura_aot_func_table_epoch() == table0, "#4578: compact freezes the table");
+        CHECK(aura_get_aot_defuse_version() == defuse0, "#4578: compact freezes defuse");
+        CHECK(cs.public_mutation_epoch() == epoch0, "#4578: compact freezes the mutation epoch");
+        CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+              "#4578: compact demotion stamps would_allow_native=false");
+        aura_free_closure(cid_f);
+    }
+    apply_dev_audit_defaults();
+
+    std::println("\n--- #4578: Soft ArenaCompact keeps the rows and the bump ---");
+    {
+        CompilerService cs;
+        cs.public_jit_cache_insert_dummy_for_test("s4578");
+        cs.public_jit_cache_insert_dummy_for_test("s4578#0");
+        const auto bridge_soft0 = aura_get_current_bridge_epoch();
+        cs.public_arena_compact_deopt_for_test("s4578");
+        CHECK(cs.public_jit_cache_contains("s4578"), "#4578: Soft ArenaCompact keeps the bare row");
+        CHECK(cs.public_jit_cache_contains("s4578#0"),
+              "#4578: Soft ArenaCompact keeps the name# row");
+        CHECK(aura_get_current_bridge_epoch() != bridge_soft0,
+              "#4578: Soft ArenaCompact still publishes the historical C-bridge bump");
+    }
+
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto arm = ixx.find("if (dirty_scope == shape::kShapeDirtyScopeArenaCompact)");
+    CHECK(arm != std::string::npos, "4578: ArenaCompact arm present");
+    if (arm != std::string::npos) {
+        const auto prod = ixx.find("erase_shape_deopt_bundle_rows_(name)", arm);
+        const auto demote = ixx.find("demote_jit_native_owner_scoped_for_shape_deopt_(name)", arm);
+        const auto soft = ixx.find("} else {", demote);
+        const auto ret = ixx.find("\n            return;", soft);
+        CHECK(prod != std::string::npos && demote != std::string::npos &&
+                  soft != std::string::npos && ret != std::string::npos && prod < demote &&
+                  demote < soft,
+              "#4578: production compact erases the bundle before demote");
+        if (soft != std::string::npos && ret != std::string::npos && ret > soft) {
+            const auto soft_body = ixx.substr(soft, ret - soft);
+            CHECK(soft_body.find("erase_shape_deopt_bundle_rows_") == std::string::npos,
+                  "#4578: Soft ArenaCompact does not erase jit_cache_");
+            CHECK(soft_body.find("bump_bridge_epoch()") != std::string::npos,
+                  "#4578: Soft ArenaCompact keeps the dual-epoch bump");
+        }
+        const auto stab = ixx.find("erase_shape_deopt_bundle_rows_(name)", ret);
+        const auto stab_demote =
+            ixx.find("demote_jit_native_owner_scoped_for_shape_deopt_(name)", ret);
+        CHECK(stab != std::string::npos && stab_demote != std::string::npos && stab < stab_demote,
+              "#4578: stability arm bundle-erases before demote");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4578.cpp").empty(), "4578: no test_issue_4578.cpp");
+    CHECK(ixx.find("query:4578") == std::string::npos, "4578: no query key");
+} // ac4578_shape_deopt_erases_jit_bundle
+
 } // namespace
 
 int run_test_shape_storm_partial_relower() {
@@ -988,6 +1140,7 @@ int run_test_shape_storm_partial_relower() {
     // demotion contract executes even where that pre-existing block
     // fails closed (see #3986 cache-define gate in restricted envs).
     ac4510_production_shape_deopt_owner_scoped();
+    ac4578_shape_deopt_erases_jit_bundle();
     ac3986_shape_flip_empty_persist_forces_full();
     ac4157_shape_flip_stale_persist_fails_closed();
     ac4091_shape_flip_dirty_cone();
