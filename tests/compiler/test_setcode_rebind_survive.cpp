@@ -435,7 +435,7 @@ static void ac7_3602_ffi_densify_refuse() {
                      cid_r && is_int(*cid_r) ? as_int(*cid_r) : -999);
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-b: c-func registered");
         // Issue #4532: the c-func id carries the FFI namespace bit.
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
         ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(ffi_cid, args);
@@ -471,7 +471,7 @@ static void ac7_3602_ffi_densify_refuse() {
                      cid_r.has_value(), cid_r && is_closure(*cid_r), cid_r && is_int(*cid_r),
                      cid_r && is_int(*cid_r) ? as_int(*cid_r) : -999);
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-c: opaque fn registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         auto op_r = cs.eval(std::format(
             "(c-opaque {})", static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(old))));
         CHECK(op_r && aura::compiler::types::is_opaque(*op_r), "3602 AC-c: stale opaque created");
@@ -491,7 +491,7 @@ static void ac7_3602_ffi_densify_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-d: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-d: c-func registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(ffi_cid, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
@@ -504,7 +504,7 @@ static void ac7_3602_ffi_densify_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-e: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-e: c-func registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(ffi_cid, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
@@ -517,7 +517,7 @@ static void ac7_3602_ffi_densify_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-f: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-f: c-func registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(ffi_cid, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
@@ -562,7 +562,7 @@ static void ac8_3634_per_eval_lcp_consult() {
     CHECK(cs_b.eval("(require \"std/ffi\")").has_value(), "3634 AC2: B require std/ffi");
     auto cid_b = cs_b.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
     CHECK(cid_b && is_closure(*cid_b), "3634 AC2: B c-func registered");
-    const auto ffi_cid_b = types::as_closure_id(*cid_b);
+    const auto ffi_cid_b = aura::compiler::types::as_closure_id(*cid_b);
     const void* b_id = static_cast<const void*>(&cs_b.evaluator());
     lcp::stamp_lifetime_consistency_proof_for(b_id, lcp::make_lifetime_consistency_proof());
 
@@ -572,7 +572,7 @@ static void ac8_3634_per_eval_lcp_consult() {
     CHECK(cs_a.eval("(require \"std/ffi\")").has_value(), "3634 AC2: A require std/ffi");
     auto cid_a = cs_a.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
     CHECK(cid_a && is_closure(*cid_a), "3634 AC2: A c-func registered");
-    const auto ffi_cid_a = types::as_closure_id(*cid_a);
+    const auto ffi_cid_a = aura::compiler::types::as_closure_id(*cid_a);
     const void* a_id = static_cast<const void*>(&cs_a.evaluator());
     {
         auto p = lcp::make_lifetime_consistency_proof();
@@ -585,7 +585,7 @@ static void ac8_3634_per_eval_lcp_consult() {
     CHECK(cs_c.eval("(require \"std/ffi\")").has_value(), "3634 AC2: C require std/ffi");
     auto cid_c = cs_c.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
     CHECK(cid_c && is_closure(*cid_c), "3634 AC2: C c-func registered");
-    const auto ffi_cid_c = types::as_closure_id(*cid_c);
+    const auto ffi_cid_c = aura::compiler::types::as_closure_id(*cid_c);
 
     // Neutral window holder: a fresh evaluator binds the production window
     // WITHOUT touching the A/B/C per-eval LCP slots under test.
@@ -1375,7 +1375,7 @@ static void ac13_3678_ffi_pointer_class_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3678 AC1: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3678 AC1: int fn registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         std::array<aura::compiler::types::EvalValue, 1> iargs{
             make_int(static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(old)))};
         ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
@@ -1393,7 +1393,7 @@ static void ac13_3678_ffi_pointer_class_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3678 AC2: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3678 AC2: int fn registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         void* libc = std::malloc(32);
         CHECK(libc != nullptr, "3678 AC2: libc buffer allocated");
         std::array<aura::compiler::types::EvalValue, 1> largs{
@@ -1411,7 +1411,7 @@ static void ac13_3678_ffi_pointer_class_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3678 Soft: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3678 Soft: int fn registered");
-        const auto ffi_cid = types::as_closure_id(*cid_r);
+        const auto ffi_cid = aura::compiler::types::as_closure_id(*cid_r);
         MovingFlagGuard on(1);
         auto& ar = cs.evaluator().test_arena();
         auto* p = ar.create<Pod16>(1, 2, 3, 4);
