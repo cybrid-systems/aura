@@ -233,13 +233,18 @@ def check_eval_result(bench: BenchCase, result: dict) -> bool:
     if result.get("returncode", 0) != 0:
         return False
     out = result.get("stdout", "")
+    if "parse error" in out:
+        return False
+    # Issue #4463: a case may require the type-mismatch stderr line.
+    # That line contains "error:" and is the pass condition, not a crash.
+    # A silent coerced integer no longer satisfies coerce_arith.
+    if bench.expected_err:
+        return bench.expected_err in result.get("stderr", "")
     if "error:" in result.get("stderr", ""):
         if "coercion" in result.get("stderr", ""):
             pass
         else:
             return False
-    if "parse error" in out:
-        return False
     if bench.expected_val is None:
         return len(out) > 0
     out_lines = out.strip().split("\n")

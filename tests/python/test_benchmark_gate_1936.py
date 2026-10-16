@@ -159,6 +159,32 @@ class BenchmarkGate1936(unittest.TestCase):
         result_to = dict(result, returncode=-1, timed_out=True)
         self.assertFalse(m.check_eval_result(bench, result_to))
 
+    def test_4463_coerce_benchmark_oracles(self) -> None:
+        """#4463/#4472: string is not an arithmetic operand; non-string length is 0."""
+        m = self.m
+        cases = {c.name: c for c in m.load_benchmark_cases()}
+        arith = cases["coerce_arith"]
+        self.assertEqual(arith.expected_err, "type mismatch")
+        self.assertIsNone(arith.expected_val)
+        mismatch = {
+            "stdout": "<error>",
+            "stderr": "error: type mismatch — expected Int, got String '2'",
+            "returncode": 0,
+            "timed_out": False,
+        }
+        self.assertTrue(m.check_eval_result(arith, mismatch))
+        self.assertFalse(m.check_eval_result(arith, dict(mismatch, returncode=1)))
+        self.assertFalse(
+            m.check_eval_result(
+                arith,
+                {"stdout": "3", "stderr": "", "returncode": 0, "timed_out": False},
+            )
+        )
+        slen = cases["coerce_str_len"]
+        self.assertEqual(slen.expected_val, 0)
+        self.assertTrue(m.check_eval_result(slen, {"stdout": "0", "stderr": "", "returncode": 0, "timed_out": False}))
+        self.assertFalse(m.check_eval_result(slen, {"stdout": "5", "stderr": "", "returncode": 0, "timed_out": False}))
+
     def test_4268_measure_pipeline_records_returncode(self) -> None:
         """Issue #4268: measure_pipeline keeps returncode/timed_out fields."""
         m = self.m
