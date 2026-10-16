@@ -3998,16 +3998,21 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
         static_cast<std::uint8_t>(CrossWorkspaceReject::None), std::memory_order_release);
 
     bump_reload_attempt();
-    // Issue #1271: capture pre-reload epoch so failed paths never
-    // advance table generation (atomic rollback of partial register).
-    // Also used as TypedMutationAudit before_epoch (#1882).
-    const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
+    // Issue #1271: capture pre-reload table generation so a failed path
+    // never advances it (atomic rollback of a partial register).
+    // Issue #4565: TypedMutationAudit before/after and the deny SE epoch
+    // are current_mutation_epoch(). This counter stays the AOT registry
+    // generation (hot-update stats / g_aot_last_commit_epoch). Mid stays
+    // join_audit_and_se_mid(0) inside capture_aot_hotupdate_audit.
+    const std::uint64_t table_epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
+    auto audit_mut_epoch = []() noexcept { return ::aura::core::current_mutation_epoch(); };
     auto audit_fail = [&](std::string_view reason) {
-        // Issue #3217: Error after the swap is refused (epoch not advanced).
-        // Success is only captured after commit below — never Success-then-rollback.
+        // Issue #3217: never Success-then-rollback. Error after the
+        // swap is refused (table epoch not advanced). Success is captured
+        // only after commit below.
+        const auto mut = audit_mut_epoch();
         aura::compiler::typed_audit::capture_aot_hotupdate_audit(
-            /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
-            reason);
+            /*success=*/false, mut, mut, reason);
     };
     // Issue #2178: hard guard for cross-workspace / cross-COW hot-update.
     // The MVP scope (#1943) documents single-workspace; this explicit reject
@@ -4043,18 +4048,22 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
             aura_cross_workspace_hot_update_rejected_increment();
             g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Other),
                                             std::memory_order_release);
-            aura::compiler::typed_audit::capture_aot_hotupdate_audit(
-                /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
-                "cross-COW cow_gen mismatch");
+            {
+                const auto mut = audit_mut_epoch();
+                aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+                    /*success=*/false, mut, mut, "cross-COW cow_gen mismatch");
+            }
             // Issue #3025: public reload fail stamps would_allow_native=false.
             note_reload_rollback(AotReloadFail::Other);
             return false;
         }
         // Issue #1882: audit the rejected cross-workspace attempt so Agent
         // diagnostics can attribute the failure to the right eval context.
-        aura::compiler::typed_audit::capture_aot_hotupdate_audit(
-            /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
-            "cross-workspace hot-update rejected");
+        {
+            const auto mut = audit_mut_epoch();
+            aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+                /*success=*/false, mut, mut, "cross-workspace hot-update rejected");
+        }
         // Issue #3025: public reload fail stamps would_allow_native=false.
         note_reload_rollback(AotReloadFail::Other);
         return false;
@@ -4127,8 +4136,8 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
         clear_aot_staging();
         ::dlclose(handle);
         aura_unlock_workspace_write();
-        // Epoch must remain epoch_before (no commit_func_table_swap).
-        (void)epoch_before;
+        // Table epoch must remain table_epoch_before (no commit_func_table_swap).
+        (void)table_epoch_before;
         // Issue #2093: per-reason rollback (was no-arg before).
         note_reload_rollback(reason);
         audit_fail(audit_reason);
@@ -4318,8 +4327,12 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Ok),
                                     std::memory_order_release);
     // Issue #1882: TypedMutationAudit trail for successful hot-update (sampled).
-    aura::compiler::typed_audit::capture_aot_hotupdate_audit(
-        /*success=*/true, epoch_before, g_aot_last_commit_epoch, "aot-hotupdate");
+    // Issue #4565: before/after are the Mutation epoch, not g_aot_last_commit_epoch.
+    {
+        const auto mut = audit_mut_epoch();
+        aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+            /*success=*/true, mut, mut, "aot-hotupdate");
+    }
     return true;
 }
 
