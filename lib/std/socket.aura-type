@@ -1,6 +1,6 @@
 tcp-connect: Any Any -> Any
 tcp-send: Any Any -> Void
-tcp-recv: Any Any -> String
+tcp-recv: Any Any ... -> String
 tcp-close: Any -> Void
 tcp-listen: Any -> Any
 tcp-local-port: Any -> Any
