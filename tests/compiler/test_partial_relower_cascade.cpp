@@ -49,6 +49,8 @@ using aura::compiler::set_incremental_soundness_mode;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
 using aura::compiler::should_partial_relower_impact_checked;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
@@ -1007,6 +1009,131 @@ static void ac4083_drop_native_after_partial_relower() {
     aura_free_closure(cid);
 }
 
+// Issue #4577: mark_all_defines_dirty leaves name# jit rows epoch-fresh,
+// and the full relower stores new IR without dropping them. Production
+// mark_all bundle-erases and drops each dirty define. Soft keeps the rows.
+extern "C" std::uint64_t aura_get_current_bridge_epoch(void);
+extern "C" std::uint64_t aura_aot_func_table_epoch(void);
+extern "C" std::uint64_t aura_get_aot_defuse_version(void);
+extern "C" void aura_register_fn(std::int64_t func_id,
+                                 std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                 std::int32_t local_count, std::int32_t arg_count,
+                                 std::int32_t env_count);
+extern "C" void aura_note_ir_func_define(std::int64_t func_id, const char* name);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
+extern "C" int aura_production_defaults_active_probe(void) noexcept;
+
+static std::int64_t ac4577_F_fn(std::int64_t* locals, std::uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 457701;
+}
+static std::int64_t ac4577_G_fn(std::int64_t* locals, std::uint32_t argc) {
+    (void)locals;
+    (void)argc;
+    return 457702;
+}
+
+static void ac4577_mark_all_drops_jit_bundle() {
+    std::println("\n--- #4577: mark_all drops jit bundle rows and the old ScalarFn ---");
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(aura_production_defaults_active_probe() != 0, "4577: production face");
+        cs.public_seed_define_cache_shell_for_test("f4577");
+        cs.public_jit_cache_insert_dummy_for_test("f4577");
+        cs.public_jit_cache_insert_dummy_for_test("f4577#0");
+        cs.public_jit_cache_insert_dummy_for_test("f4577x");
+        cs.public_jit_cache_insert_dummy_for_test("g4577");
+        cs.public_jit_cache_insert_dummy_for_test("g4577#0");
+
+        constexpr std::int64_t kF = 457710;
+        constexpr std::int64_t kG = 457720;
+        aura_register_fn(kF, ac4577_F_fn, 1, 0, 0);
+        aura_note_ir_func_define(kF, "f4577");
+        aura_register_fn(kG, ac4577_G_fn, 1, 0, 0);
+        aura_note_ir_func_define(kG, "g4577");
+        const auto cid = aura_alloc_closure(kF);
+        CHECK(cid >= 0, "4577: live closure allocated");
+        const bool f_on = aura_jit_fn_ptr_for_test(kF) != 0;
+        const bool g_on = aura_jit_fn_ptr_for_test(kG) != 0;
+
+        const auto bridge0 = aura_get_current_bridge_epoch();
+        const auto table0 = aura_aot_func_table_epoch();
+        const auto defuse0 = aura_get_aot_defuse_version();
+        const auto epoch0 = cs.public_mutation_epoch();
+        cs.mark_all_defines_dirty();
+
+        CHECK(!cs.public_jit_cache_contains("f4577"), "#4577: mark_all drops the bare row");
+        CHECK(!cs.public_jit_cache_contains("f4577#0"), "#4577: mark_all drops the name# row");
+        CHECK(cs.public_jit_cache_contains("f4577x"), "#4577: a longer name is not a bundle row");
+        CHECK(cs.public_jit_cache_contains("g4577"), "#4577: peer bare row stays");
+        CHECK(cs.public_jit_cache_contains("g4577#0"), "#4577: peer name# row stays");
+        if (f_on) {
+            CHECK(aura_jit_fn_ptr_for_test(kF) == 0, "#4577: mark_all drops the ScalarFn");
+            CHECK(aura_closure_get_must_deopt(cid) == 1, "#4577: live closure is MustDeopt");
+        }
+        if (g_on)
+            CHECK(aura_jit_fn_ptr_for_test(kG) != 0, "#4577: peer ScalarFn stays");
+        CHECK(aura_get_current_bridge_epoch() == bridge0, "#4577: mark_all freezes C-bridge");
+        CHECK(aura_aot_func_table_epoch() == table0, "#4577: mark_all freezes the table");
+        CHECK(aura_get_aot_defuse_version() == defuse0, "#4577: mark_all freezes defuse");
+        CHECK(cs.public_mutation_epoch() == epoch0, "#4577: mark_all freezes the mutation epoch");
+        if (cid >= 0)
+            aura_free_closure(cid);
+    }
+    apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        cs.public_seed_define_cache_shell_for_test("s4577");
+        cs.public_jit_cache_insert_dummy_for_test("s4577");
+        cs.public_jit_cache_insert_dummy_for_test("s4577#0");
+        cs.mark_all_defines_dirty();
+        CHECK(cs.public_jit_cache_contains("s4577"), "#4577: Soft mark_all keeps the bare row");
+        CHECK(cs.public_jit_cache_contains("s4577#0"), "#4577: Soft mark_all keeps the name# row");
+    }
+
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto mall = dirty.find("void CompilerService::mark_all_defines_dirty()");
+    CHECK(mall != std::string::npos, "4577: mark_all lives in service_dirty.cpp");
+    if (mall != std::string::npos) {
+        const auto mwin = dirty.substr(mall, 4000);
+        const auto probe = mwin.find("aura_production_defaults_active_probe()");
+        const auto erase = mwin.find("erase_jit_cache_bundle_rows_for_define_");
+        const auto drop = mwin.find("aura_drop_jit_fn_native_for_define");
+        // The #1999 comment names invalidate_all() before the call. The
+        // call that must stay after the drop is jit_.invalidate_all().
+        const auto inv = drop == std::string::npos ? std::string::npos
+                                                   : mwin.find("jit_.invalidate_all()", drop);
+        CHECK(probe != std::string::npos && erase != std::string::npos &&
+                  drop != std::string::npos && inv != std::string::npos && probe < erase &&
+                  erase < drop && drop < inv,
+              "#4577: production mark_all bundle-erases and drops before invalidate_all");
+    }
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto note = ixx.find("Issue #4577: full relower stores new IR");
+    CHECK(note != std::string::npos, "4577: store_define_v2 cites the bundle drop");
+    if (note != std::string::npos) {
+        const auto erase = ixx.find("erase_jit_cache_bundle_rows_for_define_(name)", note);
+        const auto reemit = ixx.find("decide_and_reemit", note);
+        CHECK(erase != std::string::npos && reemit != std::string::npos && erase < reemit,
+              "#4577: full store drops the bundle before reemit");
+    }
+    const auto cite = ixx.find("Issue #4083: partial_recompile only removes");
+    CHECK(cite != std::string::npos, "4577: partial success arm still cited");
+    if (cite != std::string::npos) {
+        const auto pwin = ixx.substr(cite, 1400);
+        CHECK(pwin.find("erase_jit_cache_bundle_rows_for_define_(name)") != std::string::npos,
+              "#4577: partial arm bundle-erases name# rows");
+        CHECK(pwin.find("jit_cache_.erase") != std::string::npos, "4577: #4083 bare erase stays");
+        CHECK(pwin.find("production_defaults") == std::string::npos,
+              "4577: partial teardown is not a production gate");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4577.cpp").empty(), "4577: no test_issue_4577.cpp");
+    CHECK(ixx.find("query:4577") == std::string::npos, "4577: no query key");
+}
+
 static void ac3892_4_no_invent() {
     std::println("\n--- #3892 AC4: no invent / no old key rename ---");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
@@ -1051,6 +1178,7 @@ int run_test_partial_relower_cascade() {
     ac3892_3_fail_closed_full_unchanged();
     ac3892_4_no_invent();
     ac4083_drop_native_after_partial_relower();
+    ac4577_mark_all_drops_jit_bundle();
     if (g_failed)
         return 1;
     std::println("partial re-lower cascade (#2041/#3550/#3584/#3656/#3892/#4083): OK ({} passed)",

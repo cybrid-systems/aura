@@ -5981,24 +5981,20 @@ public:
         // mutation boundary so the exit defuse bump can be acknowledged.
         restamp_cache_entry_live_(entry, sampled_mut_epoch, name);
         ack_peer_ir_stale_on_restamp_(entry, name);
-        // Issue #3136: success-path bitmap coherence — stamp residual force
-        // region for the just-restamped define so residual_force_mask()
-        // shrinks for the covered region (under production + named residual
-        // bits). Soft / Off: caller gated via production_defaults_active →
-        // zero extra work (hash + one load + branch).
+        // Issue #3136: residual-force bitmap. Soft / Off skips this probe.
         if (aura_production_defaults_active_probe() != 0) {
             hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));
-            // Issue #3229: define-id side set so a 6-bit collision does
-            // not cover a peer. Soft skipped by the probe above.
+            // Issue #3229: define-id side set (6-bit collision).
             hot_update_registry().note_relower_success_define(relower_success_define_id(name));
-            // Issue #3513: stored irs are the content epoch — drop the
-            // native-untrusted latch and reemit through the same facade
-            // so AOT/native can promote against this store, not the
-            // pre-mutate emit. Soft skipped by the probe above.
+            // Issue #3513: clear the native-untrusted latch before reemit.
             hot_update_registry().note_ir_content_stored_for_native();
-            // Issue #3751: feed the production dirty ring and stamp
-            // reemit-owner TLS so decide_and_reemit is not n==0 /
-            // owner-missing. Untrusted latch is already cleared.
+            // Issue #4577: full relower stores new IR before reemit.
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                erase_jit_cache_bundle_rows_for_define_(name);
+            }
+            aura_drop_jit_fn_native_for_define(name.c_str());
+            // Issue #3751: decide_and_reemit after the dirty-ring push.
             struct ReemitEvalOwnerGuard {
                 void* prev_reemit;
                 void* prev_reg;
@@ -7778,6 +7774,8 @@ public:
                                 if (jit_cache_.erase(name) > 0)
                                     metrics_.jit_cache_evictions.fetch_add(
                                         1, std::memory_order_relaxed);
+                                // Issue #4577: the bare erase leaves name#pos.
+                                erase_jit_cache_bundle_rows_for_define_(name);
                             }
                             aura_drop_jit_fn_native_for_define(name.c_str());
                             (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
@@ -15444,6 +15442,10 @@ public:
     void public_arena_compact_deopt_for_test(const std::string& name) noexcept {
         on_shape_deopt_hook(shape::make_fn_key(session_id_, name), /*version=*/0,
                             shape::kShapeDirtyScopeArenaCompact);
+    }
+    // Issue #4577: empty v2 row so mark_all_defines_dirty sees the name.
+    void public_seed_define_cache_shell_for_test(const std::string& name) {
+        ir_cache_v2_.try_emplace(name);
     }
     // Issue #3758: light-link / no-LLVM get_function_ptr is null. Seed a
     // named jit_cache_ hit + counting ScalarFn override so try_jit_execute

@@ -895,6 +895,21 @@ void CompilerService::mark_all_defines_dirty() {
         ++dirty_n;
     }
     if (dirty_n > 0) {
+        // Issue #4577: a second set-code does not move the mutation epoch,
+        // so name# jit_cache_ rows stay epoch-hits and try_jit republishes
+        // the pre-replace ScalarFn. Bundle-erase and drop each dirty
+        // define. The cache lock is not held across the native drop. No
+        // process C-bridge / table / mutation bump. Soft / Off skips this
+        // and keeps the bulk invalidate_all below.
+        if (aura_production_defaults_active_probe() != 0) {
+            for (const auto& n : dirty_names) {
+                {
+                    std::unique_lock cache_write(jit_cache_mtx_);
+                    erase_jit_cache_bundle_rows_for_define_(n);
+                }
+                aura_drop_jit_fn_native_for_define(n.c_str());
+            }
+        }
         const auto evicted = jit_.invalidate_all();
         metrics_.jit_hotswap_invalidate_total.fetch_add(evicted > 0 ? evicted : dirty_n,
                                                         std::memory_order_relaxed);
