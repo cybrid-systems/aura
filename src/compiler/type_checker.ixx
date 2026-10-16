@@ -4146,8 +4146,15 @@ public:
         , cache_epoch_(cache_epoch) {}
 
     void visit_mutation(aura::ast::FlatAST& flat, const aura::ast::MutationRecord& rec) {
-        if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)
+        if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked) {
+            // Issue #4539: a stamped Warnings is the first audit's verdict —
+            // the Full partial recovery re-runs the audit on the same log,
+            // and the second pass must not LOSE the stamped deny (the old
+            // bare skip flipped type_ok green on the re-run).
+            if (rec.invariant_status == aura::ast::InvariantStatus::Warnings)
+                worst_ = aura::ast::InvariantStatus::Warnings;
             return;
+        }
         std::vector<OwnershipNote> notes;
         auto st =
             post_mutation_invariant_check(flat, pool_, reg_, rec, notes, metrics_, cache_epoch_);
