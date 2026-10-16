@@ -1936,7 +1936,9 @@ struct AgentHandle {
             // Release our outstanding reservation before adopting o's.
             // Issue #3012: finish deferred Reclaimed cleanup first.
             finish_reclaimed_cleanup_on_dtor();
-            if (liveness)
+            // Issue #4562: overwriting a proxy releases the proxy, not the
+            // source. The shared AgentLiveness stays under the source handle.
+            if (liveness && !import_proxy)
                 liveness->helper_stop.store(true, std::memory_order_release);
             id = o.id;
             name = std::move(o.name);
@@ -2017,7 +2019,9 @@ struct AgentHandle {
         // here so a still-running body is not misreported as Done by
         // watch_agent_liveness. No join in dtor (same as body fiber) —
         // join_agent / scope joins helper. Prefer helper_stop over cancel.
-        if (liveness)
+        // Issue #4562: import_proxy shares the source AgentLiveness. Dropping
+        // the proxy must not park the source helper and must not set body_done.
+        if (liveness && !import_proxy)
             liveness->helper_stop.store(true, std::memory_order_release);
         keepalive_active = false;
         keepalive_helper = nullptr;
@@ -4795,7 +4799,9 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
                 h.producer_throttled = true;
                 // Throttle semantics (#2887 sibling): cooperative helper_stop
                 // only — no body cancel and no mailbox detach (AC4).
-                if (h.liveness)
+                // Issue #4562: proxy throttle is local. Do not park the
+                // source keepalive helper on the shared liveness.
+                if (h.liveness && !h.import_proxy)
                     h.liveness->helper_stop.store(true, std::memory_order_release);
                 g_orch_module_stats.agent_producer_throttle_enter_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -5179,7 +5185,9 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
                     from->producer_throttled = true;
                     // Throttle semantics (#2887): cooperative helper_stop
                     // only — no body cancel and no mailbox detach.
-                    if (from->liveness)
+                    // Issue #4562: proxy throttle is local. Do not park the
+                    // source keepalive helper on the shared liveness.
+                    if (from->liveness && !from->import_proxy)
                         from->liveness->helper_stop.store(true, std::memory_order_release);
                     g_orch_module_stats.agent_producer_throttle_enter_total.fetch_add(
                         1, std::memory_order_relaxed);

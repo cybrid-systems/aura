@@ -7534,6 +7534,126 @@ int run_test_join_drain_reclaim() {
         }
     }
 
+    // ── #4562: proxy dtor / throttle must not park the source helper ──
+    {
+        using aura::orch::agent_import_handoff;
+        using aura::orch::agent_reply;
+        using aura::orch::agent_send;
+        using aura::orch::AgentLiveness;
+        using aura::orch::HandoffToken;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        std::println("\n--- #4562: import proxy does not stop the source helper ---");
+        auto live = std::make_shared<AgentLiveness>();
+        auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        mb->set_bp_scope_id("tenant-a");
+        MailMessage fill;
+        fill.payload = "full";
+        CHECK(mb->push(std::move(fill)) == PushStatus::Ok, "4562: mailbox filled to high water");
+
+        Scheduler sched(1);
+        Fiber* raw = sched.spawn([] {});
+        CHECK(raw != nullptr, "4562: fiber for the import proxy");
+
+        AgentHandle src;
+        src.ok = true;
+        src.id = raw->id();
+        src.fiber = raw;
+        src.mailbox = mb;
+        src.liveness = live;
+        src.producer_bp_budget = 1;
+
+        auto make_proxy = [&]() {
+            HandoffToken tok;
+            tok.mailbox = mb;
+            tok.fiber = raw;
+            tok.liveness = live;
+            tok.producer_bp_budget = 1;
+            return agent_import_handoff(std::move(tok), nullptr, sched);
+        };
+
+        {
+            auto proxy = make_proxy();
+            CHECK(proxy.ok && proxy.import_proxy, "4562: proxy stamped");
+            CHECK(proxy.liveness.get() == live.get(), "4562: proxy shares source liveness");
+            AgentHandle drop = std::move(proxy);
+            CHECK(drop.import_proxy, "4562: moved proxy stays a proxy");
+        }
+        CHECK(!live->helper_stop.load(std::memory_order_acquire),
+              "4562: proxy dtor does not store helper_stop");
+        CHECK(!live->body_done.load(std::memory_order_acquire),
+              "4562: proxy dtor does not set body_done");
+
+        {
+            auto slot = make_proxy();
+            AgentHandle repl;
+            slot = std::move(repl);
+        }
+        CHECK(!live->helper_stop.load(std::memory_order_acquire),
+              "4562: move-assign over a proxy does not store helper_stop");
+
+        auto proxy = make_proxy();
+        MailMessage bp;
+        bp.payload = "bp";
+        CHECK(agent_send(proxy, std::move(bp)) == PushStatus::Backpressure,
+              "4562: proxy send hits backpressure");
+        CHECK(proxy.producer_throttled, "4562: proxy throttle is local");
+        CHECK(!src.producer_throttled, "4562: source handle did not throttle");
+        CHECK(!live->helper_stop.load(std::memory_order_acquire),
+              "4562: proxy send throttle does not store helper_stop");
+
+        auto reply_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+        MailMessage pre;
+        pre.payload = "pre";
+        CHECK(reply_mb->push(std::move(pre)) == PushStatus::Ok, "4562: reply mailbox filled");
+        proxy.producer_throttled = false;
+        proxy.consecutive_bp_count = 0;
+        auto rr = agent_reply(/*corr_id=*/4562001, "body", reply_mb.get(), &proxy);
+        CHECK(std::string_view(rr.status) == "backpressure", "4562: proxy reply hits backpressure");
+        CHECK(proxy.producer_throttled, "4562: proxy reply throttle is local");
+        CHECK(!live->helper_stop.load(std::memory_order_acquire),
+              "4562: proxy reply throttle does not store helper_stop");
+        CHECK(!live->body_done.load(std::memory_order_acquire),
+              "4562: proxy reply throttle does not set body_done");
+
+        auto jr = join_agent(proxy, JoinPolicy{.primary_ms = 10, .drain_ms = 0});
+        CHECK(jr.status == JoinStatus::Invalid, "4562: join_agent(proxy) still Invalid");
+        CHECK(!live->helper_stop.load(std::memory_order_acquire),
+              "4562: proxy join does not store helper_stop");
+        CHECK(!live->body_done.load(std::memory_order_acquire),
+              "4562: proxy join does not set body_done");
+
+        MailMessage src_bp;
+        src_bp.payload = "src";
+        CHECK(agent_send(src, std::move(src_bp)) == PushStatus::Backpressure,
+              "4562: source send hits backpressure");
+        CHECK(src.producer_throttled, "4562: source throttle still arms");
+        CHECK(live->helper_stop.load(std::memory_order_acquire),
+              "4562: source throttle still parks its own helper");
+
+        auto live_owner = std::make_shared<AgentLiveness>();
+        {
+            AgentHandle owner;
+            owner.liveness = live_owner;
+        }
+        CHECK(live_owner->helper_stop.load(std::memory_order_acquire),
+              "4562: non-proxy dtor still stores helper_stop");
+        CHECK(!live_owner->body_done.load(std::memory_order_acquire),
+              "4562: non-proxy dtor still does not set body_done");
+
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn.find("if (liveness && !import_proxy)") != std::string::npos,
+              "4562: dtor and move-assign skip helper_stop on a proxy");
+        CHECK(spawn.find("if (h.liveness && !h.import_proxy)") != std::string::npos,
+              "4562: agent_send throttle skips helper_stop on a proxy");
+        CHECK(spawn.find("if (from->liveness && !from->import_proxy)") != std::string::npos,
+              "4562: agent_reply throttle skips helper_stop on a proxy");
+        CHECK(spawn.find("query:4562") == std::string::npos, "4562: no query:4562");
+        CHECK(read_file("tests/orch/test_issue_4562.cpp").empty(), "4562: no test_issue_4562.cpp");
+    }
+
     // ── #3110: Production C++ join auto-wait (close host-forget window) ──
     // Closes the C++ host contract gap: join_agent / join_agents now perform
     // a short ensure_reclaimed_cleanup (50 ms production default) inline
