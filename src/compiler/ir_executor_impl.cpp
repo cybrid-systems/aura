@@ -890,15 +890,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             return string_heap_[idx];
         return {};
     };
-    // Prints the legacy line and stores a primitive error. False means
-    // there is no evaluator; the caller returns a TypeError diagnostic.
+    // Stores a primitive error. A fresh non-number also prints the legacy
+    // stderr line. False means there is no evaluator; the caller returns
+    // a TypeError diagnostic.
     auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v) -> bool {
         const auto detail =
             aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
-        // Issue #4535: no legacy stderr line here — the prim error VALUE is
-        // stored and propagates, so a try/catch upstream catches it silently
-        // (top-level path parity). Uncaught errors surface through the
-        // runner's error face instead.
+        // Issue #4535: an Error operand (fail-soft f64vector-ref OOB feeding
+        // arith inside try) must not print. A fresh non-number still prints
+        // the legacy line, matching the primitive path (#4463) and the
+        // coerce_arith / blame-add-str stderr contract.
+        if (!is_error(v))
+            std::println(std::cerr, "error: {}", detail);
         if (!context_.evaluator)
             return false;
         locals[slot] = context_.evaluator->make_arith_type_error(detail);
