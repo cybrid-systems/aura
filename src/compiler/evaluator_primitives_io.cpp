@@ -35,6 +35,7 @@ module;
 #include "tenant_host_path.hh"        // #3802 tenant FS path-prefix
 #include "tenant_exec_fs_jail.hh"     // #4413 landlock + stat emulation
 #include "core/provenance_tracker.hh" // #3802 MT active
+#include "core/sandbox.hh"            // #4561 production fd-owner face
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
 #include "core/lifetime_pin.hh" // g_lifetime_pin_stats() for owner-transition counts
@@ -655,6 +656,72 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 #endif // AURA_ENABLE_GIT
 }
 
+// Issue #4561: the process fd table is shared across tenants. Stamp the
+// creating tenant when this process mints an fd. Soft / Off and
+// single-tenant Restricted never touch the map. Restricted+MT and Strict
+// deny recv/send/close/read when the fd is foreign or was not minted here.
+namespace {
+
+    bool fd_owner_face_active(const Evaluator& ev) noexcept {
+        const auto mode = ev.effect_sandbox_mode();
+        if (mode == 0)
+            return false;
+        return mode == 2 || ::aura::core::sandbox::is_strict() ||
+               ::aura::core::provenance::multi_tenant_env_active();
+    }
+
+    struct FdTenantTable {
+        std::mutex mu;
+        std::unordered_map<int, std::uint64_t> owner;
+    };
+
+    FdTenantTable& fd_tenant_table() {
+        static FdTenantTable table;
+        return table;
+    }
+
+    void stamp_minted_fd_tenant(const Evaluator& ev, int fd) {
+        if (!fd_owner_face_active(ev) || fd < 0)
+            return;
+        auto& table = fd_tenant_table();
+        std::lock_guard<std::mutex> lock(table.mu);
+        table.owner[fd] = ev.capability_tenant_id();
+    }
+
+    void erase_minted_fd_tenant(const Evaluator& ev, int fd) {
+        if (!fd_owner_face_active(ev) || fd < 0)
+            return;
+        auto& table = fd_tenant_table();
+        std::lock_guard<std::mutex> lock(table.mu);
+        table.owner.erase(fd);
+    }
+
+    // true: the caller may use fd. false: do not recv, send, close, or read.
+    // A mismatch or an fd this process did not mint emits IsolationDeny and
+    // still returns false when a cross-grant would have allowed the audit.
+    bool minted_fd_tenant_allows(Evaluator& ev, int fd, std::string_view op) {
+        if (!fd_owner_face_active(ev))
+            return true;
+        bool minted = false;
+        std::uint64_t owner = 0;
+        {
+            auto& table = fd_tenant_table();
+            std::lock_guard<std::mutex> lock(table.mu);
+            const auto it = table.owner.find(fd);
+            if (it != table.owner.end()) {
+                minted = true;
+                owner = it->second;
+            }
+        }
+        if (minted && owner == ev.capability_tenant_id())
+            return true;
+        (void)ev.check_workspace_isolation(ev.capability_tenant_id(), minted ? owner : 0,
+                                           /*required_effects=*/0, op);
+        return false;
+    }
+
+} // namespace
+
 void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #4504: environ and self-path reads are host io-read channels.
@@ -997,6 +1064,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         ::fcntl(fd, F_SETFL, flags); // restore blocking
         ::freeaddrinfo(res);
+        stamp_minted_fd_tenant(ev, fd);
         return types::make_int(static_cast<std::int64_t>(fd));
     });
 
@@ -1004,7 +1072,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // Binds 127.0.0.1 (loopback denseness host). port 0 = ephemeral;
     // use (tcp-local-port listener) to discover the assigned port.
     ev.defer_std_host_prim("tcp-listen", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)ev;
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         const auto port = types::as_int(a[0]);
@@ -1027,6 +1094,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             ::close(fd);
             return make_void();
         }
+        stamp_minted_fd_tenant(ev, fd);
         return types::make_int(static_cast<std::int64_t>(fd));
     });
 
@@ -1045,7 +1113,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (tcp-accept listener) → client-fd | ()  — blocking accept.
     ev.defer_std_host_prim("tcp-accept", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)ev;
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto lfd = static_cast<int>(types::as_int(a[0]));
@@ -1059,13 +1126,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         tv.tv_usec = 0;
         ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        stamp_minted_fd_tenant(ev, cfd);
         return types::make_int(static_cast<std::int64_t>(cfd));
     });
 
     // (tcp-accept-timeout listener sec) → client-fd | ()
     // sec is integer seconds (0 = poll once). Uses poll then accept.
     ev.defer_std_host_prim("tcp-accept-timeout", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)ev;
         if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
             return make_void();
         auto lfd = static_cast<int>(types::as_int(a[0]));
@@ -1088,6 +1155,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         tv.tv_usec = 0;
         ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        stamp_minted_fd_tenant(ev, cfd);
         return types::make_int(static_cast<std::int64_t>(cfd));
     });
 
@@ -1098,6 +1166,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = types::as_string_idx(a[1]);
         if (sidx >= ev.string_heap_.size())
             return types::make_int(0);
+        if (!minted_fd_tenant_allows(ev, fd, "tcp-send"))
+            return types::make_int(-1);
         auto& data = ev.string_heap_[sidx];
         auto sent = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
         return types::make_int(static_cast<std::int64_t>(sent));
@@ -1107,6 +1177,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto fd = static_cast<int>(types::as_int(a[0]));
+        if (!minted_fd_tenant_allows(ev, fd, "tcp-recv"))
+            return make_void();
         auto maxlen = static_cast<std::size_t>(
             a.size() >= 2 && types::is_int(a[1]) ? types::as_int(a[1]) : 4096);
         if (maxlen > 65536)
@@ -1124,7 +1196,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     ev.defer_std_host_prim("tcp-close", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
-        ::close(static_cast<int>(types::as_int(a[0])));
+        const auto fd = static_cast<int>(types::as_int(a[0]));
+        if (!minted_fd_tenant_allows(ev, fd, "tcp-close"))
+            return make_void();
+        ::close(fd);
+        erase_minted_fd_tenant(ev, fd);
         return make_void();
     });
 #endif // AURA_ENABLE_TCP
@@ -1189,6 +1265,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         // (sys-open path [flags]) but is never applied to ::open.
         const int flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC;
         int fd = ::open(resolved.c_str(), flags);
+        if (fd >= 0)
+            stamp_minted_fd_tenant(ev, fd);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->sys_open_calls.fetch_add(1, std::memory_order_relaxed);
         return make_int(fd);
@@ -1205,6 +1283,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         int fd = static_cast<int>(as_int(a[0]));
         auto n = as_int(a[1]);
         if (n < 0 || n > 1 << 20)
+            return make_string(ev.push_string_heap(""));
+        // Issue #4561: same owner map as tcp-recv. Do not read a foreign
+        // or unminted fd. The sys-write /proc/self/fd path check stays.
+        if (!minted_fd_tenant_allows(ev, fd, "sys-read"))
             return make_string(ev.push_string_heap(""));
         std::string buf(static_cast<std::size_t>(n), '\0');
         auto got = ::read(fd, buf.data(), static_cast<std::size_t>(n));

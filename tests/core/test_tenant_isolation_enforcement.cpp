@@ -28,6 +28,8 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -8168,6 +8170,215 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_4560.cpp");
         CHECK(!invent.good(), "4560 AC3: no tests/core/test_issue_4560.cpp (forbidden)");
+    }
+
+    // ── Issue #4561: tcp fd tenant stamp ──
+    {
+        std::println("\n--- #4561: minted tcp fds stay with the creating tenant ---");
+        reset_all();
+        using aura::compiler::types::is_void;
+        using aura::compiler::types::make_int;
+        using aura::compiler::types::make_string;
+
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(0);
+        (void)ev_a.ensure_std_host_prims("std/socket");
+        (void)ev_b.ensure_std_host_prims("std/socket");
+        auto listen_a = ev_a.primitives().lookup("tcp-listen");
+        auto port_a = ev_a.primitives().lookup("tcp-local-port");
+        auto accept_a = ev_a.primitives().lookup("tcp-accept");
+        auto send_a = ev_a.primitives().lookup("tcp-send");
+        auto recv_a = ev_a.primitives().lookup("tcp-recv");
+        auto close_a = ev_a.primitives().lookup("tcp-close");
+        auto send_b = ev_b.primitives().lookup("tcp-send");
+        auto recv_b = ev_b.primitives().lookup("tcp-recv");
+        auto close_b = ev_b.primitives().lookup("tcp-close");
+        CHECK(listen_a && port_a && accept_a && send_a && recv_a && close_a && send_b && recv_b &&
+                  close_b,
+              "4561: socket prims installed");
+
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        ev_a.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(7);
+        ev_b.set_capability_tenant_id(42);
+
+        auto& ring = g_security_event_ring();
+        auto saw_op = [&](std::uint64_t se_base, std::string_view op, std::uint64_t tenant) {
+            bool saw = false;
+            const auto expect_epoch = aura::core::current_mutation_epoch();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.op) != op)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == tenant, "4561: IsolationDeny tenant is the caller");
+                CHECK(e.epoch == expect_epoch, "4561: IsolationDeny epoch is the Mutation epoch");
+                CHECK(e.denied, "4561: IsolationDeny row is denied");
+            }
+            return saw;
+        };
+
+        int lfd = -1;
+        int cfd = -1;
+        int raw = -1;
+        if (listen_a && port_a && accept_a && send_a && recv_a && close_a && send_b && recv_b &&
+            close_b) {
+            const auto listened = (*listen_a)({make_int(0)});
+            CHECK(is_int(listened) && as_int(listened) >= 0,
+                  "4561: tenant A tcp-listen mints an fd");
+            if (is_int(listened) && as_int(listened) >= 0)
+                lfd = static_cast<int>(as_int(listened));
+            const auto port = lfd >= 0 ? (*port_a)({make_int(lfd)}) : make_int(-1);
+            CHECK(is_int(port) && as_int(port) > 0, "4561: owner tcp-local-port sees the listener");
+
+            if (is_int(port) && as_int(port) > 0) {
+                raw = ::socket(AF_INET, SOCK_STREAM, 0);
+                sockaddr_in addr{};
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(static_cast<std::uint16_t>(as_int(port)));
+                addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                CHECK(raw >= 0 &&
+                          ::connect(raw, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0,
+                      "4561: loopback peer connected");
+                if (raw >= 0) {
+                    timeval tv{};
+                    tv.tv_sec = 1;
+                    ::setsockopt(raw, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                }
+                const auto accepted = (*accept_a)({make_int(lfd)});
+                CHECK(is_int(accepted) && as_int(accepted) >= 0,
+                      "4561: owner accept mints a client fd");
+                if (is_int(accepted) && as_int(accepted) >= 0)
+                    cfd = static_cast<int>(as_int(accepted));
+            }
+
+            if (cfd >= 0 && raw >= 0) {
+                auto& heap_a = ev_a.string_heap_mut();
+                heap_a.push_back("ping");
+                const auto sent = (*send_a)(
+                    {make_int(cfd), make_string(static_cast<std::uint64_t>(heap_a.size() - 1))});
+                CHECK(is_int(sent) && as_int(sent) == 4, "4561: owner tcp-send writes its socket");
+                char got[8]{};
+                const auto n = ::recv(raw, got, sizeof(got), 0);
+                CHECK(n == 4 && std::string(got, static_cast<std::size_t>(n)) == "ping",
+                      "4561: owner payload arrived");
+
+                auto& heap_b = ev_b.string_heap_mut();
+                heap_b.push_back("nope");
+                const auto se_send = ring.seq.load(std::memory_order_acquire);
+                const auto foreign_send = (*send_b)(
+                    {make_int(cfd), make_string(static_cast<std::uint64_t>(heap_b.size() - 1))});
+                CHECK(is_int(foreign_send) && as_int(foreign_send) == -1,
+                      "4561: foreign tcp-send returns -1");
+                CHECK(saw_op(se_send, "tcp-send", 42),
+                      "4561: foreign tcp-send emits IsolationDeny");
+                char extra[8]{};
+                const auto n2 = ::recv(raw, extra, sizeof(extra), MSG_DONTWAIT);
+                CHECK(n2 < 0, "4561: foreign tcp-send did not write");
+
+                CHECK(::send(raw, "zz", 2, MSG_NOSIGNAL) == 2, "4561: peer queued two bytes");
+                const auto se_recv = ring.seq.load(std::memory_order_acquire);
+                const auto foreign_recv = (*recv_b)({make_int(cfd), make_int(8)});
+                CHECK(is_void(foreign_recv), "4561: foreign tcp-recv returns void");
+                CHECK(saw_op(se_recv, "tcp-recv", 42),
+                      "4561: foreign tcp-recv emits IsolationDeny");
+                const auto owner_recv = (*recv_a)({make_int(cfd), make_int(8)});
+                CHECK(is_string(owner_recv), "4561: owner tcp-recv still sees the bytes");
+                if (is_string(owner_recv)) {
+                    const auto sidx = as_string_idx(owner_recv);
+                    const auto heap = ev_a.string_heap();
+                    CHECK(sidx < heap.size() && heap[sidx] == "zz",
+                          "4561: foreign recv did not consume the payload");
+                }
+
+                const auto se_close = ring.seq.load(std::memory_order_acquire);
+                const auto foreign_close = (*close_b)({make_int(lfd)});
+                CHECK(is_void(foreign_close), "4561: foreign tcp-close returns void");
+                CHECK(saw_op(se_close, "tcp-close", 42),
+                      "4561: foreign tcp-close emits IsolationDeny");
+                const auto still = (*port_a)({make_int(lfd)});
+                CHECK(is_int(still) && as_int(still) > 0,
+                      "4561: foreign close did not close the listener");
+            }
+
+            int sv[2] = {-1, -1};
+            CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0, "4561: unminted socketpair");
+            if (sv[0] >= 0) {
+                auto& heap_a = ev_a.string_heap_mut();
+                heap_a.push_back("raw");
+                const auto se_raw = ring.seq.load(std::memory_order_acquire);
+                const auto raw_send = (*send_a)(
+                    {make_int(sv[0]), make_string(static_cast<std::uint64_t>(heap_a.size() - 1))});
+                CHECK(is_int(raw_send) && as_int(raw_send) == -1,
+                      "4561: unminted fd tcp-send returns -1");
+                CHECK(saw_op(se_raw, "tcp-send", 7), "4561: unminted fd emits IsolationDeny");
+                char leaked[8]{};
+                CHECK(::recv(sv[1], leaked, sizeof(leaked), MSG_DONTWAIT) < 0,
+                      "4561: unminted send did not deliver");
+                ::close(sv[0]);
+                ::close(sv[1]);
+            }
+        }
+        if (cfd >= 0 && close_a)
+            (*close_a)({make_int(cfd)});
+        if (lfd >= 0 && close_a)
+            (*close_a)({make_int(lfd)});
+        if (raw >= 0)
+            ::close(raw);
+
+        std::println("\n--- #4561: Soft skips the fd owner map ---");
+        reset_all();
+        ::unsetenv("AURA_MULTI_TENANT");
+        ev_a.set_effect_sandbox_mode(0);
+        ev_a.set_capability_tenant_id(7);
+        int soft_sv[2] = {-1, -1};
+        CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, soft_sv) == 0, "4561: soft socketpair");
+        if (soft_sv[0] >= 0 && send_a) {
+            auto& heap_a = ev_a.string_heap_mut();
+            heap_a.push_back("soft");
+            const auto se_soft = ring.seq.load(std::memory_order_acquire);
+            const auto soft_sent = (*send_a)(
+                {make_int(soft_sv[0]), make_string(static_cast<std::uint64_t>(heap_a.size() - 1))});
+            CHECK(is_int(soft_sent) && as_int(soft_sent) == 4, "4561: Soft tcp-send still writes");
+            char soft_got[8]{};
+            const auto ns = ::recv(soft_sv[1], soft_got, sizeof(soft_got), 0);
+            CHECK(ns == 4 && std::string(soft_got, 4) == "soft", "4561: Soft payload arrived");
+            CHECK(!saw_op(se_soft, "tcp-send", 7), "4561: Soft send emits no IsolationDeny");
+            ::close(soft_sv[0]);
+            ::close(soft_sv[1]);
+        }
+
+        const auto io = read_file("src/compiler/evaluator_primitives_io.cpp");
+        const auto sys_read = io.find("defer_std_host_prim(\"sys-read\"");
+        const auto owner_at = io.find("minted_fd_tenant_allows(ev, fd, \"sys-read\")", sys_read);
+        const auto read_at = io.find("::read(fd, buf.data()", sys_read);
+        CHECK(sys_read != std::string::npos && owner_at != std::string::npos &&
+                  read_at != std::string::npos && owner_at < read_at,
+              "4561: sys-read owner check is before ::read");
+        CHECK(io.find("stamp_minted_fd_tenant(ev, fd)") != std::string::npos,
+              "4561: connect and listen stamp the creating tenant");
+        CHECK(io.find("stamp_minted_fd_tenant(ev, cfd)") != std::string::npos,
+              "4561: accept stamps the creating tenant");
+        CHECK(io.find("\"/proc/self/fd/%d\"") != std::string::npos,
+              "4561: sys-write /proc/self/fd path check stays");
+        CHECK(io.find("query:4561") == std::string::npos, "4561: no query:4561");
+        std::ifstream invent("tests/core/test_issue_4561.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_4561.cpp");
+        CHECK(!invent.good(), "4561: no tests/core/test_issue_4561.cpp");
+
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        reset_all();
     }
 
     // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
