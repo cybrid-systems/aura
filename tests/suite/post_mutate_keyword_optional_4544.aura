@@ -1,0 +1,101 @@
+; Issue #4544 — the post-mutate typecheck reported keyword literals
+; (:switch, :create, :list, :def-use, :current) as unbound variables, so an
+; identity mutate:rebind of a body that uses them was rejected.
+; Issue #4545 — hash-ref with a default and tcp-recv with a maxlen were
+; registered at fixed arity 2 / 1, so a 3-arg hash-ref inside a let (and any
+; 2-arg tcp-recv) was rejected even though the runtime accepts it.
+; The issue repros must return #t; the arity bounds and free names still
+; reject. White-box arms: tests/compiler/test_mutate_type_gate.cpp.
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (accepted label r)
+  (if (not (eq? r #t)) (begin (display "    got: ") (write r) (newline)))
+  (assert! (eq? r #t) label))
+(define (typecheck-reject? r)
+  (and (pair? r) (equal? (car r) "mutation-failed")))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+
+; ── #4544 keywords ──
+(define (f4544 x) (list :switch x))
+(assert! (equal? (f4544 1) (list :switch 1)) "evaluator: keyword self-evaluates")
+
+(set-code "(define g4544 (lambda (x) (list :switch x)))")
+(eval-current)
+(accepted "keyword call arg rebind"
+          (rebind "g4544" "(lambda (x) (list :switch x x))" "kw"))
+(assert! (equal? (g4544 2) (list :switch 2 2)) "rebound keyword body runs")
+
+(set-code "(define h4544 (lambda (n) (workspace :switch n)))")
+(eval-current)
+(accepted "keyword workspace op identity rebind"
+          (rebind "h4544" "(lambda (n) (workspace :switch n))" "ident"))
+
+(set-code "(define k4544 (lambda (x) (let ((k :create)) (if (eq? x :current) :def-use (list k :list x)))))")
+(eval-current)
+(accepted "keywords in let / eq? / if identity rebind"
+          (rebind "k4544" "(lambda (x) (let ((k :create)) (if (eq? x :current) :def-use (list k :list x))))" "ident"))
+
+(set-code "(define m4544 (lambda (x) (let ((k :switch)) (if (eq? k :switch) not-a-real-name-4544 x))))")
+(eval-current)
+(let ((r (rebind "m4544" "(lambda (x) (let ((k :switch)) (if (eq? k :switch) not-a-real-name-4544 x)))" "free")))
+  (assert! (typecheck-reject? r) "free name next to keyword still rejected")
+  (assert! (and (typecheck-reject? r) (string-has? (cadr r) "not-a-real-name-4544"))
+           "rejection names the free variable")
+  (assert! (and (typecheck-reject? r) (not (string-has? (cadr r) "unbound variable: :")))
+           "rejection does not name a keyword"))
+
+; ── #4545 optional args ──
+(set-code "(define (g4545 h) (hash-ref h \"a\" 0))")
+(eval-current)
+(accepted "hash-ref 3 args at body top"
+          (rebind "g4545" "(lambda (h) (hash-ref h \"a\" 0))" "id"))
+
+(set-code "(define (g4545 h) (let ((e (hash-ref h \"a\" #f))) e))")
+(eval-current)
+(accepted "hash-ref 3 args inside let"
+          (rebind "g4545" "(lambda (h) (let ((e (hash-ref h \"a\" #f))) e))" "id"))
+(assert! (eq? (g4545 (hash)) #f) "hash-ref default reaches runtime")
+
+(set-code "(define p4545 (lambda (s) (tcp-recv s 4096)))")
+(eval-current)
+(accepted "tcp-recv with maxlen"
+          (rebind "p4545" "(lambda (s) (tcp-recv s 4096))" "id"))
+
+(set-code "(define q4545 (lambda (s) (let ((m (tcp-recv s))) m)))")
+(eval-current)
+(accepted "tcp-recv without maxlen inside let"
+          (rebind "q4545" "(lambda (s) (let ((m (tcp-recv s))) m))" "id"))
+
+(set-code "(define b4545 (lambda (h) (let ((e (hash-ref h 1 2 3))) e)))")
+(eval-current)
+(let ((r (rebind "b4545" "(lambda (h) (let ((e (hash-ref h 1 2 3))) e))" "x")))
+  (assert! (typecheck-reject? r) "hash-ref 4 args still rejected"))
+
+(set-code "(define t4545 (lambda (s) (let ((m (tcp-recv s 1 2))) m)))")
+(eval-current)
+(let ((r (rebind "t4545" "(lambda (s) (let ((m (tcp-recv s 1 2))) m))" "x")))
+  (assert! (typecheck-reject? r) "tcp-recv 3 args still rejected"))
+
+(if (= *fails* 0)
+    (display "OK-4544 post-mutate keywords and optional args\n")
+    (begin
+      (display "FAIL-4544 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

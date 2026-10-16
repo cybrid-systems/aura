@@ -4338,7 +4338,9 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
 
     // Hash primitives
     register_primitive("hash", {Dyn}, Hash);
-    register_primitive("hash-ref", {Hash, Dyn}, Dyn);
+    // Issue #4545: optional default. Dotted rest so (hash-ref h k) and
+    // (hash-ref h k default) both typecheck, matching evaluator_primitives_vector.
+    register_primitive("hash-ref", {Hash, Dyn, Dyn}, Dyn, true);
     register_primitive("hash-set!", {Hash, Dyn, Dyn}, Void);
     register_primitive("hash-length", {Hash}, Int);
     register_primitive("hash-keys", {Hash}, Dyn);
@@ -4414,7 +4416,7 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     // std/hash
     register_primitive("hash-keys", {Dyn}, Dyn);
     register_primitive("hash-values", {Dyn}, Dyn);
-    register_primitive("hash-ref", {Dyn, Dyn}, Dyn);
+    register_primitive("hash-ref", {Dyn, Dyn, Dyn}, Dyn, true); // Issue #4545
     register_primitive("hash-has-key?", {Dyn, Dyn}, Bool);
     register_primitive("hash-set!", {Dyn, Dyn, Dyn}, Void);
     register_primitive("hash-length", {Dyn}, Int);
@@ -4518,7 +4520,8 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     register_primitive("tcp-accept", {Dyn}, Dyn);
     register_primitive("tcp-accept-timeout", {Dyn, Int}, Dyn);
     register_primitive("tcp-send", {Dyn, String}, Void);
-    register_primitive("tcp-recv", {Dyn}, String);
+    // Issue #4545: optional maxlen (evaluator_primitives_io reads a[1]).
+    register_primitive("tcp-recv", {Dyn, Int}, String, true);
     register_primitive("tcp-close", {Dyn}, Void);
 
     // std/algorithm
@@ -5905,6 +5908,11 @@ TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, Nod
         flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::UnboundVariable));
         return reg_.dynamic_type();
     }
+    // Issue #4544: :foo is a self-evaluating keyword literal, same split as
+    // eval_flat (#3401) and lowering (#4321). It is never a name ref, so it
+    // must not reach env_.lookup and report UnboundVariable.
+    if (name[0] == ':')
+        return reg_.dynamic_type();
     std::string var_name(name);
 
     // Module member access: name:member → look up module type, extract member type
@@ -6183,10 +6191,30 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         if (!ft.args.empty() && !named_variadic) {
             if (ft.variadic) {
                 const std::size_t fixed = ft.args.size() > 0 ? ft.args.size() - 1 : 0;
+                // Issue #4545: hash-ref (default) and tcp-recv (maxlen) take
+                // exactly one optional argument at runtime. They ride the
+                // dotted-rest shape for the lower bound; cap the upper bound
+                // at the registered size so an extra argument still rejects.
+                // The shape test keeps a user define of the same name with a
+                // different signature unaffected.
+                std::size_t optional_max = 0;
+                if (callee_v.sym_id != INVALID_SYM && callee_v.tag == NodeTag::Variable) {
+                    auto cname = pool.resolve(callee_v.sym_id);
+                    if ((cname == "hash-ref" && ft.args.size() == 3) ||
+                        (cname == "tcp-recv" && ft.args.size() == 2))
+                        optional_max = ft.args.size();
+                }
                 if (num_args < fixed) {
                     auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
                                "': expected at least " + std::to_string(fixed) +
                                " arguments, got " + std::to_string(num_args);
+                    diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+                    flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
+                } else if (optional_max != 0 && num_args > optional_max) {
+                    auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
+                               "': expected " + std::to_string(fixed) + " to " +
+                               std::to_string(optional_max) + " arguments, got " +
+                               std::to_string(num_args);
                     diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
                     flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
                 }

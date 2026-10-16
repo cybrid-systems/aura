@@ -531,6 +531,147 @@ int run_test_mutate_type_gate() {
         bad.evaluator().set_sandbox_mode(prev_sandbox);
     }
 
+    // Issue #4544: keyword literals (:switch …) are self-evaluating in the
+    // evaluator and must not be UnboundVariable in the post-mutate gate.
+    // Issue #4545: hash-ref (optional default) and tcp-recv (optional maxlen)
+    // take the arity their runtime accepts — 2..3 and 1..2 — whether or not
+    // the call sits inside a let. Hard forces infer; the let-bound bodies are
+    // not light-path eligible, so Soft infers too.
+    {
+        std::println("\n--- #4544/#4545: keywords and optional args after rebind ---");
+        auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        CHECK(impl.find("register_primitive(\"hash-ref\", {Hash, Dyn, Dyn}, Dyn, true)") !=
+                  std::string::npos,
+              "hash-ref optional default");
+        CHECK(impl.find("register_primitive(\"hash-ref\", {Dyn, Dyn, Dyn}, Dyn, true)") !=
+                  std::string::npos,
+              "std/hash hash-ref optional default");
+        CHECK(impl.find("register_primitive(\"tcp-recv\", {Dyn, Int}, String, true)") !=
+                  std::string::npos,
+              "tcp-recv optional maxlen");
+        CHECK(impl.find("register_primitive(\"hash-ref\", {Dyn, Dyn}, Dyn)") == std::string::npos,
+              "no fixed 2-arg hash-ref");
+        CHECK(impl.find("register_primitive(\"tcp-recv\", {Dyn}, String)") == std::string::npos,
+              "no fixed 1-arg tcp-recv");
+        // Runtime side of the contract: the evaluator reads the optional arg.
+        auto vec_prims = read_file("src/compiler/evaluator_primitives_vector.cpp");
+        auto io_prims = read_file("src/compiler/evaluator_primitives_io.cpp");
+        CHECK(vec_prims.find("return a.size() >= 3 ? a[2] : make_void();") != std::string::npos,
+              "runtime hash-ref reads a[2]");
+        CHECK(io_prims.find("a.size() >= 2 && types::is_int(a[1])") != std::string::npos,
+              "runtime tcp-recv reads a[1]");
+        auto hash_sig = read_file("lib/std/hash.aura-type");
+        auto sock_sig = read_file("lib/std/socket.aura-type");
+        CHECK(hash_sig.find("hash-ref: Any Any Any ... -> Any") != std::string::npos,
+              "hash.aura-type hash-ref");
+        CHECK(sock_sig.find("tcp-recv: Any Any ... -> String") != std::string::npos,
+              "socket.aura-type tcp-recv");
+
+        reset_for_test();
+        CompilerService sandbox_probe;
+        const bool prev_sandbox = sandbox_probe.evaluator().sandbox_mode();
+        const char* forms = "(define (kw x) (list :switch x))"
+                            "(define (kwl x) (let ((k :create)) (list k :list x)))"
+                            "(define (kwq x) (let ((c (eq? x :current))) (if c :def-use x)))"
+                            "(define (ws n) (workspace :switch n))"
+                            "(define (hr h) (hash-ref h \\\"a\\\" 0))"
+                            "(define (hr2 h) (let ((e (hash-ref h \\\"a\\\"))) e))"
+                            "(define (hr3 h) (let ((e (hash-ref h \\\"a\\\" #f))) e))"
+                            "(define (tr s) (tcp-recv s 4096))"
+                            "(define (tr1 s) (let ((m (tcp-recv s))) m))"
+                            "(define (tr2 s) (let ((m (tcp-recv s 4096))) m))";
+        auto rebind_true = [](CompilerService& cs, const char* expr, const std::string& label) {
+            auto r = cs.eval(expr);
+            const bool ok = r && is_bool(*r) && as_bool(*r);
+            if (!ok)
+                std::println("  {} last_mutate_error={}", label,
+                             cs.evaluator().last_mutate_error());
+            CHECK(ok, label);
+        };
+        auto drive = [&](MutateTypeGate gate, const char* tag) {
+            set_mode(gate);
+            CompilerService cs;
+            cs.evaluator().set_sandbox_mode(false);
+            CHECK(cs.eval(std::string("(set-code \"") + forms + "\")").has_value(),
+                  std::string(tag) + " set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval");
+            const std::string t(tag);
+            rebind_true(cs, "(mutate:rebind \"kw\" \"(lambda (x) (list :switch x x))\" \"kw\")",
+                        t + " keyword call arg");
+            rebind_true(cs,
+                        "(mutate:rebind \"kwl\" \"(lambda (x) (let ((k :create)) "
+                        "(list k :list x)))\" \"id\")",
+                        t + " keyword in let");
+            rebind_true(cs,
+                        "(mutate:rebind \"kwq\" \"(lambda (x) (let ((c (eq? x :current))) "
+                        "(if c :def-use x)))\" \"id\")",
+                        t + " keyword in eq?/if");
+            rebind_true(cs, "(mutate:rebind \"ws\" \"(lambda (n) (workspace :switch n))\" \"id\")",
+                        t + " keyword workspace op");
+            rebind_true(cs,
+                        "(mutate:rebind \"hr\" \"(lambda (h) (hash-ref h \\\"a\\\" 0))\" \"id\")",
+                        t + " hash-ref 3 top");
+            rebind_true(cs,
+                        "(mutate:rebind \"hr2\" \"(lambda (h) (let ((e (hash-ref h \\\"a\\\"))) "
+                        "e))\" \"id\")",
+                        t + " hash-ref 2 in let");
+            rebind_true(cs,
+                        "(mutate:rebind \"hr3\" \"(lambda (h) (let ((e (hash-ref h \\\"a\\\" "
+                        "#f))) e))\" \"id\")",
+                        t + " hash-ref 3 in let");
+            rebind_true(cs, "(mutate:rebind \"tr\" \"(lambda (s) (tcp-recv s 4096))\" \"id\")",
+                        t + " tcp-recv 2 top");
+            rebind_true(
+                cs, "(mutate:rebind \"tr1\" \"(lambda (s) (let ((m (tcp-recv s))) m))\" \"id\")",
+                t + " tcp-recv 1 in let");
+            rebind_true(cs,
+                        "(mutate:rebind \"tr2\" \"(lambda (s) (let ((m (tcp-recv s 4096))) m))\" "
+                        "\"id\")",
+                        t + " tcp-recv 2 in let");
+            // The rebound default still reaches the runtime.
+            auto d = cs.eval("(hr3 (hash))");
+            CHECK(d && is_bool(*d) && !as_bool(*d), t + " hash-ref default #f at runtime");
+            auto k = cs.eval("(kw 1)");
+            CHECK(k.has_value(), t + " keyword call runs");
+        };
+        drive(MutateTypeGate::Hard, "hard");
+        drive(MutateTypeGate::Soft, "soft");
+
+        // Upper and lower bounds still reject, and a free name next to a
+        // keyword is still unbound.
+        set_mode(MutateTypeGate::Hard);
+        auto refuse = [](const char* define, const char* rebind, const char* want,
+                         const std::string& label) {
+            CompilerService bad;
+            bad.evaluator().set_sandbox_mode(false);
+            CHECK(bad.eval(std::string("(set-code \"") + define + "\")").has_value(),
+                  label + " set-code");
+            CHECK(bad.eval("(eval-current)").has_value(), label + " eval");
+            auto r = bad.eval(rebind);
+            CHECK(r.has_value(), label + " rebind eval");
+            CHECK(!(r && is_bool(*r) && as_bool(*r)), label + " is not #t");
+            const auto& err = bad.evaluator().last_mutate_error();
+            CHECK(err.find(want) != std::string::npos, label + ": " + err);
+            CHECK(err.find("unbound variable: :") == std::string::npos, label + ": " + err);
+        };
+        refuse("(define (b4 h) (let ((e (hash-ref h 1 2 3))) e))",
+               "(mutate:rebind \"b4\" \"(lambda (h) (let ((e (hash-ref h 1 2 3))) e))\" \"x\")",
+               "call 'hash-ref': expected 2 to 3 arguments, got 4", "hash-ref 4");
+        refuse("(define (b1 h) (let ((e (hash-ref h))) e))",
+               "(mutate:rebind \"b1\" \"(lambda (h) (let ((e (hash-ref h))) e))\" \"x\")",
+               "call 'hash-ref': expected at least 2 arguments, got 1", "hash-ref 1");
+        refuse("(define (t3 s) (let ((m (tcp-recv s 1 2))) m))",
+               "(mutate:rebind \"t3\" \"(lambda (s) (let ((m (tcp-recv s 1 2))) m))\" \"x\")",
+               "call 'tcp-recv': expected 1 to 2 arguments, got 3", "tcp-recv 3");
+        // The free name sits in an if arm, not past the first list arg:
+        // list/vector args after the first are not synthesized (separate gap).
+        refuse("(define (kf x) (let ((k :switch)) (if (eq? k :switch) not-a-real-name x)))",
+               "(mutate:rebind \"kf\" \"(lambda (x) (let ((k :switch)) "
+               "(if (eq? k :switch) not-a-real-name x)))\" \"x\")",
+               "unbound variable: not-a-real-name", "keyword + free name");
+        sandbox_probe.evaluator().set_sandbox_mode(prev_sandbox);
+    }
+
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
