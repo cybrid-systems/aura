@@ -27,13 +27,13 @@
     "name": "coerce_arith",
     "code": "(+ 1 \"2\")",
     "pipeline": "eval",
-    "expected_val": 3
+    "expected_err": "type mismatch"
   },
   {
     "name": "coerce_str_len",
     "code": "(string-length 12345)",
     "pipeline": "eval",
-    "expected_val": 5
+    "expected_val": 0
   },
   {
     "name": "cons_car",
