@@ -4771,6 +4771,10 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
     // Issue #3632: capture the sender before the move — the BP arm below
     // attributes the gauge bump to msg.from_fiber.
     const auto send_from_fiber = msg.from_fiber;
+    // Issue #4563: a prior push on this thread can leave self_noted set.
+    // Mutation-hold / delivery-safety return before note_self_backpressure,
+    // so a stale true would skip the one note those arms still need.
+    serve::mf_mailbox::clear_mailbox_bp_self_noted();
     auto st = h.mailbox->push(std::move(msg));
     if (st == serve::mf_mailbox::PushStatus::Ok) {
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
@@ -4791,7 +4795,23 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
         // process bucket (Soft / single-agent MVP, zero behavioural
         // change). Mirrors the agent_send BP arm fix so a storm in
         // scope A does not poison the process bucket for siblings.
-        note_mailbox_bp_recent_event(h.bp_scope_id, send_from_fiber);
+        // Issue #4563: one logical send charges one admit gauge once.
+        // Skip when push already noted this same scope (#4384 shape).
+        // Production + empty handle + a named mailbox notes that mailbox
+        // scope, or skips — never note_mailbox_bp_recent_event("").
+        // Non-empty handle scope (including "-") keeps the call below.
+        const auto mb_scope = h.mailbox->bp_scope_id();
+        const bool push_noted_same = serve::mf_mailbox::mailbox_bp_self_noted() &&
+                                     mb_scope == std::string_view{h.bp_scope_id};
+        if (!push_noted_same) {
+            const bool named_mb = !mb_scope.empty() && mb_scope != kBpScopeProcessBucket;
+            if (production_defaults_active() && h.bp_scope_id.empty() && named_mb) {
+                if (!serve::mf_mailbox::mailbox_bp_self_noted())
+                    note_mailbox_bp_recent_event(mb_scope, send_from_fiber);
+            } else {
+                note_mailbox_bp_recent_event(h.bp_scope_id, send_from_fiber);
+            }
+        }
         if (h.producer_bp_budget > 0) {
             ++h.consecutive_bp_count;
             h.last_producer_bp_us = orch_now_us();
