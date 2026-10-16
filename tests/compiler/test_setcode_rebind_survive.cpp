@@ -43,6 +43,10 @@ using aura::compiler::types::is_closure;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_void;
 using aura::compiler::types::make_int;
+// Issue #4532 (49173fd7a): the ffi_cid threading refers to the namespace
+// alias directly (types::as_closure_id / types::EvalValue in the 3602
+// family) — member usings alone do not declare `types`.
+namespace types = aura::compiler::types;
 using aura::test::g_failed;
 using aura::test::g_passed;
 

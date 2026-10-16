@@ -336,8 +336,15 @@ int run_test_query_index_composite() {
     // ── AC4 #4163: source-cite guards ────────────────────────────
     {
         std::println("\n--- #4163 AC4: source-cite — index guards + serve guard ---");
-        std::ifstream f_idx("src/compiler/evaluator_query_index.cpp");
-        std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+        // The batch CWD is the build dir — anchor to the source root
+        // (raw relative paths read empty and fail these ACs).
+#ifdef AURA_SOURCE_DIR
+        const std::string qic_src_root = std::string(AURA_SOURCE_DIR) + "/";
+#else
+        const std::string qic_src_root = "../";
+#endif
+        std::ifstream f_idx(qic_src_root + "src/compiler/evaluator_query_index.cpp");
+        std::ifstream f_qws(qic_src_root + "src/compiler/evaluator_primitives_query_workspace.cpp");
         std::string qidx((std::istreambuf_iterator<char>(f_idx)), std::istreambuf_iterator<char>());
         std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
         CHECK(!qidx.empty(), "AC4: evaluator_query_index.cpp readable");
@@ -361,7 +368,7 @@ int run_test_query_index_composite() {
               "AC4: serve loop guards is_free_slot");
         // No per-issue test file (per #81934 the family test is extended).
         {
-            std::ifstream f("tests/compiler/test_issue_4163.cpp");
+            std::ifstream f(qic_src_root + "tests/compiler/test_issue_4163.cpp");
             CHECK(!f.good(), "AC4: no tests/compiler/test_issue_4163.cpp");
         }
     }

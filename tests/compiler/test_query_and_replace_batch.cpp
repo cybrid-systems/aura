@@ -58,6 +58,16 @@ static CompilerMetrics* metrics_of(CompilerService& cs) {
     return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
 }
 
+// The batch CWD is the build dir — anchor source-tree reads to the root
+// (raw relative paths read empty and silently ++g_failed).
+static std::string src_path(const char* rel) {
+#ifdef AURA_SOURCE_DIR
+    return std::string(AURA_SOURCE_DIR) + "/" + rel;
+#else
+    return std::string("../") + rel;
+#endif
+}
+
 static std::uint64_t load_u64(std::atomic<std::uint64_t>& a) {
     return a.load(std::memory_order_relaxed);
 }
@@ -262,7 +272,7 @@ static void ac2527_7_query_surface_keys() {
 // multi-round edit primitive. Verify the source doc-comment is present
 // in the production file by reading the source file directly.
 static void ac2527_8_source_doc_comment() {
-    std::ifstream in("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream in(src_path("src/compiler/evaluator_primitives_mutate.cpp"));
     if (!in) {
         ++g_failed;
         return;
@@ -281,7 +291,7 @@ static void ac2527_8_source_doc_comment() {
 
 // Issue #3509: batch default-denies MacroIntroduced (source-cite + helper).
 static void ac3509_batch_hygiene_gate_source() {
-    std::ifstream in("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream in(src_path("src/compiler/evaluator_primitives_mutate.cpp"));
     if (!in) {
         ++g_failed;
         return;
