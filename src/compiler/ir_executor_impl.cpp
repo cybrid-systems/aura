@@ -526,12 +526,14 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
         std::uint64_t frame_ver = cl.env_version != 0 ? cl.env_version : cur_ver;
         constexpr auto kNullEnv2 = std::numeric_limits<std::uint32_t>::max();
         if (cl.env_id != kNullEnv2) {
-            // Prefer live frame version when available.
+            // Prefer live frame version when available. Issue #4536: the
+            // detailed resolve copies version under the shard lock — the
+            // bare pointer deref raced compact's deque move.
             const auto eid = static_cast<EnvId>(cl.env_id);
             if (!ev->is_env_frame_invalid(eid)) {
-                // resolve may be null under race — fall back to env_version.
-                if (const auto* fr = ev->resolve_env_frame(eid))
-                    frame_ver = fr->version_;
+                const auto r = ev->resolve_env_frame_detailed(eid);
+                if (r)
+                    frame_ver = r.version;
             }
         }
         if (!Evaluator::validate_linear_ownership_state(
