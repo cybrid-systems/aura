@@ -19,7 +19,8 @@ second closure table.
 
 ACs:
   AC1  cone helper lives in service.ixx, cites #4146, and drops per
-       dependent: jit_cache_.erase(dependent) under jit_cache_mtx_,
+       dependent: erase_jit_cache_bundle_rows_for_define_(dependent)
+       under jit_cache_mtx_ (#4538 full bundle, not the bare key),
        aura_drop_jit_fn_native_for_define(dependent), then
        jit_.invalidate(dependent) + invalidate_prefix(dependent) —
        ordered erase → drop → invalidate like the #3749 root drop.
@@ -96,7 +97,7 @@ def main() -> int:
     )
     if fn != -1:
         win = ixx[fn : fn + 4200]
-        erase = win.find("jit_cache_.erase(dependent)")
+        erase = win.find("erase_jit_cache_bundle_rows_for_define_(dependent)")
         drop = win.find("aura_drop_jit_fn_native_for_define(dependent.c_str())")
         inval = win.find("jit_.invalidate(dependent.c_str())")
         prefix = win.find("jit_.invalidate_prefix(dependent.c_str())")
