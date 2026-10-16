@@ -25,6 +25,7 @@
 // (6-8 pure functions total).
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -489,7 +490,7 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(const types::E
 export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
                                                          aura::core::TypeTag from,
                                                          aura::core::TypeTag to,
-                                                         std::pmr::vector<std::string>& heap) {
+                                                         ::aura::compiler::LockedStringHeap& heap) {
     using aura::core::TypeTag;
     if (from == to)
         return {};
@@ -520,8 +521,7 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
     }
     if (from == TypeTag::INT && to == TypeTag::STRING) {
         auto s = std::to_string(types::as_int(val));
-        auto id = static_cast<std::uint64_t>(heap.size());
-        heap.push_back(std::move(s));
+        auto id = static_cast<std::uint64_t>(heap.mint(std::move(s)));
         val = types::make_string(id);
         return {};
     }
@@ -562,8 +562,7 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
     }
     if (from == TypeTag::FLOAT && to == TypeTag::STRING) {
         auto s = std::to_string(types::as_float(val));
-        auto id = static_cast<std::uint64_t>(heap.size());
-        heap.push_back(std::move(s));
+        auto id = static_cast<std::uint64_t>(heap.mint(std::move(s)));
         val = types::make_string(id);
         return {};
     }

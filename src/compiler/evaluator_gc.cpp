@@ -203,7 +203,7 @@ std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
             string_remap_.push_back(-1);
         }
     }
-    string_heap_ = std::move(new_strings);
+    string_heap_.replace(std::move(new_strings)); // Issue #4543
     string_slot_tenants_ = std::move(new_string_tenants);
     return string_heap_.size();
 }

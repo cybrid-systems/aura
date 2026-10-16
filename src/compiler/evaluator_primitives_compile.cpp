@@ -399,8 +399,7 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -465,8 +464,7 @@ void CompilePrims::register_compile_p3(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -563,8 +561,7 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -675,8 +672,7 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -797,8 +793,7 @@ void CompilePrims::register_compile_p6(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -886,8 +881,7 @@ void CompilePrims::register_compile_p7(PrimRegistrar add, Evaluator& ev) {
                     // HASH_EMPTY sentinel (FNV-1a top bits collision).
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -963,8 +957,7 @@ void CompilePrims::register_compile_p8(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1046,8 +1039,7 @@ void CompilePrims::register_compile_p9(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1128,8 +1120,7 @@ void CompilePrims::register_compile_p10(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1213,8 +1204,7 @@ void CompilePrims::register_compile_p11(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1299,8 +1289,7 @@ void CompilePrims::register_compile_p12(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1389,8 +1378,7 @@ void CompilePrims::register_compile_p13(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1498,8 +1486,7 @@ void CompilePrims::register_compile_p14(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1588,8 +1575,7 @@ void CompilePrims::register_compile_p15(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1697,8 +1683,7 @@ void CompilePrims::register_compile_p16(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -1767,8 +1752,7 @@ void CompilePrims::register_compile_p17(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1847,8 +1831,7 @@ void CompilePrims::register_compile_p18(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1935,8 +1918,7 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2070,8 +2052,7 @@ void CompilePrims::register_compile_p20(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -2160,8 +2141,7 @@ void CompilePrims::register_compile_p21(PrimRegistrar add, Evaluator& ev) {
 
         // Build alist
         auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-            auto key_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(key);
+            auto key_idx = ev.string_heap_.mint(key);
             auto entry_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_string(key_idx), val});
             return entry_pair;
@@ -2169,8 +2149,7 @@ void CompilePrims::register_compile_p21(PrimRegistrar add, Evaluator& ev) {
 
         EvalValue result = make_void();
         auto cvt = [&](std::uint64_t n) -> EvalValue {
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(n));
+            auto idx = ev.string_heap_.mint(std::to_string(n));
             return make_string(idx);
         };
         std::uint64_t entry_ids[4];
@@ -2390,8 +2369,7 @@ void CompilePrims::register_compile_p24(PrimRegistrar add, Evaluator& ev) {
         EvalValue list = make_void();
         for (std::size_t id = view.size(); id-- > 0;) {
             if (view[id] & mask) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::to_string(id));
+                auto sidx = ev.string_heap_.mint(std::to_string(id));
                 auto p_idx = ev.pairs_.size();
                 Pair tmp{make_string(sidx), list};
                 ev.pairs_.push_back(std::move(tmp));
@@ -2726,8 +2704,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -2796,8 +2773,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -2911,8 +2887,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3529,8 +3504,7 @@ void CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {
             for (std::size_t id = n; id-- > 0;) {
                 const auto bits = ws.verification_dirty(static_cast<aura::ast::NodeId>(id));
                 if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
-                    auto idx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(std::to_string(id));
+                    auto idx = ev.string_heap_.mint(std::to_string(id));
                     auto pid = ev.pairs_.size();
                     ev.pairs_.push_back({make_string(idx), list});
                     list = make_pair(pid);
@@ -3624,8 +3598,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
         for (std::size_t id = n; id-- > 0;) {
             const auto bits = ws->verification_dirty(static_cast<aura::ast::NodeId>(id));
             if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::to_string(id));
+                auto idx = ev.string_heap_.mint(std::to_string(id));
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(idx), list});
                 list = make_pair(pid);
@@ -3867,8 +3840,7 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -4652,8 +4624,7 @@ void CompilePrims::register_compile_p48(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4828,8 +4799,7 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -4912,8 +4882,7 @@ void CompilePrims::register_compile_p50(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4988,8 +4957,7 @@ void CompilePrims::register_compile_p51(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -5176,14 +5144,12 @@ void CompilePrims::register_compile_p53(PrimRegistrar add, Evaluator& ev) {
             const auto s = aura::ast::mutators::dispatch_stats().capture();
 
             auto cvt = [&](std::uint64_t n) -> EvalValue {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::to_string(n));
+                auto idx = ev.string_heap_.mint(std::to_string(n));
                 return make_string(idx);
             };
 
             auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-                auto key_idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(key);
+                auto key_idx = ev.string_heap_.mint(key);
                 auto entry_pair = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(key_idx), val});
                 return entry_pair;
@@ -5844,8 +5810,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
                         "\"ast_arena_bytes_in_use\":{},\"ast_arena_upstream_bytes\":{}}}",
                         m->env_frames_size_total.load(), m->env_frames_stale_count.load(),
                         m->ast_arena_bytes_in_use.load(), m->ast_arena_upstream_bytes.load());
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(json));
+        auto idx = ev.string_heap_.mint(std::move(json));
         return types::make_string(idx);
     });
     // Issue #1386: (evaluator:compact-env-frames) primitive.
@@ -5948,8 +5913,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
                     m->bidirectional_guardshape_check_total.load(std::memory_order_relaxed);
             }
 
-            auto mode_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(mode_str);
+            auto mode_idx = ev.string_heap_.mint(mode_str);
             EvalValue mode_ev = make_string(mode_idx);
 
             std::uint64_t ground_warn = 0;
@@ -5967,8 +5931,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
                 gp = svc->gradual_permissiveness();
             else
                 gp = static_cast<GradualPermissiveness>(gradual_mode > 2 ? 1 : gradual_mode);
-            auto gp_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::string(gradual_permissiveness_name(gp)));
+            auto gp_idx = ev.string_heap_.mint(std::string(gradual_permissiveness_name(gp)));
             EvalValue gp_ev = make_string(gp_idx);
 
             std::vector<std::pair<std::string, EvalValue>> kv = {

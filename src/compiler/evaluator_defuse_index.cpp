@@ -975,8 +975,7 @@ void Evaluator::install_defuse_subsystem() {
                 // pair index across fiber:spawn workers.
                 std::lock_guard lock(alloc_storage_lock_);
                 auto kv_ref = make_pair(pairs_.size());
-                auto k_sym = string_heap_.size();
-                string_heap_.push_back(std::string(k));
+                auto k_sym = string_heap_.mint(std::string(k));
                 types::EvalValue car = make_string(k_sym);
                 types::EvalValue cdr = make_int(v);
                 pairs_.push_back(Pair{car, cdr});

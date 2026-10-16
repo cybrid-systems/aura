@@ -72,8 +72,7 @@ static void ac1_rendezvous_blocks() {
     auto id = as_int(id_v);
 
     auto& sh = ev.string_heap_mut();
-    auto sidx = sh.size();
-    sh.push_back("hello-rendezvous");
+    auto sidx = sh.mint("hello-rendezvous");
     auto msg = make_string(static_cast<std::uint64_t>(sidx));
 
     std::atomic<bool> send_done{false};
@@ -121,10 +120,8 @@ static void ac2_buffered() {
     auto id = as_int(id_v);
 
     auto& sh = ev.string_heap_mut();
-    auto s0 = sh.size();
-    sh.push_back("a");
-    auto s1 = sh.size();
-    sh.push_back("b");
+    auto s0 = sh.mint("a");
+    auto s1 = sh.mint("b");
 
     auto r0 = (*send)({make_int(id), make_string(static_cast<std::uint64_t>(s0))});
     auto r1 = (*send)({make_int(id), make_string(static_cast<std::uint64_t>(s1))});

@@ -302,8 +302,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             (void)run_git_jailed({"status", "--short"}, jail_root, /*capture=*/true, &out);
             if (!out.empty() && out.back() == '\n')
                 out.pop_back();
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(out));
+            auto sid = ev.string_heap_.mint(std::move(out));
             return make_string(sid);
         }
         std::string result;
@@ -325,8 +324,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
 
@@ -350,8 +348,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                 (void)run_git_jailed({"diff", "--staged"}, jail_root, /*capture=*/true, &out);
             else
                 (void)run_git_jailed({"diff"}, jail_root, /*capture=*/true, &out);
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(out));
+            auto sid = ev.string_heap_.mint(std::move(out));
             return make_string(sid);
         }
         std::string result;
@@ -372,8 +369,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                 result += buf.data();
             ::pclose(fp);
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
 
@@ -398,8 +394,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                                  /*capture=*/true, &out);
             if (!out.empty() && out.back() == '\n')
                 out.pop_back();
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(out));
+            auto sid = ev.string_heap_.mint(std::move(out));
             return make_string(sid);
         }
 #ifdef AURA_HAVE_LIBGIT2
@@ -421,8 +416,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
 
@@ -512,8 +506,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                                  /*capture=*/true, &out);
             if (!out.empty() && out.back() == '\n')
                 out.pop_back();
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(out));
+            auto sid = ev.string_heap_.mint(std::move(out));
             return make_string(sid);
         }
         std::string result;
@@ -534,8 +527,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
 
@@ -627,8 +619,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                                  /*capture=*/true, &out);
             if (!out.empty() && out.back() == '\n')
                 out.pop_back();
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(out));
+            auto sid = ev.string_heap_.mint(std::move(out));
             return make_string(sid);
         }
         std::string result;
@@ -649,8 +640,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
 #endif // AURA_ENABLE_GIT
@@ -757,8 +747,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         // (or (getenv "X") default) idiom falls back. Void was truthy.
         if (!val)
             return types::make_bool(false);
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::string(val));
+        auto sidx = ev.string_heap_.mint(std::string(val));
         return types::make_string(sidx);
     });
 
@@ -769,8 +758,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         auto path = aura::compiler::paths::resolve_self_executable();
         if (path.empty())
             return make_void();
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(path));
+        auto sidx = ev.string_heap_.mint(std::move(path));
         return types::make_string(sidx);
     });
 
@@ -830,8 +818,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     get_curl().easy_cleanup(curl);
                     if (res != CURLE_OK && result.empty())
                         return make_void();
-                    auto sidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(std::move(result));
+                    auto sidx = ev.string_heap_.mint(std::move(result));
                     return types::make_string(sidx);
                 }
             }
@@ -879,8 +866,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 result = aura::messaging::g_http_post_async(url_copy, body_copy, auth);
             }
             if (!result.empty()) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::move(result));
+                auto sidx = ev.string_heap_.mint(std::move(result));
                 return types::make_string(sidx);
             }
         }
@@ -1002,8 +988,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
         if (result.empty())
             return make_void();
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sidx = ev.string_heap_.mint(std::move(result));
         return types::make_string(sidx);
     });
 
@@ -1188,8 +1173,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (n <= 0)
             return make_void();
         buf.resize(static_cast<std::size_t>(n));
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(buf));
+        auto sidx = ev.string_heap_.mint(std::move(buf));
         return types::make_string(sidx);
     });
 

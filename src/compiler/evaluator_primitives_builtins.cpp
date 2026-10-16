@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "core/arena_auto_policy_stats.h"
 #include "primitives_meta.h"
@@ -59,7 +60,7 @@ using types::make_void;
 
 namespace {
 
-    std::string mismatch_detail(const EvalValue& v, const std::pmr::vector<std::string>* heap) {
+    std::string mismatch_detail(const EvalValue& v, const ::aura::compiler::LockedStringHeap* heap) {
         std::string_view text;
         if (is_string(v) && heap != nullptr) {
             const auto idx = as_string_idx(v);

@@ -3,6 +3,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "runtime_shared.h"
 #include "prim_heap_quota.hh" // Issue #2916
@@ -261,7 +262,7 @@ namespace {
 } // namespace
 
 void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                         std::pmr::vector<std::string>& string_heap,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
                                          std::vector<EvalValue>& error_values,
                                          std::vector<std::vector<EvalValue>>& vector_heap,
                                          std::atomic<std::uint64_t>* primitive_error_counter,

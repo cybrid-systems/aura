@@ -6,6 +6,10 @@ follows, and the index is never *really* used (incomplete-refactor leftover
 that pollutes the heap on every call). Also flags bare push_back with no
 nearby size capture (index never taken).
 
+Issue #4543: string_heap_ is a LockedStringHeap whose only growth path is
+`idx = string_heap_.mint(s)`; a minted index that is never used is the same
+dead-push class and is flagged as 'unused-mint'.
+
 Usage:
   python3 scripts/audit/audit_dead_heap_push.py          # report, exit 0
   python3 scripts/audit/audit_dead_heap_push.py --strict # exit 1 if any candidate
@@ -36,6 +40,11 @@ SIZE_RE = re.compile(
 # between size capture and push — e.g. seva:generate-regression).
 SIZE_ANY_RE = re.compile(r"(?:ev\.)?string_heap_\.size\s*\(\s*\)")
 PUSH_RE = re.compile(r"(?:ev\.)?string_heap_\.(?:push_back|emplace_back)\s*\(")
+# Issue #4543: idx = [static_cast<T>(][ev.]string_heap_.mint(...)
+MINT_RE = re.compile(
+    r"(?:auto|const\s+auto|std::size_t|size_t|std::uint64_t|uint64_t|std::int32_t|std::int64_t)"
+    r"\s+(\w+)\s*=\s*(?:static_cast<[\w:]+>\(\s*)?(?:ev\.)?string_heap_\.mint\s*\("
+)
 
 # Intentional dual-heap mirror (IR executor keeps local string_heap_ aligned
 # with primitives heap for coercion; make_string uses prim_idx). #1668.
@@ -125,6 +134,36 @@ def scan_file(path: Path, *, rel: str | None = None) -> list[tuple[int, str, str
                 break
         if not used:
             hits.append((i + 1, name, "unused-index", lines[i].strip()))
+
+    # Issue #4543: minted index captured but never used.
+    for i, line in enumerate(lines):
+        code = _code_line(line)
+        if not code:
+            continue
+        m = MINT_RE.search(code)
+        if not m:
+            continue
+        name = m.group(1)
+        used = False
+        rest = code[m.end() :]
+        if has_real_use(rest, name):
+            used = True
+        for j in range(i + 1, min(len(lines), i + 120)):
+            if used:
+                break
+            wl = _code_line(lines[j])
+            if not wl:
+                continue
+            if re.search(
+                rf"(?:auto|const\s+auto|std::size_t|size_t|std::uint64_t|uint64_t)\s+"
+                rf"{re.escape(name)}\s*=",
+                wl,
+            ):
+                break
+            if has_real_use(lines[j], name):
+                used = True
+        if not used:
+            hits.append((i + 1, name, "unused-mint", lines[i].strip()))
 
     # Bare push: push_back without string_heap_.size() in the previous 30 lines.
     for i, line in enumerate(lines):

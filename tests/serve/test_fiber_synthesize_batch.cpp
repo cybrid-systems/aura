@@ -176,8 +176,7 @@ int run_synthesize_json_1715() {
         CompilerService cs;
         // Build JSON on the heap via C++ to avoid Aura nested-escape pitfalls.
         auto& heap = cs.evaluator().string_heap_mut();
-        auto jidx = heap.size();
-        heap.push_back(R"JSON({"choices":[{"message":{"content":"(define s \"hi\")"}}]})JSON");
+        auto jidx = heap.mint(R"JSON({"choices":[{"message":{"content":"(define s \"hi\")"}}]})JSON");
         auto parse_fn = cs.evaluator().primitives().lookup("json-parse");
         auto href_fn = cs.evaluator().primitives().lookup("hash-ref");
         CHECK(parse_fn && href_fn, "json-parse and hash-ref present");
@@ -189,8 +188,7 @@ int run_synthesize_json_1715() {
             auto root = (*parse_fn)({make_string(jidx)});
             CHECK(is_hash(root), "root is hash");
             auto push_key = [&](const char* k) {
-                auto i = heap.size();
-                heap.push_back(k);
+                auto i = heap.mint(k);
                 return make_string(i);
             };
             auto choices = (*href_fn)({root, push_key("choices")});
@@ -213,8 +211,7 @@ int run_synthesize_json_1715() {
         CompilerService cs;
         // Push JSON string "\u03bb" via C++ heap (avoid Aura escape maze).
         auto& heap = cs.evaluator().string_heap_mut();
-        auto jidx = heap.size();
-        heap.push_back("\"\\u03bb\""); // JSON text for string value λ
+        auto jidx = heap.mint("\"\\u03bb\""); // JSON text for string value λ
         auto parse_fn = cs.evaluator().primitives().lookup("json-parse");
         CHECK(parse_fn, "json-parse present");
         if (parse_fn) {
@@ -424,7 +421,7 @@ int run_try_probe_1718() {
                     auto region = code.substr(tp, 900);
                     CHECK(region.find("probe_slot") != std::string::npos,
                           "try_probe uses probe_slot");
-                    CHECK(region.find("push_back(call_src)") != std::string::npos,
+                    CHECK(region.find("mint(call_src)") != std::string::npos,
                           "first-time push still present");
                     CHECK(region.find("string_heap_[probe_slot]") != std::string::npos,
                           "in-place assign to slot");

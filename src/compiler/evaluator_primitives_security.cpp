@@ -391,8 +391,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -465,8 +464,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -626,8 +624,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -775,8 +772,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1455,8 +1451,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1544,8 +1539,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1566,8 +1560,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
-            auto rt_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(runtime_dir ? runtime_dir : "");
+            auto rt_idx = ev.string_heap_.mint(runtime_dir ? runtime_dir : "");
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"http-port", make_int(http_port)},
                 {"runtime-dir-set", make_bool(runtime_dir != nullptr && runtime_dir[0] != '\0')},
@@ -1598,8 +1591,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1651,8 +1643,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1709,8 +1700,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1767,8 +1757,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1826,8 +1815,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1892,8 +1880,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1963,8 +1950,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2029,8 +2015,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2097,8 +2082,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2190,8 +2174,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2274,8 +2257,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2364,8 +2346,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2454,8 +2435,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2511,8 +2491,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2604,8 +2583,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2738,8 +2716,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -2827,8 +2804,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -2944,8 +2920,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3064,8 +3039,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3151,8 +3125,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3259,8 +3232,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3351,8 +3323,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3446,8 +3417,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3520,8 +3490,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3559,8 +3528,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3617,8 +3585,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3696,8 +3663,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3758,8 +3724,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3830,8 +3795,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3892,8 +3856,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -3956,8 +3919,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4021,8 +3983,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4086,8 +4047,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4151,8 +4111,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4382,8 +4341,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4529,8 +4487,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4590,8 +4547,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4657,8 +4613,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4713,8 +4668,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -4801,8 +4755,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -4975,8 +4928,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     entry.epoch_delta, entry.timestamp_ms, entry.effect_bits, entry.tenant_id,
                     entry.provenance_mutation_id, entry.epoch, entry.effect_denied ? 1 : 0,
                     entry.bridge_epoch);
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::move(line));
+                auto sidx = ev.string_heap_.mint(std::move(line));
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(sidx), result});
                 result = make_pair(pid);
@@ -5009,8 +4961,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             wal_full_scan_hit = 1;
                     }
                     auto push_line = [&](std::string line) {
-                        auto sidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(std::move(line));
+                        auto sidx = ev.string_heap_.mint(std::move(line));
                         auto pid = ev.pairs_.size();
                         ev.pairs_.push_back({make_string(sidx), result});
                         result = make_pair(pid);
@@ -5103,8 +5054,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     "op=\"{}\" reason=\"{}\" denied={}",
                     e.seq, kind_str, e.tenant_id, e.fiber_id, e.mutation_id, e.epoch, e.effect_bits,
                     e.op, e.reason, e.denied ? 1 : 0);
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::move(line));
+                auto sidx = ev.string_heap_.mint(std::move(line));
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(sidx), result});
                 result = make_pair(pid);
@@ -5329,8 +5279,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     typed_outcome_wal, typed_kind_wal);
                 // Issue #3970: ring row is in-window — full-scan face stays 0.
                 line += " wal-full-scan-hit=0 wal-segments-scanned=0";
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::move(line));
+                auto sidx = ev.string_heap_.mint(std::move(line));
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(sidx), result});
                 result = make_pair(pid);
@@ -5401,8 +5350,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             typed_summary_from_wal, typed_outcome_wal, typed_kind_wal);
                         line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}",
                                             wal_full_scan_hit, wal_segments_scanned);
-                        auto sidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(std::move(line));
+                        auto sidx = ev.string_heap_.mint(std::move(line));
                         auto pid = ev.pairs_.size();
                         ev.pairs_.push_back({make_string(sidx), result});
                         result = make_pair(pid);
@@ -5453,8 +5401,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     typed_outcome_wal, typed_kind_wal, typed_summary_from_wal == 1 ? 0 : 1);
                 line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}",
                                     wal_full_scan_hit, wal_segments_scanned);
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::move(line));
+                auto sidx = ev.string_heap_.mint(std::move(line));
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(sidx), result});
                 result = make_pair(pid);
@@ -5500,8 +5447,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5632,8 +5578,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -5654,11 +5599,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        auto vidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(std::string(v_str));
+                        auto vidx = ev.string_heap_.mint(std::string(v_str));
                         vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
                         ht->size++;
                         return;
@@ -6056,8 +5999,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6169,8 +6111,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;

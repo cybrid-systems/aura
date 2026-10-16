@@ -4,6 +4,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include "primitives_detail.h"
 #include "observability_metrics.h"
@@ -86,7 +87,7 @@ namespace {
 } // namespace
 
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                              std::pmr::vector<std::string>& string_heap,
+                              ::aura::compiler::LockedStringHeap& string_heap,
                               std::vector<EvalValue>& error_values, Evaluator& ev) {
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;

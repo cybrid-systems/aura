@@ -72,7 +72,8 @@ def main() -> int:
     if "string_intern_.find" in lwin:
         fails.append("AC1: LiteralString arm still hashes string_intern_.find")
     must("std::string raw(raw_sv)", "AC1 miss still allocates", lwin)
-    must("string_heap_.push_back", "AC1 miss still push_back", lwin)
+    # #4543: growth is the locked push_string_heap -> LockedStringHeap::mint.
+    must("push_string_heap(", "AC1 miss still mints (locked)", lwin)
 
     kw = flat.find("// Issue #3401: keyword O(1) intern")
     kwin = flat[kw : kw + 1600] if kw >= 0 else ""

@@ -171,7 +171,7 @@ namespace primitives_detail {
     // standard capture names so primitive error sites read as one-liners
     // instead of repeating the 4-arg call. Requires the enclosing lambda
     // (or function) to have in scope:
-    //   - std::pmr::vector<std::string>&    string_heap
+    //   - ::aura::compiler::LockedStringHeap&    string_heap
     //   - std::vector<EvalValue>&           error_values
     //   - std::atomic<std::uint64_t>*       primitive_error_counter
     // matching the register_*_primitives() signature in evaluator.ixx.
@@ -263,8 +263,7 @@ namespace primitives_detail {
             auto idx = ((h >> 1) + at) & (hcap - 1);
             if (meta[idx] == 0xFF) {
                 meta[idx] = fp;
-                auto kidx = string_heap.size();
-                string_heap.push_back(k_str);
+                auto kidx = string_heap.mint(k_str);
                 keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                 vals[idx] = make_int(v).val;
                 ht->size++;

@@ -1240,7 +1240,7 @@ static void ac4008_compact_remaps_dense_inplace() {
 // #3401: eval_flat hot-path intern — production skips the function-scope
 // try/catch; LiteralString / :foo Variable arms read pool resolve via
 // std::string_view and consult Evaluator::string_intern_ / keyword_intern_
-// first; std::string construction + string_heap_.push_back /
+// first; std::string construction + string_heap_.mint (#4543) /
 // keyword_table_.push_back happen only on the first encounter of a
 // unique literal / keyword. Source-cite via read_file (no new helpers).
 static void ac3401_eval_flat_hot_path_intern() {
@@ -1274,8 +1274,11 @@ static void ac3401_eval_flat_hot_path_intern() {
     // does not compile (asan-build / ubsan-smoke / health / repro).
     CHECK(eval_flat.find("string_heap_.size()") != std::string::npos,
           "AC2: LiteralString miss path uses string_heap_.size() (vector, not pointer)");
-    CHECK(eval_flat.find("string_heap_.push_back") != std::string::npos,
-          "AC2: LiteralString miss path uses string_heap_.push_back (vector, not pointer)");
+    // #4543: growth goes through LockedStringHeap::mint (locked), not push_back.
+    CHECK(eval_flat.find("string_heap_.mint(") != std::string::npos,
+          "AC2/#4543: LiteralString miss path grows string_heap_ via locked mint()");
+    CHECK(eval_flat.find("string_heap_.push_back") == std::string::npos,
+          "AC2/#4543: no unlocked string_heap_.push_back in eval_flat");
     CHECK(eval_flat.find("string_heap_->") == std::string::npos,
           "AC2: LiteralString arm does not treat string_heap_ as a pointer");
 

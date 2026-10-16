@@ -4615,6 +4615,13 @@ aura_add_issue_test(test_stale_ref_string_heap)
 aura_issue_test_link_light(test_stale_ref_string_heap)
 add_dependencies(all_test_issue_targets test_stale_ref_string_heap)
 
+# Issue #4543: string_heap_ grows only through LockedStringHeap::mint
+# (compile-time no push_back; concurrent mint + shared-Evaluator prim stress;
+# run under --sanitizer=tsan for the race face).
+aura_add_issue_test(test_locked_string_heap)
+aura_issue_test_link_light(test_locked_string_heap)
+add_dependencies(all_test_issue_targets test_locked_string_heap)
+
 # Issue #2654: language (hash) / hash-set! grow past fixed capacity 8.
 aura_add_issue_test(test_hash_table_grow)
 aura_issue_test_link_light(test_hash_table_grow)

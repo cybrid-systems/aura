@@ -152,8 +152,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 }
             }
             result += ")";
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(result);
+            auto sidx = ev.string_heap_.mint(result);
             return types::make_string(sidx);
         });
 
@@ -216,8 +215,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         if (!saved_src.empty()) {
             auto set_fn = ev.primitives_.lookup("set-code");
             if (set_fn) {
-                auto si = ev.string_heap_.size();
-                ev.string_heap_.push_back(saved_src);
+                auto si = ev.string_heap_.mint(saved_src);
                 (*set_fn)({types::make_string(si)});
             }
         }
@@ -435,8 +433,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(), ev.error_values_.size(),
                 g_hash_tables.size(), ev.vector_heap_.size(), ev.opaque_heap_.size(), closure_count,
                 root_count);
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(result);
+            auto sidx = ev.string_heap_.mint(result);
             return types::make_string(sidx);
         });
 
@@ -492,8 +489,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -733,8 +729,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 auto idx = ((h >> 1) + at) & (hcap - 1);
                 if (meta[idx] == 0xFF) {
                     meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
+                    auto kidx = ev.string_heap_.mint(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                     vals[idx] = make_int(v).val;
                     ht->size++;
@@ -793,8 +788,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 commit = load(m->mutation_lightweight_commit_total);
                 rollback = load(m->mutation_lightweight_rollback_total);
             }
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::format(
+            auto sidx = ev.string_heap_.mint(std::format(
                 "total={} commit={} rollback={} records={} depth={} active={} frame_commit={} "
                 "schema=1355",
                 total, commit, rollback, records, depth, active,
@@ -852,8 +846,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 m->prim_cold_dispatch_fallback.store(static_cast<std::uint64_t>(cold),
                                                      std::memory_order_relaxed);
             }
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::format(
+            auto sidx = ev.string_heap_.mint(std::format(
                 "hot_table_size={} hot_dispatch_hits={} hot_dispatch_hits_render={} "
                 "cold_dispatch_fallback={} hot_meta_count={} schema=1356",
                 hot_sz, hits, hits_r, cold, static_cast<std::int64_t>(p.hot_meta_count())));
@@ -902,8 +895,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             }
             out += std::format("tracked_calls={} slot_table_calls={} samples={}", tracked_calls,
                                slot_calls, m ? m->render_prim_latency_samples.load() : 0);
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(out));
+            auto sidx = ev.string_heap_.mint(std::move(out));
             return types::make_string(sidx);
         });
 
@@ -933,8 +925,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             for (int i = 0; i <= 8; ++i)
                 under_16 +=
                     ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed);
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::format(
+            auto sidx = ev.string_heap_.mint(std::format(
                 "schema=1357 total_frames={} mean_frame_ns={} min_ns={} max_ns={} under_16ms={} "
                 "buckets=[{}] labels=0-1,1-2,2-4,4-6,6-8,8-10,10-12,12-14,14-16,16-20,20-33,>33ms",
                 frames, mean, mn, mx, under_16, buckets));
@@ -1192,8 +1183,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             } else {
                 out = "{\"arenas\":[]}";
             }
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(out);
+            auto sidx = ev.string_heap_.mint(out);
             return types::make_string(sidx);
         });
     // (string-pool:compact) — Issue #187 (P0): rehash the workspace's
@@ -1239,8 +1229,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1377,8 +1366,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
+                    auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -1531,8 +1519,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
+                auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -1643,15 +1630,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         std::vector<EvalValue> suggestions;
         for (auto& s : snaps) {
             if (s.pct >= 80) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("gc-module " + s.name);
+                auto sidx = ev.string_heap_.mint("gc-module " + s.name);
                 suggestions.push_back(make_string(sidx));
             }
         }
         if (ev.eval_depth_ - ev.last_gc_temp_eval_depth_ >
             ev.memory_policy_.recent_gc_temp_window) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("gc-temp");
+            auto sidx = ev.string_heap_.mint("gc-temp");
             suggestions.push_back(make_string(sidx));
         }
 
@@ -1673,8 +1658,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
+            auto kidx = ev.string_heap_.mint(k);
             EvalValue key_ev = make_string(kidx);
             for (std::size_t at = 0; at < cap; ++at) {
                 auto idx = ((h >> 1) + at) & (cap - 1);
@@ -1690,10 +1674,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         };
 
         // String values: intern the level and top_name, then build String EvalValues.
-        auto level_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(level);
-        auto top_name_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(top_name);
+        auto level_idx = ev.string_heap_.mint(level);
+        auto top_name_idx = ev.string_heap_.mint(top_name);
 
         // Suggestions vector
         auto sugg_vidx = ev.vector_heap_.size();
@@ -1814,8 +1796,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
+            auto kidx = ev.string_heap_.mint(k);
             EvalValue key_ev = make_string(kidx);
             EvalValue val_ev = make_int(v);
             auto meta = ht->metadata();

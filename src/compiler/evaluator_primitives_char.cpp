@@ -189,8 +189,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 utf8_append(result, as_int(car)); // Issue #4472
             v = ev.pairs_[idx].cdr;
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
+        auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
 
@@ -220,8 +219,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (eof)
             return make_void();
-        auto id = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(line));
+        auto id = ev.string_heap_.mint(std::move(line));
         return make_string(id);
     });
 
@@ -327,8 +325,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             out.push_back(kAlphabet[(b1 & 0xF) << 2]);
             out.push_back('=');
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
+        auto sid = ev.string_heap_.mint(std::move(out));
         return make_string(sid);
     });
 
@@ -376,8 +373,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 out.push_back(static_cast<char>((acc >> bits) & 0xFF));
             }
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
+        auto sid = ev.string_heap_.mint(std::move(out));
         return make_string(sid);
     });
 
@@ -402,8 +398,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             out.push_back(kHex[c >> 4]);
             out.push_back(kHex[c & 0xF]);
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
+        auto sid = ev.string_heap_.mint(std::move(out));
         return make_string(sid);
     });
 
@@ -443,8 +438,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 hi = -1;
             }
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
+        auto sid = ev.string_heap_.mint(std::move(out));
         return make_string(sid);
     });
 

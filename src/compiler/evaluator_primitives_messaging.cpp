@@ -298,15 +298,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!raw.empty() && (raw[0] == '{' || raw[0] == '[' || raw[0] == '"')) {
             auto parse_fn = ev.primitives_.lookup("json-parse");
             if (parse_fn) {
-                auto sid = ev.string_heap_.size();
-                ev.string_heap_.push_back(raw);
+                auto sid = ev.string_heap_.mint(raw);
                 auto parsed = (*parse_fn)({make_string(sid)});
                 if (!is_void(parsed))
                     return parsed;
             }
         }
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(*result));
+        auto idx = ev.string_heap_.mint(std::move(*result));
         return make_string(idx);
     });
 
@@ -318,8 +316,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         auto id = aura::messaging::g_session_id(svc);
         if (id.empty())
             id = "(unknown)";
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(id);
+        auto idx = ev.string_heap_.mint(id);
         return make_string(idx);
     });
 
@@ -403,8 +400,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -761,8 +757,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1018,8 +1013,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Try serve-mode first (full session isolation)
         if (aura::messaging::g_session_create && *aura::messaging::g_session_create) {
             if ((*aura::messaging::g_session_create)(name)) {
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(name);
+                auto sidx = ev.string_heap_.mint(name);
                 return make_string(sidx);
             }
             return ev.make_merr("create-failed",
@@ -1305,8 +1299,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.bump_orch_telemetry_hit();
         if (!json.empty())
             ev.bump_orch_telemetry_savings();
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(json);
+        auto idx = ev.string_heap_.mint(json);
         return types::make_string(idx);
     });
 
@@ -1465,8 +1458,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ch.queue.pop_front();
         ul.unlock();
         ch.cv.notify_all();
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(msg));
+        auto idx = ev.string_heap_.mint(std::move(msg));
         return make_string(static_cast<std::uint64_t>(idx));
     });
 
@@ -1491,8 +1483,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ch.queue.pop_front();
         ul.unlock();
         ch.cv.notify_all(); // wake blocked senders (full buffer / next rendezvous)
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(msg));
+        auto idx = ev.string_heap_.mint(std::move(msg));
         return make_string(static_cast<std::uint64_t>(idx));
     });
 
@@ -1526,8 +1517,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return result;
         auto names = (*aura::messaging::g_session_list)();
         for (auto it = names.rbegin(); it != names.rend(); ++it) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(*it);
+            auto sidx = ev.string_heap_.mint(*it);
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_string(sidx), result});
             result = make_pair(pid);

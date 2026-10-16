@@ -3263,8 +3263,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     validate_reason = "validate-primitive-missing";
                 } else {
                     for (auto root : replaced_roots) {
-                        auto tidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(validate_type);
+                        auto tidx = ev.string_heap_.mint(validate_type);
                         auto vresult = (*validate_fn)({make_string(tidx)});
                         // EvalValue has explicit operator bool() = delete;
                         // check via is_error() helper instead.
@@ -3525,8 +3524,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     name = "strict";
                     break;
             }
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(name);
+            auto idx = ev.string_heap_.mint(name);
             return make_string(static_cast<std::int32_t>(idx));
         });
 
@@ -3587,8 +3585,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     name = "lazy";
                     break;
             }
-            auto pidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(name);
+            auto pidx = ev.string_heap_.mint(name);
             return make_string(static_cast<std::int32_t>(pidx));
         });
 
@@ -3864,10 +3861,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (!validate_type.empty()) {
             auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
             if (validate_fn) {
-                auto ci = ev.string_heap_.size();
-                ev.string_heap_.push_back(safe_str(a[1]));
-                auto ti = ev.string_heap_.size();
-                ev.string_heap_.push_back(validate_type);
+                auto ci = ev.string_heap_.mint(safe_str(a[1]));
+                auto ti = ev.string_heap_.mint(validate_type);
                 // Issue #1684: schema validate must not throw past Guard
                 // with ok=true (would commit an unvalidated rebind).
                 EvalValue vresult = make_void();
@@ -6271,15 +6266,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             EvalValue result = make_void();
             for (auto it = captured.rbegin(); it != captured.rend(); ++it) {
                 auto nm = ev.workspace_pool_->resolve(*it);
-                auto ni = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::string(nm));
+                auto ni = ev.string_heap_.mint(std::string(nm));
                 auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({make_string(ni), result});
                 result = make_pair(pid);
             }
             // Wrap in (captured ...) so the LLM can pattern-match on it.
-            auto cap_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back("captured");
+            auto cap_idx = ev.string_heap_.mint("captured");
             auto wrap = ev.pairs_.size();
             ev.pairs_.push_back({make_string(cap_idx), result});
             return make_pair(wrap);
@@ -6438,8 +6431,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::int64_t batch_snap_id = -1;
             if (want_snapshot) {
                 if (auto snap_fn = ev.primitives_.lookup("ast:snapshot")) {
-                    auto snap_name_idx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("atomic-batch-pre");
+                    auto snap_name_idx = ev.string_heap_.mint("atomic-batch-pre");
                     auto snap_result = (*snap_fn)({make_string(snap_name_idx)});
                     if (is_int(snap_result)) {
                         batch_snap_id = as_int(snap_result);
@@ -9516,8 +9508,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
-                const auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back("hash-overflow");
+                const auto kidx = ev.string_heap_.mint("hash-overflow");
                 const auto key_ev = make_string(static_cast<std::uint64_t>(kidx));
                 for (std::size_t i = 0; i < ht->capacity; ++i) {
                     if (meta[i] == 0xFF)
@@ -9566,8 +9557,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9667,8 +9657,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9744,8 +9733,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9801,8 +9789,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -9983,8 +9970,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10065,8 +10051,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10144,8 +10129,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10691,8 +10675,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
+                        auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
