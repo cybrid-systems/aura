@@ -1935,8 +1935,11 @@ static void ac4146_production_facade_cone_jit_drop() {
         // (comments included) — MustDeopt/bump sit at +4297/+4430, so 5200
         // covers the full helper body.
         const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 5200);
-        CHECK(hwin.find("jit_cache_.erase(dependent)") != std::string::npos,
-              "4146 AC1: per-dependent jit_cache_ erase");
+        // Issue #4538: the cone drop erases the full bundle (name + name#*
+        // lowered rows) per dependent — the bare-key erase left D#0 behind
+        // and the stale lowered body republished the pre-mutate ScalarFn.
+        CHECK(hwin.find("erase_jit_cache_bundle_rows_for_define_(dependent)") != std::string::npos,
+              "4146 AC1: per-dependent jit_cache_ bundle erase");
         CHECK(hwin.find("aura_drop_jit_fn_native_for_define(dependent.c_str())") !=
                   std::string::npos,
               "4146 AC1: per-dependent native drop");

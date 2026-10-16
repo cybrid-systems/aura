@@ -16729,8 +16729,12 @@ public:
                 continue;
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
-                if (jit_cache_.erase(dependent) > 0)
-                    metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+                // Issue #4538: the cone drop must erase the full bundle
+                // (name + name#* rows) like the root define — the bare-key
+                // erase left D#0 behind, and the next try_jit_execute
+                // cache-hit the stale lowered body (republishing the
+                // pre-mutate ScalarFn through aura_register_fn_named).
+                erase_jit_cache_bundle_rows_for_define_(dependent);
             }
             aura_drop_jit_fn_native_for_define(dependent.c_str());
             {
