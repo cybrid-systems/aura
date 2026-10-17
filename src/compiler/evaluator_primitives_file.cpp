@@ -185,8 +185,14 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string content;
         if (is_string(a[1])) {
             auto cidx = as_string_idx(a[1]);
-            if (cidx < ev.string_heap_.size())
+            if (cidx < ev.string_heap_.size()) {
+                // Issue #4559: a Write grant is not a grant to copy another
+                // principal's stamped string. In-range before the bytes
+                // reach the host buffer; deny leaves the file untouched.
+                if (!ev.inrange_string_tenant_allows(cidx, kEffectWrite, "write-file"))
+                    return make_void();
                 content = ev.string_heap_[cidx];
+            }
         } else if (is_int(a[1])) {
             content = std::to_string(as_int(a[1]));
         } else {
@@ -404,6 +410,10 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_int(-1);
+        // Issue #4559: Exec pays for the spawn, not for reading another
+        // principal's stamped string into argv — in-range before the jail.
+        if (!ev.inrange_string_tenant_allows(idx, kEffectExec, "shell"))
+            return make_int(-1);
         // Issue #4233: Restricted+MT / Strict tenant FS jail — absolute /
         // ".." / expansion-escape command tokens deny with IsolationDeny
         // tenant-path-escape + zero exec (the #3802 write-file fence on the
@@ -475,6 +485,10 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_void();
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
+                return make_void();
+            // Issue #4559: same data fence as shell — in-range before the
+            // command bytes reach argv.
+            if (!ev.inrange_string_tenant_allows(idx, kEffectExec, "command-output"))
                 return make_void();
             auto& cmd = ev.string_heap_[idx];
             // Issue #4233: Restricted+MT / Strict tenant FS jail — same

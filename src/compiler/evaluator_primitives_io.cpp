@@ -786,6 +786,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto uidx = types::as_string_idx(a[0]);
             if (uidx >= ev.string_heap_.size())
                 return make_void();
+            // Issue #4559: the URL bytes leave the heap into libcurl —
+            // in-range before any copy (Network face).
+            if (!ev.inrange_string_tenant_allows(uidx, aura::compiler::security::kEffectNetwork,
+                                                 "http-get"))
+                return make_void();
             const auto& url = ev.string_heap_[uidx];
             // Issue #4382: scheme jail — only http/https under the tenant
             // jail; file:// and other schemes deny IsolationDeny
@@ -837,6 +842,21 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto bidx = types::as_string_idx(a[1]);
         if (uidx >= ev.string_heap_.size() || bidx >= ev.string_heap_.size())
             return make_void();
+        // Issue #4559: URL / body / auth all leave the heap (wire or the
+        // CLI fallback's argv) — in-range each before any copy.
+        if (!ev.inrange_string_tenant_allows(uidx, aura::compiler::security::kEffectNetwork,
+                                             "http-post"))
+            return make_void();
+        if (!ev.inrange_string_tenant_allows(bidx, aura::compiler::security::kEffectNetwork,
+                                             "http-post"))
+            return make_void();
+        if (a.size() >= 3 && types::is_string(a[2])) {
+            const auto aidx = types::as_string_idx(a[2]);
+            if (aidx < ev.string_heap_.size() &&
+                !ev.inrange_string_tenant_allows(aidx, aura::compiler::security::kEffectNetwork,
+                                                 "http-post"))
+                return make_void();
+        }
 
         auto& curl_url = ev.string_heap_[uidx];
         auto& curl_body = ev.string_heap_[bidx];
@@ -1151,6 +1171,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = types::as_string_idx(a[1]);
         if (sidx >= ev.string_heap_.size())
             return types::make_int(0);
+        // Issue #4559: Network pays for the send, not for reading another
+        // principal's stamped string into the socket buffer. In-range
+        // before the fd fence so the data fence denies with its own row.
+        if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNetwork,
+                                             "tcp-send"))
+            return types::make_int(-1);
         if (!minted_fd_tenant_allows(ev, fd, "tcp-send"))
             return types::make_int(-1);
         auto& data = ev.string_heap_[sidx];
@@ -1294,6 +1320,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         int fd = static_cast<int>(as_int(a[0]));
         auto sidx = as_string_idx(a[1]);
         if (sidx >= ev.string_heap_.size())
+            return make_int(-1);
+        // Issue #4559: Write pays for the fd write, not for reading another
+        // principal's stamped string into the kernel buffer.
+        if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectWrite,
+                                             "sys-write"))
             return make_int(-1);
         // Issue #3802: under Restricted+MT / Strict, if /proc/self/fd/N
         // resolves to a path under the tenant FS base, refuse cross-tenant
