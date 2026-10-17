@@ -991,6 +991,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 auto& slot = ev.string_heap_[ki];
                 std::fill(slot.begin(), slot.end(), '\0');
                 slot.clear();
+                ev.string_heap_.note_write(ki); // Issue #4548
             }
             if (!is_string(resp))
                 continue;
@@ -1331,6 +1332,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                             probe_slot = ev.string_heap_.mint(call_src);
                         } else {
                             ev.string_heap_[probe_slot] = call_src;
+                            ev.string_heap_.note_write(probe_slot); // Issue #4548
                         }
                     }
                     if (eval_fn) {
@@ -1804,6 +1806,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     slot = ev.string_heap_.mint(s);
                 } else {
                     ev.string_heap_[slot] = s;
+                    ev.string_heap_.note_write(slot); // Issue #4548
                 }
                 // Issue #4370: never hand the reused slot to a closure.
                 // An equal string already on the heap (not one of the

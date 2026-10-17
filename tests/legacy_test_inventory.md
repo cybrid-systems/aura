@@ -33,8 +33,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 94 | 94 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 275 | 275 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 106 | 106 | P1 — domain suite already collapses many obs gates |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 276 | 276 | P0 — high volume; strong domain suite foothold |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 105 | 105 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 60 | 60 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
@@ -1213,13 +1213,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (275)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (276)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (275)
+#### domain/ (276)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1355,6 +1355,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_synth_boundary_authority.cpp` (—) [domain_suite, theme_compiler] — AC1: Production synth hard-fail → boundary/hard-gate force-rollback;
 - `tests/compiler/test_load_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/core/test_lock_hierarchy.cpp` (—) [domain_suite, theme_core] — the lock-hierarchy contract documented in Issue #1388.
+- `tests/core/test_locked_string_heap.cpp` (—) [domain_suite, theme_core] — `idx = heap.size(); heap.push_back(s);` pair (#4519 AC2a TSan: unlocked
 - `tests/core/test_macro_dirty_bits_lock.cpp` (—) [domain_suite, theme_core] — AC1: concurrent apply_macro_dirty_bits(same_id, same_reasons) → +1 metric
 - `tests/compiler/test_macro_intro_restamp.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_macro_restamp_after_flat.cpp (which covers
 - `tests/compiler/test_macro_schema_dirty_propagate.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2098 + file-level atomic + C-linkage reader +
@@ -1497,13 +1498,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (106)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (105)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (106)
+#### domain/ (105)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [large, domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1549,7 +1550,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_join_drain_reclaim.cpp` (—) [large, domain_suite, theme_orch] — AC1: residual + reclaim counters bump when non-yielding body +
 - `tests/serve/test_join_drain_timeout.cpp` (—) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
 - `tests/compiler/test_lock_order_audit_hard.cpp` (—) [domain_suite, theme_compiler] — AC1: Audit off → zero atomics on acquire (TLS depth still tracked —
-- `tests/core/test_locked_string_heap.cpp` (—) [domain_suite, theme_core] — `idx = heap.size(); heap.push_back(s);` pair (#4519 AC2a TSan: unlocked
 - `tests/compiler/test_macro_clone_target_atomicity.cpp` (—) [domain_suite, theme_compiler] — rollback). Soft / Off keeps historical half-write (zero-cost contract).
 - `tests/compiler/test_macro_self_evo_check_evaluator_principal.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites the new helper tenant_for_macro_self_evo_check
 - `tests/orch/test_mailbox_bp_admit_default.cpp` (—) [domain_suite, theme_orch] — AC1: no env → resolve_mailbox_bp_admit_threshold() == 32

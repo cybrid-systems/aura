@@ -9524,11 +9524,24 @@ public:
     // Issue #4472: code point at a character index. One locked scan,
     // no copy of the heap string (#4320). -1 is out of range / missing.
     // An ill-formed byte is its own unit so a valid sequence is not split.
+    // Issue #4548: long strings use the heap's cached code-point index
+    // (ASCII: O(1); otherwise one stride walk), not a walk from byte 0.
     [[nodiscard]] int string_heap_code_point_at(std::size_t idx, std::size_t cp_index) const {
         std::lock_guard lock(alloc_storage_lock_);
-        if (idx >= string_heap_.size())
-            return -1;
-        return utf8_code_point_at(string_heap_[idx], cp_index);
+        return string_heap_.code_point_at(idx, cp_index);
+    }
+    // Issue #4548: code-point count (string-length) via the same index;
+    // npos when idx is out of range.
+    [[nodiscard]] std::size_t string_heap_code_point_count(std::size_t idx) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return string_heap_.code_point_count(idx);
+    }
+    // Issue #4548: substring copies only [start, end) of the slot — the
+    // whole source string used to be copied first. False when idx is OOB.
+    bool string_heap_code_point_slice(std::size_t idx, std::size_t start, std::size_t end,
+                                      std::string& out) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return string_heap_.code_point_slice(idx, start, end, out);
     }
     // Issue #2652: process-wide mutex for g_hash_tables mutation + string
     // key compare (hash-set! / hash-ref under multi-fiber stats-bump).

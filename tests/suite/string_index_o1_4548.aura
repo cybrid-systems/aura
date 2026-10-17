@@ -1,0 +1,66 @@
+;; expect: OK-4548 string-ref/substring/string-length use the cached code-point index
+; Issue #4548: string-ref / substring / string-length walked the UTF-8 bytes
+; from 0 on every call (and substring copied the whole source). Long strings
+; now use a cached code-point index. Results must match the #4472 code-point
+; semantics exactly, and in-place writers (string-fill!) must invalidate it.
+(define *fails* 0)
+(define *passes* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+(define (dbl s k) (if (= k 0) s (dbl (string-append s s) (- k 1))))
+
+; ASCII: 300,000 bytes.
+(define a10 "abcdefghij")
+(define big (dbl (string-append a10 a10 a10) 13))           ; 30 * 8192 = 245,760
+(check "ascii length" (string-length big) 245760)
+(check "ascii ref 0" (string-ref big 0) 97)
+(check "ascii ref end" (string-ref big 245759) 106)
+(check "ascii ref mid" (string-ref big 123457) (char->integer #\h))
+(check "ascii ref oob" (try (string-ref big 245760) (catch (e) 'oob)) 'oob)
+(check "ascii substring end" (substring big 245750 245760) "abcdefghij")
+(check "ascii substring clamp" (substring big 245755 999999) "fghij")
+(check "ascii substring empty" (substring big 10 10) "")
+(check "ascii substring reversed" (substring big 20 10) "")
+
+; Non-ASCII: "é" (2 bytes) "中" (3 bytes) "😀" (4 bytes) mixed with ASCII.
+(define unit "aé中😀b")                                        ; 5 code points, 11 bytes
+(define wide (dbl unit 12))                                    ; 20,480 cps, 45,056 bytes
+(check "wide length" (string-length wide) 20480)
+(check "wide ref e" (string-ref wide (+ (* 5 4000) 1)) 233)
+(check "wide ref han" (string-ref wide (+ (* 5 4095) 2)) 20013)
+(check "wide ref emoji end" (string-ref wide 20478) 128512)
+(check "wide ref last" (string-ref wide 20479) 98)
+(check "wide ref oob" (try (string-ref wide 20480) (catch (e) 'oob)) 'oob)
+(check "wide substring" (substring wide 10003 10008) "😀baé中")
+(check "wide substring stride edge" (substring wide 63 66) (substring (dbl unit 6) 63 66))
+(check "wide substring tail" (substring wide 20475 30000) unit)
+(check "wide substring length" (string-length (substring wide 1000 3000)) 2000)
+
+; string-fill! rewrites bytes in place (same byte length): the cached
+; index must not survive it.
+(define w2 (dbl "é" 9))                                        ; 512 cps, 1024 bytes
+(check "fill before" (string-length w2) 512)
+(check "fill before ref" (string-ref w2 511) 233)
+(string-fill! w2 (char->integer #\q))
+(check "fill after length" (string-length w2) 1024)
+(check "fill after ref" (string-ref w2 1023) (char->integer #\q))
+(check "fill after substring" (substring w2 1020 1030) "qqqq")
+
+; Cost does not grow with the offset (generous bound: the interpreted loop
+; dominates; the old walk was ~80x at this size).
+(define (refs s off n) (let l ((i 0) (acc 0)) (if (< i n) (l (+ i 1) (+ acc (string-ref s (+ off i)))) acc)))
+(define (time-ms th) (let ((t0 (current-time-ms))) (th) (- (current-time-ms) t0)))
+(define t-lo (time-ms (lambda () (refs big 0 3000))))
+(define t-hi (time-ms (lambda () (refs big 240000 3000))))
+(check "ref cost flat" (<= t-hi (+ 20 (* 4 t-lo))) #t)
+
+(if (and (= *fails* 0) (= *passes* 25))
+    (display "OK-4548 string-ref/substring/string-length use the cached code-point index\n")
+    (begin
+      (display "FAIL-4548 fails=") (display *fails*)
+      (display " passes=") (display *passes*) (newline)
+      (exit 1)))
