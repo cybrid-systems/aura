@@ -176,7 +176,8 @@ int run_synthesize_json_1715() {
         CompilerService cs;
         // Build JSON on the heap via C++ to avoid Aura nested-escape pitfalls.
         auto& heap = cs.evaluator().string_heap_mut();
-        auto jidx = heap.mint(R"JSON({"choices":[{"message":{"content":"(define s \"hi\")"}}]})JSON");
+        auto jidx =
+            heap.mint(R"JSON({"choices":[{"message":{"content":"(define s \"hi\")"}}]})JSON");
         auto parse_fn = cs.evaluator().primitives().lookup("json-parse");
         auto href_fn = cs.evaluator().primitives().lookup("hash-ref");
         CHECK(parse_fn && href_fn, "json-parse and hash-ref present");

@@ -78,12 +78,14 @@ PairSegment* pair_segment(std::size_t id, bool create) {
 
 // Thread-local cons slabs (#898). Linked once so process exit can free
 // them without a per-cons vector push under the workspace write lock.
+// Fixed-size slot array: a flexible array member is not ISO C++ and
+// test_ir builds with -Wpedantic -Werror.
+constexpr std::uint32_t kPairSlabCap = 64;
 struct PairSlab {
     PairSlab* next;
     std::uint32_t cap;
-    PairSlot slots[];
+    PairSlot slots[kPairSlabCap];
 };
-constexpr std::uint32_t kPairSlabCap = 64;
 std::atomic<PairSlab*> g_pair_slabs{nullptr};
 std::atomic<std::uint64_t> g_pair_slab_publishes{0};
 
@@ -281,8 +283,7 @@ PairTenantTable::Ref& PairTenantTable::Ref::operator=(std::uint64_t tenant) {
 
 extern "C" PairSlot* aura_pair_tls_bump() {
     if (!tls_pair_bump.slab || tls_pair_bump.used >= tls_pair_bump.slab->cap) {
-        const std::size_t bytes = sizeof(PairSlab) + sizeof(PairSlot) * kPairSlabCap;
-        auto* slab = static_cast<PairSlab*>(std::malloc(bytes));
+        auto* slab = static_cast<PairSlab*>(std::malloc(sizeof(PairSlab)));
         if (!slab)
             return nullptr;
         slab->cap = kPairSlabCap;

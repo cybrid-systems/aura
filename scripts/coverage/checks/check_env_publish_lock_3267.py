@@ -56,7 +56,8 @@ def main() -> int:
     must("publish_live_env_linear_to_bridge_holding_env_lock()", "AC1 holding", win)
     must("non-recursive", "AC1 non-recursive", env)
     tpos = env.find("Evaluator::truncate_env_frames_to_checkpoint()")
-    twin = env[tpos : tpos + 5000] if tpos >= 0 else ""
+    # #4542: truncate grew (closures-first hold); same 7000 window as test_envframe_epoch_batch.
+    twin = env[tpos : tpos + 7000] if tpos >= 0 else ""
     must("publish_live_env_linear_to_bridge_holding_env_lock()", "AC1 truncate holding", twin)
     if "publish_live_env_linear_to_bridge();" in twin:
         fails.append("AC1: truncate must not nested-lock publish()")

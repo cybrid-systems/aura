@@ -543,8 +543,9 @@ namespace {
 } // namespace
 
 void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                               ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
-                               ModulePathResolver resolve_module_path, Evaluator& ev) {
+                               ::aura::compiler::LockedStringHeap& string_heap,
+                               void*& type_registry, ModulePathResolver resolve_module_path,
+                               Evaluator& ev) {
 
     // Issue #1680: mtime-keyed cache; amortize re-read/re-parse of module files.
     add("query:module-exports",
