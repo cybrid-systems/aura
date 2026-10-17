@@ -37,7 +37,11 @@ using aura::compiler::mutate_type_gate::reset_for_test;
 using aura::compiler::mutate_type_gate::set_mode;
 using aura::compiler::mutate_type_gate::snapshot;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -670,6 +674,108 @@ int run_test_mutate_type_gate() {
                "(if (eq? k :switch) not-a-real-name x)))\" \"x\")",
                "unbound variable: not-a-real-name", "keyword + free name");
         sandbox_probe.evaluator().set_sandbox_mode(prev_sandbox);
+    }
+
+    // Issue #4581: named-variadic primitives (list/vector) register a fixed
+    // one-arg signature; synthesize_flat_call clamped at the prefix, so a
+    // free name in argument 2+ passed the post-mutate gate while the same
+    // name in argument 1 was rejected. Arith (+ - * /) had the same hole
+    // for operands 3+.
+    {
+        set_mode(MutateTypeGate::Soft);
+        CompilerService cs;
+        cs.evaluator().set_sandbox_mode(false);
+        auto setup = [&cs](const char* define) {
+            CHECK(cs.eval(std::string("(set-code \"") + define + "\")").has_value(),
+                  "4581 set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "4581 eval-current");
+        };
+        auto refused = [&](const char* define, const char* rebind, const char* want,
+                           const std::string& label) {
+            setup(define);
+            auto r = cs.eval(rebind);
+            CHECK(r.has_value(), label + ": rebind eval");
+            CHECK(!(r && is_bool(*r) && as_bool(*r)), label + ": is not #t");
+            const auto& err = cs.evaluator().last_mutate_error();
+            CHECK(err.find(want) != std::string::npos, label + ": " + err);
+        };
+        refused("(define (z81a x) x)",
+                "(mutate:rebind \"z81a\" \"(lambda (x) (list x not-a-real-name-4581))\" \"x\")",
+                "unbound variable: not-a-real-name-4581", "4581 free second list arg");
+        refused("(define (z81b x) x)",
+                "(mutate:rebind \"z81b\" "
+                "\"(lambda (x) (list \\\"s\\\" not-a-real-name-4581 x))\" \"x\")",
+                "unbound variable: not-a-real-name-4581", "4581 free third list arg");
+        refused("(define (z81c x) x)",
+                "(mutate:rebind \"z81c\" "
+                "\"(lambda (x) (vector \\\"s\\\" not-a-real-name-4581))\" \"x\")",
+                "unbound variable: not-a-real-name-4581", "4581 free second vector arg");
+        refused("(define (z81d x) x)",
+                "(mutate:rebind \"z81d\" "
+                "\"(lambda (x) (+ 1 2 not-a-real-name-4581))\" \"x\")",
+                "unbound variable: not-a-real-name-4581", "4581 free third arith operand");
+        // Argument 1 / operand 1 keep the pre-#4581 rejection (regression).
+        refused("(define (z81e x) x)",
+                "(mutate:rebind \"z81e\" \"(lambda (x) (list not-a-real-name-4581 x))\" \"x\")",
+                "unbound variable: not-a-real-name-4581",
+                "4581 free first list arg still rejected");
+        // cons is fixed arity — unchanged.
+        refused("(define (z81f x) x)",
+                "(mutate:rebind \"z81f\" "
+                "\"(lambda (x) (cons \\\"s\\\" not-a-real-name-4581))\" \"x\")",
+                "unbound variable: not-a-real-name-4581", "4581 cons still rejected");
+        // A closed body over list/vector still commits and runs.
+        setup("(define (z81g x) x)");
+        auto ok_r = cs.eval("(mutate:rebind \"z81g\" \"(lambda (x) (list :switch x x))\" \"x\")");
+        CHECK(ok_r.has_value() && is_bool(*ok_r) && as_bool(*ok_r),
+              "4581 closed list body commits");
+        auto zv = cs.eval("(z81g 5)");
+        CHECK(zv.has_value(), "4581 rebound z81g runs");
+    }
+
+    // Issue #4579: rebinding a procedure define to a provably non-procedure
+    // value is refused at the rebind gate. The post-mutate typecheck only
+    // re-infers the mutated define, so a caller's stale closure applied the
+    // literal and allocated without bound (bad_alloc / host OOM — not
+    // catchable by try).
+    {
+        set_mode(MutateTypeGate::Soft);
+        CompilerService cs;
+        cs.evaluator().set_sandbox_mode(false);
+        auto setup = [&cs](const char* define) {
+            CHECK(cs.eval(std::string("(set-code \"") + define + "\")").has_value(),
+                  "4579 set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "4579 eval-current");
+        };
+        setup("(define (f79 x) (+ x 1)) (define (g79 y) (* (f79 y) 2))");
+        auto r = cs.eval("(mutate:rebind \"f79\" \"42\" \"4579\")");
+        CHECK(r.has_value(), "4579 rebind eval");
+        CHECK(!(r && is_bool(*r) && as_bool(*r)), "4579 literal rebind is not #t");
+        // Early gate rejections return the tagged pair directly;
+        // last_mutate_error_ is populated by the typecheck refusal path,
+        // not by pre-typecheck gates (same as hygiene / not-found).
+        const auto& ev79 = cs.evaluator();
+        auto msg = cs.eval("(cadr (mutate:rebind \"f79\" \"42\" \"4579\"))");
+        CHECK(msg && is_string(*msg), "4579: rejection message is a string");
+        const auto midx = as_string_idx(*msg);
+        CHECK(midx < ev79.string_heap().size() &&
+                  ev79.string_heap()[midx].find("rebind-non-procedure") != std::string::npos,
+              "4579: rejection names the gate");
+        // Workspace unchanged — the old procedure bodies still run.
+        auto fv = cs.eval("(f79 3)");
+        CHECK(fv && is_int(*fv) && as_int(*fv) == 4, "4579: f still callable after rollback");
+        auto gv = cs.eval("(g79 3)");
+        CHECK(gv && is_int(*gv) && as_int(*gv) == 8, "4579: caller g still callable");
+        // Alias to another lambda define is a procedure value — allowed.
+        setup("(define h79 (lambda (a) a)) (define (k79 y) (h79 y))");
+        auto alias = cs.eval("(mutate:rebind \"k79\" \"h79\" \"4579\")");
+        CHECK(alias.has_value() && is_bool(*alias) && as_bool(*alias),
+              "4579: alias to lambda define commits");
+        // Value defines can still be rebound to literals.
+        setup("(define c79 1)");
+        auto val = cs.eval("(mutate:rebind \"c79\" \"42\" \"4579\")");
+        CHECK(val.has_value() && is_bool(*val) && as_bool(*val),
+              "4579: value define to literal still commits");
     }
 
     reset_for_test();

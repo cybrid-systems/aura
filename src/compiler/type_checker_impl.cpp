@@ -6162,16 +6162,6 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 }
             }
         }
-        // Issue #4398: dotted-rest has no upper bound. Synthesize args past
-        // the prefix so a free name there is still UnboundVariable. Do not
-        // unify them with the rest binding — that type is the list, not one
-        // element (user `(lambda (a . rest) ...)`).
-        if (ft.variadic) {
-            for (std::size_t i = n_expected; i < num_args; ++i) {
-                auto arg_id = v.child(i + 1);
-                (void)synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
-            }
-        }
         // Skip arity check for known variadic primitives (and/or/+ / …)
         bool named_variadic = false;
         auto callee_v = flat.get(func_id);
@@ -6184,6 +6174,24 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                  // Issue #63 Phase 3: strategy primitives take optional
                  // :key value keyword args, so are variadic.
                  cname == "define-strategy" || cname == "evolve-strategy");
+        }
+        // Issue #4398: dotted-rest has no upper bound. Synthesize args past
+        // the prefix so a free name there is still UnboundVariable. Do not
+        // unify them with the rest binding — that type is the list, not one
+        // element (user `(lambda (a . rest) ...)`).
+        // Issue #4581: named-variadic primitives (list/vector/hash/…) are
+        // registered with a fixed one-arg signature, so n_expected clamps at
+        // the prefix and arguments past it were never visited — a free name
+        // in argument 2+ passed the post-mutate gate while the same name in
+        // argument 1 was rejected. Walk those arguments too (same synthesis,
+        // no unification — a named variadic has no rest binding to unify
+        // against): every argument is at least checked for free names, in
+        // the selective post-mutate recheck and full infer alike.
+        if (ft.variadic || named_variadic) {
+            for (std::size_t i = n_expected; i < num_args; ++i) {
+                auto arg_id = v.child(i + 1);
+                (void)synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
+            }
         }
         // Issue #2578 / Aether H6: dotted-rest FuncType (ft.variadic) —
         // min arity is args.size()-1 (rest may be empty); no upper bound.
@@ -6391,6 +6399,19 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     static const auto* const arith = new std::unordered_set<std::string>{"+", "-", "*", "/"};
     if (!arith->count(std::string(fname)))
         return std::nullopt;
+
+    // Issue #4581: arith primitives are named-variadic at runtime but are
+    // registered with a fixed 2-arg signature; operands past the second
+    // were never synthesized, so a free name in operand 3+ passed the
+    // post-mutate gate while the same name in operand 1 was rejected.
+    // Walk the tail (same synthesis, no unification — arith has no rest
+    // binding), matching the list/vector walk in synthesize_flat_call.
+    for (std::size_t i = 3; i < v.children.size(); ++i) {
+        auto tail_id = v.child(i);
+        if (tail_id == NULL_NODE || tail_id >= flat.size())
+            continue;
+        (void)synthesize_flat(flat, pool, tail_id, flat.get(tail_id));
+    }
 
     // Variadic arith with 0 or 1 args
     // (+) → Int, (+ x) → type of x (or Int if unknown)

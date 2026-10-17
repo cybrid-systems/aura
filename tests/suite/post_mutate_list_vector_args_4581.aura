@@ -1,0 +1,76 @@
+; Issue #4581 — the typechecker never synthesized list/vector arguments
+; past the first (named-variadic prims are registered with a fixed 1-arg
+; signature and the past-prefix walk only ran for dotted-rest lambdas), so
+; a free name in argument 2+ passed the post-mutate gate and the call only
+; failed at runtime. Arith (+ - * /) had the same hole for operands 3+.
+; Every argument of a named-variadic call is now synthesized (walked for
+; free names), in both the selective post-mutate check and full infer.
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (accepted label r)
+  (if (not (eq? r #t)) (begin (display "    got: ") (write r) (newline)))
+  (assert! (eq? r #t) label))
+(define (typecheck-reject? r)
+  (and (pair? r) (equal? (car r) "mutation-failed")))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+
+(define (tryit tag body)
+  (set-code "(define (z81 x) x)")
+  (eval-current)
+  (rebind "z81" body tag))
+
+; ── free names past the first list/vector arg now reject ──
+(let ((r (tryit "free first" "(lambda (x) (list not-a-real-name-4581 x))")))
+  (assert! (typecheck-reject? r) "free first still rejected")
+  (assert! (string-has? (cadr r) "unbound variable: not-a-real-name-4581")
+           "free first names the variable"))
+
+(let ((r (tryit "free second" "(lambda (x) (list x not-a-real-name-4581))")))
+  (assert! (typecheck-reject? r) "free second list arg rejected")
+  (assert! (string-has? (cadr r) "not-a-real-name-4581") "rejection names the variable"))
+
+(let ((r (tryit "str first" "(lambda (x) (list \"s\" not-a-real-name-4581 x))")))
+  (assert! (typecheck-reject? r) "free third list arg rejected"))
+
+(let ((r (tryit "vector" "(lambda (x) (vector \"s\" not-a-real-name-4581))")))
+  (assert! (typecheck-reject? r) "free second vector arg rejected"))
+
+(let ((r (tryit "arith" "(lambda (x) (+ 1 2 not-a-real-name-4581))")))
+  (assert! (typecheck-reject? r) "free third arith operand rejected"))
+
+; ── fixed-arity and pre-#4581 behavior unchanged ──
+(let ((r (tryit "cons" "(lambda (x) (cons \"s\" not-a-real-name-4581))")))
+  (assert! (typecheck-reject? r) "cons still rejected"))
+
+; ── closed bodies over named variadics still commit and run ──
+(accepted "closed list body commits"
+          (tryit "valid" "(lambda (x) (list :switch x x))"))
+(assert! (equal? (z81 5) (list :switch 5 5)) "committed list rebind runs")
+
+(accepted "closed arith body commits"
+          (tryit "valid-add" "(lambda (x) (+ 1 2 x 3))"))
+(assert! (equal? (z81 4) 10) "committed arith rebind runs")
+
+(if (= *fails* 0)
+    (display "OK-4581 named-variadic args past the prefix\n")
+    (begin
+      (display "FAIL-4581 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

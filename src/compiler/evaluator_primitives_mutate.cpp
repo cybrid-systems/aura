@@ -4105,6 +4105,59 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             new_value = root_v.child(0);
         }
 
+        // Issue #4579: refuse to replace a procedure define (lambda body)
+        // with a value that is provably not a procedure. The post-mutate
+        // typecheck only re-infers the mutated define, so a caller like
+        // (define (g y) (* (f y) 2)) keeps a stale closure for the old f;
+        // applying it against a literal allocated without bound in the
+        // re-specialise re-dispatch (std::bad_alloc → SIGABRT, and a host
+        // OOM kill with no cap — uncatchable by try). Literal bodies
+        // (int / float / string / quote / pair / …) and alias names that
+        // resolve to a non-lambda workspace define are both refused; lambda
+        // bodies, computed calls (may evaluate to a closure), and aliases
+        // that resolve to a lambda / a primitive / a module import stay on
+        // the existing path.
+        {
+            const auto od_v = flat.get(old_define);
+            const bool old_is_procedure = !od_v.children.empty() && od_v.child(0) < flat.size() &&
+                                          flat.get(od_v.child(0)).tag == aura::ast::NodeTag::Lambda;
+            if (old_is_procedure) {
+                const auto nv_v = flat.get(new_value);
+                bool new_is_procedure = false;
+                if (nv_v.tag == aura::ast::NodeTag::Lambda ||
+                    nv_v.tag == aura::ast::NodeTag::Call) {
+                    new_is_procedure = true;
+                } else if (nv_v.tag == aura::ast::NodeTag::Variable) {
+                    // Alias: assume procedure unless the name provably
+                    // resolves to a non-lambda workspace define. Not found
+                    // (primitive / module import / parameter) → do not block.
+                    new_is_procedure = true;
+                    if (nv_v.sym_id != aura::ast::INVALID_SYM) {
+                        for (aura::ast::NodeId d = 0; d < flat.size(); ++d) {
+                            if (flat.is_free_slot(d) || d == old_define)
+                                continue;
+                            const auto dv = flat.get(d);
+                            if (dv.tag != aura::ast::NodeTag::Define || dv.sym_id != nv_v.sym_id)
+                                continue;
+                            new_is_procedure =
+                                !dv.children.empty() && dv.child(0) < flat.size() &&
+                                flat.get(dv.child(0)).tag == aura::ast::NodeTag::Lambda;
+                            break;
+                        }
+                    }
+                }
+                if (!new_is_procedure) {
+                    free_rebind_parse_orphans(); // Issue #2791: unlinked parse appends
+                    ok = false;
+                    return mev("rebind-non-procedure",
+                               "rebind-non-procedure: '" + name +
+                                   "' is a procedure; refusing to replace it with a non-procedure "
+                                   "value (callers would apply a stale closure against it — "
+                                   "unbounded allocation, #4579)");
+                }
+            }
+        }
+
         // Issue #4357: closed one-line Soft lambda only. The eligibility
         // walk is above this handler.
         if (rebind_light_path_eligible(flat, old_define, new_value, ev.workspace_pool_,
