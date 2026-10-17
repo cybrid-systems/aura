@@ -1232,7 +1232,11 @@ public:
     void append_hygiene_blame_frame(std::uint32_t node_id, std::uint64_t mutation_id = 0);
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
-    void mark_touched_on_delta(aura::core::TypeId var, bool occurrence_narrow = false);
+    // record_goal: narrowing apply appends an OccurrenceGoal. Replay
+    // (#4583) passes false so a re-inject of priority roots does not
+    // duplicate the live table. Default true keeps apply call sites.
+    void mark_touched_on_delta(aura::core::TypeId var, bool occurrence_narrow = false,
+                               bool record_goal = true);
     // Issue #1617: mark a Let-Polymorphism free/instantiated var as a
     // high-priority dirty root for solve_delta worklist + re-generalize.
     void mark_let_poly_dirty(aura::core::TypeId var);
