@@ -7135,6 +7135,86 @@ int main() {
     }
 
     {
+        std::println("\n--- #4559: in-range string fence denies effectful sinks ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
+
+        // Tenant 7 mints the stamped secret; the shared string_heap_ keeps
+        // the bytes reachable from tenant 9's scope (shared top env).
+        aura::compiler::types::EvalValue secret;
+        {
+            Evaluator::TenantScope t7(ev, 7);
+            secret = aura::compiler::types::make_string(
+                static_cast<std::uint64_t>(ev.push_string_heap("secret-token")));
+        }
+        const auto sidx = aura::compiler::types::as_string_idx(secret);
+        const auto& ring = g_security_event_ring();
+
+        {
+            Evaluator::TenantScope t9(ev, 9);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            // Each sink calls this fence with the effect it already required
+            // before copying the bytes into a host buffer / argv / socket.
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectWrite,
+                                                   "write-file"),
+                  "4559: write-file content fence denies foreign stamp");
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectExec,
+                                                   "shell"),
+                  "4559: shell command fence denies foreign stamp");
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectExec,
+                                                   "command-output"),
+                  "4559: command-output fence denies foreign stamp");
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectWrite,
+                                                   "sys-write"),
+                  "4559: sys-write fence denies foreign stamp");
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNetwork,
+                                                   "http-get"),
+                  "4559: http-get url fence denies foreign stamp");
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNetwork,
+                                                   "http-post"),
+                  "4559: http-post url/body/auth fence denies foreign stamp");
+            CHECK(!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNetwork,
+                                                   "tcp-send"),
+                  "4559: tcp-send payload fence denies foreign stamp");
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (std::string_view(e.op) == "write-file" || std::string_view(e.op) == "tcp-send")
+                    saw = true;
+            }
+            CHECK(saw, "4559: IsolationDeny rows carry the sink ops");
+        }
+        {
+            Evaluator::TenantScope t7(ev, 7);
+            CHECK(ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectWrite,
+                                                  "write-file"),
+                  "4559: owner fence allows (no over-deny)");
+        }
+        // Tenant 0's intern is a real stamp (tenant+1); only the never-stamped
+        // hole (record 0) stays on the historical allow path.
+        aura::compiler::types::EvalValue zsec;
+        {
+            Evaluator::TenantScope t0(ev, 0);
+            zsec = aura::compiler::types::make_string(
+                static_cast<std::uint64_t>(ev.push_string_heap("zero-4559")));
+        }
+        {
+            Evaluator::TenantScope t9(ev, 9);
+            const auto zsidx = aura::compiler::types::as_string_idx(zsec);
+            CHECK(!ev.inrange_string_tenant_allows(zsidx, aura::compiler::security::kEffectWrite,
+                                                   "write-file"),
+                  "4559: tenant-0 stamp refuses tenant 9");
+        }
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
         std::println("\n--- #4382 AC2: Soft/Off scheme passthrough (legacy face) ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
