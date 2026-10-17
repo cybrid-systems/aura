@@ -458,6 +458,8 @@ struct LLVMBuilder {
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
     llvm::Function* fn_deopt_to_interpreter = nullptr;
+    // Issue #4567: entry guard for a real per-arg shape map.
+    llvm::Function* fn_check_shape_guard = nullptr;
     // Issue #4451: peek the #4084 sentinel after OpCall / OpApply.
     // Does not clear it. The host take-after still sees a callee refuse.
     llvm::Function* fn_peek_prologue_deopt_sentinel = nullptr;
@@ -600,6 +602,10 @@ struct LLVMBuilder {
         fn_deopt_to_interpreter = llvm::Function::Create(
             llvm::FunctionType::get(i64, {ptr_i8}, false), llvm::Function::ExternalLinkage,
             "aura_jit_deopt_to_interpreter", mod);
+        // Issue #4567: i32 aura_check_shape_guard(i64* args, i32 n, i8* map, i32 map_n)
+        fn_check_shape_guard = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, {ptr_i8, i32_ty, ptr_i8, i32_ty}, false),
+            llvm::Function::ExternalLinkage, "aura_check_shape_guard", mod);
         // Issue #4451: i32 aura_jit_peek_prologue_deopt_sentinel(void)
         fn_peek_prologue_deopt_sentinel = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
@@ -3052,6 +3058,9 @@ int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+// Issue #4567: defined in spec_jit_controller.cpp (C linkage).
+int aura_check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
+                           const std::uint8_t* shape_map, std::uint32_t map_size);
 int aura_jit_peek_prologue_deopt_sentinel(void) noexcept;
 int64_t aura_prim_call(int64_t, int64_t*, int64_t); // Issue #2576 N-arg
 uint64_t aura_prim_call_count();
@@ -3492,6 +3501,7 @@ struct AuraJIT::Impl {
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
         reg("aura_jit_deopt_to_interpreter", (void*)aura_jit_deopt_to_interpreter);
+        reg("aura_check_shape_guard", (void*)aura_check_shape_guard);
         reg("aura_jit_peek_prologue_deopt_sentinel", (void*)aura_jit_peek_prologue_deopt_sentinel);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
         // Issue #3988: Jump back-edge poll (strong in evaluator_fiber_mutation).
@@ -3811,6 +3821,70 @@ struct AuraJIT::Impl {
             builder.entry_body_bb = bb_cont;
             if (metrics)
                 metrics->prologue_emit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Issue #4567: a shape map speculates argument slots. Check the
+        // OpArg buffer (env is prepended, so the index is not local 0)
+        // before the body. A miss returns the prologue deopt sentinel.
+        // No map, or a macro-origin function, emits no call.
+        if (fn.shape_map && fn.source_marker != 1 && builder.fn_check_shape_guard &&
+            builder.fn_deopt_to_interpreter) {
+            std::vector<std::uint8_t> codes;
+            for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+                const auto& fb = fn.blocks[bi];
+                for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                    const auto& inst = fb.instructions[ii];
+                    if (inst.opcode != OpArg)
+                        continue;
+                    const uint32_t buf = inst.ops[1];
+                    const uint32_t dest = inst.ops[0];
+                    if (buf >= fn.local_count || dest >= fn.local_count)
+                        continue;
+                    const auto expect = fn.shape_map[dest];
+                    if (expect == 0)
+                        continue;
+                    if (codes.size() <= buf)
+                        codes.resize(static_cast<std::size_t>(buf) + 1, 0);
+                    codes[buf] = static_cast<std::uint8_t>(expect);
+                }
+            }
+            bool any = false;
+            for (auto c : codes)
+                if (c != 0)
+                    any = true;
+            if (any) {
+                auto* insert_bb = builder.entry_body_bb ? builder.entry_body_bb
+                                                        : builder.block_map[fn.entry_block];
+                builder.irb->SetInsertPoint(insert_bb);
+                auto* arr = llvm::ConstantDataArray::get(ctx, codes);
+                auto* gv = new llvm::GlobalVariable(*builder.mod, arr->getType(), true,
+                                                    llvm::GlobalValue::PrivateLinkage, arr,
+                                                    "shape_guard_map");
+                auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                auto* map_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    gv->getValueType(), gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+                auto* n32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx),
+                                                   static_cast<std::uint64_t>(codes.size()));
+                auto* locals_ptr = &*builder.func->arg_begin();
+                auto* guard_ok = builder.irb->CreateCall(
+                    llvm::FunctionCallee(builder.fn_check_shape_guard),
+                    llvm::ArrayRef<llvm::Value*>{locals_ptr, n32, map_ptr, n32});
+                auto* miss = builder.irb->CreateICmpEQ(guard_ok, zero32);
+                auto* bb_deopt = llvm::BasicBlock::Create(ctx, "shape_guard_deopt", builder.func);
+                auto* bb_cont = llvm::BasicBlock::Create(ctx, "shape_guard_cont", builder.func);
+                builder.irb->CreateCondBr(miss, bb_deopt, bb_cont);
+                builder.irb->SetInsertPoint(bb_deopt);
+                const char* gname = (fn.name && fn.name[0]) ? fn.name : "<anon>";
+                auto* name_gv = builder.irb->CreateGlobalString(gname, "shape_guard_fn_name");
+                auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    name_gv->getValueType(), name_gv,
+                    llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+                auto* deopt_ret =
+                    builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
+                                            llvm::ArrayRef<llvm::Value*>{name_ptr});
+                builder.irb->CreateRet(deopt_ret);
+                builder.entry_body_bb = bb_cont;
+            }
         }
 
         // Lower each block

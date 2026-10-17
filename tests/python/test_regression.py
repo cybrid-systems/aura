@@ -664,7 +664,132 @@ def test_fuzz_edsl():
     print("  ✅ test_fuzz_edsl")
 
 
+def test_jit_soundness_4567():
+    """Issue #4567: IR, eval-path, and --jit stdout agree on >=200 programs.
+
+    One deep tail call (g 300) covers the workspace-depth wrap. Synthetic
+    shape seeds must not print a spec: line or change the result.
+    """
+
+    def add(bucket, name, code, timeout=8, expect=None):
+        bucket.append((name, code, timeout, expect))
+
+    programs = []
+    for n in range(40):
+        tri = n * (n - 1) // 2
+        add(
+            programs,
+            f"sumi-{n}",
+            "(define (sumi n) (let loop ((i 0) (acc 0)) "
+            "(if (< i n) (loop (+ i 1) (+ acc i)) acc))) "
+            f"(display (sumi {n}))",
+            expect=str(tri),
+        )
+    for n in range(10):
+        add(
+            programs,
+            f"sumf-{n}",
+            "(define (sumf n) (let loop ((i 0) (acc 0.0)) "
+            "(if (< i n) (loop (+ i 1) (+ acc 1.5)) acc))) "
+            f"(display (sumf {n}))",
+        )
+    for n in range(40):
+        add(
+            programs,
+            f"g-{n}",
+            f"(define (g a b) (if (< a 1) b (g (- a 1) (+ b 1)))) (display (g {n} 0))",
+            expect=str(n),
+        )
+    add(
+        programs,
+        "g-300",
+        "(define (g a b) (if (< a 1) b (g (- a 1) (+ b 1)))) (display (g 300 0))",
+        timeout=20,
+        expect="300",
+    )
+    for n in range(16):
+        add(
+            programs,
+            f"h-{n}",
+            f"(define (h a b) (if (< a 1) b (h (- a 1) (cons a b)))) (display (length (h {n} ())))",
+            expect=str(n),
+        )
+    add(
+        programs,
+        "h-quote-10",
+        "(define (h a b) (if (< a 1) b (h (- a 1) (cons a b)))) (display (length (h 10 (quote ()))))",
+        expect="10",
+    )
+    for n in range(12):
+        add(
+            programs,
+            f"build-{n}",
+            "(define (build n) (let loop ((i 0) (acc (quote ()))) "
+            "(if (< i n) (loop (+ i 1) (cons i acc)) (length acc)))) "
+            f"(display (build {n}))",
+            expect=str(n),
+        )
+    add(programs, "cons-empty", "(display (length (cons 1 ())))", expect="1")
+    add(programs, "cons-quote", "(display (length (cons 1 (quote ()))))", expect="1")
+    add(programs, "car-cons", "(display (car (cons 7 ())))", expect="7")
+    for n in range(13):
+        add(
+            programs,
+            f"fact-{n}",
+            f"(define (fact n) (if (< n 2) 1 (* n (fact (- n 1))))) (display (fact {n}))",
+        )
+    for n in range(13):
+        add(
+            programs,
+            f"fib-{n}",
+            f"(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) (display (fib {n}))",
+        )
+    for a in range(8):
+        for b in range(5):
+            add(programs, f"add-{a}-{b}", f"(display (+ {a} {b}))", expect=str(a + b))
+            add(programs, f"lt-{a}-{b}", f"(display (< {a} {b}))", expect="#t" if a < b else "#f")
+    for n in range(12):
+        add(
+            programs,
+            f"mix-{n}",
+            f"(define (mix a b) (if (< a b) (+ a b) (- a b))) (display (mix {n} {n // 2}))",
+        )
+    if len(programs) < 200:
+        raise Exception(f"corpus has {len(programs)} programs, need >= 200")
+
+    def run_mode(code, mode, timeout):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    for name, code, timeout, expect in programs:
+        outs = {}
+        for mode in ("ir", "eval", "jit"):
+            try:
+                r = run_mode(code, mode, timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise Exception(f"{name} {mode}: timeout") from exc
+            err = r.stderr or ""
+            if r.returncode != 0 or "spec:" in err:
+                raise Exception(f"{name} {mode}: rc={r.returncode} out={r.stdout!r} err={err[:300]!r}")
+            outs[mode] = (r.stdout or "").strip()
+        if not (outs["ir"] == outs["eval"] == outs["jit"]):
+            raise Exception(f"{name}: ir={outs['ir']!r} eval={outs['eval']!r} jit={outs['jit']!r}")
+        if expect is not None and outs["ir"] != expect:
+            raise Exception(f"{name}: expected {expect!r}, got {outs['ir']!r}")
+    print(f"  ✅ jit-soundness-4567 ({len(programs)} programs)")
+
+
 for tf in [
+    test_jit_soundness_4567,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

@@ -354,7 +354,10 @@ inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
 }
 
 // Per-thread re-entry depth for each level.
-inline thread_local std::uint8_t g_depth[static_cast<std::uint8_t>(Level::kCount)] = {};
+// Issue #4567: a JIT self-call acquires Workspace once per frame.
+// uint8_t wrapped at 256, is_held() went false, and the next lock()
+// deadlocked on the non-recursive shared_mutex ((g 1000 0) hang).
+inline thread_local std::uint32_t g_depth[static_cast<std::uint8_t>(Level::kCount)] = {};
 
 [[nodiscard]] inline bool is_held(Level L) noexcept {
     return g_depth[static_cast<std::uint8_t>(L)] > 0;

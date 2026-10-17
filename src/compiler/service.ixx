@@ -3427,27 +3427,10 @@ public:
                     }
                 }
             }
-            // Issue #2292: self-recursive MakeClosure (func_id == enclosing
-            // function) is correct in the IR interpreter but currently
-            // infinite-loops in the LLVM JIT. Force IR for those modules.
-            // AURA_FORCE_IR=1 also skips JIT for diagnosis.
-            if (!skip_jit) {
-                for (const auto& jf : ir_mod.functions) {
-                    for (const auto& jb : jf.blocks) {
-                        for (const auto& ji : jb.instructions) {
-                            if (ji.opcode == aura::ir::IROpcode::MakeClosure &&
-                                ji.operands.size() > 1 && ji.operands[1] == jf.id) {
-                                skip_jit = true;
-                                break;
-                            }
-                        }
-                        if (skip_jit)
-                            break;
-                    }
-                    if (skip_jit)
-                        break;
-                }
-            }
+            // Issue #4567: self-recursive MakeClosure stays on the JIT.
+            // The old skip hid a workspace-depth wrap at 256 frames
+            // (uint8_t g_depth) that deadlocked (g 1000 0). AURA_FORCE_IR
+            // still selects the interpreter.
             if (!skip_jit && !std::getenv("AURA_FORCE_IR")) {
                 auto jit_result = try_jit_execute(ir_mod, &last_escape_maps_);
                 if (jit_result) {
@@ -4130,50 +4113,18 @@ public:
                 }
             }
 
-            // Populate shape_map from profiler data.
-            // Fills shape_map_storage and sets flat_fn.shape_map.
+            // Issue #4567: a function-level dominant shape is not per-arg
+            // feedback. Stamping it onto every argument, with no entry
+            // guard, made named-let under --jit return 0 once synthetic
+            // SHAPE_INT seeds flipped is_stable. Stay on the generic body.
+            // Per-arg maps are #4568; check_shape_guard is the entry guard
+            // for a map that is actually installed.
             bool set_shape_map(const shape::ShapeProfiler& profiler, const std::string& session,
                                const std::string& fn_name) {
-                auto fn_key = shape::make_fn_key(session, fn_name);
-                if (!profiler.is_stable(fn_key))
-                    return false;
-
-                auto dom = profiler.dominant_shape(fn_key);
-                // Map ShapeID to shape_map byte code
-                std::uint8_t code = 0; // Dynamic
-                if (dom == shape::SHAPE_INT)
-                    code = 1;
-                else if (dom == shape::SHAPE_FLOAT)
-                    code = 2;
-                else if (dom == shape::SHAPE_BOOL)
-                    code = 3;
-                else if (dom == shape::SHAPE_STRING)
-                    code = 4;
-                else if (dom == shape::SHAPE_VOID)
-                    code = 5;
-                else if (dom == shape::SHAPE_PAIR)
-                    code = 10;
-                else if (dom == shape::SHAPE_VECTOR)
-                    code = 11;
-                else if (dom == shape::SHAPE_HASH)
-                    code = 12;
-                else if (dom == shape::SHAPE_CLOSURE)
-                    code = 13;
-                else if (dom == shape::SHAPE_REF)
-                    code = 14;
-                else
-                    return false; // Not a simple leaf shape
-
-                shape_map_storage.resize(flat_fn.local_count, 0);
-                // Only annotate argument slots (slots 0..arg_count-1 are args)
-                for (std::uint32_t i = 0; i < flat_fn.arg_count && i < flat_fn.local_count; ++i)
-                    shape_map_storage[i] = code;
-
-                flat_fn.shape_map = shape_map_storage.data();
-
-                std::fprintf(stderr, "spec: L1 for '%s' — arg shape=%d\n", fn_name.c_str(),
-                             (int)code);
-                return true;
+                (void)profiler;
+                (void)session;
+                (void)fn_name;
+                return false;
             }
         };
 
@@ -4187,6 +4138,15 @@ public:
         for (auto& ir_fn : ir_mod.functions) {
             if (ir_fn.id == ir_mod.entry_function_id) {
                 entry_func_id = static_cast<int64_t>(ir_fn.id);
+            }
+            // Issue #4567: every define and named-let lambda is lowered as
+            // "__lambda__". jit_cache_ and AuraJIT::compile_fns_ key on that
+            // name, so the second function reused the first body (sumi → 0,
+            // (g 3) ran f). Stamp the function id before any cache probe.
+            if (ir_fn.name.empty() || ir_fn.name == "__lambda__" ||
+                ir_fn.name == "__self_placeholder__") {
+                const std::string stem = ir_fn.name.empty() ? "__lambda__" : ir_fn.name;
+                ir_fn.name = stem + "#" + std::to_string(ir_fn.id);
             }
 
             // env_count = number of captured free variables
@@ -4232,8 +4192,10 @@ public:
                             // evict and recompile with shape specialization.
                             auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                             if (!cache_it->second.has_shape_map &&
+                                !cache_it->second.spec_declined &&
                                 shape_profiler_.is_stable(fn_key)) {
-                                // Drop shared lock; take unique for erase.
+                                // Drop shared lock; take unique for the
+                                // #4567 specialization probe.
                             } else if (jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                                 // Issue #605: shape version bumped by mutate — re-compile.
                                 shape::jit_shape_miss_count.fetch_add(1, std::memory_order_relaxed);
@@ -4256,10 +4218,21 @@ public:
                         cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
                         jit_cache_.erase(cache_it);
                     } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
+                               !cache_it->second.spec_declined &&
                                shape_profiler_.is_stable(fn_key)) {
-                        std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
-                                     ir_fn.name.c_str());
-                        jit_cache_.erase(cache_it);
+                        // Issue #4567: compile_specialized is the live
+                        // entry. It returns null without a guarded per-arg
+                        // map, so keep the generic body. Do not erase.
+                        std::uint8_t no_map = 0;
+                        auto* spec = spec_jit_.compile_specialized(
+                            ir_fn.name, &no_map, 0,
+                            cache_it->second.fn_ptr.load(std::memory_order_acquire),
+                            ir_fn.arg_count, ir_fn.local_count);
+                        (void)spec;
+                        cache_it->second.spec_declined = true;
+                        fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
+                        need_compile = false;
+                        note_cache_hit(cache_it->second);
                     } else if (cache_it != jit_cache_.end() &&
                                jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                         // Issue #605: drop stale shape-specialized entry.
@@ -4339,19 +4312,9 @@ public:
                 // Success counter
                 metrics_.jit_compilations.fetch_add(1, std::memory_order_relaxed);
 
-                // Issue #744: seed ShapeProfiler observations at JIT compile
-                // so mutate/invalidate closed-loop has per-fn profiles.
-                if (ir_fn.name != "__top__") {
-                    auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                    shape::ShapeID seed = shape::SHAPE_INT;
-                    if (had_shape) {
-                        const auto dom = shape_profiler_.dominant_shape(fn_key);
-                        if (dom != shape::SHAPE_UNKNOWN)
-                            seed = dom;
-                    }
-                    for (std::uint32_t si = 0; si < shape::ShapeProfiler::kStableThreshold; ++si)
-                        shape_profiler_.record_shape(fn_key, seed);
-                }
+                // Issue #4567: do not seed ShapeProfiler. A specialization
+                // has to come from real per-arg feedback (#4568) or from
+                // static types, and every speculated slot needs a guard.
 
                 // Cache compiled function (skip __top__ — IR varies per eval)
                 if (ir_fn.name != "__top__") {
@@ -4528,7 +4491,7 @@ public:
                                                 static_cast<std::uint64_t>(-raw_result - 1));
                                         else
                                             ev_result = types::make_pair(
-                                                static_cast<std::uint64_t>(raw_result >> 2));
+                                                static_cast<std::uint64_t>(raw_result >> 6));
                                         goto done;
                                     case aura::ir::IROpcode::NewCell:
                                         ev_result = types::make_cell(
@@ -16035,6 +15998,9 @@ public:
         std::uint32_t arg_count = 0;
         std::uint32_t env_count = 0;
         bool has_shape_map = false; // true if compiled with shape_map
+        // Issue #4567: generic body kept. A function-level dominant
+        // shape is not a guarded per-arg map, so do not hot-recompile.
+        bool spec_declined = false;
         // Issue #605: ShapeProfiler version at compile time.
         // Compared on cache hit; mismatch → re-compile + jit_shape_miss.
         std::uint64_t compiled_shape_version_ = 0;
@@ -17239,7 +17205,7 @@ public:
     // escape_maps: optional pre-computed escape maps from EscapeAnalysisWrap pass.
     //              If null, escape analysis is run inline.
     std::optional<types::EvalValue>
-    try_jit_execute(const aura::ir::IRModule& ir_mod,
+    try_jit_execute(aura::ir::IRModule& ir_mod,
                     const std::vector<std::vector<std::uint8_t>>* escape_maps = nullptr) {
         // Issue #59 Iter 3: shared-lock the Mutation Lock so a
         // concurrent mutate:* waits for this compile to drain before
@@ -17268,6 +17234,13 @@ public:
 
         // Compile ALL functions (with JIT cache) and register with runtime
         for (auto& ir_fn : ir_mod.functions) {
+            // Issue #4567: same unique name as exec_jit. A shared
+            // "__lambda__" cache entry aliases every lambda in the module.
+            if (ir_fn.name.empty() || ir_fn.name == "__lambda__" ||
+                ir_fn.name == "__self_placeholder__") {
+                const std::string stem = ir_fn.name.empty() ? "__lambda__" : ir_fn.name;
+                ir_fn.name = stem + "#" + std::to_string(ir_fn.id);
+            }
             std::uint32_t env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
 
             // Check JIT cache (shared lock for read, unique for write).
@@ -17290,9 +17263,10 @@ public:
                     // is a miss. Do not load the pre-mutate ScalarFn.
                     if (cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
                         // Unique re-probe erases. Shared lock cannot.
-                    } else if (!cache_it->second.has_shape_map &&
+                    } else if (!cache_it->second.has_shape_map && !cache_it->second.spec_declined &&
                                shape_profiler_.is_stable(fn_key)) {
-                        // hot-recompile path: needs unique lock
+                        // Drop shared lock; take unique for the
+                        // #4567 specialization probe.
                     } else if (jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                         shape::jit_shape_miss_count.fetch_add(1, std::memory_order_relaxed);
                     } else if (aura_jit_is_deopt_pending(ir_fn.name.c_str()) != 0) {
@@ -17314,10 +17288,20 @@ public:
                     cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
                     jit_cache_.erase(cache_it);
                 } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
-                           shape_profiler_.is_stable(fn_key)) {
-                    std::fprintf(stderr, "spec: hot-recompile '%s' (try_jit)\n",
-                                 ir_fn.name.c_str());
-                    jit_cache_.erase(cache_it);
+                           !cache_it->second.spec_declined && shape_profiler_.is_stable(fn_key)) {
+                    // Issue #4567: compile_specialized is the live entry.
+                    // It returns null without a guarded per-arg map, so
+                    // keep the generic body. Do not erase.
+                    std::uint8_t no_map = 0;
+                    auto* spec = spec_jit_.compile_specialized(
+                        ir_fn.name, &no_map, 0,
+                        cache_it->second.fn_ptr.load(std::memory_order_acquire), ir_fn.arg_count,
+                        ir_fn.local_count);
+                    (void)spec;
+                    cache_it->second.spec_declined = true;
+                    fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
+                    need_compile = false;
+                    note_cache_hit(cache_it->second);
                 } else if (cache_it != jit_cache_.end() &&
                            jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                     // Issue #605: drop stale shape-specialized entry.
@@ -17334,35 +17318,12 @@ public:
                 }
             }
             if (!fn_ptr) {
-                // Set up shape_storage for shape_map (keep alive until compile).
-                // Issue #60 Iter 2: must be done BEFORE building flat_instrs
-                // because the shape_id stamping reads final_shape_map.
-                std::vector<std::uint8_t> shape_storage;
+                // Issue #4567: do not stamp one dominant shape onto every
+                // argument. final_shape_map stays null, so the generic body
+                // is what runs. A real per-arg map is #4568 and is guarded
+                // at entry by aura_check_shape_guard.
                 const uint8_t* final_shape_map = nullptr;
                 auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                if (shape_profiler_.is_stable(fn_key)) {
-                    auto dom = shape_profiler_.dominant_shape(fn_key);
-                    uint8_t code = 0;
-                    if (dom == shape::SHAPE_INT)
-                        code = 1;
-                    else if (dom == shape::SHAPE_FLOAT)
-                        code = 2;
-                    else if (dom == shape::SHAPE_BOOL)
-                        code = 3;
-                    else if (dom == shape::SHAPE_STRING)
-                        code = 4;
-                    else if (dom == shape::SHAPE_VOID)
-                        code = 5;
-                    else if (dom == shape::SHAPE_PAIR)
-                        code = 10;
-                    if (code) {
-                        shape_storage.resize(ir_fn.local_count, 0);
-                        for (uint32_t i = 0; i < ir_fn.arg_count && i < ir_fn.local_count; ++i)
-                            shape_storage[i] = code;
-                        final_shape_map = shape_storage.data();
-                        std::fprintf(stderr, "spec: try_jit L1 for '%s'\n", ir_fn.name.c_str());
-                    }
-                }
 
                 // Build FlatFunction from IR function (with shape_id stamping)
                 std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(
@@ -17405,8 +17366,7 @@ public:
                                                        escape_storage);
                     }
                 }
-                // (Issue #60 Iter 2: shape_storage and final_shape_map
-                // are now set above, before the flat_instrs build.)
+                // Issue #4567: final_shape_map stays null (no synthetic stamp).
 
                 aura::jit::FlatFunction flat_fn{ir_fn.name.c_str(),
                                                 ir_fn.entry_block,
@@ -17648,7 +17608,7 @@ public:
                                             static_cast<uint64_t>(-raw_result - 1));
                                     else
                                         result_type = types::make_pair(
-                                            static_cast<uint64_t>(raw_result >> 2));
+                                            static_cast<uint64_t>(raw_result >> 6));
                                     goto result_done;
                                 case aura::ir::IROpcode::NewCell:
                                     result_type =
@@ -17920,10 +17880,7 @@ public:
     // Invalidate shape profile for a function (called after mutate:*).
     void invalidate_shape(const std::string& name) {
         auto fn_key = shape::make_fn_key(session_id_, name);
-        if (shape_profiler_.metrics(fn_key).total_calls == 0) {
-            for (std::uint32_t si = 0; si < shape::ShapeProfiler::kStableThreshold; ++si)
-                shape_profiler_.record_shape(fn_key, shape::SHAPE_INT);
-        }
+        // Issue #4567: do not seed SHAPE_INT when the profile is empty.
         const bool needs_deopt = shape_profiler_.invalidate(fn_key);
         bool in_jit_cache = false;
         {
