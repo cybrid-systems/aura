@@ -42,7 +42,10 @@ def main() -> int:
     pos = mut.find('add_mutate("mutate:rebind"')
     if pos < 0:
         pos = mut.find("mutate:rebind")
-    win = mut[pos : pos + 20000] if pos >= 0 else ""
+    # Window: the rebind handler grew past 20000 chars when #4579 added the
+    # procedure->non-procedure gate between parse and the old-body capture;
+    # keep presence + ordering checks intact over the full body.
+    win = mut[pos : pos + 28000] if pos >= 0 else ""
 
     # AC1
     must("Issue #2795", "AC1", win)
