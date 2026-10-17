@@ -161,32 +161,34 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_void();
     };
     auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg,
-                            bool list_hotpath = false) -> bool {
+                            bool list_hotpath = false) -> EvalValue {
         // Issue #4228: Soft std/math exports are define-cells. Env::lookup
         // returns the cell sentinel; Variable eval usually derefs, but
         // list hot-path preds must tolerate a cell reaching apply_pred
         // (same for apply_unary / apply_binary).
+        // Issue #4586: return the value. An error is not a truth test;
+        // only #f is false, so folding the error here kept the element.
         EvalValue pred = fn;
         if (is_cell(pred)) {
             auto ci = as_cell_id(pred);
             if (ci < ev.cells().size())
                 pred = ev.cells()[ci];
             else
-                return false;
+                return make_bool(false);
         }
         if (is_primitive(pred)) {
             auto slot = as_primitive_slot(pred);
             ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
-                return false;
+                return make_bool(false);
             ev.bump_primitives_apply_fastpath_wins();
             ev.bump_list_intrinsic_dispatches();
             if (list_hotpath)
                 ev.bump_list_soa_hits();
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
-            return aura::compiler::pure::is_truthy((*prim)({arg}));
+            return (*prim)({arg});
         }
         if (is_closure(pred)) {
             auto cid = as_closure_id(pred);
@@ -194,9 +196,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (list_hotpath)
                 ev.bump_list_estimated_cache_misses();
             auto result = ev.apply_closure(cid, {arg});
-            return result ? aura::compiler::pure::is_truthy(*result) : false;
+            return result ? *result : make_bool(false);
         }
-        return false;
+        return make_bool(false);
     };
     auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg,
                               bool list_hotpath = false) -> EvalValue {
@@ -734,8 +736,14 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // still holds them — the returned list aliases live rows.
             const Evaluator::TwVecPin pin_cars(cars);
             const Evaluator::TwVecPin pin_mapped(mapped);
-            for (const auto& car : cars)
-                mapped.push_back(apply_unary(a[0], car, true));
+            for (const auto& car : cars) {
+                // Issue #4586: a callback error must leave map. Consing it
+                // prints <unknown> and try never sees an error value.
+                auto one = apply_unary(a[0], car, true);
+                if (is_error(one))
+                    return one;
+                mapped.push_back(std::move(one));
+            }
 
             Evaluator::ListCtorLockHold hold(ev);
             const auto n = mapped.size();
@@ -813,7 +821,12 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const Evaluator::TwVecPin pin_cars(cars);
             const Evaluator::TwVecPin pin_kept(kept);
             for (const auto& car : cars) {
-                if (apply_pred(a[0], car, true))
+                // Issue #4586: same as map. The error used to be truthy,
+                // so filter kept the element and try did not catch it.
+                auto pred_v = apply_pred(a[0], car, true);
+                if (is_error(pred_v))
+                    return pred_v;
+                if (aura::compiler::pure::is_truthy(pred_v))
                     kept.push_back(car);
             }
 
