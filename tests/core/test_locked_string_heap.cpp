@@ -19,6 +19,10 @@
 //        the same slot). Run under --sanitizer=tsan for the race face.
 //   AC4: the #4428 tenant stamp is written for primitive mints (the hook
 //        replaces the per-site note_inrange_string_mint calls).
+//   AC5: Issue #4548 code-point index — code_point_count / code_point_at /
+//        code_point_slice agree with the #4472 reference walk on ASCII,
+//        multi-byte and ill-formed strings above and below the threshold;
+//        note_write, resize and a reallocating rewrite invalidate it.
 
 #include "test_harness.hpp"
 #include "compiler/locked_string_heap.hh"
@@ -208,6 +212,81 @@ void ac4_tenant_stamp_on_prim_mint() {
           "AC4: minted slot carries the minting tenant's stamp");
 }
 
+// Reference walk (#4472) the cached index must agree with.
+std::string ref_slice(const std::string& s, std::size_t a, std::size_t b) {
+    const auto sb = aura::compiler::utf8_byte_offset(s, a);
+    const auto eb = aura::compiler::utf8_byte_offset(s, b);
+    return sb >= eb ? std::string{} : s.substr(sb, eb - sb);
+}
+
+bool agrees(const LockedStringHeap& h, std::size_t idx, const std::string& s) {
+    const auto n = aura::compiler::utf8_unit_count(s);
+    if (h.code_point_count(idx) != n)
+        return false;
+    for (std::size_t i = 0; i <= n + 2; ++i) {
+        if (h.code_point_at(idx, i) != aura::compiler::utf8_code_point_at(s, i))
+            return false;
+    }
+    std::string out;
+    const std::size_t step = n > 300 ? 37 : 1;
+    for (std::size_t a = 0; a <= n + 1; a += step) {
+        for (std::size_t b : {a, a + 1, a + 63, a + 64, a + 65, n, n + 5}) {
+            if (!h.code_point_slice(idx, a, b, out) || out != ref_slice(s, a, b))
+                return false;
+        }
+    }
+    return true;
+}
+
+void ac5_code_point_index() {
+    std::println("\n--- AC5: #4548 cached code-point index ---");
+    LockedStringHeap h; // unbound: unlocked
+    std::string ascii(5000, 'a');
+    for (std::size_t i = 0; i < ascii.size(); ++i)
+        ascii[i] = static_cast<char>('a' + (i * 7) % 26);
+    std::string mixed;
+    for (int i = 0; i < 1500; ++i) {
+        mixed += (i % 3 == 0) ? "\xC3\xA9" : (i % 5 == 0 ? "\xE4\xB8\xAD" : "x");
+        if (i % 97 == 0)
+            mixed += "\xF0\x9F\x98\x80"; // 4-byte
+        if (i % 211 == 0)
+            mixed += "\xFF"; // ill-formed: one unit
+    }
+    const std::string small = "h\xC3\xA9llo";
+    const auto ia = h.mint(ascii);
+    const auto im = h.mint(mixed);
+    const auto is = h.mint(small);
+    CHECK(agrees(h, ia, ascii), "AC5: ASCII long string agrees with the reference walk");
+    CHECK(agrees(h, im, mixed), "AC5: multi-byte / ill-formed string agrees");
+    CHECK(agrees(h, is, small), "AC5: short string (below threshold) agrees");
+    CHECK(h.cp_index_entries() == 2, "AC5: index built only for the two long strings");
+    CHECK(h.code_point_at(99, 0) == -1 && h.code_point_count(99) == LockedStringHeap::npos,
+          "AC5: out-of-range slot");
+
+    // Same-size in-place write that makes the ASCII string multi-byte.
+    {
+        auto& s = h[ia];
+        s[10] = '\xC3';
+        s[11] = '\xA9';
+        h.note_write(ia);
+        CHECK(agrees(h, ia, h[ia]), "AC5: note_write after a same-size byte write re-indexes");
+        CHECK(h.code_point_count(ia) == ascii.size() - 1, "AC5: two bytes became one code point");
+    }
+    // A rewrite that changes length/pointer is caught without note_write.
+    {
+        h[im] = std::string(4000, 'z');
+        CHECK(agrees(h, im, h[im]), "AC5: rewritten slot (new size) re-indexes");
+    }
+    // Structural writes move the generation.
+    {
+        const auto g0 = h.write_generation();
+        h.resize(2);
+        CHECK(h.write_generation() != g0, "AC5: resize moves the write generation");
+        const auto i2 = h.mint(mixed);
+        CHECK(i2 == 2 && agrees(h, i2, mixed), "AC5: reused index after resize re-indexes");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -215,6 +294,7 @@ int main() {
     ac2_concurrent_mint();
     ac3_shared_evaluator_prims();
     ac4_tenant_stamp_on_prim_mint();
+    ac5_code_point_index();
     std::println("\n=== test_locked_string_heap: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

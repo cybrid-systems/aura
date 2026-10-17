@@ -218,6 +218,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             }
             auto fill_char = static_cast<char>(as_int(a[1]));
             std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
+            string_heap.note_write(idx); // Issue #4548: same-size content write
             return make_void();
         },
         mutate_general(2, "(string char) -> void", "Fill a string with a character."));
@@ -1170,7 +1171,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                             "string-length: cross-tenant string slot read denied (#4505)",
                             ev.primitive_error_counter_ptr());
                     }
-                    len = utf8_unit_count(string_heap[idx]);
+                    // Issue #4548: cached index, not a recount per call.
+                    const auto n = ev.string_heap_code_point_count(idx);
+                    len = n == ::aura::compiler::LockedStringHeap::npos ? 0 : n;
                 }
             }
             return make_int(static_cast<std::int64_t>(len));
@@ -1221,7 +1224,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 3)
                 return make_int(0);
-            // Issue #2652: copy source under lock then push via locked helper.
+            // Issue #2652: copy under lock then push via locked helper.
+            // Issue #4548: only the slice is copied, located through the
+            // heap's cached code-point index (one locked call).
             std::string s;
             if (is_string(a[0])) {
                 // Issue #4505: the bytes are payload; compare the intern
@@ -1233,19 +1238,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                         "substring: cross-tenant string slot read denied (#4505)",
                         ev.primitive_error_counter_ptr());
                 }
-                s = ev.copy_string_heap_at(as_string_idx(a[0]));
             } else
                 return make_int(0);
             // Issue #4472: indexes are code points, so a slice never splits
-            // a well-formed UTF-8 sequence. Past-the-end clamps.
+            // a well-formed UTF-8 sequence. Past-the-end clamps; an OOB slot
+            // reads as "" like copy_string_heap_at did.
             auto start = static_cast<std::size_t>(as_int(a[1]));
             auto end = static_cast<std::size_t>(as_int(a[2]));
-            auto start_b = utf8_byte_offset(s, start);
-            auto end_b = utf8_byte_offset(s, end);
-            if (start_b >= end_b)
-                return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
-            return make_string(static_cast<std::uint64_t>(
-                ev.push_string_heap(s.substr(start_b, end_b - start_b))));
+            if (!ev.string_heap_code_point_slice(as_string_idx(a[0]), start, end, s))
+                s.clear();
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(s))));
         },
         pure_general(3, "(string int int) -> string",
                      "Substring from start to end, in code points."));

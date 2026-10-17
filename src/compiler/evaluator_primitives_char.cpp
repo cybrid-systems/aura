@@ -577,6 +577,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 return f64err(
                     std::format("f64vector-set!: index {} out of range for length {}", i, n));
             std::memcpy(s.data() + static_cast<std::size_t>(i) * 8, &x, 8);
+            ev.string_heap_.note_write(idx); // Issue #4548: in-place bytes
             return make_void();
         });
     // (f64vector-dot a b [a-off b-off n]) — sum of a[a-off+k]*b[b-off+k].
