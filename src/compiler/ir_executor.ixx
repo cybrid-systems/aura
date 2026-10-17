@@ -205,7 +205,16 @@ public:
     // Issue #4357: each interpreter starts at kClosureIdHighBit. Persistent
     // define bindings share one owner map, so the service hands out a
     // disjoint id range before execute().
-    void set_next_closure_id(std::uint64_t id) noexcept { next_closure_id_ = id; }
+    // Issue #4450: move the cursor forward to the global high-water so a
+    // call-time mint does not reuse an id already handed to the next define.
+    // Issue #4584: never move it backwards. A filter/map predicate re-enters
+    // dispatch on this same interpreter before the outer call has published,
+    // and assigning the stale global reused a live id. The next MakeClosure
+    // then overwrote the callee, so the second call ran the previous define.
+    void set_next_closure_id(std::uint64_t id) noexcept {
+        if (id > next_closure_id_)
+            next_closure_id_ = id;
+    }
     [[nodiscard]] std::uint64_t next_closure_id() const noexcept { return next_closure_id_; }
 
     // ── Runtime reflection API ─────────────────────────────────
