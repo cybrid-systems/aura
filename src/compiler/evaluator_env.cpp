@@ -1154,6 +1154,10 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // ensure_dual_path_consistent() can route counter bumps through
     // the owning Evaluator. Set AFTER push_back (index stable).
     env_frames_[id].set_owner(this);
+    // Issue #4580: publish the new size with release — is_valid_env_id
+    // reads this atomic instead of deque::size(), so unlocked audit
+    // readers never race the push_back.
+    env_frames_published_size_.store(env_frames_.size(), std::memory_order_release);
     return id;
 }
 
@@ -2662,6 +2666,9 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
         bump_envframe_post_rollback_invalidations(invalidated);
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
+    // Issue #4580: publish the shrunk size so is_valid_env_id drops the
+    // truncated tail immediately (release pairs with the acquire load).
+    env_frames_published_size_.store(checkpoint_size, std::memory_order_release);
     ++env_generation_;
     // Issue #4448: doomed frames' snapshots die with them, and the
     // truncated tail's EnvIds are immediately reusable — a stale cached

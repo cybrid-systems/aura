@@ -893,8 +893,11 @@ void Evaluator::clear_adt_non_exhaustive_inject_for_test() noexcept {
 
 void Evaluator::inject_cross_batch_linear_escape_for_test() noexcept {
     std::unique_lock<std::shared_mutex> lock(env_frame_shards_[0].mu); // Issue #3900
-    if (env_frames_.empty())
+    if (env_frames_.empty()) {
         env_frames_.emplace_back();
+        // Issue #4580: keep the published size in sync with direct growth.
+        env_frames_published_size_.store(env_frames_.size(), std::memory_order_release);
+    }
     auto& fr = env_frames_[0];
     if (fr.bindings_linear_ownership_state_.empty()) {
         fr.bindings_.emplace_back("__escape_test__", make_int(0));

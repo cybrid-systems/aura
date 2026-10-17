@@ -615,14 +615,21 @@ void Evaluator::record_linear_violation_audit(std::uint8_t path, std::uint8_t re
                                               std::uint32_t env_id,
                                               std::uint64_t closure_id) noexcept {
     const auto seq = linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
-    auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
-    slot.seq = seq;
-    slot.path = path;
-    slot.reason = reason;
-    slot.epoch = current_bridge_epoch();
-    slot.defuse_version = defuse_version_snapshot();
-    slot.env_id = env_id;
-    slot.closure_id = closure_id;
+    {
+        // Issue #4580: leaf lock — publish the slot under the same mutex
+        // entry_at snapshots with. Two writers land on the same slot when
+        // the ring wraps, and a concurrent reader must never see fields
+        // from different events (torn slot).
+        std::lock_guard<std::mutex> slot_lock(linear_violation_audit_mu_);
+        auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
+        slot.seq = seq;
+        slot.path = path;
+        slot.reason = reason;
+        slot.epoch = current_bridge_epoch();
+        slot.defuse_version = defuse_version_snapshot();
+        slot.env_id = env_id;
+        slot.closure_id = closure_id;
+    }
     linear_violation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->linear_violation_audit_total.fetch_add(1, std::memory_order_relaxed);
@@ -733,17 +740,22 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
                     m->linear_live_closures_marked_invalid_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
-                // Record under locks is fine (audit ring is independent).
+                // Issue #4580: slot publish under the ring mutex — entry_at
+                // snapshots under it, so the ring is no longer "independent"
+                // for readers (plain stores raced the query-side reader).
                 const auto seq =
                     linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
-                auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
-                slot.seq = seq;
-                slot.path = path;
-                slot.reason = reason;
-                slot.epoch = cur_bridge;
-                slot.defuse_version = cur_ver;
-                slot.env_id = static_cast<std::uint32_t>(cl.env_id);
-                slot.closure_id = static_cast<std::uint64_t>(id);
+                {
+                    std::lock_guard<std::mutex> slot_lock(linear_violation_audit_mu_);
+                    auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
+                    slot.seq = seq;
+                    slot.path = path;
+                    slot.reason = reason;
+                    slot.epoch = cur_bridge;
+                    slot.defuse_version = cur_ver;
+                    slot.env_id = static_cast<std::uint32_t>(cl.env_id);
+                    slot.closure_id = static_cast<std::uint64_t>(id);
+                }
                 linear_violation_audit_total_.fetch_add(1, std::memory_order_relaxed);
                 if (m)
                     m->linear_violation_audit_total.fetch_add(1, std::memory_order_relaxed);
