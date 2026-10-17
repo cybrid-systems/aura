@@ -1452,8 +1452,20 @@ void CompilerService::invalidate_function(const std::string& name) {
 
     // Issue #272 Cycle 2: drop stale IR define env bindings before re-bind.
     clear_ir_define_env_binding(name);
-    for (auto& dep_name : dependents)
+    // Issue #4547: a dependent that is not a workspace lambda (a module
+    // function cache_module recorded) keeps its binding.
+    // Its IR resolves the callee through the top cell at call time (the
+    // one-line rebind light path never drops it), and no later step
+    // reinstalls a module function, so clearing it left the module's top
+    // cell holding an owner-less IR closure id: every call after
+    // mutate:atomic-batch failed with "eval_flat: invalid closure".
+    // Only for a workspace rebind; other invalidations keep the old sweep.
+    const bool ws_focus = is_workspace_lambda_define(name);
+    for (auto& dep_name : dependents) {
+        if (ws_focus && !is_workspace_lambda_define(dep_name))
+            continue;
         clear_ir_define_env_binding(dep_name);
+    }
 
     // Clean up the original function's dep info
     {
@@ -1687,6 +1699,15 @@ void CompilerService::invalidate_function(const std::string& name) {
     // Re-lower each dependent. Prefer partial; full lower only when needed.
     // Dependents vector is BFS + lexicographically sorted (Issue #401).
     for (auto& dep_name : dependents) {
+        // Issue #4547: a module function cache_module recorded as a
+        // dependent of a workspace lambda keeps its tree-walker closure
+        // (which looks the callee up by name). Re-lowering it here parsed
+        // function_sources_ (the whole module text) and
+        // bind_function_define_via_ir replaced the module's top cell with
+        // an IR closure whose call failed: "eval_flat: invalid closure"
+        // for every caller after mutate:atomic-batch.
+        if (ws_focus && !is_workspace_lambda_define(dep_name))
+            continue;
         if (try_partial_invalidate_relower(dep_name))
             continue;
 

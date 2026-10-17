@@ -10815,6 +10815,20 @@ public:
             if (names.empty() || names.size() > kWorkspaceSpecializeCap)
                 return;
         } else {
+            // Issue #4547: dep_graph_ also records module functions
+            // (cache_module -> record_dependency) and their
+            // function_sources_ row is the WHOLE module text. Lowering that
+            // under the caller's name bound some other define's closure
+            // (often a sibling) into the shared top_ cell, so after a
+            // rebind of `wb` a module's `caller6:b` ran `caller6:a`, or hit
+            // "invalid closure" / a foreign arity. Only live workspace
+            // Lambda defines are specialised here; module functions keep
+            // their tree-walker closure, which looks the callee up by name.
+            auto is_ws_lambda = [&](const std::string& n) -> bool {
+                return is_workspace_lambda_define(n);
+            };
+            if (!is_ws_lambda(focus))
+                return;
             names.push_back(focus);
             std::vector<std::string> callers;
             {
@@ -10827,6 +10841,8 @@ public:
                     continue;
                 if (names.size() >= 5)
                     break;
+                if (!is_ws_lambda(c))
+                    continue;
                 names.push_back(c);
             }
         }
@@ -11002,6 +11018,32 @@ public:
         if (!r)
             return std::nullopt;
         return *r;
+    }
+
+    // Issue #4547: true when `name` is a live (define name (lambda ...)) of
+    // the current workspace. dep_graph_ also holds module functions
+    // (cache_module -> record_dependency); those are not re-specialised
+    // from function_sources_ (that row is the whole module text) and the
+    // invalidate cascade must not drop their IR binding either: nothing
+    // would reinstall it, so the module's top cell kept a closure id with
+    // no owner ("eval_flat: invalid closure" after mutate:atomic-batch).
+    bool is_workspace_lambda_define(const std::string& name) {
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool || name.empty())
+            return false;
+        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+            if (ws_flat->is_free_slot(id))
+                continue;
+            auto v = ws_flat->get(id);
+            if (v.tag != aura::ast::NodeTag::Define || v.children.empty() ||
+                v.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            if (ws_pool->resolve(v.sym_id) != name)
+                continue;
+            return ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda;
+        }
+        return false;
     }
 
     void clear_ir_define_env_binding(const std::string& name) {

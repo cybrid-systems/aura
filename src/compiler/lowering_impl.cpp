@@ -2501,7 +2501,28 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id,
         }
 
         case NodeTag::Coercion: {
-            return "(coerce " + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
+            // Issue #4550: emit the parser's (cast expr : Type) form. The old
+            // "(coerce expr)" re-parsed as a call to an unbound `coerce`, so a
+            // define whose body carried a typecheck-inserted coercion was
+            // re-lowered (IR specialise after eval-current) into a call of a
+            // non-closure: every call failed with "eval_flat: invalid closure".
+            // Same spelling as ast_unparse (coercion_type_name).
+            std::string_view tname = "Any";
+            switch (v.int_value) {
+                case 0:
+                    tname = "Int";
+                    break;
+                case 1:
+                    tname = "String";
+                    break;
+                case 2:
+                    tname = "Bool";
+                    break;
+                default: // 3 Dynamic; 4 Float has no cast spelling (same as ast_unparse)
+                    break;
+            }
+            return "(cast " + unparse_node(flat, pool, v.child(0), indent + 1) + " : " +
+                   std::string(tname) + ")";
         }
 
         case NodeTag::MacroDef: {

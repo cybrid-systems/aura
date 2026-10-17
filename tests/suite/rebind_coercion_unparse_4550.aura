@@ -1,0 +1,61 @@
+; Issue #4550 — the IR re-specialise of a rebound define's callers re-parses
+; function_sources_ rows that lowering's unparse_node regenerated from the
+; typechecked workspace. A typecheck-inserted Coercion was spelled
+; "(coerce e)", which re-parsed as a call of an unbound `coerce`; after the
+; third rebind every call of rk-block-build failed with
+; "eval_flat: invalid closure". It is now spelled "(cast e : T)", the
+; parser's form.
+;; expect: OK-4550
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+(define (safe thunk) (try (thunk) (catch (e) (list "ERR" e))))
+(define (check label got want)
+  (if (not (equal? got want))
+      (begin (display "    got: ") (write got) (display " want: ") (write want) (newline)))
+  (assert! (equal? got want) label))
+
+; ── #4550: three rebinds in a 6-define workspace ──
+(write-file "/tmp/aura4550_ws.aura"
+  (string-append
+    "(define rk-dec (lambda (s off w) (letrec ((loop (lambda (i v) (if (< i w) (loop (+ i 1) (+ (* v 10) (- (string-ref s (+ off i)) 48))) v)))) (loop 0 0))))\n"
+    "(define rk-block-seek (lambda (blk key n ra) 0))\n"
+    "(define rk-pad (lambda (n w) (let ((s (number->string n))) (if (> (string-length s) w) (error \"overflow\") (letrec ((loop (lambda (s) (if (< (string-length s) w) (loop (string-append \"0\" s)) s)))) (loop s))))))\n"
+    "(define rk-block-build (lambda (blob) (letrec ((loop (lambda (off n offs) (if (>= off (string-length blob)) (string-append blob (apply string-append (reverse offs)) (rk-pad n 6)) (loop (+ off 11 (rk-dec blob (+ off 1) 4) (rk-dec blob (+ off 5) 6)) (+ n 1) (cons (rk-pad off 6) offs)))))) (loop 0 0 (list)))))\n"
+    "(define rk-block-get (lambda (blk key) (rk-block-seek blk key 0 0)))\n"
+    "(define rk-cs (lambda (c) (if (null? c) 0 c)))\n"))
+(set-code (read-file "/tmp/aura4550_ws.aura"))
+(eval-current)
+(define (build4550) (safe (lambda () (rk-block-build ""))))
+(define (rb4550 name body)
+  (let ((r (mutate:atomic-batch (list (list "mutate:rebind" name body "t4550")))))
+    (eval-current)
+    r))
+(check "start: rk-block-build" (build4550) "000000")
+(check "rebind 1 accepted" (rb4550 "rk-block-get" "(lambda (a0 a1) 7)") #t)
+(check "after rebind 1" (build4550) "000000")
+(check "rebind 2 accepted" (rb4550 "rk-block-get" "(lambda (a0 a1) 8)") #t)
+(check "after rebind 2" (build4550) "000000")
+(check "rebind 3 accepted" (rb4550 "rk-dec" "(lambda (a0 a1 a2) 0)") #t)
+(check "after rebind 3: caller of rk-dec still callable" (build4550) "000000")
+(check "after rebind 3: rk-pad" (safe (lambda () (rk-pad 7 3))) "007")
+(check "after rebind 3: rk-block-get" (safe (lambda () (rk-block-get "b" "k"))) 8)
+; a non-empty blob takes the rebound rk-dec (0 lengths): one 11-byte entry
+(check "after rebind 3: new rk-dec used"
+       (safe (lambda () (rk-block-build "k0000000000")))
+       "k0000000000000000000001")
+
+(if (= *fails* 0)
+    (display "OK-4550 coerced callers survive rebind\n")
+    (begin
+      (display "FAIL-4550 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))
