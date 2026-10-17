@@ -31,9 +31,11 @@ namespace {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::solve_delta_occurrence;
 using aura::compiler::SolveResult;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::core::TypeId;
 using aura::core::TypeRegistry;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -185,6 +187,32 @@ static void ac5_query_and_source() {
     CHECK(href(cs, "delta-truncate-force-full-solve-total") >= 0, "AC5: force-full still exposed");
 }
 
+// Issue #4583: replay used to append a goal per live goal per pass.
+// Two passes (solve_delta_occurrence + goal-priority reverify) made
+// the table 4× larger on every mutate:rebind once any goal existed
+// (a self-recursive define's occurrence narrowing). Re-seed of the
+// same occurrence var must not append either.
+static void ac4583_replay_does_not_duplicate_goals() {
+    std::println("\n--- #4583: occurrence replay does not duplicate goals ---");
+    UnitCs u;
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), /*pred=*/1, /*mut=*/1, /*epoch=*/0);
+    CHECK(u.cs.occurrence_goals_size() == 1, "4583: one seed goal");
+    TypeId occ[] = {v};
+    auto r1 = solve_delta_occurrence(u.cs, {}, nullptr, &u.m);
+    (void)r1;
+    CHECK(u.cs.occurrence_goals_size() == 1, "4583: SDO replay does not duplicate");
+    auto r2 = solve_delta_occurrence(u.cs, std::span<const TypeId>(occ, 1), nullptr, &u.m);
+    (void)r2;
+    CHECK(u.cs.occurrence_goals_size() == 1, "4583: occurrence-var re-seed does not duplicate");
+    auto r3 = solve_delta_occurrence(u.cs, std::span<const TypeId>(occ, 1), nullptr, &u.m);
+    (void)r3;
+    CHECK(u.cs.occurrence_goals_size() == 1, "4583: second SDO stays flat");
+    const bool recovered = u.cs.try_goal_priority_reverify_before_full();
+    (void)recovered;
+    CHECK(u.cs.occurrence_goals_size() == 1, "4583: goal-priority reverify stays flat");
+}
+
 } // namespace
 
 int run_test_delta_truncate_goal_priority() {
@@ -193,6 +221,7 @@ int run_test_delta_truncate_goal_priority() {
     ac3_still_truncated_full_solve();
     ac4_no_truncate_zero_cost();
     ac5_query_and_source();
+    ac4583_replay_does_not_duplicate_goals();
     if (g_failed)
         return 1;
     std::println("delta truncate goal priority #2508: OK ({} passed)", g_passed);

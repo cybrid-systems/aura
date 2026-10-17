@@ -396,7 +396,7 @@ void ConstraintSystem::note_touched_var(TypeId id) {
     touched_roots_.insert(rep);
 }
 
-void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow) {
+void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow, bool record_goal) {
     note_touched_var(var);
     if (occurrence_narrow && metrics_ && aura_evaluator_mutation_boundary_depth() > 0) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
@@ -415,8 +415,15 @@ void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow)
         // come from the active context (active_predicate_cond_node_
         // may be 0 after a clear_blame_context — that's fine, the
         // goal still anchors var + refined for the replay path).
-        note_occurrence_goal(var, binding_[rep], active_predicate_cond_node_, active_mutation_id_,
-                             current_epoch_);
+        // Issue #4583: replay must not append. solve_delta_occurrence
+        // and try_goal_priority_reverify_before_full re-inject every
+        // live goal; recording there doubled the table per pass
+        // (4× per mutate:rebind, two passes) and OOM'd beside a
+        // self-recursive define. Apply sites keep record_goal true.
+        if (record_goal) {
+            note_occurrence_goal(var, binding_[rep], active_predicate_cond_node_,
+                                 active_mutation_id_, current_epoch_);
+        }
     }
 }
 
@@ -2355,7 +2362,9 @@ bool ConstraintSystem::try_goal_priority_reverify_before_full() noexcept {
                 continue;
             if (epoch > 0 && epoch < cur_epoch)
                 continue;
-            mark_touched_on_delta(var, /*occurrence_narrow=*/true);
+            // Issue #4583: re-inject priority only. Recording here
+            // appended a copy of every live goal on each reverify.
+            mark_touched_on_delta(var, /*occurrence_narrow=*/true, /*record_goal=*/false);
         }
     }
     // Also seed pending full-solve backlog into touched so reverify
@@ -13109,7 +13118,7 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     // mark_touched_on_delta.
     for (const auto t : occurrence_vars) {
         if (t.valid())
-            cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+            cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true, /*record_goal=*/false);
     }
     // Issue #2278 (AC1): replay live OccurrenceGoal records into the
     // priority worklist so goals recorded on a prior delta still feed
@@ -13153,7 +13162,11 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
                 ++drifted;
                 continue;
             }
-            cs.mark_touched_on_delta(goal.var, /*occurrence_narrow=*/true);
+            // Issue #4583: priority re-inject only. note_occurrence_goal
+            // lives inside mark_touched_on_delta; recording on replay
+            // duplicated the table (see the record_goal flag).
+            cs.mark_touched_on_delta(goal.var, /*occurrence_narrow=*/true,
+                                     /*record_goal=*/false);
             ++replayed;
         }
         if (replayed > 0 && m)
