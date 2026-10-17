@@ -258,6 +258,26 @@ static bool form_cannot_be_error(const FlatAST& flat, NodeId id) {
     }
 }
 
+static std::uint32_t
+lower_flat_expr(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+                const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                         aura::core::TransparentStringHash, std::equal_to<>>* cache,
+                std::vector<std::string>* cache_hits);
+
+// Issue #4588: a value about to be used as data. An error leaves the
+// function, or the enclosing try, before the consumer runs. Literals
+// skip the branch. `escape` is false for display outside an IR try.
+static std::uint32_t lower_data_operand(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits, bool escape) {
+    auto slot = lower_flat_expr(state, flat, pool, id, cache, cache_hits);
+    if (escape && !form_cannot_be_error(flat, id))
+        emit_error_escape(state, slot);
+    return slot;
+}
+
 static std::uint32_t lower_flat_expr(
     LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
@@ -576,8 +596,10 @@ static std::uint32_t lower_flat_expr(
                         auto tail_slot = state.alloc_local();
                         state.emit(IROpcode::ConstVoid, tail_slot);
                         for (std::size_t i = arg_count; i >= 1; --i) {
-                            auto val =
-                                lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                            // Issue #4588: an error element is the list's
+                            // result. Do not cons it.
+                            auto val = lower_data_operand(state, flat, pool, v.child(i), cache,
+                                                          cache_hits, true);
                             auto cell = state.alloc_local();
                             state.emit(IROpcode::MakePair, cell, val, tail_slot);
                             if (i == 1) {
@@ -704,9 +726,10 @@ static std::uint32_t lower_flat_expr(
                         // No args: return 0
                         state.emit(IROpcode::ConstI64, result_slot, 0, 0);
                     } else {
-                        // Lower first arg
-                        auto prev =
-                            lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                        // Lower first arg. Issue #4588: an error operand
+                        // propagates before car/cons/arith run.
+                        auto prev = lower_data_operand(state, flat, pool, v.child(1), cache,
+                                                       cache_hits, true);
                         if (arg_count == 1) {
                             // Unary minus: emit Sub(0, arg)
                             if (callee_name == "-") {
@@ -723,8 +746,8 @@ static std::uint32_t lower_flat_expr(
                                 state.emit(op, result_slot, prev, prev, num_eq);
                             }
                         } else if (arg_count == 2) {
-                            auto arg1 =
-                                lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+                            auto arg1 = lower_data_operand(state, flat, pool, v.child(2), cache,
+                                                           cache_hits, true);
                             state.emit(op, result_slot, prev, arg1, num_eq);
                         } else {
                             // 3+ args: comparison ops need pairwise AND (= a b c → (and (= a b) (=
@@ -738,8 +761,8 @@ static std::uint32_t lower_flat_expr(
                                 auto pair_prev = prev;
                                 auto and_acc = state.alloc_local();
                                 for (std::size_t ai = 2; ai < v.children.size(); ++ai) {
-                                    auto pair_next = lower_flat_expr(state, flat, pool, v.child(ai),
-                                                                     cache, cache_hits);
+                                    auto pair_next = lower_data_operand(
+                                        state, flat, pool, v.child(ai), cache, cache_hits, true);
                                     auto cmp = state.alloc_local();
                                     state.emit(op, cmp, pair_prev, pair_next, num_eq);
                                     if (first) {
@@ -755,13 +778,13 @@ static std::uint32_t lower_flat_expr(
                                 state.emit(IROpcode::And, result_slot, and_acc, and_acc);
                             } else {
                                 // Arithmetic chaining: ((a + b) + c)
-                                auto arg1 = lower_flat_expr(state, flat, pool, v.child(2), cache,
-                                                            cache_hits);
+                                auto arg1 = lower_data_operand(state, flat, pool, v.child(2), cache,
+                                                               cache_hits, true);
                                 auto acc = state.alloc_local();
                                 state.emit(op, acc, prev, arg1);
                                 for (std::size_t ai = 3; ai < v.children.size(); ++ai) {
-                                    auto next = lower_flat_expr(state, flat, pool, v.child(ai),
-                                                                cache, cache_hits);
+                                    auto next = lower_data_operand(state, flat, pool, v.child(ai),
+                                                                   cache, cache_hits, true);
                                     auto is_last = (ai + 1 == v.children.size());
                                     if (is_last) {
                                         state.emit(op, result_slot, acc, next);
@@ -837,9 +860,11 @@ static std::uint32_t lower_flat_expr(
                                         } else if (var_form.tag == NodeTag::Variable) {
                                             var_name = std::string(pool.resolve(var_form.sym_id));
                                         }
-                                        // Allocate slot and bind error value
+                                        // Issue #4588: bind the cause string, not the
+                                        // raw Error. operands[2] is outside
+                                        // Local's operand_count.
                                         auto err_slot = state.alloc_local();
-                                        state.emit(IROpcode::Local, err_slot, err_value_slot);
+                                        state.emit(IROpcode::Local, err_slot, err_value_slot, 1);
                                         // Ensure a scope exists for the error variable binding
                                         if (state.scopes.empty()) {
                                             state.scopes.push_back({});
@@ -949,12 +974,12 @@ static std::uint32_t lower_flat_expr(
                                                                         : IROpcode::HashRef);
                     auto result_slot = state.alloc_local();
                     auto hash_slot =
-                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                        lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
                     auto key_slot =
-                        lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+                        lower_data_operand(state, flat, pool, v.child(2), cache, cache_hits, true);
                     if (callee_name == "hash-set!" && v.children.size() >= 4) {
-                        auto val_slot =
-                            lower_flat_expr(state, flat, pool, v.child(3), cache, cache_hits);
+                        auto val_slot = lower_data_operand(state, flat, pool, v.child(3), cache,
+                                                           cache_hits, true);
                         auto pair_slot = state.alloc_local();
                         state.emit(IROpcode::MakePair, pair_slot, key_slot, val_slot);
                         state.emit(hop, result_slot, hash_slot, pair_slot);
@@ -970,9 +995,13 @@ static std::uint32_t lower_flat_expr(
                     auto prim_id = static_cast<std::uint32_t>(pcit->second);
                     auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
                     auto arg_base = state.local_count;
+                    // Issue #4588: display outside an IR try still runs, so a
+                    // host try can see the error (#4456) and a bare display
+                    // still prints. Every other prim propagates first.
+                    const bool escape_arg = callee_name != "display" || !state.err_escapes.empty();
                     for (std::size_t i = 1; i < v.children.size(); ++i) {
-                        auto val_slot =
-                            lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                        auto val_slot = lower_data_operand(state, flat, pool, v.child(i), cache,
+                                                           cache_hits, escape_arg);
                         state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1),
                                    val_slot);
                         state.alloc_local();
@@ -1054,7 +1083,7 @@ static std::uint32_t lower_flat_expr(
                 // not: inlined as IROpcode::Not (expanded to LLVM ICmp + Xor)
                 if (callee_name == "not" && v.children.size() == 2) {
                     auto arg_slot =
-                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                        lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
                     auto result_slot = state.alloc_local();
                     state.emit(IROpcode::Not, result_slot, arg_slot);
                     return result_slot;
@@ -1247,7 +1276,9 @@ static std::uint32_t lower_flat_expr(
             auto arg_base = state.local_count;
             for (std::size_t i = 1; i < v.children.size(); ++i) {
                 auto arg_node = v.child(i);
-                auto val_slot = lower_flat_expr(state, flat, pool, arg_node, cache, cache_hits);
+                // Issue #4588: an error argument does not enter the call.
+                auto val_slot =
+                    lower_data_operand(state, flat, pool, arg_node, cache, cache_hits, true);
                 // Insert CastOp if arg type differs from expected param type.
                 // Issue #1925: elide identity / Dynamic / narrow-proved;
                 // attach current_narrowing_evidence for residual CastOps.
@@ -1641,7 +1672,10 @@ static std::uint32_t lower_flat_expr(
                 state.scopes.push_back({});
                 auto& scope = state.scopes.back();
                 scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-                auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+                // Issue #4588: an error init is not a binding. The body
+                // stays in the continuation and does not run.
+                auto val_slot =
+                    lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
                 state.emit(IROpcode::CellSet, ci, val_slot);
                 auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
                 state.scopes.pop_back();
@@ -1654,7 +1688,9 @@ static std::uint32_t lower_flat_expr(
                 // so that set! can find the mutable Cell inside closures
                 auto ci = state.alloc_local();
                 state.emit(IROpcode::NewCell, ci);
-                auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+                // Issue #4588: same as letrec. Do not run the body.
+                auto val_slot =
+                    lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
                 state.emit(IROpcode::CellSet, ci, val_slot);
                 state.scopes.push_back({});
                 auto& scope = state.scopes.back();

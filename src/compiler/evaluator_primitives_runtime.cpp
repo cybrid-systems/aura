@@ -649,7 +649,11 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #4497: display consumes an error-valued argument outside
         // try (#4456). Name it on stderr and mark the run failed, instead
         // of printing <unknown> and exiting 0.
+        // Issue #4588: inside a try, return the error so catch sees it.
+        // The tree walker returns before this call; IR display does not.
         if (is_error(a[0])) {
+            if (ev.try_body_depth_ > 0)
+                return a[0];
             note_displayed_error(ev, a[0]);
             return make_void();
         }
