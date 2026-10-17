@@ -1,0 +1,19 @@
+; Class 2 leaf rebind. Timed region is set-code, query, mutate:rebind, eval-current.
+; BENCH_SRC is the define block (the harness builds it). BENCH_N is informational.
+; Requires AURA_SANDBOX=off until #4575: Restricted denies Mutate.
+(define src (getenv "BENCH_SRC"))
+(if (not (string? src))
+    (set! src "(define (f0 x) (+ x 0))\n(define (f1 x) (+ x 1))"))
+(define t0 (monotonic-ms))
+(set-code src)
+(define q (query :node (car (query:node-type "Define"))))
+(mutate:rebind "f0" "(lambda (x) (+ x 1))" "leaf")
+(eval-current)
+(define t1 (monotonic-ms))
+(define call (f0 3))
+(if (not (pair? q)) (display "QUERY-FAIL\n") 0)
+(display "BENCH leaf ")
+(display call)
+(display " ")
+(display (- t1 t0))
+(newline)

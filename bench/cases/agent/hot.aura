@@ -1,0 +1,18 @@
+; Class 2 widely-called rebind. Every fN calls shared. Rebind shared, then eval-current.
+; Checksum is (f0 1) after rebind to (+ x 10), which is 11.
+(define src (getenv "BENCH_SRC"))
+(if (not (string? src))
+    (set! src "(define (shared x) (+ x 1))\n(define (f0 x) (shared x))"))
+(define t0 (monotonic-ms))
+(set-code src)
+(define q (query :node (car (query:node-type "Define"))))
+(mutate:rebind "shared" "(lambda (x) (+ x 10))" "hot")
+(eval-current)
+(define t1 (monotonic-ms))
+(define call (f0 1))
+(if (not (pair? q)) (display "QUERY-FAIL\n") 0)
+(display "BENCH hot ")
+(display call)
+(display " ")
+(display (- t1 t0))
+(newline)

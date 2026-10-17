@@ -1,0 +1,40 @@
+; Class 3 multi-agent. Eight workers each sum 0..299, add their id, and
+; send that on a buffered channel. The parent joins them first (fiber:join
+; drops the oneshot body lock so the workers can run) and then receives
+; the mailbox. Checksum 8*44850 + 28 = 358828.
+(define ch (channel:create 16))
+(define (spawn-one id)
+  (fiber:spawn
+    (lambda ()
+      (let ((i 0) (a 0))
+        (while (< i 300)
+          (set! a (+ a i))
+          (set! i (+ i 1)))
+        (channel:send ch (number->string (+ a id)))
+        (+ a id)))))
+(define t0 (monotonic-ms))
+(define fs
+  (list
+    (spawn-one 0)
+    (spawn-one 1)
+    (spawn-one 2)
+    (spawn-one 3)
+    (spawn-one 4)
+    (spawn-one 5)
+    (spawn-one 6)
+    (spawn-one 7)))
+(define rest fs)
+(while (pair? rest)
+  (fiber:join (car rest))
+  (set! rest (cdr rest)))
+(define s 0)
+(define j 0)
+(while (< j 8)
+  (set! s (+ s (string->number (channel:recv ch))))
+  (set! j (+ j 1)))
+(define t1 (monotonic-ms))
+(display "BENCH multi-agent ")
+(display s)
+(display " ")
+(display (- t1 t0))
+(newline)
