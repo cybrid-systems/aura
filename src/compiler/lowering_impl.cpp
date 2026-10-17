@@ -394,6 +394,7 @@ static std::uint32_t lower_flat_expr(
                     added_fids.reserve(cache_it->second.size());
                     std::uint32_t lambda_fid = 0;
                     bool found_user_lambda = false;
+                    bool found_exact_name = false;
                     std::uint32_t first_added = 0;
                     bool have_first = false;
                     for (std::size_t ci = 0; ci < cache_it->second.size(); ++ci) {
@@ -415,12 +416,20 @@ static std::uint32_t lower_flat_expr(
                         // Issue #660 / #2732: find the user-defined lambda by NAME.
                         // Prefer "<name>#0" (cache_define). Also accept "__lambda__",
                         // empty, or name#N — never leave lambda_fid==0 (→ __top__).
+                        // Issue #4584: a define's own lambda is named exactly `name`
+                        // (#4568). Nested lambdas are renamed to name#0 first, so a
+                        // first match on name#0 MakeClosure'd the predicate. Exact
+                        // name wins even when it appears later. Bundles that only
+                        // have name#0 still use the fallback above.
                         const std::string want = std::string(name) + "#0";
-                        const bool is_user_lambda =
-                            copy.name == want || copy.name == "__lambda__" || copy.name.empty() ||
-                            (copy.name.size() > name.size() &&
-                             copy.name.compare(0, name.size(), name) == 0 &&
-                             copy.name[name.size()] == '#');
+                        const bool exact_name = copy.name.size() == name.size() &&
+                                                copy.name.compare(0, name.size(), name) == 0;
+                        const bool is_user_lambda = exact_name || copy.name == want ||
+                                                    copy.name == "__lambda__" ||
+                                                    copy.name.empty() ||
+                                                    (copy.name.size() > name.size() &&
+                                                     copy.name.compare(0, name.size(), name) == 0 &&
+                                                     copy.name[name.size()] == '#');
                         const auto orig_id = copy.id;
                         auto new_fid = state.module.add_function(std::move(copy));
                         orig_to_new[orig_id] = new_fid;
@@ -429,7 +438,11 @@ static std::uint32_t lower_flat_expr(
                             first_added = new_fid;
                             have_first = true;
                         }
-                        if (is_user_lambda && !found_user_lambda) {
+                        if (exact_name && !found_exact_name) {
+                            lambda_fid = new_fid;
+                            found_user_lambda = true;
+                            found_exact_name = true;
+                        } else if (is_user_lambda && !found_user_lambda) {
                             lambda_fid = new_fid;
                             found_user_lambda = true;
                         }

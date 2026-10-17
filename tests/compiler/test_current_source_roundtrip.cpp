@@ -940,6 +940,137 @@ static void run_4450_runtime_mint_ids() {
     }
 }
 
+// Issue #4584: a workspace define that hands a procedure to filter/map was
+// rebound at the call site. Two mechanisms: the cache-hit pick took name#0
+// (the nested predicate, renamed before the define's own lambda) so call 1
+// already returned #t, and a re-entrant dispatch rewound the closure-id
+// cursor so call 2 of a named predicate ran the previous define (budget).
+// Both calls must be (8 (a)). Rows the report listed as already ok stay ok.
+static void ac4584_hof_callee_stable() {
+    std::println("\n--- #4584: second call keeps the HOF callee ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    auto is_true = [](CompilerService& cs, std::string_view code) {
+        auto r = cs.eval(code);
+        return r && is_bool(*r) && as_bool(*r);
+    };
+    // (list 8 (list "a")) — one call of `callee` per eval.
+    const char* filtered = "(let ((r (decide \"a\"))) "
+                           "(and (= (car r) 8) "
+                           "(string=? (car (car (cdr r))) \"a\") "
+                           "(null? (cdr (car (cdr r))))))";
+    const char* one_a = "(let ((r (order \"a\"))) "
+                        "(and (string=? (car r) \"a\") (null? (cdr r))))";
+
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define budget (lambda (c) 8))\n"
+                           "(define order (lambda (c) (filter (lambda (o) (equal? o \"a\")) "
+                           "(list \"a\" \"b\"))))\n"
+                           "(define decide (lambda (x) (list (budget x) (order x))))"),
+              "4584: set-code inline filter");
+        CHECK(cs.eval("(eval-current)").has_value(), "4584: eval-current inline");
+        CHECK(is_true(cs, filtered), "4584: inline call 1 is (8 (a))");
+        CHECK(is_true(cs, filtered), "4584: inline call 2 is (8 (a))");
+        CHECK(is_true(cs, filtered), "4584: inline call 3 is (8 (a))");
+        CHECK(is_true(cs, one_a), "4584: direct (order \"a\") stays (a)");
+    }
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define budget (lambda (c) 8))\n"
+                           "(define pred (lambda (o) (equal? o \"a\")))\n"
+                           "(define order-named (lambda (c) (filter pred (list \"a\" \"b\"))))\n"
+                           "(define decide-named (lambda (x) (list (budget x) (order-named x))))"),
+              "4584: set-code named pred");
+        CHECK(cs.eval("(eval-current)").has_value(), "4584: eval-current named");
+        const char* named = "(let ((r (decide-named \"a\"))) "
+                            "(and (= (car r) 8) "
+                            "(string=? (car (car (cdr r))) \"a\") "
+                            "(null? (cdr (car (cdr r))))))";
+        CHECK(is_true(cs, named), "4584: named call 1 is (8 (a))");
+        auto pb = cs.eval("(pred \"b\")");
+        CHECK(pb && is_bool(*pb) && !as_bool(*pb), "4584: (pred \"b\") is #f");
+        auto eq = cs.eval("(eq? pred budget)");
+        CHECK(eq && is_bool(*eq) && !as_bool(*eq), "4584: pred is not budget");
+        CHECK(is_true(cs, "(let ((r (order-named \"a\"))) "
+                          "(and (string=? (car r) \"a\") (null? (cdr r))))"),
+              "4584: direct order-named after call 1 is (a)");
+        CHECK(is_true(cs, named), "4584: named call 2 is (8 (a))");
+        CHECK(is_true(cs, named), "4584: named call 3 is (8 (a))");
+        CHECK(is_true(cs, "(let ((r (order-named \"a\"))) "
+                          "(and (string=? (car r) \"a\") (null? (cdr r))))"),
+              "4584: direct order-named after call 2 is (a)");
+    }
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define budget (lambda (c) 8))\n"
+                           "(define order (lambda (c) (map (lambda (o) o) (list \"a\" \"b\"))))\n"
+                           "(define decide (lambda (x) (list (budget x) (order x))))"),
+              "4584: set-code map");
+        CHECK(cs.eval("(eval-current)").has_value(), "4584: eval-current map");
+        const char* mapped = "(let ((r (decide \"a\"))) "
+                             "(and (= (car r) 8) "
+                             "(string=? (car (car (cdr r))) \"a\") "
+                             "(string=? (car (cdr (car (cdr r)))) \"b\") "
+                             "(null? (cdr (cdr (car (cdr r)))))))";
+        CHECK(is_true(cs, mapped), "4584: map call 1 is (8 (a b))");
+        CHECK(is_true(cs, mapped), "4584: map call 2 is (8 (a b))");
+    }
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define app (lambda (f z) (f z)))\n"
+                           "(define budget (lambda (c) 8))\n"
+                           "(define order (lambda (c) (app (lambda (o) o) \"z\")))\n"
+                           "(define decide (lambda (x) (list (budget x) (order x))))"),
+              "4584: set-code user hof");
+        CHECK(cs.eval("(eval-current)").has_value(), "4584: eval-current user hof");
+        const char* zipped = "(let ((r (decide \"a\"))) "
+                             "(and (= (car r) 8) (string=? (car (cdr r)) \"z\")))";
+        CHECK(is_true(cs, zipped), "4584: user hof call 1 is (8 z)");
+        CHECK(is_true(cs, zipped), "4584: user hof call 2 is (8 z)");
+    }
+    {
+        // Source writes order before budget. List still builds (order-result
+        // budget-result). This row stayed correct before the fix.
+        CompilerService cs;
+        CHECK(set_code(cs, "(define budget (lambda (c) 8))\n"
+                           "(define order (lambda (c) (filter (lambda (o) (equal? o \"a\")) "
+                           "(list \"a\" \"b\"))))\n"
+                           "(define decide (lambda (x) (list (order x) (budget x))))"),
+              "4584: set-code order-before-budget");
+        CHECK(cs.eval("(eval-current)").has_value(), "4584: eval-current order-before");
+        const char* swapped = "(let ((r (decide \"a\"))) "
+                              "(and (string=? (car (car r)) \"a\") "
+                              "(null? (cdr (car r))) "
+                              "(= (car (cdr r)) 8)))";
+        CHECK(is_true(cs, swapped), "4584: order-before call 1 is ((a) 8)");
+        CHECK(is_true(cs, swapped), "4584: order-before call 2 is ((a) 8)");
+    }
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, "(define budget (lambda (c) 8))\n"
+                           "(define order (lambda (c) (filter (lambda (o) (equal? o \"a\")) "
+                           "(list \"a\" \"b\"))))\n"
+                           "(define decide (lambda (x) (order x)))"),
+              "4584: set-code only-order");
+        CHECK(cs.eval("(eval-current)").has_value(), "4584: eval-current only-order");
+        const char* only = "(let ((r (decide \"a\"))) "
+                           "(and (string=? (car r) \"a\") (null? (cdr r))))";
+        CHECK(is_true(cs, only), "4584: only-order call 1 is (a)");
+        CHECK(is_true(cs, only), "4584: only-order call 2 is (a)");
+    }
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("Issue #4584") != std::string::npos, "4584: exact define name wins over name#0");
+    const auto irx = read_file("src/compiler/ir_executor.ixx");
+    CHECK(irx.find("Issue #4584") != std::string::npos, "4584: closure cursor does not rewind");
+}
+
 // Issue #4360: adding a define must not drop sibling IR closures, and a
 // hard rebind must reinstall the caller after the drain. The light path
 // stays armed only for Soft; hard still typechecks and still drains.
@@ -1139,6 +1270,7 @@ int run_test_current_source_roundtrip() {
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();
+    ac4584_hof_callee_stable();
     ac4360_sibling_and_hard_caller();
     ac4362_soft_caller_arity();
     std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
