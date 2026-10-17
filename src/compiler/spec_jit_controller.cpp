@@ -184,6 +184,13 @@ SpecJITController::compile_specialized(const std::string& fn_name, const std::ui
                                        std::uint32_t shape_map_size, aura::jit::ScalarFn generic_fn,
                                        std::uint32_t arg_count, std::uint32_t local_count) {
     (void)generic_fn; // Unused in Phase 2 — the guard is at the call site
+    (void)arg_count;
+    (void)local_count;
+
+    // Issue #4567: a size-0 probe means "no per-arg map". Return before
+    // the storm / unhandled fprintfs so a generic cache hit stays quiet.
+    if (shape_map_size == 0 || shape_map == nullptr)
+        return nullptr;
 
     // Issue #2172: StormLevel-driven conservative gate. When the
     // Shape bit of the unified StormLevel facade is set (Shape-only
@@ -253,10 +260,21 @@ SpecJITController::compile_specialized(const std::string& fn_name, const std::ui
     // performed in service.ixx via AuraJIT::compile(); this controller only
     // tracks successful specializations (install_specialization). Logging
     // the request is enough for diagnostics.
-    std::fprintf(stderr, "spec: specialization request for '%s' (shape_key=%lu)\n", fn_name.c_str(),
-                 (unsigned long)shape_key);
+    // Issue #4567: a size-0 request is the "no per-arg map" probe from
+    // the cache. Stay quiet. A real map still logs.
+    if (shape_map_size > 0) {
+        std::fprintf(stderr, "spec: specialization request for '%s' (shape_key=%lu)\n",
+                     fn_name.c_str(), (unsigned long)shape_key);
+    }
     maybe_evict_();
     return nullptr;
+}
+
+// Issue #4567: production entry guard. The JIT calls this when a
+// function was compiled with a shape map. Null map matches.
+extern "C" int aura_check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
+                                      const std::uint8_t* shape_map, std::uint32_t map_size) {
+    return check_shape_guard(args, arg_count, shape_map, map_size) ? 1 : 0;
 }
 
 void SpecJITController::maybe_evict_() {

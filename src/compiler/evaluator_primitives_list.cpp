@@ -11,6 +11,8 @@ module;
 #include "prim_heap_quota.hh" // Issue #2916 / #2997
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
+#include "core/sandbox.hh"            // Issue #4567: is_strict() on the JIT cdr face
+#include "core/provenance_tracker.hh" // Issue #4567: multi_tenant_env_active() face arm
 
 module aura.compiler.evaluator;
 
@@ -82,6 +84,36 @@ namespace {
         if (is_string(x) && is_string(y))
             return as_string_idx(x) == as_string_idx(y);
         return false;
+    }
+
+    // Issue #4567: JIT cons lives in g_pair_slots, past the evaluator
+    // pairs vector. length and list? follow that cdr the way car does.
+    // The production face loads the tenant stamp only when sandbox != 0
+    // and Strict or Restricted+MT. Soft/Off never loads it.
+    enum class JitCdrKind : std::uint8_t { Missing, Denied, Ok };
+
+    struct JitCdr {
+        JitCdrKind kind = JitCdrKind::Missing;
+        EvalValue value{};
+    };
+
+    JitCdr jit_pair_cdr(Evaluator& ev, std::size_t id, const char* op) {
+        if (id >= g_pair_slots.size() || !g_pair_slots[id])
+            return {};
+        const bool prod_pair_face =
+            ev.effect_sandbox_mode() != 0 &&
+            (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
+             ::aura::core::provenance::multi_tenant_env_active());
+        if (prod_pair_face) {
+            const std::uint64_t slot_tenant =
+                (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+            if (slot_tenant != ev.capability_tenant_id()) {
+                (void)ev.check_workspace_isolation(ev.capability_tenant_id(), slot_tenant,
+                                                   /*required_effects=*/0, op);
+                return {JitCdrKind::Denied, {}};
+            }
+        }
+        return {JitCdrKind::Ok, EvalValue{g_pair_slots[id]->cdr}};
     }
 
 } // namespace
@@ -239,7 +271,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(255, "(...vals) -> list", "Construct a proper list from arguments."));
     register_prim(
         add, ev, "list?",
-        [&pairs](std::span<const EvalValue> a) {
+        [&pairs, &ev](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_bool(true);
             auto v = a[0];
@@ -247,8 +279,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (!is_pair(v))
                     return make_bool(false);
                 auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    return make_bool(false);
+                if (idx >= pairs.size()) {
+                    // In-range stays bool-only. Out of range, a readable
+                    // JIT proper list is still a list. A prod deny is #f
+                    // and still records the isolation audit.
+                    auto slot = jit_pair_cdr(ev, idx, "list?");
+                    if (slot.kind != JitCdrKind::Ok)
+                        return make_bool(false);
+                    v = slot.value;
+                    continue;
+                }
                 v = pairs[idx].cdr; // follow cdr chain
             }
             // Issue #2026-07-17 (commercial-readiness audit): predicates must
@@ -278,8 +318,22 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (!is_pair(v))
                     break;
                 auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    break;
+                if (idx >= pairs.size()) {
+                    // Issue #4567: JIT pair table. Deny is #4111; a missing
+                    // slot stops the walk the way an in-range miss does.
+                    auto slot = jit_pair_cdr(ev, idx, "length");
+                    if (slot.kind == JitCdrKind::Denied) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "length: cross-tenant pair slot read denied (#4111)",
+                            ev.primitive_error_counter_ptr());
+                    }
+                    if (slot.kind != JitCdrKind::Ok)
+                        break;
+                    v = slot.value;
+                    n++;
+                    continue;
+                }
                 // Issue #4505: the cdr walk itself reads a foreign mint's
                 // slots — the count is foreign structure. Same reader gate
                 // as car (required_effects 0, IsolationDeny in the helper).

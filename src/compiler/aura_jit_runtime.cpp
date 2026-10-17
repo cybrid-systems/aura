@@ -5309,9 +5309,10 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 // are NOT in the #3647 slot family (only evaluator-side cl.flat / cl.pool
 // / modules_ are), so the cell values have no rewrite cover — the canary
 // is their only observe channel and cannot false-positive a successful
-// rewrite. Cells are stable for the token's lifetime: capture / remount /
-// free all need the exclusive table lock and the dtor runs while this
-// frame still holds the shared lock.
+// rewrite. Bound addresses are snapshotted before the native call.
+// Issue #4567 drops the shared table lock across that call so
+// MakeClosure can take the unique lock; the dtor still runs after the
+// shared lock is reacquired and unnotes these snapshots, not a re-walk.
 // Issue #4124: the cell notes go through the #4066 bind contract —
 // aura_bind_temporary_moving_live_ptr_any_arena takes the #3210 inventory
 // mutex, resolves the cell through every live arena's last_object_remap_,
@@ -5859,8 +5860,16 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 for (int32_t i = 0; i < nargs; ++i)
                     locals[env_count + i] = args[i];
 
-                int64_t fast_result = fn(locals, static_cast<uint32_t>(argc));
+                // Issue #4567: MakeClosure inside the native body takes the
+                // unique table lock, then the workspace write. This frame
+                // holds the shared lock and the workspace read; shared_mutex
+                // is not recursive. Locals are already copied. Drop both,
+                // call, then reacquire the shared lock so the moving canary
+                // dtor still unnotes under it. Do not unlock the read twice.
+                tlock.unlock();
                 aura_unlock_workspace_read();
+                int64_t fast_result = fn(locals, static_cast<uint32_t>(argc));
+                tlock.lock();
                 return fast_result;
             }
         }
@@ -5989,17 +5998,30 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             locals[slot] = args[i];
     }
 
+    // Issue #4567: same drop as the fast path. aura_alloc_closure needs the
+    // unique table lock and the workspace write, and neither can be taken
+    // while this frame holds the shared lock and the workspace read.
+    tlock.unlock();
+    aura_unlock_workspace_read();
     int64_t result = entry.fn(locals, static_cast<uint32_t>(argc));
 
     // ── Update cache (Issue #1305: write under exclusive lock — not read lock) ──
     // Pre-#1305 updated 5 fields under read lock → TOCTOU with concurrent
     // fast-path readers sharing the same cache_idx (hash collision).
     // Issue #1707: generation bumps bracket the multi-field write.
-    aura_unlock_workspace_read();
-    aura_lock_workspace_write();
-    write_closure_cache_entry(g_closure_cache[cache_idx], closure_id, entry.fn, entry.local_count,
-                              entry.arg_count, static_cast<int32_t>(env_count_check));
-    aura_unlock_workspace_write();
+    // Issue #4567: reacquire table then workspace (#157). A slot freed or
+    // reused while native ran must not publish this fn under the new id.
+    tlock.lock();
+    const bool slot_live = slow_cid < g_closure_func_ids.size() &&
+                           g_closure_func_ids[slow_cid] == func_id &&
+                           (slow_cid >= g_closure_freed.size() || g_closure_freed[slow_cid] == 0);
+    if (slot_live) {
+        aura_lock_workspace_write();
+        write_closure_cache_entry(g_closure_cache[cache_idx], closure_id, entry.fn,
+                                  entry.local_count, entry.arg_count,
+                                  static_cast<int32_t>(env_count_check));
+        aura_unlock_workspace_write();
+    }
     return result;
 }
 
@@ -6321,7 +6343,7 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
-    return (id << 2) | 1;
+    return (id << 6) | 1; // #4567: evaluator pair tag
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
@@ -6359,7 +6381,7 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = aura_jit_owner_capability_tenant();
-    return (id << 2) | 1;
+    return (id << 6) | 1; // #4567: evaluator pair tag
 }
 
 // Issue #4093: explicit-tenant pair alloc seam (same #4036 rationale as
@@ -6381,7 +6403,7 @@ extern "C" int64_t aura_alloc_pair_tenant(int64_t car, int64_t cdr, int64_t owne
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = static_cast<std::uint64_t>(owner_tenant);
-    return (id << 2) | 1;
+    return (id << 6) | 1; // #4567: evaluator pair tag
 }
 
 // L2 specialization: "unchecked" pair access (shape already verified).
@@ -6398,7 +6420,7 @@ extern "C" int64_t aura_alloc_pair_tenant(int64_t car, int64_t cdr, int64_t owne
 // pair_val should be a pair reference, not a fixnum/void.
 static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op,
                                  std::uint64_t caller_tenant, int sandbox_mode) {
-    const uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    const uint64_t id = static_cast<uint64_t>(pair_val >> 6); // #4567
     if (id >= g_pair_slots.size() || g_pair_slots[id] == nullptr) {
         g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return 0;
@@ -6663,7 +6685,7 @@ extern "C" int64_t aura_hash_set_checked(int64_t hash_val, int64_t pair_val,
             return 0;
         }
     }
-    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    uint64_t id = static_cast<uint64_t>(pair_val >> 6); // #4567
     if (id < g_pair_slots.size() && g_pair_slots[id]) {
         int64_t key = g_pair_slots[id]->car;
         // Key stored as-is (JIT encoding). aura_hash_key_eq handles comparison
