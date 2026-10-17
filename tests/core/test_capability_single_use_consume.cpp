@@ -125,6 +125,13 @@ const SecurityEvent* ring_lookup_reason(std::string_view needle, std::uint64_t l
 void reset_all() {
     reset_capability_effects_for_test();
     reset_security_event_ring_for_test();
+    // Issue #3996 fix-up: deny-path SE emits pin the TLS composite join mid
+    // (promote_sampled_force_join_mid / #3066) and no boundary exit clears it
+    // in a unit arm. A later arm's fence then joins its explicit caller mid
+    // to the stale pinned value, so freshly seeded session rows (bound to the
+    // literal mid) fail the session-mid match and TenantAdmin lookups deny.
+    // Every arm must start with an unpinned join SSOT.
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
     set_mode(SandboxMode::Off);
 }
 
