@@ -520,8 +520,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     ObservabilityPrims::register_stats_impl("ast:list-snapshots", [&ev](const auto&) -> EvalValue {
         EvalValue result = make_void();
         for (int i = static_cast<int>(ev.snapshot_sources_.size()) - 1; i >= 0; --i) {
-            auto name_idx = ev.string_heap_.mint(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
-                                                                    : ev.snapshot_names_[i]);
+            auto name_idx =
+                ev.string_heap_.mint(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
+                                                                   : ev.snapshot_names_[i]);
             // Pair: (id . name)
             auto entry_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_int(i), make_string(name_idx)});

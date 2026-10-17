@@ -188,9 +188,9 @@ namespace {
 } // namespace
 
 void register_math_regex_and_arithmetic_primitives(
-    PrimRegistrar add, std::pmr::vector<Pair>& pairs, ::aura::compiler::LockedStringHeap& string_heap,
-    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
-    Evaluator& ev) {
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     using aura::compiler::mutate_general;
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;

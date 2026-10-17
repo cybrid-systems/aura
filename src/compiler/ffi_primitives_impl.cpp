@@ -111,7 +111,8 @@ struct FfiRenderHotpathGuard {
     return true;
 }
 
-void FFIRuntime::register_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* string_heap,
+void FFIRuntime::register_primitives(RegisterFn add,
+                                     ::aura::compiler::LockedStringHeap* string_heap,
                                      std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
     // Issue #3176: Evaluator ctor wraps `add` so c-* names go to

@@ -60,7 +60,8 @@ using types::make_void;
 
 namespace {
 
-    std::string mismatch_detail(const EvalValue& v, const ::aura::compiler::LockedStringHeap* heap) {
+    std::string mismatch_detail(const EvalValue& v,
+                                const ::aura::compiler::LockedStringHeap* heap) {
         std::string_view text;
         if (is_string(v) && heap != nullptr) {
             const auto idx = as_string_idx(v);

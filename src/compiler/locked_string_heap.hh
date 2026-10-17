@@ -36,7 +36,7 @@
 namespace aura::compiler {
 
 class LockedStringHeap {
-  public:
+public:
     using Vec = std::pmr::vector<std::string>;
     using value_type = std::string;
     using size_type = std::size_t;
@@ -47,8 +47,11 @@ class LockedStringHeap {
     using MintHook = void (*)(void* ctx, std::size_t idx) noexcept;
 
     LockedStringHeap() = default;
-    explicit LockedStringHeap(std::pmr::memory_resource* r) : v_(r) {}
-    LockedStringHeap(std::pmr::memory_resource* r, std::recursive_mutex* m) : v_(r), mu_(m) {}
+    explicit LockedStringHeap(std::pmr::memory_resource* r)
+        : v_(r) {}
+    LockedStringHeap(std::pmr::memory_resource* r, std::recursive_mutex* m)
+        : v_(r)
+        , mu_(m) {}
     LockedStringHeap(const LockedStringHeap&) = delete;
     LockedStringHeap& operator=(const LockedStringHeap&) = delete;
 
@@ -60,8 +63,7 @@ class LockedStringHeap {
     [[nodiscard]] std::recursive_mutex* mutex() const noexcept { return mu_; }
 
     // The only growth path. Returns the index of the new string.
-    template <class... Args>
-    std::uint64_t mint(Args&&... args) {
+    template <class... Args> std::uint64_t mint(Args&&... args) {
         Guard g(mu_);
         const auto idx = v_.size();
         v_.emplace_back(std::forward<Args>(args)...);
@@ -93,7 +95,9 @@ class LockedStringHeap {
     [[nodiscard]] const Vec& view() const noexcept { return v_; }
     operator const Vec&() const noexcept { return v_; }
     operator std::span<const std::string>() const noexcept { return {v_.data(), v_.size()}; }
-    [[nodiscard]] std::pmr::memory_resource* resource() const noexcept { return v_.get_allocator().resource(); }
+    [[nodiscard]] std::pmr::memory_resource* resource() const noexcept {
+        return v_.get_allocator().resource();
+    }
 
     // ── structural writes (locked) ─────────────────────────────────
     // Shrink to n (panic checkpoint restore) or pad with empty strings.
@@ -122,10 +126,11 @@ class LockedStringHeap {
     // Caller holds mutex() or runs with every mutator stopped.
     Vec& unsafe_storage() noexcept { return v_; }
 
-  private:
+private:
     struct Guard {
         std::recursive_mutex* m;
-        explicit Guard(std::recursive_mutex* mm) : m(mm) {
+        explicit Guard(std::recursive_mutex* mm)
+            : m(mm) {
             if (m)
                 m->lock();
         }
@@ -144,8 +149,7 @@ class LockedStringHeap {
 
 // Generic mint for helpers templated on the heap type (LockedStringHeap or a
 // plain std::vector<std::string> scratch heap).
-template <class Heap>
-inline std::uint64_t heap_mint(Heap& h, std::string s) {
+template <class Heap> inline std::uint64_t heap_mint(Heap& h, std::string s) {
     if constexpr (requires { h.mint(std::move(s)); }) {
         return h.mint(std::move(s));
     } else {

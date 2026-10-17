@@ -67,7 +67,8 @@ static_assert(!HasInsert<LockedStringHeap>, "#4543: no unlocked insert");
 static_assert(HasMint<LockedStringHeap>, "#4543: mint is the growth API");
 static_assert(!std::is_copy_constructible_v<LockedStringHeap>);
 static_assert(
-    std::is_same_v<std::remove_cvref_t<decltype(std::declval<CompilerService&>().evaluator().string_heap_mut())>,
+    std::is_same_v<std::remove_cvref_t<
+                       decltype(std::declval<CompilerService&>().evaluator().string_heap_mut())>,
                    LockedStringHeap>,
     "#4543: Evaluator hands out the locked heap");
 
@@ -159,8 +160,8 @@ void ac3_shared_evaluator_prims() {
             idxs[t].reserve(kPer);
             for (int i = 0; i < kPer; ++i) {
                 const EvalValue argv[1] = {make_int(i)};
-                auto r = ((t + i) % 2 == 0) ? (*pss)({})
-                                            : (*n2s)(std::span<const EvalValue>(argv, 1));
+                auto r =
+                    ((t + i) % 2 == 0) ? (*pss)({}) : (*n2s)(std::span<const EvalValue>(argv, 1));
                 if (!is_string(r)) {
                     bad.fetch_add(1);
                     continue;

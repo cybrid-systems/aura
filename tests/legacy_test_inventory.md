@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 890 | Preferred destination suites |
-| **Total scanned** | **890** | |
+| `tests/core/test_*.cpp` | 891 | Preferred destination suites |
+| **Total scanned** | **891** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 93 | 93 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 94 | 94 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 275 | 275 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 106 | 106 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
@@ -629,6 +629,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_lock_order_audit_hard.cpp`
 - `tests/compiler/test_lock_order_closures_env.cpp`
 - `tests/compiler/test_lock_order_production_soft.cpp`
+- `tests/core/test_locked_string_heap.cpp`
 - `tests/compiler/test_longrunning_infra_primitives.cpp`
 - `tests/compiler/test_longrunning_recovery_latency.cpp`
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp`
@@ -1109,13 +1110,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (93)
+### `arena_compaction` — Arena / compaction / GC (94)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (93)
+#### domain/ (94)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [large, domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1181,6 +1182,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_issue_1991.cpp` (#1991) [small, domain_suite, theme_serve] — test_issue_1991.cpp — Issue #1991 / B-010: (gc) primitive clears
 - `tests/serve/test_issue_1993.cpp` (#1993) [domain_suite, theme_serve] — test_issue_1993.cpp — Issue #1993 (D-001): (gc-heap) direct-clear
 - `tests/compiler/test_layout_stamp.cpp` (—) [domain_suite, theme_compiler] — API for cross-subsystem epoch coherence (P1, MemorySafety-Review,
+- `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_memo_goal_epoch_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Two successive queries without mutate return identical epoch
 - `tests/compiler/test_module_path_refuse.cpp` (—) [domain_suite, theme_compiler] — AC1: empty path refused (no crash; not "cannot resolve ''")
 - `tests/compiler/test_move_node_partial_failure_no_dangling.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2803; try_move_child; metric on FlatAST
@@ -1547,7 +1549,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_join_drain_reclaim.cpp` (—) [large, domain_suite, theme_orch] — AC1: residual + reclaim counters bump when non-yielding body +
 - `tests/serve/test_join_drain_timeout.cpp` (—) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
 - `tests/compiler/test_lock_order_audit_hard.cpp` (—) [domain_suite, theme_compiler] — AC1: Audit off → zero atomics on acquire (TLS depth still tracked —
-- `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
+- `tests/core/test_locked_string_heap.cpp` (—) [domain_suite, theme_core] — `idx = heap.size(); heap.push_back(s);` pair (#4519 AC2a TSan: unlocked
 - `tests/compiler/test_macro_clone_target_atomicity.cpp` (—) [domain_suite, theme_compiler] — rollback). Soft / Off keeps historical half-write (zero-cost contract).
 - `tests/compiler/test_macro_self_evo_check_evaluator_principal.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites the new helper tenant_for_macro_self_evo_check
 - `tests/orch/test_mailbox_bp_admit_default.cpp` (—) [domain_suite, theme_orch] — AC1: no env → resolve_mailbox_bp_admit_threshold() == 32
