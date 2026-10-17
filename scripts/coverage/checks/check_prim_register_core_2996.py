@@ -104,15 +104,22 @@ def main() -> int:
                 fails.append(f"AC2: {group} has no PrimSpec factory")
 
     # AC2: every register_prim has a factory with two string args (schema, doc)
+    # Args may be adjacent string literals (clang-format splits long docs);
+    # match each literal run, then validate dequoted non-empty text (#4549).
+    _lit = r"((?:\"[^\"]+\"\s*)+)"
     factory_re = re.compile(
         r"register_prim\s*\(\s*add\s*,\s*ev\s*,\s*\"([^\"]+)\"[\s\S]*?"
-        r"(pure_general|mutate_general|io_general)\s*\(\s*\d+\s*,\s*\"([^\"]+)\"\s*,\s*\"([^\"]+)\"\s*\)",
+        r"(pure_general|mutate_general|io_general)\s*\(\s*\d+\s*,\s*" + _lit + r"\s*,\s*" + _lit + r"\s*\)",
         re.MULTILINE,
     )
+
+    def _dequote(run: str) -> str:
+        return "".join(re.findall(r'"([^"]*)"', run))
+
     seen: set[str] = set()
     for fn, t in tus.items():
         for m in factory_re.finditer(t):
-            name, _kind, schema, doc = m.group(1), m.group(2), m.group(3), m.group(4)
+            name, _kind, schema, doc = m.group(1), m.group(2), _dequote(m.group(3)), _dequote(m.group(4))
             seen.add(name)
             if not schema.strip():
                 fails.append(f"AC2: {fn} {name} empty schema")
