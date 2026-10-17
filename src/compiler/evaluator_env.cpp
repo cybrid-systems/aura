@@ -282,18 +282,34 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
+    // Issue #4350: authoritative O(1) local probes (newest binding wins —
+    // the same answer as a reverse scan, since every append re-points the
+    // index at the new slot and erasures rebuild it).
+    auto local_binding = [n](const Env& e) -> const EvalValue* {
+        if (auto it = e.binding_index_.find(n); it != e.binding_index_.end()) {
+            const auto idx = it->second;
+            if (idx < e.bindings_.size() && e.bindings_[idx].first == n)
+                return &e.bindings_[idx].second;
+        }
+        return nullptr;
+    };
+    auto local_symid_binding = [](const Env& e, aura::ast::SymId s) -> const EvalValue* {
+        if (auto it = e.symid_index_.find(s); it != e.symid_index_.end()) {
+            const auto idx = it->second;
+            if (idx < e.bindings_symid_.size() && e.bindings_symid_[idx].first == s)
+                return &e.bindings_symid_[idx].second;
+        }
+        return nullptr;
+    };
 
     // 1. Check local bindings — Issue #894: O(1) via binding_index_
-    if (auto it = binding_index_.find(n); it != binding_index_.end()) {
-        const auto idx = it->second;
-        if (idx < bindings_.size() && bindings_[idx].first == n)
-            return bindings_[idx].second;
-    }
-    // Fallback linear scan (index may be stale after rare rewrites)
-    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
-        if (it->first == n) {
-            return it->second;
-        }
+    // Issue #4350: the index is authoritative — every writer of bindings_
+    // (bind*, replace_string_bindings, unbind_local, the module export
+    // filter) keeps it in sync, so a miss means "not bound here". The old
+    // per-miss reverse scan made every primitive reference (never bound in
+    // top_) string-compare against all K top-level defines.
+    if (const auto* hit = local_binding(*this))
+        return *hit;
     // 1b. Issue #1482 restore: bindings_symid_ is PRIMARY. materialize_call_env
     // copies only the SymId array (string bindings_ stay empty). Free vars /
     // letrec recursive names captured via bind_symid therefore live only here.
@@ -308,16 +324,9 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     };
     if (pool_ && !bindings_symid_.empty()) {
         const auto s = ensure_interned();
-        // Issue #4343: O(1) index hit before the linear walk.
-        if (auto it = symid_index_.find(s); it != symid_index_.end()) {
-            const auto idx = it->second;
-            if (idx < bindings_symid_.size() && bindings_symid_[idx].first == s)
-                return bindings_symid_[idx].second;
-        }
-        for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
-            if (it->first == s)
-                return it->second;
-        }
+        // Issue #4343 / #4350: authoritative O(1) index (see local_symid_binding).
+        if (const auto* hit = local_symid_binding(*this, s))
+            return *hit;
     }
     // Issue #4350: delegated capture bindings (shared snapshot with
     // prebuilt O(1) indexes) — the frozen capture content the per-call
@@ -345,23 +354,13 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     if (parent_) {
         std::size_t hops = 0;
         for (const Env* p = parent_; p && hops < MAX_ENV_DEPTH; p = p->parent_, ++hops) {
-            if (auto it = p->binding_index_.find(n); it != p->binding_index_.end()) {
-                const auto idx = it->second;
-                if (idx < p->bindings_.size() && p->bindings_[idx].first == n)
-                    return p->bindings_[idx].second;
-            }
-            for (auto it = p->bindings_.rbegin(); it != p->bindings_.rend(); ++it) {
-                if (it->first == n)
-                    return it->second;
-            }
+            // Issue #4350: authoritative indexes on every hop (no per-miss scan).
+            if (const auto* hit = local_binding(*p))
+                return *hit;
             if (p->pool_ && !p->bindings_symid_.empty()) {
-                // Prefer this env's pool for intern when present.
-                auto* pp = p->pool_ ? p->pool_ : pool_;
-                auto s = const_cast<aura::ast::StringPool*>(pp)->intern(n);
-                for (auto it = p->bindings_symid_.rbegin(); it != p->bindings_symid_.rend(); ++it) {
-                    if (it->first == s)
-                        return it->second;
-                }
+                auto s = const_cast<aura::ast::StringPool*>(p->pool_)->intern(n);
+                if (const auto* hit = local_symid_binding(*p, s))
+                    return *hit;
             }
         }
         // Fall through to SoA / top_env (do not return nullopt here).
@@ -455,18 +454,15 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             // require are invisible to materialize_call_env SoA walks that
             // start from a module capture frame (parent chain ends at 0).
             if (cur == 0 && owner_) {
-                for (auto it =
-                         const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();
-                     it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend();
-                     ++it) {
-                    if (it->first == n) {
-                        if (is_cell(it->second)) {
-                            auto ci = as_cell_id(it->second);
-                            if (ci < owner_->cells().size())
-                                return owner_->cells()[ci];
-                        }
-                        return it->second;
+                // Issue #4350: O(1) via top_'s authoritative name index
+                // (newest binding wins — same answer as the reverse scan).
+                if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
+                    if (is_cell(*b)) {
+                        auto ci = as_cell_id(*b);
+                        if (ci < owner_->cells().size())
+                            return owner_->cells()[ci];
                     }
+                    return *b;
                 }
             }
             cur = pfr.parent_id;
@@ -475,18 +471,14 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         // Issue #2566: also covered above when walk reaches cur==0; keep this
         // for the parent_id_==0 start path (no hops into non-zero frames).
         if (parent_id_ == 0 && owner_) {
-            // Check live top_ env's bindings
-            for (auto it = const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();
-                 it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend();
-                 ++it) {
-                if (it->first == n) {
-                    if (is_cell(it->second)) {
-                        auto ci = as_cell_id(it->second);
-                        if (ci < owner_->cells().size())
-                            return owner_->cells()[ci];
-                    }
-                    return it->second;
+            // Check live top_ env's bindings (Issue #4350: O(1) index).
+            if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
+                if (is_cell(*b)) {
+                    auto ci = as_cell_id(*b);
+                    if (ci < owner_->cells().size())
+                        return owner_->cells()[ci];
                 }
+                return *b;
             }
         }
     }
