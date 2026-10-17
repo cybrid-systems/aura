@@ -26,6 +26,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.type;
+import aura.core.ast;
 
 using aura::compiler::CompilerService;
 using aura::compiler::mutate_type_gate::apply_production_defaults;
@@ -61,6 +62,45 @@ static std::string read_file(const char* path) {
 // linear scan. Identity must not change: structurally equal types return
 // the first-registered TypeId, distinct ones stay distinct, and compact()
 // drops the index with the entries.
+// Issue #4558: StringPool::intern read-first fast path — existing names
+// resolve under the shared lock, new names still insert exactly once, ids
+// stay stable across growth, and concurrent intern/resolve agree.
+static void stringpool_intern_fastpath_4558() {
+    aura::ast::StringPool pool;
+    const auto a = pool.intern("alpha4558");
+    const auto before = aura::ast::stringpool_intern_total();
+    CHECK(pool.intern("alpha4558") == a, "4558: re-intern returns same id");
+    CHECK(aura::ast::stringpool_intern_total() == before + 1, "4558: fast path still counted");
+    CHECK(pool.resolve(a) == "alpha4558", "4558: resolve");
+    CHECK(pool.intern("") == 0, "4558: empty -> 0");
+    const auto n0 = pool.entry_count();
+    std::vector<aura::ast::SymId> ids;
+    for (int i = 0; i < 500; ++i)
+        ids.push_back(pool.intern("n4558_" + std::to_string(i)));
+    CHECK(pool.entry_count() == n0 + 500, "4558: 500 new names inserted once");
+    bool stable = pool.intern("alpha4558") == a;
+    for (int i = 0; i < 500; ++i)
+        stable = stable && pool.intern("n4558_" + std::to_string(i)) == ids[i];
+    CHECK(stable, "4558: ids stable across rehash");
+    CHECK(pool.find_by_name("n4558_499") == ids[499], "4558: find_by_name agrees");
+
+    std::atomic<bool> bad{false};
+    std::vector<std::thread> th;
+    for (int t = 0; t < 4; ++t)
+        th.emplace_back([&pool, &bad, t] {
+            for (int i = 0; i < 2000; ++i) {
+                const auto name = "c4558_" + std::to_string((i * 7 + t) % 600);
+                const auto id = pool.intern(name);
+                if (pool.intern(name) != id || pool.find_by_name(name) != id)
+                    bad.store(true);
+            }
+        });
+    for (auto& x : th)
+        x.join();
+    CHECK(!bad.load(), "4558: concurrent intern/resolve consistent");
+    CHECK(pool.entry_count() == n0 + 500 + 600, "4558: concurrent inserts deduplicated");
+}
+
 static void registry_intern_4557() {
     std::println("\n--- #4557: TypeRegistry intern index keeps dedup identity ---");
     aura::core::TypeRegistry r;
@@ -840,6 +880,7 @@ int run_test_mutate_type_gate() {
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
     registry_intern_4557();
+    stringpool_intern_fastpath_4558();
     return g_failed ? 1 : 0;
 }
 

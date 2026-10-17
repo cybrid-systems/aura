@@ -1,0 +1,86 @@
+; Issue #4558 — interpreter baseline. Env::lookup now locks one env-frame
+; shard per SoA hop (was all 16 per lookup), StringPool::intern probes under
+; the shared lock before taking the write lock, and capture snapshots probe
+; their name index with a string_view. These cases pin the lookup semantics
+; those hot paths must keep: nested-frame captures (named let / letrec /
+; lambda-in-lambda), let shadowing at every depth, set! through captured
+; cells, primitive references as values, first-seen names, and a primitive
+; shadowed by a local.
+;; expect: OK-4558
+
+(define *fails* 0)
+(define *passes* 0)
+(define (check label got want)
+  (if (equal? got want)
+      (begin (set! *passes* (+ *passes* 1)) (display "  pass: ") (display label) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display label)
+        (display " got: ") (write got) (display " want: ") (write want) (newline))))
+
+(define (f1 x) (+ x 1))
+(define (loop-sum n)
+  (let loop ((i 0) (acc 0))
+    (if (< i n) (loop (+ i 1) (+ acc (f1 i))) acc)))
+(check "named-let loop calling global" (loop-sum 1000) 500500)
+
+(define (make-adder k) (lambda (x) (+ x k)))
+(define add5 (make-adder 5))
+(check "captured param" (add5 10) 15)
+
+(define (deep a)
+  (let ((b (+ a 1)))
+    (let ((c (+ b 1)))
+      (let ((d (+ c 1)))
+        ((lambda () (list a b c d)))))))
+(check "four-level capture" (deep 1) (list 1 2 3 4))
+
+(define (shadow v)
+  (let ((v (* v 10)))
+    (let ((g (lambda () v)))
+      (let ((v 0)) (g)))))
+(check "lexical shadowing in closure" (shadow 3) 30)
+
+(define (counter)
+  (let ((n 0))
+    (lambda () (set! n (+ n 1)) n)))
+(define c1 (counter))
+(c1) (c1)
+(check "set! through captured cell" (c1) 3)
+(define c2 (counter))
+(check "independent cells" (list (c2) (c1)) (list 1 4))
+
+(define (apply-op op a b) (op a b))
+(check "primitive as value" (apply-op + 2 3) 5)
+(check "primitive via map" (map car (list (list 1) (list 2))) (list 1 2))
+
+(define (local-plus x)
+  (let ((+ (lambda (a b) (* a b))))
+    (+ x 7)))
+(check "primitive shadowed by local" (local-plus 3) 21)
+(check "primitive unshadowed after let" (+ 3 7) 10)
+
+(define (evens n)
+  (letrec ((ev? (lambda (k) (if (= k 0) #t (od? (- k 1)))))
+           (od? (lambda (k) (if (= k 0) #f (ev? (- k 1))))))
+    (ev? n)))
+(check "letrec mutual recursion" (list (evens 10) (evens 7)) (list #t #f))
+
+(define (fresh-name-user) zz-defined-late-4558)
+(define zz-defined-late-4558 42)
+(check "name first interned at lookup" (fresh-name-user) 42)
+
+(define (outer-loop)
+  (let loop ((i 0) (out '()))
+    (if (< i 3)
+        (loop (+ i 1) (cons ((lambda (j) (* j i)) 2) out))
+        out)))
+(check "closure in named-let body" (outer-loop) (list 4 2 0))
+
+(if (= *fails* 0)
+    (display "OK-4558 lookup hot paths keep semantics\n")
+    (begin
+      (display "FAIL-4558 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

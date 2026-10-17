@@ -291,10 +291,21 @@ public:
     // a not-safe-across-compact target (see compact_sweep restamp in
     // evaluator.ixx — SymId is rebuilt across compact).
     SymId intern(std::string_view s) {
-        std::unique_lock<std::shared_mutex> write_lock(mtx_.mutable_get());
         g_stringpool_intern_total.fetch_add(1, std::memory_order_relaxed);
         if (s.empty())
             return 0;
+        // Issue #4558: read-mostly fast path. Env::lookup interns the
+        // query name on every miss of its string index (every primitive
+        // reference walks there), so a unique_lock per call serialized
+        // all readers on the pool. Probe under the shared lock first;
+        // only a genuinely new name takes the write lock (and re-probes,
+        // since another writer may have inserted it in between).
+        {
+            std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
+            if (auto hit = probe_unlocked(s))
+                return *hit;
+        }
+        std::unique_lock<std::shared_mutex> write_lock(mtx_.mutable_get());
 
         auto hash = hash_str(s);
         auto mask = hash_capacity_ - 1;
@@ -361,6 +372,21 @@ public:
         g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
         if (s.empty())
             return SymId{0};
+        auto hash = hash_str(s);
+        auto mask = hash_capacity_ - 1;
+        auto idx = hash & mask;
+        while (hash_tbl_[idx] != INVALID_SYM) {
+            auto existing = hash_tbl_[idx];
+            if (resolve_unlocked(existing) == s)
+                return existing;
+            idx = (idx + 1) & mask;
+        }
+        return std::nullopt;
+    }
+
+    // Issue #4558: probe without locking (caller holds mtx_ shared or
+    // unique). Same FNV-1a + linear probe as intern / find_by_name.
+    [[nodiscard]] std::optional<SymId> probe_unlocked(std::string_view s) const noexcept {
         auto hash = hash_str(s);
         auto mask = hash_capacity_ - 1;
         auto idx = hash & mask;
