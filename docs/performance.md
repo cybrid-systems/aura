@@ -10,9 +10,9 @@ Measured at commit `d7de6a11b0e36683f7585e0c5b9e1583f7194f25` on Linux-7.0.14-or
 (14 CPUs). Clock is in-process
 `(monotonic-ms)`. Startup is excluded. No new primitive.
 
-Class 2 runs with `AURA_SANDBOX=off` because the default Restricted
-face denies Mutate until #4575. `AURA_SOFT` is not set and no grant
-is minted.
+Class 2 still runs with `AURA_SANDBOX=off`. That variable is the dev
+escape hatch. New Soft experiments use `aura soft`. `AURA_SOFT` is not
+set and the harness does not mint the scoped grant.
 
 LuaJIT column: skipped (interpreter not on PATH in the dev image that
 produced this page). Speculative JIT: no separate mode, column absent.

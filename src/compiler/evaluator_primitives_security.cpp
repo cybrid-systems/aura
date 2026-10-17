@@ -1303,6 +1303,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // stamps at handler end only — no key renames.
             insert_kv("schema-4141", 4141);
             insert_kv("issue-4141", 4141);
+            // Issue #4575: Soft auto-grant on the existing stats surface.
+            // Planned stays 208 (live+16 still fits). No new query name.
+            {
+                using ::aura::core::capability::g_capability_registry;
+                auto& reg = g_capability_registry();
+                std::lock_guard<std::mutex> lock(reg.mtx);
+                insert_kv("soft-auto-grant", reg.soft_session_active_ ? 1 : 0);
+                insert_kv("soft-auto-grant-workspace",
+                          static_cast<std::int64_t>(reg.soft_session_workspace_));
+            }
+            insert_kv("schema-4575", 4575);
+            insert_kv("issue-4575", 4575);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
@@ -5962,6 +5974,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 // Live ~105; planned 128 still has #3339/#3882 headroom.
                 insert_kv("production-defaults-active", prod ? 1 : 0);
             }
+            // Issue #4575: same Soft grant bits on posture. Planned 128
+            // still covers live+8. No new query name.
+            {
+                using ::aura::core::capability::g_capability_registry;
+                auto& reg = g_capability_registry();
+                std::lock_guard<std::mutex> lock(reg.mtx);
+                insert_kv("soft-auto-grant", reg.soft_session_active_ ? 1 : 0);
+                insert_kv("soft-auto-grant-workspace",
+                          static_cast<std::int64_t>(reg.soft_session_workspace_));
+            }
+            insert_kv("schema-4575", 4575);
+            insert_kv("issue-4575", 4575);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 

@@ -67,7 +67,12 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     if (name.starts_with("tcp-") || name.starts_with("http:") || name.starts_with("http-") ||
         name.starts_with("net:") || name.starts_with("network:"))
         return kEffectNetwork;
-    if (name == "write-file" || name.starts_with("file:write") || name.starts_with("sys-write") ||
+    // Issue #4575: write-file's body checks Write only. Dispatch must
+    // not also demand Exec, or --allow write cannot lift it while shell
+    // (Exec) stays denied. file:write / sys-* / git-* stay Write|Exec.
+    if (name == "write-file")
+        return kEffectWrite;
+    if (name.starts_with("file:write") || name.starts_with("sys-write") ||
         name.starts_with("sys-open") || name.starts_with("git-"))
         return static_cast<std::uint16_t>(kEffectWrite | kEffectExec);
     if (name.starts_with("exec:") || name.starts_with("exec-") || name.starts_with("syscall") ||

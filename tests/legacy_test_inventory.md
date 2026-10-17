@@ -1365,7 +1365,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_module_require_freevar.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2766 — require-before-export free-var capture of module-private
 - `tests/core/test_moving_densify_fail_closed.cpp` (—) [large, domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
 - `tests/compiler/test_mutate_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutate_batch.cpp
-- `tests/compiler/test_mutate_capability_force.cpp` (—) [domain_suite, theme_compiler] — AC1: Source: add_mutate calls check_and_record_effect + check_workspace_isolation
+- `tests/compiler/test_mutate_capability_force.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Source: add_mutate calls check_and_record_effect + check_workspace_isolation
 - `tests/compiler/test_mutate_cross_thread_migration.cpp` (—) [domain_suite, theme_compiler] — test_mutate_cross_thread_migration.cpp — Issue #1373:
 - `tests/serve/test_mutate_mailbox_starvation_throttle.cpp` (—) [domain_suite, theme_serve] — tests/serve/test_mutate_mailbox_starvation_throttle.cpp
 - `tests/compiler/test_mutate_type_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft default / Hard production; schema-2219 query surface

@@ -140,6 +140,16 @@ enum class Effect : std::uint16_t {
     Syscall = 1 << 9,     // syscall (high-risk arbitrary syscall)
 };
 
+// Issue #4575: Soft launcher token. Not an env var and not a new Effect bit.
+// Opt-in extras are only Read/Write/Exec/Network/Ffi. Mutate|Read is the
+// default mask; TenantAdmin, Syscall, and MacroSelfEvo never ride along.
+inline constexpr char kSoftAutoGrantName[] = "soft-auto-grant";
+inline constexpr char kSoftAutoGrantReason[] = "soft-auto-grant";
+inline constexpr std::uint16_t kSoftSessionOptInMask =
+    static_cast<std::uint16_t>(Effect::Read) | static_cast<std::uint16_t>(Effect::Write) |
+    static_cast<std::uint16_t>(Effect::Exec) | static_cast<std::uint16_t>(Effect::Network) |
+    static_cast<std::uint16_t>(Effect::Ffi);
+
 // Issue #2023: policy limits for macro expansion (capability layer).
 // Internal hard depth (MAX_HYGIENE_DEPTH=1024) remains last-resort safety;
 // these bounds are the supervisor-tunable policy. Zero max_depth or
@@ -288,6 +298,14 @@ struct CapabilityGrant {
     // check_and_record_effect fails on a stolen SessionBound entry (no
     // double-consume). Layout-additive at END of struct per #2906.
     bool stolen = false;
+    // Issue #4575: Soft launcher session. Layout-additive at END.
+    // Not single-use and not swept by session-mid-exit / orphan sweep.
+    // Re-armed to the live check mid. A non-soft re-grant of the same
+    // name clears these (apply) so a TenantAdmin grant cannot inherit
+    // the lifetime. source is empty on ordinary rows.
+    bool soft_session = false;
+    std::uint32_t workspace_id = 0;
+    char source[32]{};
 };
 
 // Sandbox mode mirror for effect checks (written only via sandbox::set_mode).
@@ -611,6 +629,20 @@ struct CapabilityRegistry {
     // Issue #2151: when true, grant_fiber_id mismatch is a hard deny
     // (not observability-only). Default false preserves #2055 soft share.
     std::atomic<bool> hard_fiber_isolation_{false};
+    // Issue #4575: process Soft session. Only begin_soft_session writes
+    // active. Explicit revoke clears it. Session-exit and orphan sweep
+    // must not, or the next boundary cannot re-arm.
+    bool soft_session_active_ = false;
+    TenantId soft_session_tenant_ = 0;
+    std::uint32_t soft_session_workspace_ = 0;
+    Effect soft_session_effects_ = Effect::None;
+    std::uint64_t soft_session_mint_mid_ = 0;
+    // One-shot workspace scope for the next effects_for_locked call.
+    // #4038 cites that exact two-argument signature and the
+    // effects_for_locked(tenant, prov.mutation_id) call, so the
+    // workspace is armed under the same lock instead of a new parameter.
+    bool soft_workspace_filter_ = false;
+    std::uint32_t soft_workspace_filter_id_ = 0;
 
     // Issue #2074: anti privilege-sticky accessors.
     void set_grant_min_valid_epoch(std::uint64_t epoch) noexcept {
@@ -705,7 +737,8 @@ struct CapabilityRegistry {
     // the legacy synthesis (zero-cost contract, AC5) for session_bound.
     bool grant(TenantId tenant, std::string_view name, Effect effects,
                const EffectProvenance& prov = {}, bool single_use = false,
-               bool session_bound = false, TenantId caller_principal = 0) {
+               bool session_bound = false, TenantId caller_principal = 0, bool soft_session = false,
+               std::uint32_t soft_workspace = 0, const char* soft_source = nullptr) {
         // Pre-lock refuse (Issue #3090). Reads only sandbox_mode atomic +
         // prov.mutation_id (caller-owned); no registry state needed.
         {
@@ -727,7 +760,7 @@ struct CapabilityRegistry {
         }
         std::lock_guard<std::mutex> lock(mtx);
         return grant_locked(tenant, name, effects, prov, single_use, session_bound,
-                            caller_principal);
+                            caller_principal, soft_session, soft_workspace, soft_source);
     }
 
     // Issue #3126: caller MUST hold `mtx`. Body is the post-refuse
@@ -740,7 +773,9 @@ struct CapabilityRegistry {
     // run without the lock).
     bool grant_locked(TenantId tenant, std::string_view name, Effect effects,
                       const EffectProvenance& prov = {}, bool single_use = false,
-                      bool session_bound = false, TenantId caller_principal = 0) {
+                      bool session_bound = false, TenantId caller_principal = 0,
+                      bool soft_session = false, std::uint32_t soft_workspace = 0,
+                      const char* soft_source = nullptr) {
         // Issue #3409: push the #3086/#3029 TenantAdmin fence shape into
         // grant_locked SSOT. Production Restricted/Strict requires TA on
         // the caller when (tenant is foreign) OR (effects contain high
@@ -803,12 +838,32 @@ struct CapabilityRegistry {
         }
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
-            g.effects = g.effects | effects;
+            // Issue #4575: a soft re-arm replaces the mask so a widened
+            // re-grant cannot stick. Ordinary grants still OR. A non-soft
+            // re-grant clears the soft lifetime on this name.
+            if (soft_session) {
+                g.effects = effects;
+                g.stolen = false;
+            } else {
+                g.effects = g.effects | effects;
+            }
             // Issue #2586: re-grant resets single_use flag (fresh grant).
             const bool was_session = g.session_bound && !g.revoked;
             g.single_use = single_use;
             g.session_bound = session_bound; // #2944
             g.revoked = false;
+            g.soft_session = soft_session;
+            if (soft_session) {
+                g.workspace_id = soft_workspace;
+                std::memset(g.source, 0, sizeof(g.source));
+                if (soft_source != nullptr && soft_source[0] != '\0') {
+                    const auto n = std::min(std::strlen(soft_source), sizeof(g.source) - 1);
+                    std::memcpy(g.source, soft_source, n);
+                }
+            } else {
+                g.workspace_id = 0;
+                std::memset(g.source, 0, sizeof(g.source));
+            }
             g.bound_mutation_id = prov.mutation_id;
             g.bound_node_id = prov.node_id;
             g.grant_epoch = prov.epoch;
@@ -922,6 +977,10 @@ struct CapabilityRegistry {
                     for (auto& g : vec) {
                         if (g.revoked || !g.session_bound)
                             continue;
+                        // Issue #4575: the Soft launcher row outlives the
+                        // session mid. Exit/steal must not clear it.
+                        if (g.soft_session)
+                            continue;
                         if (g.bound_mutation_id != mid)
                             continue;
                         if (g.grant_fiber_id != 0) {
@@ -972,6 +1031,9 @@ struct CapabilityRegistry {
         for (auto& [tenant, vec] : by_tenant) {
             for (auto& g : vec) {
                 if (g.revoked || !g.session_bound)
+                    continue;
+                // Issue #4575: keep the Soft launcher row across mid exit.
+                if (g.soft_session)
                     continue;
                 if (g.bound_mutation_id != mid)
                     continue;
@@ -1060,6 +1122,9 @@ struct CapabilityRegistry {
         for (auto& g : it->second) {
             if (g.revoked || !g.session_bound)
                 continue;
+            // Issue #4575: scope dtor must not drop the host Soft grant.
+            if (g.soft_session)
+                continue;
             if (g.bound_mutation_id != mid)
                 continue;
             if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
@@ -1139,6 +1204,9 @@ struct CapabilityRegistry {
             for (const auto& g : vec) {
                 if (g.revoked || !g.session_bound)
                     continue;
+                // Issue #4575: the Soft row is not an orphan of its bound mid.
+                if (g.soft_session)
+                    continue;
                 if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
                     continue; // peer-fiber grant — live elsewhere (#3241)
                 bool live = false;
@@ -1188,6 +1256,9 @@ struct CapabilityRegistry {
         for (auto& [tenant, vec] : by_tenant) {
             for (auto& g : vec) {
                 if (g.revoked || !g.session_bound)
+                    continue;
+                // Issue #4575: orphan sweep must not revoke the Soft row.
+                if (g.soft_session)
                     continue;
                 if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
                     continue; // peer-fiber grant — live elsewhere (#3241)
@@ -1251,6 +1322,9 @@ struct CapabilityRegistry {
         for (auto& g : it->second) {
             if (g.revoked || !g.session_bound || g.stolen)
                 continue;
+            // Issue #4575: a steal must not kill the host Soft grant.
+            if (g.soft_session)
+                continue;
             if (g.bound_mutation_id != mid)
                 continue;
             if (fiber_id != 0 && g.grant_fiber_id != fiber_id)
@@ -1301,6 +1375,9 @@ struct CapabilityRegistry {
             (void)tenant;
             for (auto& g : vec) {
                 if (g.revoked || !g.session_bound || g.stolen)
+                    continue;
+                // Issue #4575: a steal must not kill the host Soft grant.
+                if (g.soft_session)
                     continue;
                 if (g.bound_mutation_id != mid)
                     continue;
@@ -1354,6 +1431,11 @@ struct CapabilityRegistry {
                 // flag and decrements live residual (saturate at 0) so Soft
                 // AC3 does not ratchet forever / orphan sweep stays armed
                 // only while real residuals remain.
+                // Issue #4575: an explicit revoke of the Soft row clears the
+                // process flag so the next check cannot re-arm. Sweep and
+                // session-mid exit never reach this named path.
+                const bool was_soft = g.soft_session && !g.revoked && soft_session_active_;
+                const auto soft_mid = g.bound_mutation_id;
                 const bool was_session = g.session_bound;
                 g.revoked = true;
                 g.effects = Effect::None;
@@ -1376,6 +1458,12 @@ struct CapabilityRegistry {
                     auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
                     if (cur > 0)
                         met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+                }
+                if (was_soft) {
+                    soft_session_active_ = false;
+                    emit_soft_posture(tenant, soft_mid, ep,
+                                      static_cast<std::uint16_t>(soft_session_effects_), "revoke",
+                                      /*denied=*/false);
                 }
             }
         }
@@ -1453,7 +1541,14 @@ struct CapabilityRegistry {
         for (const auto& g : it->second) {
             // Issue #4038: stale session row (bound mid of an exited
             // outermost) is not a contributor under the production join.
+            // Issue #4575: the Soft row is session_bound too. Rearm binds
+            // it to the check mid before this OR, so the same skip admits
+            // the live row and rejects a stale one. A different workspace
+            // is not a contributor when the one-shot filter is armed.
             if (production_join && g.session_bound && g.bound_mutation_id != join_mid)
+                continue;
+            if (soft_workspace_filter_ && g.soft_session &&
+                g.workspace_id != soft_workspace_filter_id_)
                 continue;
             // Issue #3142: stolen entries excluded (see effects_for above).
             if (!g.revoked && !g.stolen)
@@ -1678,6 +1773,10 @@ struct CapabilityRegistry {
             // tenant. required==None → check all live grants (query path).
             if (required != Effect::None && !has_effect(g.effects, required))
                 continue;
+            // Issue #4575: a Soft row for another workspace is not a
+            // contributor and must not fail the whole check.
+            if (g.soft_session && g.workspace_id != prov.workspace_id)
+                continue;
             if (fail_closed_mid) {
                 // Production: zero bound mid is not a silent skip — refuse.
                 if (g.bound_mutation_id == 0) {
@@ -1761,6 +1860,9 @@ struct CapabilityRegistry {
                 continue;
             // Issue #3333: contributing-grant mid join (see provenance_ok).
             if (required != Effect::None && !has_effect(g.effects, required))
+                continue;
+            // Issue #4575: Soft workspace mismatch is a skip, not a deny.
+            if (g.soft_session && g.workspace_id != prov.workspace_id)
                 continue;
             if (fail_closed_mid) {
                 if (g.bound_mutation_id == 0) {
@@ -2188,10 +2290,152 @@ struct CapabilityRegistry {
         return it->second;
     }
 
+    // Issue #4575: PostureObserve reason soft-auto-grant. op is mint,
+    // revoke, refuse, or rearm. Does not take mtx.
+    void emit_soft_posture(TenantId tenant, std::uint64_t mid, std::uint64_t epoch,
+                           std::uint16_t bits, const char* op, bool denied) noexcept {
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        emit_security_event_durable(SecurityEventKind::PostureObserve, tenant, mid, epoch, bits,
+                                    op != nullptr ? op : "", kSoftAutoGrantReason, denied,
+                                    /*fiber_id=*/0);
+    }
+
+    // Issue #4575: host mint. Restricted only, non-zero Mutation mid,
+    // caller_principal 0 session token (#3996). Refuses Strict and Off.
+    // Caller emits the mint SecurityEvent. Returns false with no row
+    // when the mode or the mid is refused.
+    bool begin_soft_session(TenantId tenant, std::uint32_t workspace_id, Effect effects,
+                            const EffectProvenance& prov) {
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        if (mode != EffectSandboxMode::Restricted || prov.mutation_id == 0)
+            return false;
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!grant_locked(tenant, kSoftAutoGrantName, effects, prov,
+                          /*single_use=*/false, /*session_bound=*/true,
+                          /*caller_principal=*/0, /*soft_session=*/true, workspace_id,
+                          kSoftAutoGrantReason))
+            return false;
+        soft_session_active_ = true;
+        soft_session_tenant_ = tenant;
+        soft_session_workspace_ = workspace_id;
+        soft_session_effects_ = effects;
+        soft_session_mint_mid_ = prov.mutation_id;
+        return true;
+    }
+
+    // Issue #4575: caller MUST hold mtx. Bind the live Soft row to the
+    // check mid so the production join admits it. No-op when the session
+    // is inactive, the tenant or workspace differs, or the row is already
+    // armed for this mid. Emits one rearm event only when the bound mid
+    // changes.
+    void rearm_soft_session_locked(TenantId tenant, const EffectProvenance& prov) {
+        if (!soft_session_active_ || tenant != soft_session_tenant_)
+            return;
+        if (prov.workspace_id != soft_session_workspace_ || prov.mutation_id == 0)
+            return;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return;
+        const CapabilityGrant* row = nullptr;
+        for (const auto& g : it->second) {
+            if (g.name == kSoftAutoGrantName) {
+                row = &g;
+                break;
+            }
+        }
+        if (row == nullptr)
+            return;
+        const auto prev = row->bound_mutation_id;
+        const bool same = !row->revoked && row->soft_session && prev == prov.mutation_id &&
+                          row->effects == soft_session_effects_ &&
+                          row->workspace_id == soft_session_workspace_;
+        if (same)
+            return;
+        if (!grant_locked(tenant, kSoftAutoGrantName, soft_session_effects_, prov,
+                          /*single_use=*/false, /*session_bound=*/true,
+                          /*caller_principal=*/0, /*soft_session=*/true, soft_session_workspace_,
+                          kSoftAutoGrantReason))
+            return;
+        if (prev != prov.mutation_id) {
+            emit_soft_posture(tenant, prov.mutation_id, prov.epoch,
+                              static_cast<std::uint16_t>(soft_session_effects_), "rearm",
+                              /*denied=*/false);
+        }
+    }
+
+    // Issue #4575: caller MUST hold mtx. True when the live Soft row is
+    // what authorized this check, so the EffectAllow reason can join it.
+    [[nodiscard]] bool soft_session_covers_locked(TenantId tenant, const EffectProvenance& prov,
+                                                  Effect required) const {
+        if (!soft_session_active_ || tenant != soft_session_tenant_)
+            return false;
+        if (prov.workspace_id != soft_session_workspace_)
+            return false;
+        if (required != Effect::None && !has_effect(soft_session_effects_, required))
+            return false;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return false;
+        for (const auto& g : it->second) {
+            if (g.name != kSoftAutoGrantName)
+                continue;
+            if (g.revoked || g.stolen || !g.soft_session)
+                return false;
+            if (prov.mutation_id != 0 && g.bound_mutation_id != prov.mutation_id)
+                return false;
+            return required == Effect::None || has_effect(g.effects, required);
+        }
+        return false;
+    }
+
+    // Issue #4575: lock internally. True only when the live Soft row
+    // covers this tenant, workspace, and every required bit. Callers
+    // use it to skip unset-principal isolation for that self-call.
+    // A foreign ref is the caller's decision; this does not see it.
+    [[nodiscard]] bool soft_session_admits_self(TenantId tenant, std::uint32_t workspace,
+                                                std::uint16_t req_bits) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!soft_session_active_ || tenant != soft_session_tenant_)
+            return false;
+        if (workspace != soft_session_workspace_)
+            return false;
+        if (req_bits != 0 &&
+            (static_cast<std::uint16_t>(soft_session_effects_) & req_bits) != req_bits)
+            return false;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return false;
+        for (const auto& g : it->second) {
+            if (g.name != kSoftAutoGrantName)
+                continue;
+            if (g.revoked || g.stolen || !g.soft_session)
+                return false;
+            return req_bits == 0 || (static_cast<std::uint16_t>(g.effects) & req_bits) == req_bits;
+        }
+        return false;
+    }
+
+    // Issue #4575: caller MUST hold mtx. The next effects_for_locked
+    // skips a Soft row for a different workspace, then the caller disarms.
+    // Other effects_for_locked callers leave this false.
+    void arm_soft_workspace_filter_locked(std::uint32_t workspace_id) noexcept {
+        soft_workspace_filter_ = true;
+        soft_workspace_filter_id_ = workspace_id;
+    }
+    void disarm_soft_workspace_filter_locked() noexcept { soft_workspace_filter_ = false; }
+
     void clear_for_test() {
         std::lock_guard<std::mutex> lock(mtx);
         by_tenant.clear();
         macro_self_evo_by_tenant.clear();
+        soft_session_active_ = false;
+        soft_session_tenant_ = 0;
+        soft_session_workspace_ = 0;
+        soft_session_effects_ = Effect::None;
+        soft_session_mint_mid_ = 0;
+        soft_workspace_filter_ = false;
+        soft_workspace_filter_id_ = 0;
         sandbox_mode = EffectSandboxMode::Off;
         {
             // Issue #2425: clear published slots under ring mutex.
@@ -2332,7 +2576,13 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
             // Issue #4038: join posture bits on the caller mid so stale
             // session rows (exited outermost) do not contribute bits that
             // provenance_ok_locked skips anyway.
+            // Issue #4575: re-arm the Soft row onto this mid first, then
+            // drop a row whose workspace is not the check's workspace.
+            // The join call stays the #4038 two-argument cite.
+            reg.rearm_soft_session_locked(tenant, prov);
+            reg.arm_soft_workspace_filter_locked(prov.workspace_id);
             const Effect held = reg.effects_for_locked(tenant, prov.mutation_id);
+            reg.disarm_soft_workspace_filter_locked();
             // Require full coverage of required bits (not just any overlap).
             const auto req_u = static_cast<std::uint16_t>(required);
             const auto held_u = static_cast<std::uint16_t>(held);
@@ -2350,6 +2600,11 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         const char* reason_hint = (!allowed && hard1 > hard0)               ? "fiber-grant-mismatch"
                                   : (wildcard_ok && need_grant && !allowed) ? "via-wildcard-denied"
                                                                             : nullptr;
+        // Issue #4575: an allow that the Soft row authorized joins later
+        // audit by this reason. Deny reasons stay as they were.
+        if (reason_hint == nullptr && allowed &&
+            reg.soft_session_covers_locked(tenant, prov, required))
+            reason_hint = kSoftAutoGrantReason;
         reg.record_audit(required, actual, tenant, prov, !allowed, op, reason_hint);
 
         // Issue #2586: single-use grant auto-revoke on successful allow.
@@ -2369,6 +2624,10 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
             if (it != reg.by_tenant.end()) {
                 for (auto& g : it->second) {
                     if (g.revoked || !g.single_use)
+                        continue;
+                    // Issue #4575: the Soft row is not single-use. Two
+                    // Mutate checks in one boundary both succeed.
+                    if (g.soft_session)
                         continue;
                     // Issue #3142 AC2: stolen entries are skipped — caller cannot
                     // consume a stolen SessionBound grant (no double-consume

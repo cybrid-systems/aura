@@ -6247,6 +6247,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             } else if (lock_.owns_lock()) {
                 lock_.unlock();
             }
+            // Issue #4407 / #4575: C-ABI lock_workspace_* under this Guard
+            // only bumps adopt depth. The cancel unlock drops those layers.
+            // The success drain calls invalidate_function, which acquires
+            // Mutate. A leftover Workspace depth inverts (Mutate < Workspace).
+            while (Evaluator::workspace_lock_adopt_depth_tls() > 0) {
+                --Evaluator::workspace_lock_adopt_depth_tls();
+                aura::compiler::lock_order::on_release(
+                    aura::compiler::lock_order::Level::Workspace);
+            }
             aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
             // Issue #2812: post-Guard BFS invalidate_function drain.
             if (success)

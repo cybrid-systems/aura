@@ -26,6 +26,7 @@ python3 bench/run.py --gate
 python3 bench/run.py --full
 ```
 
-Class 2 needs `AURA_SANDBOX=off` until issue 4575, because the default
-Restricted face denies Mutate. The harness sets that on the child. It does
-not set `AURA_SOFT`.
+Class 2 still sets `AURA_SANDBOX=off` on the child. That variable is the
+dev escape hatch. New Soft experiments use `aura soft`, which mints a
+scoped Mutate grant on the Restricted face. The harness does not set
+`AURA_SOFT` and does not mint that grant.

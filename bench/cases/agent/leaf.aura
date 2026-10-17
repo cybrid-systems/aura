@@ -1,6 +1,7 @@
 ; Class 2 leaf rebind. Timed region is set-code, query, mutate:rebind, eval-current.
 ; BENCH_SRC is the define block (the harness builds it). BENCH_N is informational.
-; Requires AURA_SANDBOX=off until #4575: Restricted denies Mutate.
+; The harness sets AURA_SANDBOX=off (dev escape hatch). New Soft
+; experiments use `aura soft` instead of that variable.
 (define src (getenv "BENCH_SRC"))
 (if (not (string? src))
     (set! src "(define (f0 x) (+ x 0))\n(define (f1 x) (+ x 1))"))
