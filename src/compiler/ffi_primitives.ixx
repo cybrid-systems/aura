@@ -20,6 +20,7 @@ module;
 #include <cstdint>
 #include <functional>
 #include <memory_resource>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -191,6 +192,135 @@ public:
     // TLS identity. Phase-5 and the auto-arm store this Evaluator.
     void set_densify_eval_id(const void* id) noexcept { densify_eval_id_ = id; }
 
+    // ── Issue #4556: native memory views + native handles ──────────────
+    // A view is an opaque_heap_ slot holding owner_base + offset, plus this
+    // record: the element kind, the count, and the owner's slot. Every
+    // element access re-reads the owner's slot, so a c-free'd / closed
+    // owner makes the view raise instead of reading freed memory. A handle
+    // is an opaque slot with a finalizer that runs exactly once, on
+    // c-close! or c-free. Both tables are guarded by the Evaluator's
+    // alloc_storage_lock_ (opaque_alloc_mu_).
+    enum class ViewKind : std::uint8_t { F64, I64, U64, I32, U32, U8 };
+    struct NativeView {
+        std::size_t owner = 0;  // opaque slot of the owning block
+        std::size_t offset = 0; // byte offset inside the owner
+        std::size_t count = 0;  // elements
+        ViewKind kind = ViewKind::F64;
+    };
+    struct NativeHandle {
+        void* finalizer = nullptr; // void (*)(void*) or null
+        std::string tag;
+    };
+    [[nodiscard]] static std::size_t view_width(ViewKind k) noexcept {
+        switch (k) {
+            case ViewKind::F64:
+            case ViewKind::I64:
+            case ViewKind::U64:
+                return 8;
+            case ViewKind::I32:
+            case ViewKind::U32:
+                return 4;
+            case ViewKind::U8:
+                return 1;
+        }
+        return 8;
+    }
+    // Resolve a view slot to its first element. False when slot is not a
+    // view or its owner was freed / closed. Caller holds the alloc lock.
+    [[nodiscard]] bool resolve_native_view(const std::vector<void*>& oh, std::size_t slot,
+                                           char*& base, NativeView& out) const {
+        auto it = native_views_.find(slot);
+        if (it == native_views_.end())
+            return false;
+        const auto& v = it->second;
+        if (slot >= oh.size() || oh[slot] == nullptr || v.owner >= oh.size() ||
+            oh[v.owner] == nullptr)
+            return false;
+        base = static_cast<char*>(oh[v.owner]) + v.offset;
+        out = v;
+        return true;
+    }
+    [[nodiscard]] bool is_native_view(std::size_t slot) const {
+        return native_views_.count(slot) != 0;
+    }
+    [[nodiscard]] std::size_t native_view_count() const noexcept { return native_views_.size(); }
+    [[nodiscard]] std::size_t native_handle_count() const noexcept {
+        return native_handles_.size();
+    }
+    [[nodiscard]] std::uint64_t native_finalizers_run() const noexcept {
+        return native_finalizers_run_;
+    }
+    [[nodiscard]] std::size_t opaque_alias_count() const noexcept {
+        return opaque_alias_slot_.size();
+    }
+    // Issue #4556: slot already minted for p by c-opaque / c-struct-ref,
+    // if it still holds p. Null never dedups.
+    [[nodiscard]] std::optional<std::size_t> reuse_opaque_alias(const std::vector<void*>* oh,
+                                                                void* p) const {
+        if (p == nullptr)
+            return std::nullopt;
+        auto it = opaque_alias_slot_.find(p);
+        if (it == opaque_alias_slot_.end() || it->second >= oh->size() || (*oh)[it->second] != p)
+            return std::nullopt;
+        return it->second;
+    }
+    // c-alloc size of ptr (0 when unknown: raw c-opaque / foreign).
+    [[nodiscard]] std::size_t opaque_size_of(void* ptr) const {
+        auto it = opaque_sizes_.find(ptr);
+        return it == opaque_sizes_.end() ? 0 : it->second;
+    }
+    void add_native_view(std::size_t slot, NativeView v) { native_views_[slot] = v; }
+    void retire_native_view(std::vector<void*>& oh, std::size_t slot) {
+        if (slot < oh.size())
+            oh[slot] = nullptr;
+        native_views_.erase(slot);
+    }
+    [[nodiscard]] void* ffi_func_ptr(std::uint64_t i) const {
+        return i < funcs_.size() ? funcs_[i].fn_ptr : nullptr;
+    }
+    void add_native_handle(std::size_t slot, void* finalizer, std::string tag) {
+        native_handles_[slot] = NativeHandle{finalizer, std::move(tag)};
+    }
+    [[nodiscard]] bool is_native_handle(std::size_t slot) const {
+        return native_handles_.count(slot) != 0;
+    }
+    [[nodiscard]] bool native_handle_tag(std::size_t slot, std::string& out) const {
+        auto it = native_handles_.find(slot);
+        if (it == native_handles_.end())
+            return false;
+        out = it->second.tag;
+        return true;
+    }
+    // Close a handle slot: null it and hand back (finalizer, ptr) for the
+    // caller to run outside the lock. False when already closed. The
+    // record is dropped with the close (a closed handle is a null slot),
+    // so create/close churn does not grow this table.
+    bool take_native_handle(std::vector<void*>& oh, std::size_t slot, void*& fin, void*& ptr) {
+        auto it = native_handles_.find(slot);
+        if (it == native_handles_.end() || slot >= oh.size() || oh[slot] == nullptr)
+            return false;
+        fin = it->second.finalizer;
+        ptr = oh[slot];
+        oh[slot] = nullptr;
+        native_handles_.erase(it);
+        if (fin != nullptr)
+            ++native_finalizers_run_;
+        return true;
+    }
+    // The opaque heap was cleared (gc-heap reset / teardown): slot ids are
+    // recycled from 0, so view / handle / alias records keyed by slot would
+    // misdescribe new tenants. Handle finalizers do not run here; the
+    // handles' Aura references went with the heap (GC finalizers: follow-up).
+    void forget_native_slots() noexcept {
+        native_views_.clear();
+        native_handles_.clear();
+        opaque_alias_slot_.clear();
+    }
+    static void run_native_finalizer(void* fin, void* ptr) {
+        if (fin != nullptr && ptr != nullptr)
+            reinterpret_cast<void (*)(void*)>(fin)(ptr);
+    }
+
 private:
     std::vector<void*> libs_;
     std::vector<FFIFunc> funcs_;
@@ -206,6 +336,13 @@ private:
     std::unordered_map<void*, void*>* opaque_rewrite_ = nullptr;
     // Issue #4396: non-owning Evaluator*. Null until the ctor publishes it.
     const void* densify_eval_id_ = nullptr;
+    // Issue #4556: views / handles by opaque slot; ptr -> slot for the
+    // c-opaque / c-struct-ref (pointer field) mints, so polling the same
+    // address reuses its slot instead of growing opaque_heap_.
+    std::unordered_map<std::size_t, NativeView> native_views_;
+    std::unordered_map<std::size_t, NativeHandle> native_handles_;
+    std::unordered_map<void*, std::size_t> opaque_alias_slot_;
+    std::uint64_t native_finalizers_run_ = 0;
 };
 
 } // namespace aura::compiler

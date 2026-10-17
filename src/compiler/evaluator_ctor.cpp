@@ -419,6 +419,7 @@ Evaluator::~Evaluator() {
     pair_slot_tenants_.clear(); // Issue #4298: drop owner records with the slots
     error_values_.clear();
     opaque_heap_.clear();
+    ffi_runtime_.forget_native_slots(); // Issue #4556
     string_heap_.clear();
     string_slot_tenants_.clear(); // Issue #4428: drop owner records with the slots
     clear_sym_intern();

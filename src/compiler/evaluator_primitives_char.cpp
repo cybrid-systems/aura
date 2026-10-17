@@ -7,7 +7,8 @@ module;
 #include "runtime_shared.h"
 #include "security_side_effect.hh" // kEffectMutate (#4503 f64vector-set!)
 #include "messaging_bridge.h"
-#include "utf8_scalar.hh" // Issue #4472
+#include "utf8_scalar.hh"        // Issue #4472
+#include "compiler/value_tags.h" // Issue #4556: ffi closure ids (c-handle finalizer)
 
 #include <poll.h>
 #include <termios.h>
@@ -17,6 +18,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.compiler.value;
+import aura.core.lifetime_pin; // Issue #4556: note_ffi_opaque_create_exempt (#3291)
 
 namespace aura::compiler::primitives_detail {
 
@@ -713,6 +715,592 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         std::int32_t v;
         std::memcpy(&v, s.data() + off, 4);
         return make_int(v);
+    });
+
+    // ── Issue #4556: native memory views, bulk f64vector ops, handles ──────
+    // A view (c-view) is a typed window (f64 / i64 / u64 / i32 / u32 / u8)
+    // onto native memory a C library owns (c-alloc / c-opaque /
+    // c-struct-ref pointer). Element reads are a native load each, with no
+    // byte-string snapshot per poll; c-view-copy! / c-view->f64vector move
+    // a whole window into an f64vector in one native loop; and
+    // c-view-read-consistent! copies a window under a seqlock word so a
+    // concurrently written block is never read torn. Every access re-reads
+    // the owner's opaque slot: after c-free / c-close! of the owner the view
+    // raises a catchable error instead of reading freed memory. Views and
+    // handles are c-* names: installed by (require "std/ffi") with the rest
+    // of the FFI capability (kEffectFfi under sandbox).
+    using ViewKind = FFIRuntime::ViewKind;
+    using NativeView = FFIRuntime::NativeView;
+    auto view_kind_of = [&ev](const EvalValue& v, ViewKind& out) {
+        if (!is_string(v))
+            return false;
+        const std::string k = ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(v)));
+        if (k == "f64" || k == "double")
+            out = ViewKind::F64;
+        else if (k == "i64")
+            out = ViewKind::I64;
+        else if (k == "u64")
+            out = ViewKind::U64;
+        else if (k == "i32")
+            out = ViewKind::I32;
+        else if (k == "u32")
+            out = ViewKind::U32;
+        else if (k == "u8")
+            out = ViewKind::U8;
+        else
+            return false;
+        return true;
+    };
+    // Element load / store. p is base + i * width (may be unaligned).
+    auto view_load = [](const char* p, ViewKind k) -> EvalValue {
+        switch (k) {
+            case ViewKind::F64: {
+                double d;
+                std::memcpy(&d, p, 8);
+                return make_float(d);
+            }
+            case ViewKind::I64: {
+                std::int64_t x;
+                std::memcpy(&x, p, 8);
+                return types::make_int_or_promote(x);
+            }
+            case ViewKind::U64: {
+                std::uint64_t x;
+                std::memcpy(&x, p, 8);
+                if (x > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    return make_float(static_cast<double>(x));
+                return types::make_int_or_promote(static_cast<std::int64_t>(x));
+            }
+            case ViewKind::I32: {
+                std::int32_t x;
+                std::memcpy(&x, p, 4);
+                return make_int(x);
+            }
+            case ViewKind::U32: {
+                std::uint32_t x;
+                std::memcpy(&x, p, 4);
+                return make_int(static_cast<std::int64_t>(x));
+            }
+            case ViewKind::U8:
+                return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*p)));
+        }
+        return make_void();
+    };
+    auto view_load_f64 = [](const char* p, ViewKind k) -> double {
+        switch (k) {
+            case ViewKind::F64: {
+                double d;
+                std::memcpy(&d, p, 8);
+                return d;
+            }
+            case ViewKind::I64: {
+                std::int64_t x;
+                std::memcpy(&x, p, 8);
+                return static_cast<double>(x);
+            }
+            case ViewKind::U64: {
+                std::uint64_t x;
+                std::memcpy(&x, p, 8);
+                return static_cast<double>(x);
+            }
+            case ViewKind::I32: {
+                std::int32_t x;
+                std::memcpy(&x, p, 4);
+                return static_cast<double>(x);
+            }
+            case ViewKind::U32: {
+                std::uint32_t x;
+                std::memcpy(&x, p, 4);
+                return static_cast<double>(x);
+            }
+            case ViewKind::U8:
+                return static_cast<double>(static_cast<unsigned char>(*p));
+        }
+        return 0.0;
+    };
+    // Resolve a view argument under alloc_storage_lock_ (caller holds it).
+    // Returns an error message, or empty on success.
+    auto view_at = [&ev](const EvalValue& v, const char* who, char*& base,
+                         NativeView& meta) -> std::string {
+        if (!is_opaque(v))
+            return std::format("{}: expected a native view (c-view)", who);
+        const auto slot = static_cast<std::size_t>(types::as_opaque_idx(v));
+        if (!ev.ffi_runtime_.is_native_view(slot))
+            return std::format("{}: expected a native view (c-view)", who);
+        if (!ev.ffi_runtime_.resolve_native_view(ev.opaque_heap_, slot, base, meta))
+            return std::format("{}: the view's native memory was freed or closed", who);
+        return {};
+    };
+
+    // (c-view ptr byte-offset count kind [byte-length]) → view.
+    // ptr is an opaque (c-alloc / c-opaque / c-struct-ref pointer field) or
+    // a view (offsets compose; the new view must fit inside it). The window
+    // must fit in the c-alloc size, the optional byte-length, or the parent
+    // view; a raw pointer with no known size requires byte-length.
+    ev.defer_std_host_prim("c-view", [&ev, f64err, view_kind_of](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_opaque(a[0]) || !is_int(a[1]) || !is_int(a[2]))
+            return f64err("c-view: expected (c-view ptr byte-offset count kind [byte-length])");
+        ViewKind kind{};
+        if (!view_kind_of(a[3], kind))
+            return f64err("c-view: kind must be one of f64 i64 u64 i32 u32 u8");
+        const auto off = as_int(a[1]);
+        const auto cnt = as_int(a[2]);
+        if (off < 0 || cnt < 0 || cnt > (1LL << 40))
+            return f64err("c-view: byte-offset and count must be non-negative");
+        const auto width = FFIRuntime::view_width(kind);
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        auto& rt = ev.ffi_runtime_;
+        auto& oh = ev.opaque_heap_;
+        const auto src = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
+        if (src >= oh.size() || oh[src] == nullptr)
+            return f64err("c-view: pointer is null, freed or closed");
+        std::size_t owner = src;
+        std::size_t base_off = 0;
+        std::int64_t limit = -1; // bytes available from the owner base + base_off
+        if (rt.is_native_view(src)) {
+            char* vb = nullptr;
+            NativeView pv;
+            if (!rt.resolve_native_view(oh, src, vb, pv))
+                return f64err("c-view: the parent view's native memory was freed or closed");
+            owner = pv.owner;
+            base_off = pv.offset;
+            limit = static_cast<std::int64_t>(pv.count * FFIRuntime::view_width(pv.kind));
+        } else if (auto known = rt.opaque_size_of(oh[src]); known != 0) {
+            limit = static_cast<std::int64_t>(known);
+        }
+        if (a.size() >= 5) {
+            if (!is_int(a[4]) || as_int(a[4]) < 0)
+                return f64err("c-view: byte-length must be a non-negative integer");
+            if (limit < 0 || as_int(a[4]) < limit)
+                limit = as_int(a[4]);
+        }
+        if (limit < 0)
+            return f64err("c-view: pointer has no known size; pass byte-length");
+        // cnt <= 2^40 and width <= 8, so cnt * width cannot overflow; check
+        // off first so limit - off cannot underflow.
+        if (off > limit || cnt * static_cast<std::int64_t>(width) > limit - off)
+            return f64err(std::format("c-view: window of {} x {}-byte elements at offset {} "
+                                      "exceeds {} bytes",
+                                      cnt, width, off, limit));
+        const std::size_t voff = base_off + static_cast<std::size_t>(off);
+        const auto slot = oh.size();
+        oh.push_back(static_cast<char*>(oh[owner]) + voff);
+        // Issue #3022 / #3291: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
+        // A view addresses native memory the C side (or c-alloc) owns, never
+        // an arena object; every access re-derives the address from the
+        // owner's slot, so this element is never the address that is read.
+        aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
+        rt.add_native_view(slot, NativeView{owner, voff, static_cast<std::size_t>(cnt), kind});
+        return types::make_opaque(slot);
+    });
+    ev.defer_std_host_prim("c-view?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_opaque(a[0]))
+            return make_bool(false);
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        return make_bool(
+            ev.ffi_runtime_.is_native_view(static_cast<std::size_t>(types::as_opaque_idx(a[0]))));
+    });
+    ev.defer_std_host_prim("c-view-length", [&ev, f64err, view_at](const auto& a) -> EvalValue {
+        if (a.empty())
+            return f64err("c-view-length: expected a native view (c-view)");
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        char* base = nullptr;
+        NativeView m;
+        if (auto e = view_at(a[0], "c-view-length", base, m); !e.empty())
+            return f64err(std::move(e));
+        return make_int(static_cast<std::int64_t>(m.count));
+    });
+    ev.defer_std_host_prim(
+        "c-view-ref", [&ev, f64err, view_at, view_load](const auto& a) -> EvalValue {
+            if (a.size() < 2 || !is_int(a[1]))
+                return f64err("c-view-ref: expected (view index)");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            char* base = nullptr;
+            NativeView m;
+            if (auto e = view_at(a[0], "c-view-ref", base, m); !e.empty())
+                return f64err(std::move(e));
+            const auto i = as_int(a[1]);
+            if (i < 0 || static_cast<std::uint64_t>(i) >= m.count)
+                return f64err(
+                    std::format("c-view-ref: index {} out of range for length {}", i, m.count));
+            return view_load(base + static_cast<std::size_t>(i) * FFIRuntime::view_width(m.kind),
+                             m.kind);
+        });
+    ev.defer_std_host_prim("c-view-set!", [&ev, f64err, view_at](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_int(a[1]) || !(is_int(a[2]) || is_float(a[2])))
+            return f64err("c-view-set!: expected (view index number)");
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        char* base = nullptr;
+        NativeView m;
+        if (auto e = view_at(a[0], "c-view-set!", base, m); !e.empty())
+            return f64err(std::move(e));
+        const auto i = as_int(a[1]);
+        if (i < 0 || static_cast<std::uint64_t>(i) >= m.count)
+            return f64err(
+                std::format("c-view-set!: index {} out of range for length {}", i, m.count));
+        char* p = base + static_cast<std::size_t>(i) * FFIRuntime::view_width(m.kind);
+        const bool fl = is_float(a[2]);
+        const double d = fl ? as_float(a[2]) : static_cast<double>(as_int(a[2]));
+        const std::int64_t n = fl ? static_cast<std::int64_t>(d) : as_int(a[2]);
+        switch (m.kind) {
+            case ViewKind::F64:
+                std::memcpy(p, &d, 8);
+                break;
+            case ViewKind::I64:
+            case ViewKind::U64:
+                std::memcpy(p, &n, 8);
+                break;
+            case ViewKind::I32:
+            case ViewKind::U32: {
+                const auto x = static_cast<std::uint32_t>(n);
+                std::memcpy(p, &x, 4);
+                break;
+            }
+            case ViewKind::U8:
+                *p = static_cast<char>(static_cast<unsigned char>(n));
+                break;
+        }
+        return make_void();
+    });
+    // Copy view elements (as doubles) into an f64vector under the lock.
+    // copy_fn(dst_bytes, src_base, meta, dst_off) does the actual loads.
+    auto f64_dst_gate = [&ev](const EvalValue& v, const char* who, std::size_t& idx,
+                              std::string& err) -> bool {
+        if (!is_string(v)) {
+            err = std::format("{}: destination must be an f64vector", who);
+            return false;
+        }
+        idx = static_cast<std::size_t>(types::as_string_idx(v));
+        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0) {
+            err = std::format("{}: destination must be an f64vector", who);
+            return false;
+        }
+        if (!ev.inrange_string_tenant_allows(idx, aura::compiler::security::kEffectMutate, who)) {
+            err = std::format("{}: cross-tenant slot write denied (#4428)", who);
+            return false;
+        }
+        return true;
+    };
+    auto copy_view = [view_load_f64](char* dst, const char* base, const NativeView& m) {
+        if (m.kind == ViewKind::F64) {
+            std::memcpy(dst, base, m.count * 8);
+            return;
+        }
+        const auto w = FFIRuntime::view_width(m.kind);
+        for (std::size_t k = 0; k < m.count; ++k) {
+            const double d = view_load_f64(base + k * w, m.kind);
+            std::memcpy(dst + k * 8, &d, 8);
+        }
+    };
+    // (c-view-copy! view f64vector [dst-index]) → count copied.
+    ev.defer_std_host_prim(
+        "c-view-copy!",
+        [&ev, f64err, view_at, f64_dst_gate, copy_view](const auto& a) -> EvalValue {
+            if (a.size() < 2)
+                return f64err("c-view-copy!: expected (view f64vector [dst-index])");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            char* base = nullptr;
+            NativeView m;
+            if (auto e = view_at(a[0], "c-view-copy!", base, m); !e.empty())
+                return f64err(std::move(e));
+            std::size_t idx = 0;
+            std::string err;
+            if (!f64_dst_gate(a[1], "c-view-copy!", idx, err))
+                return f64err(std::move(err));
+            std::int64_t dst_off = 0;
+            if (a.size() >= 3) {
+                if (!is_int(a[2]) || as_int(a[2]) < 0)
+                    return f64err("c-view-copy!: dst-index must be a non-negative integer");
+                dst_off = as_int(a[2]);
+            }
+            auto& s = ev.string_heap_[idx];
+            const auto n = static_cast<std::int64_t>(s.size() / 8);
+            if (dst_off + static_cast<std::int64_t>(m.count) > n)
+                return f64err(
+                    std::format("c-view-copy!: {} elements at index {} do not fit length {}",
+                                m.count, dst_off, n));
+            copy_view(s.data() + static_cast<std::size_t>(dst_off) * 8, base, m);
+            ev.string_heap_.note_write(idx); // Issue #4548: in-place bytes
+            return make_int(static_cast<std::int64_t>(m.count));
+        });
+    // (c-view->f64vector view) → fresh f64vector with the window as doubles.
+    ev.defer_std_host_prim(
+        "c-view->f64vector", [&ev, f64err, view_at, copy_view](const auto& a) -> EvalValue {
+            if (a.empty())
+                return f64err("c-view->f64vector: expected a native view");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            char* base = nullptr;
+            NativeView m;
+            if (auto e = view_at(a[0], "c-view->f64vector", base, m); !e.empty())
+                return f64err(std::move(e));
+            std::string out(m.count * 8, '\0');
+            copy_view(out.data(), base, m);
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(out))));
+        });
+    // (c-view-read-consistent! view f64vector seq-view [seq-index max-tries])
+    // Seqlock reader: the C writer bumps a u64 sequence word to odd, writes
+    // the block, then bumps it to even. Copy only between two equal even
+    // reads; retry otherwise (bounded). seq-view is a u64/i64 view holding
+    // the sequence word. Returns the number of retries.
+    ev.defer_std_host_prim(
+        "c-view-read-consistent!",
+        [&ev, f64err, view_at, f64_dst_gate, copy_view](const auto& a) -> EvalValue {
+            if (a.size() < 3)
+                return f64err(
+                    "c-view-read-consistent!: expected (view f64vector seq-view [seq-index "
+                    "max-tries])");
+            std::int64_t seq_i = 0, max_tries = 1000000;
+            if (a.size() >= 4) {
+                if (!is_int(a[3]) || as_int(a[3]) < 0)
+                    return f64err("c-view-read-consistent!: seq-index must be >= 0");
+                seq_i = as_int(a[3]);
+            }
+            if (a.size() >= 5) {
+                if (!is_int(a[4]) || as_int(a[4]) < 1)
+                    return f64err("c-view-read-consistent!: max-tries must be >= 1");
+                max_tries = as_int(a[4]);
+            }
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            char* base = nullptr;
+            NativeView m;
+            if (auto e = view_at(a[0], "c-view-read-consistent!", base, m); !e.empty())
+                return f64err(std::move(e));
+            char* sbase = nullptr;
+            NativeView sm;
+            if (auto e = view_at(a[2], "c-view-read-consistent!", sbase, sm); !e.empty())
+                return f64err(std::move(e));
+            if (sm.kind != ViewKind::U64 && sm.kind != ViewKind::I64)
+                return f64err("c-view-read-consistent!: seq-view must be a u64 or i64 view");
+            if (static_cast<std::uint64_t>(seq_i) >= sm.count)
+                return f64err("c-view-read-consistent!: seq-index out of range");
+            char* seq_p = sbase + static_cast<std::size_t>(seq_i) * 8;
+            if (reinterpret_cast<std::uintptr_t>(seq_p) % alignof(std::uint64_t) != 0)
+                return f64err("c-view-read-consistent!: sequence word is not 8-byte aligned");
+            std::size_t idx = 0;
+            std::string err;
+            if (!f64_dst_gate(a[1], "c-view-read-consistent!", idx, err))
+                return f64err(std::move(err));
+            auto& s = ev.string_heap_[idx];
+            if (s.size() / 8 < m.count)
+                return f64err(std::format(
+                    "c-view-read-consistent!: destination length {} is shorter than the view "
+                    "({})",
+                    s.size() / 8, m.count));
+            std::atomic_ref<std::uint64_t> seq(*reinterpret_cast<std::uint64_t*>(seq_p));
+            std::string tmp(m.count * 8, '\0');
+            for (std::int64_t tries = 0; tries < max_tries; ++tries) {
+                const auto s1 = seq.load(std::memory_order_acquire);
+                if ((s1 & 1U) != 0) {
+                    std::this_thread::yield();
+                    continue;
+                }
+                copy_view(tmp.data(), base, m);
+                std::atomic_thread_fence(std::memory_order_acquire);
+                const auto s2 = seq.load(std::memory_order_relaxed);
+                if (s1 == s2) {
+                    std::memcpy(s.data(), tmp.data(), tmp.size());
+                    ev.string_heap_.note_write(idx); // Issue #4548
+                    return make_int(tries);
+                }
+            }
+            return f64err(std::format(
+                "c-view-read-consistent!: no stable snapshot after {} tries (writer stuck odd?)",
+                max_tries));
+        });
+
+    // Bulk f64vector ops: whole loops natively, one boxed result.
+    // Shared read gate: slot is an f64vector the caller's tenant may read.
+    auto f64_src = [&ev](const EvalValue& v, const char* who, std::size_t& idx,
+                         std::string& err) -> bool {
+        if (!is_string(v)) {
+            err = std::format("{}: expected an f64vector", who);
+            return false;
+        }
+        idx = static_cast<std::size_t>(types::as_string_idx(v));
+        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0) {
+            err = std::format("{}: expected an f64vector", who);
+            return false;
+        }
+        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, who)) {
+            err = std::format("{}: cross-tenant string slot read denied (#4505)", who);
+            return false;
+        }
+        return true;
+    };
+    // (f64vector-sum v) → float.
+    add("f64vector-sum", [&ev, f64err, f64_src, rd](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty())
+            return f64err("f64vector-sum: expected an f64vector");
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::size_t idx = 0;
+        std::string err;
+        if (!f64_src(a[0], "f64vector-sum", idx, err))
+            return f64err(std::move(err));
+        const auto& s = ev.string_heap_[idx];
+        double acc = 0.0;
+        for (std::size_t k = 0, n = s.size() / 8; k < n; ++k)
+            acc += rd(s, k);
+        return make_float(acc);
+    });
+    // (f64vector-max-index v) → index of the largest element (first on
+    // ties; NaN never wins), or -1 when empty / all NaN.
+    add("f64vector-max-index",
+        [&ev, f64err, f64_src, rd](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return f64err("f64vector-max-index: expected an f64vector");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::size_t idx = 0;
+            std::string err;
+            if (!f64_src(a[0], "f64vector-max-index", idx, err))
+                return f64err(std::move(err));
+            const auto& s = ev.string_heap_[idx];
+            std::int64_t best = -1;
+            double bv = 0.0;
+            for (std::size_t k = 0, n = s.size() / 8; k < n; ++k) {
+                const double d = rd(s, k);
+                if (d == d && (best < 0 || d > bv)) {
+                    best = static_cast<std::int64_t>(k);
+                    bv = d;
+                }
+            }
+            return make_int(best);
+        });
+    // (f64vector-sub! dst a b) → dst[i] = a[i] - b[i] (all one length).
+    // dst may alias a or b (deltas: (f64vector-sub! d cur prev)).
+    add("f64vector-sub!",
+        [&ev, f64err, f64_src, f64_dst_gate, rd](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 3)
+                return f64err("f64vector-sub!: expected (dst a b)");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::size_t di = 0, xi = 0, yi = 0;
+            std::string err;
+            if (!f64_dst_gate(a[0], "f64vector-sub!", di, err) ||
+                !f64_src(a[1], "f64vector-sub!", xi, err) ||
+                !f64_src(a[2], "f64vector-sub!", yi, err))
+                return f64err(std::move(err));
+            auto& d = ev.string_heap_[di];
+            const auto& x = ev.string_heap_[xi];
+            const auto& y = ev.string_heap_[yi];
+            if (x.size() != d.size() || y.size() != d.size())
+                return f64err("f64vector-sub!: lengths differ");
+            for (std::size_t k = 0, n = d.size() / 8; k < n; ++k) {
+                const double r = rd(x, k) - rd(y, k);
+                std::memcpy(d.data() + k * 8, &r, 8);
+            }
+            ev.string_heap_.note_write(di); // Issue #4548
+            return make_void();
+        });
+    // (f64vector-ewma! acc x alpha) → acc[i] = acc[i] + alpha*(x[i]-acc[i]).
+    add("f64vector-ewma!",
+        [&ev, f64err, f64_src, f64_dst_gate, rd,
+         as_real](std::span<const EvalValue> a) -> EvalValue {
+            double alpha = 0.0;
+            if (a.size() < 3 || !as_real(a[2], alpha))
+                return f64err("f64vector-ewma!: expected (acc x alpha)");
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::size_t di = 0, xi = 0;
+            std::string err;
+            if (!f64_dst_gate(a[0], "f64vector-ewma!", di, err) ||
+                !f64_src(a[1], "f64vector-ewma!", xi, err))
+                return f64err(std::move(err));
+            auto& d = ev.string_heap_[di];
+            const auto& x = ev.string_heap_[xi];
+            if (x.size() != d.size())
+                return f64err("f64vector-ewma!: lengths differ");
+            for (std::size_t k = 0, n = d.size() / 8; k < n; ++k) {
+                const double c = rd(d, k);
+                const double r = c + alpha * (rd(x, k) - c);
+                std::memcpy(d.data() + k * 8, &r, 8);
+            }
+            ev.string_heap_.note_write(di); // Issue #4548
+            return make_void();
+        });
+
+    // ── Handles: an opaque with a finalizer that runs exactly once ─────────
+    // (c-handle ptr finalizer [tag]) → handle. ptr is an opaque or an int
+    // address; finalizer is a c-func procedure taking one Opaque / Int
+    // (its return is ignored), or #f for none. (c-close! h) runs the
+    // finalizer once and nulls the slot: #t the first time, #f after. c-free
+    // on a handle closes it the same way (no libc free of a foreign
+    // pointer). Any view onto a closed handle raises. Not GC-driven: an
+    // unreachable, unclosed handle is not finalized automatically.
+    ev.defer_std_host_prim("c-handle", [&ev, f64err](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !(is_opaque(a[0]) || is_int(a[0])))
+            return f64err("c-handle: expected (c-handle ptr finalizer [tag])");
+        void* fin = nullptr;
+        if (is_closure(a[1]) && types::is_ffi_closure_id(types::as_closure_id(a[1]))) {
+            const auto fi = types::ffi_closure_id_index(types::as_closure_id(a[1]));
+            fin = ev.ffi_runtime_.ffi_func_ptr(fi);
+            if (fin == nullptr)
+                return f64err("c-handle: finalizer is not a live c-func");
+        } else if (!(is_bool(a[1]) && !as_bool(a[1]))) {
+            return f64err("c-handle: finalizer must be a c-func procedure or #f");
+        }
+        std::string tag;
+        if (a.size() >= 3) {
+            if (!is_string(a[2]))
+                return f64err("c-handle: tag must be a string or symbol");
+            tag = ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(a[2])));
+        }
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        auto& oh = ev.opaque_heap_;
+        void* ptr = nullptr;
+        if (is_opaque(a[0])) {
+            const auto src = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
+            if (src >= oh.size())
+                return f64err("c-handle: invalid opaque");
+            ptr = oh[src];
+        } else {
+            ptr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(as_int(a[0])));
+        }
+        if (ptr == nullptr)
+            return f64err("c-handle: pointer is null, freed or closed");
+        const auto slot = oh.size();
+        oh.push_back(ptr);
+        // Issue #3022 / #3291: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
+        // (a handle wraps a pointer the native module allocated).
+        aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
+        ev.ffi_runtime_.add_native_handle(slot, fin, std::move(tag));
+        return types::make_opaque(slot);
+    });
+    ev.defer_std_host_prim("c-close!", [&ev, f64err](const auto& a) -> EvalValue {
+        if (a.empty() || !is_opaque(a[0]))
+            return f64err("c-close!: expected a handle (c-handle)");
+        void* fin = nullptr;
+        void* ptr = nullptr;
+        {
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            const auto slot = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
+            // A closed (or freed) handle is a null slot: closing again is #f.
+            if (slot < ev.opaque_heap_.size() && ev.opaque_heap_[slot] == nullptr)
+                return make_bool(false);
+            if (!ev.ffi_runtime_.take_native_handle(ev.opaque_heap_, slot, fin, ptr))
+                return f64err("c-close!: expected a handle (c-handle)");
+        }
+        FFIRuntime::run_native_finalizer(fin, ptr); // outside the lock
+        return make_bool(true);
+    });
+    ev.defer_std_host_prim("c-handle-live?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_opaque(a[0]))
+            return make_bool(false);
+        std::lock_guard lock(ev.alloc_storage_lock_);
+        const auto slot = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
+        return make_bool(ev.ffi_runtime_.is_native_handle(slot) && slot < ev.opaque_heap_.size() &&
+                         ev.opaque_heap_[slot] != nullptr);
+    });
+    // (c-handle-tag h) → tag string ("" when none); #f when h is not an open
+    // handle.
+    ev.defer_std_host_prim("c-handle-tag", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_opaque(a[0]))
+            return make_bool(false);
+        std::string tag;
+        {
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            const auto slot = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
+            if (!ev.ffi_runtime_.native_handle_tag(slot, tag))
+                return make_bool(false);
+        }
+        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(tag))));
     });
 }
 

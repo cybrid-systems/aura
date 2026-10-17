@@ -6,7 +6,10 @@
 
 #include "test_harness.hpp"
 
+#include <atomic>
+#include <bit>
 #include <cstdint>
+#include <thread>
 #include <string>
 #include <string_view>
 
@@ -20,6 +23,7 @@ using aura::compiler::types::as_bool;
 using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_float;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -30,11 +34,62 @@ namespace {
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
     auto r = cs.eval(aura::test::aura_href_expr(q, key));
     if (!r || !is_int(*r))
-        return -1;
+        return -1; // the read loop raised (e.g. no stable snapshot within max-tries)
     return as_int(*r);
 }
 
 } // namespace
+
+// #4556: a native writer thread updates 64 f64 fields under a seqlock
+// (odd while writing). Every field of one generation holds the same value,
+// so a torn snapshot shows up as sum != 64 * first element. Returns the
+// torn count, or -1 when the run failed / the writer never advanced.
+alignas(8) static std::uint64_t g_shm_4556[1 + 64] = {};
+
+static std::int64_t seqlock_torn_reads_4556(CompilerService& cs) {
+    std::atomic<bool> stop{false};
+    std::thread writer([&stop] {
+        std::atomic_ref<std::uint64_t> seq(g_shm_4556[0]);
+        double gen = 0.0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            seq.store(seq.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_release);
+            gen += 1.0;
+            const auto bits = std::bit_cast<std::uint64_t>(gen);
+            for (int k = 1; k <= 64; ++k)
+                std::atomic_ref<std::uint64_t>(g_shm_4556[k])
+                    .store(bits, std::memory_order_relaxed);
+            seq.store(seq.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+            // A data plane publishes a stats block periodically, not in a
+            // tight loop; without a gap the reader can starve (bounded tries).
+            std::this_thread::sleep_for(std::chrono::microseconds(20));
+        }
+    });
+    const auto addr = reinterpret_cast<std::uintptr_t>(&g_shm_4556[0]);
+    // Install the c-* host prims the way (require "std/ffi") does.
+    if (is_error(cs.evaluator().ensure_std_host_prims("std/ffi"))) {
+        stop.store(true);
+        writer.join();
+        return -2;
+    }
+    auto r = cs.eval(std::format(
+        "(let* ((shm (c-opaque {})) (seq (c-view shm 0 1 'u64 520))"
+        "       (vals (c-view shm 8 64 'f64 520)) (snap (make-f64vector 64 0.0)))"
+        "  (let loop ((i 0) (torn 0) (first -1.0) (last -1.0))"
+        "    (if (< i 5000)"
+        "        (begin (c-view-read-consistent! vals snap seq)"
+        "               (let ((v (f64vector-ref snap 0)))"
+        "                 (loop (+ i 1)"
+        "                       (if (= (f64vector-sum snap) (* 64.0 v)) torn (+ torn 1))"
+        "                       (if (< first 0.0) v first) v)))"
+        "        (if (> last first) torn -1))))",
+        addr));
+    stop.store(true);
+    writer.join();
+    if (!r || !is_int(*r))
+        return -1; // the read loop raised (e.g. no stable snapshot within max-tries)
+    return as_int(*r);
+}
 
 int run_test_stdlib_production_review() {
     CompilerService cs;
@@ -95,6 +150,14 @@ int run_test_stdlib_production_review() {
     // list-sort bumps iterative sort counter
     CHECK(href(cs, "query:stdlib-production-review-stats", "list-iterative-sorts") >= 1,
           "list-sort bumped iterative-sorts");
+
+    // #4556: seqlock reads of a concurrently written native block never tear.
+    // Runs on cs, last: a second CompilerService in this process would leave
+    // cs's stdlib-review prims bound to the other (destroyed) Evaluator.
+    {
+        const auto torn = seqlock_torn_reads_4556(cs);
+        CHECK(torn == 0, "4556: c-view-read-consistent! never returns a torn snapshot");
+    }
 
     if (::aura::test::g_failed)
         return 1;

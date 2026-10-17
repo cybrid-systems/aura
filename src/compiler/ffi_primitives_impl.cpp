@@ -246,8 +246,16 @@ void FFIRuntime::register_primitives(RegisterFn add,
         if (a.empty() || !types::is_int(a[0]))
             return make_int(0);
         auto addr = types::as_int(a[0]);
+        void* p = reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr));
+        // Issue #4556: polling the same address reuses its slot (the slot
+        // is valid while it still holds p — c-free / densify rewrite break
+        // the match) instead of growing opaque_heap_ by one per call.
+        if (auto reuse = reuse_opaque_alias(oh, p))
+            return types::make_opaque(*reuse);
         auto idx = oh->size();
-        oh->push_back(reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr)));
+        oh->push_back(p);
+        if (p != nullptr)
+            opaque_alias_slot_[p] = idx;
         // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
         // Not an arena create. Densify-tracked aliases in opaque_heap_
         // are slot-covered at known-root walk (#3057).
@@ -301,6 +309,30 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // Issue #1230: double-free / free-unknown detection.
         if (ptr == nullptr) {
             ++double_free_total_;
+            return make_void();
+        }
+        // Issue #4556: c-free of a handle closes it (finalizer once, no
+        // libc free of a foreign pointer); c-free of a view only retires
+        // the view — the owner's memory is not the view's to free.
+        if (is_native_handle(idx)) {
+            void* fin = nullptr;
+            void* hp = nullptr;
+            bool closed = false;
+            {
+                std::unique_lock<std::recursive_mutex> lk;
+                if (opaque_alloc_mu_ != nullptr)
+                    lk = std::unique_lock<std::recursive_mutex>(*opaque_alloc_mu_);
+                closed = take_native_handle(*oh, idx, fin, hp);
+            }
+            if (closed)
+                run_native_finalizer(fin, hp);
+            return make_void();
+        }
+        if (is_native_view(idx)) {
+            std::unique_lock<std::recursive_mutex> lk;
+            if (opaque_alloc_mu_ != nullptr)
+                lk = std::unique_lock<std::recursive_mutex>(*opaque_alloc_mu_);
+            retire_native_view(*oh, idx);
             return make_void();
         }
         auto it = opaque_sizes_.find(ptr);
@@ -491,6 +523,10 @@ void FFIRuntime::register_primitives(RegisterFn add,
                         ptr = found->second;
                 }
             }
+            // Issue #4556: a pointer field read repeatedly (polling a
+            // native struct) reuses the slot minted for the same address.
+            if (auto reuse = reuse_opaque_alias(oh, ptr))
+                return types::make_opaque(*reuse);
             auto ni = oh->size();
             oh->push_back(ptr);
             // Issue #3022 / #3057 / #3274 / #3533: opaque-struct-copy may alias
@@ -507,6 +543,8 @@ void FFIRuntime::register_primitives(RegisterFn add,
                 oh->pop_back();
                 return make_int(0);
             }
+            if (ptr != nullptr)
+                opaque_alias_slot_[ptr] = ni;
             return types::make_opaque(ni);
         }
         return make_int(0);
