@@ -995,32 +995,160 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(3, "(fn acc list) -> any", "Left fold fn over list starting at acc."));
 
     // Issue #923 / #928: native iterative list-sort (no Aura recursion depth).
-    // Sorts a proper list of numbers ascending via std::sort on a temp buffer.
+    // Issue #4549: the buffer used to be std::vector<int64_t>, so Floats came
+    // back truncated to Ints and any string made it return () — silent data
+    // loss that std/list `sort` passed through (() is a list). Now:
+    //   (list-sort xs)        all numbers: numeric order, each element keeps
+    //                         its own Int/Float type (stable; NaN sorts last);
+    //                         all strings: lexicographic (byte) order.
+    //   (list-sort xs less?)  user comparator, either argument order
+    //   (list-sort less? xs)  (stable bottom-up merge, n log n calls).
+    // Anything else (mixed kinds, bools, improper list) is a primitive
+    // error, never a silent ().
     register_prim(
         add, ev, "list-sort",
-        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) -> EvalValue {
+        [&pairs, &string_heap, &error_values, &ev,
+         apply_binary](std::span<const EvalValue> a) -> EvalValue {
+            auto fail = [&](std::string msg) -> EvalValue {
+                return make_primitive_error(string_heap, error_values, std::move(msg),
+                                            ev.primitive_error_counter_ptr());
+            };
             if (a.empty())
-                return make_void();
-            std::vector<std::int64_t> buf;
+                return fail("list-sort: expected (list-sort list [less?]) (#4549)");
+            if (a.size() > 2)
+                return fail("list-sort: too many arguments; expected (list-sort list [less?]) "
+                            "(#4549)");
+            auto is_proc = [](const EvalValue& v) {
+                return is_closure(v) || is_primitive(v) || is_cell(v);
+            };
+            EvalValue lst = a[0];
+            EvalValue less = make_void();
+            const bool has_less = a.size() == 2;
+            if (has_less) {
+                less = a[1];
+                if (is_proc(a[0]) && !is_proc(a[1])) {
+                    lst = a[1];
+                    less = a[0];
+                }
+                if (!is_proc(less))
+                    return fail("list-sort: comparator must be a procedure (#4549)");
+            }
+
+            // Collect the elements (same reader gates as length / car).
+            std::vector<EvalValue> buf;
             buf.reserve(64);
-            auto v = a[0];
+            auto v = lst;
             while (!is_end_of_list(v)) {
                 if (!is_pair(v))
-                    return make_void(); // improper list
+                    return fail("list-sort: not a proper list (#4549)");
                 auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    return make_void();
-                auto car = pairs[idx].car;
-                if (!is_int(car) && !is_float(car))
-                    return make_void(); // non-numeric
-                if (is_int(car))
-                    buf.push_back(as_int(car));
-                else
-                    buf.push_back(static_cast<std::int64_t>(as_float(car)));
+                if (idx >= pairs.size()) {
+                    // Issue #4567: JIT pair table.
+                    auto slot = jit_pair_cdr(ev, idx, "list-sort");
+                    if (slot.kind == JitCdrKind::Denied)
+                        return fail("list-sort: cross-tenant pair slot read denied (#4111)");
+                    if (slot.kind != JitCdrKind::Ok)
+                        return fail("list-sort: not a proper list (#4549)");
+                    buf.push_back(EvalValue{g_pair_slots[idx]->car});
+                    v = slot.value;
+                    continue;
+                }
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "list-sort"))
+                    return fail("list-sort: cross-tenant pair slot read denied (#4505)");
+                buf.push_back(pairs[idx].car);
                 v = pairs[idx].cdr;
                 ev.bump_list_chain_traversals();
             }
-            std::sort(buf.begin(), buf.end());
+
+            if (has_less) {
+                // Stable bottom-up merge sort. A comparator error aborts the
+                // sort and is returned as-is.
+                std::vector<EvalValue> tmp(buf.size());
+                EvalValue cmp_error = make_void();
+                bool failed = false;
+                auto before = [&](const EvalValue& x, const EvalValue& y) -> bool {
+                    if (failed)
+                        return false;
+                    auto r = apply_binary(less, x, y);
+                    if (is_error(r)) {
+                        failed = true;
+                        cmp_error = r;
+                        return false;
+                    }
+                    return aura::compiler::pure::is_truthy(r);
+                };
+                const std::size_t n = buf.size();
+                for (std::size_t width = 1; width < n && !failed; width *= 2) {
+                    for (std::size_t lo = 0; lo < n && !failed; lo += 2 * width) {
+                        const std::size_t mid = std::min(lo + width, n);
+                        const std::size_t hi = std::min(lo + 2 * width, n);
+                        std::size_t i = lo, j = mid, k = lo;
+                        while (i < mid && j < hi) {
+                            // Take from the right run only when it is strictly
+                            // before the left head: keeps equal keys stable.
+                            if (before(buf[j], buf[i]))
+                                tmp[k++] = buf[j++];
+                            else
+                                tmp[k++] = buf[i++];
+                        }
+                        while (i < mid)
+                            tmp[k++] = buf[i++];
+                        while (j < hi)
+                            tmp[k++] = buf[j++];
+                    }
+                    if (!failed)
+                        buf.swap(tmp);
+                }
+                if (failed)
+                    return cmp_error;
+            } else if (!buf.empty()) {
+                bool all_num = true;
+                bool all_str = true;
+                for (const auto& e : buf) {
+                    all_num = all_num && (is_int(e) || is_float(e));
+                    all_str = all_str && is_string(e);
+                }
+                if (all_num) {
+                    auto key = [](const EvalValue& e) -> long double {
+                        // long double holds every int64 exactly on x86-64.
+                        return is_int(e) ? static_cast<long double>(as_int(e))
+                                         : static_cast<long double>(as_float(e));
+                    };
+                    std::stable_sort(buf.begin(), buf.end(),
+                                     [&key](const EvalValue& x, const EvalValue& y) {
+                                         if (is_int(x) && is_int(y))
+                                             return as_int(x) < as_int(y);
+                                         const auto kx = key(x);
+                                         const auto ky = key(y);
+                                         const bool nx = std::isnan(kx);
+                                         const bool ny = std::isnan(ky);
+                                         if (nx || ny)
+                                             return !nx && ny; // NaN last
+                                         return kx < ky;
+                                     });
+                } else if (all_str) {
+                    std::vector<std::pair<std::string, EvalValue>> keyed;
+                    keyed.reserve(buf.size());
+                    for (const auto& e : buf) {
+                        const auto sidx = as_string_idx(e);
+                        if (sidx < string_heap.size() &&
+                            !ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0,
+                                                             "list-sort"))
+                            return fail("list-sort: cross-tenant string slot read denied (#4505)");
+                        keyed.emplace_back(
+                            sidx < string_heap.size() ? string_heap[sidx] : std::string{}, e);
+                    }
+                    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& x, const auto& y) {
+                        return x.first < y.first;
+                    });
+                    for (std::size_t i = 0; i < buf.size(); ++i)
+                        buf[i] = keyed[i].second;
+                } else {
+                    return fail("list-sort: elements must be all numbers or all strings; "
+                                "pass a comparator: (list-sort list less?) (#4549)");
+                }
+            }
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 m->stdlib_list_iterative_sorts_total.fetch_add(1, std::memory_order_relaxed);
@@ -1033,7 +1161,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
             EvalValue result = make_void();
             for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
-                const auto new_id = ev.mint_pair(make_int(*it), result, /*check_quota=*/true);
+                const auto new_id = ev.mint_pair(*it, result, /*check_quota=*/true);
                 if (new_id == Evaluator::kFileHeapMintDenied) {
                     return make_primitive_error(
                         string_heap, error_values,
@@ -1045,7 +1173,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
-        pure_general(1, "(list) -> list", "Iterative ascending sort of a numeric list."));
+        pure_general(255, "(list [less?]) -> list",
+                     "Sort a list: numbers numerically, strings lexicographically, or by a "
+                     "(less? a b) comparator (stable)."));
 }
 
 } // namespace aura::compiler::primitives_detail

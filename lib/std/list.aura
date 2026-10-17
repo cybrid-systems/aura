@@ -65,12 +65,16 @@
 (define (partition pred lst)
   (list (filter pred lst) (filter (lambda (x) (not (pred x))) lst)))
 
-; sort: prefer native list-sort (#923 C++ iterative); fall back to merge-sort
-(define (sort lst)
-  (if (null? lst)
-    lst
-    (let ((r (list-sort lst)))
-      (if (list? r) r (sort-merge lst)))))
+;
+; sort: native list-sort (#923 C++ iterative, stable).
+; Issue #4549: (sort xs) orders numbers numerically (Int and Float mixed,
+; each element keeps its type) and strings lexicographically; (sort xs less?)
+; takes a (less? a b) comparator. Any other list raises an error. It used to
+; come back as () — a silent data loss, since () passed the list? fallback.
+(define (sort lst . less)
+  (cond ((null? lst) lst)
+        ((null? less) (list-sort lst))
+        (else (list-sort lst (car less)))))
 
 (define (sort-merge lst)
   (if (or (null? lst) (null? (cdr lst)))

@@ -1,0 +1,73 @@
+;; expect: OK-4549 list-sort/sort keep Floats, sort strings, take a comparator, raise otherwise
+; Issue #4549: native list-sort copied the list into int64_t, so Floats came
+; back truncated and any string made it return () — and std/list `sort`
+; passed that () through (it is a list). Each probe also runs hot so the
+; IR/JIT tiers see the same results.
+(require "std/list" all:)
+(define *fails* 0)
+(define *passes* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+(define (raises? th) (try (begin (th) #f) (catch (e) #t)))
+
+; Ints are unchanged.
+(check "ints" (list-sort (list 3 1 2)) (list 1 2 3))
+(check "ints dup/neg" (list-sort (list 5 -1 5 0 -7)) (list -7 -1 0 5 5))
+(check "empty" (list-sort (list)) (list))
+; Floats keep their value and type.
+(check "floats" (list-sort (list 2.5 1.7 3.9)) (list 1.7 2.5 3.9))
+(check "float type" (float? (car (list-sort (list 2.5 1.7)))) #t)
+; Mixed Int/Float sort numerically; each element keeps its own type.
+(define mixed (list-sort (list 3 1.5 2 0.25 -1)))
+(check "mixed" mixed (list -1 0.25 1.5 2 3))
+(check "mixed int kept" (integer? (car mixed)) #t)
+(check "mixed float kept" (float? (cadr mixed)) #t)
+; Strings sort lexicographically.
+(check "strings" (list-sort (list "b" "a" "c")) (list "a" "b" "c"))
+(check "strings prefix" (list-sort (list "ab" "a" "b" "" "aa")) (list "" "a" "aa" "ab" "b"))
+; std/list sort, the issue's repro.
+(check "sort strings" (sort (list "b" "a" "c")) (list "a" "b" "c"))
+(check "sort floats" (sort (list 2.5 1.7 3.9)) (list 1.7 2.5 3.9))
+(check "sort ints" (sort (list 9 8 7)) (list 7 8 9))
+(check "sort empty" (sort (list)) (list))
+; Comparators, either argument order, and through std/list sort.
+(check "cmp >" (list-sort (list 3 1 2) >) (list 3 2 1))
+(check "cmp first" (list-sort string<? (list "b" "a" "c")) (list "a" "b" "c"))
+(check "cmp lambda" (list-sort (list "bb" "a" "ccc") (lambda (x y) (> (string-length x) (string-length y))))
+       (list "ccc" "bb" "a"))
+(check "sort cmp" (sort (list 1 3 2) >) (list 3 2 1))
+; Stable: equal keys keep input order.
+(check "stable"
+       (list-sort (list (list 2 "a") (list 1 "b") (list 2 "c") (list 1 "d"))
+                  (lambda (x y) (< (car x) (car y))))
+       (list (list 1 "b") (list 1 "d") (list 2 "a") (list 2 "c")))
+(check "cmp pairs by symbol"
+       (map car (sort (list (cons "k2" 2) (cons "k1" 1)) (lambda (x y) (string<? (car x) (car y)))))
+       (list "k1" "k2"))
+; Unsupported lists raise instead of answering ().
+(check "mixed kinds raise" (raises? (lambda () (list-sort (list 1 "x")))) #t)
+(check "bools raise" (raises? (lambda () (list-sort (list #t #f)))) #t)
+(check "sort mixed raise" (raises? (lambda () (sort (list "a" 1)))) #t)
+(check "bad comparator raise" (raises? (lambda () (list-sort (list 1 2) 5))) #t)
+; Longer inputs (merge runs, hot loop).
+(define big (let loop ((i 0) (acc (list))) (if (= i 500) acc (loop (+ i 1) (cons (* 1.5 (modulo (* i 7919) 500)) acc)))))
+(define sorted-big (list-sort big))
+(check "big length" (length sorted-big) 500)
+(check "big order" (let loop ((xs sorted-big)) (cond ((null? (cdr xs)) #t) ((> (car xs) (cadr xs)) #f) (else (loop (cdr xs))))) #t)
+(check "big cmp = native" (list-sort big <) sorted-big)
+(define (hot-sort) (list-sort (list "pear" "apple" "fig")))
+(let loop ((i 0) (ok #t))
+  (if (< i 2000)
+      (loop (+ i 1) (and ok (equal? (hot-sort) (list "apple" "fig" "pear"))))
+      (check "hot strings" ok #t)))
+
+(if (and (= *fails* 0) (= *passes* 28))
+    (display "OK-4549 list-sort/sort keep Floats, sort strings, take a comparator, raise otherwise\n")
+    (begin
+      (display "FAIL-4549 fails=") (display *fails*)
+      (display " passes=") (display *passes*) (newline)
+      (exit 1)))
