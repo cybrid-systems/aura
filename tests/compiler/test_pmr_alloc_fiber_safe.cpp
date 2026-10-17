@@ -739,6 +739,62 @@ static void ac4350_4474_top_level_capture() {
               std::string("4350/4474 AC3: K=4000 within 3x of K=0 (body ") + body + ", " +
                   std::to_string(big) + " ms vs " + std::to_string(small) + " ms)");
     }
+    // AC4 (#4474): procedure defines in a required module share one capture
+    // frame (letrec cells are identical for every closure in the module body)
+    // instead of K copies of the module env; private helpers and forward
+    // references still resolve.
+    auto module_program = [](int k) {
+        const std::string path = "/tmp/aura_4474_mod_" + std::to_string(k) + ".aura";
+        std::ofstream mod(path);
+        mod << "(export modfwd dummy1)\n(define (modfwd x) (modpriv (* x 2)))\n"
+               "(define (modpriv x) (+ x 1))\n";
+        // dummy1 is exported, so even the K=0 baseline defines two procs.
+        for (int i = 0; i < std::max(k, 2); ++i)
+            mod << "(define (dummy" << i << " x) (+ x " << i << "))\n";
+        mod.close();
+        return "(begin (require \"" + path +
+               "\" all:) (define (g x) (let ((r 1)) r))"
+               "(define (run) (let loop ((i 0)) (if (< i 20000) (begin (g 1) (loop (+ i 1))) i)))"
+               "(+ (modfwd 5) (dummy1 1)))";
+    };
+    {
+        constexpr int kMod = 2000;
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const auto before = ev.env_frames_size();
+        auto r = cs.eval(module_program(kMod));
+        CHECK(r && is_int(*r) && as_int(*r) == 11 + 2,
+              "4474 AC4: module forward ref + private helper resolve");
+        std::size_t total = 0;
+        for (std::size_t id = before; id < ev.env_frames_size(); ++id) {
+            const auto& fr = ev.env_frame(static_cast<std::uint32_t>(id) /* EnvId */);
+            total += fr.bindings_symid_.size() + fr.bindings_.size();
+        }
+        CHECK(total < 20u * kMod, "4474 AC4: module frame bindings O(K) for K module procs (got " +
+                                      std::to_string(total) + ")");
+        auto timed_mod = [&](int k) {
+            CompilerService c2;
+            auto r0 = c2.eval(module_program(k));
+            if (!r0 || !is_int(*r0))
+                return -1.0;
+            double best = 1e18;
+            for (int rep = 0; rep < 3; ++rep) {
+                const auto t0 = std::chrono::steady_clock::now();
+                auto rr = c2.eval("(run)");
+                const auto t1 = std::chrono::steady_clock::now();
+                if (!rr)
+                    return -1.0;
+                best = std::min(best, std::chrono::duration<double, std::milli>(t1 - t0).count());
+            }
+            return best;
+        };
+        const double small = timed_mod(0);
+        const double big = timed_mod(kMod);
+        CHECK(small > 0 && big > 0, "4474 AC4: module let loop evals");
+        CHECK(big < 3.0 * small + 5.0, "4474 AC4: module K=2000 let within 3x of K=0 (" +
+                                           std::to_string(big) + " ms vs " + std::to_string(small) +
+                                           " ms)");
+    }
 }
 
 int run_test_pmr_alloc_fiber_safe() {
