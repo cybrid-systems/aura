@@ -30,6 +30,7 @@
 
 #include "test_harness.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <fstream>
@@ -423,6 +424,37 @@ static void ac9_source_cite() {
           "4542 AC9: global order documented in evaluator.ixx");
 }
 
+// Issue #4580 AC11: concurrent closure registration must draw unique
+// ClosureIds. register_active_closure (and the flat-eval sites) draw
+// next_id() BEFORE taking the closures shard lock — a plain counter handed
+// two threads the same id, aliasing shard entries and breaking
+// gc_safe_closure_id_ bookkeeping.
+static void ac11_next_id_unique_concurrent() {
+    std::println("\n--- AC11 (#4580): concurrent ClosureId uniqueness ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr int kThreads = 4;
+    constexpr int kPerThread = 400;
+    std::vector<std::uint64_t> ids(static_cast<std::size_t>(kThreads) * kPerThread, 0);
+    std::vector<std::thread> thr;
+    for (int t = 0; t < kThreads; ++t) {
+        thr.emplace_back([&, t]() {
+            for (int i = 0; i < kPerThread; ++i) {
+                Closure cl;
+                cl.env_id = NULL_ENV_ID;
+                const auto id = ev.register_active_closure(std::move(cl));
+                ids[static_cast<std::size_t>(t) * kPerThread + static_cast<std::size_t>(i)] = id;
+            }
+        });
+    }
+    for (auto& t : thr)
+        t.join();
+    std::sort(ids.begin(), ids.end());
+    CHECK(ids.front() != 0, "4580 AC11: ids nonzero");
+    const auto dup = std::adjacent_find(ids.begin(), ids.end());
+    CHECK(dup == ids.end(), "4580 AC11: all ClosureIds unique under concurrent registration");
+}
+
 } // namespace
 
 int main() {
@@ -437,6 +469,7 @@ int main() {
     ac8_concurrent_truncate_compact_vs_scan();
     ac10_compact_after_truncate_no_recursion();
     ac9_source_cite();
+    ac11_next_id_unique_concurrent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

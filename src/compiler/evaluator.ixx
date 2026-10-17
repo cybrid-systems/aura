@@ -4685,8 +4685,13 @@ public:
     [[nodiscard]] std::uint64_t linear_gc_root_audit_seq() const noexcept {
         return linear_gc_root_audit_seq_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] const LinearGcRootAuditEntry&
+    [[nodiscard]] LinearGcRootAuditEntry
     linear_gc_root_audit_entry_at(std::uint64_t seq) const noexcept {
+        // Issue #4580: snapshot under the ring mutex — the writer publishes
+        // slot fields under linear_gc_root_audit_mu_, so a concurrent reader
+        // can never observe a torn slot. Callers binding `const auto&` still
+        // get a stable copy (temporary lifetime extension).
+        std::lock_guard<std::mutex> lock(linear_gc_root_audit_mu_);
         return linear_gc_root_audit_ring_[seq % kLinearGcRootAuditRingSize];
     }
     [[nodiscard]] static std::string_view
@@ -4746,8 +4751,13 @@ public:
     [[nodiscard]] std::uint64_t linear_violation_audit_seq() const noexcept {
         return linear_violation_audit_seq_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] const LinearViolationAuditEntry&
+    [[nodiscard]] LinearViolationAuditEntry
     linear_violation_audit_entry_at(std::uint64_t seq) const noexcept {
+        // Issue #4580: snapshot under the ring mutex — both slot writers
+        // (record_linear_violation_audit + the enforce epoch fence) publish
+        // under linear_violation_audit_mu_, so a concurrent reader can never
+        // see a torn slot whose fields come from different events.
+        std::lock_guard<std::mutex> lock(linear_violation_audit_mu_);
         return linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
     }
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
@@ -5302,8 +5312,11 @@ public:
     EnvFrame& env_frame_mut(EnvId id) pre(id != NULL_ENV_ID) { return env_frames_[id]; }
     // Validity check (cheap). After #1360 truncate, post-checkpoint
     // EnvIds fail this check (OOB) instead of lingering as INVALID_VERSION.
+    // Issue #4580: read the published size (release store in
+    // alloc_env_frame / truncate / clear) instead of deque::size() —
+    // the unlocked GC root audit readers raced push_back (TSan).
     [[nodiscard]] bool is_valid_env_id(EnvId id) const {
-        return id != NULL_ENV_ID && id < env_frames_.size();
+        return id != NULL_ENV_ID && id < env_frames_published_size_.load(std::memory_order_acquire);
     }
     // Acquire a shared_lock on the env_frames_ deque before
     // calling env_frame() / env_frame_mut() / iterating. This
@@ -5566,12 +5579,14 @@ public:
     // module arenas, lifetime managed separately).
     void reset_env_frames() {
         env_frames_.clear();
+        // Issue #4580: keep the published size in sync with the structure.
+        env_frames_published_size_.store(0, std::memory_order_release);
         env_frame_reuse_.clear();
         env_frame_on_freelist_.clear();
     }
 
 private:
-    ClosureId next_id() { return next_id_++; }
+    ClosureId next_id() { return next_id_.fetch_add(1, std::memory_order_relaxed); }
     [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) {
         // Issue #1397: push_back + size read MUST be atomic so the
         // returned index is stable across concurrent `fiber:spawn`
@@ -6057,6 +6072,16 @@ public:
     }
     std::array<EnvFramesShard, kEnvFramesShardCount> env_frame_shards_;
     std::deque<EnvFrame> env_frames_;
+    // Issue #4580: size published with release after every growth / shrink /
+    // clear (push_back in alloc_env_frame, truncate resize, test-injection
+    // emplace_back, reset_env_frames). The structure SSOT stays env_frames_;
+    // this atomic only exists so is_valid_env_id can answer "is this id
+    // within the live range" without taking env_frames_mtx_ — the linear GC
+    // root audit path reads it unlocked and used to race push_back (TSan:
+    // size read vs deque growth). deque reference stability (push_back does
+    // not invalidate references) keeps element access safe once the id is
+    // known in-range.
+    std::atomic<std::size_t> env_frames_published_size_{0};
     // Issue #4459: capture frames freed by the tree-walker sweep.
     // Slots stay in the deque (no renumber). alloc_env_frame pops
     // one and restamps it. Cleared when compact renumbers or
@@ -7334,7 +7359,14 @@ private:
     std::uint32_t tw_closure_allocs_trigger_ = kReclaimTriggerFloor;
     std::uint32_t file_heap_allocs_trigger_ = kReclaimTriggerFloor;
     bool file_reclaim_active_ = false;
-    std::uint64_t next_id_ = 1;
+    // Issue #4580: shared across registering threads — register_active_closure
+    // and the flat-eval sites draw the id BEFORE taking the closures shard
+    // lock, and evaluator_primitives_memory reads it for gc_safe_closure_id_.
+    // A plain increment could hand two threads the same ClosureId (duplicate
+    // shard entries alias and break gc_safe_closure_id_ bookkeeping).
+    // relaxed: only uniqueness matters here; the shard map insert + the
+    // closures apply epoch (issue #3832) provide the cross-thread ordering.
+    std::atomic<std::uint64_t> next_id_{1};
     ClosureId gc_safe_closure_id_ = 0;
     // Issue #68: depth counter (was bool) so nested `intend` calls
     // correctly keep outer closures in the persistent arena. With
@@ -7528,7 +7560,8 @@ private:
     std::atomic<std::uint64_t> linear_gc_root_audit_total_{0};
     // Last-seen counter snapshots for monotonicity checks across audits.
     // Guarded by linear_gc_root_audit_mu_ (multi-fiber shared Evaluator).
-    std::mutex linear_gc_root_audit_mu_;
+    // mutable (#4580): const entry_at snapshots the ring under it.
+    mutable std::mutex linear_gc_root_audit_mu_;
     std::uint64_t linear_gc_root_audit_prev_reg_{0};
     std::uint64_t linear_gc_root_audit_prev_stale_{0};
     std::uint64_t linear_gc_root_audit_prev_viol_{0};
@@ -7538,6 +7571,10 @@ private:
     // Issue #1568: linear violation provenance audit ring.
     std::array<LinearViolationAuditEntry, kLinearViolationAuditRingSize>
         linear_violation_audit_ring_{};
+    // Issue #4580: leaf lock for slot publish vs entry_at snapshot. Writers
+    // hold closures/env locks first (same order as force_drop); entry_at
+    // takes ONLY this mutex, so no lock-order inversion is possible.
+    mutable std::mutex linear_violation_audit_mu_;
     std::atomic<std::uint64_t> linear_violation_audit_seq_{0};
     std::atomic<std::uint64_t> linear_violation_audit_total_{0};
     void record_linear_violation_audit(std::uint8_t path, std::uint8_t reason, std::uint32_t env_id,

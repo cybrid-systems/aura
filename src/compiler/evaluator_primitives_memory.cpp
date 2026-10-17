@@ -332,7 +332,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // The while loop's predicate/body closures are created before this
     // call (in persistent arena when in_task_context_=false).
     add("gc-freeze", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        ev.gc_safe_closure_id_ = ev.next_id_;
+        // Issue #4580: acquire load — next_id_ is a shared atomic now
+        // (registering threads draw ids concurrently).
+        ev.gc_safe_closure_id_ = ev.next_id_.load(std::memory_order_acquire);
         return types::make_bool(true);
     });
 
