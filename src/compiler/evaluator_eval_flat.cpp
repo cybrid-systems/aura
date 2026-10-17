@@ -7485,6 +7485,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         auto vv = eval_flat(*f, *p, val_id, *tail_env);
                         if (!vv)
                             return vv;
+                        // Issue #4586: an error value is not a binding. The
+                        // body must not run.
+                        if (is_error(*vv))
+                            return vv;
                         cells_[ci] = *vv;
                         // Body evaluated in *tail_env (recursive refs need the child env).
                         // Issue #2871: TCO into body — named-let desugars to
@@ -7513,6 +7517,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // the env but parent_ still points to the original stack env).
                         auto vv = eval_flat(*f, *p, val_id, eval_env);
                         if (!vv)
+                            return vv;
+                        // Issue #4586: same as the letrec arm. A callback
+                        // error in the init aborts before the body.
+                        if (is_error(*vv))
                             return vv;
 
                         // ── Match exhaustiveness check (tree-walker path) ──

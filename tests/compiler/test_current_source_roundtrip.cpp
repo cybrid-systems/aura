@@ -1339,11 +1339,50 @@ static void ac4362_soft_caller_arity() {
           "4362: caller arity stays off the light path");
 }
 
+// Issue #4586: a list-ref error inside map/filter must leave the HOF.
+// try catches it. A let whose init is that call does not run its body.
+static void ac4586_hof_callback_error_propagates() {
+    std::println("\n--- #4586: map/filter callback errors propagate ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    CompilerService cs;
+    const char* prog = "(define (boom c) (list-ref c 3))\n"
+                       "(define (f) (map (lambda (c) (boom c)) (list (list 1 2 3))))\n"
+                       "(define (caught? r)\n"
+                       "  (and (pair? r) (equal? (car r) \"caught\")\n"
+                       "       (equal? (car (cdr r)) \"list-ref: index out of bounds\")))\n"
+                       "(define a (try (f) (catch (e) (list \"caught\" e))))\n"
+                       "(define b (try (filter (lambda (c) (boom c)) (list (list 1 2 3)))\n"
+                       "                (catch (e) (list \"caught\" e))))\n"
+                       "(define c (try (boom (list 1 2 3)) (catch (e) (list \"caught\" e))))\n"
+                       "(define (g) (let ((r (f))) (list \"continued\" r)))\n"
+                       "(define d (try (g) (catch (e) (list \"caught\" e))))\n"
+                       "(and (caught? a) (caught? b) (caught? c) (caught? d)\n"
+                       "     (equal? (map (lambda (x) (+ x 1)) (list 1 2)) (list 2 3))\n"
+                       "     (equal? (filter (lambda (x) (> x 1)) (list 1 2 3)) (list 2 3))\n"
+                       "     (null? (filter (lambda (x) #f) (list 1))))\n";
+    auto r = cs.eval(prog);
+    CHECK(r && is_bool(*r) && as_bool(*r),
+          "4586: try catches map/filter errors and the let body does not run");
+    const auto list = read_file("src/compiler/evaluator_primitives_list.cpp");
+    CHECK(list.find("Issue #4586") != std::string::npos,
+          "4586: map and filter return the callback error");
+    const auto ev = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(ev.find("Issue #4586") != std::string::npos, "4586: let does not bind an error value");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
     // birth-stamp path is the one the CLI hits on a fresh start.
     ac4585_host_calls_stay_on_snapshot();
+    ac4586_hof_callback_error_propagates();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();
