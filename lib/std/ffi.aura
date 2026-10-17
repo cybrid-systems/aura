@@ -20,10 +20,30 @@
 ;   (c-struct-size …)          → int
 ;   (c-struct-set! p off v)    → void
 ;   (c-struct-ref p off ty)    → value
+;
+; Issue #4556: native memory views and handles.
+;   (c-view p off n kind [len]) → view: typed window (kind f64 i64 u64 i32
+;       u32 u8) of n elements at byte offset off of p (opaque or view).
+;       Bounded by the c-alloc size, len, or the parent view; a raw
+;       pointer needs len. Each access re-checks the owner: after c-free /
+;       c-close! of the owner it raises a catchable error.
+;   (c-view? x)  (c-view-length v)  (c-view-ref v i)  (c-view-set! v i x)
+;   (c-view-copy! v f64vec [dst-i]) → n   one native copy into an f64vector
+;   (c-view->f64vector v)           → fresh f64vector
+;   (c-view-read-consistent! v f64vec seq-view [seq-i max-tries]) → retries
+;       seqlock read: copy only between two equal even sequence words.
+;   (c-handle p finalizer [tag]) → handle: finalizer is a c-func taking the
+;       pointer (or #f). (c-close! h) runs it once (#t), then #f; c-free on
+;       a handle closes it too. (c-handle-live? h) (c-handle-tag h).
+;   c-opaque / c-struct-ref pointer reads of the same live address reuse
+;   one slot, so polling does not grow the opaque heap.
 
 (export c-load c-func c-alloc c-free
         c-opaque c-opaque? c-opaque->int
-        c-struct-size c-struct-set! c-struct-ref)
+        c-struct-size c-struct-set! c-struct-ref
+        c-view c-view? c-view-length c-view-ref c-view-set!
+        c-view-copy! c-view->f64vector c-view-read-consistent!
+        c-handle c-close! c-handle-live? c-handle-tag)
 
 (define c-load c-load)
 (define c-func c-func)
@@ -35,3 +55,15 @@
 (define c-struct-size c-struct-size)
 (define c-struct-set! c-struct-set!)
 (define c-struct-ref c-struct-ref)
+(define c-view c-view)
+(define c-view? c-view?)
+(define c-view-length c-view-length)
+(define c-view-ref c-view-ref)
+(define c-view-set! c-view-set!)
+(define c-view-copy! c-view-copy!)
+(define c-view->f64vector c-view->f64vector)
+(define c-view-read-consistent! c-view-read-consistent!)
+(define c-handle c-handle)
+(define c-close! c-close!)
+(define c-handle-live? c-handle-live?)
+(define c-handle-tag c-handle-tag)

@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**458** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**462** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 55 primitives (12%)
-- **core**: 368 primitives (80%)
+- **core**: 372 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -140,7 +140,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (264)
+## Core builtins (268)
 
 - `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -225,9 +225,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `exp` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `f32-bytes->f64vector` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-dot` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-ewma!` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-length` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-max-index` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-ref` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-set!` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sub!` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sum` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `filter` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -664,7 +668,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (368)
+### Core builtins (must remain primitive) (372)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -773,9 +777,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
 - `f32-bytes->f64vector` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-dot` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-ewma!` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-length` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-max-index` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-ref` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-set!` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sub!` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sum` — `src/compiler/evaluator_primitives_char.cpp`
 - `ffi:pin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
