@@ -998,10 +998,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         });
 
     // (workspace :merge child-id)
-    //   → result string: alist of ("name" . "updated"|"added")
-    //   Source-level merge: combines parent + child source.
     //   Child definitions override parent for conflicting symbols.
-    //   Works because set-code now updates the correct WorkspaceNode flat.
+    //   Issue #4589: the root keeps one define per name. A child text
+    //   that differs replaces the parent; an unchanged name is omitted.
+    //   set-code failure reports "rejected", never "merged".
     (*w_impls)["workspace:merge"] =
         PrimFn{[&ev, get_ws_source, destroy_defuse_index](const auto& a) -> EvalValue {
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
@@ -1027,25 +1027,43 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             ev.workspace_pool_ = parent.pool;
             tree->set_active(0);
 
-            // ── Parse child's source to extract define names ──
+            // Issue #4589: top-level defines only. A define inside a lambda
+            // is not a workspace symbol. Nested begin is the multi-form root.
+            struct TopForm {
+                std::string name;
+                aura::ast::NodeId id = aura::ast::NULL_NODE;
+                bool is_define = false;
+            };
+            auto collect_top = [](const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                  aura::ast::NodeId root) {
+                std::vector<TopForm> forms;
+                auto add = [&](auto& self, aura::ast::NodeId id) -> void {
+                    if (id == aura::ast::NULL_NODE || id >= flat.size())
+                        return;
+                    auto v = flat.get(id);
+                    if (v.tag == aura::ast::NodeTag::Begin) {
+                        for (auto c : v.children)
+                            self(self, c);
+                        return;
+                    }
+                    TopForm form;
+                    form.id = id;
+                    if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+                        form.name = std::string(pool.resolve(v.sym_id));
+                        form.is_define = !form.name.empty();
+                    }
+                    forms.push_back(std::move(form));
+                };
+                add(add, root);
+                return forms;
+            };
+
             aura::ast::StringPool child_pool;
             aura::ast::FlatAST child_flat;
             auto child_pr = aura::parser::parse_to_flat(child_source, child_flat, child_pool);
-            if (!child_pr.success || child_pr.root == aura::ast::NULL_NODE) {
+            if (!child_pr.success || child_pr.root == aura::ast::NULL_NODE)
                 return make_bool(false);
-            }
             child_flat.root = child_pr.root;
-
-            // Collect child define names
-            std::unordered_set<std::string> child_names;
-            for (aura::ast::NodeId id = 0; id < child_flat.size(); ++id) {
-                auto v = child_flat.get(id);
-                if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
-                    auto nm = child_pool.resolve(v.sym_id);
-                    if (!nm.empty())
-                        child_names.insert(std::string(nm));
-                }
-            }
 
             // ── Get parent's current source ──
             auto src_fn = ev.primitives_.lookup("current-source");
@@ -1063,34 +1081,119 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 }
             }
 
-            // ── Source-level merge ──
-            // Keep parent source first, then append child source.
-            // In Scheme, later definitions override earlier ones.
-            std::string merged = parent_source;
-            if (!merged.empty() && merged.back() != '\n')
-                merged += '\n';
-            merged += child_source;
-
-            // ── Apply merged source via set-code ──
-            // set-code updates the active node's flat (via update_shared_tree_root fix)
-            // so parent.flat now points to the merged workspace.
-            auto mi = ev.string_heap_.mint(merged);
-            bool ok = false;
-            if (auto set_fn2 = ev.primitives_.lookup("set-code")) {
-                auto r = (*set_fn2)({make_string(mi)});
-                ok = is_bool(r) ? as_bool(r) : false;
+            // Last child define of a name is the one to promote.
+            std::unordered_map<std::string, std::string> child_text;
+            std::vector<std::string> child_order;
+            for (const auto& form : collect_top(child_flat, child_pool, child_flat.root)) {
+                if (!form.is_define)
+                    continue;
+                auto text = unparse_node(child_flat, child_pool, form.id, 0);
+                if (child_text.find(form.name) == child_text.end())
+                    child_order.push_back(form.name);
+                child_text[form.name] = std::move(text);
             }
 
-            // ── Build result string ──
+            struct MergeReport {
+                std::string name;
+                bool want_merged = false;
+            };
+            std::vector<MergeReport> reports;
+            std::string merged;
+            auto append_form = [&](const std::string& text) {
+                if (text.empty())
+                    return;
+                if (!merged.empty())
+                    merged.push_back('\n');
+                merged += text;
+            };
+
+            bool parent_parsed = parent_source.empty();
+            aura::ast::StringPool parent_pool;
+            aura::ast::FlatAST parent_flat;
+            if (!parent_source.empty()) {
+                auto parent_pr =
+                    aura::parser::parse_to_flat(parent_source, parent_flat, parent_pool);
+                parent_parsed = parent_pr.success && parent_pr.root != aura::ast::NULL_NODE;
+                if (parent_parsed)
+                    parent_flat.root = parent_pr.root;
+            }
+
+            if (!parent_parsed) {
+                // Cannot splice. Do not append the child after the parent.
+                for (const auto& name : child_order)
+                    reports.push_back(MergeReport{name, false});
+            } else {
+                std::unordered_set<std::string> emitted;
+                if (!parent_source.empty()) {
+                    auto parent_forms = collect_top(parent_flat, parent_pool, parent_flat.root);
+                    for (const auto& form : parent_forms) {
+                        if (!form.is_define) {
+                            append_form(unparse_node(parent_flat, parent_pool, form.id, 0));
+                            continue;
+                        }
+                        if (!emitted.insert(form.name).second)
+                            continue;
+                        auto parent_text = unparse_node(parent_flat, parent_pool, form.id, 0);
+                        auto it = child_text.find(form.name);
+                        if (it == child_text.end()) {
+                            append_form(parent_text);
+                            continue;
+                        }
+                        if (it->second.empty() || it->second == parent_text) {
+                            append_form(parent_text);
+                            if (it->second.empty())
+                                reports.push_back(MergeReport{form.name, false});
+                            continue;
+                        }
+                        append_form(it->second);
+                        reports.push_back(MergeReport{form.name, true});
+                    }
+                }
+                for (const auto& name : child_order) {
+                    if (emitted.count(name))
+                        continue;
+                    const auto& text = child_text[name];
+                    if (text.empty()) {
+                        reports.push_back(MergeReport{name, false});
+                        continue;
+                    }
+                    append_form(text);
+                    reports.push_back(MergeReport{name, true});
+                }
+            }
+
+            // set-code installs the spliced source on the active root.
+            // A non-bool or #f result did not apply the child text.
+            bool want_apply = false;
+            for (const auto& rep : reports) {
+                if (rep.want_merged) {
+                    want_apply = true;
+                    break;
+                }
+            }
+            bool applied = false;
+            if (want_apply && !merged.empty()) {
+                auto mi = ev.string_heap_.mint(merged);
+                if (auto set_fn2 = ev.primitives_.lookup("set-code")) {
+                    auto r = (*set_fn2)({make_string(mi)});
+                    applied = is_bool(r) && as_bool(r);
+                }
+            }
+
             std::string result = "(";
             bool first = true;
-            for (auto& nm : child_names) {
+            for (const auto& rep : reports) {
                 if (!first)
-                    result += " ";
-                result += "(\"" + nm + "\" . \"merged\")";
+                    result += ' ';
+                const char* status = (rep.want_merged && applied) ? "merged" : "rejected";
+                result += "(\"";
+                result += rep.name;
+                result += "\" . \"";
+                result += status;
+                result += "\")";
                 first = false;
             }
-            result += ")";
+            result += ')';
             auto ri = ev.string_heap_.mint(result);
 
             // Keep the new merged flat active (set-code already set ev.workspace_flat_

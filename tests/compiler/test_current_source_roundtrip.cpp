@@ -1542,6 +1542,95 @@ static void ac4588_error_data_propagates() {
     CHECK(evh.find("Issue #4588") != std::string::npos, "4588: error cause is the bound value");
 }
 
+// Issue #4589: workspace :merge keeps one define, the child's, for a name
+// the child changed. An unchanged sibling is not reported merged. A name
+// that exists only on the child is added. set-code failure says "rejected".
+static void ac4589_merge_child_define_wins() {
+    std::println("\n--- #4589: merge promotes the child define ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    auto count_sub = [](const std::string& s, std::string_view sub) {
+        std::size_t n = 0;
+        std::size_t pos = 0;
+        while ((pos = s.find(sub, pos)) != std::string::npos) {
+            ++n;
+            pos += sub.size();
+        }
+        return n;
+    };
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\\n"
+                      "(define g (lambda (x) (+ x 2)))\")")
+                  .has_value(),
+              "4589: set-code f and g");
+        CHECK(cs.eval("(eval-current)").has_value(), "4589: eval-current parent");
+        auto idv = cs.eval("(workspace :create \"cand\")");
+        CHECK(idv && is_int(*idv) && as_int(*idv) > 0, "4589: child id");
+        const auto id = as_int(*idv);
+        CHECK(cs.eval("(workspace :switch " + std::to_string(id) + ")").has_value(),
+              "4589: switch to child");
+        auto reb = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 10))\" \"child edit\")");
+        CHECK(reb && is_bool(*reb) && as_bool(*reb), "4589: rebind child f");
+        CHECK(cs.eval("(eval-current)").has_value(), "4589: eval-current child");
+        auto child_f = cs.eval("(f 2)");
+        CHECK(child_f && is_int(*child_f) && as_int(*child_f) == 20, "4589: child f(2) is 20");
+        CHECK(cs.eval("(workspace :switch 0)").has_value(), "4589: switch to root");
+        auto report = eval_string(cs, "(workspace :merge " + std::to_string(id) + ")");
+        CHECK(report.find("\"f\"") != std::string::npos &&
+                  report.find("merged") != std::string::npos,
+              std::string("4589: f merged, got: ") + report);
+        CHECK(report.find("\"g\"") == std::string::npos,
+              std::string("4589: unchanged g is not merged, got: ") + report);
+        CHECK(report.find("rejected") == std::string::npos,
+              std::string("4589: applied merge is not rejected, got: ") + report);
+        CHECK(cs.eval("(eval-current)").has_value(), "4589: eval-current root");
+        auto root_f = cs.eval("(f 2)");
+        CHECK(root_f && is_int(*root_f) && as_int(*root_f) == 20, "4589: root f(2) is the child");
+        auto root_g = cs.eval("(g 2)");
+        CHECK(root_g && is_int(*root_g) && as_int(*root_g) == 4, "4589: root g is unchanged");
+        auto ws = eval_string(cs, "(current-source :workspace)");
+        CHECK(count_sub(ws, "(define f ") == 1, std::string("4589: one f in the root, got: ") + ws);
+        CHECK(ws.find("(* x 10)") != std::string::npos, "4589: root f is (* x 10)");
+        CHECK(ws.find("(+ x 1)") == std::string::npos, "4589: parent (+ x 1) is gone");
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+              "4589: parent f only");
+        CHECK(cs.eval("(eval-current)").has_value(), "4589: eval parent f");
+        auto idv = cs.eval("(workspace :create \"add\")");
+        CHECK(idv && is_int(*idv) && as_int(*idv) > 0, "4589: add-child id");
+        const auto id = as_int(*idv);
+        CHECK(cs.eval("(workspace :switch " + std::to_string(id) + ")").has_value(),
+              "4589: switch to add-child");
+        CHECK(cs.eval("(set-code \"(define h (lambda (x) (+ x 3)))\")").has_value(),
+              "4589: child defines h");
+        CHECK(cs.eval("(eval-current)").has_value(), "4589: eval child h");
+        CHECK(cs.eval("(workspace :switch 0)").has_value(), "4589: back to root for add");
+        auto report = eval_string(cs, "(workspace :merge " + std::to_string(id) + ")");
+        CHECK(report.find("\"h\"") != std::string::npos &&
+                  report.find("merged") != std::string::npos,
+              std::string("4589: h added, got: ") + report);
+        CHECK(report.find("\"f\"") == std::string::npos,
+              std::string("4589: untouched f is not merged, got: ") + report);
+        CHECK(cs.eval("(eval-current)").has_value(), "4589: eval root after add");
+        auto root_f = cs.eval("(f 2)");
+        CHECK(root_f && is_int(*root_f) && as_int(*root_f) == 3, "4589: parent f stays");
+        auto root_h = cs.eval("(h 2)");
+        CHECK(root_h && is_int(*root_h) && as_int(*root_h) == 5, "4589: merged h(2) is 5");
+    }
+    const auto ws = read_file("src/compiler/evaluator_primitives_workspace.cpp");
+    CHECK(ws.find("Issue #4589") != std::string::npos, "4589: merge cites the override");
+    CHECK(ws.find("\"rejected\"") != std::string::npos, "4589: a failed apply does not say merged");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
@@ -1550,6 +1639,7 @@ int run_test_current_source_roundtrip() {
     ac4586_hof_callback_error_propagates();
     ac4587_workspace_free_names();
     ac4588_error_data_propagates();
+    ac4589_merge_child_define_wins();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();
