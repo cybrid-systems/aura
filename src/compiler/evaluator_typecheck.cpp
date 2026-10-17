@@ -311,6 +311,27 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         auto& tc = *tc_ptr;
         // Issue #4397: selective and full post-mutate engines copy this probe.
         tc.set_registered_prim_probe(&prim_name_registered, &primitives_);
+        // Issue #4587: runtime already sees host top_env. Seed those names
+        // so the post-mutate check does not call a host helper unbound.
+        // Truly free names are not in top_env and stay UnboundVariable.
+        {
+            std::vector<std::string> host_names;
+            std::unordered_set<std::string> seen;
+            auto take = [&](const std::string& nm) {
+                if (nm.empty())
+                    return;
+                const char c0 = nm[0];
+                if (c0 == '_' || c0 == '@' || c0 == ':')
+                    return;
+                if (seen.insert(nm).second)
+                    host_names.push_back(nm);
+            };
+            for (const auto& binding : top_.bindings())
+                take(binding.first);
+            for (const auto& binding : top_.bindings_with_names())
+                take(binding.first);
+            tc.set_host_visible_names(std::move(host_names));
+        }
         // Issue #3655: mark infer-ran even when fingerprint is 0 (empty
         // live goals). Distinguishes vacuous SOLVED from skipped SDO.
         auto stage_fp_if_solved = [&]() {

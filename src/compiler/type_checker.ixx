@@ -1864,6 +1864,9 @@ export class InferenceEngine {
     // Null (unit tests, lowering) still reports UnboundVariable.
     bool (*registered_prim_probe_)(const void* ctx, std::string_view name) noexcept = nullptr;
     const void* registered_prim_ctx_ = nullptr;
+    // Issue #4587: host top_env names. Seeded as Dynamic when the workspace
+    // flat does not already give them a type. Empty for unit tests.
+    std::vector<std::string> host_visible_names_;
 
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 
@@ -1981,6 +1984,10 @@ public:
                                    const void* ctx) noexcept {
         registered_prim_probe_ = probe;
         registered_prim_ctx_ = ctx;
+    }
+    // Issue #4587: copied onto the short-lived engine before seed.
+    void set_host_visible_names(std::vector<std::string> names) {
+        host_visible_names_ = std::move(names);
     }
     // Issue #536: forward solve_delta observability hooks.
     void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
@@ -2746,7 +2753,9 @@ export TypeCheckResult type_check_flat_pure(
     GradualPermissiveness gradual_permissiveness = GradualPermissiveness::Balanced, // Issue #2992
     // Issue #4397: null probe keeps UnboundVariable (pass_impls, unit tests).
     bool (*registered_prim_probe)(const void* ctx, std::string_view name) noexcept = nullptr,
-    const void* registered_prim_ctx = nullptr)
+    const void* registered_prim_ctx = nullptr,
+    // Issue #4587: null leaves host names unbound (pass_impls, unit tests).
+    const std::vector<std::string>* host_visible_names = nullptr)
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /
@@ -2893,6 +2902,10 @@ export struct TypeChecker {
                                    const void* ctx) noexcept {
         registered_prim_probe_ = probe;
         registered_prim_ctx_ = ctx;
+    }
+    // Issue #4587: host top_env names for both short-lived engines.
+    void set_host_visible_names(std::vector<std::string> names) {
+        host_visible_names_ = std::move(names);
     }
     // Issue #2355: on epoch advance, prune type_dep edges stamped at older
     // epochs (epoch > 0 && epoch < new_epoch). AC3: same epoch → no-op.
@@ -3596,6 +3609,8 @@ private:
     // pointer so this module does not import aura.compiler.evaluator.
     bool (*registered_prim_probe_)(const void* ctx, std::string_view name) noexcept = nullptr;
     const void* registered_prim_ctx_ = nullptr;
+    // Issue #4587: host bindings the workspace flat does not declare.
+    std::vector<std::string> host_visible_names_;
 
     // Issue #1407 R1: ConstraintSolver engine-level cache.
     // Per NodeId, store the (epoch, constraints_hash, solve_result)
