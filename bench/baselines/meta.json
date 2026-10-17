@@ -1,0 +1,12 @@
+{
+  "schema": 4566,
+  "issue": 1936,
+  "description": "Class-2 statistical gate. Reuses classify_regression from tests/bench/benchmark.py.",
+  "defaults": {
+    "tolerance_percent": 20,
+    "min_delta_ms": 20,
+    "catastrophic_ratio": 3.0,
+    "rationale": "A hit needs a ratio past tolerance and an absolute delta above min_delta_ms. Movement under 20 ms is noise, the same floor as issue 1936. A catastrophic ratio still has to clear that floor."
+  },
+  "cases": {}
+}

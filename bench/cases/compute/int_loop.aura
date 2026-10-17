@@ -1,0 +1,17 @@
+; Class 1 integer loop. while, not named-let: named-let has no TCO and
+; trips the >2000 recursion guard. Checksum is sum 0..6000.
+(define (sumi n)
+  (let ((i 0) (a 0))
+    (while (<= i n)
+      (set! a (+ a i))
+      (set! i (+ i 1)))
+    a))
+(sumi 20)
+(define t0 (monotonic-ms))
+(define r (sumi 6000))
+(define t1 (monotonic-ms))
+(display "BENCH int-loop ")
+(display r)
+(display " ")
+(display (- t1 t0))
+(newline)
