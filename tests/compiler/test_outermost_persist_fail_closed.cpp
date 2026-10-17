@@ -685,7 +685,12 @@ static void ac4540_overhead_probe() {
     CHECK(cs.eval(std::format("(set-code \"{}\")", src)).has_value(), "4540 probe: set-code");
     (void)cs.eval("(eval-current)");
     (void)cs.eval("(typecheck-current)");
-    constexpr int kIters = 200;
+    // kIters: production defaults keep rebinds on the full cascade (light
+    // path #4357 is Soft-only), so each iteration runs a full workspace
+    // infer with a fresh InferenceEngine (~2.3 s/op measured at this
+    // 200-define workspace). The probe only prints the per-op cost — keep
+    // the iteration count inside the CI per-test budget (#4540 follow-up).
+    constexpr int kIters = 3;
     ev.enter_render_hotpath();
     const auto t0 = std::chrono::steady_clock::now();
     int ok_n = 0;
