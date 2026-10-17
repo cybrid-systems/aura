@@ -1,0 +1,97 @@
+; Issue #4547 — a module required after another module loaded the workspace
+; (set-code + eval-current at module top level) got its functions IR-cached by
+; cache_module, with dep_graph_ edges onto the workspace defines and the WHOLE
+; module text as function_sources_. After mutate:rebind of a workspace define,
+; the IR re-specialise of the rebound define's callers re-lowered that module
+; text under the caller's name and bound a sibling's closure into the shared
+; top_ cell: caller6:b ran caller6:a (silent wrong value) or failed with
+; "invalid closure" / a foreign arity. The mutate:atomic-batch path dropped
+; and re-lowered the same module dependents in invalidate_function. Only
+; workspace lambdas are re-specialised / re-lowered now; module functions keep
+; their tree-walker closure, which looks the callee up by name.
+; No main-file set-code here: the /tmp modules are resolved before the body
+; runs when they already exist (re-run), so a main set-code would replace the
+; module's workspace in one mode and not the other.
+;; expect: OK-4547
+
+; Workaround for #4546 (set-code leaves the top env on the workspace pool):
+; when the require below runs lazily, the module's first define lands in the
+; main file's first top-level slot. Keep a throwaway define there; drop it once
+; #4546 is fixed.
+(define *pad4547* 0)
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+(define (safe thunk) (try (thunk) (catch (e) (list "ERR" e))))
+(define (check label got want)
+  (if (not (equal? got want))
+      (begin (display "    got: ") (write got) (display " want: ") (write want) (newline)))
+  (assert! (equal? got want) label))
+
+
+; ── #4547: module loads the workspace, a later module calls into it ──
+(write-file "/tmp/aura4547_wsload.aura"
+  (string-append
+    "(export wsload4547:ok)\n"
+    "(define wsload4547:ok #t)\n"
+    "(set-code \"(define wa4547 (lambda (x) (+ x 1000)))\\n(define wb4547 (lambda (x) (+ x 2000)))\\n\")\n"
+    "(eval-current)\n"))
+; references wb before wa (the issue's trigger order) plus a 2-arg sibling
+(write-file "/tmp/aura4547_caller.aura"
+  (string-append
+    "(export c4547:b c4547:a c4547:two)\n"
+    "(define (c4547:b) (wb4547 1))\n"
+    "(define (c4547:a) (wa4547 1))\n"
+    "(define (c4547:two p q) (+ (wa4547 p) q))\n"))
+(require "/tmp/aura4547_wsload.aura" all:)
+(require "/tmp/aura4547_caller.aura" all:)
+
+(check "before: c4547:b" (safe (lambda () (c4547:b))) 2001)
+(check "before: c4547:a" (safe (lambda () (c4547:a))) 1001)
+
+(check "rebind wb4547 accepted" (mutate:rebind "wb4547" "(lambda (x) (+ x 3000))" "t4547") #t)
+(check "after rebind: top-level wb4547" (safe (lambda () (wb4547 1))) 3001)
+(check "after rebind: c4547:b sees new wb4547" (safe (lambda () (c4547:b))) 3001)
+(check "after rebind: c4547:a unchanged" (safe (lambda () (c4547:a))) 1001)
+(check "after rebind: c4547:two arity kept" (safe (lambda () (c4547:two 1 5))) 1006)
+
+(eval-current)
+(check "after eval-current: c4547:b" (safe (lambda () (c4547:b))) 3001)
+(check "after eval-current: c4547:a" (safe (lambda () (c4547:a))) 1001)
+
+; atomic-batch path (aura-kernel-sink swap) on the other define
+(mutate:atomic-batch (list (list "mutate:rebind" "wa4547" "(lambda (x) (+ x 5000))" "t4547")))
+(eval-current)
+(check "batch rebind wa4547: c4547:a" (safe (lambda () (c4547:a))) 5001)
+(check "batch rebind wa4547: c4547:b" (safe (lambda () (c4547:b))) 3001)
+(check "batch rebind wa4547: c4547:two" (safe (lambda () (c4547:two 1 5))) 5006)
+
+; different arity rebind must not surface as invalid closure in the module
+(mutate:rebind "wb4547" "(lambda (x) (* x 7))" "t4547")
+(check "rebind wb4547 again: c4547:b" (safe (lambda () (c4547:b))) 7)
+
+;; snapshot / restore (hot-strategy:heal! rolls a sunk kernel back this way)
+(define sid4547 (ast:snapshot))
+(mutate:atomic-batch (list (list "mutate:rebind" "wb4547" "(lambda (x) (+ x 9000))" "t4547")))
+(eval-current)
+(check "batch rebind wb4547: c4547:b" (safe (lambda () (c4547:b))) 9001)
+(check "batch rebind wb4547: c4547:a" (safe (lambda () (c4547:a))) 5001)
+(ast:restore sid4547)
+(eval-current)
+(check "restore: c4547:b back to old body" (safe (lambda () (c4547:b))) 7)
+(check "restore: c4547:a" (safe (lambda () (c4547:a))) 5001)
+(check "restore: c4547:two" (safe (lambda () (c4547:two 1 5))) 5006)
+
+(if (= *fails* 0)
+    (display "OK-4547 module callers survive rebind\n")
+    (begin
+      (display "FAIL-4547 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))
