@@ -3129,7 +3129,13 @@ int main(int argc, char* argv[]) {
     if (!soft_launch) {
         if (const char* sb = std::getenv("AURA_SANDBOX")) {
             const std::string_view sv(sb);
-            if (sv == "off" || sv == "OFF" || sv == "Off")
+            if ((sv == "off" || sv == "OFF" || sv == "Off") &&
+                // Issue #4575 follow-up (asan-verify): the hatch note is for
+                // the human at a REPL. Piped runs (CI, case harnesses) merge
+                // stderr into the compared output — the banner on cerr fails
+                // every text comparison in tests/run-tests.sh (281 cases).
+                // Interactive faces keep the note; pipes stay clean.
+                ::isatty(::fileno(stderr)))
                 std::println(std::cerr, "aura: sandbox=off (dev escape hatch)");
         }
     }
