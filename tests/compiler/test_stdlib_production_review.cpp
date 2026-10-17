@@ -17,8 +17,10 @@ import aura.compiler.value;
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -44,6 +46,21 @@ int run_test_stdlib_production_review() {
         // car should be 1 after sort
         auto car = cs.eval("(car (list-sort (list 3 1 2)))");
         CHECK(car && is_int(*car) && as_int(*car) == 1, "list-sort ascending");
+    }
+
+    // #4549: Floats keep their type, strings sort, comparators apply, and an
+    // unsupported list is an error — never a silent ().
+    {
+        auto f = cs.eval("(car (list-sort (list 2.5 1.7 3.9)))");
+        CHECK(f && is_float(*f) && as_float(*f) == 1.7, "4549: list-sort keeps Floats");
+        auto m = cs.eval("(equal? (list-sort (list 3 1.5 2)) (list 1.5 2 3))");
+        CHECK(m && is_bool(*m) && as_bool(*m), "4549: mixed Int/Float numeric order");
+        auto s = cs.eval("(equal? (list-sort (list \"b\" \"a\" \"c\")) (list \"a\" \"b\" \"c\"))");
+        CHECK(s && is_bool(*s) && as_bool(*s), "4549: list-sort strings");
+        auto c = cs.eval("(equal? (list-sort (list 1 3 2) >) (list 3 2 1))");
+        CHECK(c && is_bool(*c) && as_bool(*c), "4549: list-sort comparator");
+        auto e = cs.eval("(try (begin (list-sort (list 1 \"x\")) #f) (catch (e) #t))");
+        CHECK(e && is_bool(*e) && as_bool(*e), "4549: mixed kinds raise");
     }
 
     // #926 / #923–#940: production review dashboard
