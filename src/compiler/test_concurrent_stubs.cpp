@@ -222,3 +222,17 @@ aura_bind_temporary_moving_live_ptr_any_arena(void* /*p*/) noexcept {
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_owner_capability_tenant(void) noexcept {
     return 0;
 }
+
+// Issue #4567: aura_jit.cpp registers aura_check_shape_guard as a JIT
+// runtime symbol; the strong def lives in spec_jit_controller.cpp,
+// which the light-link targets do not compile — without this stub
+// asan-build / ubsan-smoke fail at link (undefined reference from
+// AuraJIT::Impl::init). These binaries never compile a function with
+// a shape map, and a null/absent map is defined to match, so the
+// stub reports "guard passes".
+extern "C" __attribute__((weak)) int aura_check_shape_guard(const std::int64_t* /*args*/,
+                                                            std::uint32_t /*arg_count*/,
+                                                            const std::uint8_t* /*shape_map*/,
+                                                            std::uint32_t /*map_size*/) {
+    return 1;
+}
