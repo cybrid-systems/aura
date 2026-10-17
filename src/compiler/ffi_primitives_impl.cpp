@@ -188,6 +188,37 @@ void FFIRuntime::register_primitives(RegisterFn add,
                          "c-func: third arg must be signature string like \"(String) -> Int\"");
             return make_int(0);
         }
+        // Issue #4553: reject a signature the call path cannot pass. The
+        // old marshaler accepted any arity and silently dropped arguments
+        // past the 6th; apply_closure now passes up to 16 integer-class
+        // (Int / String / Opaque) and 8 Float slots (evaluator_pure.ixx
+        // kFfiMaxIntSlots / kFfiMaxSseSlots). Void is only valid as the
+        // whole argument list ("(Void) -> Int" is a nullary function).
+        if (arg_types.size() == 1 && arg_types[0] == 0)
+            arg_types.clear();
+        {
+            std::size_t n_int = 0, n_sse = 0;
+            bool void_arg = false;
+            for (int at : arg_types) {
+                if (at == 0)
+                    void_arg = true;
+                else if (at == 2)
+                    ++n_sse;
+                else
+                    ++n_int;
+            }
+            if (void_arg || n_int > kFfiSigMaxIntSlots || n_sse > kFfiSigMaxSseSlots) {
+                std::println(std::cerr, "c-func: unsupported signature for '{}'", name);
+                if (void_arg)
+                    std::println(std::cerr, "  reason: Void is not an argument type");
+                else
+                    std::println(std::cerr,
+                                 "  reason: {} integer-class and {} Float arguments; at most {} "
+                                 "integer-class (Int, String, Opaque) and {} Float are supported",
+                                 n_int, n_sse, kFfiSigMaxIntSlots, kFfiSigMaxSseSlots);
+                return make_int(0);
+            }
+        }
         auto* fn_ptr = ::dlsym(lib, name.c_str());
         if (!fn_ptr) {
             auto* err = ::dlerror();

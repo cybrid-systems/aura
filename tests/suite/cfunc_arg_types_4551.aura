@@ -1,0 +1,24 @@
+;; expect: 5 3 caught caught caught caught caught caught 3.0 #t #t #t
+; Issue #4551: a c-func argument whose tag does not match the declared
+; kind raises a catchable error instead of passing garbage (String into
+; Int passed its heap index; Int into String was dereferenced: SIGSEGV).
+; Issue #4553: signatures the call path cannot pass are rejected at
+; c-func time; 8 integer-class slots are accepted.
+(require "std/ffi" all:)
+(define c-abs (c-func -1 "labs" "(Int) -> Int"))
+(define c-strlen (c-func -1 "strlen" "(String) -> Int"))
+(define c-fabs (c-func -1 "fabs" "(Float) -> Float"))
+(define (probe thunk) (try (begin (thunk) "silent") (catch (e) "caught")))
+(display (c-abs -5)) (display " ")
+(display (c-strlen "abc")) (display " ")
+(display (probe (lambda () (c-abs "x")))) (display " ")
+(display (probe (lambda () (c-abs 1.5)))) (display " ")
+(display (probe (lambda () (c-strlen 5)))) (display " ")
+(display (probe (lambda () (c-fabs "x")))) (display " ")
+(display (probe (lambda () (c-abs 1 2)))) (display " ")
+(display (probe (lambda () (c-strlen)))) (display " ")
+(display (c-fabs -3)) (display " ")
+(display (procedure? (c-func -1 "labs" "(Int Int Int Int Int Int Int Int) -> Int"))) (display " ")
+(display (equal? 0 (c-func -1 "labs" "(Int Int Int Int Int Int Int Int Int Int Int Int Int Int Int Int Int) -> Int"))) (display " ")
+(display (equal? 0 (c-func -1 "fabs" "(Float Float Float Float Float Float Float Float Float) -> Float")))
+(newline)

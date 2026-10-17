@@ -18,9 +18,11 @@ import aura.compiler.evaluator_pure;
 
 using aura::compiler::CompilerService;
 using aura::compiler::FFIRuntime;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
 using aura::compiler::types::EvalValue;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_ffi_closure_id;
@@ -47,6 +49,28 @@ static double ffi4531_z() {
 }
 static std::int64_t ffi4531_len(const char* p) {
     return static_cast<std::int64_t>(p[0]);
+}
+// Issue #4553 fixtures: more than 6 integer-class slots (stack-passed past
+// rdi..r9) and mixed classes past the old 6-argument total.
+static std::int64_t ffi4553_pos8(std::int64_t a, std::int64_t b, std::int64_t c, std::int64_t d,
+                                 std::int64_t e, std::int64_t f, std::int64_t g, std::int64_t h) {
+    return a + 10 * b + 100 * c + 1000 * d + 10000 * e + 100000 * f + 1000000 * g + 10000000 * h;
+}
+static double ffi4553_mix(std::int64_t a, double x, std::int64_t b, double y, std::int64_t c,
+                          double z, std::int64_t d, double w) {
+    return static_cast<double>(a) + 10 * x + 100 * static_cast<double>(b) + 1000 * y +
+           10000 * static_cast<double>(c) + 100000 * z + 1000000 * static_cast<double>(d) +
+           10000000 * w;
+}
+static std::int64_t ffi4553_sum16(std::int64_t a0, std::int64_t a1, std::int64_t a2,
+                                  std::int64_t a3, std::int64_t a4, std::int64_t a5,
+                                  std::int64_t a6, std::int64_t a7, std::int64_t a8,
+                                  std::int64_t a9, std::int64_t a10, std::int64_t a11,
+                                  std::int64_t a12, std::int64_t a13, std::int64_t a14,
+                                  std::int64_t a15, double f0, double f7) {
+    return a0 + 2 * a1 + 3 * a2 + 4 * a3 + 5 * a4 + 6 * a5 + 7 * a6 + 8 * a7 + 9 * a8 + 10 * a9 +
+           11 * a10 + 12 * a11 + 13 * a12 + 14 * a13 + 15 * a14 + 16 * a15 +
+           static_cast<std::int64_t>(f0 * 100) + static_cast<std::int64_t>(f7 * 1000);
 }
 
 int run_test_bugfix() {
@@ -142,6 +166,143 @@ int run_test_bugfix() {
             CHECK(ffi_call_by_class<std::int64_t>(reinterpret_cast<void*>(ffi4531_len), ic, nullptr,
                                                   1, 0) == 65,
                   "4531: String slot passes a live pointer");
+        }
+    }
+
+    // Issue #4553: the dispatcher used to stop at ni + nd <= 6 (and the
+    // marshaler silently dropped arguments past the 6th). Integer-class
+    // slots past the registers go on the stack in declared order; Floats
+    // stay in xmm0..7, so the int-first prototype stays compatible.
+    {
+        using aura::compiler::pure::ffi_call_by_class;
+        const std::int64_t ic8[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        CHECK(ffi_call_by_class<std::int64_t>(reinterpret_cast<void*>(ffi4553_pos8), ic8, nullptr,
+                                              8, 0) == 87654321,
+              "4553: 8 Int slots arrive in order (7th and 8th on the stack)");
+        const std::int64_t ic4[4] = {1, 3, 5, 7};
+        const double dc4[4] = {2.0, 4.0, 6.0, 8.0};
+        CHECK(ffi_call_by_class<double>(reinterpret_cast<void*>(ffi4553_mix), ic4, dc4, 4, 4) ==
+                  87654321.0,
+              "4553: 4 Int + 4 Float interleaved (8 args) arrive in order");
+        std::int64_t ic16[16];
+        for (int i = 0; i < 16; ++i)
+            ic16[i] = 1;
+        const double dc2[2] = {0.5, 0.25};
+        CHECK(ffi_call_by_class<std::int64_t>(reinterpret_cast<void*>(ffi4553_sum16), ic16, dc2, 16,
+                                              2) == 136 + 50 + 250,
+              "4553: 16 integer-class slots + 2 Float arrive in order");
+        CHECK(ffi_call_by_class<std::int64_t>(reinterpret_cast<void*>(ffi4553_pos8), ic8, nullptr,
+                                              17, 0) == 0,
+              "4553: a shape past the slot limits is not called");
+    }
+
+    // Issue #4554: str_bufs was a growing std::vector<std::string>; the
+    // second String argument's push_back moved the first, and an SSO
+    // (<= 15 byte) string's bytes move with the object, so s_vals[0]
+    // pointed into freed storage. Each argument now owns a fixed slot.
+    // Issue #4551: tags are checked against the declared kinds.
+    {
+        using aura::compiler::pure::ffi_marshal_args_pure;
+        const std::vector<std::string> heap{"short", "other", "a-long-string-over-15-bytes"};
+        const std::vector<int> ss{3, 3, 3};
+        const std::array<EvalValue, 3> sargs{make_string(0), make_string(1), make_string(2)};
+        const auto m = ffi_marshal_args_pure(sargs, ss, heap, {});
+        CHECK(m.ok() && m.ni == 3 && m.nd == 0, "4554: three String slots marshal");
+        bool live = true;
+        for (std::size_t i = 0; i < 3; ++i)
+            live = live && m.s_vals[i] == m.str_bufs[i].c_str() &&
+                   std::string_view(m.s_vals[i]) == heap[i] &&
+                   m.ic[i] == reinterpret_cast<std::int64_t>(m.s_vals[i]);
+        CHECK(live, "4554: every String pointer names its own live buffer (SSO included)");
+
+        const std::vector<int> isig{1};
+        const std::array<EvalValue, 1> sarg{make_string(0)};
+        const auto bad_i = ffi_marshal_args_pure(sarg, isig, heap, {});
+        CHECK(!bad_i.ok() && bad_i.bad_arg == 0 && bad_i.bad_kind == 1,
+              "4551: String into an Int slot is a mismatch");
+        const std::vector<int> ssig{1, 3};
+        const std::array<EvalValue, 2> iarg{make_int(1), make_int(5)};
+        const auto bad_s = ffi_marshal_args_pure(iarg, ssig, heap, {});
+        CHECK(!bad_s.ok() && bad_s.bad_arg == 1 && bad_s.bad_kind == 3,
+              "4551: Int into a String slot is a mismatch (was dereferenced)");
+        const auto arity = ffi_marshal_args_pure(iarg, isig, heap, {});
+        CHECK(!arity.ok() && arity.arity_mismatch, "4551: argument count must match");
+        const std::vector<int> fsig{2};
+        const std::array<EvalValue, 1> farg{make_int(3)};
+        const auto widen = ffi_marshal_args_pure(farg, fsig, heap, {});
+        CHECK(widen.ok() && widen.nd == 1 && widen.dc[0] == 3.0, "4551: Int widens into Float");
+    }
+
+    // Issues #4551 / #4553 / #4554 end to end: a cc-built library loaded
+    // with c-load. Before the fixes: (kid "x") returned 1, (count7 7 x8)
+    // returned 6, the 8-argument mixed call returned garbage, a short first
+    // String argument read freed memory once the callee allocated, and
+    // (klen 5 1) crashed the process (SIGSEGV).
+    {
+        const char* cpath = "/tmp/aura-cfunc-4551-lib.c";
+        const char* sopath = "/tmp/aura-cfunc-4551-lib.so";
+        bool have_cc = false;
+        {
+            std::ofstream c(cpath);
+            c << "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n"
+                 "long kid(long a) { return a + 1; }\n"
+                 "long klen(const char *s, long n) { long h = 0; for (long i = 0; i < n; i++) "
+                 "h += (unsigned char)s[i]; return h; }\n"
+                 "long count7(long a, long b, long c, long d, long e, long f, long g, long h) "
+                 "{ return (a == 7) + (b == 7) + (c == 7) + (d == 7) + (e == 7) + (f == 7) + "
+                 "(g == 7) + (h == 7); }\n"
+                 "double mix(long a, double x, long b, double y, long c, double z, long d, "
+                 "double w) { return a + 10*x + 100*b + 1000*y + 10000*c + 100000*z + "
+                 "1000000*d + 10000000*w; }\n"
+                 "static char out[256];\n"
+                 "const char *join2(const char *a, const char *b) { void *keep[16]; "
+                 "for (int i = 0; i < 16; i++) { keep[i] = malloc(32); memset(keep[i], 0x58, "
+                 "31); ((char *)keep[i])[31] = 0; } snprintf(out, sizeof out, \"%s|%s\", a, b); "
+                 "for (int i = 0; i < 16; i++) free(keep[i]); return out; }\n";
+            have_cc = static_cast<bool>(c);
+        }
+        have_cc =
+            have_cc &&
+            std::system(
+                std::format("cc -O2 -shared -fPIC -o {} {} 2>/dev/null", sopath, cpath).c_str()) ==
+                0;
+        if (have_cc) {
+            CompilerService cs;
+            auto ok = cs.eval(std::format(
+                "(begin (require \"std/ffi\" all:)"
+                " (define lib4551 (c-load \"{}\"))"
+                " (define kid4551 (c-func lib4551 \"kid\" \"(Int) -> Int\"))"
+                " (define klen4551 (c-func lib4551 \"klen\" \"(String Int) -> Int\"))"
+                " (define c7-4553 (c-func lib4551 \"count7\" \"(Int Int Int Int Int Int Int "
+                "Int) -> Int\"))"
+                " (define mix4553 (c-func lib4551 \"mix\" \"(Int Float Int Float Int Float Int "
+                "Float) -> Float\"))"
+                " (define join4554 (c-func lib4551 \"join2\" \"(String String) -> String\"))"
+                " #t)",
+                sopath));
+            CHECK(ok.has_value(), "4551: library and c-funcs load");
+            auto truthy = [&](const char* src, const char* label) {
+                auto r = cs.eval(src);
+                CHECK(r && is_bool(*r) && as_bool(*r), label);
+            };
+            truthy("(= (kid4551 41) 42)", "4551: well-typed Int call");
+            truthy("(equal? (try (kid4551 \"x\") (catch (e) \"caught\")) \"caught\")",
+                   "4551: String into Int slot raises a catchable error");
+            truthy("(equal? (try (kid4551 1.5) (catch (e) \"caught\")) \"caught\")",
+                   "4551: Float into Int slot raises (no silent truncation)");
+            truthy("(equal? (try (klen4551 5 1) (catch (e) \"caught\")) \"caught\")",
+                   "4551: Int into String slot raises instead of SIGSEGV");
+            truthy("(= (klen4551 \"ab\" 2) 195)", "4551: well-typed String call");
+            truthy("(= (c7-4553 7 7 7 7 7 7 7 7) 8)", "4553: all 8 Int arguments arrive");
+            truthy("(= (mix4553 1 2.0 3 4.0 5 6.0 7 8.0) 87654321.0)",
+                   "4553: 4 Int + 4 Float arguments arrive in order");
+            truthy("(equal? (join4554 \"short\" \"other\") \"short|other\")",
+                   "4554: short first String argument survives a callee allocation");
+            truthy("(equal? (join4554 \"k205\" \"a-long-string-over-15-bytes\") "
+                   "\"k205|a-long-string-over-15-bytes\")",
+                   "4554: short String before a long one");
+        } else {
+            std::println("  SKIP: 4551/4553/4554 end to end (no cc)");
         }
     }
 
