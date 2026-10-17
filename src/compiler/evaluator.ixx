@@ -17301,6 +17301,17 @@ private:
     // restore + delete + create and the walk never returns.
     // Append-only at struct end.
     void rebind_workspace_defines_on_switch() noexcept;
+    // Issue #4585: the first set-code bump takes the mutation epoch off 0.
+    // Closures born while tracking was inactive carry bridge_epoch 0, and
+    // is_bridge_stale then treats that birth stamp as an unstamped
+    // tombstone (#2930 / #1665). Promote those stamps to the epoch just
+    // published. A must-deopt poison and a dead lifetime stay at 0.
+    void adopt_pre_tracking_closure_bridge_epochs() noexcept;
+    // Issue #4585: a later set-code can bump the bridge epoch from the
+    // shape hook without the #2569 expire restamp. Bring usable non-zero
+    // stamps up to the current epoch so host calls stay on the snapshot.
+    // Bridge 0, must-deopt, and a dead or unusable body stay put.
+    void restamp_usable_closure_bridge_epochs() noexcept;
     // Flat whose defines top_env already reflects. Compared, never
     // dereferenced: a second switch onto this same object skips re-eval.
     // Append-only at struct end.

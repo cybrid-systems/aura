@@ -586,8 +586,14 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // the live define stayed on the old lambda. Bump once when the
             // epoch is still unset. Do not mint a phantom mid inside
             // require_effect, and do not advance an epoch a caller already set.
-            if (ev.workspace_flat_ != nullptr && aura::core::current_mutation_epoch() == 0)
+            // Issue #4585: this bump is what turns tracking on. Host closures
+            // stamped while the epoch was 0 must be promoted after rebind,
+            // or every later call skips the capture snapshot.
+            bool epoch_tracking_activated = false;
+            if (ev.workspace_flat_ != nullptr && aura::core::current_mutation_epoch() == 0) {
                 aura::core::bump_mutation_epoch();
+                epoch_tracking_activated = true;
+            }
             // Issue #4315: production set-code publishes a new FlatAST whose
             // generation/wrap/cow restart at the birth values. Stamp a
             // monotonic install id so a ref or schema-2 hash from the
@@ -600,6 +606,17 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // unbound until a separate eval-current, so (f 5) missed f.
             ev.rebind_workspace_defines_on_switch();
             ev.defines_bound_flat_ = ev.workspace_flat_;
+            // After rebind so a scan inside the new defines cannot force-drop
+            // a stamp we just published (force-drop only rewrites a non-zero
+            // bridge). Workspace closures created by the rebind are already
+            // stamped at the new epoch.
+            if (epoch_tracking_activated)
+                ev.adopt_pre_tracking_closure_bridge_epochs();
+            // A second set-code bumps the bridge from the shape hook
+            // (cache is no longer empty) and does not expire tree-walker
+            // closures. Host stamps would miss that epoch and skip the
+            // snapshot again. Ride usable bodies up to the epoch now.
+            ev.restamp_usable_closure_bridge_epochs();
             return make_bool(true);
         });
 

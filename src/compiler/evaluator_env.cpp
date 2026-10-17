@@ -135,6 +135,70 @@ void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept {
     }
 }
 
+// Issue #4585: stamp_closure_bridge_epoch stores current_bridge_epoch(),
+// which is the mutation epoch. While that epoch is still 0, tracking is
+// inactive and is_bridge_stale(0, 0) is fresh. set-code's #3691 bump is
+// the first time the epoch leaves 0, and it does not restamp. Every host
+// closure then fails is_bridge_stale as an unstamped tombstone and
+// materialize_call_env skips the #4350 capture snapshot on every call.
+// Birth stamps (bridge 0, live, not a must-deopt poison) become the epoch
+// just published. Closures created after tracking is active still go
+// through stamp_closure_bridge_epoch; a later real bump leaves these
+// stamps behind on purpose. Compact's restamp still leaves 0 alone.
+void Evaluator::adopt_pre_tracking_closure_bridge_epochs() noexcept {
+    const auto cur = current_bridge_epoch();
+    if (cur == 0)
+        return;
+    std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> wlock;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        wlock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+    bump_closures_apply_epoch(); // Issue #3832
+    for (auto& cl_sh : closures_shards_) {
+        for (auto& [id, cl] : cl_sh.map) {
+            (void)id;
+            if (cl.bridge_epoch != 0)
+                continue;
+            if (cl.must_deopt_before_next_call)
+                continue;
+            if (!cl.lifetime_valid_for_views())
+                continue;
+            cl.bridge_epoch = cur;
+        }
+    }
+}
+
+// Issue #4585 / #2569: soft recover for a bridge bump that did not go
+// through expire_stale_live_closures_. A usable tree-walker body is still
+// the closure's own flat (set-code keeps the previous arena alive). Match
+// the epoch just published so materialize_call_env stays on the capture
+// snapshot. Unstamped 0 stays 0 (#2930). must-deopt and a cleared view
+// stay stale.
+void Evaluator::restamp_usable_closure_bridge_epochs() noexcept {
+    const auto cur = current_bridge_epoch();
+    if (cur == 0)
+        return;
+    std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> wlock;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        wlock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+    bump_closures_apply_epoch(); // Issue #3832
+    for (auto& cl_sh : closures_shards_) {
+        for (auto& [id, cl] : cl_sh.map) {
+            (void)id;
+            if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur)
+                continue;
+            if (cl.must_deopt_before_next_call)
+                continue;
+            if (!cl.lifetime_valid_for_views())
+                continue;
+            const bool body_usable = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
+                                     cl.body_id < cl.flat->size();
+            if (!body_usable)
+                continue;
+            cl.bridge_epoch = cur;
+        }
+    }
+}
+
 // Issue #1365 / #2930: bridge_epoch staleness (fail-closed for unstamped).
 // Defined out-of-line so bridge_epoch_zero_stats.h is shared with the JIT
 // dual-freshness path without importing Evaluator into aura_jit_bridge.cpp.
