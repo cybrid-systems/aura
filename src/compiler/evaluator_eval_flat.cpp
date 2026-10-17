@@ -6048,6 +6048,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     if (callee.tag == aura::ast::NodeTag::Variable) {
                         auto cname = std::string(p->resolve(callee.sym_id));
                         if (cname == "require" && v.children.size() > 1) {
+                            // Issue #4575: file mode already denied this require.
+                            // Replay the diagnostic; do not run the gate again.
+                            if (auto pending = take_pending_require_diag())
+                                return std::unexpected(std::move(*pending));
+                            auto surface = [&](Diagnostic d) -> EvalResult {
+                                if (require_failure_is_diagnostic_)
+                                    stash_pre_exec_require_diag(d);
+                                return std::unexpected(std::move(d));
+                            };
                             // Collect module names and check for all: flag
                             // (require mod1 mod2 ... all:) — all: applies to ALL modules
                             std::vector<std::string> mod_names;
@@ -6118,15 +6127,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         wire_general_object_create_pair_or_required_fail(
                                             ipool_pin, iflat_pin, static_cast<void*>(ipool),
                                             static_cast<void*>(iflat))) {
-                                    return std::unexpected(
+                                    return surface(
                                         Diagnostic{ErrorKind::InternalError,
                                                    "import: GeneralObjectPin required under "
                                                    "production (#2840)"});
                                 }
                                 auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
                                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                                    return std::unexpected(Diagnostic{ErrorKind::ParseError,
-                                                                      "require: internal error"});
+                                    return surface(Diagnostic{ErrorKind::ParseError,
+                                                              "require: internal error"});
                                 }
                                 iflat->root = pr.root;
                                 // Pre-expand macros so import primitive is recognized
@@ -6135,24 +6144,34 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Issue #4078: do not eval a refused half-expand.
                                 if (aura_hygiene_expand_deny_blocks_eval()) {
                                     const char* why = aura_macro_hygiene_last_limit_reason_string();
-                                    return std::unexpected(Diagnostic{
-                                        ErrorKind::InternalError, (why != nullptr && why[0] != '\0')
-                                                                      ? why
-                                                                      : "hygiene-pass-limit"});
+                                    return surface(Diagnostic{ErrorKind::InternalError,
+                                                              (why != nullptr && why[0] != '\0')
+                                                                  ? why
+                                                                  : "hygiene-pass-limit"});
                                 }
+                                // Issue #3457: this import is a fresh pool. SymId
+                                // intern is pool-local; clear around the eval so
+                                // the path is not a cached non-string.
+                                struct RequireSymReset {
+                                    Evaluator* ev;
+                                    explicit RequireSymReset(Evaluator* e) noexcept
+                                        : ev(e) {
+                                        ev->clear_sym_intern();
+                                    }
+                                    ~RequireSymReset() noexcept { ev->clear_sym_intern(); }
+                                    RequireSymReset(const RequireSymReset&) = delete;
+                                } require_sym_reset(this);
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
                                 if (!last) {
                                     // Issue #4460: file mode needs a source
                                     // location so the oneshot runner resumes.
-                                    if (require_failure_is_diagnostic_ &&
-                                        !last.error().location.valid()) {
-                                        Diagnostic d = last.error();
+                                    Diagnostic d = last.error();
+                                    if (require_failure_is_diagnostic_ && !d.location.valid()) {
                                         d.location = aura::diag::SourceLocation{
                                             v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col, 0};
                                         d.node_id = current_id;
-                                        return std::unexpected(std::move(d));
                                     }
-                                    return last;
+                                    return surface(std::move(d));
                                 }
                                 // Issue #4460: import turns a void load into an
                                 // error value. File mode reports that once, at
@@ -6180,7 +6199,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         msg = "require \"" + mod_path + "\": " + why;
                                     const auto line = v.line == 0 ? 1u : v.line;
                                     const auto col = v.col == 0 ? 1u : v.col;
-                                    return std::unexpected(Diagnostic{
+                                    return surface(Diagnostic{
                                         ErrorKind::InternalError, std::move(msg),
                                         aura::diag::SourceLocation{line, col, 0}, current_id});
                                 }

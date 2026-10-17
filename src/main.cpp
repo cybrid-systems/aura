@@ -2955,15 +2955,20 @@ int main(int argc, char* argv[]) {
     auto print_denseness_usage = [&](const char* prog) {
         std::println(std::cerr, "usage: {} [options] [file.aura …]", prog);
         std::println(std::cerr, "       {} -e '(+ 1 2)'", prog);
+        std::println(std::cerr, "       {} soft [--allow ffi,write] [file.aura …]", prog);
         std::println(std::cerr, "       echo '(+ 1 2)' | {}", prog);
         std::println(std::cerr, "       {} < file.aura", prog);
         std::println(std::cerr, "");
         std::println(std::cerr, "Programs are read from stdin when no file/-e is given.");
+        std::println(std::cerr, "Soft experiments (#4575):");
+        std::println(std::cerr,
+                     "  {} soft file.aura              Restricted Mutate on this workspace", prog);
+        std::println(std::cerr, "  {} soft --allow ffi,write      explicit opt-in; never implied",
+                     prog);
         std::println(std::cerr, "Denseness / span host env (soft multi-module probes):");
         std::println(std::cerr,
                      "  export AURA_BIN=…/build/aura   absolute path (#2772 multi-process)");
         std::println(std::cerr, "  export AURA_PATH=…/lib[:extra] module search path");
-        std::println(std::cerr, "  export AURA_SANDBOX=off        local Soft ergonomics");
         std::println(std::cerr,
                      "  export AURA_PIPELINE_STRICT=0  allow tree-walker fallback (#2213)");
         std::println(std::cerr, "Multi-process: shell children inherit only exported vars.");
@@ -2979,6 +2984,55 @@ int main(int argc, char* argv[]) {
     // (--serve, --ir, …) to earlier branches (they return).
     std::string all_input;
     bool source_from_argv = false;
+    // Issue #4575: `aura soft` is the launcher. It is not an env var.
+    // `--allow` is recognized only after `soft`. Plain `aura --allow`
+    // stays an unknown option.
+    bool soft_launch = false;
+    std::uint16_t soft_extra = 0;
+    std::string soft_allow_list;
+    bool soft_allow_bad = false;
+    std::string soft_allow_bad_tok;
+    auto take_allow = [&](std::string_view list) {
+        using aura::core::capability::Effect;
+        std::size_t p = 0;
+        while (p < list.size()) {
+            while (p < list.size() && (list[p] == ' ' || list[p] == ','))
+                ++p;
+            if (p >= list.size())
+                break;
+            auto j = p;
+            while (j < list.size() && list[j] != ',')
+                ++j;
+            auto tok = list.substr(p, j - p);
+            while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\t'))
+                tok.remove_suffix(1);
+            p = j < list.size() ? j + 1 : j;
+            if (tok.empty())
+                continue;
+            std::uint16_t bit = 0;
+            if (tok == "ffi")
+                bit = static_cast<std::uint16_t>(Effect::Ffi);
+            else if (tok == "write")
+                bit = static_cast<std::uint16_t>(Effect::Write);
+            else if (tok == "exec" || tok == "shell")
+                bit = static_cast<std::uint16_t>(Effect::Exec);
+            else if (tok == "network" || tok == "net")
+                bit = static_cast<std::uint16_t>(Effect::Network);
+            else if (tok == "read")
+                bit = static_cast<std::uint16_t>(Effect::Read);
+            else {
+                // mutate is the default, not an opt-in. tenant-admin,
+                // syscall, macro-self-evo, and unknown tokens fail closed.
+                soft_allow_bad = true;
+                soft_allow_bad_tok = std::string(tok);
+                return;
+            }
+            soft_extra = static_cast<std::uint16_t>(soft_extra | bit);
+            if (!soft_allow_list.empty())
+                soft_allow_list.push_back(',');
+            soft_allow_list.append(tok);
+        }
+    };
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             const std::string_view a(argv[i]);
@@ -3016,6 +3070,29 @@ int main(int argc, char* argv[]) {
             }
             if (a.starts_with("--health-port="))
                 continue;
+            // Issue #4575: first bare arg `soft` is the subcommand.
+            // `aura ./soft` remains a file. `--allow` is only valid here.
+            if (a == "soft" && i == 1 && !soft_launch) {
+                soft_launch = true;
+                continue;
+            }
+            if (soft_launch && (a == "--allow" || a.starts_with("--allow="))) {
+                std::string_view list;
+                if (a == "--allow") {
+                    if (i + 1 >= argc) {
+                        soft_allow_bad = true;
+                        soft_allow_bad_tok = "--allow";
+                        break;
+                    }
+                    list = argv[++i];
+                } else {
+                    list = a.substr(std::string_view("--allow=").size());
+                }
+                take_allow(list);
+                if (soft_allow_bad)
+                    break;
+                continue;
+            }
             if (!a.empty() && a[0] == '-') {
                 std::println(std::cerr, "error: unknown option '{}'", a);
                 print_denseness_usage(argv[0]);
@@ -3037,8 +3114,25 @@ int main(int argc, char* argv[]) {
             source_from_argv = true;
         }
     }
+    if (soft_allow_bad) {
+        std::println(std::cerr, "error: unknown --allow token '{}'", soft_allow_bad_tok);
+        std::println(std::cerr,
+                     "hint: ffi, write, exec|shell, network|net (mutate is already granted)");
+        print_denseness_usage(argv[0]);
+        return 1;
+    }
 
     aura::compiler::CompilerService cs;
+    // Issue #4575: AURA_SANDBOX=off stays the dev hatch and says so once.
+    // --serve / --ir / --jit returned above. `aura soft` prints its own
+    // refuse line instead of this one.
+    if (!soft_launch) {
+        if (const char* sb = std::getenv("AURA_SANDBOX")) {
+            const std::string_view sv(sb);
+            if (sv == "off" || sv == "OFF" || sv == "Off")
+                std::println(std::cerr, "aura: sandbox=off (dev escape hatch)");
+        }
+    }
     cs.set_session_id("default");
     aura::compiler::CompilerService::register_session("default", &cs);
     // Issue (lyapunov-fact demo 2026-07-28): use Repl for pipe mode too.
@@ -3090,6 +3184,38 @@ int main(int argc, char* argv[]) {
         std::println(std::cerr, "error: no program source (stdin empty and no file/-e given)");
         print_denseness_usage(argv[0]);
         return 1;
+    }
+
+    // Issue #4575: mint only once we have a program. Refuse exits before
+    // any form runs. The banner is the one stderr line for this launch.
+    if (soft_launch) {
+        const auto st = cs.evaluator().enter_soft_session(soft_extra);
+        if (!st.active) {
+            const char* word = "restricted";
+            if (cs.evaluator().effect_sandbox_mode() == 2)
+                word = "strict";
+            else if (cs.evaluator().effect_sandbox_mode() == 0)
+                word = "off (dev escape hatch)";
+            else if (const char* sb = std::getenv("AURA_SANDBOX")) {
+                const std::string_view sv(sb);
+                if (sv == "off" || sv == "OFF" || sv == "Off")
+                    word = "off (dev escape hatch)";
+                else if (sv == "strict" || sv == "STRICT" || sv == "Strict")
+                    word = "strict";
+            }
+            std::println(std::cerr, "aura: sandbox={}, soft auto-grant: refused", word);
+            return 1;
+        }
+        std::string line =
+            std::format("aura: sandbox=restricted, soft auto-grant: mutate(tenant={}, ws={}) "
+                        "token=soft-auto-grant",
+                        st.tenant, st.workspace_id);
+        if (!soft_allow_list.empty()) {
+            line.push_back(' ');
+            line += "allow=";
+            line += soft_allow_list;
+        }
+        std::println(std::cerr, "{}", line);
     }
 
     // Split into balanced S-expressions by tracking paren balance

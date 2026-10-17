@@ -798,23 +798,37 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // (see invalidate_typecheck_report_cache).
         ev.invalidate_typecheck_report_cache();
 
-        // Use ev.temp_arena_ for the parse state so (gc-temp) reclaims it.
-        // The ev.workspace_pool_ / ev.workspace_flat_ pointers below are the
-        // long-lived handles; the temp allocation is just a parse scratch.
-        auto alloc = ev.temp_arena_->allocator();
-        auto* pool_ptr = ev.temp_arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = ev.temp_arena_->create<aura::ast::FlatAST>(alloc);
+        // Issue #4575 / #3420: the loaded flat becomes the workspace, same
+        // as set-code. Production required refuses an uncovered create
+        // (both-null), which made (load ...) return void before eval.
+        // Cover the long-lived workspace members. A failed parse restores
+        // the previous workspace so the deny/fail paths stay untouched.
+        if (!ev.arena_)
+            return make_void();
+        auto* saved_pool = ev.workspace_pool_;
+        auto* saved_flat = ev.workspace_flat_;
+        auto alloc = ev.arena_->allocator();
+        auto* pool_ptr = ev.arena_->create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&ev.workspace_pool_), nullptr, alloc);
+        auto* flat_ptr = ev.arena_->create_with_cover<aura::ast::FlatAST>(
+            reinterpret_cast<void**>(&ev.workspace_flat_), nullptr, alloc);
         // Issue #2363: GeneralObjectPin adopt (site 6/7) — load.
         aura::core::lifetime::GeneralObjectPin load_pool_pin;
         aura::core::lifetime::GeneralObjectPin load_flat_pin;
         // Issue #2840: production required-mode fail-closed on pin wire.
-        if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+        if (!pool_ptr || !flat_ptr ||
+            !aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
                 load_pool_pin, load_flat_pin, static_cast<void*>(pool_ptr),
-                static_cast<void*>(flat_ptr)))
+                static_cast<void*>(flat_ptr))) {
+            ev.workspace_pool_ = saved_pool;
+            ev.workspace_flat_ = saved_flat;
             return make_void();
+        }
 
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            ev.workspace_pool_ = saved_pool;
+            ev.workspace_flat_ = saved_flat;
             return mev("parse", "load failed to parse file");
         }
         flat_ptr->root = pr.root;
@@ -840,6 +854,20 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Issue #4078: load-file must not eval a refused half-expand.
         if (const char* why = hygiene_expand_deny_why_4078())
             return mev(why, why);
+        // eval_flat of a Define re-keys top_ onto the load pool. Put the
+        // caller's pool back so the rest of this program resolves its own
+        // names (same shape as eval-current / rebind_workspace_defines).
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(ev.top_env());
         auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
         ev.workspace_flat_->clear_all_dirty();
         if (result)

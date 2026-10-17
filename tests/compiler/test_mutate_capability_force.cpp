@@ -21,9 +21,13 @@
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.evaluator;
@@ -77,6 +81,526 @@ std::string read_src(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+std::int64_t href_q(CompilerService& cs, std::string_view query, std::string_view key) {
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", query, key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+std::string heap_str(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    if (!is_string(v))
+        return {};
+    const auto i = as_string_idx(v);
+    const auto heap = cs.evaluator().string_heap();
+    if (i >= heap.size())
+        return {};
+    return std::string(heap[i]);
+}
+
+// query:security-audit returns a pair list of line strings, newest first.
+// Issue #3462: an explicit mutation-id, including 0, filters. Mint and
+// allow rows carry a non-zero mid, so a 0 here hides them. #f is not an
+// int, so tenant / fiber / mid stay unfiltered. Reason is contains-match.
+std::string audit_lines(CompilerService& cs) {
+    // Public query:* prims were removed (#1439). engine:metrics forwards
+    // the filter args to the registered query:security-audit impl.
+    auto r = cs.eval("(engine:metrics \"query:security-audit\" 80 #f #f 0 #f "
+                     "\"soft-auto-grant\")");
+    std::string out;
+    if (!r)
+        return out;
+    auto v = *r;
+    for (int guard = 0; guard < 96 && is_pair(v); ++guard) {
+        const auto& p = cs.evaluator().pairs()[as_pair_idx(v)];
+        out += heap_str(cs, p.car);
+        out.push_back('\n');
+        v = p.cdr;
+    }
+    return out;
+}
+
+std::string aura_binary() {
+    if (const char* e = std::getenv("AURA_BIN")) {
+        if (::access(e, X_OK) == 0)
+            return e;
+    }
+    char buf[4096];
+    const auto n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string dir(buf);
+        const auto slash = dir.rfind('/');
+        if (slash != std::string::npos) {
+            auto cand = dir.substr(0, slash + 1) + "aura";
+            if (::access(cand.c_str(), X_OK) == 0)
+                return cand;
+        }
+    }
+    for (const char* c : {"./aura", "./build/aura", "../build/aura"}) {
+        if (::access(c, X_OK) == 0)
+            return c;
+    }
+    return {};
+}
+
+struct CliOut {
+    int rc = -1;
+    std::string out;
+    std::string err;
+};
+
+CliOut run_aura(const std::string& bin, const std::string& env_prefix, const std::string& args) {
+    const char* outp = "/tmp/aura-4575-out.txt";
+    const char* errp = "/tmp/aura-4575-err.txt";
+    const std::string cmd = "timeout 25 " + env_prefix + " '" + bin + "' " + args + " > '" + outp +
+                            "' 2> '" + errp + "'";
+    const int raw = std::system(cmd.c_str());
+    CliOut r;
+    r.rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+    {
+        std::ifstream in(outp);
+        r.out.assign((std::istreambuf_iterator<char>(in)), {});
+    }
+    {
+        std::ifstream in(errp);
+        r.err.assign((std::istreambuf_iterator<char>(in)), {});
+    }
+    return r;
+}
+
+int count_sub(const std::string& hay, const std::string& needle) {
+    int n = 0;
+    for (std::size_t p = 0; (p = hay.find(needle, p)) != std::string::npos; p += needle.size())
+        ++n;
+    return n;
+}
+
+struct SavedEnv {
+    const char* key;
+    bool had = false;
+    std::string val;
+    explicit SavedEnv(const char* k)
+        : key(k) {
+        if (const char* v = std::getenv(k)) {
+            had = true;
+            val = v;
+        }
+    }
+    ~SavedEnv() {
+        if (had)
+            ::setenv(key, val.c_str(), 1);
+        else
+            ::unsetenv(key);
+    }
+};
+
+void write_text(const char* path, std::string_view body) {
+    std::ofstream f(path);
+    f << body;
+}
+
+// Issue #4575. Appended here so #4322 / #4323 above stay as they were.
+void run_issue_4575() {
+    using aura::compiler::security::kEffectExec;
+    using aura::compiler::security::kEffectFfi;
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    using aura::compiler::security::kEffectMutate;
+    using aura::compiler::security::kEffectNetwork;
+    using aura::compiler::security::kEffectRead;
+    using aura::compiler::security::kEffectSyscall;
+    using aura::compiler::security::kEffectTenantAdmin;
+    using aura::compiler::security::kEffectWrite;
+    using aura::core::current_mutation_epoch;
+    using aura::core::capability::CapabilityGrant;
+    using aura::core::capability::g_capability_registry;
+    std::println("\n--- #4575: Restricted soft auto-grant ---");
+
+    const auto forbidden =
+        static_cast<std::uint16_t>(kEffectTenantAdmin | kEffectSyscall | kEffectMacroSelfEvo);
+    const auto base_bits = static_cast<std::uint16_t>(kEffectMutate | kEffectRead);
+
+    // No env var mints. AURA_SOFT is set only inside this scope, then restored.
+    {
+        SavedEnv soft("AURA_SOFT");
+        SavedEnv soft2("AURA_SOFT_AUTO_GRANT");
+        SavedEnv sb("AURA_SANDBOX");
+        SavedEnv mt("AURA_MULTI_TENANT");
+        ::setenv("AURA_SOFT", "1", 1);
+        ::setenv("AURA_SOFT_AUTO_GRANT", "1", 1);
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::reset_multi_tenant_env_for_test();
+        reset_all();
+        CompilerService cs;
+        cs.evaluator().apply_production_security_defaults_for_test();
+        CapabilityGrant g;
+        CHECK(!g_capability_registry().find_grant(0, "soft-auto-grant", g),
+              "4575: AURA_SOFT does not mint");
+        CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 0,
+              "4575: stats stay 0 without enter");
+        ::unsetenv("AURA_SANDBOX");
+        CompilerService cs_unset;
+        cs_unset.evaluator().apply_production_security_defaults_for_test();
+        CHECK(!g_capability_registry().find_grant(0, "soft-auto-grant", g),
+              "4575: unset sandbox plus AURA_SOFT does not mint");
+        cs.evaluator().disarm_production_audit_defaults_for_test();
+    }
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::provenance::reset_multi_tenant_env_for_test();
+
+    // Strict, multi-tenant, and Off refuse. The prim cannot mint the flag.
+    {
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(2);
+        auto st = ev.enter_soft_session(0);
+        CHECK(st.refused && !st.active, "4575: Strict refuses");
+        CapabilityGrant g;
+        CHECK(!g_capability_registry().find_grant(0, "soft-auto-grant", g),
+              "4575: Strict mints nothing");
+        ev.set_effect_sandbox_mode(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        st = ev.enter_soft_session(0);
+        CHECK(st.refused && !st.active, "4575: multi-tenant refuses");
+        aura::core::provenance::reset_multi_tenant_env_for_test();
+        ev.set_effect_sandbox_mode(0);
+        st = ev.enter_soft_session(0);
+        CHECK(st.refused && !st.active, "4575: Off refuses");
+        auto prim = cs.eval("(security:grant-effect! \"soft-auto-grant\" 8)");
+        {
+            CapabilityGrant offg;
+            const bool found = g_capability_registry().find_grant(0, "soft-auto-grant", offg);
+            if (found)
+                CHECK(!offg.soft_session, "4575: Off prim row is not a soft session");
+            CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 0,
+                  "4575: Off prim does not raise the flag");
+        }
+        ev.set_effect_sandbox_mode(1);
+        prim = cs.eval("(security:grant-effect! \"soft-auto-grant\" 8)");
+        CHECK(!prim || is_error(*prim) || (is_bool(*prim) && !as_bool(*prim)),
+              "4575: prim is #f without TenantAdmin");
+        CHECK(!g_capability_registry().find_grant(0, "soft-auto-grant", g) || !g.soft_session,
+              "4575: prim row is not a soft session");
+        CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 0,
+              "4575: prim does not raise the flag");
+        // A real TenantAdmin grant of the same name still leaves soft_session false.
+        const auto mid = current_mutation_epoch() != 0 ? current_mutation_epoch() : 4575;
+        aura::core::capability::EffectProvenance prov;
+        prov.mutation_id = mid;
+        prov.epoch = mid;
+        auto& reg = g_capability_registry();
+        CHECK(reg.grant(0, "ta-seed", aura::core::capability::Effect::TenantAdmin, prov,
+                        /*single_use=*/false, /*session_bound=*/true, /*caller_principal=*/0),
+              "4575: session-mint a TenantAdmin seed");
+        CHECK(reg.grant(0, "ta", aura::core::capability::Effect::TenantAdmin, prov,
+                        /*single_use=*/false, /*session_bound=*/false, /*caller_principal=*/0),
+              "4575: non-session TenantAdmin sticks");
+        // Library-TU join (grant_effect_capability). The prim's own TU may
+        // still see mid 0, which leaves the session filter off.
+        ev.note_boundary_audit_mid_for_test(mid);
+        prim = cs.eval("(security:grant-effect! \"soft-auto-grant\" 8)");
+        CHECK(reg.find_grant(0, "soft-auto-grant", g), "4575: TA grant landed a row");
+        CHECK(!g.soft_session, "4575: TA grant does not set soft_session");
+        CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 0,
+              "4575: TA grant does not activate the session");
+        ev.note_boundary_audit_mid_for_test(0);
+        ev.clear_boundary_audit_mid_for_test();
+    }
+
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.kernel_self_single_tenant(), "4575: face is Restricted single-tenant");
+        const bool wal_before = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+        auto st = ev.enter_soft_session(0);
+        CHECK(st.active && !st.refused, "4575: enter mints");
+        CHECK(st.tenant == 0, "4575: tenant 0");
+        CHECK(st.workspace_id == 0, "4575: root workspace");
+        CHECK(st.effects == base_bits, "4575: default mask is Mutate|Read");
+        CHECK((st.effects & forbidden) == 0, "4575: no TenantAdmin/Syscall/MacroSelfEvo");
+        CHECK(aura::core::audit_wal::g_mutation_audit_wal().is_enabled() == wal_before,
+              "4575: enter does not toggle WAL");
+        CapabilityGrant g;
+        CHECK(g_capability_registry().find_grant(0, "soft-auto-grant", g), "4575: row stored");
+        CHECK(g.soft_session && !g.single_use && g.session_bound, "4575: soft session row");
+        CHECK(std::string(g.source) == "soft-auto-grant", "4575: source stamp");
+        CHECK(g.workspace_id == 0, "4575: row workspace 0");
+        CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 1,
+              "4575: stats soft-auto-grant");
+        CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant-workspace") == 0,
+              "4575: stats workspace");
+        CHECK(href_q(cs, "query:capability-effect-stats", "issue-4575") == 4575,
+              "4575: stats issue");
+        CHECK(href_q(cs, "query:security-posture", "soft-auto-grant") == 1, "4575: posture flag");
+        CHECK(href_q(cs, "query:security-posture", "issue-4575") == 4575, "4575: posture issue");
+
+        const auto mint_mid = g.bound_mutation_id;
+        CHECK(mint_mid != 0, "4575: mint mid is non-zero");
+        ev.note_boundary_audit_mid_for_test(mint_mid);
+        auto denied = ev.require_effect(kEffectWrite, "write-file", 0, 0);
+        CHECK(!denied, "4575: write-file denied without opt-in");
+        CHECK(!ev.require_effect(kEffectExec, "shell", 0, 0), "4575: shell denied");
+        CHECK(!ev.require_effect(kEffectFfi, "std/ffi", 0, 0), "4575: ffi denied");
+        CHECK(!ev.require_effect(kEffectNetwork, "std/net", 0, 0), "4575: network denied");
+        CHECK(ev.require_effect(kEffectMutate, "set-code", 0, 0), "4575: set-code allowed");
+        CHECK(g_capability_registry().find_grant(0, "soft-auto-grant", g), "4575: row after check");
+        CHECK(g.bound_mutation_id == mint_mid, "4575: rearm binds the noted mid");
+        ev.note_boundary_audit_mid_for_test(mint_mid + 17);
+        CHECK(ev.require_effect(kEffectMutate, "set-code", 0, 0), "4575: second mid still allows");
+        CHECK(g_capability_registry().find_grant(0, "soft-auto-grant", g), "4575: row after rearm");
+        CHECK(g.bound_mutation_id == mint_mid + 17, "4575: rearm follows the new mid");
+        ev.clear_boundary_audit_mid_for_test();
+
+        // Foreign tenant and a second workspace are outside the grant.
+        CHECK(!ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "set-code", 0,
+                                                   /*tenant=*/42, mint_mid),
+              "4575: foreign tenant denied");
+        CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "4575: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4575: eval-current");
+        auto f2 = cs.eval("(f 2)");
+        CHECK(f2 && is_int(*f2) && as_int(*f2) == 3, "4575: f(2) is 3");
+        if (ev.workspace_flat() != nullptr) {
+            auto ref = ev.make_stamped_ref(ev.workspace_flat()->root);
+            ref.tenant_id = 42;
+            CHECK(!ev.require_effect_on_ref(kEffectMutate, "set-car!", ref),
+                  "4575: cross-tenant ref denied");
+        }
+        {
+            aura::compiler::WorkspaceTree tree;
+            tree.nodes_.resize(2);
+            CHECK(tree.set_active(1), "4575: second workspace");
+            ev.set_workspace_tree(&tree);
+            CHECK(!ev.require_effect(kEffectMutate, "set-code", 0, 0),
+                  "4575: other workspace denied");
+            CHECK(tree.set_active(0), "4575: back to root");
+            CHECK(ev.require_effect(kEffectMutate, "set-code", 0, 0),
+                  "4575: root workspace allows");
+            ev.set_workspace_tree(nullptr);
+        }
+        auto reb = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"4575\")");
+        CHECK(reb && is_bool(*reb) && as_bool(*reb), "4575: rebind");
+        CHECK(cs.eval("(eval-current)").has_value(), "4575: eval after rebind");
+        f2 = cs.eval("(f 2)");
+        CHECK(f2 && is_int(*f2) && as_int(*f2) == 4, "4575: f(2) is 4");
+        auto batch = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+                             "\"(lambda (x) (+ x 3))\")) \"4575\")");
+        CHECK(batch && is_bool(*batch) && as_bool(*batch), "4575: atomic-batch");
+        CHECK(cs.eval("(eval-current)").has_value(), "4575: eval after batch");
+        f2 = cs.eval("(f 2)");
+        CHECK(f2 && is_int(*f2) && as_int(*f2) == 5, "4575: f(2) is 5");
+        write_text("/tmp/aura-4575-load.aura", "(define (g x) (+ x 9))\n");
+        auto loaded = cs.eval("(load \"/tmp/aura-4575-load.aura\")");
+        CHECK(loaded && !is_error(*loaded), "4575: load");
+        if (loaded && is_error(*loaded))
+            std::println(stderr, "4575 load: {}", ev.soft_error_message(*loaded));
+        auto g1 = cs.eval("(g 1)");
+        CHECK(g1 && is_int(*g1) && as_int(*g1) == 10, "4575: g(1) is 10");
+        auto rb = cs.eval("(workspace:rollback-latest)");
+        CHECK(rb && !is_error(*rb), "4575: rollback-latest");
+        for (int i = 0; i < 4; ++i) {
+            auto r = cs.eval(std::format("(set-code \"(define (h{}) 1)\")", i));
+            CHECK(r && !is_error(*r), "4575: set-code survives the boundary");
+        }
+        auto lines = audit_lines(cs);
+        CHECK(lines.find("op=\"mint\"") != std::string::npos, "4575: audit mint");
+        CHECK(lines.find("kind=EffectAllow") != std::string::npos, "4575: audit allow");
+        CHECK(lines.find("reason=\"soft-auto-grant\"") != std::string::npos, "4575: audit reason");
+        CHECK(lines.find("mutation_id=" + std::to_string(mint_mid)) != std::string::npos,
+              "4575: mint mid joins an audit row");
+        ev.revoke_effect_capability(0, "soft-auto-grant");
+        CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 0,
+              "4575: revoke clears the flag");
+        auto after = cs.eval("(set-code \"(define (z) 1)\")");
+        CHECK(after && is_error(*after), "4575: set-code denies after revoke");
+        if (after && is_error(*after)) {
+            const auto msg = ev.soft_error_message(*after);
+            CHECK(msg.find("effect-denied: mutate") != std::string::npos, "4575: mutate deny");
+            CHECK(msg.find("op=set-code") != std::string::npos, "4575: deny op is set-code");
+        }
+        lines = audit_lines(cs);
+        CHECK(lines.find("op=\"revoke\"") != std::string::npos, "4575: audit revoke");
+        CHECK(lines.find("op=\"mint\"") != std::string::npos, "4575: mint row remains");
+        // Clear the library proof stamp this block noted.
+        ev.note_boundary_audit_mid_for_test(0);
+        ev.clear_boundary_audit_mid_for_test();
+    }
+
+    // Opt-in keeps Ffi|Write and strips TenantAdmin. shell stays denied
+    // after a process that installed the prim under an explicit Exec grant.
+    {
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        const auto extra =
+            static_cast<std::uint16_t>(kEffectFfi | kEffectWrite | kEffectTenantAdmin);
+        auto st = ev.enter_soft_session(extra);
+        CHECK(st.active, "4575: opt-in enter");
+        const auto want = static_cast<std::uint16_t>(base_bits | kEffectFfi | kEffectWrite);
+        CHECK(st.effects == want, "4575: opt-in strips TenantAdmin");
+        CHECK(ev.require_effect(kEffectWrite, "write-file", 0, 0), "4575: write opted in");
+        CHECK(ev.require_effect(kEffectFfi, "std/ffi", 0, 0), "4575: ffi opted in");
+        CHECK(!ev.require_effect(kEffectExec, "shell", 0, 0), "4575: exec still denied");
+        CHECK(!ev.require_effect(kEffectNetwork, "std/net", 0, 0), "4575: network still denied");
+        ev.revoke_effect_capability(0, "soft-auto-grant");
+        st = ev.enter_soft_session(kEffectExec);
+        CHECK(st.active, "4575: exec opt-in to install shell");
+        auto req = cs.eval("(require \"std/process\")");
+        ev.revoke_effect_capability(0, "soft-auto-grant");
+        st = ev.enter_soft_session(0);
+        CHECK(st.active && st.effects == base_bits, "4575: back to the default mask");
+        if (req && !is_error(*req)) {
+            auto sh = cs.eval("(shell \"true\")");
+            CHECK(sh && is_error(*sh), "4575: shell denies after Exec is dropped");
+            if (sh && is_error(*sh)) {
+                const auto msg = ev.soft_error_message(*sh);
+                CHECK(msg.find("effect-denied: exec") != std::string::npos, "4575: exec deny");
+                CHECK(msg.find("op=shell") != std::string::npos, "4575: shell op");
+            }
+        } else {
+            CHECK(!ev.require_effect(kEffectExec, "shell", 0, 0),
+                  "4575: shell effect stays denied");
+        }
+        ev.revoke_effect_capability(0, "soft-auto-grant");
+    }
+
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::provenance::reset_multi_tenant_env_for_test();
+
+    // CLI launcher. The child unsets the inherited sandbox so Restricted is real.
+    {
+        std::println("\n--- #4575: aura soft CLI ---");
+        const auto bin = aura_binary();
+        CHECK(!bin.empty(), "4575: aura binary");
+        if (!bin.empty()) {
+            const char* face = "env -u AURA_SANDBOX -u AURA_SOFT -u AURA_SOFT_AUTO_GRANT "
+                               "-u AURA_MULTI_TENANT AURA_PIPELINE_STRICT=0";
+            write_text("/tmp/aura-4575-load.aura", "(define (g x) (+ x 9))\n");
+            write_text(
+                "/tmp/aura-4575-ok.aura",
+                "(set-code \"(define (f x) (+ x 1))\")\n"
+                "(eval-current)\n"
+                "(display \"SET-OK \") (display (f 2)) (newline)\n"
+                "(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"s\")\n"
+                "(eval-current)\n"
+                "(display \"REBIND-OK \") (display (f 2)) (newline)\n"
+                "(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+                "\"(lambda (x) (+ x 3))\")) \"s\")\n"
+                "(eval-current)\n"
+                "(display \"BATCH-OK \") (display (f 2)) (newline)\n"
+                "(load \"/tmp/aura-4575-load.aura\")\n"
+                "(display \"LOAD-OK \") (display (g 1)) (newline)\n"
+                "(display \"ROLLBACK-OK \") (display (workspace:rollback-latest)) (newline)\n");
+            auto ok = run_aura(bin, face, "soft /tmp/aura-4575-ok.aura");
+            CHECK(ok.rc == 0, "4575: aura soft exits 0");
+            CHECK(ok.out.find("SET-OK 3") != std::string::npos, "4575: CLI set-code");
+            CHECK(ok.out.find("REBIND-OK 4") != std::string::npos, "4575: CLI rebind");
+            CHECK(ok.out.find("BATCH-OK 5") != std::string::npos, "4575: CLI batch");
+            CHECK(ok.out.find("LOAD-OK 10") != std::string::npos, "4575: CLI load");
+            CHECK(ok.out.find("ROLLBACK-OK") != std::string::npos, "4575: CLI rollback");
+            CHECK(ok.out.find("effect-denied: mutate") == std::string::npos,
+                  "4575: no mutate deny");
+            CHECK(ok.err.find("aura: sandbox=restricted, soft auto-grant: mutate(tenant=0, ws=") !=
+                      std::string::npos,
+                  "4575: banner prefix");
+            CHECK(ok.err.find("token=soft-auto-grant") != std::string::npos, "4575: banner token");
+            CHECK(count_sub(ok.err, "soft auto-grant:") == 1, "4575: banner once");
+
+            auto plain = run_aura(bin, face, "/tmp/aura-4575-ok.aura");
+            const auto both = plain.out + plain.err;
+            CHECK(both.find("effect-denied: mutate") != std::string::npos, "4575: plain denies");
+            CHECK(both.find("op=set-code") != std::string::npos, "4575: plain op=set-code");
+            CHECK(both.find("soft auto-grant:") == std::string::npos, "4575: plain has no grant");
+
+            write_text("/tmp/aura-4575-deny.aura",
+                       "(display (write-file \"/tmp/aura-4575-nope.txt\" \"x\"))\n"
+                       "(newline)\n"
+                       "(require \"std/ffi\")\n"
+                       "(require \"std/net\")\n"
+                       "(require \"std/process\")\n");
+            auto deny = run_aura(bin, face, "soft /tmp/aura-4575-deny.aura");
+            const auto d = deny.out + deny.err;
+            CHECK(d.find("effect-denied: write") != std::string::npos, "4575: CLI write denied");
+            CHECK(d.find("op=std/ffi") != std::string::npos, "4575: CLI ffi denied");
+            CHECK(d.find("op=std/net") != std::string::npos, "4575: CLI network denied");
+            CHECK(d.find("effect-denied: exec") != std::string::npos, "4575: CLI exec denied");
+
+            auto allow = run_aura(bin, face, "soft --allow write,ffi /tmp/aura-4575-deny.aura");
+            const auto a = allow.out + allow.err;
+            CHECK(allow.err.find("allow=write,ffi") != std::string::npos,
+                  "4575: banner records opt-in");
+            CHECK(a.find("effect-denied: write") == std::string::npos, "4575: write opted in");
+            CHECK(a.find("op=std/ffi") == std::string::npos, "4575: ffi opted in");
+            CHECK(a.find("effect-denied: exec") != std::string::npos, "4575: exec still denied");
+            CHECK(a.find("op=std/net") != std::string::npos, "4575: network still denied");
+
+            auto bad = run_aura(bin, face, "soft --allow tenant-admin /tmp/aura-4575-ok.aura");
+            CHECK(bad.rc != 0, "4575: unknown --allow exits");
+            CHECK((bad.out + bad.err).find("token=soft-auto-grant") == std::string::npos,
+                  "4575: bad --allow does not mint");
+
+            auto strict = run_aura(bin,
+                                   "env -u AURA_SOFT -u AURA_MULTI_TENANT AURA_SANDBOX=strict "
+                                   "AURA_PIPELINE_STRICT=0",
+                                   "soft /tmp/aura-4575-ok.aura");
+            CHECK(strict.rc == 1, "4575: strict exits 1");
+            CHECK(strict.err.find("soft auto-grant: refused") != std::string::npos,
+                  "4575: strict refused");
+            CHECK(strict.out.find("SET-OK") == std::string::npos, "4575: strict does not run");
+
+            auto mten = run_aura(bin,
+                                 "env -u AURA_SANDBOX -u AURA_SOFT AURA_MULTI_TENANT=1 "
+                                 "AURA_PIPELINE_STRICT=0",
+                                 "soft /tmp/aura-4575-ok.aura");
+            CHECK(mten.rc == 1, "4575: multi-tenant exits 1");
+            CHECK(mten.err.find("soft auto-grant: refused") != std::string::npos,
+                  "4575: multi-tenant refused");
+            CHECK(mten.out.find("SET-OK") == std::string::npos, "4575: multi-tenant does not run");
+
+            auto off = run_aura(bin,
+                                "env -u AURA_SOFT -u AURA_MULTI_TENANT AURA_SANDBOX=off "
+                                "AURA_PIPELINE_STRICT=0",
+                                "soft /tmp/aura-4575-ok.aura");
+            CHECK(off.rc == 1, "4575: off refuses the grant");
+            CHECK(off.err.find("soft auto-grant: refused") != std::string::npos,
+                  "4575: off refused");
+            CHECK(off.err.find("aura: sandbox=off (dev escape hatch), soft auto-grant: refused") !=
+                      std::string::npos,
+                  "4575: off refuse carries the hatch phrase");
+            CHECK(count_sub(off.err, "aura: sandbox=off (dev escape hatch)\n") == 0,
+                  "4575: off does not double-print the hatch");
+
+            write_text("/tmp/aura-4575-plain.aura", "(display \"PLAIN\")\n(newline)\n");
+            auto hatch = run_aura(bin, "env -u AURA_SOFT AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
+                                  "/tmp/aura-4575-plain.aura");
+            CHECK(hatch.rc == 0, "4575: plain off still runs");
+            CHECK(count_sub(hatch.err, "aura: sandbox=off (dev escape hatch)\n") == 1,
+                  "4575: plain off warning once");
+            CHECK(hatch.err.find("soft auto-grant:") == std::string::npos,
+                  "4575: plain off no grant");
+
+            ::mkdir("/tmp/aura-4575-dir", 0755);
+            write_text("/tmp/aura-4575-dir/soft", "(display \"FILE-OK\")\n(newline)\n");
+            auto as_file = run_aura(bin, face, "/tmp/aura-4575-dir/soft");
+            CHECK((as_file.out + as_file.err).find("FILE-OK") != std::string::npos,
+                  "4575: a path named soft is a file");
+            CHECK((as_file.out + as_file.err).find("soft auto-grant:") == std::string::npos,
+                  "4575: file path does not mint");
+        }
+    }
+
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::provenance::reset_multi_tenant_env_for_test();
 }
 
 } // namespace
@@ -360,6 +884,26 @@ int run_test_mutate_capability_force() {
         CHECK(cs.eval("(eval-current)").has_value(), "4322 prod eval");
         aura::compiler::typed_audit::apply_production_audit_defaults();
         cs.evaluator().set_effect_sandbox_mode(1);
+        // Member harness sets AURA_SANDBOX=off, so apply_production_audit_defaults
+        // skips force_wal. Restricted + production + WAL off is
+        // security-schedule:posture-degraded and never reaches the #3395
+        // bare-int reject. Pin the audit WAL for this block only.
+        struct PinAuditWal {
+            bool pinned = false;
+            PinAuditWal() {
+                using aura::core::audit_wal::g_mutation_audit_wal;
+                if (g_mutation_audit_wal().is_enabled())
+                    return;
+                std::error_code ec;
+                std::filesystem::create_directories("/tmp/aura-4322-wal", ec);
+                pinned = g_mutation_audit_wal().enable(std::string_view("/tmp/aura-4322-wal"),
+                                                       nullptr, 0);
+            }
+            ~PinAuditWal() {
+                if (pinned)
+                    aura::core::audit_wal::g_mutation_audit_wal().disable();
+            }
+        } pin_audit_wal;
         auto found = cs.eval("(query :find \"live\")");
         CHECK(found && is_hash(*found), "4322 prod find is a hash");
         // #4391: query of a bare NodeId is stale-ref on this face. The
@@ -441,6 +985,8 @@ int run_test_mutate_capability_force() {
         auto n = cs.eval("n");
         CHECK(n && is_int(*n) && as_int(*n) == 7, "4323 n cell is 7");
     }
+
+    run_issue_4575();
 
     std::println("\n#2052 mutate capability force: {} passed, {} failed", g_passed, g_failed);
     return g_failed ? 1 : 0;

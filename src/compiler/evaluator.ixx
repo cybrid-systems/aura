@@ -1782,6 +1782,16 @@ export struct WorkspaceTree {
                        std::uint32_t to_layer) const noexcept;
 };
 
+// Issue #4575: result of Evaluator::enter_soft_session. The launcher
+// prints the banner from this; the library does not write stderr.
+export struct SoftSessionStatus {
+    bool active = false;
+    bool refused = false;
+    std::uint64_t tenant = 0;
+    std::uint32_t workspace_id = 0;
+    std::uint16_t effects = 0;
+};
+
 export class Evaluator {
     friend void primitives_detail::register_mutate_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
@@ -3067,6 +3077,20 @@ public:
     // and --load, which keep the error value (#2570).
     void set_require_failure_is_diagnostic(bool on) noexcept {
         require_failure_is_diagnostic_ = on;
+    }
+    // Issue #4575: file-mode require denied inside pre_exec. The kept
+    // Call is replayed once; the stash is the diagnostic, so the gate
+    // does not run a second time and IR does not void the failure.
+    void stash_pre_exec_require_diag(aura::diag::Diagnostic d) {
+        pre_exec_require_diag_ = std::move(d);
+    }
+    [[nodiscard]] bool has_pending_require_diag() const noexcept {
+        return pre_exec_require_diag_.has_value();
+    }
+    [[nodiscard]] std::optional<aura::diag::Diagnostic> take_pending_require_diag() {
+        std::optional<aura::diag::Diagnostic> out;
+        out.swap(pre_exec_require_diag_);
+        return out;
     }
     // Issue #4471: file-mode oneshot. The top-level form that was executing
     // when eval returned a diagnostic. Its source location can name an
@@ -5914,6 +5938,8 @@ private:
     Env* require_inject_env_ = nullptr;
     // Issue #4460: file-mode oneshot (see set_require_failure_is_diagnostic).
     bool require_failure_is_diagnostic_ = false;
+    // Issue #4575: diagnostic from a require that pre_exec kept in the AST.
+    std::optional<aura::diag::Diagnostic> pre_exec_require_diag_{};
     // Issue #4465: outermost eval_flat while that flag is on. Only a direct
     // child of this begin turns an escaped primitive error into a diagnostic.
     // Nested begins and module bodies keep the error value (#2570).
@@ -7982,6 +8008,11 @@ public:
                               bool single_use = false) noexcept;
     // Issue #2055: revoke with WorkspaceEpoch Mutation stamp for audit.
     void revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept;
+    // Issue #4575: mint the Soft auto-grant. Only the launcher / host
+    // calls this. No env var reaches it. Refuses unless
+    // kernel_self_single_tenant() (Restricted, tenant 0, not Strict,
+    // not multi-tenant). extra is masked to Read|Write|Exec|Network|Ffi.
+    [[nodiscard]] SoftSessionStatus enter_soft_session(std::uint16_t extra = 0) noexcept;
     void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict
     [[nodiscard]] std::uint8_t effect_sandbox_mode() const noexcept;
     // Issue #2859: opt-in gate for outermost MutationBoundaryGuard

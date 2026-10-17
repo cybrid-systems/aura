@@ -319,6 +319,7 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
         r == "sandbox-downgrade-needs-explicit-tenant-admin" ||
         r == "wildcard-write-fence-needs-explicit-tenant-admin" ||
         r == "tenant-spoof-denied" ||          // Issue #4017 spawn :tenant-id principal fence
+        r == "soft-auto-grant" ||              // Issue #4575 launcher refuse may be mid 0
         r == "cross-flat-provenance-zeroed" || // Issue #4293 observe, not a refuse
         r == kAuditMidSsotMissReason)
         return reason ? reason : "";

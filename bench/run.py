@@ -18,9 +18,9 @@ class-2 checksum is wrong or `classify_regression` from the #1936 gate
 reports a hit. 200 and 2000 defines are `--full` (200 is tens of seconds
 per sample on this box; 2000 is much slower).
 
-Class 2 sets `AURA_SANDBOX=off` on the child because Restricted denies
-Mutate until #4575. The harness does not set `AURA_SOFT` and does not
-mint a capability.
+Class 2 still sets `AURA_SANDBOX=off` on the child. That variable is the
+dev escape hatch. New Soft experiments use `aura soft`. The harness does
+not set `AURA_SOFT` and does not mint that grant.
 
 LuaJIT is reported as skipped when it is not on PATH. There is no
 separate speculative-JIT mode, so that column is absent. The CPython
@@ -241,7 +241,7 @@ CASES = build_cases()
 
 def child_env(extra: dict[str, str]) -> dict[str, str]:
     env = os.environ.copy()
-    # Restricted denies Mutate. off is the dev hatch until #4575.
+    # Dev escape hatch. New Soft experiments use `aura soft`.
     env["AURA_SANDBOX"] = "off"
     env["AURA_PIPELINE_STRICT"] = "0"
     env.update(extra)
@@ -574,9 +574,9 @@ def render_performance(report: dict[str, object]) -> str:
         f"({report.get('box', {}).get('ncpu')} CPUs). Clock is in-process",
         "`(monotonic-ms)`. Startup is excluded. No new primitive.",
         "",
-        "Class 2 runs with `AURA_SANDBOX=off` because the default Restricted",
-        "face denies Mutate until #4575. `AURA_SOFT` is not set and no grant",
-        "is minted.",
+        "Class 2 still runs with `AURA_SANDBOX=off`. That variable is the dev",
+        "escape hatch. New Soft experiments use `aura soft`. `AURA_SOFT` is not",
+        "set and the harness does not mint the scoped grant.",
         "",
         "LuaJIT column: skipped (interpreter not on PATH in the dev image that",
         "produced this page). Speculative JIT: no separate mode, column absent.",

@@ -583,6 +583,11 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // Issue #2151: effect_fiber_id_or lets tests simulate fiber A vs B;
     // production leaves override at 0 → live TLS fiber id.
     prov.fiber_id = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+    // Issue #4575: the Soft grant is scoped to the active workspace layer.
+    // A null tree is the CLI root (workspace 0).
+    prov.workspace_id = 0;
+    if (workspace_tree_ != nullptr)
+        prov.workspace_id = static_cast<WorkspaceTree*>(workspace_tree_)->active_idx();
 
     // Issue #2883: production hard principal check on side-effect entry.
     // If the current fiber resume had a hard principal mismatch under
@@ -901,14 +906,21 @@ bool Evaluator::kernel_self_workspace_mutate(std::string_view op,
     return true;
 }
 
+// Issue #4575: Soft self-call (this tenant, this workspace, every bit).
+// Lives outside require_effect so the #2658 ref_tenant cite stays in window.
+[[nodiscard]] static bool soft_session_skips_isolation(std::uint16_t req_bits, std::uint64_t tenant,
+                                                       std::uint64_t ref_tenant,
+                                                       void* tree) noexcept {
+    if (ref_tenant != 0 && ref_tenant != tenant)
+        return false;
+    const auto ws = tree == nullptr ? 0u : static_cast<WorkspaceTree*>(tree)->active_idx();
+    return ::aura::core::capability::g_capability_registry().soft_session_admits_self(tenant, ws,
+                                                                                      req_bits);
+}
+
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
-    // Issue #3526: 3-arg default ref_tenant=0 with a concrete NodeId
-    // re-opens #2658. Route through for_node_id so isolation sees the
-    // principal / existing stamp before the body. Inner on_ref → this
-    // with a still-zero tenant (unset principal) must not recurse.
-    // Soft/Off: target_node==0 (2-arg / 3-arg literal 0) skips; no extra
-    // stores on the exempt path.
+    // Issue #3526: NodeId + ref_tenant 0 routes through for_node_id (#2658).
     if (req_bits != 0 && target_node != 0 && ref_tenant == 0) {
         static thread_local bool redirecting = false;
         if (!redirecting) {
@@ -924,27 +936,28 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
         }
     }
     // #3109: fail-closed deny at entry (overflow ring full).
-    // #3302: fail-closed is force_wal-defaulted or AURA_WAL_APPEND_FAIL_CLOSED.
-    // #3493: do not extra-AND is_strict() — Restricted+MT already
-    // force_wal-default fail-closed; overflow-full mutate while audit
-    // is lossy is the commercial-face residual.
+    // #3302: force_wal default-arms fail-closed. #3493: not Strict-only.
     if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
-        ::aura::core::security_event_wal::wal_overflow_ring_full())
+        ::aura::core::security_event_wal::wal_overflow_ring_full()) {
         return false;
+    }
     if (req_bits != 0) {
-        // Issue #3415: foreign stamped tenant is the isolation target
-        // (align with resolve_stamped). Same-tenant / unset keep caller so
-        // Soft + cur==target fall-through is unchanged.
+        // Issue #3415: foreign stamp is the isolation target.
         const auto iso_target = (ref_tenant != 0 && ref_tenant != capability_tenant_id_)
                                     ? ref_tenant
                                     : capability_tenant_id_;
+        // Issue #4575: Soft self skips unset-principal isolation.
+        const bool soft_self = soft_session_skips_isolation(req_bits, capability_tenant_id_,
+                                                            ref_tenant, workspace_tree_);
         if ((req_bits != aura::compiler::security::kEffectMutate ||
              !kernel_self_workspace_mutate(op, ref_tenant)) &&
+            !soft_self &&
             !check_workspace_isolation(
                 /*target=*/iso_target,
                 /*ref_tenant=*/ref_tenant || target_node ? ref_tenant : capability_tenant_id_,
-                req_bits, op))
+                req_bits, op)) {
             return false; // IsolationDeny emitted (single-count, #2388)
+        }
     }
     // Issue #3296: Soft/Off SSOT is TypedMid → epoch. Issue #3966: hard
     // face joins caller_mid=0 (composite/boundary/resolve). Issue #3843/#3594/#3462:
@@ -974,8 +987,9 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
         // deny trail (query by mid=0 sees refuse, by mid=P sees allow —
         // same action, two keys).
         mid = typed_audit::peek_audit_mutation_id(0);
-        if (mid == 0)
+        if (mid == 0) {
             return false; // fail-closed, zero side effect (no refuse SE, #4241)
+        }
     } else if (mid == 0) {
         mid = 1; // Soft only: non-zero join stamp (process origin)
     }
@@ -2011,6 +2025,55 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
     // Issue #4430: a same-name grant for another tenant stays.
     if (!name.empty())
         drop_granted_string_for_tenant(name, tenant_id);
+}
+
+SoftSessionStatus Evaluator::enter_soft_session(std::uint16_t extra) noexcept {
+    using namespace ::aura::core::capability;
+    SoftSessionStatus st;
+    st.tenant = capability_tenant_id_;
+    st.workspace_id = 0;
+    if (workspace_tree_ != nullptr)
+        st.workspace_id = static_cast<WorkspaceTree*>(workspace_tree_)->active_idx();
+    auto emit_refuse = [&]() {
+        st.active = false;
+        st.refused = true;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        g_capability_registry().emit_soft_posture(st.tenant, epoch, epoch, /*bits=*/0, "refuse",
+                                                  /*denied=*/true);
+        return st;
+    };
+    // Same gate as kernel_self_single_tenant: Restricted, tenant 0,
+    // not Strict, not multi-tenant. Off is the hatch, not this grant.
+    if (!kernel_self_single_tenant())
+        return emit_refuse();
+    using aura::compiler::security::kEffectExec;
+    using aura::compiler::security::kEffectFfi;
+    using aura::compiler::security::kEffectMutate;
+    using aura::compiler::security::kEffectNetwork;
+    using aura::compiler::security::kEffectRead;
+    using aura::compiler::security::kEffectWrite;
+    const auto allow = static_cast<std::uint16_t>(kEffectRead | kEffectWrite | kEffectExec |
+                                                  kEffectNetwork | kEffectFfi);
+    // Read is required: load checks io-read before the Mutate choke.
+    // Forbidden bits (TenantAdmin, Syscall, MacroSelfEvo) are not in allow.
+    const auto bits = static_cast<std::uint16_t>(kEffectMutate | kEffectRead | (extra & allow));
+    st.effects = bits;
+    // set-code pays Mutate before the Guard. peek is 0 until an epoch exists.
+    if (::aura::core::current_mutation_epoch() == 0)
+        ::aura::core::bump_mutation_epoch();
+    EffectProvenance prov;
+    prov.mutation_id = ::aura::core::current_mutation_epoch();
+    prov.epoch = prov.mutation_id;
+    prov.workspace_id = st.workspace_id;
+    prov.fiber_id = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+    if (!g_capability_registry().begin_soft_session(st.tenant, st.workspace_id,
+                                                    static_cast<Effect>(bits), prov))
+        return emit_refuse();
+    st.active = true;
+    st.refused = false;
+    g_capability_registry().emit_soft_posture(st.tenant, prov.mutation_id, prov.epoch, bits, "mint",
+                                              /*denied=*/false);
+    return st;
 }
 
 void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {

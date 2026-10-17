@@ -2986,6 +2986,17 @@ public:
         // Issue #123: capture the (possibly stripped) root and use it for
         // the rest of the eval pipeline.
         expanded_root = pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+        // Issue #4575: a denied require stays in the tree. Replay it on
+        // the walker so prefix forms run and IR cannot ConstVoid the deny.
+        if (evaluator_.has_pending_require_diag()) {
+            auto result =
+                evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            if (auto leftover = evaluator_.take_pending_require_diag()) {
+                if (result)
+                    return std::unexpected(std::move(*leftover));
+            }
+            return result;
+        }
         // After pre_exec, root may be NULL_NODE (if the whole program
         // was a single require). Treat as a no-op.
         if (expanded_root == aura::ast::NULL_NODE) {
@@ -3629,6 +3640,16 @@ public:
         // so cached define functions are available during lowering.
         // Issue #123: capture the (possibly stripped) root.
         expanded_root = pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+        // Issue #4575: same replay as eval(). A denied require is not void.
+        if (evaluator_.has_pending_require_diag()) {
+            auto result =
+                evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            if (auto leftover = evaluator_.take_pending_require_diag()) {
+                if (result)
+                    return std::unexpected(std::move(*leftover));
+            }
+            return result;
+        }
         if (expanded_root == aura::ast::NULL_NODE) {
             return EvalResult(types::make_void());
         }
