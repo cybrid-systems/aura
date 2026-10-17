@@ -404,7 +404,7 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         // collision face, so symid matching stays confined to same-pool
         // env arrays (the local checks above).
         for (const CapSnapshot* snap = cap_snap_.get(); snap; snap = snap->parent.get()) {
-            if (auto it = snap->name_index_.find(std::string(n)); it != snap->name_index_.end())
+            if (auto it = snap->name_index_.find(n); it != snap->name_index_.end())
                 return snap->bindings_[it->second].second;
         }
     }
@@ -451,11 +451,15 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // bounded by MAX_ENV_DEPTH (same cycle budget as parent_
     // pointer walk; #1858: one hop per frame, not 2×).
     if (parent_id_ != NULL_ENV_ID && owner_) {
-        std::array<std::shared_lock<std::shared_mutex>, Evaluator::env_frame_shard_count()>
-            env_rlock;
-        for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
-            env_rlock[ef_i] = std::shared_lock<std::shared_mutex>(
-                owner_->env_frame_shard_mu(ef_i)); // Issue #3900
+        // Issue #4558: per-hop shard lock instead of all 16 shards per
+        // lookup (32 atomic RMWs on every primitive reference — the
+        // dominant cost in the interpreter-baseline gdb profile).
+        // Structural writers (alloc / truncate / clear) take ALL shards
+        // unique, so holding the visited frame's shard shared excludes
+        // them while that frame is read; per-frame writers take exactly
+        // that frame's shard. Same per-hop pattern as the set! parent
+        // walk in evaluator_eval_flat.cpp. The size check below runs
+        // under the hop's lock, so a truncate between hops is caught.
         EnvId cur = parent_id_;
         std::size_t hops = 0;
         // Wave2: intern once for the whole SoA walk (not once per hop).
@@ -467,9 +471,12 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             // dangling parent_id_ chains stay parked on fiber stacks or
             // across set-code restores, and the unchecked env_frame()
             // accessor then asserts (deque operator[] past size, SIGABRT
-            // in test_type_txn_misc_batch). The shard array held above
-            // excludes a CONCURRENT shrink, so the size is stable for the
-            // whole walk — this guard catches already-stale chains.
+            // in test_type_txn_misc_batch). Issue #4558: the hop's shard
+            // lock (held above) excludes a CONCURRENT shrink while this
+            // frame is read — this guard catches stale chains (including
+            // a truncate that landed between hops).
+            std::shared_lock<std::shared_mutex> hop_rlock(
+                owner_->env_frame_shard_mu(Evaluator::env_frame_shard_index(cur)));
             if (static_cast<std::size_t>(cur) >= owner_->env_frames_size())
                 break;
             const EnvFrame& pfr = owner_->env_frame(cur);
@@ -816,7 +823,7 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     // against the snapshot's pool-local keys is the #4351/#4352
     // collision face (symid-first lookups included).
     if (cap_snap_ && pool_) {
-        if (auto it = cap_snap_->name_index_.find(std::string(pool_->resolve(s)));
+        if (auto it = cap_snap_->name_index_.find(pool_->resolve(s));
             it != cap_snap_->name_index_.end())
             return cap_snap_->bindings_[it->second].second;
     }
@@ -4152,7 +4159,7 @@ static bool cap_snap_cell(const std::shared_ptr<const CapSnapshot>& root, std::s
                           std::optional<std::uint64_t>& cell_out) {
     cell_out.reset();
     for (const CapSnapshot* snap = root.get(); snap; snap = snap->parent.get()) {
-        auto it = snap->name_index_.find(std::string(n));
+        auto it = snap->name_index_.find(n);
         if (it == snap->name_index_.end())
             continue;
         const auto& bound = snap->bindings_[it->second].second;

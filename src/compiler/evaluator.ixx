@@ -993,7 +993,10 @@ export struct CapSnapshot {
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     std::unordered_map<aura::ast::SymId, std::size_t> symid_index_;
-    std::unordered_map<std::string, std::size_t> name_index_;
+    // Issue #4558: transparent hash — Env::lookup probes every snapshot
+    // level with a string_view per miss (was a std::string temp each).
+    std::unordered_map<std::string, std::size_t, Primitives::StringHash, std::equal_to<>>
+        name_index_;
     // The capture frame's own parent — the materialized Env's SoA chain
     // starts here (identical wiring to the per-call copy it replaces).
     EnvId parent_id = NULL_ENV_ID;

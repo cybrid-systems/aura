@@ -275,12 +275,21 @@ option(AURA_ENABLE_M4 "Register m4-* domain primitives (linear stubs, #1976)" ON
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
 # Remove when GCC >= fixed-version builds cleanly without -O0 overrides.
-option(AURA_ENABLE_GCC_ICE_WORKAROUND "Per-file -O0 for cache_impl.cpp + ast.ixx on GCC 16+" ON)
+option(AURA_ENABLE_GCC_ICE_WORKAROUND "Per-file -O0 for cache_impl.cpp (+ ast.ixx on GCC < 16.2) on GCC 16+" ON)
+option(AURA_AST_IXX_FORCE_O0 "Issue #4558: force ast.ixx to -O0 on GCC >= 16.2 too (#475 ICE override)" OFF)
 if(AURA_ENABLE_GCC_ICE_WORKAROUND
    AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
    AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
     set_source_files_properties(src/compiler/cache_impl.cpp PROPERTIES COMPILE_FLAGS "-O0")
-    set_source_files_properties(src/core/ast.ixx PROPERTIES COMPILE_FLAGS "-O0")
+    # Issue #4558: ast.ixx (FlatAST / StringPool / PersistentChildVector) is
+    # on every interpreter step — at -O0 its accessors held the eval loop
+    # to ~2.3x its optimized cost. GCC 16.2.0 (dev:v1.0.9) compiles ast.ixx
+    # cleanly at -O2, -O3, -O2/-O3 + ASan, -O2 + UBSan and TSan, so the
+    # override stays only for earlier GCC 16 releases (where the #475 ICE
+    # was observed) or when forced. cache_impl.cpp keeps the override.
+    if(AURA_AST_IXX_FORCE_O0 OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16.2")
+        set_source_files_properties(src/core/ast.ixx PROPERTIES COMPILE_FLAGS "-O0")
+    endif()
 endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
