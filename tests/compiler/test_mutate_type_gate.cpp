@@ -25,6 +25,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.type;
 
 using aura::compiler::CompilerService;
 using aura::compiler::mutate_type_gate::apply_production_defaults;
@@ -54,6 +55,64 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// Issue #4557: register_* dedup goes through an intern index instead of a
+// linear scan. Identity must not change: structurally equal types return
+// the first-registered TypeId, distinct ones stay distinct, and compact()
+// drops the index with the entries.
+static void registry_intern_4557() {
+    std::println("\n--- #4557: TypeRegistry intern index keeps dedup identity ---");
+    aura::core::TypeRegistry r;
+    const auto Int = r.int_type();
+    const auto Dyn = r.dynamic_type();
+    const auto Bool = r.bool_type();
+    const auto Str = r.string_type();
+    const auto f = r.register_func({Int, Dyn}, Bool);
+    const auto n = r.size();
+    CHECK(r.register_func({Int, Dyn}, Bool) == f && r.size() == n, "4557: same func -> same id");
+    CHECK(!(r.register_func({Int, Dyn}, Bool, true) == f), "4557: variadic is a different func");
+    CHECK(!(r.register_func({Dyn, Int}, Bool) == f), "4557: arg order matters");
+    const auto inner = r.register_func({Int}, Int);
+    const auto outer = r.register_func({inner}, Int);
+    CHECK(r.register_func({r.register_func({Int}, Int)}, Int) == outer, "4557: nested func dedups");
+    const auto a = r.make_var("a");
+    const auto b = r.make_var("b");
+    const auto fa = r.register_func({a}, a);
+    CHECK(r.register_func({a}, a) == fa, "4557: same type var -> same func");
+    CHECK(!(r.register_func({b}, b) == fa), "4557: different type var -> different func");
+    const auto all = r.register_forall(a, fa);
+    CHECK(r.register_forall(a, fa) == all, "4557: forall dedups");
+    CHECK(!(r.register_forall(b, fa) == all), "4557: forall over another var differs");
+    const auto io = r.register_effect("IO");
+    CHECK(r.register_effect("IO") == io && !(r.register_effect("Net") == io), "4557: effect dedup");
+    const auto lin = r.register_linear(Int);
+    CHECK(r.register_linear(Int) == lin && !(r.register_linear(Str) == lin), "4557: linear dedup");
+    const auto my = r.register_type(aura::core::TypeTag::INT, "MyInt4557");
+    CHECK(r.register_type(aura::core::TypeTag::INT, "MyInt4557") == my, "4557: named type dedup");
+    CHECK(r.register_type(aura::core::TypeTag::FLOAT, "Float") == r.lookup_type("Float"),
+          "4557: predefined Float found by tag + name");
+    const auto v = r.register_type(aura::core::TypeTag::VARIANT, "V4557");
+    CHECK(r.register_type(aura::core::TypeTag::VARIANT, "V4557") == v, "4557: variant name dedup");
+    const auto named = r.register_func_named({Str}, Int, "named4557");
+    CHECK(r.register_func({Str}, Int) == named && r.name_of(named) == "named4557",
+          "4557: first registration keeps identity and name");
+    // Many distinct registrations stay distinct (no false dedup on collision).
+    std::vector<aura::core::TypeId> vars;
+    for (int i = 0; i < 2000; ++i)
+        vars.push_back(r.register_func({r.make_var("")}, Int));
+    bool distinct = true;
+    for (std::size_t i = 1; i < vars.size(); ++i)
+        distinct = distinct && !(vars[i] == vars[i - 1]);
+    CHECK(distinct, "4557: 2000 fresh-var funcs stay distinct");
+    CHECK(r.register_func({Int, Dyn}, Bool) == f, "4557: early entry still found after growth");
+    r.compact();
+    const auto g = r.register_func({r.int_type(), r.dynamic_type()}, r.bool_type());
+    CHECK(g.generation == r.generation() && g.index < r.size(), "4557: compact drops the index");
+    // A pre-compact id is stale: it must not dedup onto a current entry.
+    CHECK(!(r.register_func({Int, Dyn}, r.bool_type()) == g), "4557: stale ids do not dedup");
+    CHECK(r.register_func({r.int_type(), r.dynamic_type()}, r.bool_type()) == g,
+          "4557: dedup works after compact");
 }
 
 int run_test_mutate_type_gate() {
@@ -780,6 +839,7 @@ int run_test_mutate_type_gate() {
 
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
+    registry_intern_4557();
     return g_failed ? 1 : 0;
 }
 

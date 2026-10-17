@@ -1,0 +1,60 @@
+;; expect: OK-4557 large workspace set-code, rebind cascade and restore stay correct
+; Issue #4557: set-code / rebind / restore on a 300-define workspace.
+; The type registry dedup now goes through an intern index, the primitive
+; type environment is built once per registry generation, and the dep
+; graph's sibling-define test uses a name set built once per populate.
+; These checks pin behaviour (dedup identity, dependency edges, restore);
+; the cost numbers live in the issue's bench.
+(define *fails* 0)
+(define *passes* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+(define W 300)
+(define (fillers k acc)
+  (if (= k 0) acc
+      (fillers (- k 1)
+               (string-append acc "(define (wsf" (number->string k) " x) (+ x " (number->string k) "))\n"))))
+(define src
+  (fillers W (string-append "(define knob (lambda () \"skiplist\"))\n"
+                            "(define (base) 1)\n"
+                            "(define (user) (+ (base) 1))\n"
+                            "(define (chain2) (* 10 (user)))\n")))
+(check "set-code ok" (set-code src) #t)
+(eval-current)
+(check "filler first" (wsf1 1) 2)
+(check "filler last" (wsf300 1) 301)
+(check "user before" (user) 2)
+(check "chain before" (chain2) 20)
+; A typed define after many engines still type-checks (shared prim env).
+(check "string prims typed" (string-length (knob)) 8)
+(define sid (ast:snapshot "scale"))
+(check "snapshot id" (>= sid 0) #t)
+; Rebind a callee: dependents (found through the dep graph) see it.
+(mutate:rebind "base" "(lambda () 41)" "4557")
+(eval-current)
+(check "callee rebind" (base) 41)
+(check "dependent sees callee" (user) 42)
+(check "transitive dependent" (chain2) 420)
+(mutate:rebind "knob" "(lambda () \"vector\")" "4557")
+(eval-current)
+(check "knob swapped" (knob) "vector")
+(check "filler untouched" (wsf150 0) 150)
+; Restore: every define returns to the snapshot.
+(ast:restore sid)
+(eval-current)
+(check "knob restored" (knob) "skiplist")
+(check "callee restored" (base) 1)
+(check "dependent restored" (user) 2)
+(check "filler after restore" (wsf299 1) 300)
+; A second set-code on the same registry reuses the cached prim env.
+(check "second set-code" (set-code "(define (one) 1)\n(define (two) (+ (one) (one)))") #t)
+(eval-current)
+(check "second workspace" (two) 2)
+(if (and (= *fails* 0) (= *passes* 18))
+    (display "OK-4557 large workspace set-code, rebind cascade and restore stay correct\n")
+    (begin (display "FAIL-4557 fails=") (display *fails*)
+           (display " passes=") (display *passes*) (newline) (exit 1)))

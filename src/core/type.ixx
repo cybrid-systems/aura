@@ -283,6 +283,22 @@ public:
         return meet_precision_hit_total_.load(std::memory_order_relaxed);
     }
 
+    // Issue #4557: the InferenceEngine primitive environment, built once
+    // per registry generation and shared by every later engine (opaque
+    // here; aura.compiler.type_checker owns the layout). compact() bumps
+    // the generation, which drops the cached TypeIds with it.
+    std::shared_ptr<const void> prim_env_cache() const {
+        std::lock_guard lock(prim_env_mu_);
+        if (prim_env_cache_ && prim_env_gen_ == generation())
+            return prim_env_cache_;
+        return nullptr;
+    }
+    void set_prim_env_cache(std::shared_ptr<const void> c) {
+        std::lock_guard lock(prim_env_mu_);
+        prim_env_cache_ = std::move(c);
+        prim_env_gen_ = generation();
+    }
+
     // Bump the generation counter and clear all non-predefined entries.
     // After compact() returns, any TypeId with generation less than
     // generation() (i.e. type_id.generation < next_generation_) is
@@ -310,9 +326,30 @@ private:
     // ~TypeRegistry() both invoke this.
     void destroy_all_entries() noexcept;
 
-    // type_hash is the structural hash for the dedup intern table
-    // (the initial implementation still linear-scans entries_).
+    // type_hash is the structural hash for the dedup intern table.
+    // Equal types (type_equals) hash equal; leaves hash by tag only.
     std::uint64_t type_hash(TypeId a) const;
+
+    // Issue #4557: dedup intern index. register_func / _forall /
+    // _linear / _effect used to linear-scan entries_ (with type_equals)
+    // on every call, so each InferenceEngine's primitive env cost
+    // O(registry size) per registration and set-code grew ~W^2.
+    // Keys are type_hash-consistent payload hashes; a lookup returns
+    // the candidate indices in ascending order and the caller keeps
+    // the old match predicate, so the first-registered entry still wins.
+    // register_type keys on tag + name. Caller holds the unique lock.
+    mutable std::mutex prim_env_mu_;
+    std::shared_ptr<const void> prim_env_cache_;
+    std::uint32_t prim_env_gen_ = 0;
+    std::unordered_multimap<std::uint64_t, std::uint32_t> intern_;
+    std::unordered_map<std::string, std::uint32_t> type_by_tag_name_;
+    std::vector<std::uint32_t> intern_candidates(std::uint64_t key) const;
+    void intern_note(std::uint64_t key, std::uint32_t index) { intern_.emplace(key, index); }
+    std::uint64_t func_key(const std::vector<TypeId>& args, TypeId ret) const;
+    std::uint64_t forall_key(TypeId var, TypeId body) const;
+    std::uint64_t linear_key(TypeId inner) const;
+    std::uint64_t effect_key(std::string_view name) const;
+    static std::string tag_name_key(TypeTag tag, std::string_view name);
 
 public:
     // Substitute type variables in a type using the given substitution map

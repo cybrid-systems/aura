@@ -306,6 +306,16 @@ void TypeEnv::bind(std::string name, TypeId type) {
     scopes_.back()[std::move(name)] = Binding{type, is_poly, {}};
 }
 
+std::vector<std::pair<std::string, TypeId>> TypeEnv::top_bindings() const {
+    std::vector<std::pair<std::string, TypeId>> out;
+    if (scopes_.empty())
+        return out;
+    out.reserve(scopes_.front().size());
+    for (const auto& [n, b] : scopes_.front())
+        out.emplace_back(n, b.type);
+    return out;
+}
+
 TypeId TypeEnv::lookup(const std::string& name) {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         auto f = it->find(name);
@@ -1663,6 +1673,23 @@ void ConstraintSystem::add_delta(Constraint c) {
     }
 }
 
+// Issue #4557: same Union-Find setup as fresh_var_named for a var a
+// previous ConstraintSystem allocated (shared primitive env).
+void ConstraintSystem::adopt_var(TypeId id, bool unnamed) {
+    if (unnamed)
+        ++fresh_counter_;
+    auto idx = static_cast<std::size_t>(id.index);
+    if (idx >= parent_.size()) {
+        parent_.resize(idx + 64, -1);
+        rank_.resize(idx + 64, 0);
+        binding_.resize(idx + 64, TypeId{});
+    }
+    if (parent_[idx] < 0)
+        parent_[idx] = static_cast<std::int64_t>(idx);
+    if (first_free_var_ == 0 || id.index < first_free_var_)
+        first_free_var_ = id.index;
+}
+
 TypeId ConstraintSystem::fresh_var() {
     return fresh_var_named("");
 }
@@ -1697,6 +1724,8 @@ TypeId ConstraintSystem::fresh_var_named(std::string_view hint) {
         parent_[idx] = static_cast<std::int64_t>(idx);
     if (first_free_var_ == 0 || id.index < first_free_var_)
         first_free_var_ = id.index;
+    if (fresh_log_)
+        fresh_log_->push_back(id);
     return id;
 }
 
@@ -4140,7 +4169,35 @@ void InferenceEngine::register_poly_primitive(std::string name, std::vector<Type
     env_.bind(std::move(name), func_type);
 }
 
+namespace {
+    // Issue #4557: the primitive environment every InferenceEngine starts
+    // from. Building it registers ~280 types and a dozen fresh type vars;
+    // set-code makes one engine per define, so rebuilding it per engine
+    // grew the registry (and every O(registry) pass) with the workspace.
+    struct PrimEnvCache {
+        std::vector<std::pair<std::string, TypeId>> binds;
+        std::vector<TypeId> cs_vars; // made by cs_.fresh_var() (unnamed)
+    };
+} // namespace
+
 void InferenceEngine::init_primitive_env() {
+    if (auto cached = reg_.prim_env_cache()) {
+        const auto* c = static_cast<const PrimEnvCache*>(cached.get());
+        for (auto v : c->cs_vars)
+            cs_.adopt_var(v, /*unnamed=*/true);
+        for (const auto& [n, t] : c->binds)
+            env_.bind(n, t);
+        return;
+    }
+    auto fresh = std::make_shared<PrimEnvCache>();
+    cs_.fresh_log_ = &fresh->cs_vars;
+    init_primitive_env_uncached();
+    cs_.fresh_log_ = nullptr;
+    fresh->binds = env_.top_bindings();
+    reg_.set_prim_env_cache(std::shared_ptr<const void>(std::move(fresh)));
+}
+
+void InferenceEngine::init_primitive_env_uncached() {
     auto Int = reg_.int_type();
     auto Bool = reg_.bool_type();
     auto Float = reg_.register_type(TypeTag::FLOAT, "Float");

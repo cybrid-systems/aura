@@ -316,6 +316,9 @@ public:
     aura::core::TypeId lookup(const std::string& name);
     bool is_bound(const std::string& name) const;
     void collect_names(std::vector<std::string>& out) const;
+    // Issue #4557: outermost-scope bindings (name, bound type), for the
+    // shared primitive-environment cache. Replayed through bind().
+    std::vector<std::pair<std::string, aura::core::TypeId>> top_bindings() const;
 };
 
 // ── Constraint System ────────────────────────────────────
@@ -1546,6 +1549,11 @@ public:
     [[nodiscard]] std::uint64_t compute_vars_hash() const;
     void clear();
     aura::core::TypeId fresh_var();
+    // Issue #4557: while non-null, fresh_var_named appends each new var
+    // (the primitive-env cache records them); adopt_var replays one on a
+    // later ConstraintSystem without allocating a registry entry.
+    std::vector<aura::core::TypeId>* fresh_log_ = nullptr;
+    void adopt_var(aura::core::TypeId id, bool unnamed);
     // Issue #79: variant that takes a name hint, so the resulting type var
     // shows up in error messages as a meaningful name (e.g. 'a' or 'xs')
     // instead of the default '__t<N>'. The hint may be empty.
@@ -2459,6 +2467,7 @@ public:
 
     // Initialize environment with primitive type signatures
     void init_primitive_env();
+    void init_primitive_env_uncached(); // Issue #4557: first engine per registry generation
 
     // Bind declared type sigs (from inject_type_sigs) to the env.
     // Called by TypeChecker::infer_flat after construction so the
