@@ -1,0 +1,124 @@
+; Issue #4350 / #4474 — a closure created directly at top level used to copy
+; every top-level binding into its capture frame, so K procedure defines held
+; ~K^2/2 frame bindings: each primitive reference (an index miss) scanned the
+; copy, and the file-mode reclaim mark walked every copy (each `let` cell
+; advanced the reclaim window). Top-level closures now capture an empty
+; frame and read globals through the live top_ consult. These cases pin the
+; semantics that consult must keep: forward references, redefinition,
+; set! of globals, shadowing, primitive references, and lookups among
+; hundreds of filler defines.
+;; expect: OK-4350
+
+(define *fails* 0)
+(define *passes* 0)
+(define (check label got want)
+  (if (equal? got want)
+      (begin (set! *passes* (+ *passes* 1)) (display "  pass: ") (display label) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display label)
+        (display " got: ") (write got) (display " want: ") (write want) (newline))))
+
+(define (use-later) (later-defined 5))
+(define (later-defined x) (* x 2))
+(check "forward reference" (use-later) 10)
+
+(define gx 1)
+(define (read-gx) gx)
+(define gx 2)
+(check "redefined value" (read-gx) 2)
+
+(define counter 0)
+(define (bump!) (set! counter (+ counter 1)) counter)
+(bump!)
+(bump!)
+(check "set! global from top-level closure" (list (bump!) counter) (list 3 3))
+
+(define y 10)
+(define (shadow) (let ((y 3)) (+ y 1)))
+(check "let shadows a global" (list (shadow) y) (list 4 10))
+
+(define (loop-global n)
+  (let lp ((i 0)) (if (< i n) (begin (set! counter (+ counter 1)) (lp (+ i 1))) counter)))
+(check "named-let set! of a global" (loop-global 4) 7)
+
+(define (mk-adder k) (lambda (x) (+ x k)))
+(define add5 (mk-adder 5))
+(check "nested capture" (add5 1) 6)
+
+(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))
+(check "self recursion" (fact 10) 3628800)
+
+(define (ev? n) (if (= n 0) #t (od? (- n 1))))
+(define (od? n) (if (= n 0) #f (ev? (- n 1))))
+(check "mutual recursion" (ev? 10) #t)
+
+(define (redef-target) 1)
+(define (call-redef) (redef-target))
+(define (redef-target) 2)
+(check "redefined procedure" (call-redef) 2)
+
+(define (mk-ctr) (let ((c 0)) (lambda () (set! c (+ c 1)) c)))
+(define ctr (mk-ctr))
+(ctr)
+(ctr)
+(check "counter closure" (ctr) 3)
+
+(define (a1) (let ((i 0)) (define (inc!) (set! i (+ i 1))) (inc!) (inc!) i))
+(check "inner define set!" (a1) 2)
+
+(check "map with top-level lambda" (map (lambda (x) (* x x)) '(1 2 3)) '(1 4 9))
+(define (trimmed) (string-trim "  hi  "))
+(check "stdlib call from top-level closure" (trimmed) "hi")
+
+(define z-before (lambda () z-after))
+(define z-after 'late)
+(check "lambda forward reference" (z-before) 'late)
+
+; A few hundred filler procedure defines; lookups through them stay correct.
+(define (f001 x) (+ x 1))
+(define (f002 x) (+ x 1))
+(define (f003 x) (+ x 1))
+(define (f004 x) (+ x 1))
+(define (f005 x) (+ x 1))
+(define (f006 x) (+ x 1))
+(define (f007 x) (+ x 1))
+(define (f008 x) (+ x 1))
+(define (f009 x) (+ x 1))
+(define (f010 x) (+ x 1))
+(define (f011 x) (+ x 1))
+(define (f012 x) (+ x 1))
+(define (f013 x) (+ x 1))
+(define (f014 x) (+ x 1))
+(define (f015 x) (+ x 1))
+(define (f016 x) (+ x 1))
+(define (f017 x) (+ x 1))
+(define (f018 x) (+ x 1))
+(define (f019 x) (+ x 1))
+(define (f020 x) (+ x 1))
+(define (f021 x) (+ x 1))
+(define (f022 x) (+ x 1))
+(define (f023 x) (+ x 1))
+(define (f024 x) (+ x 1))
+(define (f025 x) (+ x 1))
+(define (f026 x) (+ x 1))
+(define (f027 x) (+ x 1))
+(define (f028 x) (+ x 1))
+(define (f029 x) (+ x 1))
+(define (f030 x) (+ x 1))
+(define (sum-to n) (let lp ((i 0) (acc 0)) (if (< i n) (lp (+ i 1) (+ acc (f017 i))) acc)))
+(check "loop among filler defines" (sum-to 100) 5050)
+(define (g x) (let ((r (* x 2))) (+ r (f030 0))))
+(check "let in a top-level procedure" (g 4) 9)
+
+; An error inside a check aborts that form without counting, so also
+; require every check to have passed.
+(if (and (= *fails* 0) (= *passes* 16))
+    (display "OK-4350 top-level closures read globals live\n")
+    (begin
+      (display "FAIL-4350 fails=")
+      (display *fails*)
+      (display " passes=")
+      (display *passes*)
+      (newline)
+      (exit 1)))

@@ -663,6 +663,84 @@ static void ac4525_burst_rebalance() {
     }
 }
 
+// ── Issue #4350 / #4474: top-level closures must not copy all of top_ ──
+// Every TW closure capture copied the whole capturing env, so K top-level
+// procedure defines held ~K^2/2 frame bindings: each primitive reference
+// (an index miss) scanned the copy (#4350), and the file-mode reclaim mark
+// walked every copy per window, fired by each `let` cell (#4474). A
+// top-level closure now captures an empty frame and reads globals through
+// the live top_ consult.
+static std::string defs_program(int k, int iters, const char* body) {
+    std::string src = "(begin ";
+    for (int i = 0; i < k; ++i)
+        src += "(define (filler" + std::to_string(i) + " x) (+ x " + std::to_string(i) + "))";
+    src += "(define (g x) (let ((r 1)) r))";
+    src += "(define (run) (let loop ((i 0)) (if (< i " + std::to_string(iters) + ") (begin ";
+    src += body;
+    src += " (loop (+ i 1))) i)))";
+    src += "(run))";
+    return src;
+}
+
+static void ac4350_4474_top_level_capture() {
+    std::println("\n--- #4350/#4474: top-level closures capture live top_ ---");
+    constexpr int kDefs = 2000;
+    // AC1: frame bindings stay O(K), not O(K^2).
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto r = cs.eval(defs_program(kDefs, 10, "0"));
+        CHECK(r && is_int(*r) && as_int(*r) == 10, "4350 AC1: 2000-define program runs");
+        std::size_t total = 0;
+        for (std::size_t id = 0; id < ev.env_frames_size(); ++id) {
+            const auto& fr = ev.env_frame(static_cast<std::uint32_t>(id) /* EnvId */);
+            total += fr.bindings_symid_.size() + fr.bindings_.size();
+        }
+        CHECK(total < 20u * kDefs, "4350 AC1: frame bindings O(K) for K top-level defines (got " +
+                                       std::to_string(total) +
+                                       ", K^2/2 = " + std::to_string(kDefs * kDefs / 2) + ")");
+    }
+    // AC2: semantics through the live consult — forward references,
+    // redefinition, set! of a global from a top-level closure.
+    {
+        CompilerService cs;
+        auto r = cs.eval("(begin (define (use) (later 5)) (define (later x) (* x 2))"
+                         "(define gx 1) (define (read-gx) gx) (define gx 40)"
+                         "(define n 0) (define (bump!) (set! n (+ n 1)) n) (bump!) (bump!)"
+                         "(+ (use) (read-gx) (bump!) n))");
+        CHECK(r && is_int(*r) && as_int(*r) == 10 + 40 + 3 + 3,
+              "4350 AC2: forward ref / redefine / global set! through live top_");
+    }
+    // AC3: per-iteration cost of a primitive-referencing loop and of a
+    // `let` no longer grows with the number of top-level defines. Generous
+    // bound (3x, best of 3) — pre-fix ratios were ~3.4x (empty loop) and
+    // ~150x (`let`) at K=4000.
+    for (const char* body : {"0", "(g 1)"}) {
+        auto timed = [&](int k) {
+            CompilerService cs;
+            auto r0 = cs.eval(defs_program(k, 20000, body));
+            if (!r0 || !is_int(*r0))
+                return -1.0;
+            double best = 1e18;
+            for (int rep = 0; rep < 3; ++rep) {
+                const auto t0 = std::chrono::steady_clock::now();
+                auto r = cs.eval("(run)");
+                const auto t1 = std::chrono::steady_clock::now();
+                if (!r)
+                    return -1.0;
+                best = std::min(best, std::chrono::duration<double, std::milli>(t1 - t0).count());
+            }
+            return best;
+        };
+        const double small = timed(0);
+        const double big = timed(4000);
+        CHECK(small > 0 && big > 0, std::string("4350 AC3: loop evals (body ") + body + ")");
+        CHECK(big < 3.0 * small + 5.0,
+              std::string("4350/4474 AC3: K=4000 within 3x of K=0 (body ") + body + ", " +
+                  std::to_string(big) + " ms vs " + std::to_string(small) + " ms)");
+    }
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -678,6 +756,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4480_map_accumulator_pinned();
     ac4492_nested_map_filter_pinned();
     ac4525_burst_rebalance();
+    ac4350_4474_top_level_capture();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

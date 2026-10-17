@@ -658,14 +658,16 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                                  "' is unbound (void); define may have failed or been skipped");
             }
         }
-        auto& bindings = mod_env->bindings();
-        for (auto it = bindings.begin(); it != bindings.end();) {
-            if (!current_export_set_->count(it->first)) {
-                it = bindings.erase(it);
-            } else {
-                ++it;
-            }
+        // Issue #4350: filter through replace_string_bindings so the name
+        // index is rebuilt — Env::lookup treats binding_index_ as
+        // authoritative, and an in-place erase shifts every later slot.
+        std::vector<std::pair<std::string, EvalValue>> kept;
+        kept.reserve(mod_env->bindings().size());
+        for (const auto& b : std::as_const(*mod_env).bindings()) {
+            if (current_export_set_->count(b.first))
+                kept.push_back(b);
         }
+        mod_env->replace_string_bindings(kept);
         current_export_set_->clear();
     }
 

@@ -7306,7 +7306,41 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     // P0: legacy env pointer removed. Register captured env in SoA for this
                     // closure.
-                    EnvId cap_id = alloc_env_frame_from_env(*current_env);
+                    // Issue #4350 / #4474: a closure created directly in top_
+                    // captures an EMPTY frame parented at top_'s root frame
+                    // instead of a copy of every top-level binding. Free
+                    // variables resolve through the live top_ consult at the
+                    // root of the SoA walk (Env::lookup / lookup_cell_*), which
+                    // already held the same cells. Copying made K top-level
+                    // procedure defines cost K^2 frame bindings: every lookup
+                    // miss (each primitive call) scanned the copy, and the
+                    // file-mode reclaim mark walked all K copies per window.
+                    // Linear-tracked top_ bindings (#1539) keep the exact copy.
+                    auto top_capture_is_live_safe = [&]() -> bool {
+                        if (current_env != &top_ || top_.cap_snapshot())
+                            return false;
+                        for (auto st : top_.bindings_linear_ownership_state())
+                            if (st != linear_rt::Untracked)
+                                return false;
+                        return true;
+                    };
+                    EnvId cap_id = NULL_ENV_ID;
+                    if (top_capture_is_live_safe()) {
+                        const EnvId root = top_.parent_id();
+                        cap_id = alloc_env_frame(root);
+                        if (cap_id != NULL_ENV_ID) {
+                            std::unique_lock<std::shared_mutex> fwlock(
+                                env_frame_shards_[env_frame_shard_index(cap_id)].mu);
+                            EnvFrame& cfr = env_frames_[cap_id];
+                            cfr.pool_ = top_.pool();
+                            cfr.set_owner(this);
+                            cfr.version_ = defuse_version_.load(std::memory_order_acquire);
+                            std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+                            cap_snap_cache_.erase(cap_id);
+                        }
+                    }
+                    if (cap_id == NULL_ENV_ID)
+                        cap_id = alloc_env_frame_from_env(*current_env);
                     note_tw_closure_owner(cid); // Issue #4428
                     {
                         std::unique_lock<std::shared_mutex> wlock(
