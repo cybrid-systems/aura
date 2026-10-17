@@ -995,11 +995,26 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             std::span<void* const> opaque_heap_view(opaque_heap_.data(), opaque_heap_.size());
             auto marshalled = aura::compiler::pure::ffi_marshal_args_pure(
                 args, arg_types, string_heap_view, opaque_heap_view);
-            const auto& i6 = marshalled.i_vals;
-            const auto& d6 = marshalled.d_vals;
-            // s6 and str_bufs are not used directly (we only
-            // need the void*; s_vals already points into str_bufs
-            // for lifetime).
+            // Issue #4551: a tag that does not match the declared kind (or
+            // a wrong argument count) is a catchable type error; nothing is
+            // passed to native code. An Int used to reach a String slot as
+            // a raw pointer (SIGSEGV) and a String an Int slot as its heap
+            // index.
+            if (!marshalled.ok()) {
+                std::string msg;
+                if (marshalled.arity_mismatch) {
+                    msg = std::format("c-func {}: expected {} argument{}, got {}", ff.name,
+                                      arg_types.size(), arg_types.size() == 1 ? "" : "s",
+                                      args.size());
+                } else {
+                    const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
+                    msg =
+                        std::format("c-func {}: argument {}: expected {}, got {}", ff.name, bi + 1,
+                                    aura::compiler::pure::ffi_kind_name(marshalled.bad_kind),
+                                    aura::compiler::pure::ffi_value_kind_name(args[bi]));
+                }
+                return make_arith_type_error(msg);
+            }
 
             // Issue #3602: FFI arm shares the #3421 densify-stale refuse.
             // The TW/IR arms hard-refuse; this return path marshaled +
@@ -1016,36 +1031,24 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
 
             std::int64_t result_i = 0;
 
-            // Issue #4531: marshal per DECLARED slot class — integer-class
-            // slots (Int / String / Opaque) go to the integer registers in
+            // Issue #4531: per DECLARED slot class — integer-class slots
+            // (Int / String / Opaque) go to the integer registers in
             // declared order, Float slots to the SSE registers in declared
             // order; the result register follows the declared return type
-            // (xmm0 for Float, rax otherwise). The old any_float switch
-            // either dropped the Float args (int trampoline) or sent
-            // String/Int slots through xmm (double trampoline), and a Float
-            // return without a Float argument read rax.
-            std::array<std::int64_t, 6> ffi_ic{};
-            std::array<double, 6> ffi_dc{};
-            int ffi_ni = 0, ffi_nd = 0;
-            for (std::size_t fi = 0; fi < args.size() && fi < 6; ++fi) {
-                const int ffi_slot = fi < arg_types.size() ? arg_types[fi] : 1;
-                if (ffi_slot == 2) {
-                    ffi_dc[ffi_nd++] = marshalled.d_vals[fi];
-                } else if (ffi_slot == 3) {
-                    ffi_ic[ffi_ni++] = marshalled.s_vals[fi]
-                                           ? reinterpret_cast<std::int64_t>(marshalled.s_vals[fi])
-                                           : marshalled.i_vals[fi];
-                } else {
-                    ffi_ic[ffi_ni++] = marshalled.i_vals[fi];
-                }
-            }
+            // (xmm0 for Float, rax otherwise). Issue #4553: the marshaler
+            // fills ic / dc in the same pass (no second loop, no 6-arg cap);
+            // integer-class slots past the registers go on the stack.
+            const auto* ffi_ic = marshalled.ic.data();
+            const auto* ffi_dc = marshalled.dc.data();
+            const int ffi_ni = marshalled.ni;
+            const int ffi_nd = marshalled.nd;
             if (ret_type == 2) {
                 return types::make_float(aura::compiler::pure::ffi_call_by_class<double>(
-                    fn_ptr, ffi_ic.data(), ffi_dc.data(), ffi_ni, ffi_nd));
+                    fn_ptr, ffi_ic, ffi_dc, ffi_ni, ffi_nd));
             }
             {
                 result_i = aura::compiler::pure::ffi_call_by_class<std::int64_t>(
-                    fn_ptr, ffi_ic.data(), ffi_dc.data(), ffi_ni, ffi_nd);
+                    fn_ptr, ffi_ic, ffi_dc, ffi_ni, ffi_nd);
                 if (ret_type == 3 && result_i != 0) {
                     // String return: char* → string_heap
                     auto s = reinterpret_cast<const char*>(static_cast<std::intptr_t>(result_i));

@@ -39,6 +39,11 @@ namespace aura::compiler {
 // that the types are compatible at the call site.
 using PrimFn = std::function<types::EvalValue(std::span<const types::EvalValue>)>;
 
+// Issue #4553: c-func signature limits; must equal kFfiMaxIntSlots /
+// kFfiMaxSseSlots in evaluator_pure.ixx (the call path's slot counts).
+inline constexpr std::size_t kFfiSigMaxIntSlots = 16;
+inline constexpr std::size_t kFfiSigMaxSseSlots = 8;
+
 // FFI function record. Each registered C function gets
 // one of these. The closures_ lookup uses the index.
 struct FFIFunc {

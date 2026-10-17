@@ -152,24 +152,99 @@ export inline std::string closest_match_pure(std::string_view name,
 // Tagged arg type codes — match the int constants used
 // elsewhere in FFIRuntime for the arg_types array.
 //   1 = Int, 2 = Float, 3 = String, 4 = Opaque
+//
+// Issue #4553: slot limits. The old marshaler stopped at 6 arguments in
+// total and silently dropped the rest. ffi_call_by_class now passes up to
+// kFfiMaxIntSlots integer-class arguments (Int / String / Opaque; past
+// the register count they go to the stack in declared order) and up to
+// kFfiMaxSseSlots Float arguments (all in registers, so no Float ever
+// spills and the int-first prototype stays ABI-compatible). c-func
+// rejects a signature outside these limits when it is created
+// (ffi_primitives.ixx kFfiSigMaxIntSlots / kFfiSigMaxSseSlots mirror them).
+export inline constexpr std::size_t kFfiMaxIntSlots = 16;
+export inline constexpr std::size_t kFfiMaxSseSlots = 8;
+export inline constexpr std::size_t kFfiMaxArgs = kFfiMaxIntSlots + kFfiMaxSseSlots;
+
 struct FFIMarshalled {
-    std::array<std::int64_t, 6> i_vals{}; // raw i64 registers
-    std::array<double, 6> d_vals{};       // raw f64 registers
-    std::array<const char*, 6> s_vals{};  // char* registers (point into str_bufs)
-    std::vector<std::string> str_bufs;    // owns string contents
+    // Per declared argument (indexed like args / arg_types).
+    std::array<std::int64_t, kFfiMaxArgs> i_vals{}; // raw i64 value
+    std::array<double, kFfiMaxArgs> d_vals{};       // raw f64 value
+    std::array<const char*, kFfiMaxArgs> s_vals{};  // char* (points into str_bufs)
+    // Issue #4554: one fixed slot per argument. The old growing
+    // std::vector<std::string> moved earlier strings on the next
+    // push_back, and an SSO (<= 15 byte) string's bytes move with the
+    // object, so s_vals of an earlier short String argument dangled.
+    std::array<std::string, kFfiMaxArgs> str_bufs;
+    // Issue #4531 / #4553: per class, in declared order — what the call
+    // passes (integer registers then stack; xmm registers).
+    std::array<std::int64_t, kFfiMaxIntSlots> ic{};
+    std::array<double, kFfiMaxSseSlots> dc{};
+    int ni = 0;
+    int nd = 0;
     bool any_float = false;
+    // Issue #4551: the first argument whose tag does not match its
+    // declared kind (-1: none) and that kind. arity_mismatch: the call
+    // passed a different number of arguments than the signature declares,
+    // or the signature does not fit the slot limits.
+    int bad_arg = -1;
+    int bad_kind = 0;
+    bool arity_mismatch = false;
+    [[nodiscard]] bool ok() const noexcept { return bad_arg < 0 && !arity_mismatch; }
 };
 
-// ffi_marshal_args_pure — marshals up to 6 EvalValue args
-// into the raw C ABI for a foreign-function call. The
-// `str_bufs` field on the result owns the underlying
-// string memory for `s_vals` pointers; the caller must
-// keep the result alive for the duration of the FFI call.
+// Issue #4551: names used in the c-func argument type error.
+export inline const char* ffi_kind_name(int kind) noexcept {
+    switch (kind) {
+        case 2:
+            return "Float";
+        case 3:
+            return "String";
+        case 4:
+            return "Opaque";
+        default:
+            return "Int";
+    }
+}
+
+export inline const char* ffi_value_kind_name(const types::EvalValue& v) noexcept {
+    if (types::is_int(v))
+        return "Int";
+    if (types::is_float(v))
+        return "Float";
+    if (types::is_opaque(v))
+        return "Opaque";
+    if (types::is_string(v))
+        return "String";
+    if (types::is_bool(v))
+        return "Bool";
+    if (types::is_void(v))
+        return "Void";
+    if (types::is_pair(v))
+        return "Pair";
+    if (types::is_vector(v))
+        return "Vector";
+    if (types::is_closure(v))
+        return "Closure";
+    if (types::is_error(v))
+        return "Error";
+    return "Value";
+}
+
+// ffi_marshal_args_pure — marshals EvalValue args into the raw C ABI for
+// a foreign-function call. The `str_bufs` field on the result owns the
+// string memory `s_vals` points into; the caller must keep the result
+// alive for the duration of the FFI call.
 //
-// arg_type codes: 1 = Int (default if missing), 2 = Float,
-// 3 = String (looks up idx in string_heap, copies into
-// str_bufs for lifetime), 4 = Opaque (looks up idx in
-// opaque_heap, treats the void* as i64).
+// arg_type codes: 1 = Int (also any unknown code), 2 = Float,
+// 3 = String (looks up idx in string_heap, copies into str_bufs),
+// 4 = Opaque (looks up idx in opaque_heap, passes the void*).
+//
+// Issue #4551: each argument is checked against its declared kind
+// before anything is passed: Int takes an Int; Float takes a Float or
+// an Int (widened); String takes a String; Opaque takes an Opaque or an
+// Int address. On a mismatch bad_arg / bad_kind name the first bad
+// argument and nothing should be called (the caller raises a catchable
+// type error). The argument count must equal the declared count.
 //
 // All inputs are read-only spans. No `this` access.
 export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalValue> args,
@@ -177,28 +252,45 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
                                                   std::span<const std::string> string_heap,
                                                   std::span<void* const> opaque_heap) {
     FFIMarshalled out{};
-    constexpr std::size_t kMaxArgs = 6;
-    for (std::size_t i = 0; i < args.size() && i < kMaxArgs; ++i) {
-        int atype = (i < arg_types.size()) ? arg_types[i] : 1; // default Int
+    if (args.size() != arg_types.size() || args.size() > kFfiMaxArgs) {
+        out.arity_mismatch = true;
+        return out;
+    }
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const int atype = arg_types[i];
         const auto& a = args[i];
         if (atype == 2) { // Float
+            if (out.nd >= static_cast<int>(kFfiMaxSseSlots)) {
+                out.arity_mismatch = true;
+                return out;
+            }
             if (types::is_float(a)) {
                 out.d_vals[i] = types::as_float(a);
             } else if (types::is_int(a)) {
                 out.d_vals[i] = static_cast<double>(types::as_int(a));
+            } else {
+                out.bad_arg = static_cast<int>(i);
+                out.bad_kind = atype;
+                return out;
             }
             out.i_vals[i] = static_cast<std::int64_t>(out.d_vals[i]);
             out.any_float = true;
-        } else if (atype == 3) { // String → char*
-            if (types::is_string(a)) {
-                auto idx = types::as_string_idx(a);
-                if (idx < string_heap.size()) {
-                    out.str_bufs.push_back(string_heap[idx]);
-                    out.s_vals[i] = out.str_bufs.back().c_str();
-                    out.i_vals[i] = reinterpret_cast<std::int64_t>(out.s_vals[i]);
-                    out.d_vals[i] = 0.0;
-                }
+            out.dc[static_cast<std::size_t>(out.nd++)] = out.d_vals[i];
+            continue;
+        }
+        if (out.ni >= static_cast<int>(kFfiMaxIntSlots)) {
+            out.arity_mismatch = true;
+            return out;
+        }
+        if (atype == 3) { // String → char*
+            if (!types::is_string(a) || types::as_string_idx(a) >= string_heap.size()) {
+                out.bad_arg = static_cast<int>(i);
+                out.bad_kind = atype;
+                return out;
             }
+            out.str_bufs[i] = string_heap[types::as_string_idx(a)];
+            out.s_vals[i] = out.str_bufs[i].c_str();
+            out.i_vals[i] = reinterpret_cast<std::int64_t>(out.s_vals[i]);
         } else if (atype == 4) { // Opaque (void*)
             if (types::is_opaque(a)) {
                 auto oi = types::as_opaque_idx(a);
@@ -207,18 +299,20 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
             } else if (types::is_int(a)) {
                 out.i_vals[i] = types::as_int(a);
             } else {
-                out.i_vals[i] = 0;
+                out.bad_arg = static_cast<int>(i);
+                out.bad_kind = atype;
+                return out;
             }
-            out.d_vals[i] = 0.0;
-        } else { // Int (default for atype 1 or unknown)
-            if (types::is_int(a)) {
-                out.i_vals[i] = types::as_int(a);
-            } else if (types::is_float(a)) {
-                out.i_vals[i] = static_cast<std::int64_t>(types::as_float(a));
-                out.any_float = true;
+        } else { // Int (atype 1 or unknown)
+            if (!types::is_int(a)) {
+                out.bad_arg = static_cast<int>(i);
+                out.bad_kind = 1;
+                return out;
             }
+            out.i_vals[i] = types::as_int(a);
             out.d_vals[i] = static_cast<double>(out.i_vals[i]);
         }
+        out.ic[static_cast<std::size_t>(out.ni++)] = out.i_vals[i];
     }
     return out;
 }
@@ -230,129 +324,50 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
 // same (ni, nd) shape: the i-th integer slot lands in the i-th integer
 // register and the j-th Float slot in xmm(j), whatever the declared order.
 // A Float result lives in xmm0 and an integer result in rax regardless of
-// the argument classes. ni and nd must both be in [0, 6] with ni + nd <= 6
-// (the marshaler caps total args at 6); anything else returns R{}.
+// the argument classes.
+//
+// Issue #4553: integer-class slots past the register count are passed on
+// the stack in declared order, and that also holds for an int-first
+// prototype as long as no Float spills (nd <= 8 keeps every Float in
+// xmm0..7). The old hand-written switch stopped at ni + nd <= 6. One
+// prototype per (ni, nd) shape is generated here: ni in [0,
+// kFfiMaxIntSlots], nd in [0, kFfiMaxSseSlots]; anything else returns R{}.
+namespace ffi_detail {
+    template <std::size_t> struct FfiIntSlot {
+        using type = std::int64_t;
+    };
+    template <std::size_t> struct FfiSseSlot {
+        using type = double;
+    };
+    template <typename R, std::size_t... I, std::size_t... J>
+    inline R ffi_call_shape(void* fn, const std::int64_t* ic, const double* dc,
+                            std::index_sequence<I...>, std::index_sequence<J...>) {
+        using F = R (*)(typename FfiIntSlot<I>::type..., typename FfiSseSlot<J>::type...);
+        (void)ic;
+        (void)dc;
+        return reinterpret_cast<F>(fn)(ic[I]..., dc[J]...);
+    }
+    template <typename R, std::size_t K>
+    R ffi_call_shape_k(void* fn, const std::int64_t* ic, const double* dc) {
+        return ffi_call_shape<R>(fn, ic, dc, std::make_index_sequence<K / (kFfiMaxSseSlots + 1)>{},
+                                 std::make_index_sequence<K % (kFfiMaxSseSlots + 1)>{});
+    }
+    template <typename R> using FfiShapeFn = R (*)(void*, const std::int64_t*, const double*);
+    template <typename R, std::size_t... K>
+    constexpr std::array<FfiShapeFn<R>, sizeof...(K)> ffi_shape_table(std::index_sequence<K...>) {
+        return {&ffi_call_shape_k<R, K>...};
+    }
+} // namespace ffi_detail
+
 export template <typename R>
 inline R ffi_call_by_class(void* fn, const std::int64_t* ic, const double* dc, int ni, int nd) {
-    switch (ni * 16 + nd) {
-        case 0 * 16 + 0: {
-            using F = R (*)();
-            return reinterpret_cast<F>(fn)();
-        }
-        case 0 * 16 + 1: {
-            using F = R (*)(double);
-            return reinterpret_cast<F>(fn)(dc[0]);
-        }
-        case 0 * 16 + 2: {
-            using F = R (*)(double, double);
-            return reinterpret_cast<F>(fn)(dc[0], dc[1]);
-        }
-        case 0 * 16 + 3: {
-            using F = R (*)(double, double, double);
-            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2]);
-        }
-        case 0 * 16 + 4: {
-            using F = R (*)(double, double, double, double);
-            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2], dc[3]);
-        }
-        case 0 * 16 + 5: {
-            using F = R (*)(double, double, double, double, double);
-            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2], dc[3], dc[4]);
-        }
-        case 0 * 16 + 6: {
-            using F = R (*)(double, double, double, double, double, double);
-            return reinterpret_cast<F>(fn)(dc[0], dc[1], dc[2], dc[3], dc[4], dc[5]);
-        }
-        case 1 * 16 + 0: {
-            using F = R (*)(std::int64_t);
-            return reinterpret_cast<F>(fn)(ic[0]);
-        }
-        case 1 * 16 + 1: {
-            using F = R (*)(std::int64_t, double);
-            return reinterpret_cast<F>(fn)(ic[0], dc[0]);
-        }
-        case 1 * 16 + 2: {
-            using F = R (*)(std::int64_t, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1]);
-        }
-        case 1 * 16 + 3: {
-            using F = R (*)(std::int64_t, double, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1], dc[2]);
-        }
-        case 1 * 16 + 4: {
-            using F = R (*)(std::int64_t, double, double, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1], dc[2], dc[3]);
-        }
-        case 1 * 16 + 5: {
-            using F = R (*)(std::int64_t, double, double, double, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], dc[0], dc[1], dc[2], dc[3], dc[4]);
-        }
-        case 2 * 16 + 0: {
-            using F = R (*)(std::int64_t, std::int64_t);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1]);
-        }
-        case 2 * 16 + 1: {
-            using F = R (*)(std::int64_t, std::int64_t, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0]);
-        }
-        case 2 * 16 + 2: {
-            using F = R (*)(std::int64_t, std::int64_t, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0], dc[1]);
-        }
-        case 2 * 16 + 3: {
-            using F = R (*)(std::int64_t, std::int64_t, double, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0], dc[1], dc[2]);
-        }
-        case 2 * 16 + 4: {
-            using F = R (*)(std::int64_t, std::int64_t, double, double, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], dc[0], dc[1], dc[2], dc[3]);
-        }
-        case 3 * 16 + 0: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2]);
-        }
-        case 3 * 16 + 1: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], dc[0]);
-        }
-        case 3 * 16 + 2: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], dc[0], dc[1]);
-        }
-        case 3 * 16 + 3: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, double, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], dc[0], dc[1], dc[2]);
-        }
-        case 4 * 16 + 0: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3]);
-        }
-        case 4 * 16 + 1: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], dc[0]);
-        }
-        case 4 * 16 + 2: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, double, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], dc[0], dc[1]);
-        }
-        case 5 * 16 + 0: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], ic[4]);
-        }
-        case 5 * 16 + 1: {
-            using F =
-                R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t, double);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], ic[4], dc[0]);
-        }
-        case 6 * 16 + 0: {
-            using F = R (*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t,
-                            std::int64_t);
-            return reinterpret_cast<F>(fn)(ic[0], ic[1], ic[2], ic[3], ic[4], ic[5]);
-        }
-        default:
-            break;
-    }
-    return R{};
+    if (ni < 0 || nd < 0 || ni > static_cast<int>(kFfiMaxIntSlots) ||
+        nd > static_cast<int>(kFfiMaxSseSlots))
+        return R{};
+    static constexpr auto kTable = ffi_detail::ffi_shape_table<R>(
+        std::make_index_sequence<(kFfiMaxIntSlots + 1) * (kFfiMaxSseSlots + 1)>{});
+    return kTable[static_cast<std::size_t>(ni) * (kFfiMaxSseSlots + 1) +
+                  static_cast<std::size_t>(nd)](fn, ic, dc);
 }
 
 // ── Macro expansion (Issue #146 Phase 6 sub-extract) ────────

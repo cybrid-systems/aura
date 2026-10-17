@@ -7,7 +7,11 @@
 ; FFI is an explicit dangerous capability (dlopen / native memory).
 ;
 ;   (c-load path)              → lib handle | 0
-;   (c-func lib name sig)      → procedure
+;   (c-func lib name sig)      → procedure | 0
+;       sig "(Int String Float Opaque …) -> Ret": at most 16 integer-class
+;       (Int / String / Opaque) and 8 Float arguments, else 0 (#4553).
+;       A call checks each argument against its declared kind and the
+;       argument count; a mismatch raises a catchable error (#4551).
 ;   (c-alloc n)                → opaque
 ;   (c-free p)                 → void
 ;   (c-opaque addr)            → opaque
