@@ -23,6 +23,12 @@ module;
 #include "compiler/typed_mutation_audit.h" // Issue #2899: linear_ir_fastpath_try_skip
 #include "compiler/mutation_hold_budget.h" // Issue #3988: opcode-stride poll stride
 #include "compiler/user_arity.hh"          // Issue #4467: call-site procedure arity
+// Issue #4568: this TU owns the feedback row map. The macro must be
+// set before the include so the definition arrives via the header
+// (a global module fragment may only contain preprocessor inclusion).
+#define AURA_TYPE_FEEDBACK_DEFINE_TABLE
+#include "compiler/type_feedback.h" // Issue #4568: relaxed per-site feedback
+
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -937,6 +943,52 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         fr.resume_instr = 0;
     }
 
+    // Issue #4568: one lookup per call. After the back-edge or entry
+    // budget the row is cooled and `fb.on` stays false, so the timed
+    // loop only tests that flag. Writes are relaxed atomics; no
+    // ShapeProfiler lock. __top__ is the driver, not a queried define.
+    feedback::Recorder fb;
+    if (!func.name.empty() && func.name != "__top__" && !feedback::known_off(&func)) {
+        if (feedback::fast_hit(&func))
+            fb = feedback::enter_fast();
+        if (!fb.row) {
+            feedback::EnterInfo info;
+            info.key = &func;
+            info.name = func.name.data();
+            info.name_len = static_cast<std::uint32_t>(func.name.size());
+            info.free_count = static_cast<std::uint32_t>(func.free_vars.size());
+            info.arg_count = func.arg_count;
+            info.nblocks = static_cast<std::uint32_t>(func.blocks.size());
+            if (info.nblocks > feedback::kMaxBlocks)
+                info.nblocks = feedback::kMaxBlocks;
+            std::uint64_t h = 14695981039346656037ull;
+            std::uint32_t cursor = 0;
+            for (std::uint32_t bi = 0; bi < func.blocks.size(); ++bi) {
+                if (bi < info.nblocks)
+                    info.bases[bi] = cursor;
+                for (const auto& ins : func.blocks[bi].instructions) {
+                    h ^= static_cast<std::uint64_t>(ins.opcode);
+                    h *= 1099511628211ull;
+                    for (int k = 0; k < 4; ++k) {
+                        h ^= ins.operands[k];
+                        h *= 1099511628211ull;
+                    }
+                    ++cursor;
+                }
+            }
+            info.site_count = cursor;
+            info.fingerprint = h;
+            fb = feedback::enter_slow(info);
+        }
+    }
+    auto fb_lat = [](const EvalValue& v) -> std::uint8_t {
+        if (is_int(v))
+            return feedback::kFixnum;
+        if (is_float(v))
+            return feedback::kFloat;
+        return feedback::kOther;
+    };
+
     std::uint32_t opcode_poll_n = 0;
     while (current < func.blocks.size()) {
         auto& block = func.blocks[current];
@@ -1116,6 +1168,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     default:
                         break;
                 }
+                // Issue #4568: operand lattice + overflow hint. Off after warmup.
+                if (fb.on) {
+                    const bool ov =
+                        operand_is_number(a) && operand_is_number(b) && is_error(locals[ops[0]]);
+                    feedback::note_arith(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                         fb_lat(a), fb_lat(b), ov);
+                }
                 continue; // next instruction
             }
 
@@ -1203,6 +1262,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
 
                 case IROpcode::Arg:
+                    // Issue #4568: user-arg lattice (captures sit below free_count).
+                    if (fb.on)
+                        feedback::note_arg(
+                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)), ops[1],
+                            fb.free_count,
+                            fb_lat(ops[1] < args.size() ? args[ops[1]] : make_void()));
                     // Issue #4439: bind the caller value unchanged. A negative
                     // fixnum is that integer. Define and let emit NewCell, and
                     // next_cell_id_ starts at 1, so one cell makes
@@ -1218,6 +1283,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Add/Sub/Mul/Div: handled by IROpcodeClass::Arith table path (#910).
 
                 case IROpcode::Eq: {
+                    if (fb.on)
+                        feedback::note_cmp(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                           fb_lat(locals[ops[1]]), fb_lat(locals[ops[2]]));
                     // Content-aware equality (not just raw pointer comparison).
                     // ops[3] == 1 is numeric `=` (Issue #4463). eq?/eqv? keep
                     // ops[3] == 0 and stay identity.
@@ -1265,6 +1333,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::Gt:
                 case IROpcode::Le:
                 case IROpcode::Ge: {
+                    if (fb.on)
+                        feedback::note_cmp(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                           fb_lat(locals[ops[1]]), fb_lat(locals[ops[2]]));
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     if (!operand_is_number(a) || !operand_is_number(b)) {
@@ -1427,7 +1498,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // function's result instead of running the consequent.
                     if (is_error(locals[ops[0]]))
                         return locals[ops[0]];
-                    current = is_truthy(locals[ops[0]]) ? ops[1] : ops[2];
+                    {
+                        const bool taken = is_truthy(locals[ops[0]]);
+                        if (fb.on) {
+                            feedback::note_branch(
+                                fb.row, fb.site(current, static_cast<std::uint32_t>(ii)), taken);
+                            const auto dest = taken ? ops[1] : ops[2];
+                            if (dest <= current)
+                                feedback::note_back(fb);
+                        }
+                        current = taken ? ops[1] : ops[2];
+                    }
                     goto next_block;
 
                 // Issue #61 Iter 3: lazy-deopt guard. Compares the
@@ -1525,6 +1606,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Jump:
+                    if (fb.on && ops[0] <= current)
+                        feedback::note_back(fb);
                     current = ops[0];
                     goto next_block;
 
@@ -1589,6 +1672,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::Car: {
+                    if (fb.on)
+                        feedback::note_recv(
+                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                            feedback::kKindCar,
+                            is_pair(locals[ops[1]]) ? feedback::kRecvPair : feedback::kRecvOther);
                     auto pfn = context_.primitives.lookup("car");
                     if (pfn)
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
@@ -1597,6 +1685,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::Cdr: {
+                    if (fb.on)
+                        feedback::note_recv(
+                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                            feedback::kKindCdr,
+                            is_pair(locals[ops[1]]) ? feedback::kRecvPair : feedback::kRecvOther);
                     auto pfn = context_.primitives.lookup("cdr");
                     if (pfn)
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
@@ -1668,6 +1761,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
                     // Create an error value by calling the raise primitive
                 case IROpcode::HashRef: {
+                    if (fb.on)
+                        feedback::note_recv(fb.row,
+                                            fb.site(current, static_cast<std::uint32_t>(ii)),
+                                            feedback::kKindHash, feedback::kRecvHash);
                     auto pfn = context_.primitives.lookup("hash-ref");
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
@@ -1885,6 +1982,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             call_stack_.back().resume_instr =
                                 static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
                         }
+                        feedback::note_call(fb.row, fb.site(current, ii), closure.func_id);
                         return PendingCall{&callee_func, std::move(all_args), ops[3], tail};
                     } else if (is_primitive(callee_val)) {
                         // Primitive function call — look up and invoke.
@@ -2097,6 +2195,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             call_stack_.back().resume_instr =
                                 static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
                         }
+                        if (fb.on)
+                            feedback::note_call(fb.row,
+                                                fb.site(current, static_cast<std::uint32_t>(ii)),
+                                                closure.func_id);
                         return PendingCall{&callee_func, std::move(all_args), ops[2], tail};
                     } else {
                         locals[ops[2]] = closure_val;

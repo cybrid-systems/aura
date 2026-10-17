@@ -11,6 +11,7 @@ module;
 #include "compiler/gc_coord_scope.h"
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
+#include "compiler/type_feedback.h" // Issue #4568
 #include "compiler/value_tags.h"
 #include "core/gc_hooks.h"
 #include "core/layout_stamp.hh"
@@ -166,10 +167,22 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                                     void*& type_registry, ModulePathResolver resolve_module_path,
                                     Evaluator& ev) {
     (void)pairs;
-    (void)string_heap;
     (void)type_registry;
     (void)resolve_module_path;
     (void)ev;
+    // Issue #4568: per-arg lattice, call targets, and the warmup budgets.
+    // A missing row still prints entries=0, arg0=none, and the budgets.
+    add("query:type-feedback", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        std::string name;
+        if (!a.empty() && is_string(a[0])) {
+            const auto idx = as_string_idx(a[0]);
+            if (idx < string_heap.size())
+                name = string_heap[idx];
+        }
+        const auto sidx = string_heap.mint(aura::compiler::feedback::render(name));
+        return make_string(sidx);
+    });
+
     add("query:mutations-since", [](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_void();
