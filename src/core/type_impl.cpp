@@ -118,15 +118,42 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
     // Issue #1431: lock TypeRegistry for mutator `register_type`
     std::lock_guard lock(type_registry_mutex_);
     // Dedup: same tag + same name returns the existing TypeId.
-    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i]->tag == tag && entries_[i]->name == name) {
+    // Issue #4557: indexed by tag + name instead of a linear scan.
+    // Scalar / nominal tags are only ever created here and never
+    // renamed, so the index is exact for them. Other tags (VARIANT by
+    // name, ...) can also match an entry made by register_variant & co,
+    // so they keep the scan as the fallback when the index misses.
+    const auto tn_key = tag_name_key(tag, name);
+    if (auto it = type_by_tag_name_.find(tn_key); it != type_by_tag_name_.end()) {
+        const auto i = it->second;
+        if (i < entries_.size() && entries_[i]->tag == tag && entries_[i]->name == name)
             return TypeId{i, current_generation()};
-        }
+    }
+    switch (tag) {
+        case TypeTag::DYNAMIC:
+        case TypeTag::INT:
+        case TypeTag::BOOL:
+        case TypeTag::STRING:
+        case TypeTag::FLOAT:
+        case TypeTag::PAIR:
+        case TypeTag::VECTOR:
+        case TypeTag::VOID:
+        case TypeTag::TYPE:
+        case TypeTag::HASH:
+            break;
+        default:
+            for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+                if (entries_[i]->tag == tag && entries_[i]->name == name) {
+                    type_by_tag_name_[tn_key] = i;
+                    return TypeId{i, current_generation()};
+                }
+            }
     }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = current_generation(),
     };
+    type_by_tag_name_[tn_key] = id.index;
     entries_.push_back(arena_.allocate(Entry{tag, std::move(name), std::nullopt, std::nullopt,
                                              std::nullopt, std::nullopt, std::nullopt, std::nullopt,
                                              std::nullopt, std::nullopt, std::nullopt}));
@@ -141,7 +168,9 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret, bool va
     // existing entry's name may differ from what we'd compute
     // (e.g. user named it via register_func_named); we keep the
     // first registration's name to preserve identity.
-    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+    // Issue #4557: candidates from the intern index, ascending.
+    const auto key = func_key(args, ret);
+    for (std::uint32_t i : intern_candidates(key)) {
         if (entries_[i]->tag != TypeTag::FUNC || !entries_[i]->func)
             continue;
         const auto& f = *entries_[i]->func;
@@ -180,6 +209,7 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret, bool va
         name += "... ";
     name += std::string("-> ") + std::string(name_of(ret)) + ")";
     entries_.back()->name = name;
+    intern_note(key, id.index);
     return id;
 }
 
@@ -202,7 +232,8 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
     // Issue #1431: lock TypeRegistry for mutator `register_linear`
     std::lock_guard lock(type_registry_mutex_);
     // Dedup: same inner returns the existing TypeId.
-    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+    const auto key = linear_key(inner);
+    for (std::uint32_t i : intern_candidates(key)) {
         if (entries_[i]->tag != TypeTag::LINEAR || !entries_[i]->linear)
             continue;
         const auto& l = *entries_[i]->linear;
@@ -219,6 +250,7 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
         TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt, LinearType{inner},
         std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
     name_to_id_[entries_.back()->name] = id;
+    intern_note(key, id.index);
     return id;
 }
 
@@ -387,7 +419,8 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
     // Issue #1431: lock TypeRegistry for mutator `register_effect`
     std::lock_guard lock(type_registry_mutex_);
     // Dedup: same name + same arg returns the existing TypeId.
-    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+    const auto key = effect_key(name);
+    for (std::uint32_t i : intern_candidates(key)) {
         if (entries_[i]->tag != TypeTag::EFFECT || !entries_[i]->effect)
             continue;
         const auto& e = *entries_[i]->effect;
@@ -406,6 +439,7 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
                                              std::nullopt, std::nullopt, std::nullopt, std::nullopt,
                                              EffectType{std::move(name), arg}, std::nullopt,
                                              std::nullopt, std::nullopt}));
+    intern_note(key, id.index);
     return id;
 }
 
@@ -511,7 +545,8 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     // (Caveat: bound var is by INDEX. Two calls with structurally
     // equal bodies but different vars collapse — correct per
     // structural-identity semantics.)
-    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+    const auto key = forall_key(var, body);
+    for (std::uint32_t i : intern_candidates(key)) {
         if (entries_[i]->tag != TypeTag::FORALL || !entries_[i]->forall)
             continue;
         const auto& f = *entries_[i]->forall;
@@ -540,6 +575,7 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     entries_.push_back(arena_.allocate(Entry{
         TypeTag::FORALL, std::move(forall_name), std::nullopt, ForallType{var, body}, std::nullopt,
         std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
+    intern_note(key, id.index);
     return id;
 }
 
@@ -1243,6 +1279,8 @@ std::uint32_t TypeRegistry::compact() {
     arena_.reset();
     name_to_id_.clear();
     name_to_id_.rehash(0); // rehash to smallest bucket count
+    intern_.clear();       // Issue #4557: indexes refer to the dropped entries
+    type_by_tag_name_.clear();
     // Re-register the 9 predefined types so the basic lookups work.
     // Each new TypeId carries the bumped generation.
     register_type(TypeTag::DYNAMIC, "Any");
@@ -1267,6 +1305,66 @@ std::uint32_t TypeRegistry::compact() {
 // components. Order matters for records/variants/modules (use the
 // insertion order — which is the canonical order). Sets (capability
 // effects) sort first for hash invariance.
+// Issue #4557: intern index helpers. Each key mixes exactly what the
+// matching register_* predicate compares (children through type_hash,
+// which equal types share), so every possible match is a candidate.
+std::vector<std::uint32_t> TypeRegistry::intern_candidates(std::uint64_t key) const {
+    std::vector<std::uint32_t> out;
+    auto [b, e] = intern_.equal_range(key);
+    for (auto it = b; it != e; ++it)
+        if (it->second < entries_.size())
+            out.push_back(it->second);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::uint64_t TypeRegistry::func_key(const std::vector<TypeId>& args, TypeId ret) const {
+    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+    auto mix = [&](std::uint64_t v) { h = (h ^ v) * ::aura::compiler::stats::kFnvPrime; };
+    mix(static_cast<std::uint64_t>(TypeTag::FUNC));
+    mix(args.size());
+    for (auto a : args)
+        mix(type_hash(a));
+    mix(type_hash(ret));
+    return h;
+}
+
+std::uint64_t TypeRegistry::forall_key(TypeId var, TypeId body) const {
+    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+    auto mix = [&](std::uint64_t v) { h = (h ^ v) * ::aura::compiler::stats::kFnvPrime; };
+    mix(static_cast<std::uint64_t>(TypeTag::FORALL));
+    mix(var.index);
+    mix(type_hash(body));
+    return h;
+}
+
+std::uint64_t TypeRegistry::linear_key(TypeId inner) const {
+    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+    auto mix = [&](std::uint64_t v) { h = (h ^ v) * ::aura::compiler::stats::kFnvPrime; };
+    mix(static_cast<std::uint64_t>(TypeTag::LINEAR));
+    mix(type_hash(inner));
+    return h;
+}
+
+std::uint64_t TypeRegistry::effect_key(std::string_view name) const {
+    // The arg is compared with type_equals after the name; keying on the
+    // name alone keeps every same-name effect a candidate.
+    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+    auto mix = [&](std::uint64_t v) { h = (h ^ v) * ::aura::compiler::stats::kFnvPrime; };
+    mix(static_cast<std::uint64_t>(TypeTag::EFFECT));
+    mix(std::hash<std::string_view>{}(name));
+    return h;
+}
+
+std::string TypeRegistry::tag_name_key(TypeTag tag, std::string_view name) {
+    std::string k;
+    k.reserve(name.size() + 2);
+    k.push_back(static_cast<char>(static_cast<std::uint8_t>(tag) + 1));
+    k.push_back('\x1f');
+    k.append(name);
+    return k;
+}
+
 std::uint64_t TypeRegistry::type_hash(TypeId a) const {
     auto tag = tag_of(a);
     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;

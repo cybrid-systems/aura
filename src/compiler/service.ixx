@@ -8362,6 +8362,15 @@ public:
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool)
             return;
+        // Issue #4557: every Define name in the flat, collected once. The
+        // sibling test below used to rescan the whole flat for each
+        // Variable reference of each define (O(W^2) per set-code).
+        std::unordered_set<std::string> define_names;
+        for (aura::ast::NodeId sid = 0; sid < ws_flat->size(); ++sid) {
+            auto sv = ws_flat->get(sid);
+            if (sv.tag == aura::ast::NodeTag::Define && sv.sym_id != aura::ast::INVALID_SYM)
+                define_names.insert(std::string(ws_pool->resolve(sv.sym_id)));
+        }
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             auto v = ws_flat->get(id);
             if (v.tag != aura::ast::NodeTag::Define)
@@ -8395,19 +8404,7 @@ public:
                     auto vname = std::string(ws_pool->resolve(nv.sym_id));
                     if (!vname.empty() && vname != name && seen.insert(vname).second) {
                         // Check if vname is a sibling define in this workspace
-                        bool sibling = false;
-                        for (aura::ast::NodeId sid = 0; sid < ws_flat->size(); ++sid) {
-                            auto sv = ws_flat->get(sid);
-                            if (sv.tag == aura::ast::NodeTag::Define &&
-                                sv.sym_id != aura::ast::INVALID_SYM) {
-                                auto sname = std::string(ws_pool->resolve(sv.sym_id));
-                                if (sname == vname) {
-                                    sibling = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (sibling) {
+                        if (define_names.count(vname) != 0) {
                             record_dependency(name, vname);
                         }
                     }
