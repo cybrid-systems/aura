@@ -1,0 +1,79 @@
+; Issue #4579 — mutate:rebind of a procedure define to a non-procedure
+; value ("42") used to commit in Soft mode. Calling the rebound define
+; directly failed cleanly, but calling a CALLER of it ((g 3) where g
+; applies (f y)) allocated without bound in the stale-closure re-dispatch
+; — std::bad_alloc / SIGABRT under a memory cap, host OOM kill without
+; one, and never catchable by try.
+; The rebind gate now refuses a provably non-procedure value for a lambda
+; define (literals, and alias names resolving to a non-lambda workspace
+; define) and leaves the workspace unchanged. Lambda bodies, computed
+; calls, aliases to lambda defines / primitives stay allowed, and value
+; defines can still be rebound to literals.
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (accepted label r)
+  (if (not (eq? r #t)) (begin (display "    got: ") (write r) (newline)))
+  (assert! (eq? r #t) label))
+(define (typecheck-reject? r)
+  (and (pair? r) (equal? (car r) "mutation-failed")))
+(define (gate-reject? r tag)
+  ; Early-gate rejections carry their kind as the pair car (e.g.
+  ; "rebind-non-procedure") and the reason on cadr — unlike the typecheck
+  ; refusal path which wraps as ("mutation-failed" ...).
+  (and (pair? r) (string-has? (cadr r) tag)))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+
+; ── #4579 procedure -> literal is refused, workspace unchanged ──
+(set-code "(define (f79 x) (+ x 1)) (define (g79 y) (* (f79 y) 2))")
+(eval-current)
+(assert! (equal? (g79 3) 8) "caller works before rebind")
+
+(let ((r (rebind "f79" "42" "4579")))
+  (assert! (gate-reject? r "rebind-non-procedure")
+           "procedure -> literal rebind refused")
+  (assert! (string-has? (cadr r) "rebind-non-procedure") "refusal names the gate")
+  (assert! (equal? (f79 3) 4) "f unchanged after refusal")
+  (assert! (equal? (g79 3) 8) "caller unchanged after refusal"))
+
+; ── alias to a non-lambda define is also refused ──
+(set-code "(define s79 \"str\") (define (h79 x) x)")
+(eval-current)
+(let ((r (rebind "h79" "s79" "4579")))
+  (assert! (gate-reject? r "rebind-non-procedure")
+           "procedure -> alias of non-lambda define refused"))
+
+; ── alias to a lambda define is a procedure value — allowed ──
+(set-code "(define l79 (lambda (a) a)) (define (k79 y) (l79 y))")
+(eval-current)
+(accepted "procedure -> alias of lambda define" (rebind "k79" "l79" "4579"))
+(assert! (equal? (k79 7) 7) "alias rebind runs")
+
+; ── value defines still rebind to literals ──
+(set-code "(define c79 1)")
+(eval-current)
+(accepted "value define -> literal rebind" (rebind "c79" "42" "4579"))
+(assert! (equal? c79 42) "literal rebind took effect")
+
+(if (= *fails* 0)
+    (display "OK-4579 rebind non-procedure gate\n")
+    (begin
+      (display "FAIL-4579 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))
