@@ -3923,6 +3923,20 @@ void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& po
         for (auto c : rv.children)
             bind_define(c);
     }
+    // Issue #4587: host (define n 5) / (define (get-n) n) live in top_env,
+    // not in this workspace flat. Bind them Dynamic when this flat has not
+    // already given the name a type, so a later rebind does not report the
+    // host helper as unbound. A real free name is not in the list.
+    for (const auto& host_name : host_visible_names_) {
+        if (host_name.empty())
+            continue;
+        const char c0 = host_name[0];
+        if (c0 == '_' || c0 == '@' || c0 == ':')
+            continue;
+        if (env_.is_bound(host_name))
+            continue;
+        env_.bind(host_name, reg_.dynamic_type());
+    }
 }
 
 
@@ -9228,7 +9242,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     auto r =
         type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_, strict_,
                              cache_epoch_, metrics_, bidirectional_mode_, gradual_permissiveness_,
-                             registered_prim_probe_, registered_prim_ctx_);
+                             registered_prim_probe_, registered_prim_ctx_, &host_visible_names_);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -9306,10 +9320,12 @@ TypeCheckResult type_check_flat_pure(
     bool bidirectional_mode,                      // Issue #283 f/u #5
     GradualPermissiveness gradual_permissiveness, // Issue #2992
     bool (*registered_prim_probe)(const void* ctx, std::string_view name) noexcept,
-    const void* registered_prim_ctx) {
+    const void* registered_prim_ctx, const std::vector<std::string>* host_visible_names) {
     TypeCheckResult result;
     InferenceEngine engine(types, diag);
     engine.set_registered_prim_probe(registered_prim_probe, registered_prim_ctx);
+    if (host_visible_names)
+        engine.set_host_visible_names(*host_visible_names);
     engine.declared_modules_ = module_src;
     engine.declared_sigs_ = sigs;
     engine.set_strict(strict);                                 // Issue #79: plumb strict mode
@@ -10067,6 +10083,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // re-inference pass.
     InferenceEngine engine(types, diag);
     engine.set_registered_prim_probe(registered_prim_probe_, registered_prim_ctx_);
+    engine.set_host_visible_names(host_visible_names_);
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
     engine.set_strict(strict_);                                 // Issue #79: plumb strict mode

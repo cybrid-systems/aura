@@ -1377,12 +1377,83 @@ static void ac4586_hof_callback_error_propagates() {
     CHECK(ev.find("Issue #4586") != std::string::npos, "4586: let does not bind an error value");
 }
 
+// Issue #4587: a workspace lambda must not turn a free name into 0.
+// A host value and a host procedure both resolve. A name that is neither
+// raises unbound. The post-mutate check agrees: a host helper does not
+// reject a later rebind, and a real free name still does.
+static void ac4587_workspace_free_names() {
+    std::println("\n--- #4587: workspace free names are not silent 0 ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    const char* ws = "(define a (lambda () n))\n"
+                     "(define b (lambda () (get-n)))\n"
+                     "(define c (lambda () not-a-real-name))\n"
+                     "(define d (lambda () (+ not-a-real-name 1)))";
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(define n 5)\n(define (get-n) n)").has_value(), "4587: host n and get-n");
+        CHECK(set_code(cs, ws), "4587: set-code free names");
+        CHECK(cs.eval("(eval-current)").has_value(), "4587: eval-current");
+        auto aval = cs.eval("(a)");
+        CHECK(aval && is_int(*aval) && as_int(*aval) == 5, "4587: (a) is host n, not 0");
+        auto bval = cs.eval("(b)");
+        CHECK(bval && is_int(*bval) && as_int(*bval) == 5, "4587: (b) calls host get-n");
+        auto cmsg = eval_string(cs, "(try (c) (catch (e) e))");
+        CHECK(cmsg.find("unbound variable: not-a-real-name") != std::string::npos,
+              "4587: (c) raises unbound variable: not-a-real-name");
+        auto dmsg = eval_string(cs, "(try (d) (catch (e) e))");
+        CHECK(dmsg.find("unbound variable: not-a-real-name") != std::string::npos,
+              "4587: (d) raises unbound variable: not-a-real-name");
+        CHECK(cs.eval("(set! n 9)").has_value(), "4587: set! host n");
+        auto a2 = cs.eval("(a)");
+        CHECK(a2 && is_int(*a2) && as_int(*a2) == 9, "4587: (a) sees the live host cell");
+        auto b2 = cs.eval("(b)");
+        CHECK(b2 && is_int(*b2) && as_int(*b2) == 9, "4587: (b) sees set! through get-n");
+        auto refused =
+            cs.eval("(mutate:rebind \"a\" \"(lambda () (list 1 not-a-real-name))\" \"x\")");
+        CHECK(refused.has_value(), "4587: rebind eval returns");
+        CHECK(!(refused && is_bool(*refused) && as_bool(*refused)),
+              "4587: free-name rebind is not #t");
+        const auto& err = cs.evaluator().last_mutate_error();
+        CHECK(err.find("unbound variable: not-a-real-name") != std::string::npos,
+              std::string("4587: rebind names not-a-real-name, got: ") + err);
+        CHECK(err.find("unbound variable: get-n") == std::string::npos,
+              std::string("4587: rebind must not name get-n, got: ") + err);
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(define n 5)\n(define (get-n) n)").has_value(), "4587: clean host bindings");
+        CHECK(set_code(cs, "(define a (lambda () n))\n(define b (lambda () (get-n)))"),
+              "4587: set-code host-only");
+        CHECK(cs.eval("(eval-current)").has_value(), "4587: eval-current host-only");
+        auto reb = cs.eval("(mutate:rebind \"a\" \"(lambda () (list (get-n) n))\" \"x\")");
+        CHECK(reb && !is_error(*reb), "4587: rebind that only uses host names commits");
+        auto ok = cs.eval("(equal? (a) (list 5 5))");
+        CHECK(ok && is_bool(*ok) && as_bool(*ok), "4587: rebound (a) is (5 5)");
+        auto bval = cs.eval("(b)");
+        CHECK(bval && is_int(*bval) && as_int(*bval) == 5, "4587: (b) still 5 after rebind");
+    }
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #4587") != std::string::npos, "4587: host cells and free-name refusal");
+    const auto tc = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tc.find("Issue #4587") != std::string::npos, "4587: host names seed as Dynamic");
+    const auto gate = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(gate.find("Issue #4587") != std::string::npos, "4587: post-mutate copies host names");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
     // birth-stamp path is the one the CLI hits on a fresh start.
     ac4585_host_calls_stay_on_snapshot();
     ac4586_hof_callback_error_propagates();
+    ac4587_workspace_free_names();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();
