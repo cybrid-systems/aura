@@ -1258,7 +1258,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Local:
-                    locals[ops[0]] = locals[ops[1]];
+                    // Issue #4588: operands[2]==1 unwraps an Error to the
+                    // cause the tree walker binds in catch. The flag is
+                    // outside Local's operand_count, so DCE does not
+                    // treat it as a slot. A plain copy leaves it 0.
+                    if (ops[2] == 1 && context_.evaluator)
+                        locals[ops[0]] = context_.evaluator->error_cause_value(locals[ops[1]]);
+                    else
+                        locals[ops[0]] = locals[ops[1]];
                     break;
 
                 case IROpcode::Arg:

@@ -1447,6 +1447,101 @@ static void ac4587_workspace_free_names() {
     CHECK(gate.find("Issue #4587") != std::string::npos, "4587: post-mutate copies host names");
 }
 
+// Issue #4588: an error used as data leaves the function (or the enclosing
+// try) instead of being stored. Workspace catch binds the cause string.
+// The same let/let* rule holds for plain script defines.
+static void ac4588_error_data_propagates() {
+    std::println("\n--- #4588: error values propagate as data ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    const char* ws = "(define g (lambda () (let ((r (error \"x\"))) (if (error? r) 1 2))))\n"
+                     "(define h (lambda () (list 1 (error \"in-list\") 3)))\n"
+                     "(define n2 (lambda () (string-append \"a\" (error \"sa\"))))\n"
+                     "(define q (lambda () (car (error \"carerr\"))))\n"
+                     "(define d (lambda () (display (error \"disp\")) 7))\n"
+                     "(define k2 (lambda () (try (error \"inner\") (catch (e) (list \"c\" e)))))\n"
+                     "(define ok-list (lambda () (list 1 2 3)))\n"
+                     "(define ok-car (lambda () (car (cons 4 5))))\n"
+                     "(define ok-str (lambda () (string-append \"a\" \"b\")))\n"
+                     "(define ok-let (lambda () (let ((r 3)) (+ r 1))))";
+    {
+        CompilerService cs;
+        CHECK(set_code(cs, ws), "4588: set-code error data");
+        CHECK(cs.eval("(eval-current)").has_value(), "4588: eval-current");
+        auto caught = [&](const char* call) {
+            return eval_string(cs, std::string("(try (") + call + ") (catch (e) e))");
+        };
+        auto gmsg = caught("g");
+        CHECK(gmsg == "x", std::string("4588: let init raises x, got: ") + gmsg);
+        auto hmsg = caught("h");
+        CHECK(hmsg == "in-list", std::string("4588: list arg raises in-list, got: ") + hmsg);
+        auto nmsg = caught("n2");
+        CHECK(nmsg == "sa", std::string("4588: string-append raises sa, got: ") + nmsg);
+        auto qmsg = caught("q");
+        CHECK(qmsg == "carerr", std::string("4588: car raises carerr, got: ") + qmsg);
+        auto dmsg = caught("d");
+        CHECK(dmsg == "disp", std::string("4588: display inside try raises disp, got: ") + dmsg);
+        auto k = cs.eval("(equal? (k2) (list \"c\" \"inner\"))");
+        CHECK(k && is_bool(*k) && as_bool(*k), "4588: catch binds the message, (c inner)");
+        auto d7 = cs.eval("(d)");
+        CHECK(d7 && is_int(*d7) && as_int(*d7) == 7, "4588: display outside try still returns 7");
+        auto ol = cs.eval("(equal? (ok-list) (list 1 2 3))");
+        CHECK(ol && is_bool(*ol) && as_bool(*ol), "4588: list of numbers is unchanged");
+        auto oc = cs.eval("(ok-car)");
+        CHECK(oc && is_int(*oc) && as_int(*oc) == 4, "4588: car of a pair is unchanged");
+        auto os = eval_string(cs, "(ok-str)");
+        CHECK(os == "ab", std::string("4588: string-append of strings, got: ") + os);
+        auto olet = cs.eval("(ok-let)");
+        CHECK(olet && is_int(*olet) && as_int(*olet) == 4, "4588: let of a number still runs");
+    }
+    {
+        CompilerService cs;
+        const char* prog = "(define (boom) (error \"boom\"))\n"
+                           "(define (direct) (let ((r (error \"direct\"))) 1))\n"
+                           "(define (callee) (let ((r (boom))) 1))\n"
+                           "(define (callee*) (let* ((r (boom))) 1))\n"
+                           "(define (unread) (let ((r (error \"gone\"))) 1))\n"
+                           "(define (callee-arg) (+ 1 (boom)))\n"
+                           "(define (callee-seq) (boom) 1)\n"
+                           "(define (ok) (let ((r 4)) r))\n";
+        CHECK(cs.eval(prog).has_value(), "4588: plain script defines");
+        auto caught = [&](const char* call) {
+            return eval_string(cs, std::string("(try (") + call + ") (catch (e) e))");
+        };
+        auto direct = caught("direct");
+        CHECK(direct == "direct",
+              std::string("4588: plain let init raises direct, got: ") + direct);
+        auto callee = caught("callee");
+        CHECK(callee == "boom",
+              std::string("4588: plain let of a call raises boom, got: ") + callee);
+        auto cstar = caught("callee*");
+        CHECK(cstar == "boom", std::string("4588: plain let* raises boom, got: ") + cstar);
+        auto unread = caught("unread");
+        CHECK(unread == "gone", std::string("4588: unread let init still raises, got: ") + unread);
+        auto carg = caught("callee-arg");
+        CHECK(carg == "boom", std::string("4588: call arg still raises boom, got: ") + carg);
+        auto cseq = caught("callee-seq");
+        CHECK(cseq == "boom", std::string("4588: sequence still raises boom, got: ") + cseq);
+        auto ok = cs.eval("(ok)");
+        CHECK(ok && is_int(*ok) && as_int(*ok) == 4, "4588: plain let of a number still runs");
+    }
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("Issue #4588") != std::string::npos, "4588: data operands and let inits escape");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(ir.find("Issue #4588") != std::string::npos, "4588: catch Local binds the cause");
+    const auto prim = read_file("src/compiler/evaluator_primitives_runtime.cpp");
+    CHECK(prim.find("Issue #4588") != std::string::npos,
+          "4588: display inside try returns the error");
+    const auto evh = read_file("src/compiler/evaluator.ixx");
+    CHECK(evh.find("Issue #4588") != std::string::npos, "4588: error cause is the bound value");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
@@ -1454,6 +1549,7 @@ int run_test_current_source_roundtrip() {
     ac4585_host_calls_stay_on_snapshot();
     ac4586_hof_callback_error_propagates();
     ac4587_workspace_free_names();
+    ac4588_error_data_propagates();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();

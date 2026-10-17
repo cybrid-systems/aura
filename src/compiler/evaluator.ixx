@@ -15129,6 +15129,17 @@ public:
         }
         return "<error>";
     }
+    // Issue #4588: tree-walker catch binds this cause, not the Error
+    // value. IR catch uses the same value so (list e) does not see an
+    // error argument. A non-error is returned unchanged.
+    [[nodiscard]] types::EvalValue error_cause_value(types::EvalValue v) const {
+        if (!types::is_error(v) || types::is_string(v))
+            return v;
+        const auto idx = types::as_error_idx(v);
+        if (idx >= error_values_.size())
+            return v;
+        return error_values_[idx];
+    }
     // Issue #4461: integer `/` by zero. Same error value as modulo, so a
     // literal zero and a zero from a binding agree.
     [[nodiscard]] types::EvalValue make_div_zero_error() {
