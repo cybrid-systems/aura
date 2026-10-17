@@ -788,8 +788,127 @@ def test_jit_soundness_4567():
     print(f"  ✅ jit-soundness-4567 ({len(programs)} programs)")
 
 
+def test_type_feedback_4568():
+    """Issue #4568: query:type-feedback lattice, polymorphic calls, rebind reset."""
+    code = r"""
+(define (id x) x)
+(id 1)
+(display "===ID===\n")
+(display (query:type-feedback "id"))
+(define (flt x) x)
+(flt 1.5)
+(display "===FLT===\n")
+(display (query:type-feedback "flt"))
+(define (mix x) x)
+(mix 1)
+(mix 2.5)
+(display "===MIX===\n")
+(display (query:type-feedback "mix"))
+(define (inc x) (+ x 1))
+(define (app f) (f 1))
+(app id)
+(app inc)
+(display "===APP===\n")
+(display (query:type-feedback "app"))
+(define (keep x) x)
+(keep 3)
+(display "===KEEP1===\n")
+(display (query:type-feedback "keep"))
+(set-code "(define (id x) x) (define (keep x) x)")
+(eval-current)
+(id 9)
+(keep 4)
+(mutate:rebind "id" "(lambda (x) x)" "t")
+(display "===IDRESET===\n")
+(display (query:type-feedback "id"))
+(display "===KEEP2===\n")
+(display (query:type-feedback "keep"))
+(id 7)
+(display "===ID2===\n")
+(display (query:type-feedback "id"))
+(display "===MISS===\n")
+(display (query:type-feedback "no-such"))
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    r = subprocess.run(
+        [AURA],
+        input=code,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    out = r.stdout or ""
+    err = r.stderr or ""
+    if r.returncode != 0:
+        raise Exception(f"rc={r.returncode} out={out!r} err={err[:400]!r}")
+
+    def section(mark):
+        key = f"==={mark}==="
+        start = out.find(key)
+        if start < 0:
+            raise Exception(f"missing {key} in {out!r} err={err[:300]!r}")
+        start += len(key)
+        nxt = out.find("===", start)
+        return out[start : nxt if nxt >= 0 else len(out)]
+
+    id1 = section("ID")
+    flt = section("FLT")
+    mix = section("MIX")
+    app = section("APP")
+    keep1 = section("KEEP1")
+    reset = section("IDRESET")
+    keep2 = section("KEEP2")
+    id2 = section("ID2")
+    miss = section("MISS")
+    for label, text in (
+        ("id", id1),
+        ("flt", flt),
+        ("mix", mix),
+        ("app", app),
+        ("keep", keep1),
+        ("reset", reset),
+        ("keep2", keep2),
+        ("id2", id2),
+        ("miss", miss),
+    ):
+        if "budget-back=" not in text or "budget-entry=" not in text:
+            raise Exception(f"{label} missing budgets: {text!r}")
+    if "arg0=fixnum" not in id1:
+        raise Exception(f"id lattice: {id1!r}")
+    if "arg0=float" not in flt:
+        raise Exception(f"flt lattice: {flt!r}")
+    if "arg0=other" not in mix:
+        raise Exception(f"mix lattice: {mix!r}")
+    pos = app.find("call-targets=")
+    if pos < 0:
+        raise Exception(f"app targets missing: {app!r}")
+    after = app[pos + len("call-targets=") :]
+    stop = len(after)
+    for sep in ("\n", "\\n"):
+        j = after.find(sep)
+        if 0 <= j < stop:
+            stop = j
+    if "," not in after[:stop] and "megamorphic=1" not in app:
+        raise Exception(f"app targets: {app!r}")
+    if "arg0=fixnum" not in keep1 or "arg0=fixnum" not in keep2:
+        raise Exception(f"keep drifted: {keep1!r} / {keep2!r}")
+    if "entries=0" not in reset or "arg0=none" not in reset:
+        raise Exception(f"id did not reset: {reset!r}")
+    if "arg0=fixnum" not in id2:
+        raise Exception(f"id after rebind call: {id2!r}")
+    if "entries=0" not in miss or "arg0=none" not in miss:
+        raise Exception(f"missing row: {miss!r}")
+    print("  ✅ type-feedback-4568")
+
+
 for tf in [
     test_jit_soundness_4567,
+    test_type_feedback_4568,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

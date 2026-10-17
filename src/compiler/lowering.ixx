@@ -170,6 +170,9 @@ export struct LoweringState {
     // Issue #4552: >0 while lowering a Lambda body. The top-level entry
     // function keeps its historical statement semantics outside try.
     std::uint32_t lambda_depth = 0;
+    // Issue #4568: define name consumed by the first lambda lowered for
+    // that define. Nested lambdas stay "__lambda__".
+    std::string feedback_define_name;
 
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;

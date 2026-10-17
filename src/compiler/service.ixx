@@ -56,6 +56,7 @@ module;
 #include "serve/gc_coordinator.h"
 #include "shape.h"
 #include "shape_profiler.h"
+#include "compiler/type_feedback.h" // Issue #4568: per-arg feedback, no profiler lock
 #include "spec_jit_controller.h"
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
@@ -4017,6 +4018,7 @@ public:
             // Shape map storage (must outlive FlatFunction usage)
             std::vector<std::uint8_t> shape_map_storage;
             std::vector<std::uint8_t> escape_map_storage;
+            const aura::ir::IRFunction* ir_fn_ = nullptr;
 
             // Build from IR function, optionally accepting pre-computed escape map.
             FlatFnBuilder(const aura::ir::IRFunction& ir_fn,
@@ -4024,6 +4026,7 @@ public:
                           std::size_t precomputed_size = 0,
                           const std::uint8_t* precomputed_shape = nullptr,
                           const std::vector<std::uint8_t>* inst_dirty = nullptr) {
+                ir_fn_ = &ir_fn;
                 flat_instrs.resize(ir_fn.blocks.size());
                 flat_blocks.resize(ir_fn.blocks.size());
 
@@ -4113,18 +4116,35 @@ public:
                 }
             }
 
-            // Issue #4567: a function-level dominant shape is not per-arg
-            // feedback. Stamping it onto every argument, with no entry
-            // guard, made named-let under --jit return 0 once synthetic
-            // SHAPE_INT seeds flipped is_stable. Stay on the generic body.
-            // Per-arg maps are #4568; check_shape_guard is the entry guard
-            // for a map that is actually installed.
+            // Issue #4567: do not stamp a function-level dominant shape onto
+            // every local. Issue #4568: install JIT codes 1/2 only for
+            // monomorphic user OpArg dests. Other, unseen, macro-origin,
+            // and empty feedback stay on the generic body. check_shape_guard
+            // is the entry guard for a map that is actually installed.
             bool set_shape_map(const shape::ShapeProfiler& profiler, const std::string& session,
                                const std::string& fn_name) {
                 (void)profiler;
                 (void)session;
-                (void)fn_name;
-                return false;
+                if (!ir_fn_)
+                    return false;
+                std::vector<aura::compiler::feedback::ArgSlot> args;
+                for (const auto& blk : ir_fn_->blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.opcode != aura::ir::IROpcode::Arg)
+                            continue;
+                        aura::compiler::feedback::ArgSlot slot;
+                        slot.dest = instr.operands[0];
+                        slot.arg_index = instr.operands[1];
+                        args.push_back(slot);
+                    }
+                }
+                if (!aura::compiler::feedback::shape_map_from_feedback(
+                        fn_name, flat_fn.source_marker, flat_fn.local_count,
+                        args.empty() ? nullptr : args.data(),
+                        static_cast<std::uint32_t>(args.size()), shape_map_storage))
+                    return false;
+                flat_fn.shape_map = shape_map_storage.data();
+                return true;
             }
         };
 
@@ -16353,6 +16373,11 @@ public:
     // Issue #1523 lock order: mutate_mtx_ unique FIRST (if not held),
     // then epoch + bridge stamp (no dep_graph / workspace).
     void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
+        // Issue #4568: one-line Soft rebind returns before invalidate_shape.
+        // Reset this name only. An empty catch-all must not wipe unrelated
+        // defines (their feedback survives).
+        if (!name.empty())
+            aura::compiler::feedback::reset_name(name);
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
         // #4322: skip Mutate when Workspace is already held.
@@ -17396,6 +17421,35 @@ public:
                         break;
                 }
 
+                // Issue #4568: per-arg feedback. The aggregate above passes
+                // final_shape_map as const_tags (still null). The map, when
+                // one exists, is shape_map only. Storage outlives compile.
+                // Fresh --jit has an empty table, so this stays null.
+                std::vector<std::uint8_t> feedback_shape;
+                std::vector<aura::compiler::feedback::ArgSlot> fb_args;
+                for (const auto& blk : ir_fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.opcode != aura::ir::IROpcode::Arg)
+                            continue;
+                        aura::compiler::feedback::ArgSlot slot;
+                        slot.dest = instr.operands[0];
+                        slot.arg_index = instr.operands[1];
+                        fb_args.push_back(slot);
+                    }
+                }
+                if (aura::compiler::feedback::shape_map_from_feedback(
+                        ir_fn.name, flat_fn.source_marker, ir_fn.local_count,
+                        fb_args.empty() ? nullptr : fb_args.data(),
+                        static_cast<std::uint32_t>(fb_args.size()), feedback_shape)) {
+                    flat_fn.shape_map = feedback_shape.data();
+                    for (auto& block : flat_instrs) {
+                        for (auto& fi : block) {
+                            if (fi.ops[0] < feedback_shape.size())
+                                fi.shape_id = feedback_shape[fi.ops[0]];
+                        }
+                    }
+                }
+
                 // Skip if already cached at the current mutation epoch
                 // (prevents duplicate JIT symbols). Issue #4073: a stale
                 // last_seen_epoch_ must not revive the pre-mutate ScalarFn.
@@ -17437,8 +17491,8 @@ public:
                         it->second.env_count = env_count;
                         it->second.last_seen_epoch_ =
                             jit_sample_epoch; // #4338 sampled epoch, not insert-time current
-                        it->second.has_shape_map = final_shape_map != nullptr;
-                        if (final_shape_map != nullptr) {
+                        it->second.has_shape_map = flat_fn.shape_map != nullptr;
+                        if (flat_fn.shape_map != nullptr) {
                             it->second.compiled_shape_version_ =
                                 shape_profiler_.current_snapshot(fn_key).version;
                         }
@@ -17879,6 +17933,9 @@ public:
 
     // Invalidate shape profile for a function (called after mutate:*).
     void invalidate_shape(const std::string& name) {
+        // Issue #4568: drop this define's feedback (and name#* rows).
+        // No synthetic SHAPE_INT seed. Other names stay.
+        aura::compiler::feedback::reset_name(name);
         auto fn_key = shape::make_fn_key(session_id_, name);
         // Issue #4567: do not seed SHAPE_INT when the profile is empty.
         const bool needs_deopt = shape_profiler_.invalidate(fn_key);

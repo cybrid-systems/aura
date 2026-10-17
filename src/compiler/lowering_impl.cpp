@@ -1399,9 +1399,19 @@ static std::uint32_t lower_flat_expr(
                     free_vars.push_back(fv);
             }
 
-            // Create new IR function
+            // Create new IR function.
+            // Issue #4568: a define's own lambda keeps the define name so
+            // type feedback is keyed by that name. Nested lambdas (self
+            // already active, or the define name already consumed) stay
+            // "__lambda__".
             IRFunction func;
             func.name = "__lambda__";
+            if (!state.feedback_define_name.empty()) {
+                func.name = state.feedback_define_name;
+                state.feedback_define_name.clear();
+            } else if (!state.self_name.empty() && !state.self_func_active) {
+                func.name = state.self_name;
+            }
             func.entry_block = 0;
             func.blocks.push_back({0, {}, {}});
             func.params = param_names;
@@ -1660,8 +1670,15 @@ static std::uint32_t lower_flat_expr(
                 state.emit(IROpcode::NewCell, ci);
                 scope[std::string(name)] = Binding{BindingKind::Cell, ci};
             }
-            // Now lower the value — self-references will CellGet the pre-bound cell
+            // Now lower the value — self-references will CellGet the pre-bound cell.
+            // Issue #4568: stamp the define name onto the lambda this value
+            // lowers, then drop it so a later define does not inherit it.
+            const bool stamp_feedback = state.feedback_define_name.empty();
+            if (stamp_feedback)
+                state.feedback_define_name.assign(name.begin(), name.end());
             auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+            if (stamp_feedback)
+                state.feedback_define_name.clear();
             state.emit(IROpcode::CellSet, ci, val_slot);
             return val_slot;
         }

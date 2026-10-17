@@ -24,6 +24,7 @@ module;
 #include "core/densify_consistency_report.h"  // Issue #4125: densify_in_flight_for (eval-keyed)
 #include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
+#include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
 
 module aura.compiler.evaluator;
 
@@ -934,6 +935,30 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
     }
 }
 
+// Issue #4568: file and stdin eval never enter IRInterpreter::run_function.
+// Record before the body runs. TLS keeps the row after this returns, so
+// the TCO `continue` below can still note while-edges on the callee.
+static void feedback_enter_call(std::uint64_t cid, std::string_view name, const EvalValue* args,
+                                std::uint32_t nargs) {
+    const auto* key = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(cid) + 1u);
+    feedback::note_call_current(static_cast<std::uint32_t>(cid));
+    auto argc = nargs;
+    if (argc > feedback::kMaxUserArgs)
+        argc = feedback::kMaxUserArgs;
+    auto fb = feedback::enter_named(key, name, argc);
+    if (!fb.on || !fb.row || !args)
+        return;
+    for (std::uint32_t i = 0; i < argc; ++i) {
+        const EvalValue& v = args[i];
+        std::uint8_t lat = feedback::kOther;
+        if (is_int(v))
+            lat = feedback::kFixnum;
+        else if (is_float(v))
+            lat = feedback::kFloat;
+        feedback::note_arg(fb.row, 0, i, 0, lat);
+    }
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #4467: drop a message left by a caller that did not take it.
@@ -1643,6 +1668,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             }
             if (metrics)
                 metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #4568: non-TCO callers (primitives, closure-form while).
+            // The inline TCO arm records itself and does not reach here.
+            {
+                const auto nnote =
+                    std::min(args.size(), static_cast<std::size_t>(feedback::kMaxUserArgs));
+                feedback_enter_call(cid, cl_copy.name, args.data(),
+                                    static_cast<std::uint32_t>(nnote));
+            }
             auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
             if (r)
                 return *r;
@@ -6375,6 +6408,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     }
                                 }
                                 while (true) {
+                                    // Issue #4568: back-edge budget. Cooled
+                                    // rows leave a TLS flag check.
+                                    feedback::note_loop_edge();
                                     auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
                                     if (!cond_result)
                                         return cond_result;
@@ -6764,6 +6800,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (cl.dotted && !cl.params.empty()) {
                             for (std::size_t i = named_count; i < provided.size(); ++i)
                                 rest_args.push_back(std::move(provided[i]));
+                        }
+                        // Issue #4568: note the caller target, then the
+                        // callee lattice, before bind_symid moves cargs.
+                        // TLS holds the row across the TCO continue.
+                        {
+                            const auto nnote = std::min(
+                                cargs.size(), static_cast<std::size_t>(feedback::kMaxUserArgs));
+                            feedback_enter_call(cid, cl.name, cargs.data(),
+                                                static_cast<std::uint32_t>(nnote));
                         }
                         tail_env = materialize_call_env(cl);
                         tail_env->set_primitives(&primitives_);
