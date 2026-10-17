@@ -46,6 +46,7 @@
 #include <vector>
 
 #include "compiler/mutate_type_gate.hh"
+#include "core/workspace_epoch.hh"
 
 import std;
 import aura.compiler.service;
@@ -1071,6 +1072,88 @@ static void ac4584_hof_callee_stable() {
     CHECK(irx.find("Issue #4584") != std::string::npos, "4584: closure cursor does not rewind");
 }
 
+// Issue #4585: the first set-code takes the mutation epoch off 0. Host
+// closures stamped while tracking was inactive must stay on the capture
+// snapshot. The signal is closure-bridge-epoch-zero-treated-stale-total:
+// a stale birth stamp counts about twice per call. (four) stays 4.
+static void ac4585_host_calls_stay_on_snapshot() {
+    std::println("\n--- #4585: host calls stay fresh after set-code ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    CHECK(aura::core::current_mutation_epoch() == 0, "4585: epoch is 0 before the first workspace");
+    CompilerService cs;
+    const char* prog =
+        "(define (inc x) (+ x 1))\n"
+        "(define (four) (inc (inc (inc (inc 0)))))\n"
+        "(define (zst) (hash-ref (engine:metrics \"query:epoch-apply-hotpath-stats\") "
+        "\"closure-bridge-epoch-zero-treated-stale-total\" -1))\n"
+        "(define (rst) (hash-ref (engine:metrics \"query:aot-incremental-reemit-stats\") "
+        "\"live-closure-epoch-restamp-total\" -1))\n"
+        "(define b0 (zst))\n"
+        "(define br0 (rst))\n"
+        "(four) (four) (four) (four) (four)\n"
+        "(define b1 (zst))\n"
+        "(define br1 (rst))\n"
+        "(set-code \"(define w (lambda (x) x))\")\n"
+        "(define a0 (zst))\n"
+        "(define ar0 (rst))\n"
+        "(four) (four) (four) (four) (four)\n"
+        "(define a1 (zst))\n"
+        "(define ar1 (rst))\n"
+        "(set-code \"(define a (lambda (x) x)) (define b (lambda (x) x)) "
+        "(define c (lambda (x) x)) (define d (lambda (x) x)) "
+        "(define e (lambda (x) x)) (define f (lambda (x) x)) "
+        "(define g (lambda (x) x))\")\n"
+        "(define c0 (zst))\n"
+        "(define cr0 (rst))\n"
+        "(four) (four) (four) (four) (four)\n"
+        "(define c1 (zst))\n"
+        "(define cr1 (rst))\n"
+        "(eval-current)\n"
+        "(define d0 (zst))\n"
+        "(define dr0 (rst))\n"
+        "(four) (four) (four) (four) (four)\n"
+        "(define d1 (zst))\n"
+        "(define dr1 (rst))\n"
+        "(and (= (four) 4) (= b0 0) (>= br0 0) "
+        "(= (- b1 b0) 0) (= (- br1 br0) 0) "
+        "(= (- a1 a0) 0) (= (- ar1 ar0) 0) "
+        "(= (- c1 c0) 0) (= (- cr1 cr0) 0) "
+        "(= (- d1 d0) 0) (= (- dr1 dr0) 0))\n";
+    auto r = cs.eval(prog);
+    CHECK(r && is_bool(*r) && as_bool(*r),
+          "4585: (four) stays 4 and bridge-0 stale does not climb");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(prim.find("adopt_pre_tracking_closure_bridge_epochs") != std::string::npos,
+          "4585: set-code promotes birth stamps after rebind");
+    CHECK(prim.find("restamp_usable_closure_bridge_epochs") != std::string::npos,
+          "4585: a later set-code rides usable stamps up to the new epoch");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    const auto adopt = env.find("void Evaluator::adopt_pre_tracking_closure_bridge_epochs");
+    CHECK(adopt != std::string::npos, "4585: adopt helper is defined");
+    if (adopt != std::string::npos) {
+        const auto body = env.substr(adopt, 900);
+        CHECK(body.find("must_deopt_before_next_call") != std::string::npos,
+              "4585: a must-deopt poison stays at bridge 0");
+        CHECK(body.find("lifetime_valid_for_views") != std::string::npos,
+              "4585: a dead lifetime stays at bridge 0");
+    }
+    const auto restamp = env.find("void Evaluator::restamp_usable_closure_bridge_epochs");
+    CHECK(restamp != std::string::npos, "4585: usable restamp helper is defined");
+    if (restamp != std::string::npos) {
+        const auto body = env.substr(restamp, 900);
+        CHECK(body.find("cl.bridge_epoch == 0") != std::string::npos,
+              "4585: an unstamped closure stays at bridge 0");
+        CHECK(body.find("body_usable") != std::string::npos, "4585: a cleared view stays stale");
+    }
+}
+
 // Issue #4360: adding a define must not drop sibling IR closures, and a
 // hard rebind must reinstall the caller after the drain. The light path
 // stays armed only for Soft; hard still typechecks and still drains.
@@ -1258,6 +1341,9 @@ static void ac4362_soft_caller_arity() {
 
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
+    // Before any set-code in this process: the epoch must still be 0 so the
+    // birth-stamp path is the one the CLI hits on a fresh start.
+    ac4585_host_calls_stay_on_snapshot();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();
