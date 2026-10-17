@@ -7339,6 +7339,53 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             cap_snap_cache_.erase(cap_id);
                         }
                     }
+                    // Issue #4474: closures created in the body of a module
+                    // being loaded (letrec: every define's cell is pre-bound
+                    // before any RHS runs) all capture the SAME bindings.
+                    // Share one capture frame instead of K identical copies
+                    // (K^2 bindings for K procedure defines, all walked by
+                    // the file-mode reclaim mark). Reuse requires identical
+                    // content (pool, parent, every (name, value) pair), so
+                    // the shared frame is exactly the copy this closure
+                    // would have built; any define in between makes a new one.
+                    if (cap_id == NULL_ENV_ID && current_env == require_inject_env_ &&
+                        !current_env->cap_snapshot()) {
+                        struct ModuleCaptureShare {
+                            const Evaluator* ev = nullptr;
+                            const Env* env = nullptr;
+                            std::uint64_t gen = 0;
+                            EnvId id = NULL_ENV_ID;
+                        };
+                        thread_local ModuleCaptureShare share;
+                        bool linear_free = true;
+                        for (auto st : current_env->bindings_linear_ownership_state())
+                            if (st != linear_rt::Untracked) {
+                                linear_free = false;
+                                break;
+                            }
+                        if (linear_free) {
+                            const Env& ce = *current_env;
+                            const auto pid = ce.parent_id();
+                            if (share.ev == this && share.env == current_env &&
+                                share.gen == env_generation_ && share.id != NULL_ENV_ID &&
+                                static_cast<std::size_t>(share.id) < env_frames_size()) {
+                                std::shared_lock<std::shared_mutex> frlock(
+                                    env_frame_shards_[env_frame_shard_index(share.id)].mu);
+                                const EnvFrame& sfr = env_frames_[share.id];
+                                auto bss = ce.bindings_symid();
+                                auto bs = ce.bindings();
+                                if (sfr.version_ != INVALID_VERSION && sfr.parent_id == pid &&
+                                    sfr.pool_ == ce.pool() &&
+                                    std::ranges::equal(sfr.bindings_symid_, bss) &&
+                                    std::ranges::equal(sfr.bindings_, bs))
+                                    cap_id = share.id;
+                            }
+                            if (cap_id == NULL_ENV_ID) {
+                                cap_id = alloc_env_frame_from_env(ce);
+                                share = {this, current_env, env_generation_, cap_id};
+                            }
+                        }
+                    }
                     if (cap_id == NULL_ENV_ID)
                         cap_id = alloc_env_frame_from_env(*current_env);
                     note_tw_closure_owner(cid); // Issue #4428
