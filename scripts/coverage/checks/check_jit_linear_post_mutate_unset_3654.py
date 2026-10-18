@@ -47,7 +47,12 @@ def main() -> int:
     build = _read("build.py")
 
     fn = brc.find('extern "C" int aura_jit_linear_post_mutate_enforce')
-    win = brc[fn : fn + 1800] if fn >= 0 else ""
+    # #4600: the declared-none consult (exec_jit's explicit no-linear-env
+    # declaration) sits at the head of the unset path and pushed the normal
+    # callback invocation past 1800 chars. The contract is unchanged — the
+    # callback is still invoked (twice now: once with kLinearEnvNull for
+    # declared-none hosts, once with the resolved id). Widen to 2600.
+    win = brc[fn : fn + 2600] if fn >= 0 else ""
 
     # AC1
     must("Issue #3654", "AC1 strong cite", win)
