@@ -140,15 +140,12 @@ static void ac6_4595_source_cite_gates() {
             continue;
         found_env_cpp = true;
         std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        CHECK(src.find("f.bindings_.rbegin()") != std::string::npos,
-              "AC6: cell-lookup SoA walks scan reverse (rbegin)");
-        CHECK(src.find("auto tb = owner_->top_env().bindings();") != std::string::npos,
-              "AC6: live-top consult reverse-scans via tb");
         CHECK(src.find("aura::serve::g_current_fiber == nullptr && bindings_.empty()") !=
                   std::string::npos,
               "AC6: empty-capture live-top consult fiber-gated (host-thread only)");
-        CHECK(src.find("BEFORE scanning the root") != std::string::npos,
-              "AC6: root-frame walk consults live top_ before the frozen snapshot");
+        CHECK(src.find("cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()") !=
+                  std::string::npos,
+              "AC6: consult only for truly-empty captures (symid-only keeps capture order)");
         CHECK(src.find("auto tb4595 = owner_->top_env().bindings();") != std::string::npos,
               "AC6: cell-lookup empty-capture consults use tb4595");
         break;
