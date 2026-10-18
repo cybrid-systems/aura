@@ -15637,6 +15637,12 @@ public:
     // (mutate:rebind) EDSL surface, which would also rebuild the function
     // body (mixing the traversal test with the rebind path).
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
+    // Issue #4570: optimized LLVM IR of a JIT-compiled function (empty if
+    // never compiled). Backs `aura --jit-session` ";;ir NAME" and the L1
+    // no-runtime-call IR snapshot test.
+    [[nodiscard]] std::string public_jit_function_ir(const std::string& name) {
+        return jit_.compile_function_to_llvm_ir_by_name(name.c_str());
+    }
     // Issue #1514: test/Agent seam for dirty cascade without full invalidate.
     void public_mark_define_dirty(const std::string& name) { mark_define_dirty(name); }
     // Issue #2137: test/Agent entry to drain deferred non-render cascades.

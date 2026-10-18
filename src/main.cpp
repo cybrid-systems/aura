@@ -53,6 +53,7 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
 
 extern "C" void aura_reset_runtime(); // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
+extern "C" std::uint64_t aura_jit_float_pool_size(); // Issue #4570 --jit-session
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 // Issue #243: defuse_version_ setter/getter so the AOT
 // bridge can mangle + register with the current emit epoch.
@@ -2080,6 +2081,8 @@ int main(int argc, char* argv[]) {
     //   ;;invalidate NAME  — rebind cascade entry (invalidate_function)
     //   ;;stats            — "compiles=N <jit-assume stats>"
     //   ;;events           — assumption invalidation events
+    //   ;;ir NAME          — optimized LLVM IR of NAME (#4570)
+    //   ;;floatpool        — JIT float-pool size (#4570)
     // Output: one line per program (value or "error: ...").
     if (argc > 1 && std::string_view(argv[1]) == "--jit-session") {
 #ifdef AURA_HAVE_LLVM
@@ -2096,6 +2099,14 @@ int main(int argc, char* argv[]) {
             if (line == ";;stats") {
                 std::println("compiles={} {}", cs.snapshot().jit_compilations,
                              aura::compiler::jit_assume::format_stats());
+                continue;
+            }
+            if (line == ";;floatpool") {
+                std::println("floatpool={}", aura_jit_float_pool_size());
+                continue;
+            }
+            if (line.starts_with(";;ir ")) {
+                std::println("{}", cs.public_jit_function_ir(line.substr(5)));
                 continue;
             }
             if (line == ";;events") {

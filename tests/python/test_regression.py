@@ -866,6 +866,206 @@ def test_jit_assumption_invalidation_4569():
     print("  ✅ test_jit_assumption_invalidation_4569")
 
 
+def test_jit_l1_4570():
+    """Issue #4570: L1 lowering (cell scalar replacement, both-fixnum fast
+    path, compare+branch fusion, static float slots) keeps --jit output
+    identical to the IR interpreter and the eval path, including ABI 4
+    fixnum edges, overflow, mixed int/float, escaping cells and floats.
+    Then one --jit-session checks the emitted LLVM IR of a `while` int loop
+    has no cell bridge calls, and that a float accumulator loop does not
+    grow the float pool per iteration.
+    """
+    mx, mn = (1 << 62) - 1, -(1 << 62)
+    bin_ops = "(define (add a b) (+ a b)) (define (sub a b) (- a b)) (define (mul a b) (* a b)) "
+    cmp_ops = (
+        "(define (lt a b) (if (< a b) 1 2)) (define (ge a b) (if (>= a b) 1 2)) (define (eqn a b) (if (= a b) 1 2)) "
+    )
+    programs = []
+
+    def add(name, code, expect=None):
+        programs.append((name, code, expect))
+
+    for a, b, op in [
+        (mx, 0, "add"),
+        (mx - 1, 1, "add"),
+        (mn, 0, "sub"),
+        (mn + 1, 1, "sub"),
+        (2147483647, 2147483647, "mul"),
+        (-2147483648, 2147483648, "mul"),
+        (mx, 1, "mul"),
+        (mn, 1, "mul"),
+        (mx, -1, "mul"),
+        (-7, 3, "mul"),
+        (5, -9, "sub"),
+        (1, 2.5, "add"),
+        (2.5, 1, "sub"),
+        (1.5, 2.5, "mul"),
+        (3, 0.5, "mul"),
+    ]:
+        add(f"{op}-{a}-{b}", f"{bin_ops}(display ({op} {a} {b}))")
+    for a, b in [(1, 2), (2, 1), (2, 2), (mx, mn), (mn, mx), (1, 2.5), (2.5, 1), (2, 2.0), (-3, -3)]:
+        for op in ("lt", "ge", "eqn"):
+            add(f"{op}-{a}-{b}", f"{cmp_ops}(display ({op} {a} {b}))")
+    loop_i = "(define (sumi n) (let ((i 0) (a 0)) (while (<= i n) (set! a (+ a i)) (set! i (+ i 1))) a)) "
+    for n in (0, 1, 7, 100, 2000):
+        add(f"while-sumi-{n}", f"{loop_i}(display (sumi {n}))", expect=str(n * (n + 1) // 2))
+    loop_f = "(define (sumf n) (let ((i 0) (a 0.0)) (while (< i n) (set! a (+ a 1.5)) (set! i (+ i 1))) a)) "
+    for n in (0, 1, 10, 1000):
+        add(f"while-sumf-{n}", f"{loop_f}(display (sumf {n}))")
+    add(
+        "while-mixed",
+        "(define (m n) (let ((i 0) (a 0.5)) (while (< i n) (set! a (* a 2)) (set! i (+ i 1))) a)) (display (m 10))",
+    )
+    add(
+        "while-int-then-float",
+        "(define (m n) (let ((i 0) (a 0)) (while (< i n) (set! a (+ a 1)) (set! i (+ i 1))) "
+        "(set! a (+ a 0.25)) a)) (display (m 4))",
+    )
+    add(
+        "cell-captured",
+        "(define (k n) (let ((c 0)) (let ((inc (lambda () (set! c (+ c 1))))) (while (< c n) (inc)) c))) (display (k 5))",
+        expect="5",
+    )
+    add(
+        "cell-escapes-closure",
+        "(define (mk) (let ((c 10)) (lambda () (set! c (+ c 1)) c))) (define g (mk)) (g) (display (g))",
+        expect="12",
+    )
+    add(
+        "float-escapes-list",
+        "(define (fl n) (let ((a 0.0) (l (quote ())) (i 0)) (while (< i n) (set! a (+ a 0.1)) "
+        "(set! l (cons a l)) (set! i (+ i 1))) "
+        "(if (and (= (car l) 0.5) (= (car (cdr l)) 0.4) (= (length l) 5)) 1 0))) (display (fl 5))",
+        expect="1",
+    )
+    add("eq-branch", "(define (e x y) (if (eq? x y) 1 2)) (display (+ (e 3 3) (e 3 4)))", expect="3")
+    add("div-int", "(define (d a b) (/ a b)) (display (d 7 2))")
+    add("div-float", "(define (d a b) (/ a b)) (display (d 7.0 2))")
+    add(
+        "nested-let-loop",
+        "(define (nl n) (let ((i 0) (s 0)) (while (< i n) (let ((t (* i i))) (set! s (+ s t))) (set! i (+ i 1))) s)) "
+        "(display (nl 10))",
+        expect="285",
+    )
+
+    def run_mode(code, mode):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=30, env=env)
+        return r.returncode, (r.stdout or "").strip()
+
+    quirk = 0
+    for name, code, expect in programs:
+        outs = {mode: run_mode(code, mode) for mode in ("ir", "eval", "jit")}
+        # Pre-existing `--jit` top-level print quirk: after the displayed
+        # value it can print "#f" or "<cell[N]>" (the last define's cell).
+        # Tolerated only when the pre-#4570 lowering (AURA_JIT_L1=0) prints
+        # the same trailing text (its value may differ where #4570 fixed a
+        # compare), so L1 cannot hide behind it. #4570 follow-up.
+        rc_j, out_j = outs["jit"]
+        ir_out = outs["ir"][1]
+        if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>)", out_j):
+            env_off = os.environ.copy()
+            env_off.update({"AURA_SANDBOX": "off", "AURA_PIPELINE_STRICT": "0", "AURA_JIT_L1": "0"})
+            env_off.pop("AURA_FORCE_IR", None)
+            r_off = subprocess.run([AURA, "--jit"], input=code, capture_output=True, text=True, timeout=30, env=env_off)
+            suffix = out_j[len(ir_out) :]
+            if (r_off.stdout or "").strip().endswith(suffix):
+                outs["jit"] = (rc_j, ir_out)
+                quirk += 1
+        if not (outs["ir"] == outs["eval"] == outs["jit"]):
+            raise Exception(f"{name}: ir={outs['ir']!r} eval={outs['eval']!r} jit={outs['jit']!r}")
+        if expect is not None and outs["jit"] != (0, expect):
+            raise Exception(f"{name}: expected {expect!r}, got {outs['jit']!r}")
+
+    lines = [
+        loop_i + "(sumi 3)",
+        ";;ir sumi",
+        loop_f + "(sumf 3)",
+        ";;floatpool",
+        loop_f + "(sumf 50000)",
+        ";;floatpool",
+    ]
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    r = subprocess.run(
+        [AURA, "--jit-session"], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=60, env=env
+    )
+    out = r.stdout or ""
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+    assert "define i64 @sumi" in out, out[:400]
+    ir = out[out.index("define i64 @sumi") :]
+    ir = ir[: ir.index("\n}")]
+    for bridge in ("@aura_cell_get", "@aura_cell_set", "@aura_new_cell"):
+        assert bridge not in ir, f"sumi native code still calls {bridge}"
+    # The hot arms are the both-fixnum add and the fused compare; the float
+    # promote path stays as the cold generic arm (operands are not proven
+    # fixnum: overflow yields RefError).
+    assert "l1_fixnum" in ir and "l1_cmp_fixnum" in ir, "L1 fast-path blocks missing from sumi"
+    pools = [int(x) for x in re.findall(r"floatpool=(\d+)", out)]
+    assert len(pools) == 2, out[-400:]
+    grew = pools[1] - pools[0]
+    assert grew < 100, f"float pool grew by {grew} over a 50000-step float loop"
+    print(
+        f"  ✅ test_jit_l1_4570 ({len(programs)} programs, {quirk} display-quirk; sumf(50000) float-pool growth {grew})"
+    )
+
+
+def test_jit_mixed_compare_4570():
+    """Issue #4570: `--jit` numeric compares with one float operand compare
+    by value, like the interpreter. Before #4570 the JIT compared raw tags:
+    (< 2 2.0) was true, (= 2 2.0) was false, and (= 1.5 1.5) on two boxed
+    floats was false. Branch results are fixnums
+    so the check does not depend on boolean display.
+    """
+    cases = [
+        ("<", "2", "2.0", 2),
+        ("<", "2", "2.5", 1),
+        ("<", "3", "2.5", 2),
+        ("<", "2.5", "3", 1),
+        (">", "2.5", "2", 1),
+        (">", "2", "2.5", 2),
+        ("<=", "3", "2.5", 2),
+        ("<=", "2", "2.0", 1),
+        (">=", "2.0", "2", 1),
+        (">=", "-1", "-0.5", 2),
+        ("=", "2", "2.0", 1),
+        ("=", "2.0", "2", 1),
+        ("=", "2", "2.5", 2),
+        ("<", "-4611686018427387904", "0.5", 1),
+        ("<", "4611686018427387903", "1.5", 2),
+        # Two floats are two pool boxes: equal values, different tags.
+        ("=", "1.5", "1.5", 1),
+        ("=", "0.5", "(+ 0.25 0.25)", 1),
+        ("<", "1.5", "1.25", 2),
+    ]
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_FORCE_IR", None)
+    for op, a, b, want in cases:
+        code = f"(define (c x y) (if ({op} x y) 1 2)) (display (c {a} {b}))"
+        for mode in ("jit", "ir"):
+            e = dict(env)
+            cmd = [AURA, "--jit"] if mode == "jit" else [AURA]
+            if mode == "ir":
+                e["AURA_FORCE_IR"] = "1"
+            r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=30, env=e)
+            got = (r.stdout or "").strip()
+            if r.returncode != 0 or got != str(want):
+                raise Exception(f"({op} {a} {b}) {mode}: rc={r.returncode} got {got!r}, want {want}")
+    print(f"  ✅ test_jit_mixed_compare_4570 ({len(cases)} cases)")
+
+
 def test_type_feedback_4568():
     """Issue #4568: query:type-feedback lattice, polymorphic calls, rebind reset."""
     code = r"""
@@ -988,6 +1188,8 @@ for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
     test_jit_assumption_invalidation_4569,
+    test_jit_l1_4570,
+    test_jit_mixed_compare_4570,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,
