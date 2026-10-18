@@ -63,6 +63,7 @@ module;
 #include "hot_update_registry.hh"       // #2127: deopt-window signals for adaptive thr
 #include "pipeline_policy.hh"           // Issue #2213: tree-walker fallback production gate
 #include "ir_cache_boundary_restamp.hh" // Issue #4377: boundary-exit defuse restamp
+#include "jit_assumptions.hh"           // Issue #4569: assumption-based JIT invalidation
 
 export module aura.compiler.service;
 import std;
@@ -3969,6 +3970,10 @@ public:
         // Stamping with the sampled epoch leaves the entry stale under
         // any concurrent bump — fail-closed, next access recompiles.
         const std::uint64_t jit_sample_epoch = aura::core::current_mutation_epoch();
+        // Issue #4569: define clock the IR is sampled under (same fail-closed
+        // rule as jit_sample_epoch, for DefineVersion dependencies).
+        const std::uint64_t jit_sample_clock =
+            aura::compiler::jit_assume::define_clock().load(std::memory_order_acquire);
 
         // Lower to IR
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
@@ -4202,9 +4207,26 @@ public:
             std::uint64_t hit_drop_gen = 0;
             auto note_cache_hit = [&](const JitCachedFn& cached) {
                 cache_hit = true;
+                aura::compiler::jit_assume::stats().hits.fetch_add(1, std::memory_order_relaxed);
+                // Issue #4569: the assumption predicate just re-validated
+                // this native code at the current state, so re-stamp the
+                // Apply prologue's dual-epoch fence (#1537) — otherwise any
+                // unrelated edit's bridge-epoch bump would still deopt it at
+                // entry (the global storm, moved into the prologue).
+                if (!aura::compiler::jit_assume::global_epoch_mode())
+                    jit_.capture_fn_epoch(ir_fn.name.c_str(), aura_aot_func_table_epoch());
                 hit_epoch = cached.last_seen_epoch_;
                 hit_drop_gen = aura_jit_define_drop_gen();
             };
+            // Issue #4569: assumption key for this IR (fingerprint + deps).
+            const std::vector<std::uint8_t>* akey_dirty = nullptr;
+            if (auto cit = ir_cache_v2_.find(ir_fn.name); cit != ir_cache_v2_.end()) {
+                if (ir_fn.id < cit->second.instruction_dirty_per_func_.size())
+                    akey_dirty = &cit->second.instruction_dirty_per_func_[ir_fn.id];
+            }
+            const JitAssumeKey akey =
+                jit_assume_key_(ir_fn, ir_mod.string_pool, akey_dirty,
+                                escape_pass.get_map(ir_fn.id), escape_pass.get_map_size(ir_fn.id));
             if (!is_top_level) {
                 {
                     std::shared_lock cache_read(jit_cache_mtx_);
@@ -4220,8 +4242,10 @@ public:
                         // missed, or a mutation in a different function
                         // that the JIT code implicitly depends on).
                         // Treat as a cache miss and force re-compile.
-                        auto current_epoch = aura::core::current_mutation_epoch();
-                        if (cache_it->second.last_seen_epoch_ != current_epoch) {
+                        // Issue #4569: assumption predicate (fingerprint +
+                        // DefineVersion deps); the bare global epoch compare
+                        // is AURA_JIT_GLOBAL_EPOCH_INVALIDATE=1 only.
+                        if (jit_entry_stale_(cache_it->second, akey, ir_fn.name, false)) {
                             // Skip the cached entry — fall through to
                             // the compile path below. Don't erase here
                             // (we hold only the shared lock); the
@@ -4255,8 +4279,9 @@ public:
                     auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                     // Issue #4073: same epoch predicate as the shared probe.
                     // A miss there must not be turned back into a hit here.
+                    // Issue #4569: assumption predicate (records the event).
                     if (cache_it != jit_cache_.end() &&
-                        cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
+                        jit_entry_stale_(cache_it->second, akey, ir_fn.name, true)) {
                         jit_cache_.erase(cache_it);
                     } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
                                !cache_it->second.spec_declined &&
@@ -4370,6 +4395,9 @@ public:
                     // Workspace-rank mutate that lands mid-compile must
                     // not see this pre-mutate ScalarFn revived as fresh.
                     it->second.last_seen_epoch_ = jit_sample_epoch;
+                    // Issue #4569: assumptions this native code relies on.
+                    it->second.fingerprint_ = akey.fp;
+                    it->second.deps_ = jit_assume_snapshot_(akey, jit_sample_clock);
                     it->second.local_count = ir_fn.local_count;
                     it->second.arg_count = ir_fn.arg_count;
                     it->second.env_count = env_count;
@@ -16233,9 +16261,143 @@ public:
         // Issue #605: ShapeProfiler version at compile time.
         // Compared on cache hit; mismatch → re-compile + jit_shape_miss.
         std::uint64_t compiled_shape_version_ = 0;
+        // Issue #4569: assumptions the native code was compiled under —
+        // IR content fingerprint (0 = none recorded, never a hit in
+        // assumption mode) and the DefineVersion words it depends on.
+        std::uint64_t fingerprint_ = 0;
+        std::vector<aura::compiler::jit_assume::Dep> deps_;
     };
     std::unordered_map<std::string, JitCachedFn, aura::core::TransparentStringHash, std::equal_to<>>
         jit_cache_;
+
+    // Issue #4569: per-function assumption key, computed from the IR the
+    // cache is probed with. fp covers everything FlatFnBuilder hands the
+    // JIT (opcode, operands, type/shape/narrow/linear/marker/provenance
+    // stamps, ConstString text, escape map, dirty bits, counts); names are
+    // the DefineVersion dependencies (own define name + captured free vars).
+    struct JitAssumeKey {
+        std::uint64_t fp = 0;
+        std::vector<std::string> names;
+    };
+    [[nodiscard]] static JitAssumeKey jit_assume_key_(const aura::ir::IRFunction& f,
+                                                      const std::vector<std::string>& pool,
+                                                      const std::vector<std::uint8_t>* dirty,
+                                                      const std::uint8_t* esc, std::size_t esc_n) {
+        aura::compiler::jit_assume::Fnv h;
+        h.u64(f.arg_count);
+        h.u64(f.local_count);
+        h.u64(f.variadic ? 1 : 0);
+        h.u64(static_cast<std::uint64_t>(f.region));
+        h.u64(f.marker);
+        h.u64(f.entry_block);
+        h.u64(f.free_vars.size());
+        for (const auto& fv : f.free_vars)
+            h.str(fv);
+        h.u64(f.blocks.size());
+        for (const auto& blk : f.blocks) {
+            h.u64(blk.instructions.size());
+            for (const auto& in : blk.instructions) {
+                h.u64(static_cast<std::uint64_t>(in.opcode));
+                for (auto op : in.operands)
+                    h.u64(op);
+                // type_id is a registry index that changes on every
+                // typecheck (fresh type vars); the JIT only tests
+                // type_id != 0 (aura_jit.cpp L2 pair stamp). Hash what the
+                // JIT reads — update this if lowering starts using the id.
+                h.u64(in.type_id != 0 ? 1 : 0);
+                h.u64(in.shape_id);
+                h.u64(in.narrow_evidence);
+                h.u64(in.linear_ownership_state);
+                h.u64(in.adt_variant_id);
+                h.u64(in.source_marker);
+                h.u64(in.provenance);
+                if (in.opcode == aura::ir::IROpcode::ConstString) {
+                    const auto idx = in.operands[1];
+                    h.str(idx < pool.size() ? std::string_view(pool[idx]) : std::string_view{});
+                }
+            }
+        }
+        if (dirty) {
+            h.u64(dirty->size());
+            h.bytes(dirty->data(), dirty->size());
+        }
+        h.u64(esc_n);
+        if (esc && esc_n)
+            h.bytes(esc, esc_n);
+        JitAssumeKey k;
+        k.fp = h.done();
+        // Own define name: "f" or "f#3" -> "f"; synthetic lambdas carry
+        // no define name of their own.
+        std::string_view own = f.name;
+        if (auto hash = own.find('#'); hash != std::string_view::npos)
+            own = own.substr(0, hash);
+        if (!own.empty() && own != "__lambda__" && own != "__top__" &&
+            own != "__self_placeholder__")
+            k.names.emplace_back(own);
+        for (const auto& fv : f.free_vars)
+            if (!fv.empty())
+                k.names.push_back(fv);
+        return k;
+    }
+    // Snapshot the dependency versions. clock0 is the define clock read
+    // before the IR was lowered: if any DefineVersion moved since, this
+    // IR may predate it, so publish fail-closed (version 0 never matches).
+    [[nodiscard]] static std::vector<aura::compiler::jit_assume::Dep>
+    jit_assume_snapshot_(const JitAssumeKey& k, std::uint64_t clock0) {
+        namespace ja = aura::compiler::jit_assume;
+        std::vector<ja::Dep> deps;
+        deps.reserve(k.names.size());
+        for (const auto& n : k.names) {
+            auto* w = ja::DefineVersions::instance().word(n);
+            deps.push_back(ja::Dep{w, w->v.load(std::memory_order_acquire), n});
+        }
+        if (ja::define_clock().load(std::memory_order_acquire) != clock0) {
+            ja::stats().torn_publishes.fetch_add(1, std::memory_order_relaxed);
+            for (auto& d : deps)
+                d.version = 0;
+            if (deps.empty())
+                deps.push_back(
+                    ja::Dep{ja::DefineVersions::instance().word("__torn__"), 0, "__torn__"});
+        }
+        return deps;
+    }
+    // Staleness predicate shared by the exec_jit and try_jit_execute probes
+    // (replaces the bare global-epoch compare, #166 / #4073). record=true on
+    // the unique-lock re-probe only, so one stale entry logs one event.
+    [[nodiscard]] static bool jit_entry_stale_(const JitCachedFn& e, const JitAssumeKey& k,
+                                               std::string_view fn, bool record) {
+        namespace ja = aura::compiler::jit_assume;
+        if (ja::global_epoch_mode()) {
+            const bool stale = e.last_seen_epoch_ != aura::core::current_mutation_epoch();
+            if (stale && record) {
+                ja::stats().epoch_misses.fetch_add(1, std::memory_order_relaxed);
+                ja::EventLog::instance().record(ja::Event{
+                    std::string(fn), std::string(), ja::Kind::GlobalEpoch, e.last_seen_epoch_,
+                    aura::core::current_mutation_epoch(), aura::core::current_mutation_epoch()});
+            }
+            return stale;
+        }
+        if (e.fingerprint_ == 0 || e.fingerprint_ != k.fp) {
+            if (record) {
+                ja::stats().fingerprint_misses.fetch_add(1, std::memory_order_relaxed);
+                ja::EventLog::instance().record(
+                    ja::Event{std::string(fn), std::string(), ja::Kind::Fingerprint, e.fingerprint_,
+                              k.fp, aura::core::current_mutation_epoch()});
+            }
+            return true;
+        }
+        if (const auto* d = ja::first_broken(e.deps_)) {
+            if (record) {
+                ja::stats().define_invalidations.fetch_add(1, std::memory_order_relaxed);
+                ja::EventLog::instance().record(
+                    ja::Event{std::string(fn), d->name, ja::Kind::Define, d->version,
+                              d->word ? d->word->v.load(std::memory_order_acquire) : 0,
+                              aura::core::current_mutation_epoch()});
+            }
+            return true;
+        }
+        return false;
+    }
     // Issue #3758: light-link get_function_ptr is null. Test override lets
     // try_jit_execute reach ScalarFn so persist-reject can prove no invoke.
     aura::jit::ScalarFn try_jit_scalar_override_for_test_ = nullptr;
@@ -17452,6 +17614,9 @@ public:
         // capture to the compile loop; a Workspace-rank mutate skips
         // mutate_mtx_ so the shared lock cannot fence it).
         const std::uint64_t jit_sample_epoch = aura::core::current_mutation_epoch();
+        // Issue #4569: define clock, same capture point as jit_sample_epoch.
+        const std::uint64_t jit_sample_clock =
+            aura::compiler::jit_assume::define_clock().load(std::memory_order_acquire);
         if (ir_mod.functions.empty())
             return std::nullopt;
 
@@ -17485,9 +17650,24 @@ public:
             std::uint64_t hit_drop_gen = 0;
             auto note_cache_hit = [&](const JitCachedFn& entry) {
                 cache_hit = true;
+                aura::compiler::jit_assume::stats().hits.fetch_add(1, std::memory_order_relaxed);
+                // Issue #4569: the assumption predicate just re-validated
+                // this native code at the current state, so re-stamp the
+                // Apply prologue's dual-epoch fence (#1537) — otherwise any
+                // unrelated edit's bridge-epoch bump would still deopt it at
+                // entry (the global storm, moved into the prologue).
+                if (!aura::compiler::jit_assume::global_epoch_mode())
+                    jit_.capture_fn_epoch(ir_fn.name.c_str(), aura_aot_func_table_epoch());
                 hit_epoch = entry.last_seen_epoch_;
                 hit_drop_gen = aura_jit_define_drop_gen();
             };
+            // Issue #4569: assumption key for this IR. The escape map is the
+            // one the compile below uses (pre-computed when available).
+            const std::vector<std::uint8_t>* akey_esc =
+                (escape_maps && ir_fn.id < escape_maps->size()) ? &(*escape_maps)[ir_fn.id]
+                                                                : &ir_fn.escape_map;
+            const JitAssumeKey akey = jit_assume_key_(ir_fn, ir_mod.string_pool, nullptr,
+                                                      akey_esc->data(), akey_esc->size());
             {
                 std::shared_lock cache_read(jit_cache_mtx_);
                 auto cache_it = jit_cache_.find(ir_fn.name);
@@ -17495,7 +17675,8 @@ public:
                     auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                     // Issue #4073: last_seen_epoch_ != current mutation epoch
                     // is a miss. Do not load the pre-mutate ScalarFn.
-                    if (cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
+                    // Issue #4569: assumption predicate (epoch behind flag).
+                    if (jit_entry_stale_(cache_it->second, akey, ir_fn.name, false)) {
                         // Unique re-probe erases. Shared lock cannot.
                     } else if (!cache_it->second.has_shape_map && !cache_it->second.spec_declined &&
                                shape_profiler_.is_stable(fn_key)) {
@@ -17518,8 +17699,9 @@ public:
                 auto cache_it = jit_cache_.find(ir_fn.name);
                 auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                 // Issue #4073: same epoch predicate as the shared probe.
+                // Issue #4569: assumption predicate (records the event).
                 if (cache_it != jit_cache_.end() &&
-                    cache_it->second.last_seen_epoch_ != aura::core::current_mutation_epoch()) {
+                    jit_entry_stale_(cache_it->second, akey, ir_fn.name, true)) {
                     jit_cache_.erase(cache_it);
                 } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
                            !cache_it->second.spec_declined && shape_profiler_.is_stable(fn_key)) {
@@ -17666,9 +17848,9 @@ public:
                     std::shared_lock cache_read(jit_cache_mtx_);
                     if (ir_fn.name != "__top__") {
                         auto cached = jit_cache_.find(ir_fn.name);
+                        // Issue #4569: same assumption predicate as the probes.
                         if (cached != jit_cache_.end() &&
-                            cached->second.last_seen_epoch_ ==
-                                aura::core::current_mutation_epoch()) {
+                            !jit_entry_stale_(cached->second, akey, ir_fn.name, false)) {
                             fn_ptr = cached->second.fn_ptr.load(std::memory_order_acquire);
                             note_cache_hit(cached->second);
                         }
@@ -17700,6 +17882,9 @@ public:
                         it->second.env_count = env_count;
                         it->second.last_seen_epoch_ =
                             jit_sample_epoch; // #4338 sampled epoch, not insert-time current
+                        // Issue #4569: assumptions this native code relies on.
+                        it->second.fingerprint_ = akey.fp;
+                        it->second.deps_ = jit_assume_snapshot_(akey, jit_sample_clock);
                         it->second.has_shape_map = flat_fn.shape_map != nullptr;
                         if (flat_fn.shape_map != nullptr) {
                             it->second.compiled_shape_version_ =

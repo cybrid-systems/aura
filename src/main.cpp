@@ -24,6 +24,7 @@
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 // Issue #2076 / #2053: production security defaults (must be before import std).
 #include "compiler/security_defaults.hh"
+#include "compiler/jit_assumptions.hh" // #4569 --jit-session stats
 
 import std;
 import aura.core;
@@ -2070,6 +2071,52 @@ int main(int argc, char* argv[]) {
         }
         std::println("{}", fmt_val(*result, cs));
         return 0;
+    }
+
+    // ── --jit-session: many exec_jit calls in ONE CompilerService ──
+    // Issue #4569: the JIT cache only pays off across calls, and
+    // `--jit` runs one. Each stdin line is one program (exec_jit);
+    // lines starting with ";;" are directives:
+    //   ;;invalidate NAME  — rebind cascade entry (invalidate_function)
+    //   ;;stats            — "compiles=N <jit-assume stats>"
+    //   ;;events           — assumption invalidation events
+    // Output: one line per program (value or "error: ...").
+    if (argc > 1 && std::string_view(argv[1]) == "--jit-session") {
+#ifdef AURA_HAVE_LLVM
+        aura::compiler::CompilerService cs;
+        std::string line;
+        int rc = 0;
+        while (std::getline(std::cin, line)) {
+            if (line.empty())
+                continue;
+            if (line.starts_with(";;invalidate ")) {
+                cs.public_invalidate_function(line.substr(13));
+                continue;
+            }
+            if (line == ";;stats") {
+                std::println("compiles={} {}", cs.snapshot().jit_compilations,
+                             aura::compiler::jit_assume::format_stats());
+                continue;
+            }
+            if (line == ";;events") {
+                std::println("{}", aura::compiler::jit_assume::format_events());
+                continue;
+            }
+            if (line.starts_with(";;"))
+                continue;
+            auto result = cs.exec_jit(line);
+            if (!result) {
+                std::println("error: {}", result.error().format());
+                rc = 1;
+                continue;
+            }
+            std::println("{}", is_void(*result) ? std::string("#<void>") : fmt_val(*result, cs));
+        }
+        return rc;
+#else
+        std::println(std::cerr, "JIT not available — rebuild with LLVM");
+        return 1;
+#endif
     }
 
     // ── --jit: compile and execute via LLVM ORC JIT ─────────────
