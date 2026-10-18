@@ -788,6 +788,58 @@ static void ac4349_snapshot_keeps_caller() {
           "4349: IR call restamps a private callee closure");
 }
 
+// Issue #4598: rebind of the leaf must refresh a caller of the direct
+// caller. A focus that stops at direct called_by leaves d4598 with the
+// old inlined c4598. Fillers keep the dirty set small beside seven
+// defines, under the specialize cap, so eval-current takes that focused
+// path. Restore drops the cone: the pre-eval-current call must not
+// return an int, and eval-current brings the snapshot value back.
+static void ac4598_transitive_rebind_and_restore() {
+    std::println("\n--- #4598: transitive rebind and restore ---");
+    CompilerService cs;
+    CHECK(set_code(cs, "(define (b4598) 1)\n"
+                       "(define (u4598) (+ (b4598) 1))\n"
+                       "(define (c4598) (* 10 (u4598)))\n"
+                       "(define (d4598) (+ (c4598) 1))\n"
+                       "(define (f4598 x) (+ x 1))\n"
+                       "(define (g4598 x) (+ x 2))\n"
+                       "(define (h4598 x) (+ x 3))\n"),
+          "4598: set-code chain");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598: eval-current binds");
+    auto pre = cs.eval("(d4598)");
+    CHECK(pre && is_int(*pre) && as_int(*pre) == 21, "4598: (d4598) = 21 before rebind");
+    auto filler = cs.eval("(f4598 1)");
+    CHECK(filler && is_int(*filler) && as_int(*filler) == 2, "4598: filler before rebind");
+    auto sid = cs.eval("(ast:snapshot \"4598\")");
+    CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4598: snapshot id");
+    auto snap = cs.eval("(d4598)");
+    CHECK(snap && is_int(*snap) && as_int(*snap) == 21, "4598: snapshot keeps (d4598)");
+    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 41)\" \"4598\")").has_value(),
+          "4598: rebind leaf");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598: eval-current after rebind");
+    auto leaf = cs.eval("(b4598)");
+    CHECK(leaf && is_int(*leaf) && as_int(*leaf) == 41, "4598: leaf is 41");
+    auto mid = cs.eval("(u4598)");
+    CHECK(mid && is_int(*mid) && as_int(*mid) == 42, "4598: direct caller is 42");
+    auto chain = cs.eval("(c4598)");
+    CHECK(chain && is_int(*chain) && as_int(*chain) == 420, "4598: chain2 is 420");
+    auto outer = cs.eval("(d4598)");
+    CHECK(outer && is_int(*outer) && as_int(*outer) == 421, "4598: transitive caller is 421");
+    auto filler2 = cs.eval("(h4598 1)");
+    CHECK(filler2 && is_int(*filler2) && as_int(*filler2) == 4, "4598: filler stays 4");
+    auto st = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    CHECK(st && is_bool(*st) && as_bool(*st), "4598: restore");
+    auto stale = cs.eval("(d4598)");
+    CHECK(!(stale && is_int(*stale)), "4598: stale transitive call is not an int");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598: eval-current after restore");
+    auto healed = cs.eval("(d4598)");
+    CHECK(healed && is_int(*healed) && as_int(*healed) == 21, "4598: (d4598) = 21 after restore");
+    auto leaf2 = cs.eval("(b4598)");
+    CHECK(leaf2 && is_int(*leaf2) && as_int(*leaf2) == 1, "4598: leaf restored");
+    auto filler3 = cs.eval("(g4598 1)");
+    CHECK(filler3 && is_int(*filler3) && as_int(*filler3) == 3, "4598: filler after restore");
+}
+
 // Issue #4357: set-code pre-cache unparses defines into function_sources_
 // and eval-current re-lowers that text onto the IR interpreter. A bool
 // printed as 1/0 comes back as an integer ((q) was 1, (boolean? (q)) #f).
@@ -1649,6 +1701,7 @@ int run_test_current_source_roundtrip() {
     ac_wiring();
     ac4349_restore_over_rebind();
     ac4349_snapshot_keeps_caller();
+    ac4598_transitive_rebind_and_restore();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();
