@@ -3726,7 +3726,13 @@ public:
         // Issue #1371: tag_arity hash map (declared before value_cache_).
         , tag_arity_index_(alloc)
         , value_cache_(alloc)
-        , mutation_log_(alloc)
+        // Issue #4583: the workspace flat is allocated on a monotonic
+        // arena. Two records per mutate:rebind grow this log, and
+        // compact's replacement buffer was abandoned there. The default
+        // resource is new_delete, so growth and compact (kept uses
+        // get_allocator()) return the buffer. #300 columns and
+        // node_first_mutation_ stay on `alloc`.
+        , mutation_log_()
         , narrowing_log_(alloc)
         // Issue #300 follow-up #2: regression from e5f559bf
         // ("fix warning"). node_first_mutation_ must use the
@@ -6125,6 +6131,56 @@ public:
         for (NodeId id = 0; id < static_cast<NodeId>(tag_.size()); ++id)
             node_gen_[id] = gen;
         restamp_lazy_align_enabled_.store(false, std::memory_order_release);
+    }
+
+    // Issue #4583: lowering stamps every Lambda whose subtree contains a
+    // Call into region_by_lambda_id_, and mark_live_nodes treats those ids
+    // as roots. A later rebind unlinks the old body, but the stamp keeps
+    // the slots alive so recycle cannot freelist them. Drop stamps whose
+    // lambda is not reachable from root. Linked lambdas, including explicit
+    // performance-region / evolution-region wrappers, stay. No-op when root
+    // is unpublished: a root-only mark would otherwise treat every slot as
+    // dead (#3618).
+    [[nodiscard]] std::size_t drop_unreachable_lambda_region_roots() {
+        if (root == NULL_NODE || !is_live_node(root) || size() == 0)
+            return 0;
+        {
+            std::shared_lock<std::shared_mutex> rlock(region_table_mtx_.mutable_get());
+            if (region_by_lambda_id_.empty())
+                return 0;
+        }
+        std::vector<bool> from_root(size(), false);
+        std::vector<NodeId> queue;
+        auto visit = [&](NodeId id) {
+            if (id == NULL_NODE || id >= size() || is_free_slot(id) || from_root[id])
+                return;
+            from_root[id] = true;
+            queue.push_back(id);
+        };
+        visit(root);
+        for (std::size_t qi = 0; qi < queue.size(); ++qi) {
+            for (auto cid : children(queue[qi])) {
+                if (cid != NULL_NODE)
+                    visit(cid);
+            }
+        }
+        std::unique_lock<std::shared_mutex> wlock(region_table_mtx_.mutable_get());
+        std::size_t dropped = 0;
+        for (auto it = region_by_lambda_id_.begin(); it != region_by_lambda_id_.end();) {
+            const NodeId lid = it->first;
+            if (lid < from_root.size() && from_root[lid]) {
+                ++it;
+                continue;
+            }
+            if (static_cast<std::size_t>(lid) < region_by_lambda_dense_.size()) {
+                std::atomic_ref<std::uint8_t>(
+                    region_by_lambda_dense_[static_cast<std::size_t>(lid)])
+                    .store(0, std::memory_order_release);
+            }
+            it = region_by_lambda_id_.erase(it);
+            ++dropped;
+        }
+        return dropped;
     }
 
     [[nodiscard]] std::size_t recycle_dead_nodes() {

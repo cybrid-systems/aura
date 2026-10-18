@@ -18,6 +18,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.ast_unparse;
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -269,9 +270,8 @@ bool Evaluator::save_panic_checkpoint() {
         return false;
     // Issue #4598: set-code / restore already stamped the full workspace
     // text. Copy that when the generation still matches so a boundary
-    // enter does not unparse. A miss (the stamp was invalidated, or
-    // nothing was stamped) still asks (current-source :workspace): panic
-    // restore set-codes this string as the whole workspace (#4267).
+    // enter does not unparse. A miss unparses workspace_flat_ into
+    // panic_safe_source_ (restore set-codes that string, #4267).
     if (workspace_source_text_valid_ && !workspace_source_text_.empty() &&
         workspace_source_text_generation_ == workspace_flat_->generation()) {
         bool newly_live = false;
@@ -291,55 +291,26 @@ bool Evaluator::save_panic_checkpoint() {
         bump_longrunning_checkpoint_success();
         return true;
     }
-    auto src_fn = primitives_.lookup("current-source");
-    if (!src_fn)
+    // Issue #4267: restore set-codes this string as the whole workspace.
+    // Unparse workspace_flat_ itself (the :workspace face). The bare
+    // (current-source) face is the transient per-eval form; set-coding
+    // that back malformed the flat. Do not mint the text onto
+    // string_heap_: that vector sits on the monotonic runtime arena, so
+    // one checkpoint per mutate:rebind never returned (#4583).
+    auto src =
+        aura::ast::unparse_to_string(*workspace_flat_, *workspace_pool_, workspace_flat_->root, {});
+    if (src.empty())
         return false;
-    // Issue #4267 follow-up: restore_panic_checkpoint() restores through
-    // (set-code …), so the checkpoint MUST hold the persistent WORKSPACE
-    // source. The bare (current-source) face returns the *transient* per-eval
-    // expression (for a mutation boundary raised by (set-code …) that is the
-    // whole enclosing "(begin … )" form), and rolling a checkpoint back then
-    // set-codes that non-workspace text into the workspace. The resulting
-    // malformed flat is unparse-unsafe: observed as a FlatAST child OOB in
-    // assemble_nodeview (SIGSEGV / _GLIBCXX_ASSERTIONS abort) and an
-    // EnvFrame deque bounds assert. (synthesize:optimize ranking variance is
-    // a separate issue -- the GA PRNG seeding in agent_prng,
-    // evaluator_primitives_agent.cpp.) Pass :workspace, the same face agent
-    // checkpoints (#2918) and stdlib refactor helpers use for user-script
-    // intent.
-    std::uint64_t ws_kw = 0;
-    bool ws_found = false;
-    for (; ws_kw < keyword_table_.size(); ++ws_kw) {
-        if (keyword_table_[ws_kw] == ":workspace") {
-            ws_found = true;
-            break;
-        }
-    }
-    if (!ws_found) {
-        ws_kw = keyword_table_.size();
-        keyword_table_.push_back(":workspace");
-    }
-    auto src = (*src_fn)({types::make_keyword(ws_kw)});
-    if (!types::is_string(src))
-        return false;
-    auto idx = types::as_string_idx(src);
-    // Issue #4519: fiber:spawn shares the Evaluator, so another fiber's
-    // push_string_heap (heap realloc) or restore_panic_checkpoint (heap
-    // shrink) can land between the idx check and the slot copy — the same
-    // unlocked-read UAF face #4509 closed for the f64 readers. Hold
-    // alloc_storage_lock_ across the string_heap_ bounds check, the slot
-    // copy, and the size snapshot. The live-CP note is an atomic bump and
-    // the cells_/pairs_/env_frames_ snapshots do not touch the heap, so
-    // they stay outside the lock.
+    // Issue #4519: the size snapshot stays under alloc_storage_lock_.
+    // The live-CP note is an atomic bump and the cells_/pairs_/env_frames_
+    // snapshots do not touch the heap, so they stay outside the lock.
     bool newly_live = false;
     {
         std::lock_guard alloc_lock(alloc_storage_lock_);
-        if (idx >= string_heap_.size())
-            return false;
         // Issue #3850: bump live-CP depth only on empty→live transition
         // (re-save of an already-live checkpoint must not double-count).
         newly_live = panic_safe_source_.empty();
-        panic_safe_source_ = string_heap_[idx];
+        panic_safe_source_ = std::move(src);
         panic_safe_string_heap_size_ = string_heap_.size();
     }
     if (newly_live)

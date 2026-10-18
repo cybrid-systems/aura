@@ -10916,7 +10916,10 @@ public:
         if (src_it == function_sources_.end() || src_it->second.empty())
             return false;
         const std::string source = src_it->second;
-        auto alloc = arena_.allocator();
+        // Issue #4583: this parse dies with the function. arena_ is
+        // monotonic, so one FlatAST per mutate:rebind never returned.
+        std::pmr::monotonic_buffer_resource scratch;
+        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(source, flat, pool);

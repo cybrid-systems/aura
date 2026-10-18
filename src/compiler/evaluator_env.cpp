@@ -2025,12 +2025,57 @@ void Evaluator::must_deopt_closures_named(std::string_view name) {
     // holds the pre-reemit body. #2569 restamp would make it look current.
     // must_deopt keeps production apply on the refuse path; Soft still
     // clears the flag and recovers.
-    walk_active_closures([&](ClosureId, Closure& cl) {
-        if (cl.name != key)
-            return;
-        cl.must_deopt_before_next_call = true;
-        cl.bridge_epoch = 0;
-    });
+    // Issue #4583: that poisoned closure is not the cell after the next
+    // rebind installs a fresh one. Leaving every generation in the map
+    // makes this walk, and the bound-define walk, pay for the whole
+    // rebind history. Drop poisoned generations except the id the cell
+    // still holds (a failed rebind must not dangle that cell).
+    bool have_keep = false;
+    ClosureId keep_id = 0;
+    if (auto bound = top_.lookup_binding(name)) {
+        types::EvalValue v = *bound;
+        if (types::is_cell(v)) {
+            const auto ci = types::as_cell_id(v);
+            if (ci < cells_.size())
+                v = cells_[static_cast<std::size_t>(ci)];
+        }
+        if (types::is_closure(v)) {
+            have_keep = true;
+            keep_id = types::as_closure_id(v);
+        }
+    }
+    std::vector<ClosureId> drop_ids;
+    {
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> wlock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            wlock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+        bump_closures_apply_epoch(); // Issue #3832
+        for (auto& cl_sh : closures_shards_) {
+            for (auto& [id, cl] : cl_sh.map) {
+                if (cl.name != key)
+                    continue;
+                if (cl.must_deopt_before_next_call && !(have_keep && id == keep_id)) {
+                    drop_ids.push_back(id);
+                    continue;
+                }
+                cl.must_deopt_before_next_call = true;
+                cl.bridge_epoch = 0;
+            }
+        }
+        for (const auto id : drop_ids) {
+            auto& shard = closures_shards_[closures_shard_index(id)];
+            auto it = shard.map.find(id);
+            if (it == shard.map.end())
+                continue;
+            invalidate_closure_lifetime(it->second);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->closure_view_dangling_prevented_total.store(
+                    g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            shard.map.erase(it);
+        }
+    }
 }
 
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
