@@ -3730,6 +3730,14 @@ extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state
 namespace {
 constexpr std::uint32_t kLinearEnvNull = std::numeric_limits<std::uint32_t>::max();
 std::atomic<std::uint32_t> g_linear_env_id{kLinearEnvNull};
+// Issue #4600 (exec_jit regression): a host that owns no linear env by
+// construction (exec_jit's top-level entry — no captures to validate)
+// declares it explicitly. NULL_ENV_ID and kLinearEnvNull are the same
+// value, so "unset" and "declared none" were indistinguishable and the
+// #3654 fail-closed path blocked every exec_jit prologue under the
+// production face. Declared-none consults the installed callback with
+// NULL_ENV_ID — the evaluator answers that as an audited no-op (#1731).
+std::atomic<bool> g_linear_env_none{false};
 std::atomic<std::uint64_t> g_linear_frame_version{0};
 } // namespace
 
@@ -3753,9 +3761,16 @@ extern "C" void aura_jit_set_linear_env_context(std::uint32_t env_id, std::uint6
     g_linear_frame_version.store(frame_version, std::memory_order_release);
 }
 
+// Issue #4600: explicit "this host call has no linear env" declaration
+// (see g_linear_env_none above). Idempotent; cleared by the clear below.
+extern "C" void aura_jit_set_linear_env_none(void) {
+    g_linear_env_none.store(true, std::memory_order_release);
+}
+
 extern "C" void aura_jit_clear_linear_env_context(void) {
     g_linear_env_id.store(kLinearEnvNull, std::memory_order_release);
     g_linear_frame_version.store(0, std::memory_order_release);
+    g_linear_env_none.store(false, std::memory_order_release);
 }
 
 // Issue #1540: host callback for Evaluator::linear_post_mutate_enforce.
@@ -3791,6 +3806,12 @@ extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id) {
     if (id == kLinearEnvNull)
         id = g_linear_env_id.load(std::memory_order_acquire);
     if (!g_linear_enforce_fn || id == kLinearEnvNull) {
+        // Issue #4600: declared-none host (exec_jit top-level entry) —
+        // consult the installed callback with NULL_ENV_ID; the evaluator
+        // treats that as an audited no-op (#1731 null-env counter).
+        if (g_linear_env_none.load(std::memory_order_acquire) && g_linear_enforce_fn) {
+            return g_linear_enforce_fn(g_linear_enforce_user, kLinearEnvNull) ? 1 : 0;
+        }
         // Issue #3654: Production/Full — missing host callback or env
         // context is unsafe (deopt). Soft/Off: pass-through (one hard-face
         // load). Do not treat unset as safe: native can skip Evaluator

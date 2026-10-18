@@ -1051,6 +1051,10 @@ int aura_jit_ir_typed_entry_commit_readiness_ok(void);
 // dual check (env_id + frame_version captured when the linear value was
 // created). Pass env_id == UINT32_MAX to clear / disable env half.
 void aura_jit_set_linear_env_context(std::uint32_t env_id, std::uint64_t frame_version);
+// Issue #4600: host declares "no linear env by construction" (exec_jit
+// top-level entry) — prologue probe consults the callback as audited no-op
+// instead of #3654 fail-close.
+void aura_jit_set_linear_env_none(void);
 void aura_jit_clear_linear_env_context(void);
 
 // Issue #1540: host wires Evaluator::linear_post_mutate_enforce.
