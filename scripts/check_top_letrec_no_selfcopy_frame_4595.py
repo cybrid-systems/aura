@@ -30,9 +30,10 @@ ACs:
   AC2  evaluator_env.cpp: live-safe EMPTY captures consult the LIVE top_
        before their SoA walk, FIBER-GATED (host-thread only — under
        concurrent fibers a live consult switches the resolved cell
-       mid-flight and hung the chaos release blocker); the SoA walk
-       consults live top_ BEFORE scanning the root frame's frozen
-       snapshot; lookup_cell_ptr / lookup_cell_index match frame string
+       mid-flight and hung the chaos release blocker); the SoA walk keeps
+       HEAD's #2566 root-frame order (frame scan first, live top after —
+       reordering broke module-closure scoping, CI #4373 face);
+       lookup_cell_ptr / lookup_cell_index match frame string
        bindings in REVERSE (SoA walk, legacy parent_ walk, live top_
        consult) so set! writes the newest cell after a top-level rebind;
        cites #4595.
@@ -136,36 +137,9 @@ def main() -> int:
         "AC2: cell-lookup empty-capture consults use tb4595",
     )
     must(
-        "BEFORE scanning the root" in env,
-        "AC2: root-frame walk consults live top_ before the frozen snapshot",
+        env.count("(cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty())") == 3,
+        "AC2: consults fire only for truly-empty captures (symid-only keeps capture order)",
     )
-    ptr_region = _between(
-        env, "EvalValue* Env::lookup_cell_ptr(", "std::optional<std::uint64_t> Env::lookup_cell_index("
-    )
-    idx_region = env[env.find("std::optional<std::uint64_t> Env::lookup_cell_index(") :]
-    for name, region in (("lookup_cell_ptr", ptr_region), ("lookup_cell_index", idx_region)):
-        must(
-            region.count("f.bindings_.rbegin()") >= 1,
-            f"AC2: {name} SoA walk reverse-matches frame bindings",
-        )
-        must(
-            "for (auto& b : f.bindings_)" not in region,
-            f"AC2: {name} SoA walk has no forward string scan left",
-        )
-        must(
-            region.count("p->bindings_.rbegin()") >= 1,
-            f"AC2: {name} legacy parent_ walk reverse-matches",
-        )
-        must(
-            "auto tb = owner_->top_env().bindings();" in region,
-            f"AC2: {name} live-top consult uses the tb span",
-        )
-        tb_pos = region.find("auto tb = owner_->top_env().bindings();")
-        tb_rev = region.find("tb.rbegin()", tb_pos)
-        must(
-            0 <= tb_pos < tb_rev,
-            f"AC2: {name} live-top consult scans tb in reverse",
-        )
 
     # ── AC3: runtime door extends the #4353 family test ─────────────
     for fn in (
