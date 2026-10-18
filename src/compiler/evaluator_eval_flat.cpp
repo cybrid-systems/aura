@@ -6609,7 +6609,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // argument must propagate so the catch fires
                                 // ((try (display (car ())) …) in the regression
                                 // net must print the handler's value).
-                                if (is_error(*ar) && !is_string(*ar) &&
+                                // Issue #4596: error? observes the value, in or
+                                // out of try. Other prims still propagate.
+                                if (is_error(*ar) && !is_string(*ar) && cname != "error?" &&
                                     (cname != "display" || try_body_depth_ > 0))
                                     return ar;
                                 args.push_back(*ar);
