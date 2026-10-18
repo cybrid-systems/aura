@@ -3852,6 +3852,23 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             }
             return root;
         }
+        // Issue #4598: a macro-free workspace (the hot-swap bench) has no
+        // MacroDef. tag() is a column read. Skip the body walk, which
+        // FlatAST::get's every node looking for one. The #3062 cite window
+        // starts at macro_expand_all_body, so this scan stays outside it.
+        {
+            bool any_macro_def = false;
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                if (flat.is_free_slot(id))
+                    continue;
+                if (flat.tag(id) == NodeTag::MacroDef) {
+                    any_macro_def = true;
+                    break;
+                }
+            }
+            if (!any_macro_def)
+                return root;
+        }
         DepthPolicyGuard depth_guard(eff_depth, chk.effective.allow_rest_hygiene);
         // Fall through into expand body with max_passes possibly clamped
         // and TLS depth set. Guard must outlive the loop — so we restructure:

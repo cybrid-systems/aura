@@ -384,19 +384,23 @@ void ConstraintSystem::add(Constraint c) {
 // constraint is simply excluded from subsequent solve()
 // scans once mark_clean() or clear() is called.
 std::uint32_t ConstraintSystem::union_find_rep_index(TypeId id) const {
-    if (!reg_.is_var(id) || id.index >= parent_.size())
+    // Issue #4598: reps live in uf_sparse_, not a registry-sized parent_.
+    if (!reg_.is_var(id))
         return UINT32_MAX;
-    auto idx = static_cast<std::size_t>(id.index);
-    if (parent_[idx] < 0)
-        return static_cast<std::uint32_t>(idx);
-    auto p = static_cast<std::int64_t>(idx);
-    while (static_cast<std::size_t>(p) < parent_.size() &&
-           parent_[static_cast<std::size_t>(p)] >= 0 &&
-           static_cast<std::size_t>(parent_[static_cast<std::size_t>(p)]) !=
-               static_cast<std::size_t>(p)) {
-        p = parent_[static_cast<std::size_t>(p)];
+    auto it = uf_sparse_.find(id.index);
+    if (it == uf_sparse_.end() || it->second.parent < 0)
+        return UINT32_MAX;
+    auto p = static_cast<std::uint32_t>(it->second.parent);
+    for (int guard = 0; guard < 1000000; ++guard) {
+        auto pit = uf_sparse_.find(p);
+        if (pit == uf_sparse_.end() || pit->second.parent < 0)
+            break;
+        const auto next = static_cast<std::uint32_t>(pit->second.parent);
+        if (next == p)
+            break;
+        p = next;
     }
-    return static_cast<std::uint32_t>(p);
+    return p;
 }
 
 void ConstraintSystem::note_touched_var(TypeId id) {
@@ -431,8 +435,11 @@ void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow,
         // (4× per mutate:rebind, two passes) and OOM'd beside a
         // self-recursive define. Apply sites keep record_goal true.
         if (record_goal) {
-            note_occurrence_goal(var, binding_[rep], active_predicate_cond_node_,
-                                 active_mutation_id_, current_epoch_);
+            TypeId bound{};
+            if (auto bit = uf_sparse_.find(rep); bit != uf_sparse_.end())
+                bound = bit->second.binding;
+            note_occurrence_goal(var, bound, active_predicate_cond_node_, active_mutation_id_,
+                                 current_epoch_);
         }
     }
 }
@@ -1678,14 +1685,8 @@ void ConstraintSystem::add_delta(Constraint c) {
 void ConstraintSystem::adopt_var(TypeId id, bool unnamed) {
     if (unnamed)
         ++fresh_counter_;
-    auto idx = static_cast<std::size_t>(id.index);
-    if (idx >= parent_.size()) {
-        parent_.resize(idx + 64, -1);
-        rank_.resize(idx + 64, 0);
-        binding_.resize(idx + 64, TypeId{});
-    }
-    if (parent_[idx] < 0)
-        parent_[idx] = static_cast<std::int64_t>(idx);
+    // Issue #4598: one sparse slot. Do not resize parent_ to id.index.
+    (void)uf_touch(id.index);
     if (first_free_var_ == 0 || id.index < first_free_var_)
         first_free_var_ = id.index;
 }
@@ -1711,17 +1712,10 @@ TypeId ConstraintSystem::fresh_var_named(std::string_view hint) {
     if (name.empty())
         name = "__t" + std::to_string(fresh_counter_++);
     auto id = reg_.make_var(name);
-    // Ensure Union-Find arrays are sized for this variable
-    auto idx = static_cast<std::size_t>(id.index);
-    if (idx >= parent_.size()) {
-        parent_.resize(idx + 64, -1);
-        rank_.resize(idx + 64, 0);
-        binding_.resize(idx + 64, TypeId{});
-    }
-    // Initialize as root (self-parent). Note: clear() sets parent to -1
-    // to indicate uninitialized; each fresh_var must set its own parent.
-    if (parent_[idx] < 0)
-        parent_[idx] = static_cast<std::int64_t>(idx);
+    // Issue #4598: root slot in the sparse union-find. parent_ is the
+    // test mirror only; sizing it to the global TypeId index made every
+    // clear() walk the registry.
+    (void)uf_touch(id.index);
     if (first_free_var_ == 0 || id.index < first_free_var_)
         first_free_var_ = id.index;
     if (fresh_log_)
@@ -1740,45 +1734,50 @@ std::int64_t find_rep(const std::vector<std::int64_t>& parent, std::int64_t idx)
 }
 
 TypeId ConstraintSystem::find_var(TypeId id) {
-    if (!reg_.is_var(id) || id.index >= parent_.size())
+    if (!reg_.is_var(id))
         return id;
-    auto idx = static_cast<std::size_t>(id.index);
-    // Uninitialized variable (parent = -1) — not yet used in any unification
-    if (parent_[idx] < 0)
-        return TypeId{static_cast<std::uint32_t>(idx), id.generation};
-    auto p = static_cast<std::int64_t>(idx);
-    // Path compression: find root
-    while (static_cast<std::size_t>(p) < parent_.size() &&
-           parent_[static_cast<std::size_t>(p)] >= 0 &&
-           static_cast<std::size_t>(parent_[static_cast<std::size_t>(p)]) !=
-               static_cast<std::size_t>(p)) {
-        p = parent_[static_cast<std::size_t>(p)];
+    auto it = uf_sparse_.find(id.index);
+    // Uninitialized variable — not yet used in any unification.
+    if (it == uf_sparse_.end() || it->second.parent < 0)
+        return TypeId{id.index, id.generation};
+    auto root = static_cast<std::uint32_t>(it->second.parent);
+    for (int guard = 0; guard < 1000000; ++guard) {
+        auto rit = uf_sparse_.find(root);
+        if (rit == uf_sparse_.end() || rit->second.parent < 0)
+            break;
+        const auto next = static_cast<std::uint32_t>(rit->second.parent);
+        if (next == root)
+            break;
+        root = next;
     }
-    auto root = static_cast<std::size_t>(p);
-    // Compress path: make all nodes on the path point directly to root
-    auto q = static_cast<std::int64_t>(idx);
-    while (static_cast<std::size_t>(q) < parent_.size() &&
-           parent_[static_cast<std::size_t>(q)] >= 0 &&
-           static_cast<std::size_t>(parent_[static_cast<std::size_t>(q)]) !=
-               static_cast<std::size_t>(q)) {
-        auto next = parent_[static_cast<std::size_t>(q)];
-        parent_[static_cast<std::size_t>(q)] = static_cast<std::int64_t>(root);
+    // Compress path: make all nodes on the path point directly to root.
+    auto q = id.index;
+    for (int guard = 0; guard < 1000000; ++guard) {
+        auto qit = uf_sparse_.find(q);
+        if (qit == uf_sparse_.end() || qit->second.parent < 0)
+            break;
+        const auto next = static_cast<std::uint32_t>(qit->second.parent);
+        if (next == q)
+            break;
+        qit->second.parent = static_cast<std::int64_t>(root);
         q = next;
     }
-    // If root has a binding, return the bound type (concrete type or root variable)
-    if (root < binding_.size() && binding_[root].valid())
-        return binding_[root];
-    // Return the root as a type variable
-    return TypeId{static_cast<std::uint32_t>(root), id.generation};
+    auto bit = uf_sparse_.find(root);
+    if (bit != uf_sparse_.end() && bit->second.binding.valid())
+        return bit->second.binding;
+    return TypeId{root, id.generation};
 }
 
 // Find with full type resolution (normalize via Union-Find)
 TypeId ConstraintSystem::find(TypeId id) {
-    if (reg_.is_var(id) && id.index < parent_.size() && parent_[id.index] != -1) {
-        auto found = find_var(id);
-        if (found != id)
-            return find(found);
-        return found;
+    if (reg_.is_var(id)) {
+        auto it = uf_sparse_.find(id.index);
+        if (it != uf_sparse_.end() && it->second.parent != -1) {
+            auto found = find_var(id);
+            if (found != id)
+                return find(found);
+            return found;
+        }
     }
     // Recurse into compound types
     if (auto* f = reg_.func_of(id)) {
@@ -1868,29 +1867,27 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
     if (reg_.is_var(t1)) {
         if (occurs_check(t1, t2))
             return false;
-        auto idx = static_cast<std::size_t>(t1.index);
-        if (idx >= parent_.size()) {
-            parent_.resize(idx + 64, -1);
-            rank_.resize(idx + 64, 0);
-            binding_.resize(idx + 64, TypeId{});
-        }
-        if (parent_[idx] < 0)
-            parent_[idx] = static_cast<std::int64_t>(idx);
+        // Issue #4598: slots, not parent_[global index]. Do not hold
+        // UfSlot& across another insert — unordered_map may rehash.
+        const auto idx = t1.index;
+        (void)uf_touch(idx);
+        auto rank_of = [this](std::uint32_t i) -> std::uint32_t {
+            auto it = uf_sparse_.find(i);
+            return it == uf_sparse_.end() ? 0 : it->second.rank;
+        };
+        auto binding_of = [this](std::uint32_t i) -> TypeId {
+            auto it = uf_sparse_.find(i);
+            return it == uf_sparse_.end() ? TypeId{} : it->second.binding;
+        };
         if (!reg_.is_var(t2)) {
             // Bind variable to concrete type
-            binding_[idx] = t2;
+            uf_sparse_[idx].binding = t2;
             note_touched_var(t1);
         } else {
-            auto idx2 = static_cast<std::size_t>(t2.index);
-            if (idx2 >= parent_.size()) {
-                parent_.resize(idx2 + 64, -1);
-                rank_.resize(idx2 + 64, 0);
-                binding_.resize(idx2 + 64, TypeId{});
-            }
-            if (parent_[idx2] < 0)
-                parent_[idx2] = static_cast<std::int64_t>(idx2);
-            auto r1 = idx;
-            auto r2 = idx2;
+            const auto idx2 = t2.index;
+            (void)uf_touch(idx2);
+            auto r1 = static_cast<std::size_t>(idx);
+            auto r2 = static_cast<std::size_t>(idx2);
             // Find roots via find_var for proper path compression
             auto f1 = find_var(t1);
             auto f2 = find_var(t2);
@@ -1900,13 +1897,14 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
                 r2 = static_cast<std::size_t>(f2.index);
             if (r1 == r2)
                 return true;
-            if (rank_[r1] < rank_[r2]) {
+            if (rank_of(static_cast<std::uint32_t>(r1)) < rank_of(static_cast<std::uint32_t>(r2))) {
                 std::swap(r1, r2);
-                std::swap(idx, idx2);
             }
-            parent_[r2] = static_cast<std::int64_t>(r1);
-            if (rank_[r1] == rank_[r2])
-                rank_[r1]++;
+            (void)uf_touch(static_cast<std::uint32_t>(r1));
+            (void)uf_touch(static_cast<std::uint32_t>(r2));
+            uf_sparse_[static_cast<std::uint32_t>(r2)].parent = static_cast<std::int64_t>(r1);
+            if (rank_of(static_cast<std::uint32_t>(r1)) == rank_of(static_cast<std::uint32_t>(r2)))
+                uf_sparse_[static_cast<std::uint32_t>(r1)].rank++;
             // Issue #745: preserve Occurrence-narrow priority across merges.
             if (occurrence_priority_roots_.count(static_cast<std::uint32_t>(r2)) > 0 ||
                 occurrence_priority_roots_.count(static_cast<std::uint32_t>(r1)) > 0) {
@@ -1933,10 +1931,12 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
             note_touched_var(TypeId{static_cast<std::uint32_t>(r1), 1});
             note_touched_var(TypeId{static_cast<std::uint32_t>(r2), 1});
             // Merge bindings: if r2 had a binding, move to r1
-            if (binding_[r2].valid()) {
-                if (!binding_[r1].valid()) {
-                    binding_[r1] = binding_[r2];
-                } else if (binding_[r1] != binding_[r2]) {
+            const auto b2 = binding_of(static_cast<std::uint32_t>(r2));
+            if (b2.valid()) {
+                const auto b1 = binding_of(static_cast<std::uint32_t>(r1));
+                if (!b1.valid()) {
+                    uf_sparse_[static_cast<std::uint32_t>(r1)].binding = b2;
+                } else if (b1 != b2) {
                     return false; // conflicting bindings
                 }
             }
@@ -3791,7 +3791,9 @@ std::uint64_t ConstraintSystem::compute_vars_hash() const {
         h ^= v;
         h *= 1099511628211ull;
     };
-    // parent_ uses int64_t (sentinel -1 for uninitialized).
+    // parent_ / binding_ / rank_ are the #4310 test mirror (usually empty
+    // in a real solve). The solver state is uf_sparse_, mixed in index
+    // order so the cache key does not depend on bucket order.
     for (auto p : parent_) {
         mix(static_cast<std::uint64_t>(static_cast<std::int64_t>(p)));
     }
@@ -3801,11 +3803,27 @@ std::uint64_t ConstraintSystem::compute_vars_hash() const {
     for (auto r : rank_) {
         mix(static_cast<std::uint64_t>(r));
     }
+    std::vector<std::uint32_t> keys;
+    keys.reserve(uf_sparse_.size());
+    for (const auto& [k, _] : uf_sparse_)
+        keys.push_back(k);
+    std::sort(keys.begin(), keys.end());
+    for (auto k : keys) {
+        const auto& s = uf_sparse_.at(k);
+        mix(static_cast<std::uint64_t>(k));
+        mix(static_cast<std::uint64_t>(static_cast<std::int64_t>(s.parent)));
+        mix(static_cast<std::uint64_t>(s.rank));
+        mix((static_cast<std::uint64_t>(s.binding.index) << 32) |
+            static_cast<std::uint64_t>(s.binding.generation));
+    }
     return h;
 }
 
 void ConstraintSystem::clear() {
     constraints_.clear();
+    // Issue #4598: solver slots. parent_ stays the test mirror; its
+    // assign is O(grow_union_find_for_test), not O(registry).
+    uf_sparse_.clear();
     parent_.assign(parent_.size(), -1);
     rank_.assign(rank_.size(), 0);
     binding_.assign(binding_.size(), TypeId{});

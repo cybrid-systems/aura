@@ -1145,8 +1145,65 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // after the tree-walker bind. Value defines are not overwritten.
         // File-mode eval never reaches this, so that comparison stays on
         // the tree walker.
-        if (result)
-            ev.bind_workspace_lambda_via_ir("");
+        // Issue #4598: a small dirty set binds only the roots. specialize
+        // walks transitive called_by, so a caller of the direct caller
+        // (chain2) does not keep an inlined body. Empty or large dirty
+        // sets keep the full specialize, which no-ops above
+        // kWorkspaceSpecializeCap. Inlined here: register_eval_primitives
+        // is the Evaluator friend, and a file-scope helper cannot see
+        // the private workspace fields.
+        if (result) {
+            if (!ev.workspace_flat_ || !ev.workspace_pool_ || !ev.is_define_dirty_fn_) {
+                ev.bind_workspace_lambda_via_ir("");
+            } else {
+                auto* bind_flat = ev.workspace_flat_;
+                auto* bind_pool = ev.workspace_pool_;
+                std::vector<std::string> dirty;
+                std::size_t define_count = 0;
+                for (aura::ast::NodeId id = 0; id < bind_flat->size(); ++id) {
+                    if (bind_flat->is_free_slot(id))
+                        continue;
+                    if (bind_flat->tag(id) != aura::ast::NodeTag::Define)
+                        continue;
+                    const auto sym = bind_flat->sym_id(id);
+                    if (sym == aura::ast::INVALID_SYM)
+                        continue;
+                    ++define_count;
+                    auto name = std::string(bind_pool->resolve(sym));
+                    if (name.empty() || name[0] == '_')
+                        continue;
+                    if (ev.is_define_dirty_fn_(name))
+                        dirty.push_back(std::move(name));
+                }
+                constexpr std::size_t kDirtyFocusMax = 16;
+                if (dirty.empty() || dirty.size() > kDirtyFocusMax ||
+                    dirty.size() * 2 > define_count) {
+                    ev.bind_workspace_lambda_via_ir("");
+                } else {
+                    std::unordered_set<std::string> dirty_set(dirty.begin(), dirty.end());
+                    std::unordered_set<std::string> is_caller;
+                    if (ev.get_dependents_fn_) {
+                        for (const auto& n : dirty) {
+                            for (const auto& c : ev.get_dependents_fn_(n)) {
+                                if (!c.empty() && dirty_set.count(c) != 0)
+                                    is_caller.insert(c);
+                            }
+                        }
+                    }
+                    bool bound_root = false;
+                    for (const auto& n : dirty) {
+                        if (is_caller.count(n) != 0)
+                            continue;
+                        bound_root = true;
+                        ev.bind_workspace_lambda_via_ir(n);
+                    }
+                    if (!bound_root) {
+                        for (const auto& n : dirty)
+                            ev.bind_workspace_lambda_via_ir(n);
+                    }
+                }
+            }
+        }
 
         // Cache + clear dirty only if workspace still same generation.
         if (ev.workspace_flat_ == flat && ev.workspace_flat_generation() == pin_gen) {
