@@ -30,6 +30,7 @@ module;
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <expected>
 #include <memory_resource>
@@ -169,12 +170,15 @@ struct FFIMarshalled {
     // Per declared argument (indexed like args / arg_types).
     std::array<std::int64_t, kFfiMaxArgs> i_vals{}; // raw i64 value
     std::array<double, kFfiMaxArgs> d_vals{};       // raw f64 value
-    std::array<const char*, kFfiMaxArgs> s_vals{};  // char* (points into str_bufs)
-    // Issue #4554: one fixed slot per argument. The old growing
-    // std::vector<std::string> moved earlier strings on the next
-    // push_back, and an SSO (<= 15 byte) string's bytes move with the
-    // object, so s_vals of an earlier short String argument dangled.
-    std::array<std::string, kFfiMaxArgs> str_bufs;
+    std::array<const char*, kFfiMaxArgs> s_vals{};  // char* (heap bytes or sso_bufs)
+    // Issue #4555: String arguments are passed zero-copy — s_vals points at
+    // the string heap slot's own buffer, so the call costs the same for 16 B
+    // and 1 MB. Only a string held in its SSO buffer (bytes inside the
+    // std::string object, which move when another fiber's mint reallocates
+    // the heap vector) is copied, into this fixed per-argument slot. That
+    // keeps #4554 fixed: no slot ever moves while the call runs.
+    static constexpr std::size_t kSsoBuf = 24;
+    std::array<std::array<char, kSsoBuf>, kFfiMaxArgs> sso_bufs;
     // Issue #4531 / #4553: per class, in declared order — what the call
     // passes (integer registers then stack; xmm registers).
     std::array<std::int64_t, kFfiMaxIntSlots> ic{};
@@ -237,12 +241,13 @@ export inline const char* ffi_value_kind_name(const types::EvalValue& v) noexcep
 }
 
 // ffi_marshal_args_pure — marshals EvalValue args into the raw C ABI for
-// a foreign-function call. The `str_bufs` field on the result owns the
-// string memory `s_vals` points into; the caller must keep the result
-// alive for the duration of the FFI call.
+// a foreign-function call. `s_vals` points into the string heap (or the
+// result's `sso_bufs` for short strings); the caller keeps the result and
+// the heap slots alive for the duration of the FFI call.
 //
 // arg_type codes: 1 = Int (also any unknown code), 2 = Float,
-// 3 = String (looks up idx in string_heap, copies into str_bufs),
+// 3 = String (looks up idx in string_heap, passes its bytes in place;
+// SSO strings copied into sso_bufs — #4555),
 // 4 = Opaque (looks up the slot in opaque_heap, passes the void*).
 // 5 = Handle:<tag> (a live native handle whose tag matches).
 //
@@ -310,9 +315,24 @@ ffi_marshal_args_pure(std::span<const types::EvalValue> args, std::span<const in
                 out.bad_kind = atype;
                 return out;
             }
-            out.str_bufs[i] = string_heap[types::as_string_idx(a)];
-            out.s_vals[i] = out.str_bufs[i].c_str();
-            out.i_vals[i] = reinterpret_cast<std::int64_t>(out.s_vals[i]);
+            // Issue #4555: zero-copy. A heap-allocated buffer does not move
+            // when the heap vector reallocates (std::string move keeps it),
+            // and the argument keeps the slot live for the call (GC
+            // compaction waits for this fiber's safepoint). An SSO string's
+            // bytes live inside the object and move with it: copy those.
+            const std::string& hs = string_heap[types::as_string_idx(a)];
+            const char* d = hs.c_str();
+            const auto* obj = reinterpret_cast<const char*>(&hs);
+            if (d >= obj && d < obj + sizeof(std::string)) {
+                auto& b = out.sso_bufs[i];
+                const auto n =
+                    hs.size() < FFIMarshalled::kSsoBuf - 1 ? hs.size() : FFIMarshalled::kSsoBuf - 1;
+                std::memcpy(b.data(), d, n);
+                b[n] = '\0';
+                d = b.data();
+            }
+            out.s_vals[i] = d;
+            out.i_vals[i] = reinterpret_cast<std::int64_t>(d);
         } else if (atype == 4) { // Opaque (void*)
             if (types::is_opaque(a)) {
                 const auto packed = types::as_opaque_idx(a);

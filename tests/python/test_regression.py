@@ -1576,6 +1576,48 @@ def test_jit_tier_differential_4574():
     )
 
 
+def test_cfunc_budget_4555():
+    """Issue #4555: pin the c-func per-call budget with relative bounds so
+    it cannot regress silently. In one process, best of 3 rounds of N
+    iterations each: a `(Int) -> Int` c-func loop costs at most 2x the same
+    loop around the primitive `(+ 1 2)`, and a `(String Int)` call with a
+    1 MB String costs at most 1.5x the same call with a 16 B String
+    (zero-copy: before #4555 the 1 MB argument was copied on every call,
+    about 10x). Uses libc (labs / strncmp via RTLD_DEFAULT).
+    """
+    code = """
+(require "std/ffi" all:)
+(define c-abs (c-func -1 "labs" "(Int) -> Int"))
+(define c-ncmp (c-func -1 "strncmp" "(String String Int) -> Int"))
+(define (mk n) (list->string (let l ((k 0) (acc (list))) (if (< k n) (l (+ k 1) (cons #\\a acc)) acc))))
+(define s16 (mk 16)) (define s1m (mk 1000000)) (define t1 (mk 16))
+(define N 50000)
+(define (t-prim) (let ((t0 (current-time-ms))) (let loop ((i 0)) (if (< i N) (begin (+ 1 2) (loop (+ i 1))) #t)) (- (current-time-ms) t0)))
+(define (t-cf) (let ((t0 (current-time-ms))) (let loop ((i 0)) (if (< i N) (begin (c-abs 1) (loop (+ i 1))) #t)) (- (current-time-ms) t0)))
+(define (t-s16) (let ((t0 (current-time-ms))) (let loop ((i 0)) (if (< i N) (begin (c-ncmp s16 t1 1) (loop (+ i 1))) #t)) (- (current-time-ms) t0)))
+(define (t-s1m) (let ((t0 (current-time-ms))) (let loop ((i 0)) (if (< i N) (begin (c-ncmp s1m t1 1) (loop (+ i 1))) #t)) (- (current-time-ms) t0)))
+(define (best f) (min (f) (f) (f)))
+(display (list (best t-prim) (best t-cf) (best t-s16) (best t-s1m)))
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=300, env=env)
+    finally:
+        os.unlink(path)
+    out = (r.stdout or "").strip()
+    m = re.search(r"\((\d+) (\d+) (\d+) (\d+)\)", out)
+    assert r.returncode == 0 and m, f"rc={r.returncode} out={out!r} err={(r.stderr or '')[-600:]!r}"
+    prim, cf, s16, s1m = (max(1, int(x)) for x in m.groups())
+    assert cf <= 2 * prim, f"c-func loop {cf} ms > 2x (+ 1 2) loop {prim} ms"
+    assert s1m <= 1.5 * s16, f"1 MB String arg {s1m} ms > 1.5x 16 B String arg {s16} ms (copying?)"
+    print(f"  ✅ test_cfunc_budget_4555 (prim {prim} ms, c-func {cf} ms, str16 {s16} ms, str1m {s1m} ms)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -1586,6 +1628,7 @@ for tf in [
     test_jit_call_path_4572,
     test_jit_scalar_pairs_4573,
     test_jit_tier_differential_4574,
+    test_cfunc_budget_4555,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

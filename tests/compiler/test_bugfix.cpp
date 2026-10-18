@@ -211,10 +211,15 @@ int run_test_bugfix() {
         CHECK(m.ok() && m.ni == 3 && m.nd == 0, "4554: three String slots marshal");
         bool live = true;
         for (std::size_t i = 0; i < 3; ++i)
-            live = live && m.s_vals[i] == m.str_bufs[i].c_str() &&
-                   std::string_view(m.s_vals[i]) == heap[i] &&
+            live = live && std::string_view(m.s_vals[i]) == heap[i] &&
                    m.ic[i] == reinterpret_cast<std::int64_t>(m.s_vals[i]);
-        CHECK(live, "4554: every String pointer names its own live buffer (SSO included)");
+        CHECK(live, "4554: every String pointer names its own live bytes (SSO included)");
+        // Issue #4555: SSO strings are copied into a fixed per-argument slot
+        // (their bytes move with the std::string); longer strings are passed
+        // in place, so call cost does not depend on string length.
+        CHECK(m.s_vals[0] == m.sso_bufs[0].data() && m.s_vals[1] == m.sso_bufs[1].data(),
+              "4555: SSO String arguments use their own fixed slot");
+        CHECK(m.s_vals[2] == heap[2].c_str(), "4555: a long String argument is passed zero-copy");
 
         const std::vector<int> isig{1};
         const std::array<EvalValue, 1> sarg{make_string(0)};

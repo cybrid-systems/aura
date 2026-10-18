@@ -1,0 +1,25 @@
+;; expect: 0 1 15 16 23 24 25 100000 #t #t #t #t #t
+; Issue #4555: String arguments are passed zero-copy (the heap slot's own
+; bytes; SSO strings copied into a fixed per-argument slot). Lengths across
+; the SSO boundary and a 100 KB string must arrive intact, and several
+; String arguments in one call must each name their own bytes (#4554).
+(require "std/ffi" all:)
+(define c-strlen (c-func -1 "strlen" "(String) -> Int"))
+(define c-strcmp-raw (c-func -1 "strcmp" "(String String) -> Int"))
+; strcmp returns a 32-bit C int; c-func Int is 64-bit, so the upper half is
+; unspecified (zero-extended here). Sign-normalize the low 32 bits.
+(define (c-strcmp a b)
+  (let ((r (modulo (c-strcmp-raw a b) 4294967296)))
+    (if (> r 2147483647) (- r 4294967296) r)))
+(define (mk n ch) (list->string (let l ((k 0) (acc (list))) (if (< k n) (l (+ k 1) (cons ch acc)) acc))))
+(for-each (lambda (n) (display (c-strlen (mk n #\a))) (display " ")) (list 0 1 15 16 23 24 25 100000))
+(define short-a (mk 5 #\a))
+(define short-b (mk 5 #\b))
+(define long-a (mk 40 #\a))
+(define long-a2 (mk 40 #\a))
+(display (= 0 (c-strcmp short-a (mk 5 #\a)))) (display " ")
+(display (< (c-strcmp short-a short-b) 0)) (display " ")
+(display (> (c-strcmp short-b short-a) 0)) (display " ")
+(display (= 0 (c-strcmp long-a long-a2))) (display " ")
+(display (< (c-strcmp short-a long-a) 0))
+(newline)
