@@ -15812,14 +15812,6 @@ public:
         try_jit_scalar_override_for_test_ = &counting_scalar_fn_for_test_;
         try_jit_facade_skip_mode_for_test_ = mode;
         constexpr const char* kName = "ac4388_hit";
-        {
-            std::unique_lock cache_write(jit_cache_mtx_);
-            auto [it, _ins] = jit_cache_.try_emplace(kName);
-            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
-            it->second.local_count = 1;
-            it->second.arg_count = 0;
-            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
-        }
         aura::ir::IRModule mod;
         aura::ir::IRFunction fn;
         fn.id = 0;
@@ -15835,6 +15827,23 @@ public:
         fn.blocks.push_back(std::move(block));
         mod.functions.push_back(std::move(fn));
         mod.entry_function_id = 0;
+        // Issue #4388 (after #4569): stamp the forged entry the way a real
+        // insert does (assumption fingerprint + deps). An unstamped entry
+        // is stale under #4569, so the hit arm this probe drives never ran.
+        {
+            const auto& pf = mod.functions[0];
+            const JitAssumeKey akey = jit_assume_key_(pf, mod.string_pool, nullptr,
+                                                      pf.escape_map.data(), pf.escape_map.size());
+            std::unique_lock cache_write(jit_cache_mtx_);
+            auto [it, _ins] = jit_cache_.try_emplace(kName);
+            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
+            it->second.local_count = 1;
+            it->second.arg_count = 0;
+            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+            it->second.fingerprint_ = akey.fp;
+            it->second.deps_ = jit_assume_snapshot_(
+                akey, aura::compiler::jit_assume::define_clock().load(std::memory_order_acquire));
+        }
         (void)try_jit_execute(mod, nullptr);
         try_jit_scalar_override_for_test_ = nullptr;
         try_jit_facade_skip_mode_for_test_ = 0;
