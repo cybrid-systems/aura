@@ -598,10 +598,10 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
         // only the Opaque arm. The Int arm (default / unknown codes) passes
         // raw values through, so a JIT / escaped native addr stashed as an
         // int rides into the call unchecked. Float is numeric truncation and
-        // String's i_val points at the marshal-owned str_bufs copy — neither
-        // can name an arena address.
+        // String's i_val points at the string's own malloc'd buffer (zero-copy,
+        // #4555) or the marshal SSO slot — neither can name an arena address.
         if (arg_types[i] == 2 || arg_types[i] == 3)
-            continue; // Float (numeric) / String (marshal-owned copy)
+            continue; // Float (numeric) / String (heap std::string bytes or SSO slot)
         auto live = reinterpret_cast<void*>(static_cast<std::intptr_t>(marshalled.i_vals[i]));
         if (live && arena && arena->resolve_object_remap(live))
             return true;
