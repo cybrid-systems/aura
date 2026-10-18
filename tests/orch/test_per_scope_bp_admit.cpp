@@ -421,7 +421,7 @@ int run_test_per_scope_bp_admit() {
             const auto inh0 =
                 g_orch_module_stats.spawn_bp_scope_inherited_total.load(std::memory_order_relaxed);
             auto spec = make_spec("soft-a");
-            auto& ha = sa.spawn(std::move(spec));
+            auto ha = sa.spawn(std::move(spec));
             CHECK(ha.ok, "#3015 AC2: Soft scope spawn admits (no storm)");
             CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
                       std::memory_order_relaxed) == inh0,
@@ -448,7 +448,7 @@ int run_test_per_scope_bp_admit() {
             // gate would otherwise preempt the storm reject for the
             // second same-scope production spawn.
             spec_a0.region_key = 1;
-            auto& ha0 = sa.spawn(std::move(spec_a0));
+            auto ha0 = sa.spawn(std::move(spec_a0));
             CHECK(ha0.ok, "#3015 AC3: first A spawn admits");
             CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
                       std::memory_order_relaxed) == inh0 + 1,
@@ -459,7 +459,7 @@ int run_test_per_scope_bp_admit() {
             bump_bp_recent(40);
 
             auto spec_b = make_spec("prod-b");
-            auto& hb = sb.spawn(std::move(spec_b));
+            auto hb = sb.spawn(std::move(spec_b));
             CHECK(hb.ok, "#3015 AC3: B admits while A + process bucket are hot");
             CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) ==
                       proc_rej0,
@@ -467,7 +467,7 @@ int run_test_per_scope_bp_admit() {
 
             auto spec_a1 = make_spec("prod-a1");
             spec_a1.region_key = 2; // #4238: distinct from prod-a0
-            auto& ha1 = sa.spawn(std::move(spec_a1));
+            auto ha1 = sa.spawn(std::move(spec_a1));
             CHECK(!ha1.ok, "#3015 AC3: A rejects on its own storm");
             CHECK(ha1.quota_dimension == "mailbox-bp", "#3015 AC3: A reject is mailbox-bp");
             CHECK(g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(
@@ -486,7 +486,7 @@ int run_test_per_scope_bp_admit() {
             aura::orch::AgentScope sc(sched);
             auto spec = make_spec("explicit-process");
             spec.bp_scope_id = std::string{aura::orch::kBpScopeProcessBucket};
-            auto& h = sc.spawn(std::move(spec));
+            auto h = sc.spawn(std::move(spec));
             CHECK(!h.ok, "#3015 AC2: explicit '-' uses process bucket (hot → reject)");
             CHECK(h.quota_dimension == "mailbox-bp", "#3015 AC2: '-' reject mailbox-bp");
         }
@@ -704,12 +704,12 @@ int run_test_per_scope_bp_admit() {
         spec_a.name = "agent-3461-a";
         spec_a.attach_mailbox = true;
         spec_a.body = [] {};
-        auto& h_a = scope_a.spawn(std::move(spec_a));
+        auto h_a = scope_a.spawn(std::move(spec_a));
         AgentSpec spec_b;
         spec_b.name = "agent-3461-b";
         spec_b.attach_mailbox = true;
         spec_b.body = [] {};
-        auto& h_b = scope_b.spawn(std::move(spec_b));
+        auto h_b = scope_b.spawn(std::move(spec_b));
         CHECK(h_a.ok, "3461 AC2 setup: scope A spawn admits");
         CHECK(h_b.ok, "3461 AC2 setup: scope B spawn admits");
         CHECK(h_a.bp_scope_id == scope_a.bp_scope_id(),
@@ -796,7 +796,7 @@ int run_test_per_scope_bp_admit() {
             // Issue #4238: distinct region keys so the two same-scope
             // production spawns below stay on the #3015 BP-inherit face.
             spec_ex.region_key = 1;
-            auto& hex = sa.spawn(std::move(spec_ex));
+            auto hex = sa.spawn(std::move(spec_ex));
             CHECK(hex.ok, "3730 AC4: explicit spawn admits");
             CHECK(hex.bp_scope_id == "explicit-3730", "3730 AC4: explicit id wins");
             CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
@@ -804,7 +804,7 @@ int run_test_per_scope_bp_admit() {
                   "3730 AC4: explicit does not bump inherit");
             auto spec_empty = make_spec("empty-3730");
             spec_empty.region_key = 2; // #4238: distinct from ex-3730
-            auto& hem = sa.spawn(std::move(spec_empty));
+            auto hem = sa.spawn(std::move(spec_empty));
             CHECK(hem.ok, "3730 AC4: empty spawn admits");
             CHECK(hem.bp_scope_id == sa.bp_scope_id(), "3730 AC4: empty still inherits");
             CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(

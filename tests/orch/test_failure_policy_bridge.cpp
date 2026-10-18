@@ -1290,7 +1290,7 @@ static bool ac3726_arm_s(aura::compiler::CompilerService& cs, Ac3726KeepaliveS& 
     spec.keepalive_interval_ms = 0;
     spec.attach_mailbox = true;
     spec.mutation_boundary = false;
-    auto& h = s.root->spawn(spec);
+    auto h = s.root->spawn(spec);
     s.fiber = h.fiber;
     return h.ok && s.fiber != nullptr;
 }
@@ -1554,7 +1554,7 @@ static void ac3969_1_report_only_failfast_does_not_cancel() {
     };
     spec.attach_mailbox = true;
     spec.mutation_boundary = false;
-    auto& h = scope.spawn(spec);
+    auto h = scope.spawn(spec);
     CHECK(h.ok && h.fiber, "3969 AC1: live scope agent");
     TaskSpec tasks[2];
     tasks[0].body = [] {
@@ -1601,7 +1601,7 @@ static void ac3969_2_explicit_cancel_failfast_cancels() {
     parked.ok = true;
     parked.name = "park-3969";
     parked.fiber = fiber_owned.get();
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(parked));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(parked));
     CHECK(slot.ok && slot.fiber, "3969 AC2: parked scope handle");
     TaskSpec tasks[2];
     tasks[0].region_key = 1;
@@ -1649,7 +1649,7 @@ static void ac3969_3_restartn_bare_adopt_skips() {
     adopted.ok = true;
     adopted.name = "bare-3969";
     adopted.fiber = fiber_owned.get();
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(adopted));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(adopted));
     CHECK(slot.ok, "3969 AC3: adopted");
     TaskSpec tasks[1];
     tasks[0].region_key = 1;
@@ -2072,7 +2072,7 @@ static void ac4050_2_long_closure_defers_not_cancels() {
                 break;
         }
     };
-    auto& h = scope.spawn(std::move(spec));
+    auto h = scope.spawn(std::move(spec));
     CHECK(h.ok, "4050 AC2: one-shot spec spawned");
     CHECK(h.coop != nullptr, "4050 AC2: #2585 coop window present");
     // Let the injected coop clock age past 2x the window while the body is
@@ -2560,7 +2560,7 @@ static void ac4236_2_circuit_breaker_residual_cancels_scope() {
     parked.ok = true;
     parked.name = "park-4236";
     parked.fiber = fiber_owned.get();
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(parked));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(parked));
     CHECK(slot.ok && slot.fiber, "4236 AC2: parked scope handle");
     TaskSpec tasks[2];
     tasks[0].region_key = 1;
@@ -2618,7 +2618,7 @@ static void ac4236_3_explicit_report_only_observe_first() {
     };
     spec.attach_mailbox = true;
     spec.mutation_boundary = false;
-    auto& h = scope.spawn(spec);
+    auto h = scope.spawn(spec);
     CHECK(h.ok && h.fiber, "4236 AC3: live scope agent");
     TaskSpec tasks[2];
     tasks[0].body = [] {
@@ -2716,7 +2716,7 @@ static bool ac4401_arm_s(aura::compiler::CompilerService& cs, Ac4401ParkedS& s) 
     parked.name = "S-4401";
     parked.fiber = s.fiber.get();
     parked.keepalive_interval_ms = 0;
-    auto& slot = s.root->adopt_handle_without_spec_for_test(std::move(parked));
+    auto slot = s.root->adopt_handle_without_spec_for_test(std::move(parked));
     s.raw = slot.fiber;
     return slot.ok && s.raw && !s.raw->is_done() && !s.raw->is_cancel_requested();
 }

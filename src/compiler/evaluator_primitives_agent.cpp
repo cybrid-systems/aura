@@ -4565,9 +4565,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // isolation observe (TLS stamp during apply is #3728).
             spec.region_key = region_key;
             try {
-                auto& handle = scope.spawn(std::move(spec));
-                // #2009: handle is a reference; extract fields before any
-                // potential concurrent scope mutation. Issue #3366: extract
+                auto handle = scope.spawn(std::move(spec));
+                // Issue #4590: handle is a by-value snapshot of the row
+                // (reads faithful; cannot dangle on a later spawn). Issue #3366: extract
                 // out_name (also used by the !ok branch) before the success
                 // path's string_heap push.
                 const std::string out_name = handle.name.empty() ? name : handle.name;

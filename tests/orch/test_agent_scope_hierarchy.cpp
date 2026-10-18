@@ -542,7 +542,7 @@ static void ac3496_tree_settled() {
     auto& c0 = root.spawn_child();
     CHECK(root.tree_settled(), "3496 AC: empty tree is settled");
     std::atomic<bool> hold{true};
-    auto& h = c0.spawn(hold_body(hold));
+    auto h = c0.spawn(hold_body(hold));
     CHECK(h.ok && h.fiber, "3496 AC: child spawn ok");
     CHECK(!root.tree_settled(), "3496 AC1: root tree_settled false while child live");
     CHECK(c0.tree_settled() == false, "3496 AC1: child tree_settled false");
@@ -568,8 +568,8 @@ static void ac3643_tree_join() {
     auto& c0 = root.spawn_child();
     std::atomic<bool> hold_root{true};
     std::atomic<bool> hold_child{true};
-    auto& hr = root.spawn(hold_body(hold_root));
-    auto& hc = c0.spawn(hold_body(hold_child));
+    auto hr = root.spawn(hold_body(hold_root));
+    auto hc = c0.spawn(hold_body(hold_child));
     CHECK(hr.ok && hr.fiber && hc.ok && hc.fiber, "3643: spawns ok");
 
     // AC1: default join is local — root's own handles join, the child
@@ -595,7 +595,7 @@ static void ac3643_tree_join() {
     // per-scope).
     auto& c1 = root.spawn_child();
     std::atomic<bool> hold_c1{true};
-    auto& h1 = c1.spawn(hold_body(hold_c1));
+    auto h1 = c1.spawn(hold_body(hold_c1));
     CHECK(h1.ok, "3643 AC3: c1 spawn ok");
     // Under armed production defaults the timed-out child join injects
     // on_join_fail Cancel (#3208) — the child may settle here; the AC3

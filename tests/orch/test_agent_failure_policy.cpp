@@ -436,7 +436,7 @@ int run_test_agent_failure_policy() {
         spec.attach_mailbox = false;
         spec.mailbox_high_water = 16;
         spec.keepalive_interval_ms = 50;
-        AgentHandle& h = scope.spawn(spec);
+        AgentHandle h = scope.spawn(spec);
         CHECK(h.ok && h.fiber, "AC2: spawn ok");
         arm.self.store(&h, std::memory_order_release);
         CHECK(wait_progress_then_age(arm, /*stall_ms=*/100), "AC2: body noted progress");
@@ -493,7 +493,7 @@ int run_test_agent_failure_policy() {
         spec_a.mailbox_high_water = 16;
         spec_a.keepalive_interval_ms = 50;
         // Spawn the initial agent.
-        auto& h_a = scope.spawn(spec_a);
+        auto h_a = scope.spawn(spec_a);
         CHECK(h_a.ok && h_a.fiber, "AC3: spawn ok");
         arm.self.store(&h_a, std::memory_order_release);
         // Capture the original fiber id for comparison.
@@ -628,7 +628,7 @@ int run_test_agent_failure_policy() {
                     aura::orch::fiber_sleep_ms(20);
                 }
             };
-            AgentHandle& h = scope.spawn(spec);
+            AgentHandle h = scope.spawn(spec);
             CHECK(h.ok, "2887 AC2: producer spawn admitted");
             CHECK(h.mailbox, "2887 AC2: producer has mailbox");
 
@@ -668,7 +668,7 @@ int run_test_agent_failure_policy() {
             spec_b.attach_mailbox = true;
             spec_b.bp_scope_id = "tenant-bp-b";
             spec_b.body = [] {};
-            AgentHandle& hb = scope_b.spawn(spec_b);
+            AgentHandle hb = scope_b.spawn(spec_b);
             CHECK(hb.ok, "2887 AC2: other scope still admits (isolation)");
             AgentFailurePolicy pol_b;
             pol_b.on_stall = AgentFailureAction::ReportOnly;
@@ -716,7 +716,7 @@ int run_test_agent_failure_policy() {
                     aura::orch::fiber_sleep_ms(20);
                 }
             };
-            AgentHandle& h = scope.spawn(spec);
+            AgentHandle h = scope.spawn(spec);
             CHECK(h.ok, "2887 AC3: throttle producer spawn ok");
             for (int i = 0; i < 6; ++i)
                 aura::orch::note_mailbox_bp_recent_event("tenant-thr");
@@ -771,7 +771,7 @@ int run_test_agent_failure_policy() {
             spec.attach_mailbox = true;
             spec.bp_scope_id = "tenant-ro";
             spec.body = [] {};
-            AgentHandle& h = scope.spawn(spec);
+            AgentHandle h = scope.spawn(spec);
             CHECK(h.ok, "2887 AC1 live: spawn ok");
             for (int i = 0; i < 10; ++i)
                 aura::orch::note_mailbox_bp_recent_event("tenant-ro");
@@ -852,7 +852,7 @@ int run_test_agent_failure_policy() {
                     aura::orch::fiber_sleep_ms(20);
                 }
             };
-            AgentHandle& h = scope.spawn(spec);
+            AgentHandle h = scope.spawn(spec);
             CHECK(h.ok, "2948 AC2: spawn admitted for watch test");
             // Inject recent just under process default if default is 32
             // and force degrade with explicit N=3 first (SSOT shared load).
@@ -1272,7 +1272,7 @@ int run_test_agent_failure_policy() {
         spec.attach_mailbox = true;
         spec.keepalive_interval_ms = 0;
         spec.body = [] {};
-        auto& h = scope.spawn(std::move(spec));
+        auto h = scope.spawn(std::move(spec));
         CHECK(h.ok, "3730 AC3: spawn ok");
         CHECK(h.keepalive_interval_ms == 0, "3730 AC3: keepalive=0");
         AgentFailurePolicy pol;
@@ -1319,7 +1319,7 @@ int run_test_agent_failure_policy() {
         spec.keepalive_interval_ms = 50;
         ProgressArm arm;
         spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/false); };
-        auto& h = scope.spawn(spec);
+        auto h = scope.spawn(spec);
         CHECK(h.ok && h.fiber, "4003 AC1: spawn");
         arm.self.store(&h, std::memory_order_release);
         const auto first_id = h.fiber->id();
@@ -1361,7 +1361,7 @@ int run_test_agent_failure_policy() {
         spec.keepalive_interval_ms = 50;
         ProgressArm arm;
         spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/true); };
-        auto& h = scope.spawn(spec);
+        auto h = scope.spawn(spec);
         CHECK(h.ok && h.fiber, "4003 AC2: spawn");
         arm.self.store(&h, std::memory_order_release);
         const auto first_id = h.fiber->id();
@@ -1397,7 +1397,7 @@ int run_test_agent_failure_policy() {
         spec.mutation_boundary = false;
         ProgressArm arm;
         spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/true); };
-        auto& h = scope.spawn(spec);
+        auto h = scope.spawn(spec);
         CHECK(h.ok && h.mailbox, "4003 AC3: mailbox");
         arm.self.store(&h, std::memory_order_release);
         for (int i = 0; i < 3; ++i) {
@@ -1475,7 +1475,7 @@ int run_test_agent_failure_policy() {
             // Ignore cancel so Soft's immediate replace races while the
             // fiber slot is still held (quota deny stays reliable).
             spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/false); };
-            auto& h0 = scope.spawn(spec);
+            auto h0 = scope.spawn(spec);
             CHECK(h0.ok && h0.fiber, "4022 AC1: initial spawn ok");
             arm.self.store(&h0, std::memory_order_release);
             CHECK(wait_progress_then_age(arm, /*stall_ms=*/100),
@@ -1538,7 +1538,7 @@ int run_test_agent_failure_policy() {
             spec.keepalive_interval_ms = 50;
             // Exits on cancel so production drain completes, then spawn denies.
             spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/true); };
-            auto& h0 = scope.spawn(spec);
+            auto h0 = scope.spawn(spec);
             CHECK(h0.ok && h0.fiber, "4022 AC2: spawn ok");
             arm.self.store(&h0, std::memory_order_release);
             CHECK(wait_progress_then_age(arm, /*stall_ms=*/100), "4022 AC2: body noted progress");
@@ -1605,7 +1605,7 @@ int run_test_agent_failure_policy() {
             spec.attach_mailbox = false;
             spec.keepalive_interval_ms = 50;
             spec.body = [&] { progress_stall_body(arm, keep, /*exit_on_cancel=*/false); };
-            auto& h0 = scope.spawn(spec);
+            auto h0 = scope.spawn(spec);
             CHECK(h0.ok, "4022 Soft ZF: spawn");
             arm.self.store(&h0, std::memory_order_release);
             CHECK(wait_progress_then_age(arm, /*stall_ms=*/100),

@@ -1401,18 +1401,22 @@ static void ac3497_scope_spawn_pending_name() {
                 std::string_view("build/test-wal-3497"), nullptr, 0);
         Scheduler sched(1);
         AgentScope scope(sched);
-        auto& h = scope.spawn(make_spec("3497-pending"));
+        auto h = scope.spawn(make_spec("3497-pending"));
         CHECK(h.ok && h.fiber, "3497 AC1: first spawn ok");
-        const auto res0 = h.reserved_memory_bytes;
+        // #4590: the spawn return is a by-value snapshot — join_agent
+        // mutates the REGISTRY ROW, so join via a handles_mut() re-fetch.
+        auto& hrow = scope.handles_mut()[0];
+        const auto res0 = hrow.reserved_memory_bytes;
         JoinPolicy policy;
         policy.primary_ms = 50;
         policy.drain_ms = 0;
-        const auto jr = join_agent(h, policy);
+        const auto jr = join_agent(hrow, policy);
         CHECK(jr.status == JoinStatus::Reclaimed, "3497 AC1: Timeout + !is_done → Reclaimed");
-        CHECK(h.reclaimed_deferred_cleanup || h.must_wait_reclaimed, "3497 AC1: pending flags");
+        CHECK(hrow.reclaimed_deferred_cleanup || hrow.must_wait_reclaimed,
+              "3497 AC1: pending flags");
         const auto n0 = scope.size();
         CHECK(n0 == 1, "3497 AC1: one handle in scope");
-        auto& h2 = scope.spawn(make_spec("3497-pending"));
+        auto h2 = scope.spawn(make_spec("3497-pending"));
         CHECK(!h2.ok, "3497 AC1: same-name spawn ok=false");
         CHECK(h2.error.find("name-reuse-while-reclaimed-pending") != std::string::npos,
               "3497 AC1: typed deny error");
@@ -1421,7 +1425,7 @@ static void ac3497_scope_spawn_pending_name() {
               "3497 AC1: pending reservation untouched");
         auto snap = scope.directory_snapshot({});
         CHECK(snap.entries.size() == 1, "3497 AC1: directory still one row");
-        finish(h);
+        finish(hrow);
         apply_dev_audit_defaults();
         if (!wal_on_3497)
             aura::core::audit_wal::g_mutation_audit_wal().disable();
@@ -1465,14 +1469,18 @@ static void ac3497_scope_spawn_pending_name() {
         apply_dev_audit_defaults();
         Scheduler sched(1);
         AgentScope scope(sched);
-        auto& h = scope.spawn(make_spec("3497-soft"));
+        auto h = scope.spawn(make_spec("3497-soft"));
         CHECK(h.ok, "3497 AC3: first spawn ok");
         auto hs = scope.handles_mut();
         hs[0].must_wait_reclaimed = true;
-        auto& h2 = scope.spawn(make_spec("3497-soft"));
+        auto h2 = scope.spawn(make_spec("3497-soft"));
         CHECK(h2.ok, "3497 AC3: Soft still emplaces");
         CHECK(scope.size() == 2, "3497 AC3: Soft size=2");
-        finish(h);
+        // #4559-followup ASan: h2's emplace reallocated handles_ and freed
+        // the old buffer, so the h reference captured before the spawn is
+        // dangling (heap-use-after-free in finish's lambda). Re-fetch the
+        // row by index - same state, fresh reference.
+        finish(scope.handles_mut()[0]);
         finish(h2);
     }
 
@@ -1686,7 +1694,7 @@ static void ac3776_scope_done_husk_compact() {
                 for (;;) {
                 }
             };
-            auto& h = scope.spawn(a);
+            auto h = scope.spawn(a);
             CHECK(h.ok && h.fiber, "3776 AC1: spawn ok");
             force_done(h);
         }
@@ -1713,7 +1721,7 @@ static void ac3776_scope_done_husk_compact() {
                 for (;;) {
                 }
             };
-            auto& h = scope.spawn(a);
+            auto h = scope.spawn(a);
             CHECK(h.ok && h.fiber, "3776 soak: spawn ok");
             force_done(h);
             (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
@@ -1736,7 +1744,7 @@ static void ac3776_scope_done_husk_compact() {
             for (;;) {
             }
         };
-        auto& h = scope.spawn(a);
+        auto h = scope.spawn(a);
         CHECK(h.ok, "3776 AC2: spawn");
         force_done(h);
         (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
@@ -1769,13 +1777,13 @@ static void ac3776_scope_done_husk_compact() {
             for (;;) {
             }
         };
-        auto& h1 = scope.spawn(a);
+        auto h1 = scope.spawn(a);
         CHECK(h1.ok && h1.fiber, "3776 AC5: first Soft spawn ok");
         force_done(h1);
         (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
         const auto raw_after_join = scope.handles().size();
         CHECK(raw_after_join >= 1, "3776 AC5: Soft keeps husk in handles_ (no compact)");
-        auto& h2 = scope.spawn(a);
+        auto h2 = scope.spawn(a);
         CHECK(h2.ok, "3776 AC5: Soft re-spawn ok");
         CHECK(scope.size() == raw_after_join + 1, "3776 AC5: Soft size is raw append-only");
         force_done(h2);
@@ -1802,7 +1810,7 @@ static void ac3776_scope_done_husk_compact() {
             for (;;) {
             }
         };
-        auto& h = scope.spawn(a);
+        auto h = scope.spawn(a);
         CHECK(h.ok, "3776 xplane: spawn");
         force_done(h);
         (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
@@ -1833,7 +1841,7 @@ static void ac3776_scope_done_husk_compact() {
             for (;;) {
             }
         };
-        auto& h = scope.spawn(s);
+        auto h = scope.spawn(s);
         CHECK(h.ok && h.fiber, "3776 pending: spawn");
         JoinPolicy policy;
         policy.primary_ms = 50;
@@ -1844,7 +1852,7 @@ static void ac3776_scope_done_husk_compact() {
         // join_all compact must not erase pending.
         (void)scope.join_all(policy);
         CHECK(scope.size() == 1, "3776 pending: size still 1 after compact pass");
-        auto& h2 = scope.spawn(s);
+        auto h2 = scope.spawn(s);
         CHECK(!h2.ok, "3776 pending: same-name still denied");
         if (h.fiber) {
             h.fiber->request_cancel();
@@ -1927,9 +1935,13 @@ static void ac3598_name_table_retire_clean() {
     // retire check and never clears the pending flags.
     {
         using aura::serve::Fiber;
-        aura::compiler::AgentNameTable table;
+        // #4590 ASan: declare the table AFTER the owning unique_ptr — the
+        // pending slot's ~AgentHandle reads fiber state in
+        // finish_reclaimed_cleanup_on_dtor at teardown, so the table must
+        // be destroyed BEFORE the Fiber frees (reverse declaration order).
         auto fiber_owned = std::make_unique<Fiber>([] {});
         fiber_owned->mark_reclaimed();
+        aura::compiler::AgentNameTable table;
         CHECK(table.put(make_pending_reclaimed_handle(fiber_owned.get(), "p3598", 4096)) != nullptr,
               "3598 AC2: pending put lands");
         auto* slot = table.find("p3598");
@@ -2559,6 +2571,10 @@ static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
     auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
     h.mailbox = mb;
     mb.reset();
+    // #4590 ASan: declared BEFORE the table — this fiber's pending slot
+    // stays in the table at block end, and ~AgentHandle reads fiber state
+    // at teardown; declared earlier = destroyed after the table.
+    auto new_fiber = std::make_unique<Fiber>([] {});
     aura::compiler::AgentNameTable table;
     CHECK(table.put(std::move(h)) != nullptr, "3805 AC1: initial put lands");
     // Issue #3968: first find is the live abandon arm then #3805 retires.
@@ -2568,7 +2584,6 @@ static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
 
     // Fresh namesake with a DIFFERENT fiber — must not move-assign over
     // the abandoned live body (old fiber unreachable by name).
-    auto new_fiber = std::make_unique<Fiber>([] {});
     auto* again = table.put(make_pending_reclaimed_handle(new_fiber.get(), "agent-3805", 0));
     CHECK(again != nullptr, "3805 AC1: same-name put accepted (fresh insert)");
     CHECK(again->fiber == new_fiber.get(), "3805 AC1: name-table points at NEW fiber");
@@ -2603,7 +2618,7 @@ static void ac3805_2_directory_scope_skip_abandoned_ghost() {
     auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
     h.mailbox = mb;
     mb.reset();
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     CHECK(slot.must_wait_reclaimed, "3805 AC2: pending adopted");
 
     // Issue #3968: first find is the live abandon arm, then #3805 skips.
@@ -2692,6 +2707,10 @@ static void ac3805_4_no_body_stack_free_on_retire() {
     auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
     h.mailbox = mb;
     mb.reset();
+    // #4590 ASan: declared BEFORE the table — this fiber's pending slot
+    // stays in the table at block end, and ~AgentHandle reads fiber state
+    // at teardown; declared earlier = destroyed after the table.
+    auto new_f = std::make_unique<Fiber>([] {});
     aura::compiler::AgentNameTable table;
     CHECK(table.put(std::move(h)) != nullptr, "3805 AC4: put");
     (void)table.find("live-3805"); // quota
@@ -2734,7 +2753,6 @@ static void ac3805_4_no_body_stack_free_on_retire() {
         CHECK(aura::orch::slot_is_abandoned_live(*slot), "3805 AC4: slot is abandoned-live");
         apply_production_audit_defaults();
     }
-    auto new_f = std::make_unique<Fiber>([] {});
     auto* again = table.put(make_pending_reclaimed_handle(new_f.get(), "shape-3805", 0));
     CHECK(again != nullptr, "3805 AC4: put retires abandoned + fresh insert");
     CHECK(again->fiber == new_f.get(), "3805 AC4: new fiber in slot");
@@ -3007,8 +3025,10 @@ static void ac3842_1_scope_sweep_cleans_vector_host_after_body_exit() {
     std::println("\n--- #3842 AC1: Scope sweep cleans vector-host after body exit (no ensure) ---");
     apply_production_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: the owning unique_ptr must be declared BEFORE the scope —
+    // ~AgentScope / cancel_all reads fiber state on rows at teardown.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     fiber_owned->set_state(FiberState::Done);
     fiber_owned->note_body_exit_if_reclaimed();
@@ -3020,7 +3040,7 @@ static void ac3842_1_scope_sweep_cleans_vector_host_after_body_exit() {
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
     // Option C: Scope owns the handle (same plane as spawn → handles_).
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     CHECK(slot.must_wait_reclaimed && slot.reserved_memory_bytes == 2048,
           "3842 AC1: pending + reservation held pre-sweep");
     // Host does NOT call ensure_reclaimed_cleanup / wait / abandon / dtor.
@@ -3047,8 +3067,11 @@ static void ac3842_2_scope_sweep_timeout_keeps_pending_no_force() {
     std::println("\n--- #3842 AC2: sweep Timeout while body live — no new force, #2661 ---");
     apply_production_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: declare the owning unique_ptr BEFORE the scope — the
+    // scope's ~AgentScope / cancel_all walks handles_ rows and reads fiber
+    // state, so the scope must be destroyed BEFORE the Fiber frees.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     // Body still live (!is_done).
     AgentHandle h;
@@ -3058,7 +3081,7 @@ static void ac3842_2_scope_sweep_timeout_keeps_pending_no_force() {
     h.name = "ac3842-live";
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     const auto force0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto swept = scope.sweep_reclaimed_pending();
@@ -3074,7 +3097,10 @@ static void ac3842_2_scope_sweep_timeout_keeps_pending_no_force() {
               std::memory_order_relaxed) == force0,
           "3842 AC2: no new force bump on fresh reclaim (ensure SSOT age gate)");
     // Steal fiber so ~AgentHandle / scope dtor does not join never-started body.
-    slot.fiber = nullptr;
+    // #4590: adopt returns a BY-VALUE snapshot — nulling slot.fiber would
+    // only clear the copy; null the REGISTRY ROW via handles_mut() so
+    // ~AgentScope::cancel_all does not read the freed fiber at teardown.
+    scope.handles_mut()[0].fiber = nullptr;
     apply_dev_audit_defaults();
 }
 
@@ -3086,8 +3112,10 @@ static void ac3842_3_soft_zero_cost_no_force() {
     std::println("\n--- #3842 AC3: Soft sweep zero-cost / no force ---");
     apply_dev_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: the owning unique_ptr must be declared BEFORE the scope —
+    // ~AgentScope / cancel_all reads fiber state on rows at teardown.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     AgentHandle h;
     h.ok = true;
@@ -3096,7 +3124,7 @@ static void ac3842_3_soft_zero_cost_no_force() {
     h.name = "ac3842-soft";
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
     const auto force0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
@@ -3125,7 +3153,7 @@ static void ac3842_4_spawn_registers_with_scope_lifetime() {
     AgentSpec spec;
     spec.name = "ac3842-spawn-reg";
     spec.body = [] {};
-    auto& named = scope.spawn(spec);
+    auto named = scope.spawn(spec);
     CHECK(named.ok || !named.ok, "3842 AC4: spawn returns handle ref");
     // Registration plane: handles_ contains the spawned slot (or failed
     // stub under deny). Soft append-only — size >= 1 when spawn pushed.
@@ -3188,8 +3216,10 @@ static void ac4115_1_join_all_sweep_records_still_pending() {
     std::println("\n--- #4115 AC1: end-of-join sweep records live Reclaimed still-pending ---");
     apply_production_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: the owning unique_ptr must be declared BEFORE the scope —
+    // ~AgentScope / cancel_all reads fiber state on rows at teardown.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     // Body still live (!is_done) — join must not clean it (#2661).
     AgentHandle h;
@@ -3199,7 +3229,7 @@ static void ac4115_1_join_all_sweep_records_still_pending() {
     h.name = "ac4115-live";
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     const auto force0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
@@ -3226,8 +3256,9 @@ static void ac4115_2_soft_join_all_no_sweep_zero_wait() {
     std::println("\n--- #4115 AC2: Soft join_all runs no sweep, zero extra wait ---");
     apply_dev_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: owning unique_ptr declared BEFORE the scope (teardown read).
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     AgentHandle h;
     h.ok = true;
@@ -3236,7 +3267,7 @@ static void ac4115_2_soft_join_all_no_sweep_zero_wait() {
     h.name = "ac4115-soft";
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
     (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
     const auto swept = scope.last_sweep_reclaimed_pending();
@@ -3259,8 +3290,9 @@ static void ac4115_3_join_all_drains_deferred_done_name_reuse_ok() {
     std::println("\n--- #4115 AC3: join_all drains Done Reclaimed husk; name reuse unblocked ---");
     apply_production_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: owning unique_ptr declared BEFORE the scope (teardown read).
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     fiber_owned->set_state(FiberState::Done);
     fiber_owned->note_body_exit_if_reclaimed();
@@ -3289,7 +3321,7 @@ static void ac4115_3_join_all_drains_deferred_done_name_reuse_ok() {
     AgentSpec again;
     again.name = "ac4115-done";
     again.body = [] {};
-    auto& re = scope.spawn(again);
+    auto re = scope.spawn(again);
     CHECK(re.ok, "4115 AC3: name reuse admitted after end-of-join sweep");
     apply_dev_audit_defaults();
 }
@@ -3301,8 +3333,9 @@ static void ac4115_4_quota_recycle_must_wait_kept_through_sweep() {
     std::println("\n--- #4115 AC4: quota-only recycle keeps must_wait through join_all sweep ---");
     apply_production_audit_defaults();
     Scheduler sched(1);
-    AgentScope scope(sched);
+    // #4590 ASan: owning unique_ptr declared BEFORE the scope (teardown read).
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     fiber_owned->mark_reclaimed();
     AgentHandle h;
     h.ok = true;
@@ -3311,7 +3344,7 @@ static void ac4115_4_quota_recycle_must_wait_kept_through_sweep() {
     h.name = "ac4115-quota";
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
-    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    auto slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     (void)scope.join_all(JoinPolicy{.primary_ms = 20, .drain_ms = 10});
     CHECK(slot.must_wait_reclaimed || slot.reclaimed_deferred_cleanup,
           "4115 AC4: sweep leaves slot owed (quota-only recycle keeps pending)");
@@ -3345,7 +3378,7 @@ static void ac4115_5_scope_soak_two_agents_pending_bounded_by_join() {
             while (run->load(std::memory_order_acquire))
                 aura::orch::fiber_sleep_ms(2);
         };
-        auto& spawned = scope.spawn(a);
+        auto spawned = scope.spawn(a);
         CHECK(spawned.ok && spawned.fiber, "4115 AC5: soak spawn ok");
     }
     CHECK(scope.size() == 2, "4115 AC5: two live before join");
@@ -3685,7 +3718,7 @@ static void ac4138_1_single_join_soak_scope_compact() {
             for (;;) {
             }
         };
-        auto& h = scope.spawn(a);
+        auto h = scope.spawn(a);
         CHECK(h.ok && h.fiber, "4138 AC1: spawn ok");
         if (h.fiber)
             h.fiber->set_state(FiberState::Done);
@@ -3725,7 +3758,7 @@ static void ac4138_2_restart_watch_indices_aligned() {
             for (;;) {
             }
         };
-        auto& h = scope.spawn(a);
+        auto h = scope.spawn(a);
         CHECK(h.ok && h.fiber, "4138 AC2: spawn ok");
         if (h.fiber)
             h.fiber->set_state(FiberState::Done);
@@ -3743,7 +3776,7 @@ static void ac4138_2_restart_watch_indices_aligned() {
         for (;;) {
         }
     };
-    auto& lh = scope.spawn(live);
+    auto lh = scope.spawn(live);
     CHECK(lh.ok && lh.fiber, "4138 AC2: live spawn ok");
     CHECK(scope.handles().size() == 1,
           "4138 AC2: raw handles_ tight — indices aligned with live agents");
@@ -3791,7 +3824,7 @@ static void ac4138_3_must_wait_survives_compact() {
         for (;;) {
         }
     };
-    auto& h = scope.spawn(s);
+    auto h = scope.spawn(s);
     CHECK(h.ok && h.fiber, "4138 AC3: spawn");
     JoinPolicy policy;
     policy.primary_ms = 50;
@@ -3806,7 +3839,7 @@ static void ac4138_3_must_wait_survives_compact() {
     CHECK(scope.size() == 1, "4138 AC3: pending still live-counted after compact");
     CHECK(scope.handles().size() == 1, "4138 AC3: pending still in raw handles_");
     CHECK(scope.find("4138-pending") != nullptr, "4138 AC3: pending name still resolves (#3467)");
-    auto& h2 = scope.spawn(s);
+    auto h2 = scope.spawn(s);
     CHECK(!h2.ok, "4138 AC3: same-name still denied (#3497 pending walk)");
     if (h.fiber) {
         h.fiber->request_cancel();
@@ -3839,7 +3872,7 @@ static void ac4138_4_soft_append_only() {
         for (;;) {
         }
     };
-    auto& h = scope.spawn(a);
+    auto h = scope.spawn(a);
     CHECK(h.ok && h.fiber, "4138 AC4: Soft spawn ok");
     if (h.fiber)
         h.fiber->set_state(FiberState::Done);
@@ -8508,22 +8541,24 @@ int run_test_join_drain_reclaim() {
             AgentSpec spec;
             spec.name = "ac3220-pending";
             spec.body = [] {};
-            auto& h = scope.spawn(spec);
+            auto h = scope.spawn(spec);
             CHECK(h.ok && h.fiber != nullptr, "3220 AC1: spawn ok");
-            h.fiber->mark_reclaimed();
-            h.reserved_memory_bytes = 8192;
+            // #4590: spawn returns a snapshot — mark/join/read the ROW.
+            auto& hrow = scope.handles_mut()[0];
+            hrow.fiber->mark_reclaimed();
+            hrow.reserved_memory_bytes = 8192;
             JoinPolicy policy{};
             policy.primary_ms = 1;
             policy.drain_ms = 0;
-            const auto jr = join_agent(h, policy);
+            const auto jr = join_agent(hrow, policy);
             CHECK(jr.status == JoinStatus::Reclaimed || jr.status == JoinStatus::Ok,
                   "3220 AC1: join Reclaimed");
             if (aura::orch::production_reclaimed_must_wait()) {
-                CHECK(h.must_wait_reclaimed, "3220 AC1: must_wait_reclaimed after Timeout");
-                CHECK(h.wait_reclaimed_timeout, "3220 AC1: wait_reclaimed_timeout");
+                CHECK(hrow.must_wait_reclaimed, "3220 AC1: must_wait_reclaimed after Timeout");
+                CHECK(hrow.wait_reclaimed_timeout, "3220 AC1: wait_reclaimed_timeout");
             }
-            CHECK(h.reserved_memory_bytes == 8192, "3220 AC1: reservation held (#2661)");
-            CHECK(h.reclaimed_deferred_cleanup, "3220 AC1: deferred cleanup still set");
+            CHECK(hrow.reserved_memory_bytes == 8192, "3220 AC1: reservation held (#2661)");
+            CHECK(hrow.reclaimed_deferred_cleanup, "3220 AC1: deferred cleanup still set");
             const auto risk1 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
                 std::memory_order_relaxed);
             if (aura::orch::production_reclaimed_must_wait())
@@ -8532,8 +8567,8 @@ int run_test_join_drain_reclaim() {
             CHECK(!snap.entries.empty(), "3220 AC1: directory still lists the name");
             CHECK(snap.entries[0].lifecycle == "reclaimed-pending",
                   "3220 AC1: directory lifecycle=reclaimed-pending");
-            h.fiber->set_state(FiberState::Done);
-            h.fiber->note_body_exit_if_reclaimed();
+            hrow.fiber->set_state(FiberState::Done);
+            hrow.fiber->note_body_exit_if_reclaimed();
         }
 
         std::println("\n--- #3220 AC2: Soft directory lifecycle stays empty ---");
@@ -8545,7 +8580,7 @@ int run_test_join_drain_reclaim() {
             AgentSpec spec;
             spec.name = "ac3220-soft";
             spec.body = [] {};
-            auto& h = scope.spawn(spec);
+            auto h = scope.spawn(spec);
             CHECK(h.ok && h.fiber != nullptr, "3220 AC2: spawn ok");
             h.fiber->mark_reclaimed();
             JoinPolicy policy{};
@@ -8620,29 +8655,32 @@ int run_test_join_drain_reclaim() {
             AgentSpec spec;
             spec.name = "ac3527-pending";
             spec.body = [] {};
-            auto& h = scope.spawn(spec);
+            auto h = scope.spawn(spec);
             CHECK(h.ok && h.fiber != nullptr, "3527 AC1: spawn ok");
-            h.fiber->mark_reclaimed();
+            // #4590: spawn returns a snapshot — mark/join/read the ROW so
+            // directory bools match the registry state.
+            auto& hrow = scope.handles_mut()[0];
+            hrow.fiber->mark_reclaimed();
             JoinPolicy policy{};
             policy.primary_ms = 1;
             policy.drain_ms = 0;
-            (void)join_agent(h, policy);
-            CHECK(h.reclaimed_deferred_cleanup || h.must_wait_reclaimed,
+            (void)join_agent(hrow, policy);
+            CHECK(hrow.reclaimed_deferred_cleanup || hrow.must_wait_reclaimed,
                   "3527 AC1: handle pending flags");
             auto snap = scope.directory_snapshot();
             CHECK(!snap.entries.empty(), "3527 AC1: directory lists the name");
-            CHECK(snap.entries[0].reclaimed_deferred == h.reclaimed_deferred_cleanup,
+            CHECK(snap.entries[0].reclaimed_deferred == hrow.reclaimed_deferred_cleanup,
                   "3527 AC1: directory reclaimed_deferred matches handle");
-            CHECK(snap.entries[0].must_wait_reclaimed == h.must_wait_reclaimed,
+            CHECK(snap.entries[0].must_wait_reclaimed == hrow.must_wait_reclaimed,
                   "3527 AC1: directory must_wait_reclaimed matches handle");
             CHECK(snap.entries[0].status == "reclaimed",
                   "3527 AC1: directory status=reclaimed (not alive)");
             if (aura::compiler::typed_audit::production_defaults_active())
                 CHECK(snap.entries[0].lifecycle == "reclaimed-pending",
                       "3527 AC1: production lifecycle=reclaimed-pending");
-            if (h.fiber) {
-                h.fiber->set_state(FiberState::Done);
-                h.fiber->note_body_exit_if_reclaimed();
+            if (hrow.fiber) {
+                hrow.fiber->set_state(FiberState::Done);
+                hrow.fiber->note_body_exit_if_reclaimed();
             }
         }
 
@@ -8655,27 +8693,29 @@ int run_test_join_drain_reclaim() {
             AgentSpec spec;
             spec.name = "ac3527-soft";
             spec.body = [] {};
-            auto& h = scope.spawn(spec);
+            auto h = scope.spawn(spec);
             CHECK(h.ok && h.fiber != nullptr, "3527 AC2: spawn ok");
-            h.fiber->mark_reclaimed();
+            // #4590: spawn returns a snapshot — mark/join/read the ROW.
+            auto& hrow = scope.handles_mut()[0];
+            hrow.fiber->mark_reclaimed();
             JoinPolicy policy{};
             policy.primary_ms = 1;
             policy.drain_ms = 0;
-            (void)join_agent(h, policy);
+            (void)join_agent(hrow, policy);
             auto snap = scope.directory_snapshot();
             CHECK(!snap.entries.empty(), "3527 AC2: directory lists the name");
-            CHECK(snap.entries[0].reclaimed_deferred == h.reclaimed_deferred_cleanup,
+            CHECK(snap.entries[0].reclaimed_deferred == hrow.reclaimed_deferred_cleanup,
                   "3527 AC2: Soft bools still populate (no intern)");
-            CHECK(snap.entries[0].must_wait_reclaimed == h.must_wait_reclaimed,
+            CHECK(snap.entries[0].must_wait_reclaimed == hrow.must_wait_reclaimed,
                   "3527 AC2: Soft must_wait_reclaimed matches handle");
             CHECK(snap.entries[0].lifecycle.empty(),
                   "3527 AC2: Soft directory lifecycle empty (zero intern)");
-            if (h.reclaimed_deferred_cleanup)
+            if (hrow.reclaimed_deferred_cleanup)
                 CHECK(snap.entries[0].status == "reclaimed",
                       "3527 AC2: Soft status=reclaimed when deferred");
-            if (h.fiber) {
-                h.fiber->set_state(FiberState::Done);
-                h.fiber->note_body_exit_if_reclaimed();
+            if (hrow.fiber) {
+                hrow.fiber->set_state(FiberState::Done);
+                hrow.fiber->note_body_exit_if_reclaimed();
             }
         }
 
@@ -9134,27 +9174,29 @@ int run_test_join_drain_reclaim() {
             AgentSpec spec;
             spec.name = "ac3245-pending";
             spec.body = [] {};
-            auto& named = scope.spawn(spec);
+            auto named = scope.spawn(spec);
             // #3793-wave CI: the batch runs 15 members in one process — a
             // prior member's leftover production state (quota/latch) can
             // deny this spawn. Surface the deny reason in the CHECK.
             CHECK(named.ok && named.fiber != nullptr,
                   std::format("3245 AC3: spawn ok (error={})",
                               named.ok ? std::string{"none"} : named.error));
-            named.fiber->mark_reclaimed();
-            named.reserved_memory_bytes = 1024;
+            // #4590: spawn returns a snapshot — mark/join/read the ROW.
+            auto& namedrow = scope.handles_mut()[0];
+            namedrow.fiber->mark_reclaimed();
+            namedrow.reserved_memory_bytes = 1024;
             JoinPolicy np{};
             np.primary_ms = 1;
             np.drain_ms = 0;
-            (void)join_agent(named, np);
+            (void)join_agent(namedrow, np);
             if (aura::orch::production_reclaimed_must_wait())
-                CHECK(named.must_wait_reclaimed, "3245 AC3: named Timeout retains must_wait");
+                CHECK(namedrow.must_wait_reclaimed, "3245 AC3: named Timeout retains must_wait");
             auto snap = scope.directory_snapshot();
             CHECK(!snap.entries.empty() && snap.entries[0].lifecycle == "reclaimed-pending",
                   "3245 AC3: name-table find during pending → reclaimed-pending");
-            if (named.fiber) {
-                named.fiber->set_state(FiberState::Done);
-                named.fiber->note_body_exit_if_reclaimed();
+            if (namedrow.fiber) {
+                namedrow.fiber->set_state(FiberState::Done);
+                namedrow.fiber->note_body_exit_if_reclaimed();
             }
 
             auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -9447,7 +9489,7 @@ int run_test_join_drain_reclaim() {
                 while (!stop_3273.load(std::memory_order_acquire))
                     ; // non-yielding live body (mirrors #3148 AC2)
             };
-            auto& src = scope.spawn(spec);
+            auto src = scope.spawn(spec);
             CHECK(src.ok && src.fiber != nullptr, "3273 AC1: source spawn ok");
             src.reserved_memory_bytes = 4096;
             const auto src_fiber_id = src.fiber->id();
@@ -9485,10 +9527,13 @@ int run_test_join_drain_reclaim() {
                 while (!stop_3273b.load(std::memory_order_acquire))
                     ;
             };
-            auto& src = scope.spawn(spec);
+            auto src = scope.spawn(spec);
             CHECK(src.ok && src.fiber != nullptr, "3273 AC2: source spawn ok");
-            src.reserved_memory_bytes = 2048;
-            auto tok = agent_export_handoff(src);
+            // #4590: spawn returns a snapshot — reservation write / export /
+            // join / reclaim reads go through the REGISTRY ROW.
+            auto& srcrow = scope.handles_mut()[0];
+            srcrow.reserved_memory_bytes = 2048;
+            auto tok = agent_export_handoff(srcrow);
             // Importer on a second Evaluator (dual name-table).
             CompilerService cs2;
             auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
@@ -9501,19 +9546,19 @@ int run_test_join_drain_reclaim() {
             CHECK(res.observation_only, "3273 AC2: importer result observation-only");
             CHECK(res.reservation_held_by_source,
                   "3273 AC2: reservation-held-by-source on importer result");
-            CHECK(src.reserved_memory_bytes == 2048,
+            CHECK(srcrow.reserved_memory_bytes == 2048,
                   "3273 AC2: source reservation unchanged after importer observe");
             // Importer drop must NOT detach source mailbox / release source
             // reservation (proxy dtor is a no-op on reservation, #2009).
             proxy = AgentHandle{};
-            CHECK(src.mailbox != nullptr, "3273 AC2: importer drop keeps source mailbox");
-            CHECK(src.reserved_memory_bytes == 2048,
+            CHECK(srcrow.mailbox != nullptr, "3273 AC2: importer drop keeps source mailbox");
+            CHECK(srcrow.reserved_memory_bytes == 2048,
                   "3273 AC2: importer drop keeps source reservation");
             stop_3273b.store(true, std::memory_order_release);
-            if (src.fiber)
-                src.fiber->request_cancel();
-            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
-            CHECK(src.reserved_memory_bytes == 0,
+            if (srcrow.fiber)
+                srcrow.fiber->request_cancel();
+            (void)join_agent(srcrow, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+            CHECK(srcrow.reserved_memory_bytes == 0,
                   "3273 AC2: source join_agent reclaims reservation (source-owned)");
         }
 
@@ -9677,11 +9722,14 @@ int run_test_join_drain_reclaim() {
                 while (!stop_4117.load(std::memory_order_acquire))
                     ; // non-yielding live body (mirrors #3273 AC1/AC2)
             };
-            auto& src = scope.spawn(spec);
+            auto src = scope.spawn(spec);
             CHECK(src.ok && src.fiber != nullptr, "4117 AC2: source spawn ok");
-            src.reserved_memory_bytes = 4117;
-            const auto src_fiber_id = src.fiber->id();
-            auto tok = agent_export_handoff(src);
+            // #4590: spawn returns a snapshot — reservation write / export /
+            // join / reclaim reads go through the REGISTRY ROW.
+            auto& srcrow = scope.handles_mut()[0];
+            srcrow.reserved_memory_bytes = 4117;
+            const auto src_fiber_id = srcrow.fiber->id();
+            auto tok = agent_export_handoff(srcrow);
             // Evaluator B imports via the token (dual name-table) and
             // observes the source-owned body through join_via_handoff.
             CompilerService cs_b;
@@ -9704,19 +9752,19 @@ int run_test_join_drain_reclaim() {
             CHECK(jr.status == JoinStatus::Invalid,
                   "4117 AC2: B join_agent(proxy) → Invalid (no Done-path cleanup)");
             proxy = AgentHandle{};
-            CHECK(src.reserved_memory_bytes == 4117,
+            CHECK(srcrow.reserved_memory_bytes == 4117,
                   "4117 AC2: source reservation still held after B observe+join+drop");
-            CHECK(src.mailbox != nullptr, "4117 AC2: source mailbox still attached");
-            CHECK(src.fiber && src.fiber->id() == src_fiber_id,
+            CHECK(srcrow.mailbox != nullptr, "4117 AC2: source mailbox still attached");
+            CHECK(srcrow.fiber && srcrow.fiber->id() == src_fiber_id,
                   "4117 AC2: source fiber identity preserved (no ownership move)");
             CHECK(scope.find("src-4117-ac2") != nullptr,
                   "4117 AC2: source name still resolves in A's scope");
             // A's own Done-path cleanup stays the sole owner and works.
             stop_4117.store(true, std::memory_order_release);
-            if (src.fiber)
-                src.fiber->request_cancel();
-            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
-            CHECK(src.reserved_memory_bytes == 0,
+            if (srcrow.fiber)
+                srcrow.fiber->request_cancel();
+            (void)join_agent(srcrow, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+            CHECK(srcrow.reserved_memory_bytes == 0,
                   "4117 AC2: source join_agent reclaims (sole Done-path owner)");
         }
 
@@ -9850,11 +9898,14 @@ int run_test_join_drain_reclaim() {
                 while (!stop_3930.load(std::memory_order_acquire))
                     ;
             };
-            auto& src = scope.spawn(spec);
+            auto src = scope.spawn(spec);
             CHECK(src.ok && src.fiber != nullptr, std::string(tag) + ": source spawn ok");
-            src.reserved_memory_bytes = 2048;
-            const auto src_fiber_id = src.fiber->id();
-            auto tok = agent_export_handoff(src);
+            // #4590: spawn returns a snapshot — reservation write / export /
+            // join / reclaim reads go through the REGISTRY ROW.
+            auto& srcrow = scope.handles_mut()[0];
+            srcrow.reserved_memory_bytes = 2048;
+            const auto src_fiber_id = srcrow.fiber->id();
+            auto tok = agent_export_handoff(srcrow);
             CompilerService cs2;
             auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
             CHECK(proxy.import_proxy, std::string(tag) + ": import stamps import_proxy");
@@ -9862,26 +9913,26 @@ int run_test_join_drain_reclaim() {
             auto jr = join_agent(proxy, JoinPolicy{.primary_ms = 20, .drain_ms = 20});
             CHECK(jr.status == JoinStatus::Invalid,
                   std::string(tag) + ": join_agent(proxy) → Invalid");
-            CHECK(src.reserved_memory_bytes == 2048,
+            CHECK(srcrow.reserved_memory_bytes == 2048,
                   std::string(tag) + ": source reservation unchanged after proxy join");
-            CHECK(src.fiber && src.fiber->id() == src_fiber_id,
+            CHECK(srcrow.fiber && srcrow.fiber->id() == src_fiber_id,
                   std::string(tag) + ": source fiber identity unchanged");
-            CHECK(src.mailbox != nullptr, std::string(tag) + ": source mailbox still attached");
-            CHECK(!src.fiber->is_cancel_requested(),
+            CHECK(srcrow.mailbox != nullptr, std::string(tag) + ": source mailbox still attached");
+            CHECK(!srcrow.fiber->is_cancel_requested(),
                   std::string(tag) + ": proxy join did not cancel source");
             auto jr_batch = join_agents(std::span<AgentHandle>(&proxy, 1),
                                         JoinPolicy{.primary_ms = 20, .drain_ms = 20});
             CHECK(jr_batch.status == JoinStatus::Invalid,
                   std::string(tag) + ": join_agents(proxy) → Invalid");
-            CHECK(src.mailbox != nullptr,
+            CHECK(srcrow.mailbox != nullptr,
                   std::string(tag) + ": source mailbox still attached after batch");
-            CHECK(src.reserved_memory_bytes == 2048,
+            CHECK(srcrow.reserved_memory_bytes == 2048,
                   std::string(tag) + ": source reservation unchanged after batch");
             stop_3930.store(true, std::memory_order_release);
-            if (src.fiber)
-                src.fiber->request_cancel();
-            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
-            CHECK(src.reserved_memory_bytes == 0,
+            if (srcrow.fiber)
+                srcrow.fiber->request_cancel();
+            (void)join_agent(srcrow, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+            CHECK(srcrow.reserved_memory_bytes == 0,
                   std::string(tag) + ": source join_agent still reclaims");
         };
 
