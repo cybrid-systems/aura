@@ -959,7 +959,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         // Copy the native address before mint: a fresh append can reallocate
         // oh, and oh[owner] is the native pointer, not an element address.
         void* view_ptr = static_cast<char*>(oh[owner]) + voff;
-        const auto vpacked = rt.mint_opaque_slot(oh, view_ptr);
+        auto vpacked = rt.mint_opaque_slot(oh, view_ptr);
+        if (vpacked == ~std::uint64_t{0}) {
+            const auto slot = static_cast<std::uint32_t>(oh.size());
+            oh.push_back(view_ptr);
+            rt.note_appended_opaque(oh);
+            vpacked = types::pack_opaque_index(slot, 0);
+        }
         // Issue #3022 / #3291: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
         // A view addresses native memory the C side (or c-alloc) owns, never
         // an arena object; every access re-derives the address from the
@@ -1335,7 +1341,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return f64err("c-handle: pointer is null, freed or closed");
         // A handle always mints a new slot. It does not reuse the source
         // opaque and does not update the address alias.
-        const auto hpacked = ev.ffi_runtime_.mint_opaque_slot(oh, ptr);
+        auto hpacked = ev.ffi_runtime_.mint_opaque_slot(oh, ptr);
+        if (hpacked == ~std::uint64_t{0}) {
+            const auto slot = static_cast<std::uint32_t>(oh.size());
+            oh.push_back(ptr);
+            ev.ffi_runtime_.note_appended_opaque(oh);
+            hpacked = types::pack_opaque_index(slot, 0);
+        }
         // Issue #3022 / #3291: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
         // (a handle wraps a pointer the native module allocated).
         aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");

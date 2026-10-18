@@ -303,8 +303,11 @@ public:
             return opaque_raise_(std::move(msg));
         return types::make_int(0);
     }
-    // Mint a slot for p. Reuses a freelist index (its generation was bumped
-    // when it was recycled) or appends. Does not record an alias.
+    // Reuse a freelist index (its generation was bumped when it was recycled).
+    // Returns ~uint64_t{0} when the caller must append. The push_back stays at
+    // the create site so the #3291 window still sees that site's cover or
+    // exempt note. Not a packed index: generation never reaches all-ones, and
+    // slot 0 generation 0 is a live index. Does not record an alias.
     [[nodiscard]] std::uint64_t mint_opaque_slot(std::vector<void*>& oh, void* p);
     // Cover failed. A fresh gen-0 tail is popped. Anything else is recycled
     // so a freelist mint cannot pop_back a different slot.
