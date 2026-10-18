@@ -22,6 +22,7 @@ module;
 #include "compiler/castop_density_policy.hh"         // #2358 HARD force-JIT policy
 #include "core/arena_auto_policy_stats.h"            // in_render_hotpath
 #include "core/transparent_string_hash.hh"           // TransparentStringHash for ir_cache_index
+#include "compiler/jit_assumptions.hh"               // #4569 DefineVersion bump
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -926,6 +927,11 @@ void CompilerService::mark_all_defines_dirty() {
 
 // ── invalidate_function (#59 / #1378 / #1476 / #1627 / #2131) ─────────────
 void CompilerService::invalidate_function(const std::string& name) {
+    // Issue #4569: DefineVersion(name) first — release store, before any
+    // early return below — so JIT code compiled against the old binding
+    // (own body or a captured reference) fails its assumption check even
+    // if a cache entry survives this call's teardown.
+    aura::compiler::jit_assume::DefineVersions::instance().bump(name);
     // Issue #59 Iter 3 + #1378: acquire the Mutation Lock FIRST so
     // epoch bump, block-dirty, BFS, and cache/JIT teardown are
     // atomic w.r.t. concurrent invalidate_function / mutate.

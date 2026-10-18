@@ -2,6 +2,7 @@
 """Regression tests for recently fixed P0 issues and new features."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -788,6 +789,83 @@ def test_jit_soundness_4567():
     print(f"  ✅ jit-soundness-4567 ({len(programs)} programs)")
 
 
+def test_jit_assumption_invalidation_4569():
+    """Issue #4569: jit_cache_ validity is IR fingerprint + DefineVersion.
+
+    One `aura --jit-session` process runs the same 200-define program
+    repeatedly. An unrelated edit must not recompile anything, a rebind
+    recompiles that define only, an edited body is a fingerprint miss for
+    that function only, and every run prints the same value. The old
+    process-global epoch predicate (AURA_JIT_GLOBAL_EPOCH_INVALIDATE=1)
+    still recompiles everything after the unrelated edit.
+    """
+    n = 200
+
+    def prog(changed=-1, add=0):
+        defs = " ".join(f"(define (f{i} x) (+ x {add if i == changed else i}))" for i in range(n))
+        return f"{defs} (+ (f0 1) (f{n - 1} 1))"
+
+    p, p2 = prog(), prog(3, 1000)
+    lines = [
+        p,
+        ";;stats",
+        p,
+        ";;stats",
+        ";;invalidate unrelated_4569",
+        p,
+        ";;stats",
+        ";;invalidate f7",
+        p,
+        ";;stats",
+        p2,
+        ";;stats",
+        ";;events",
+    ]
+
+    def session(extra_env):
+        env = os.environ.copy()
+        env.update(extra_env)
+        r = subprocess.run(
+            [AURA, "--jit-session"],
+            input="\n".join(lines) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+        )
+        out = r.stdout.splitlines()
+        comp = [int(m.group(1)) for m in (re.match(r"compiles=(\d+)", x) for x in out) if m]
+        vals = [x for x in out if re.fullmatch(r"-?\d+", x)]
+        return r, out, comp, vals
+
+    r, out, comp, vals = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "0"})
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-800:]}"
+    assert vals == [str(1 + 1 + n - 1)] * 5, f"results differ: {vals}"
+    assert len(comp) == 5, out[-10:]
+    first, same, unrelated, rebind, edited = (
+        comp[0],
+        comp[1] - comp[0],
+        comp[2] - comp[1],
+        comp[3] - comp[2],
+        comp[4] - comp[3],
+    )
+    print(f"    compiles: first={first} same={same} unrelated={unrelated} rebind={rebind} edited={edited}")
+    assert first >= n, f"first run compiled {first} < {n}"
+    assert same <= 1, f"same program recompiled {same}"
+    assert unrelated <= 1, f"unrelated edit recompiled {unrelated} (global-epoch storm)"
+    assert 1 <= rebind <= 3, f"rebind f7 recompiled {rebind}"
+    assert 1 <= edited <= 4, f"one edited body recompiled {edited}"
+    events = "\n".join(out)
+    assert "f3 fingerprint" in events, "fingerprint event for f3 missing"
+    assert "mode=assumption" in events
+
+    r, out, comp, vals = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "1"})
+    assert r.returncode == 0 and vals == [str(1 + 1 + n - 1)] * 5, (vals, r.stderr[-400:])
+    assert comp[2] - comp[1] >= n, f"global-epoch flag recompiled only {comp[2] - comp[1]}"
+    print(f"    global-epoch flag: unrelated edit recompiled {comp[2] - comp[1]}")
+    print("  ✅ test_jit_assumption_invalidation_4569")
+
+
 def test_type_feedback_4568():
     """Issue #4568: query:type-feedback lattice, polymorphic calls, rebind reset."""
     code = r"""
@@ -909,6 +987,7 @@ def test_type_feedback_4568():
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
+    test_jit_assumption_invalidation_4569,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

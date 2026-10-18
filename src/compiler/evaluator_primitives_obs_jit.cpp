@@ -21,6 +21,7 @@ module;
 #include "observability_metrics.h"
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"       // Issue #2683: shape storm isolation counters
+#include "compiler/jit_assumptions.hh"     // Issue #4569: assumption invalidation surface
 #include "compiler/hot_update_registry.hh" // Issue #2690: pending recovery drain counters
 #include "core/capability_model.hh"        // Issue #2688: capability hard-fiber / grant epoch
 #include "compiler/value_tags.h"
@@ -271,6 +272,18 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
     };
     ObservabilityPrims::register_stats_impl("query:jit-stats", jit_stats_line);
     ObservabilityPrims::register_stats_impl("compile:jit-stats", jit_stats_line);
+
+    // Issue #4569: assumption-based invalidation surface for agents and
+    // aura-loop. -stats: mode + counters; -events: last 64 invalidations,
+    // one per line "fn kind key old->new @mutation-epoch".
+    ObservabilityPrims::register_stats_impl(
+        "query:jit-assumption-stats", [&ev](const auto&) -> EvalValue {
+            return make_string(ev.string_heap_.mint(jit_assume::format_stats()));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "query:jit-assumption-events", [&ev](const auto&) -> EvalValue {
+            return make_string(ev.string_heap_.mint(jit_assume::format_events()));
+        });
 
     // Issue #491: query:jit-stats-hash — structured JIT production-readiness
     // view for AI self-monitoring (opcode coverage, fallback, hot-swap safety).

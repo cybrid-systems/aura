@@ -17,6 +17,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutate_type_gate.hh"
+#include "compiler/jit_assumptions.hh"
 
 #include <fstream>
 #include <print>
@@ -65,6 +66,48 @@ static std::string read_file(const char* path) {
 // Issue #4558: StringPool::intern read-first fast path — existing names
 // resolve under the shared lock, new names still insert exactly once, ids
 // stay stable across growth, and concurrent intern/resolve agree.
+// Issue #4569: assumption registry pieces the JIT cache predicate uses
+// (exec_jit itself is LLVM-only and covered by test_regression.py
+// test_jit_assumption_invalidation_4569 through `aura --jit-session`).
+static void jit_assumptions_4569() {
+    namespace ja = aura::compiler::jit_assume;
+    auto& dv = ja::DefineVersions::instance();
+    auto* w = dv.word("a4569");
+    CHECK(w == dv.word("a4569"), "4569: stable version word");
+    const auto v0 = w->v.load();
+    const auto clock0 = ja::define_clock().load();
+    std::vector<ja::Dep> deps{{w, v0, "a4569"}, {dv.word("b4569"), dv.peek("b4569"), "b4569"}};
+    CHECK(ja::first_broken(deps) == nullptr, "4569: fresh deps hold");
+    CHECK(dv.bump("a4569") == v0 + 1, "4569: bump returns next version");
+    CHECK(ja::define_clock().load() == clock0 + 1, "4569: bump advances define clock");
+    const auto* broken = ja::first_broken(deps);
+    CHECK(broken && broken->name == "a4569", "4569: bumped dep is the broken one");
+    deps[0].version = w->v.load();
+    CHECK(ja::first_broken(deps) == nullptr, "4569: unrelated name stays valid");
+    std::vector<ja::Dep> torn{{w, 0, "a4569"}};
+    CHECK(ja::first_broken(torn) != nullptr, "4569: version 0 (torn publish) never holds");
+    ja::Fnv h1, h2;
+    h1.str("(+ x 1)");
+    h2.str("(+ x 2)");
+    CHECK(h1.done() != h2.done() && h1.done() != 0, "4569: fingerprint separates bodies");
+    ja::set_global_epoch_mode_for_test(1);
+    CHECK(ja::global_epoch_mode(), "4569: flag on");
+    ja::set_global_epoch_mode_for_test(0);
+    CHECK(!ja::global_epoch_mode(), "4569: flag off");
+    ja::set_global_epoch_mode_for_test(-1);
+    ja::EventLog::instance().clear_for_test();
+    for (int i = 0; i < 70; ++i)
+        ja::EventLog::instance().record(
+            ja::Event{"f" + std::to_string(i), "k", ja::Kind::Define, 1, 2, 9});
+    const auto ev = ja::format_events();
+    CHECK(ja::EventLog::instance().total() == 70, "4569: event total counts all");
+    CHECK(ev.find("f69 define k 1->2 @9") != std::string::npos &&
+              ev.find("f5 define") == std::string::npos,
+          "4569: event ring keeps the newest 64");
+    CHECK(ja::format_stats().find("events=70") != std::string::npos, "4569: stats line");
+    ja::EventLog::instance().clear_for_test();
+}
+
 static void stringpool_intern_fastpath_4558() {
     aura::ast::StringPool pool;
     const auto a = pool.intern("alpha4558");
@@ -881,6 +924,7 @@ int run_test_mutate_type_gate() {
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
     registry_intern_4557();
     stringpool_intern_fastpath_4558();
+    jit_assumptions_4569();
     return g_failed ? 1 : 0;
 }
 
