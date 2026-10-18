@@ -978,6 +978,11 @@ struct LLVMBuilder {
     llvm::Function* fn_new_cell = nullptr;
     llvm::Function* fn_cell_get = nullptr;
     llvm::Function* fn_cell_set = nullptr;
+    // Issue #4600/#4606 family: define-cell bind entry (no user-mutation
+    // choke — see aura_cell_set_jit_bind in aura_jit_runtime.cpp).
+    llvm::Function* fn_cell_set_jit_bind = nullptr;
+    // Pre-pass: value slots written by OpMakeClosure (define binds).
+    std::unordered_set<std::uint32_t> mc_value_slots;
     llvm::Function* fn_top_cell_get = nullptr;
     llvm::Function* fn_alloc_pair = nullptr;
     llvm::Function* fn_alloc_pair_arena = nullptr;
@@ -1126,6 +1131,9 @@ struct LLVMBuilder {
         fn_cell_get = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_cell_get", mod);
 
+        fn_cell_set_jit_bind =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_cell_set_jit_bind", mod);
         fn_cell_set = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_cell_set", mod);
 
@@ -2792,8 +2800,14 @@ struct LLVMBuilder {
                     irb->CreateStore(load(inst.ops[1]), pcells[inst.ops[0]]);
                     return true;
                 }
-                irb->CreateCall(llvm::FunctionCallee(fn_cell_set),
-                                llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
+                // Issue #4600/#4606: the entry fn's define-cell binds (value
+                // freshly MakeClosure'd) are loader plumbing — use the bind
+                // entry so the session-less Mutate choke cannot drop them.
+                const bool is_entry_bind = fn.name && std::string_view(fn.name) == "__top__" &&
+                                           mc_value_slots.count(inst.ops[1]) != 0;
+                irb->CreateCall(
+                    llvm::FunctionCallee(is_entry_bind ? fn_cell_set_jit_bind : fn_cell_set),
+                    llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
                 return true;
             }
             case OpTopCellLoad: {
@@ -4078,6 +4092,8 @@ uint64_t aura_get_defuse_version();
 std::uintptr_t aura_jit_defuse_word_slot_addr();
 // Issue #4600 §4: cold-path guard-deopt attribution (deopt-storm policy).
 void aura_jit_note_guard_deopt(const char* name);
+// Issue #4600/#4606 family: define-cell bind write (no Mutate choke).
+void aura_cell_set_jit_bind(int64_t cell_id, int64_t val);
 // Issue #4571: L2 inline pair access (runtime_ssot.cpp / aura_jit_runtime.cpp).
 int64_t aura_jit_pair_inline_ok();
 void* aura_pair_seg_dir_base();
@@ -4564,6 +4580,7 @@ struct AuraJIT::Impl {
         reg("aura_new_cell", (void*)aura_new_cell);
         reg("aura_cell_get", (void*)aura_cell_get);
         reg("aura_cell_set", (void*)aura_cell_set);
+        reg("aura_cell_set_jit_bind", (void*)aura_cell_set_jit_bind); // #4600
         reg("aura_top_cell_get", (void*)aura_top_cell_get);
         reg("aura_alloc_pair", (void*)aura_alloc_pair);
         reg("aura_alloc_pair_arena", (void*)aura_alloc_pair_arena);
@@ -4856,6 +4873,14 @@ struct AuraJIT::Impl {
             auto* ver = builder.irb->CreateCall(builder.fn_get_defuse_version, {});
             builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
         }
+
+        // Issue #4600/#4606: value slots written by MakeClosure — the
+        // entry fn's define-cell CellSets on these are loader plumbing and
+        // take the bind entry (no user-mutation choke; tenant gate stays).
+        for (std::uint32_t mbi = 0; mbi < fn.num_blocks; ++mbi)
+            for (std::uint32_t mii = 0; mii < fn.blocks[mbi].num_instructions; ++mii)
+                if (fn.blocks[mbi].instructions[mii].opcode == OpMakeClosure)
+                    builder.mc_value_slots.insert(fn.blocks[mbi].instructions[mii].ops[0]);
 
         // Issue #1537 + #1540: Apply prologue — dual-epoch + linear_post_mutate.
         //   %cur = call @aura_jit_get_current_bridge_epoch()

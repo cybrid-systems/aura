@@ -6332,6 +6332,20 @@ extern "C" void aura_cell_set_checked(int64_t cell_id, int64_t val, std::uint64_
     aura_unlock_workspace_write();
 }
 
+// Issue #4600/#4606 family: the JIT'd __top__'s define-cell binds are
+// compiler plumbing (the loader publishing each define's closure — the
+// tree-walker's define processing writes the same binding through internal
+// paths that never cross this choke). Routing them through the #4018
+// require_effect Mutate gate denied every bind in a session-less exec_jit
+// (production face: peek_audit_mutation_id==0 fail-closed), leaving all
+// define cells empty — every closure read coerced to id 0 and multi-define
+// programs computed wrong values. This entry keeps the tenant gate +
+// workspace write lock (checked) but not the user-mutation choke.
+extern "C" void aura_cell_set_jit_bind(int64_t cell_id, int64_t val) {
+    aura_cell_set_checked(cell_id, val, aura_jit_owner_capability_tenant(),
+                          aura_jit_owner_sandbox_mode());
+}
+
 void aura_cell_set(int64_t cell_id, int64_t val) {
     // Issue #4018: require Mutate before any g_cell_heap write (#3720 choke
     // parity with aura_hash_set). Soft/Off require_effect is a no-op when
