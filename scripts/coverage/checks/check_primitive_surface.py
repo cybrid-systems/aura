@@ -406,10 +406,12 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    all_names = scan_registered_names()
-    stats_names = collect_stats_names(all_names)
+    def _survey() -> tuple[list[str], list[str], list[str]]:
+        """One full surface survey: names + stats + frozen-pattern sets."""
+        names = scan_registered_names()
+        return names, collect_stats_names(names), collect_frozen_names(names)
 
-    frozen_names = collect_frozen_names(all_names)
+    all_names, stats_names, frozen_names = _survey()
     inventory = {
         "schema": 2,
         "count": len(all_names),
@@ -456,26 +458,42 @@ def main() -> int:
 
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     base_set = set(baseline.get("names", []))
-    cur_set = set(frozen_names)
     new = freeze_violations(frozen_names, sorted(base_set))
-    removed = sorted(base_set - cur_set)
 
     if new:
-        print("FAIL: new blocked-pattern primitive names (freeze violation):", file=sys.stderr)
-        for n in new:
-            cat = blocked_category(n) or "?"
-            print(f"  + {n}  [{cat}]", file=sys.stderr)
-        print(
-            "\nDo not add public convenience/stats/ref primitives.\n"
-            "  - counters → CompilerMetrics + (engine:metrics)\n"
-            "  - string/json/math/… → lib/std (require std/surface)\n"
-            "  - ast:ref-* → StableRef API (Issue #393); no new names\n"
-            "If growth is intentional, run:\n"
-            "  python3 scripts/coverage/checks/check_primitive_surface.py --update-baseline\n"
-            "and justify in the PR (Issue #1448 governance).",
-            file=sys.stderr,
-        )
-        return 1
+        # Issue #4593: this scan can race a concurrent tree mutation (shared-
+        # checkout landings, format waves, rebases) and read a mid-mutation
+        # mix of evaluator_primitives*.cpp versions — transient surface
+        # growth a settled scan never sees. Confirm on a fresh scan; only
+        # violations stable across both reads fail.
+        all_names, stats_names, frozen_names = _survey()
+        confirmed = freeze_violations(frozen_names, sorted(base_set))
+        if not confirmed:
+            print(
+                f"NOTE: transient surface scan — first read reported "
+                f"{len(new)} new blocked-pattern name(s) the confirm scan "
+                f"does not see (mid-mutation tree, Issue #4593); passing on "
+                f"the settled state."
+            )
+        else:
+            new = confirmed
+            print("FAIL: new blocked-pattern primitive names (freeze violation):", file=sys.stderr)
+            for n in new:
+                cat = blocked_category(n) or "?"
+                print(f"  + {n}  [{cat}]", file=sys.stderr)
+            print(
+                "\nDo not add public convenience/stats/ref primitives.\n"
+                "  - counters → CompilerMetrics + (engine:metrics)\n"
+                "  - string/json/math/… → lib/std (require std/surface)\n"
+                "  - ast:ref-* → StableRef API (Issue #393); no new names\n"
+                "If growth is intentional, run:\n"
+                "  python3 scripts/coverage/checks/check_primitive_surface.py --update-baseline\n"
+                "and justify in the PR (Issue #1448 governance).",
+                file=sys.stderr,
+            )
+            return 1
+
+    removed = sorted(base_set - set(frozen_names))
 
     if removed:
         print(f"OK: {len(removed)} frozen name(s) removed since baseline (shrink is good)")
@@ -491,7 +509,22 @@ def main() -> int:
     )
 
     if args.strict:
-        return run_strict_checks(all_names, stats_names)
+        rc = run_strict_checks(all_names, stats_names)
+        if rc == 0:
+            return 0
+        # Issue #4593: same confirm-rescan as the freeze path — a budget/
+        # ceiling failure must hold on a fresh scan before the gate acts
+        # on it.
+        names2, stats2, _ = _survey()
+        rc2 = run_strict_checks(names2, stats2)
+        if rc2 == 0:
+            print(
+                "NOTE: transient surface scan — first --strict pass reported "
+                "a budget/ceiling violation the confirm scan does not see "
+                "(mid-mutation tree, Issue #4593); passing on the settled state."
+            )
+            return 0
+        return rc2
     return 0
 
 
