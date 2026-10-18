@@ -3358,7 +3358,11 @@ static void ac4518_inrange_apply_encoding_f64_readers() {
         CHECK(p != std::string::npos, std::format("4518: {} body located", name));
         if (p == std::string::npos)
             continue;
-        const auto win = char_src.substr(p, 1600);
+        // #4518 pin: the #4597/#4555 FFI series grew the c-func bodies — the
+        // nearest tenant consult now sits ~1.8k chars past `add(`. Widen to
+        // 2560 (verified: no require_effect inside 2560 of any add below,
+        // so the body-choke-free check stays meaningful).
+        const auto win = char_src.substr(p, 2560);
         CHECK(win.find("inrange_string_tenant_allows") != std::string::npos ||
                   win.find("inrange_slot_tenant_allows") != std::string::npos,
               std::format("4518: {} consults the tenant stamp", name));
