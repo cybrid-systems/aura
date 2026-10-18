@@ -312,16 +312,80 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
 
 // ── constant_fold_function — pure per-function folder ─────────
 //
-// Allocates a fresh known-map per block (so cross-block
-// ConstI64 propagation doesn't leak — matches the legacy
-// `fold_function` semantics, which clears known_ at each
-// block entry).
+// A block with anything other than one already-folded forward
+// predecessor starts from an empty known-map, so a constant does
+// not leak across a merge or a back edge.
+//
+// Issue #4592: #4588's error escape ends the inner operator's
+// block with Branch and emits the consumer in the continuation.
+// That continuation has one predecessor. Seeding its map from
+// that predecessor's exit map lets `(+ 1 (* 2 3))` fold both the
+// inner Mul and the outer Add. Slots the continuation itself
+// defines are dropped first, so a redefinition is not folded as
+// the predecessor's value.
+namespace {
+    bool instruction_defines_slot(const aura::ir::IRInstruction& instr, std::uint32_t& slot) {
+        switch (instr.opcode) {
+            case IROpcode::Call:
+            case IROpcode::PrimCall:
+                slot = instr.operands[3];
+                return true;
+            case IROpcode::Apply:
+                slot = instr.operands[2];
+                return true;
+            default:
+                break;
+        }
+        if (const auto* info = lookup_opcode(instr.opcode); info && info->has_result_slot) {
+            slot = instr.operands[0];
+            return true;
+        }
+        return false;
+    }
+} // namespace
+
 ConstantFoldingResult constant_fold_function(aura::ir::IRFunction& func) {
     ConstantFoldingResult result;
-    ConstantKnownMap known;
-    for (auto& block : func.blocks) {
-        known.clear();
-        result.folded_count += constant_fold_block(block, known);
+    const auto n = func.blocks.size();
+    std::vector<int> pred_count(n, 0);
+    std::vector<int> single_pred(n, -1);
+    auto note_succ = [&](std::size_t from, std::uint32_t to) {
+        if (to >= n)
+            return;
+        if (pred_count[to] == 0 && to != from)
+            single_pred[to] = static_cast<int>(from);
+        else
+            single_pred[to] = -1;
+        pred_count[to] += 1;
+    };
+    for (std::size_t bi = 0; bi < n; ++bi) {
+        const auto& ins = func.blocks[bi].instructions;
+        if (ins.empty())
+            continue;
+        const auto& term = ins.back();
+        if (term.opcode == IROpcode::Branch) {
+            note_succ(bi, term.operands[1]);
+            note_succ(bi, term.operands[2]);
+        } else if (term.opcode == IROpcode::Jump) {
+            note_succ(bi, term.operands[0]);
+        }
+    }
+
+    std::vector<ConstantKnownMap> at_exit(n);
+    for (std::size_t bi = 0; bi < n; ++bi) {
+        ConstantKnownMap known;
+        if (pred_count[bi] == 1) {
+            const int pred = single_pred[bi];
+            if (pred >= 0 && static_cast<std::size_t>(pred) < bi)
+                known = at_exit[static_cast<std::size_t>(pred)];
+        }
+        for (const auto& instr : func.blocks[bi].instructions) {
+            std::uint32_t slot = 0;
+            if (instruction_defines_slot(instr, slot))
+                known.erase(slot);
+        }
+        result.folded_count += constant_fold_block(func.blocks[bi], known);
+        at_exit[bi] = std::move(known);
     }
     return result;
 }
