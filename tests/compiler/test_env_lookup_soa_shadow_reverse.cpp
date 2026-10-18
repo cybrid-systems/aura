@@ -8,6 +8,14 @@
 //
 //   AC1: named-let body reads let-shadowed global (11, not 7)
 //   AC2: source-cite — SoA walk string scan matches in reverse (rbegin)
+//   AC3 (#4595): after a top-level named let, a closure from a later
+//          top-level let called through another procedure reads the
+//          let binding (42), not the stale global copy (0)
+//   AC4 (#4595): let* variant of the same face
+//   AC5 (#4595): set! through the closure path writes the same cell
+//          the read resolves (no split resolution)
+//   AC6 (#4595): source-cite — letrec register-and-repoint gated on
+//          !parent_is_live_top; cell lookups reverse-scan live top_
 //   (param-shadow + named-let recursion CLI faces live in
 //    tests/python/run-tests.sh 4353-named-let-shadow.)
 
@@ -64,11 +72,113 @@ static void ac2_source_cite_reverse_scan() {
     CHECK(false, "AC4: evaluator_env.cpp not found from CWD");
 }
 
+// AC3 (#4595): a top-level named let must not freeze top_ behind a
+// self-copy frame — a closure created in a LATER top-level let and
+// called through another procedure reads the let binding, not the
+// global cell that the named-let-time copy still holds.
+static void ac3_4595_top_named_let_shadow() {
+    std::println("\n--- #4595 AC3: top-level named let + later let-shadow ---");
+    CompilerService cs;
+    auto r = cs.eval("(begin (define x 0)"
+                     " (define (call th) (th))"
+                     " (let loop ((r 0)) (if (< r 0) (loop (+ r 1)) #t))"
+                     " (let ((x 42)) (call (lambda () x))))");
+    if (!r.has_value())
+        std::println("AC3 diagnostic: {}", r.error().message);
+    CHECK(r.has_value(), "AC3: eval ok");
+    if (r.has_value())
+        CHECK(is_int(*r) && as_int(*r) == 42,
+              "AC3: closure reads let x=42 (pre-fix: stale global copy 0)");
+}
+
+// AC4 (#4595): let* variant — the second binding in a let* created
+// after the top-level named let shadows the same-named global.
+static void ac4_4595_letstar_variant() {
+    std::println("\n--- #4595 AC4: let* variant ---");
+    CompilerService cs;
+    auto r = cs.eval("(begin (define x 0)"
+                     " (define (call th) (th))"
+                     " (let loop ((r 0)) (if (< r 0) (loop (+ r 1)) #t))"
+                     " (let* ((f 1) (x 42)) (call (lambda () x))))");
+    if (!r.has_value())
+        std::println("AC4 diagnostic: {}", r.error().message);
+    CHECK(r.has_value(), "AC4: eval ok");
+    if (r.has_value())
+        CHECK(is_int(*r) && as_int(*r) == 42,
+              "AC4: let* closure reads x=42 (pre-fix: stale global copy 0)");
+}
+
+// AC5 (#4595): set! through the closure path writes the cell the read
+// resolves — pre-fix the set! walker (lookup_cell_ptr/index forward
+// scans) wrote the OLDEST binding while the read returned the newest.
+static void ac5_4595_setbang_consistency() {
+    std::println("\n--- #4595 AC5: set! and read agree through closure ---");
+    CompilerService cs;
+    auto r = cs.eval("(begin (define x 0)"
+                     " (define (call th) (th))"
+                     " (let loop ((r 0)) (if (< r 0) (loop (+ r 1)) #t))"
+                     " (let ((x 7)) (call (lambda () (begin (set! x 42) x)))))");
+    if (!r.has_value())
+        std::println("AC5 diagnostic: {}", r.error().message);
+    CHECK(r.has_value(), "AC5: eval ok");
+    if (r.has_value())
+        CHECK(is_int(*r) && as_int(*r) == 42,
+              "AC5: thunk returns 42 after set! (split-resolution guard)");
+}
+
+// AC6 (#4595): source-cite — the letrec arm's register-and-repoint is
+// gated on !parent_is_live_top (top_ never carries a frozen self-copy
+// frame), and the cell lookups reverse-scan live top_.
+static void ac6_4595_source_cite_gates() {
+    std::println("\n--- #4595 AC6: source-cite lookup-side fix gates ---");
+    bool found_env_cpp = false;
+    for (const auto& p : {std::string("src/compiler/evaluator_env.cpp"),
+                          std::string("../src/compiler/evaluator_env.cpp"),
+                          std::string("../../src/compiler/evaluator_env.cpp")}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        found_env_cpp = true;
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(src.find("f.bindings_.rbegin()") != std::string::npos,
+              "AC6: cell-lookup SoA walks scan reverse (rbegin)");
+        CHECK(src.find("auto tb = owner_->top_env().bindings();") != std::string::npos,
+              "AC6: live-top consult reverse-scans via tb");
+        CHECK(src.find("aura::serve::g_current_fiber == nullptr && bindings_.empty()") !=
+                  std::string::npos,
+              "AC6: empty-capture live-top consult fiber-gated (host-thread only)");
+        CHECK(src.find("BEFORE scanning the root") != std::string::npos,
+              "AC6: root-frame walk consults live top_ before the frozen snapshot");
+        CHECK(src.find("auto tb4595 = owner_->top_env().bindings();") != std::string::npos,
+              "AC6: cell-lookup empty-capture consults use tb4595");
+        break;
+    }
+    CHECK(found_env_cpp, "AC6: evaluator_env.cpp found from CWD");
+    bool found_flat_cpp = false;
+    for (const auto& p : {std::string("src/compiler/evaluator_eval_flat.cpp"),
+                          std::string("../src/compiler/evaluator_eval_flat.cpp"),
+                          std::string("../../src/compiler/evaluator_eval_flat.cpp")}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        found_flat_cpp = true;
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(src.find("fixed lookup-side in Env::lookup /") != std::string::npos,
+              "AC6: letrec registration kept, fix documented lookup-side");
+        break;
+    }
+    CHECK(found_flat_cpp, "AC6: evaluator_eval_flat.cpp found from CWD");
+}
+
 } // namespace
 
 int run_test_env_lookup_soa_shadow_reverse() {
     ac1_named_let_shadow_global();
     ac2_source_cite_reverse_scan();
+    ac3_4595_top_named_let_shadow();
+    ac4_4595_letstar_variant();
+    ac5_4595_setbang_consistency();
+    ac6_4595_source_cite_gates();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

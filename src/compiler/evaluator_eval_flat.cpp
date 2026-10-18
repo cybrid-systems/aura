@@ -7495,6 +7495,22 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // (this would require tracking which envs are frames;
                         // for now, we always register, which is wasteful but
                         // correct).
+                        // Issue #4595: this registration (and the repoint
+                        // of top_.parent_id() at the frozen copy of top_'s
+                        // bindings) is load-bearing for the steal /
+                        // panic-checkpoint / reclaim graph — removing it
+                        // crashed the chaos release blocker (steal-snapshot
+                        // hard-fail, resume-fence surplus, invalid free).
+                        // The shadow bug it causes — a lambda created in
+                        // top_ captures an EMPTY live-safe frame parented
+                        // here (#4350/#4474) and its free-var walk stopped
+                        // at the stale copy, so a later top-level
+                        // let/define rebind of an existing name resolved to
+                        // the global cell frozen at named-let time — is
+                        // fixed lookup-side in Env::lookup /
+                        // lookup_cell_ptr / lookup_cell_index: live-safe
+                        // EMPTY captures consult the LIVE top_ before their
+                        // SoA walk (host-thread only; see #4595).
                         if (letrec_parent.parent_id() == NULL_ENV_ID) {
                             EnvId eval_id = alloc_env_frame_from_env(letrec_parent);
                             const_cast<Env&>(letrec_parent).set_parent_id(eval_id);

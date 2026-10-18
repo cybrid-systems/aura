@@ -9735,6 +9735,26 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4142 WAL miss/refuse fold linter failed — run python3 scripts/check_wal_miss_refuse_next_4142.py")
         return r
+    # Issue #4595 (top-level named let freezes top_): the letrec lowering
+    # must not register the live top env as a frozen self-copy frame — the
+    # #4474 empty live-safe capture parents at top_.parent_id() and its
+    # free-var walk stops at the stale copy, so every later top-level
+    # let/define rebind of an existing name resolves to the cell frozen at
+    # named-let time (aura-rocks corrupted-merge read the global `bad`
+    # counter instead of the let*-bound corrupted string). Cell lookups
+    # must also match frame string bindings in REVERSE so set! and reads
+    # agree on the newest binding. Runtime doors live in
+    # tests/compiler/test_env_lookup_soa_shadow_reverse.cpp (ac3-ac6).
+    topletc4595_script = ROOT / "scripts" / "check_top_letrec_no_selfcopy_frame_4595.py"
+    if not topletc4595_script.exists():
+        fail(f"missing {topletc4595_script}")
+        return 1
+    r = run([sys.executable, str(topletc4595_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4595 top-letrec live-top linter failed — run python3 scripts/check_top_letrec_no_selfcopy_frame_4595.py"
+        )
+        return r
     # Issue #4240 (WAL segment prune after ring wrap): after the typed
     # (256) + SE (1024) rings wrap AND AURA_WAL_MAX_SEGMENTS retention
     # prunes the only durable segment holding the mid (#3338), every
