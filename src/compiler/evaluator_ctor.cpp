@@ -177,6 +177,12 @@ Evaluator::Evaluator() {
         // Issue #4396: c-struct probes this Evaluator, the same id Phase-5
         // and the auto-arm store in the densify-in-flight slot.
         ffi_runtime_.set_densify_eval_id(this);
+        // Issue #4597: c-opaque->int of a recycled slot raises. The lambdas
+        // run later; the sink is empty only for a bare FFIRuntime.
+        ffi_runtime_.set_opaque_raise([this](std::string msg) {
+            return primitives_detail::make_primitive_error(string_heap_, error_values_, msg,
+                                                           primitive_error_counter_ptr());
+        });
     }
 
     adt_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,

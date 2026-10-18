@@ -34,6 +34,7 @@ using types::as_error_idx;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
+using types::as_opaque_idx;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
@@ -46,6 +47,7 @@ using types::is_error;
 using types::is_float;
 using types::is_hash;
 using types::is_int;
+using types::is_opaque;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
@@ -63,6 +65,8 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+using types::opaque_generation_of;
+using types::opaque_slot_index;
 
 // Issue #206 / #1757: Evaluator::compact_pairs. Compacts the
 // pairs_ arena, building a remap table for stable id
@@ -1393,7 +1397,8 @@ static void file_reclaim_mark_value(
     std::unordered_set<std::uint64_t>& seen_ir, std::unordered_set<std::uint64_t>& live_tw,
     const Evaluator::FileModeReclaimView& view, const std::pmr::vector<Pair>& pairs,
     const std::vector<std::vector<EvalValue>>& vector_heap,
-    const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values) {
+    const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values,
+    std::vector<std::uint8_t>& seen_opaque, std::span<const std::uint32_t> opaque_gen) {
     if (is_pair(v)) {
         const auto id = as_pair_idx(v);
         if (id < seen_pair.size() && !seen_pair[id]) {
@@ -1466,6 +1471,17 @@ static void file_reclaim_mark_value(
             seen_err[id] = 1;
             work.push_back(error_values[id]);
         }
+    }
+    // Issue #4597: a reachable opaque marks its slot only when the generation
+    // matches. A stale value must not keep the new tenant alive. Slots past
+    // seen_opaque were minted after the snapshot and are not finalized.
+    if (is_opaque(v)) {
+        const auto packed = as_opaque_idx(v);
+        const auto slot = opaque_slot_index(packed);
+        const auto gen = opaque_generation_of(packed);
+        if (slot < seen_opaque.size() &&
+            (slot >= opaque_gen.size() ? gen == 0 : opaque_gen[slot] == gen))
+            seen_opaque[slot] = 1;
     }
 }
 
@@ -1549,6 +1565,16 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         work.push_back(r);
     for (const auto& r : view.extra_roots)
         work.push_back(r);
+    // Issue #4597: snapshot the opaque heap before the walk. Slots minted
+    // after this are newborn and must not be finalized. The walk does not mint.
+    std::vector<std::uint8_t> seen_opaque;
+    std::vector<std::uint32_t> opaque_gen;
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto gens = ffi_runtime_.opaque_generations();
+        opaque_gen.assign(gens.begin(), gens.end());
+        seen_opaque.assign(opaque_heap_.size(), 0);
+    }
     {
         // hash_tables_mutex is the outer lock car uses before alloc. Trace
         // holds it alone, then drops it before the closures / alloc locks.
@@ -1557,7 +1583,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (std::size_t wi = 0; wi < work.size(); ++wi) {
             file_reclaim_mark_value(work[wi], work, seen_pair, seen_vec, seen_hash, seen_ev_cell,
                                     seen_err, seen_ir, live_tw, view, pairs_, vector_heap_, cells_,
-                                    error_values_);
+                                    error_values_, seen_opaque, opaque_gen);
         }
     }
 
@@ -1631,6 +1657,17 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // reclaim triggers from the reachable set (live/32, clamped).
         note_live_set_for_reclaim_trigger(live_pairs + live_vecs, mints_at_mark);
     }
+    // Issue #4597: finalize unreachable handles once, after every lock is
+    // dropped. file_reclaim_active_ stays set until this function returns,
+    // so a finalizer that re-enters Aura does not re-enter reclaim.
+    std::vector<std::pair<void*, void*>> native_fins;
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        ffi_runtime_.mark_live_view_owners(seen_opaque);
+        native_fins = ffi_runtime_.take_unreachable_handles(opaque_heap_, seen_opaque);
+    }
+    for (const auto& fp : native_fins)
+        FFIRuntime::run_native_finalizer(fp.first, fp.second);
     return true;
 }
 
@@ -1815,6 +1852,17 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     };
     absorb(pending);
 
+    // Issue #4597: snapshot before the walk. Newborn slots stay unmarked
+    // and are not finalized.
+    std::vector<std::uint8_t> seen_opaque;
+    std::vector<std::uint32_t> opaque_gen;
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto gens = ffi_runtime_.opaque_generations();
+        opaque_gen.assign(gens.begin(), gens.end());
+        seen_opaque.assign(opaque_heap_.size(), 0);
+    }
+
     FileModeReclaimView view;
     std::unordered_set<std::uint64_t> expanded;
     std::size_t traced = 0;
@@ -1826,7 +1874,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             while (traced < work.size()) {
                 file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
                                         seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
-                                        vector_heap_, cells_, error_values_);
+                                        vector_heap_, cells_, error_values_, seen_opaque,
+                                        opaque_gen);
             }
         }
         std::vector<EnvId> more;
@@ -1983,6 +2032,16 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     tw_closure_allocs_ = 0;
     // Issue #4525: benchmark observability — a full whole-heap mark ran.
     ++file_heap_reclaim_runs_;
+    // Issue #4597: same finalizer pass as file-mode reclaim. The suite's
+    // tree walker hits this function, not reclaim_file_mode_unreachable.
+    std::vector<std::pair<void*, void*>> native_fins;
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        ffi_runtime_.mark_live_view_owners(seen_opaque);
+        native_fins = ffi_runtime_.take_unreachable_handles(opaque_heap_, seen_opaque);
+    }
+    for (const auto& fp : native_fins)
+        FFIRuntime::run_native_finalizer(fp.first, fp.second);
     return true;
 }
 

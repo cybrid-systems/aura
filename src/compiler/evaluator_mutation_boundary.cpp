@@ -9039,6 +9039,8 @@ void Evaluator::push_opaque_heap_for_test(void* p) {
         p = densify_rewrite_lookup_locked_(p);
     }
     opaque_heap_.push_back(p);
+    // Issue #4597: a raw append is generation 0, not a recycled slot.
+    ffi_runtime_.note_appended_opaque(opaque_heap_);
     // note_ffi_opaque_alias_densify_cover: value-slot cover, not this element.
 }
 

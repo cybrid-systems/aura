@@ -335,6 +335,25 @@ export inline std::uint64_t as_opaque_idx(const EvalValue& v) noexcept {
     return ref_index(v.val);
 }
 
+// Issue #4597: the opaque pool index packs a stable slot (low 32 bits)
+// and a generation. Generation 0 is every index minted before recycling,
+// so existing values still name slot == index. A recycled slot bumps the
+// generation; a stale value's generation does not match and must not be
+// used as a raw vector index (that would alias the new tenant). Bit 56
+// of the index would set the tagged word's sign bit (pool shift is 6);
+// minting stops the generation below that.
+export inline constexpr std::uint64_t kOpaqueSlotMask = 0xFFFFFFFFull;
+export inline constexpr unsigned kOpaqueGenShift = 32;
+export inline std::uint32_t opaque_slot_index(std::uint64_t packed) noexcept {
+    return static_cast<std::uint32_t>(packed & kOpaqueSlotMask);
+}
+export inline std::uint32_t opaque_generation_of(std::uint64_t packed) noexcept {
+    return static_cast<std::uint32_t>(packed >> kOpaqueGenShift);
+}
+export inline std::uint64_t pack_opaque_index(std::uint32_t slot, std::uint32_t gen) noexcept {
+    return (static_cast<std::uint64_t>(gen) << kOpaqueGenShift) | slot;
+}
+
 export inline EvalValue make_linear(std::uint64_t id) noexcept {
     return EvalValue(make_ref(RefLinear, id));
 }

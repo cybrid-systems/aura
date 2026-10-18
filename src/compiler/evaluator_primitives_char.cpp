@@ -480,6 +480,26 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return -1;
         return static_cast<std::int64_t>(ev.string_heap_[idx].size());
     };
+    // Issue #4597: 1 = live 'f64 view (data/n set), 0 = not an f64 view,
+    // -1 = a view whose owner was freed or closed. Caller holds
+    // alloc_storage_lock_. A non-f64 view and a non-view opaque are 0
+    // ("expected an f64vector"), not a view error.
+    auto f64_view_locked = [&ev](const EvalValue& v, const double*& data, std::int64_t& n) -> int {
+        if (!is_opaque(v))
+            return 0;
+        const auto packed = types::as_opaque_idx(v);
+        if (!ev.ffi_runtime_.is_native_view(packed))
+            return 0;
+        char* base = nullptr;
+        FFIRuntime::NativeView meta;
+        if (!ev.ffi_runtime_.resolve_native_view(ev.opaque_heap_, packed, base, meta))
+            return -1;
+        if (meta.kind != FFIRuntime::ViewKind::F64)
+            return 0;
+        data = reinterpret_cast<const double*>(base);
+        n = static_cast<std::int64_t>(meta.count);
+        return 1;
+    };
     auto as_real = [](const EvalValue& v, double& out) {
         if (is_float(v)) {
             out = as_float(v);
@@ -517,43 +537,76 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             std::memcpy(bytes.data() + i * 8, &fill, 8);
         return new_f64(std::move(bytes));
     });
-    add("f64vector-length", [f64err, &ev, f64slot](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return f64err("f64vector-length: expected an f64vector");
-        // Issue #4518: the slot size is payload metadata (an f64vector is a
-        // string slot), so compare the intern stamp before f64slot reads it.
-        // kEffectNone inference means dispatch never choked a foreign ref;
-        // the helper records the IsolationDeny and record 0 / short stamps /
-        // Soft-Off stay allow. f64vector-set! keeps its own Mutate gate.
-        const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
-        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-length"))
-            return f64err("f64vector-length: cross-tenant string slot read denied (#4505)");
-        const auto bytes = f64slot(a[0]);
-        if (bytes < 0)
-            return f64err("f64vector-length: expected an f64vector");
-        return make_int(bytes / 8);
-    });
-    add("f64vector-ref", [f64err, &ev, rd](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
-            return f64err("f64vector-ref: expected (f64vector index)");
-        const auto i = as_int(a[1]);
-        // Issue #4509: copy the element out under alloc_storage_lock_ — the
-        // heap can reallocate between validation and read on another fiber.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
-        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
-            return f64err("f64vector-ref: expected (f64vector index)");
-        // Issue #4518: the returned double is the payload — compare the
-        // intern stamp under the storage lock (same shape as the #4428
-        // f64vector-set! gate) before any byte is copied out.
-        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-ref"))
-            return f64err("f64vector-ref: cross-tenant string slot read denied (#4505)");
-        const auto& s = ev.string_heap_[idx];
-        const auto n = static_cast<std::int64_t>(s.size() / 8);
-        if (i < 0 || i >= n)
-            return f64err(std::format("f64vector-ref: index {} out of range for length {}", i, n));
-        return make_float(rd(s, static_cast<std::size_t>(i)));
-    });
+    add("f64vector-length",
+        [f64err, &ev, f64slot, f64_view_locked](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return f64err("f64vector-length: expected an f64vector");
+            // Issue #4597: a live 'f64 view. Branch before as_string_idx. Do not
+            // tenant-check a view (it is not a string slot).
+            if (is_opaque(a[0])) {
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                const double* data = nullptr;
+                std::int64_t n = 0;
+                const int rc = f64_view_locked(a[0], data, n);
+                if (rc < 0)
+                    return f64err("f64vector-length: the view's native memory was freed or closed");
+                if (rc == 0)
+                    return f64err("f64vector-length: expected an f64vector");
+                return make_int(n);
+            }
+            if (!is_string(a[0]))
+                return f64err("f64vector-length: expected an f64vector");
+            // Issue #4518: the slot size is payload metadata (an f64vector is a
+            // string slot), so compare the intern stamp before f64slot reads it.
+            // kEffectNone inference means dispatch never choked a foreign ref;
+            // the helper records the IsolationDeny and record 0 / short stamps /
+            // Soft-Off stay allow. f64vector-set! keeps its own Mutate gate.
+            const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-length"))
+                return f64err("f64vector-length: cross-tenant string slot read denied (#4505)");
+            const auto bytes = f64slot(a[0]);
+            if (bytes < 0)
+                return f64err("f64vector-length: expected an f64vector");
+            return make_int(bytes / 8);
+        });
+    add("f64vector-ref",
+        [f64err, &ev, rd, f64_view_locked](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_int(a[1]) || !(is_string(a[0]) || is_opaque(a[0])))
+                return f64err("f64vector-ref: expected (f64vector index)");
+            const auto i = as_int(a[1]);
+            // Issue #4509: copy the element out under alloc_storage_lock_ — the
+            // heap can reallocate between validation and read on another fiber.
+            // Issue #4597: an 'f64 view is read under the same lock. Not a string
+            // slot, so no tenant check.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            if (is_opaque(a[0])) {
+                const double* data = nullptr;
+                std::int64_t n = 0;
+                const int rc = f64_view_locked(a[0], data, n);
+                if (rc < 0)
+                    return f64err("f64vector-ref: the view's native memory was freed or closed");
+                if (rc == 0)
+                    return f64err("f64vector-ref: expected (f64vector index)");
+                if (i < 0 || i >= n)
+                    return f64err(
+                        std::format("f64vector-ref: index {} out of range for length {}", i, n));
+                return make_float(data[static_cast<std::size_t>(i)]);
+            }
+            const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
+            if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+                return f64err("f64vector-ref: expected (f64vector index)");
+            // Issue #4518: the returned double is the payload — compare the
+            // intern stamp under the storage lock (same shape as the #4428
+            // f64vector-set! gate) before any byte is copied out.
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-ref"))
+                return f64err("f64vector-ref: cross-tenant string slot read denied (#4505)");
+            const auto& s = ev.string_heap_[idx];
+            const auto n = static_cast<std::int64_t>(s.size() / 8);
+            if (i < 0 || i >= n)
+                return f64err(
+                    std::format("f64vector-ref: index {} out of range for length {}", i, n));
+            return make_float(rd(s, static_cast<std::size_t>(i)));
+        });
     add("f64vector-set!",
         [&ev, f64err, f64slot, as_real](std::span<const EvalValue> a) -> EvalValue {
             double x = 0.0;
@@ -583,31 +636,47 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         });
     // (f64vector-dot a b [a-off b-off n]) — sum of a[a-off+k]*b[b-off+k].
-    add("f64vector-dot", [f64err, &ev, rd](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+    add("f64vector-dot", [f64err, &ev, f64_view_locked](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2)
             return f64err("f64vector-dot: expected two f64vectors");
-        // Issue #4509: validate both slots and run the MAC scan under
+        // Issue #4509: validate both sides and run the MAC scan under
         // alloc_storage_lock_ — the loop previously held &string_heap_[idx]
         // for the whole dot while a concurrent mint (push_string_heap) could
         // reallocate the heap and free the buffer under it. The pointers
         // stay inside the locked region; nothing is published.
+        // Issue #4597: either side may be a live 'f64 view. A view is not a
+        // string slot, so it is not tenant-checked. Both pointers stay valid
+        // for the whole MAC because the lock is held.
         std::lock_guard lock(ev.alloc_storage_lock_);
-        const auto xidx = static_cast<std::size_t>(types::as_string_idx(a[0]));
-        const auto yidx = static_cast<std::size_t>(types::as_string_idx(a[1]));
-        if (xidx >= ev.string_heap_.size() || ev.string_heap_[xidx].size() % 8 != 0 ||
-            yidx >= ev.string_heap_.size() || ev.string_heap_[yidx].size() % 8 != 0)
-            return f64err("f64vector-dot: expected two f64vectors");
-        // Issue #4518: the MAC result leaks element values, so both slots
-        // need the intern-stamp compare before any byte is scanned (same
-        // locked-region shape as f64vector-set! / f64vector-ref).
-        if (!ev.inrange_string_tenant_allows(xidx, /*required_effects=*/0, "f64vector-dot"))
-            return f64err("f64vector-dot: cross-tenant string slot read denied (#4505)");
-        if (!ev.inrange_string_tenant_allows(yidx, /*required_effects=*/0, "f64vector-dot"))
-            return f64err("f64vector-dot: cross-tenant string slot read denied (#4505)");
-        const auto& x = ev.string_heap_[xidx];
-        const auto& y = ev.string_heap_[yidx];
-        const auto nx = static_cast<std::int64_t>(x.size() / 8);
-        const auto ny = static_cast<std::int64_t>(y.size() / 8);
+        auto load = [&](const EvalValue& v, const double*& p, std::int64_t& n) -> std::string {
+            if (is_opaque(v)) {
+                const int rc = f64_view_locked(v, p, n);
+                if (rc < 0)
+                    return "f64vector-dot: the view's native memory was freed or closed";
+                if (rc == 0)
+                    return "f64vector-dot: expected two f64vectors";
+                return {};
+            }
+            if (!is_string(v))
+                return "f64vector-dot: expected two f64vectors";
+            const auto idx = static_cast<std::size_t>(types::as_string_idx(v));
+            if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+                return "f64vector-dot: expected two f64vectors";
+            // Issue #4518: the MAC result leaks element values, so a string
+            // slot needs the intern-stamp compare before any byte is scanned.
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-dot"))
+                return "f64vector-dot: cross-tenant string slot read denied (#4505)";
+            p = reinterpret_cast<const double*>(ev.string_heap_[idx].data());
+            n = static_cast<std::int64_t>(ev.string_heap_[idx].size() / 8);
+            return {};
+        };
+        const double* xp = nullptr;
+        const double* yp = nullptr;
+        std::int64_t nx = 0, ny = 0;
+        if (auto e = load(a[0], xp, nx); !e.empty())
+            return f64err(std::move(e));
+        if (auto e = load(a[1], yp, ny); !e.empty())
+            return f64err(std::move(e));
         std::int64_t xo = 0, yo = 0, n = std::min(nx, ny);
         if (a.size() >= 5) {
             if (!is_int(a[2]) || !is_int(a[3]) || !is_int(a[4]))
@@ -620,8 +689,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return f64err("f64vector-dot: range out of bounds");
         double acc = 0.0;
         for (std::int64_t k = 0; k < n; ++k)
-            acc +=
-                rd(x, static_cast<std::size_t>(xo + k)) * rd(y, static_cast<std::size_t>(yo + k));
+            acc += xp[static_cast<std::size_t>(xo + k)] * yp[static_cast<std::size_t>(yo + k)];
         return make_float(acc);
     });
     // (bytes->f64vector str [byte-offset count]) — little-endian float64.
@@ -824,10 +892,10 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                          NativeView& meta) -> std::string {
         if (!is_opaque(v))
             return std::format("{}: expected a native view (c-view)", who);
-        const auto slot = static_cast<std::size_t>(types::as_opaque_idx(v));
-        if (!ev.ffi_runtime_.is_native_view(slot))
+        const auto packed = types::as_opaque_idx(v);
+        if (!ev.ffi_runtime_.is_native_view(packed))
             return std::format("{}: expected a native view (c-view)", who);
-        if (!ev.ffi_runtime_.resolve_native_view(ev.opaque_heap_, slot, base, meta))
+        if (!ev.ffi_runtime_.resolve_native_view(ev.opaque_heap_, packed, base, meta))
             return std::format("{}: the view's native memory was freed or closed", who);
         return {};
     };
@@ -851,18 +919,23 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         std::lock_guard lock(ev.alloc_storage_lock_);
         auto& rt = ev.ffi_runtime_;
         auto& oh = ev.opaque_heap_;
-        const auto src = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
-        if (src >= oh.size() || oh[src] == nullptr)
+        const auto src_packed = types::as_opaque_idx(a[0]);
+        std::uint32_t src = 0;
+        if (!rt.locate_opaque(oh, src_packed, src) || oh[src] == nullptr)
             return f64err("c-view: pointer is null, freed or closed");
         std::size_t owner = src;
+        std::uint32_t owner_gen = rt.opaque_generation_at(src);
         std::size_t base_off = 0;
         std::int64_t limit = -1; // bytes available from the owner base + base_off
-        if (rt.is_native_view(src)) {
+        if (rt.is_native_view(src_packed)) {
             char* vb = nullptr;
             NativeView pv;
-            if (!rt.resolve_native_view(oh, src, vb, pv))
+            if (!rt.resolve_native_view(oh, src_packed, vb, pv))
                 return f64err("c-view: the parent view's native memory was freed or closed");
+            // A view of a view names the root owner, not the parent view slot,
+            // so c-free of the parent view leaves the sub-view usable.
             owner = pv.owner;
+            owner_gen = pv.owner_gen;
             base_off = pv.offset;
             limit = static_cast<std::int64_t>(pv.count * FFIRuntime::view_width(pv.kind));
         } else if (auto known = rt.opaque_size_of(oh[src]); known != 0) {
@@ -883,22 +956,24 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                                       "exceeds {} bytes",
                                       cnt, width, off, limit));
         const std::size_t voff = base_off + static_cast<std::size_t>(off);
-        const auto slot = oh.size();
-        oh.push_back(static_cast<char*>(oh[owner]) + voff);
+        // Copy the native address before mint: a fresh append can reallocate
+        // oh, and oh[owner] is the native pointer, not an element address.
+        void* view_ptr = static_cast<char*>(oh[owner]) + voff;
+        const auto vpacked = rt.mint_opaque_slot(oh, view_ptr);
         // Issue #3022 / #3291: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
         // A view addresses native memory the C side (or c-alloc) owns, never
         // an arena object; every access re-derives the address from the
         // owner's slot, so this element is never the address that is read.
         aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
-        rt.add_native_view(slot, NativeView{owner, voff, static_cast<std::size_t>(cnt), kind});
-        return types::make_opaque(slot);
+        rt.add_native_view(types::opaque_slot_index(vpacked),
+                           NativeView{owner, voff, static_cast<std::size_t>(cnt), kind, owner_gen});
+        return types::make_opaque(vpacked);
     });
     ev.defer_std_host_prim("c-view?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_opaque(a[0]))
             return make_bool(false);
         std::lock_guard lock(ev.alloc_storage_lock_);
-        return make_bool(
-            ev.ffi_runtime_.is_native_view(static_cast<std::size_t>(types::as_opaque_idx(a[0]))));
+        return make_bool(ev.ffi_runtime_.is_native_view(types::as_opaque_idx(a[0])));
     });
     ev.defer_std_host_prim("c-view-length", [&ev, f64err, view_at](const auto& a) -> EvalValue {
         if (a.empty())
@@ -1222,8 +1297,9 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     // (its return is ignored), or #f for none. (c-close! h) runs the
     // finalizer once and nulls the slot: #t the first time, #f after. c-free
     // on a handle closes it the same way (no libc free of a foreign
-    // pointer). Any view onto a closed handle raises. Not GC-driven: an
-    // unreachable, unclosed handle is not finalized automatically.
+    // pointer). Any view onto a closed handle raises. File-mode reclaim and
+    // gc-heap / gc-temp run the finalizer once when the handle is unreachable
+    // or the heap is reset (Issue #4597). The destructor does not.
     ev.defer_std_host_prim("c-handle", [&ev, f64err](const auto& a) -> EvalValue {
         if (a.size() < 2 || !(is_opaque(a[0]) || is_int(a[0])))
             return f64err("c-handle: expected (c-handle ptr finalizer [tag])");
@@ -1246,8 +1322,10 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         auto& oh = ev.opaque_heap_;
         void* ptr = nullptr;
         if (is_opaque(a[0])) {
-            const auto src = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
-            if (src >= oh.size())
+            const auto src_packed = types::as_opaque_idx(a[0]);
+            std::uint32_t src = 0;
+            // A generation mismatch must not wrap the new tenant.
+            if (!ev.ffi_runtime_.locate_opaque(oh, src_packed, src))
                 return f64err("c-handle: invalid opaque");
             ptr = oh[src];
         } else {
@@ -1255,13 +1333,14 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (ptr == nullptr)
             return f64err("c-handle: pointer is null, freed or closed");
-        const auto slot = oh.size();
-        oh.push_back(ptr);
+        // A handle always mints a new slot. It does not reuse the source
+        // opaque and does not update the address alias.
+        const auto hpacked = ev.ffi_runtime_.mint_opaque_slot(oh, ptr);
         // Issue #3022 / #3291: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
         // (a handle wraps a pointer the native module allocated).
         aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
-        ev.ffi_runtime_.add_native_handle(slot, fin, std::move(tag));
-        return types::make_opaque(slot);
+        ev.ffi_runtime_.add_native_handle(types::opaque_slot_index(hpacked), fin, std::move(tag));
+        return types::make_opaque(hpacked);
     });
     ev.defer_std_host_prim("c-close!", [&ev, f64err](const auto& a) -> EvalValue {
         if (a.empty() || !is_opaque(a[0]))
@@ -1270,11 +1349,21 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         void* ptr = nullptr;
         {
             std::lock_guard lock(ev.alloc_storage_lock_);
-            const auto slot = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
-            // A closed (or freed) handle is a null slot: closing again is #f.
-            if (slot < ev.opaque_heap_.size() && ev.opaque_heap_[slot] == nullptr)
+            const auto packed = types::as_opaque_idx(a[0]);
+            // Generation before the null test: a recycled slot's packed index
+            // still names the slot, and treating the whole word as an index
+            // looks out of range and would raise on the second close.
+            std::uint32_t slot = 0;
+            if (!ev.ffi_runtime_.locate_opaque(ev.opaque_heap_, packed, slot)) {
+                const auto raw = types::opaque_slot_index(packed);
+                if (raw >= ev.opaque_heap_.size() && types::opaque_generation_of(packed) == 0)
+                    return f64err("c-close!: expected a handle (c-handle)");
                 return make_bool(false);
-            if (!ev.ffi_runtime_.take_native_handle(ev.opaque_heap_, slot, fin, ptr))
+            }
+            // A closed (or freed) handle is a null slot: closing again is #f.
+            if (ev.opaque_heap_[slot] == nullptr)
+                return make_bool(false);
+            if (!ev.ffi_runtime_.take_native_handle(ev.opaque_heap_, packed, fin, ptr))
                 return f64err("c-close!: expected a handle (c-handle)");
         }
         FFIRuntime::run_native_finalizer(fin, ptr); // outside the lock
@@ -1284,8 +1373,11 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_opaque(a[0]))
             return make_bool(false);
         std::lock_guard lock(ev.alloc_storage_lock_);
-        const auto slot = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
-        return make_bool(ev.ffi_runtime_.is_native_handle(slot) && slot < ev.opaque_heap_.size() &&
+        const auto packed = types::as_opaque_idx(a[0]);
+        std::uint32_t slot = 0;
+        if (!ev.ffi_runtime_.locate_opaque(ev.opaque_heap_, packed, slot))
+            return make_bool(false);
+        return make_bool(ev.ffi_runtime_.is_native_handle(packed) &&
                          ev.opaque_heap_[slot] != nullptr);
     });
     // (c-handle-tag h) → tag string ("" when none); #f when h is not an open
@@ -1296,8 +1388,12 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string tag;
         {
             std::lock_guard lock(ev.alloc_storage_lock_);
-            const auto slot = static_cast<std::size_t>(types::as_opaque_idx(a[0]));
-            if (!ev.ffi_runtime_.native_handle_tag(slot, tag))
+            const auto packed = types::as_opaque_idx(a[0]);
+            std::uint32_t slot = 0;
+            if (!ev.ffi_runtime_.locate_opaque(ev.opaque_heap_, packed, slot) ||
+                ev.opaque_heap_[slot] == nullptr)
+                return make_bool(false);
+            if (!ev.ffi_runtime_.native_handle_tag(packed, tag))
                 return make_bool(false);
         }
         return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(tag))));

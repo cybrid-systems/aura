@@ -258,6 +258,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         //     boundaries (sibling of F-004 / #1994)
         // std::lock() with defer_lock avoids deadlock if future
         // multi-lock sites reverse the order.
+        // Issue #4597: finalizers run after these locks drop. The vector
+        // outlives the lock scope.
+        std::vector<std::pair<void*, void*>> native_fins;
         {
             std::unique_lock<std::mutex> heap_lock(ev.heap_mutex(), std::defer_lock);
             std::unique_lock<std::shared_mutex> module_lock(ev.module_mtx_, std::defer_lock);
@@ -298,9 +301,11 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             {
                 // Issue #4386: module is already held. alloc inside that block.
                 std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
+                // Issue #4597: snapshot finalizers before the heap is cleared.
+                // drain does not call them and does not clear oh.
+                native_fins = ev.ffi_runtime_.drain_native_finalizers(ev.opaque_heap_);
                 ev.opaque_heap_.clear();
                 ev.opaque_heap_.shrink_to_fit();
-                ev.ffi_runtime_.forget_native_slots(); // Issue #4556
                 // Issue #4459: pairs_/cells_/vector_heap_ were just cleared.
                 // A freelist id from before the clear would mint into the
                 // empty buffer.
@@ -326,6 +331,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             // suggesting "gc-temp" right after a gc-heap.
             ev.last_gc_temp_eval_depth_ = ev.eval_depth_;
         }
+        for (const auto& fp : native_fins)
+            FFIRuntime::run_native_finalizer(fp.first, fp.second);
         return types::make_bool(true);
     });
 
@@ -394,16 +401,20 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.vector_heap_.shrink_to_fit();
         ev.vector_slot_tenants_.clear(); // Issue #4298
         ev.vector_slot_tenants_.shrink_to_fit();
+        std::vector<std::pair<void*, void*>> native_fins;
         {
             // Issue #4386: shard locks are already released. alloc alone.
             std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
+            // Issue #4597: same drain as gc-heap. Finalizers run after the lock.
+            native_fins = ev.ffi_runtime_.drain_native_finalizers(ev.opaque_heap_);
             ev.opaque_heap_.clear();
             ev.opaque_heap_.shrink_to_fit();
-            ev.ffi_runtime_.forget_native_slots(); // Issue #4556
             // Issue #4459: vector_heap_ was cleared above. Pair and cell
             // freelists stay; those heaps were not reset.
             ev.abandon_vector_reuse_freelist();
         }
+        for (const auto& fp : native_fins)
+            FFIRuntime::run_native_finalizer(fp.first, fp.second);
 
         return types::make_bool(true);
     });

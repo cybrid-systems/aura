@@ -6,6 +6,7 @@
 #include "compiler/value_tags.h" // Issue #4532: ffi closure id namespace helpers
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -352,6 +353,49 @@ int run_test_bugfix() {
         auto r_len = (*apply_fn)({proc4532, arglist});
         CHECK(is_int(r_len) && as_int(r_len) == 4,
               "4532: registered ffi proc still dispatches natively");
+    }
+
+    // Issue #4597: Handle:<tag> is kind 5. Handle is not a return type, and
+    // a bare Handle (no tag) is rejected. parse appends, so the second call
+    // uses a fresh vector.
+    {
+        int ret = 0;
+        std::vector<int> args;
+        std::vector<std::string> tags;
+        std::string err;
+        CHECK(FFIRuntime::parse_ffi_sig("(Handle:rk.memtable Int) -> Int", ret, args, &err, &tags),
+              "4597: Handle:tag parses");
+        CHECK(ret == 1 && args.size() == 2 && args[0] == 5 && args[1] == 1,
+              "4597: Handle:tag is kind 5, Int stays kind 1");
+        CHECK(tags.size() == 2 && tags[0] == "rk.memtable" && tags[1].empty(),
+              "4597: handle tags stay parallel to arg types");
+        std::vector<int> args2;
+        std::vector<std::string> tags2;
+        CHECK(!FFIRuntime::parse_ffi_sig("(Int) -> Handle:rk.memtable", ret, args2, &err, &tags2),
+              "4597: Handle is not a return type");
+        CHECK(!FFIRuntime::parse_ffi_sig("(Handle) -> Int", ret, args2, &err),
+              "4597: bare Handle is rejected");
+        CHECK(err.find("Handle requires a tag") != std::string::npos,
+              "4597: bare Handle names the tag requirement");
+    }
+
+    // Issue #4597: gc-heap runs a handle finalizer once. The check is on
+    // this side of the call — gc-heap clears the string heap, so the suite
+    // cannot keep evaluating Aura afterwards.
+    {
+        ::unsetenv("AURA_4597_G");
+        CompilerService cs;
+        auto r = cs.eval("(begin (require \"std/ffi\" all:)"
+                         " (define setenv (c-func -1 \"setenv\" \"(String String Int) -> Int\"))"
+                         " (define strdup (c-func -1 \"strdup\" \"(String) -> Opaque\"))"
+                         " (define unsetenv (c-func -1 \"unsetenv\" \"(Opaque) -> Int\"))"
+                         " (setenv \"AURA_4597_G\" \"1\" 1)"
+                         " (define hg (c-handle (strdup \"AURA_4597_G\") unsetenv))"
+                         " (set! hg #f)"
+                         " (gc-heap))");
+        CHECK(r && is_bool(*r) && as_bool(*r), "4597: gc-heap ran");
+        CHECK(::getenv("AURA_4597_G") == nullptr, "4597: gc-heap ran the handle finalizer");
+        ::unsetenv("AURA_4597_G");
     }
 
     if (::aura::test::g_failed)

@@ -8,10 +8,12 @@
 ;
 ;   (c-load path)              → lib handle | 0
 ;   (c-func lib name sig)      → procedure | 0
-;       sig "(Int String Float Opaque …) -> Ret": at most 16 integer-class
-;       (Int / String / Opaque) and 8 Float arguments, else 0 (#4553).
-;       A call checks each argument against its declared kind and the
-;       argument count; a mismatch raises a catchable error (#4551).
+;       sig "(Int String Float Opaque Handle:tag …) -> Ret": at most 16
+;       integer-class (Int / String / Opaque / Handle:tag) and 8 Float
+;       arguments, else 0 (#4553). Handle:tag accepts only a live c-handle
+;       whose tag is that string (#4597). A call checks each argument
+;       against its declared kind and the argument count; a mismatch
+;       raises a catchable error (#4551).
 ;   (c-alloc n)                → opaque
 ;   (c-free p)                 → void
 ;   (c-opaque addr)            → opaque
@@ -34,9 +36,13 @@
 ;       seqlock read: copy only between two equal even sequence words.
 ;   (c-handle p finalizer [tag]) → handle: finalizer is a c-func taking the
 ;       pointer (or #f). (c-close! h) runs it once (#t), then #f; c-free on
-;       a handle closes it too. (c-handle-live? h) (c-handle-tag h).
+;       a handle closes it too. An unreachable handle is finalized once by
+;       file-mode reclaim, or by gc-heap / gc-temp (#4597).
+;       (c-handle-live? h) (c-handle-tag h).
 ;   c-opaque / c-struct-ref pointer reads of the same live address reuse
-;   one slot, so polling does not grow the opaque heap.
+;   one slot, so polling does not grow the opaque heap. Closing or freeing
+;   a slot recycles it; a stale opaque raises instead of aliasing the new
+;   tenant (#4597).
 
 (export c-load c-func c-alloc c-free
         c-opaque c-opaque? c-opaque->int
