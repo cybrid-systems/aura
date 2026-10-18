@@ -414,15 +414,6 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // a frozen copy of top_'s bindings — whose stale cells otherwise shadow
     // every later top-level let/define rebind of the same name (the #4595
     // repro resolved a let-shadowed x to the global cell frozen at
-    // named-let time). Empty local arrays + empty/no snapshot is exactly
-    // the live-safe capture shape; anything with content keeps the normal
-    // capture-first order.
-    // Issue #4595: a live-safe EMPTY capture (#4350/#4474 — lambda created
-    // directly in top_) resolves free vars against the LIVE top_ BEFORE its
-    // SoA walk: top_.parent_id() aliases a letrec #232 registration frame —
-    // a frozen copy of top_'s bindings — whose stale cells otherwise shadow
-    // every later top-level let/define rebind of the same name (the #4595
-    // repro resolved a let-shadowed x to the global cell frozen at
     // named-let time). Empty means BOTH arrays empty — a symid-only
     // capture (#1482: bindings_ stays empty, bindings_symid_ carries the
     // content) is NOT live-safe-empty and keeps capture-first order
@@ -723,6 +714,10 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
             binding_index_[key] = bindings_.size() - 1;
         }
     }
+    // Issue #4599: only a bind on the live top env invalidates the
+    // per-node prim/cell cache. Param binds on a call frame must not.
+    if (owner_ != nullptr && this == &owner_->top_env())
+        owner_->note_top_binding_changed();
 }
 
 // Issue #1861: multi-step write (bindings_ emplace + binding_index_
@@ -744,6 +739,9 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
         symid_index_[s] = bindings_symid_.size() - 1;
         bindings_linear_ownership_state_.push_back(state);
     }
+    // Issue #4599: same top_-only generation bump as bind_symid.
+    if (owner_ != nullptr && this == &owner_->top_env())
+        owner_->note_top_binding_changed();
 }
 
 // Issue #2872: drop the most recent local string binding for `n`.
@@ -762,6 +760,9 @@ bool Env::unbind_local(std::string_view n) {
         binding_index_.clear();
         for (std::size_t j = 0; j < bindings_.size(); ++j)
             binding_index_[bindings_[j].first] = j;
+        // Issue #4599: dropping a top-level name un-shadows a prim.
+        if (owner_ != nullptr && this == &owner_->top_env())
+            owner_->note_top_binding_changed();
     }
     return removed;
 }
@@ -782,7 +783,52 @@ bool Env::unbind_local_symid(aura::ast::SymId s) {
             break;
         }
     }
+    if (removed && owner_ != nullptr && this == &owner_->top_env())
+        owner_->note_top_binding_changed();
     return removed;
+}
+
+std::optional<types::EvalValue> Env::local_symid_last(aura::ast::SymId s) const {
+    if (s == aura::ast::INVALID_SYM || bindings_symid_.empty())
+        return std::nullopt;
+    // Issue #4599: a handful of params is cheaper as integer compares
+    // than a hash. Above that, the last-wins index is the same answer.
+    if (bindings_symid_.size() <= 8) {
+        for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
+            if (bindings_symid_[i - 1].first == s)
+                return bindings_symid_[i - 1].second;
+        }
+        return std::nullopt;
+    }
+    if (auto it = symid_index_.find(s); it != symid_index_.end()) {
+        const auto idx = it->second;
+        if (idx < bindings_symid_.size() && bindings_symid_[idx].first == s)
+            return bindings_symid_[idx].second;
+    }
+    return std::nullopt;
+}
+
+bool Env::overwrite_param_slots(std::span<const aura::ast::SymId> syms,
+                                std::span<const types::EvalValue> vals) {
+    const auto n = syms.size();
+    if (n != vals.size() || bindings_symid_.size() != n)
+        return false;
+    if (!bindings_.empty() && bindings_.size() != n)
+        return false;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (bindings_symid_[i].first != syms[i])
+            return false;
+        if (i < bindings_linear_ownership_state_.size() &&
+            bindings_linear_ownership_state_[i] != linear_rt::Untracked)
+            return false;
+    }
+    const bool mirror = bindings_.size() == n;
+    for (std::size_t i = 0; i < n; ++i) {
+        bindings_symid_[i].second = vals[i];
+        if (mirror)
+            bindings_[i].second = vals[i];
+    }
+    return true;
 }
 
 aura::core::VoidResult Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {

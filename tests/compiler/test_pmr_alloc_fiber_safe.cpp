@@ -586,6 +586,8 @@ static void ac4525_burst_rebalance() {
     // mark at the floor cadence today (2000 mints ≈ 15 marks); the
     // #4525 window doubling cuts the mark count to ~4 while garbage
     // between reclaims stays bounded by the (doubled) trigger window.
+    // Issue #4599: an uncaptured let no longer mints a cell. The burst
+    // oracle set!s the binding so the let still allocates. Bounds stay.
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -593,9 +595,9 @@ static void ac4525_burst_rebalance() {
         const auto m0 = ev.file_heap_reclaim_runs_for_test();
         const auto c0 = ev.cells_size();
         const auto t0 = clock::now();
-        const auto r = cs.eval(
-            "(begin (define (lp i acc) (if (< i 2000) (lp (+ i 1) (let ((x (+ acc 1.0))) x))"
-            " acc)) (lp 0 0.0))");
+        const auto r = cs.eval("(begin (define (lp i acc) (if (< i 2000) (lp (+ i 1) (let ((x (+ "
+                               "acc 1.0))) (begin (set! x x) x)))"
+                               " acc)) (lp 0 0.0))");
         const auto wall = ms(clock::now() - t0);
         const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
         const auto grown = ev.cells_size() - c0;
@@ -621,9 +623,9 @@ static void ac4525_burst_rebalance() {
         (void)ev.reclaim_tw_unreachable({}, {});
         const auto m0 = ev.file_heap_reclaim_runs_for_test();
         const auto c0 = ev.cells_size();
-        const auto r = cs.eval(
-            "(begin (define (lp i acc) (if (< i 100000) (lp (+ i 1) (let ((x (+ acc 1.0))) x))"
-            " acc)) (lp 0 0.0))");
+        const auto r = cs.eval("(begin (define (lp i acc) (if (< i 100000) (lp (+ i 1) (let ((x (+ "
+                               "acc 1.0))) (begin (set! x x) x)))"
+                               " acc)) (lp 0 0.0))");
         const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
         const auto grown = ev.cells_size() - c0;
         CHECK(r.has_value() && is_float(*r) && as_float(*r) == 100000.0,
@@ -650,9 +652,9 @@ static void ac4525_burst_rebalance() {
         CHECK(trig0 >= 1400,
               "4525 AC4: scaled window from the 48k live set (got " + std::to_string(trig0) + ")");
         const auto m0 = ev.file_heap_reclaim_runs_for_test();
-        const auto r = cs.eval(
-            "(begin (define (lp i acc) (if (< i 3000) (lp (+ i 1) (let ((x (+ acc 1.0))) x))"
-            " acc)) (lp 0 0.0))");
+        const auto r = cs.eval("(begin (define (lp i acc) (if (< i 3000) (lp (+ i 1) (let ((x (+ "
+                               "acc 1.0))) (begin (set! x x) x)))"
+                               " acc)) (lp 0 0.0))");
         const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
         CHECK(r.has_value() && is_float(*r) && as_float(*r) == 3000.0,
               "4525 AC4: live-dominant burst loop returns 3000.0");

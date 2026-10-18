@@ -831,6 +831,25 @@ struct TwPinMany {
     TwPinMany(const TwPinMany&) = delete;
 };
 
+// Issue #4599: a stack argument buffer is not a std::vector, so the
+// reclaim mark would miss it. Pin the span for the duration of the prim.
+struct TwSpanRoot {
+    const types::EvalValue* data = nullptr;
+    std::size_t n = 0;
+};
+thread_local std::vector<TwSpanRoot> g_tw_spans;
+
+struct TwPinSpan {
+    explicit TwPinSpan(const types::EvalValue* data, std::size_t n) {
+        g_tw_spans.push_back(TwSpanRoot{data, n});
+    }
+    ~TwPinSpan() {
+        if (!g_tw_spans.empty())
+            g_tw_spans.pop_back();
+    }
+    TwPinSpan(const TwPinSpan&) = delete;
+};
+
 // Issue #4480: public root for primitive-local EvalValue vectors (map's
 // accumulator). Erases the matching entry so an unbalanced pop cannot
 // drop a foreign pin when nesting ever goes out of LIFO order.
@@ -886,6 +905,12 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         for (const auto& v : *many)
             held.push_back(v);
     }
+    for (const auto& sp : g_tw_spans) {
+        if (!sp.data)
+            continue;
+        for (std::size_t i = 0; i < sp.n; ++i)
+            held.push_back(sp.data[i]);
+    }
     (void)reclaim_tw_unreachable(envs, held);
 }
 
@@ -932,6 +957,12 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
             continue;
         for (const auto& v : *many)
             out.push_back(v);
+    }
+    for (const auto& sp : g_tw_spans) {
+        if (!sp.data)
+            continue;
+        for (std::size_t i = 0; i < sp.n; ++i)
+            out.push_back(sp.data[i]);
     }
 }
 
@@ -5275,6 +5306,302 @@ namespace {
 
 } // namespace
 
+namespace {
+
+    // Issue #4599: 1 = bind the raw value, 2 = the body set!s or captures the
+    // name (or the walk gave up). Init is not walked: a set! there names an
+    // outer binding. A nested let/letrec of the same name walks its init and
+    // skips its body.
+    std::uint8_t let_body_bind_kind(aura::ast::FlatAST& f, aura::ast::NodeId body,
+                                    aura::ast::SymId name) {
+        struct Frame {
+            aura::ast::NodeId id;
+            bool in_lambda;
+        };
+        std::vector<Frame> stack;
+        if (body != aura::ast::NULL_NODE)
+            stack.push_back(Frame{body, false});
+        constexpr std::size_t kCap = 100000;
+        std::size_t steps = 0;
+        while (!stack.empty()) {
+            if (++steps > kCap)
+                return 2;
+            const auto fr = stack.back();
+            stack.pop_back();
+            if (fr.id == aura::ast::NULL_NODE || fr.id >= f.size())
+                continue;
+            const auto v = f.get(fr.id);
+            if (v.tag == aura::ast::NodeTag::Set && v.sym_id == name)
+                return 2;
+            if (v.tag == aura::ast::NodeTag::Lambda) {
+                bool shadows = false;
+                for (const auto s : v.params) {
+                    if (s == name) {
+                        shadows = true;
+                        break;
+                    }
+                }
+                if (shadows)
+                    continue;
+                for (const auto c : v.children)
+                    stack.push_back(Frame{c, true});
+                continue;
+            }
+            if ((v.tag == aura::ast::NodeTag::Let || v.tag == aura::ast::NodeTag::LetRec) &&
+                v.sym_id == name) {
+                if (!v.children.empty())
+                    stack.push_back(Frame{v.child(0), fr.in_lambda});
+                continue;
+            }
+            if (fr.in_lambda && v.tag == aura::ast::NodeTag::Variable && v.sym_id == name)
+                return 2;
+            for (const auto c : v.children)
+                stack.push_back(Frame{c, fr.in_lambda});
+        }
+        return 1;
+    }
+
+} // namespace
+
+std::uint8_t Evaluator::let_bind_kind_cached(aura::ast::FlatAST& flat, aura::ast::NodeId id,
+                                             aura::ast::SymId name, aura::ast::NodeId body) {
+    const auto kind_of = [&]() { return let_body_bind_kind(flat, body, name); };
+    if (aura::serve::g_current_fiber != nullptr)
+        return kind_of();
+    const auto uid = static_cast<std::uint32_t>(id);
+    if (uid < let_bind_kind_.size() && let_bind_kind_[uid] != 0)
+        return let_bind_kind_[uid];
+    const auto k = kind_of();
+    if (let_bind_kind_.size() <= uid)
+        let_bind_kind_.resize(static_cast<std::size_t>(uid) + 1, 0);
+    let_bind_kind_[uid] = k;
+    return k;
+}
+
+void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym, const Env& env,
+                                      const types::EvalValue& bound) {
+    // Host only. A fiber must keep Env::lookup's #4595 gate, and the
+    // vector is not synchronized.
+    if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
+        return;
+    if (sym == aura::ast::INVALID_SYM)
+        return;
+    const auto* cap = env.cap_snapshot().get();
+    auto store = [&](NameResEntry::Kind k, std::uint32_t aux) {
+        const auto uid = static_cast<std::uint32_t>(id);
+        if (name_res_by_node_.size() <= uid)
+            name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
+        auto& e = name_res_by_node_[uid];
+        if (e.kind == NameResEntry::Kind::PrimCall)
+            return;
+        e.kind = k;
+        e.sym = sym;
+        e.aux = aux;
+        e.top_gen = top_bind_gen_;
+        e.cap = cap;
+        e.nchild = 0;
+    };
+    // true = the name lives here (cached or deliberately not).
+    auto note_cell = [&](const types::EvalValue& bv) -> bool {
+        if (!is_cell(bv))
+            return false;
+        const auto ci = as_cell_id(bv);
+        if (ci > 0xffffffffu)
+            return true;
+        const auto idx = static_cast<std::size_t>(ci);
+        if (idx < cells_.size() && !is_void(cells_[idx]))
+            store(NameResEntry::Kind::Cell, static_cast<std::uint32_t>(ci));
+        return true;
+    };
+    // SymId equality is not enough. A closer frame can shadow a stdlib
+    // name that shares the id (`count`, `map`). Caching that global cell
+    // made the next read of the parameter return the function.
+    if (cap) {
+        const auto it = cap->symid_index_.find(sym);
+        if (it != cap->symid_index_.end() && it->second < cap->bindings_symid_.size() &&
+            cap->bindings_symid_[it->second].first == sym) {
+            if (cap->bindings_symid_[it->second].second == bound)
+                (void)note_cell(bound);
+            return;
+        }
+    }
+    if (const auto topv = top_.local_symid_last(sym)) {
+        if (*topv == bound) {
+            (void)note_cell(*topv);
+            return;
+        }
+    }
+    if (is_primitive(bound)) {
+        const auto slot = as_primitive_slot(bound);
+        if (slot <= 0xffffffffu)
+            store(NameResEntry::Kind::Prim, static_cast<std::uint32_t>(slot));
+    }
+}
+
+void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId callee_id,
+                                   aura::ast::SymId sym, std::uint32_t slot, const Env& env,
+                                   std::span<const aura::ast::NodeId> children) {
+    if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
+        return;
+    if (!env.binding_mirrors_aligned() || env.local_symid_last(sym))
+        return;
+    if (children.empty() || children.size() > 8)
+        return;
+    const auto* cap = env.cap_snapshot().get();
+    const auto uid = static_cast<std::uint32_t>(call_id);
+    if (name_res_by_node_.size() <= uid)
+        name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
+    auto& e = name_res_by_node_[uid];
+    e.kind = NameResEntry::Kind::PrimCall;
+    e.sym = sym;
+    e.aux = slot;
+    e.top_gen = top_bind_gen_;
+    e.cap = cap;
+    e.nchild = static_cast<std::uint8_t>(children.size());
+    for (std::uint8_t i = 0; i < e.nchild; ++i)
+        e.child[i] = children[i];
+    if (callee_id == aura::ast::NULL_NODE)
+        return;
+    const auto cid = static_cast<std::uint32_t>(callee_id);
+    if (name_res_by_node_.size() <= cid)
+        name_res_by_node_.resize(static_cast<std::size_t>(cid) + 1);
+    auto& cv = name_res_by_node_[cid];
+    if (cv.kind == NameResEntry::Kind::PrimCall)
+        return;
+    cv.kind = NameResEntry::Kind::Prim;
+    cv.sym = sym;
+    cv.aux = slot;
+    cv.top_gen = top_bind_gen_;
+    cv.cap = cap;
+    cv.nchild = 0;
+}
+
+std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
+                                                       aura::ast::StringPool& pool,
+                                                       aura::ast::NodeId id, const Env& env) {
+    if (id >= flat.size())
+        return std::nullopt;
+    const auto tag = flat.tag(id);
+    if (tag == aura::ast::NodeTag::LiteralInt) {
+        if (flat.marker(id) == aura::ast::SyntaxMarker::BoolLiteral)
+            return EvalResult(make_bool(flat.int_val(id) != 0));
+        return EvalResult(make_int_or_promote(flat.int_val(id)));
+    }
+    if (tag == aura::ast::NodeTag::Variable) {
+        // Keywords (':...') stay on the slow intern path. A miss falls
+        // through; they are never stored in the name cache.
+        if (!env.binding_mirrors_aligned())
+            return std::nullopt;
+        const auto sym = flat.sym_id(id);
+        if (sym == aura::ast::INVALID_SYM)
+            return std::nullopt;
+        // SymIds are pool-local. A call or let frame is bound in the
+        // body pool, so an integer compare is the name. top_ keeps
+        // bindings from every eval pool; the same id there is a
+        // different name (the next snippet's `(garbage 2000)` resolved
+        // as `fb`).
+        if (env.pool() == &pool && &env != &top_) {
+            if (const auto loc = env.local_symid_last(sym)) {
+                if (!is_cell(*loc))
+                    return EvalResult(*loc);
+                const auto ci = as_cell_id(*loc);
+                if (ci < cells_.size() && !is_void(cells_[static_cast<std::size_t>(ci)]))
+                    return EvalResult(cells_[static_cast<std::size_t>(ci)]);
+                return std::nullopt;
+            }
+        }
+        if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
+            return std::nullopt;
+        const auto uid = static_cast<std::uint32_t>(id);
+        if (uid >= name_res_by_node_.size())
+            return std::nullopt;
+        const auto e = name_res_by_node_[uid];
+        if (e.sym != sym || e.top_gen != top_bind_gen_ || e.cap != env.cap_snapshot().get())
+            return std::nullopt;
+        if (e.kind == NameResEntry::Kind::Prim)
+            return EvalResult(make_primitive(e.aux));
+        if (e.kind == NameResEntry::Kind::Cell && e.aux < cells_.size() && !is_void(cells_[e.aux]))
+            return EvalResult(cells_[e.aux]);
+        return std::nullopt;
+    }
+    if (tag != aura::ast::NodeTag::Call)
+        return std::nullopt;
+    // A clean node that already has a result must not re-run (display).
+    if (!(flat.is_dirty(id) || flat.get_cached_value(id) == aura::ast::FlatAST::kNotCached))
+        return std::nullopt;
+    if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
+        return std::nullopt;
+    if (!env.binding_mirrors_aligned())
+        return std::nullopt;
+    const auto uid = static_cast<std::uint32_t>(id);
+    if (uid >= name_res_by_node_.size())
+        return std::nullopt;
+    const auto e = name_res_by_node_[uid];
+    if (e.kind != NameResEntry::Kind::PrimCall || e.nchild == 0 || e.nchild > 8)
+        return std::nullopt;
+    if (e.top_gen != top_bind_gen_ || e.cap != env.cap_snapshot().get())
+        return std::nullopt;
+    if (e.aux >= primitives_.slot_count())
+        return std::nullopt;
+    for (std::uint8_t i = 0; i < e.nchild; ++i) {
+        if (e.child[i] >= flat.size())
+            return std::nullopt;
+    }
+    if (flat.tag(e.child[0]) != aura::ast::NodeTag::Variable || flat.sym_id(e.child[0]) != e.sym)
+        return std::nullopt;
+    if (env.local_symid_last(e.sym))
+        return std::nullopt;
+    const std::string& cname = primitives_.name_for_slot(e.aux);
+    if (cname == "if" || cname == "and" || cname == "or")
+        return std::nullopt;
+    const auto pfn = primitives_.slot_lookup_fast(e.aux);
+    if (!pfn)
+        return std::nullopt;
+    const auto nargs = static_cast<std::size_t>(e.nchild - 1);
+    std::array<types::EvalValue, 8> buf{};
+    for (std::size_t i = 0; i < nargs; ++i) {
+        auto ar = eval_flat(flat, pool, e.child[i + 1], env);
+        if (!ar)
+            return ar;
+        // Issue #4596 / #4456: error? observes; display escapes only in try.
+        if (is_error(*ar) && !is_string(*ar) && cname != "error?" &&
+            (cname != "display" || try_body_depth_ > 0))
+            return ar;
+        buf[i] = std::move(*ar);
+    }
+    TwPinSpan pin(buf.data(), nargs);
+    // Issue #4524: the named-let step `(+ i 1)` is the armed node. Integer
+    // arithmetic still goes through the prim (overflow promotes).
+    if (nargs == 2 && g_float_local_arm.matches(id) &&
+        (cname == "+" || cname == "-" || cname == "*")) {
+        const types::EvalValue& x = buf[0];
+        const types::EvalValue& y = buf[1];
+        const bool xi = is_int(x);
+        const bool yi = is_int(y);
+        const bool xf = !xi && is_float(x);
+        const bool yf = !yi && is_float(y);
+        if ((xi || xf) && (yi || yf) && (xf || yf)) {
+            const double dx = xf ? as_float(x) : static_cast<double>(as_int(x));
+            const double dy = yf ? as_float(y) : static_cast<double>(as_int(y));
+            double r;
+            if (cname[0] == '+') {
+                r = 0.0 + dx;
+                r = r + dy;
+            } else if (cname[0] == '*') {
+                r = 1.0 * dx;
+                r = r * dy;
+            } else {
+                r = dx - dy;
+            }
+            return EvalResult(
+                invoke_prim_with_telemetry_at(cname, e.aux, [&]() { return make_float(r); }));
+        }
+    }
+    return EvalResult(invoke_prim_with_telemetry_at(cname, e.aux, [&]() {
+        return (*pfn)(std::span<const types::EvalValue>(buf.data(), nargs));
+    }));
+}
+
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                 aura::ast::NodeId id, const Env& env) {
     static constexpr std::size_t MAX_C_STACK_DEPTH = 512;
@@ -5324,6 +5651,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         static_cast<CompilerMetrics*>(compiler_metrics_)
             ->hotpath_eval_flat_calls.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #4599: a nested eval (the (f1 1) inside the loop begin) must
+    // not clobber the caller's self-TCO stamp. continue stays in this frame.
+    TcoReuseGuard tco_reuse_guard(this);
     // Issue #3401: production (NDEBUG) builds skip the function-scope
     // try/catch — every error path inside the TCO loop already returns
     // std::unexpected(Diagnostic), so the catch only adds C-stack frame
@@ -5350,6 +5680,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         std::vector<std::unique_ptr<Env>> tco_pinned;
         auto pin_if_current_in_tail = [&]() {
             if (tail_env.has_value() && current_env == &*tail_env) {
+                // Issue #4599: the stamp addresses this optional. After the
+                // move, the next emplace reuses the storage.
+                if (tco_reuse_live_ && tco_reuse_env_ == &*tail_env)
+                    tco_reuse_live_ = false;
                 tco_pinned.push_back(std::make_unique<Env>(std::move(*tail_env)));
                 tail_env.reset();
                 current_env = tco_pinned.back().get();
@@ -5513,6 +5847,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             }
             if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
+            // Issue #4599: ints, locals, and cached prim calls skip FlatAST::get.
+            // nullopt falls through. An engaged error is returned as-is.
+            if (auto hot = try_eval_flat_hot(*f, *p, current_id, eval_env))
+                return *hot;
             auto v = f->get(current_id);
 
             // Incremental eval: if node is clean and has a cached result, reuse it.
@@ -5612,6 +5950,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // construction); Env::lookup already takes string_view.
                     auto val = eval_env.lookup(name);
                     if (val) {
+                        // Pre-deref binding: a cell id, not the cell's value.
+                        remember_resolved_var(current_id, v.sym_id, eval_env, *val);
                         // Issue #229 Cycle 1 fix: dereference cell
                         // sentinel. The Define case binds the name to
                         // a cell (make_cell(ci)) for re-def support;
@@ -5650,8 +5990,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // (Env::lookup steps 3–4; call-position also has prim path).
                     {
                         auto slot = primitives_.slot_for_name(var_name);
-                        if (slot != std::numeric_limits<std::size_t>::max())
-                            return make_primitive(slot);
+                        if (slot != std::numeric_limits<std::size_t>::max()) {
+                            auto pv = make_primitive(slot);
+                            remember_resolved_var(current_id, v.sym_id, eval_env, pv);
+                            return pv;
+                        }
                         if (auto ctor = adt_runtime_.find_ctor(var_name))
                             return make_primitive(*ctor);
                     }
@@ -6656,6 +6999,19 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // IR bridge set_owner pattern.
                             Evaluator* prim_owner =
                                 eval_env.owner() != nullptr ? eval_env.owner() : this;
+                            // Issue #4599: record the call so the next iteration
+                            // skips get(). remember_prim_call refuses a local
+                            // shadow, so `(let ((+ ...)))` stays off the cache.
+                            const std::size_t slot = primitives_.slot_for_name(cname);
+                            if (cname != "if" && cname != "and" && cname != "or" &&
+                                slot < primitives_.slot_count() && slot <= 0xffffffffu &&
+                                v.children.size() <= 8) {
+                                remember_prim_call(current_id, callee_id, callee.sym_id,
+                                                   static_cast<std::uint32_t>(slot), eval_env,
+                                                   v.children);
+                            }
+                            const bool slot_here =
+                                prim_owner == this && slot < primitives_.slot_count();
                             // Issue #4524: interpreter float-local fast path.
                             // At an armed TCO backedge argument position, a
                             // 2-operand + - * with a float operand computes
@@ -6692,10 +7048,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     } else {
                                         r = dx - dy; // sub_pure: r = x; r -= y
                                     }
+                                    if (slot_here)
+                                        return prim_owner->invoke_prim_with_telemetry_at(
+                                            cname, slot, [&]() { return make_float(r); });
                                     return prim_owner->invoke_prim_with_telemetry(
                                         cname, [&]() { return make_float(r); });
                                 }
                             }
+                            if (slot_here)
+                                return prim_owner->invoke_prim_with_telemetry_at(
+                                    cname, slot, [&]() { return (*prim)(args); });
                             return prim_owner->invoke_prim_with_telemetry(
                                 cname, [&]() { return (*prim)(args); });
                         }
@@ -6867,23 +7229,79 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             feedback_enter_call(cid, cl.name, cargs.data(),
                                                 static_cast<std::uint32_t>(nnote));
                         }
-                        tail_env = materialize_call_env(cl);
-                        tail_env->set_primitives(&primitives_);
-
-                        // Issue #145: set the pool so bind_symid can mirror
-                        if (cl.pool)
-                            tail_env->set_pool(cl.pool);
-                        for (std::size_t i = 0; i < cargs.size(); ++i) {
-                            tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
-                        }
-                        if (cl.dotted && !cl.params.empty()) {
-                            types::EvalValue rest = make_void();
-                            for (std::size_t i = rest_args.size(); i > 0; --i) {
-                                auto pid = pairs_.size();
-                                pairs_.push_back({rest_args[i - 1], rest});
-                                rest = make_pair(pid);
+                        // Issue #4599: self-TCO reuses the frame. Pointers are
+                        // compared before any overwrite. A moved frame (pin)
+                        // cleared the stamp, so a dangling pointer is not read.
+                        bool reused = false;
+                        if (tco_reuse_live_ && !cl.dotted && tail_env.has_value() &&
+                            current_env == &*tail_env && current_env == tco_reuse_env_ &&
+                            tco_reuse_cid_ == cid && cargs.size() == tco_reuse_n_ &&
+                            tco_reuse_n_ == named_count && tco_reuse_n_ <= 8 &&
+                            cl.bridge_epoch == tco_reuse_bridge_ &&
+                            defuse_version_.load(std::memory_order_acquire) == tco_reuse_defuse_ &&
+                            env_generation_ == tco_reuse_env_gen_ &&
+                            named_count <= cl.params.size()) {
+                            bool syms_ok = true;
+                            for (std::uint32_t i = 0; i < tco_reuse_n_; ++i) {
+                                if (cl.params[i] != tco_reuse_syms_[i]) {
+                                    syms_ok = false;
+                                    break;
+                                }
                             }
-                            tail_env->bind_symid(cl.params.back(), rest);
+                            if (syms_ok) {
+                                reused = tail_env->overwrite_param_slots(
+                                    std::span<const aura::ast::SymId>(tco_reuse_syms_.data(),
+                                                                      tco_reuse_n_),
+                                    std::span<const types::EvalValue>(cargs.data(), cargs.size()));
+                            }
+                        }
+                        if (!reused) {
+                            // Drop the stamp before materialize re-enters eval.
+                            tco_reuse_live_ = false;
+                            tail_env = materialize_call_env(cl);
+                            tail_env->set_primitives(&primitives_);
+
+                            // Issue #145: set the pool so bind_symid can mirror
+                            if (cl.pool)
+                                tail_env->set_pool(cl.pool);
+                            for (std::size_t i = 0; i < cargs.size(); ++i) {
+                                tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
+                            }
+                            if (cl.dotted && !cl.params.empty()) {
+                                types::EvalValue rest = make_void();
+                                for (std::size_t i = rest_args.size(); i > 0; --i) {
+                                    auto pid = pairs_.size();
+                                    pairs_.push_back({rest_args[i - 1], rest});
+                                    rest = make_pair(pid);
+                                }
+                                tail_env->bind_symid(cl.params.back(), rest);
+                            }
+                            bool can_stamp = !cl.dotted && named_count <= 8 &&
+                                             cargs.size() == named_count &&
+                                             tail_env->bindings_symid().size() == named_count &&
+                                             named_count <= cl.params.size();
+                            if (can_stamp) {
+                                const auto bs = tail_env->bindings_symid();
+                                const auto lin = tail_env->bindings_linear_ownership_state();
+                                for (std::size_t i = 0; i < named_count; ++i) {
+                                    if (bs[i].first != cl.params[i] ||
+                                        (i < lin.size() && lin[i] != linear_rt::Untracked)) {
+                                        can_stamp = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (can_stamp) {
+                                tco_reuse_live_ = true;
+                                tco_reuse_cid_ = cid;
+                                tco_reuse_env_ = &*tail_env;
+                                tco_reuse_n_ = static_cast<std::uint32_t>(named_count);
+                                tco_reuse_bridge_ = cl.bridge_epoch;
+                                tco_reuse_defuse_ = defuse_version_.load(std::memory_order_acquire);
+                                tco_reuse_env_gen_ = env_generation_;
+                                for (std::size_t i = 0; i < named_count; ++i)
+                                    tco_reuse_syms_[i] = cl.params[i];
+                            }
                         }
                         // Issue #2871: true TCO for TW closure calls.
                         // Previously `return eval_flat(body)` grew C stack per
@@ -7669,7 +8087,6 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
                         auto& me = const_cast<Env&>(eval_env);
 
-                        auto ci = alloc_cell(*vv);
                         // Issue #1539: stamp Owned when init is Linear e.
                         // State lives on Env.bindings_linear_ownership_state_ and is
                         // copied into EnvFrame by alloc_env_frame_from_env (closure capture).
@@ -7683,7 +8100,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // when pool_ is set. Do NOT also call bind() — that would
                         // dual-write a second Untracked entry and shadow Owned
                         // linear state for (let ((x (Linear ...))) ...).
-                        me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
+                        // Issue #4599: an uncaptured non-set! let binds the value.
+                        // A cell mint is what made (g 1) scale with define count.
+                        // Letrec stays a cell (self-reference, #232 / #4595).
+                        if (lin_state == linear_rt::Untracked &&
+                            let_bind_kind_cached(*f, current_id, v.sym_id, body_id) == 1) {
+                            me.bind_symid_with_linear_state(v.sym_id, std::move(*vv), lin_state);
+                        } else {
+                            auto ci = alloc_cell(*vv);
+                            me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
+                        }
                         // Issue #2871: TCO into let body (tail position).
                         if (body_id != aura::ast::NULL_NODE) {
                             current_id = body_id;
