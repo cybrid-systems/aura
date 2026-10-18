@@ -6493,6 +6493,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     auto catch_fn = f->get(cv.child(0));
                                     if (catch_fn.tag == aura::ast::NodeTag::Variable &&
                                         std::string(p->resolve(catch_fn.sym_id)) == "catch") {
+                                        // Issue #4594: (catch EXPR) has no binder. Evaluate
+                                        // EXPR in the enclosing env. (catch (var) handler)
+                                        // and (catch var handler) stay at size >= 3.
+                                        if (cv.children.size() == 2)
+                                            return eval_flat(*f, *p, cv.child(1), eval_env);
                                         // (catch (var) handler) — child[0]=catch, child[1]=(var),
                                         // child[2]=handler
                                         // Also accept (catch var handler) bare Variable binding.

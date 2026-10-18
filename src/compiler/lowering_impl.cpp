@@ -846,6 +846,17 @@ static std::uint32_t lower_flat_expr(
                             if (catch_callee.tag == NodeTag::Variable) {
                                 auto catch_name = pool.resolve(catch_callee.sym_id);
                                 if (std::string(catch_name) == "catch") {
+                                    // Issue #4594: (catch EXPR) has no binder. The
+                                    // handler block evaluates EXPR. JIT runs this
+                                    // IR (IsError / Branch / the value); there is
+                                    // no separate try special form in the JIT.
+                                    if (catch_v.children.size() == 2) {
+                                        auto handler_slot = lower_flat_expr(
+                                            state, flat, pool, catch_v.child(1), cache, cache_hits);
+                                        state.emit(IROpcode::Local, phi_slot, handler_slot);
+                                        caught = true;
+                                        break;
+                                    }
                                     // (catch (var) handler-body) or (catch var handler)
                                     // Issue #2567: bare Variable binding also accepted.
                                     if (catch_v.children.size() >= 3) {

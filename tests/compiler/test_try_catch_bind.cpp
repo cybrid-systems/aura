@@ -100,6 +100,36 @@ static void ac4_bare_var() {
           "AC4: bare e binding string?");
 }
 
+// ── #4594: (catch EXPR) with no binder ──
+static void ac4594_bare_catch_expr() {
+    std::println("\n--- #4594: (catch EXPR) evaluates EXPR ---");
+    {
+        CompilerService cs;
+        CHECK(eval_int_eq(cs, "(try (car 5) (catch 0))", 0), "#4594: (catch 0) yields 0");
+        CHECK(eval_int_eq(cs, "(try (+ 1 2) (catch 0))", 3), "#4594: success skips the bare catch");
+        CHECK(eval_int_eq(cs, "(try (car 5) (catch (e) 7))", 7),
+              "#4594: binder form still returns the handler");
+        CHECK(eval_bool(cs, "(let ((code-str \"kept\")) "
+                            "(string=? (try (car 5) (catch code-str)) \"kept\"))"),
+              "#4594: bare catch reads the enclosing variable");
+        CHECK(eval_bool(cs, "(define (g4594) (let* ((c (try (car 5) (catch 0)))) \"ok\")) "
+                            "(string=? (g4594) \"ok\")"),
+              "#4594: let* initializer does not raise");
+        CHECK(eval_int_eq(cs, "(define (h4594) (let* ((c (try (car 5) (catch 0)))) c)) (h4594)", 0),
+              "#4594: let* binds the catch value");
+    }
+    {
+        // query: forces the tree walker. The #f arm is not evaluated.
+        CompilerService cs;
+        CHECK(eval_int_eq(cs, "(if #f (query:root) (try (car 5) (catch 0)))", 0),
+              "#4594 walker: (catch 0) yields 0");
+        CHECK(eval_bool(cs, "(if #f (query:root) "
+                            "(let ((code-str \"kept\")) "
+                            "(string=? (try (car 5) (catch code-str)) \"kept\")))"),
+              "#4594 walker: bare catch reads the enclosing variable");
+    }
+}
+
 // ── AC5: source + gate ──
 static void ac5_source_gate() {
     std::println("\n--- #2567 AC5: source-cite + gate ---");
@@ -131,6 +161,7 @@ int run_test_try_catch_bind() {
     ac2_error_prim_bind();
     ac3_success_unused();
     ac4_bare_var();
+    ac4594_bare_catch_expr();
     ac5_source_gate();
     std::println("\n=== #2567: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
