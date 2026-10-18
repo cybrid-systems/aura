@@ -77,6 +77,11 @@ private:
 // once for process-exit free. The cons hot path does not push each
 // slot onto g_owned_pair_slots_.
 extern "C" PairSlot* aura_pair_tls_bump();
+// Issue #4571 (L2): address of the fixed segment directory
+// (std::atomic<PairSegment*>[kPairMaxSegs], never moves). Each segment
+// starts with kPairSegSlots atomic PairSlot* cells. The JIT bakes this
+// address into inline car/cdr; layout is static_asserted in runtime_ssot.cpp.
+extern "C" void* aura_pair_seg_dir_base();
 extern "C" std::uint64_t aura_pair_slab_publish_count();
 
 // ── TL Arena (thread-local bump allocator) ──
@@ -220,7 +225,12 @@ struct FlatHashTable {
 
     static FlatHashTable* create(uint64_t cap); // runtime_ssot.cpp (libaura_tl_arena.so)
     static void destroy(FlatHashTable* ht);
-    void rebuild(uint64_t new_cap); // rehash (grow/shrink) — aura_jit_runtime.cpp
+    // Rehash into a NEW block of new_cap slots and return it (nullptr on
+    // OOM; this table is untouched). Issue #4571: the old in-place form
+    // memcpy'd the larger table over this block (heap overflow once JIT
+    // hash-set! grew past capacity 8). The caller publishes the result in
+    // g_hash_tables under the write lock and destroys the old block.
+    FlatHashTable* rebuild(uint64_t new_cap) const; // aura_jit_runtime.cpp
 };
 
 extern std::vector<FlatHashTable*> g_hash_tables;

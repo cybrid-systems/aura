@@ -299,6 +299,21 @@ static bool jit_l1_enabled() {
     return on;
 }
 
+// Issue #4571 (L2): inline car/cdr through the non-moving pair segment
+// directory (#898). AURA_JIT_L2=0 restores the call-per-access lowering.
+static bool jit_l2_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_JIT_L2");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// Mirrors runtime_ssot.cpp kPairSegSlots / kPairMaxSegs (#898); the
+// runtime static_asserts the same values next to aura_pair_seg_dir_base.
+constexpr std::uint64_t kL2PairSegSlots = 1024;
+constexpr std::uint64_t kL2PairMaxSegs = 1u << 16;
+
 // Issue #4570: which cell slots of fn can be scalar-replaced.
 //
 // A slot qualifies when it is written by at least one OpNewCell and every
@@ -372,6 +387,9 @@ static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
                 case Op::OpAnd:
                 case Op::OpOr:
                 case Op::OpMakePair:
+                case Op::OpHashRef: // dst, hash, key (#4571)
+                case Op::OpHashSet: // dst, hash, (key . val) pair
+                case Op::OpHashRemove:
                     use(in.ops[0]);
                     use(in.ops[1]);
                     use(in.ops[2]);
@@ -469,6 +487,9 @@ static StaticFloats static_float_slots(const FlatFunction& fn,
             case Op::OpAnd:
             case Op::OpOr:
             case Op::OpMakePair:
+            case Op::OpHashRef: // #4571: non-float results
+            case Op::OpHashSet:
+            case Op::OpHashRemove:
             case Op::OpLocal:
             case Op::OpNot:
             case Op::OpCar:
@@ -754,6 +775,7 @@ struct LLVMBuilder {
     // function that reads the current Evaluator::defuse_version_
     // via the g_lock_hooks.get_version callback).
     llvm::Function* fn_get_defuse_version = nullptr;
+    llvm::Function* fn_pair_inline_ok = nullptr;
     // Issue #157 Phase 1c: in-LLVM-callable deopt counter. The
     // JIT emits a call to this at the start of every deopt basic
     // block (bb_slow in OpCar/OpCdr SHAPE_PAIR lowering) so the
@@ -879,6 +901,12 @@ struct LLVMBuilder {
         fn_get_defuse_version =
             llvm::Function::Create(llvm::FunctionType::get(i64, false),
                                    llvm::Function::ExternalLinkage, "aura_get_defuse_version", mod);
+
+        // Issue #4571: once-per-activation L2 pair gate (tenant gate not
+        // armed → inline car/cdr may skip the #4093 stamp compare).
+        fn_pair_inline_ok =
+            llvm::Function::Create(llvm::FunctionType::get(i64, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_pair_inline_ok", mod);
 
         fn_deopt_inc =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
@@ -1216,6 +1244,67 @@ struct LLVMBuilder {
     // false edge is laid out cold.
     void br_likely(llvm::Value* cond, llvm::BasicBlock* hot, llvm::BasicBlock* cold) {
         irb->CreateCondBr(cond, hot, cold, llvm::MDBuilder(ctx).createBranchWeights(2000, 1));
+    }
+
+    // Issue #4571 (L2): inline pair field read. pair_ok is the i1 the JIT
+    // prologue computed once per activation (aura_jit_pair_inline_ok: the
+    // #4093 tenant gate is not armed, so no stamp compare is owed);
+    // pair_dir is the address of the fixed segment directory. Both are
+    // null on the AOT path and under AURA_JIT_L2=0.
+    llvm::Value* pair_ok = nullptr;
+    llvm::Value* pair_dir = nullptr;
+    // Guarded inline read of field (0 = car, 1 = cdr):
+    //   (v & 63) == 1 (RefPair), seg = v >> 16 < kPairMaxSegs,
+    //   segp = acquire-load dir[seg], slotp = acquire-load segp[(v>>6)&1023],
+    //   result = slotp->field.
+    // Any miss (gate armed, not a pair, unpublished segment or slot) runs
+    // `slow`, the same runtime call as before, so the result and the
+    // fallback metric are unchanged. No call and no lock on the hit path.
+    template <class Slow>
+    llvm::Value* emit_l2_pair_field(llvm::Value* v, unsigned field, const char* tag, Slow slow) {
+        auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+        auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+        auto* parent = irb->GetInsertBlock()->getParent();
+        auto* bb_seg = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_seg", parent);
+        auto* bb_slot = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_slot", parent);
+        auto* bb_hit = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_hit", parent);
+        auto* bb_slow = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_slow", parent);
+        auto* bb_done = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_done", parent);
+        auto* is_pair = irb->CreateICmpEQ(irb->CreateAnd(v, c64(63)), c64(1));
+        auto* seg = irb->CreateLShr(v, c64(16));
+        auto* in_dir = irb->CreateICmpULT(seg, c64(kL2PairMaxSegs));
+        br_likely(irb->CreateAnd(pair_ok, irb->CreateAnd(is_pair, in_dir)), bb_seg, bb_slow);
+
+        irb->SetInsertPoint(bb_seg);
+        auto* segcell = irb->CreateGEP(ptr_ty, pair_dir, seg);
+        auto* segp = irb->CreateLoad(ptr_ty, segcell);
+        segp->setAtomic(llvm::AtomicOrdering::Acquire);
+        segp->setAlignment(llvm::Align(8));
+        br_likely(irb->CreateIsNotNull(segp), bb_slot, bb_slow);
+
+        irb->SetInsertPoint(bb_slot);
+        auto* off = irb->CreateAnd(irb->CreateLShr(v, c64(6)), c64(kL2PairSegSlots - 1));
+        auto* slotp = irb->CreateLoad(ptr_ty, irb->CreateGEP(ptr_ty, segp, off));
+        slotp->setAtomic(llvm::AtomicOrdering::Acquire);
+        slotp->setAlignment(llvm::Align(8));
+        br_likely(irb->CreateIsNotNull(slotp), bb_hit, bb_slow);
+
+        irb->SetInsertPoint(bb_hit);
+        auto* fast = irb->CreateLoad(i64_ty, irb->CreateGEP(i64_ty, slotp, c64(field)));
+        irb->CreateBr(bb_done);
+
+        irb->SetInsertPoint(bb_slow);
+        llvm::Value* slow_v = slow();
+        auto* slow_end = irb->GetInsertBlock();
+        irb->CreateBr(bb_done);
+
+        irb->SetInsertPoint(bb_done);
+        auto* phi = irb->CreatePHI(i64_ty, 2, std::string(tag) + "_l2");
+        phi->addIncoming(fast, bb_hit);
+        phi->addIncoming(slow_v, slow_end);
+        if (metrics)
+            metrics->l2_pair_inline_total.fetch_add(1, std::memory_order_relaxed);
+        return phi;
     }
 
     // Lower one FlatInstruction into the current LLVM IR builder.
@@ -2526,8 +2615,9 @@ struct LLVMBuilder {
             // top frame, stores the cause to payload_slot, and
             // emits a direct Br to handler_block. OpTryEnd pops
             // the frame. OpIsError checks the value's RefError
-            // tag (bit 0 = 1, bits 1-4 = RefError = 8 → mask 0x1F,
-            // value 0x11).
+            // tag: low2 = 01 (ref), bits 2-5 = RefError (8) → mask
+            // 0x3F, value 0x21 (Issue #4571: the old 0x1F/0x11 test
+            // matched RefHash (4), so every hash escaped as an error).
             //
             // Limitation: this is "structured" exception handling
             // via the exception stack + direct branches, NOT
@@ -2548,8 +2638,9 @@ struct LLVMBuilder {
                     metrics->exception_opcode_mask.fetch_or(1ull << 0, std::memory_order_relaxed);
                 }
                 // ops[0] = result_slot, ops[1] = value_slot
-                constexpr std::uint64_t REF_ERROR_MASK = 0x1F;
-                constexpr std::uint64_t REF_ERROR_TAG = 0x11;
+                constexpr std::uint64_t REF_ERROR_MASK = 0x3F;
+                constexpr std::uint64_t REF_ERROR_TAG = (types::RefError << 2) | 1ull;
+                static_assert(REF_ERROR_TAG == 0x21, "RefError tag drift (#4571)");
                 if (is_flocal(inst.ops[1])) {
                     // Issue #4570: a raw-double local whose shadow is
                     // authoritative holds a number, never an error — test
@@ -2568,7 +2659,7 @@ struct LLVMBuilder {
                     return true;
                 }
                 auto val = load(inst.ops[1]);
-                // Tag check: (val & 0x1F) == 0x11 (RefError encoded)
+                // Tag check: (val & 0x3F) == 0x21 (RefError encoded, #4571)
                 auto masked = irb->CreateAnd(val, c64(REF_ERROR_MASK));
                 auto is_err = irb->CreateICmpEQ(masked, c64(REF_ERROR_TAG));
                 store(inst.ops[0],
@@ -2836,6 +2927,18 @@ struct LLVMBuilder {
                 // pattern as OpHashRef's null/live/loop/check/cmp/next/
                 // found/miss/done — see aura_jit.cpp:998+ for reference.
                 auto pair_val = load(inst.ops[1]);
+                if (pair_ok) {
+                    // Issue #4571 (L2): guard + segment load + field load.
+                    // Replaces the per-access aura_get_defuse_version call;
+                    // concurrent redefinition is covered by #4569
+                    // assumption invalidation, and the segment table never
+                    // moves (#898). Misses take the aura_pair_car call.
+                    store(inst.ops[0], emit_l2_pair_field(pair_val, 0, "car", [&] {
+                              return irb->CreateCall(llvm::FunctionCallee(fn_pair_car),
+                                                     llvm::ArrayRef<llvm::Value*>{pair_val});
+                          }));
+                    return true;
+                }
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
@@ -2899,6 +3002,14 @@ struct LLVMBuilder {
             case OpCdr: {
                 // Issue #157 Phase 1b: same as OpCar but for cdr.
                 auto pair_val = load(inst.ops[1]);
+                if (pair_ok) {
+                    // Issue #4571 (L2): same inline read as OpCar, field 1.
+                    store(inst.ops[0], emit_l2_pair_field(pair_val, 1, "cdr", [&] {
+                              return irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr),
+                                                     llvm::ArrayRef<llvm::Value*>{pair_val});
+                          }));
+                    return true;
+                }
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
@@ -3250,6 +3361,20 @@ struct LLVMBuilder {
                 auto stored_key = irb->CreateLoad(i64_ty, key_gep);
                 auto val_gep = irb->CreateGEP(i64_ty, vals_ptr, slot);
                 auto val_ld = irb->CreateLoad(i64_ty, val_gep);
+                // Issue #4571: aura_hash_key_eq is only non-trivial when both
+                // keys are strings; identical bits are equal and a fixnum on
+                // either side never matches different bits. Decide those
+                // inline (no call, lock kept); only two non-fixnum keys take
+                // the unlocked eq call below.
+                auto* eqk_bb = llvm::BasicBlock::Create(ctx, "hcmp_eq", func);
+                auto* bits_eq = irb->CreateICmpEQ(stored_key, key_val);
+                auto* both_nonfix = irb->CreateICmpNE(
+                    irb->CreateAnd(irb->CreateAnd(stored_key, key_val), c64(1)), c64(0));
+                auto* bb_bits = llvm::BasicBlock::Create(ctx, "hcmp_bits", func);
+                irb->CreateCondBr(bits_eq, found_bb, bb_bits);
+                irb->SetInsertPoint(bb_bits);
+                irb->CreateCondBr(both_nonfix, eqk_bb, next_bb);
+                irb->SetInsertPoint(eqk_bb);
                 irb->CreateCall(llvm::FunctionCallee(fn_unlock_workspace_read),
                                 llvm::ArrayRef<llvm::Value*>{});
                 auto eq_res = irb->CreateCall(llvm::FunctionCallee(fn_hash_key_eq),
@@ -3569,6 +3694,9 @@ uint64_t aura_exception_fiber_count();
 void aura_exception_clear_all();
 // Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
 uint64_t aura_get_defuse_version();
+// Issue #4571: L2 inline pair access (runtime_ssot.cpp / aura_jit_runtime.cpp).
+int64_t aura_jit_pair_inline_ok();
+void* aura_pair_seg_dir_base();
 // Issue #157 Phase 1c / #1534 / #1535 / #1537: deopt + dual-epoch fences.
 void aura_deopt_inc();
 // Issue #3988: Jump back-edge hold-budget poll.
@@ -4007,6 +4135,7 @@ struct AuraJIT::Impl {
         reg("aura_pair_cdr", (void*)aura_pair_cdr);
         reg("aura_pair_car_unchecked", (void*)aura_pair_car_unchecked);
         reg("aura_pair_cdr_unchecked", (void*)aura_pair_cdr_unchecked);
+        reg("aura_jit_pair_inline_ok", (void*)aura_jit_pair_inline_ok);
         reg("aura_prim_call", (void*)aura_prim_call);
         reg("aura_set_prim_dispatcher", (void*)aura_set_prim_dispatcher);
         reg("aura_hash_ref", (void*)aura_hash_ref);
@@ -4262,6 +4391,29 @@ struct AuraJIT::Impl {
         {
             auto* ver = builder.irb->CreateCall(builder.fn_get_defuse_version, {});
             builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
+        }
+        // Issue #4571 (L2): functions that read pairs evaluate the tenant
+        // gate once per activation and bake the segment directory address
+        // (in-process JIT only; the AOT path keeps the call lowering).
+        if (jit_l2_enabled() && builder.fn_pair_inline_ok) {
+            bool reads_pairs = false;
+            for (uint32_t bi = 0; bi < fn.num_blocks && !reads_pairs; ++bi) {
+                const auto& blk = fn.blocks[bi];
+                for (uint32_t ii = 0; ii < blk.num_instructions; ++ii) {
+                    const auto op = blk.instructions[ii].opcode;
+                    if (op == OpCar || op == OpCdr) {
+                        reads_pairs = true;
+                        break;
+                    }
+                }
+            }
+            if (reads_pairs) {
+                auto* ok = builder.irb->CreateCall(builder.fn_pair_inline_ok, {});
+                builder.pair_ok = builder.irb->CreateICmpNE(ok, builder.c64(0));
+                builder.pair_dir = builder.irb->CreateIntToPtr(
+                    builder.c64(reinterpret_cast<std::uintptr_t>(aura_pair_seg_dir_base())),
+                    llvm::PointerType::getUnqual(ctx));
+            }
         }
 
         // Issue #1537 + #1540: Apply prologue — dual-epoch + linear_post_mutate.
