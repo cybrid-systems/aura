@@ -3418,11 +3418,22 @@ static void ac4519_source_cite() {
           "4519 cite: save/restore located in workspace tree");
     if (save_fn != std::string::npos && restore_fn != std::string::npos && save_fn < restore_fn) {
         const auto win = wt.substr(save_fn, restore_fn - save_fn);
-        const auto bounds = win.find("if (idx >= string_heap_.size())");
+        // #4598 restructure: the string_heap_ slot copy is gone (a generation-
+        // matched copy of the stamped workspace text, or an unparse — no heap
+        // indexing, so no bounds row). The #4519 invariant that survived:
+        // every panic_safe_source_ write AND its heap-size snapshot sit
+        // inside alloc_storage_lock_ — on both paths.
         const auto lock1 = win.find("std::lock_guard alloc_lock(alloc_storage_lock_");
-        const auto copy = win.find("panic_safe_source_ = string_heap_[idx]");
-        CHECK(bounds != std::string::npos && lock1 != std::string::npos &&
-                  copy != std::string::npos && lock1 < bounds && bounds < copy,
+        const auto copy1 = win.find("panic_safe_source_ = workspace_source_text_;");
+        const auto lock2 = win.find("std::lock_guard alloc_lock(alloc_storage_lock_", lock1 + 1);
+        const auto copy2 = win.find("panic_safe_source_ = std::move(src);");
+        const auto snap1 = win.find("panic_safe_string_heap_size_ = string_heap_.size();");
+        const auto snap2 =
+            win.find("panic_safe_string_heap_size_ = string_heap_.size();", snap1 + 1);
+        CHECK(lock1 != std::string::npos && copy1 != std::string::npos &&
+                  snap1 != std::string::npos && lock1 < copy1 && copy1 < snap1 &&
+                  lock2 != std::string::npos && copy2 != std::string::npos &&
+                  snap2 != std::string::npos && lock2 < copy2 && copy2 < snap2,
               "4519 cite: save bounds-check + slot copy inside alloc_storage_lock_");
         CHECK(win.find("panic_safe_string_heap_size_ = string_heap_.size()") != std::string::npos,
               "4519 cite: save snapshots the heap size in the locked region");
