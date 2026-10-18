@@ -4,7 +4,13 @@
 #include "aura_jit_bridge.h"
 #include "aot_mangle.h"
 #include "jit_typed_mutation_stats.h"
+#include "jit_assumptions.hh"     // Issue #4600: prologue word gate + deopt-storm policy
 #include "typed_mutation_audit.h" // Issue #1882: sample JIT hotpath into TypedMutationAudit
+
+// Issue #4600 §5: stable slot address for direct defuse-word loads
+// (defined extern "C" in aura_jit_runtime.cpp; declared early because the
+// lowering builder calls it at compile time, before the runtime decl block).
+extern "C" std::uintptr_t aura_jit_defuse_word_slot_addr();
 #include "value_tags.h"
 
 #if AURA_HAVE_LLVM
@@ -304,6 +310,29 @@ static bool jit_l1_enabled() {
 static bool jit_l2_enabled() {
     static const bool on = [] {
         const char* v = std::getenv("AURA_JIT_L2");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// Issue #4600 §7: the Apply prologue gates the dual-epoch C calls behind
+// one acquire load of the fn's DefineVersion word (word unchanged ⇒ not
+// stale — same predicate the #4569 cache-hit restamp uses).
+// AURA_JIT_PROLOGUE_WORD=0 restores the unconditional epoch-check prologue.
+static bool jit_prologue_word_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_JIT_PROLOGUE_WORD");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// Issue #4600 §5: car/cdr defuse guards read the bridge-published defuse
+// word directly (two acquire loads) instead of one get_version hook call
+// per access. AURA_JIT_DEFUSE_WORD=0 restores the per-access call lowering.
+static bool jit_defuse_word_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_JIT_DEFUSE_WORD");
         return !(v && v[0] == '0');
     }();
     return on;
@@ -1013,6 +1042,10 @@ struct LLVMBuilder {
     // Runtime definition: extern "C" void aura_deopt_inc() in
     // aura_jit_runtime.cpp.
     llvm::Function* fn_deopt_inc = nullptr;
+    // Issue #4600 §4: cold-path guard-deopt attribution for the deopt-storm
+    // policy — extern "C" void aura_jit_note_guard_deopt(const char* name)
+    // in aura_jit_runtime.cpp. Called from car/cdr bb_slow (named fns only).
+    llvm::Function* fn_note_guard_deopt = nullptr;
     // Issue #3988: hold-budget / force-safepoint poll on Jump back-edge.
     llvm::Function* fn_poll_hold_budget = nullptr;
     // Issue #1534: GuardShape dual-epoch fence — runtime call to
@@ -1141,6 +1174,10 @@ struct LLVMBuilder {
         fn_deopt_inc =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                    llvm::Function::ExternalLinkage, "aura_deopt_inc", mod);
+        // Issue #4600 §4: void aura_jit_note_guard_deopt(i8* name).
+        fn_note_guard_deopt = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {ptr_i8}, false), llvm::Function::ExternalLinkage,
+            "aura_jit_note_guard_deopt", mod);
         // Issue #3988: production Jump back-edge poll (i32 return; Soft 0).
         fn_poll_hold_budget = llvm::Function::Create(llvm::FunctionType::get(i32_ty, false),
                                                      llvm::Function::ExternalLinkage,
@@ -3226,8 +3263,25 @@ struct LLVMBuilder {
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto* cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version),
-                                                llvm::ArrayRef<llvm::Value*>{});
+                    // Issue #4600 §5: direct word read — two acquire loads
+                    // through the bridge-published slot instead of one
+                    // get_version hook call per access. Same atomic, same
+                    // ordering as the hook (Evaluator::get_defuse_version).
+                    llvm::Value* cur = nullptr;
+                    if (jit_defuse_word_enabled()) {
+                        auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
+                                                          llvm::PointerType::getUnqual(ctx));
+                        auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
+                        wp->setAtomic(llvm::AtomicOrdering::Acquire);
+                        wp->setAlignment(llvm::Align(8));
+                        auto* cur_word = irb->CreateLoad(i64_ty, wp);
+                        cur_word->setAtomic(llvm::AtomicOrdering::Acquire);
+                        cur_word->setAlignment(llvm::Align(8));
+                        cur = cur_word;
+                    } else {
+                        cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version),
+                                              llvm::ArrayRef<llvm::Value*>{});
+                    }
                     auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
                     auto* match = irb->CreateICmpEQ(cur, expected);
                     auto* entry_bb = irb->GetInsertBlock();
@@ -3265,6 +3319,18 @@ struct LLVMBuilder {
                     // increment, negligible compared to the lock.
                     irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc),
                                     llvm::ArrayRef<llvm::Value*>{});
+                    // Issue #4600 §4: attribute the guard deopt to this fn
+                    // for the deopt-storm policy (named fns only; one cold
+                    // call per slow-path access).
+                    if (fn_note_guard_deopt && fn.name && fn.name[0]) {
+                        auto* note_gv = irb->CreateGlobalString(fn.name, "guard_note_fn_name");
+                        auto* note_zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                        auto* note_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                            note_gv->getValueType(), note_gv,
+                            llvm::ArrayRef<llvm::Constant*>{note_zero, note_zero});
+                        irb->CreateCall(llvm::FunctionCallee(fn_note_guard_deopt),
+                                        llvm::ArrayRef<llvm::Value*>{note_ptr});
+                    }
                     auto* slow_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_car),
                                                         llvm::ArrayRef<llvm::Value*>{pair_val});
                     irb->CreateBr(bb_done);
@@ -3303,8 +3369,22 @@ struct LLVMBuilder {
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto* cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version),
-                                                llvm::ArrayRef<llvm::Value*>{});
+                    // Issue #4600 §5: same direct word read as OpCar.
+                    llvm::Value* cur = nullptr;
+                    if (jit_defuse_word_enabled()) {
+                        auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
+                                                          llvm::PointerType::getUnqual(ctx));
+                        auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
+                        wp->setAtomic(llvm::AtomicOrdering::Acquire);
+                        wp->setAlignment(llvm::Align(8));
+                        auto* cur_word = irb->CreateLoad(i64_ty, wp);
+                        cur_word->setAtomic(llvm::AtomicOrdering::Acquire);
+                        cur_word->setAlignment(llvm::Align(8));
+                        cur = cur_word;
+                    } else {
+                        cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version),
+                                              llvm::ArrayRef<llvm::Value*>{});
+                    }
                     auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
                     auto* match = irb->CreateICmpEQ(cur, expected);
                     auto* entry_bb = irb->GetInsertBlock();
@@ -3323,6 +3403,16 @@ struct LLVMBuilder {
                     // Issue #157 Phase 1c: bump the deopt counter.
                     irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc),
                                     llvm::ArrayRef<llvm::Value*>{});
+                    // Issue #4600 §4: same storm attribution as OpCar.
+                    if (fn_note_guard_deopt && fn.name && fn.name[0]) {
+                        auto* note_gv = irb->CreateGlobalString(fn.name, "guard_note_fn_name");
+                        auto* note_zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                        auto* note_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                            note_gv->getValueType(), note_gv,
+                            llvm::ArrayRef<llvm::Constant*>{note_zero, note_zero});
+                        irb->CreateCall(llvm::FunctionCallee(fn_note_guard_deopt),
+                                        llvm::ArrayRef<llvm::Value*>{note_ptr});
+                    }
                     auto* slow_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr),
                                                         llvm::ArrayRef<llvm::Value*>{pair_val});
                     irb->CreateBr(bb_done);
@@ -3984,6 +4074,10 @@ uint64_t aura_exception_fiber_count();
 void aura_exception_clear_all();
 // Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
 uint64_t aura_get_defuse_version();
+// Issue #4600 §5: stable slot address for direct defuse-word loads.
+std::uintptr_t aura_jit_defuse_word_slot_addr();
+// Issue #4600 §4: cold-path guard-deopt attribution (deopt-storm policy).
+void aura_jit_note_guard_deopt(const char* name);
 // Issue #4571: L2 inline pair access (runtime_ssot.cpp / aura_jit_runtime.cpp).
 int64_t aura_jit_pair_inline_ok();
 void* aura_pair_seg_dir_base();
@@ -4511,6 +4605,8 @@ struct AuraJIT::Impl {
         // Issue #3988: Jump back-edge poll (strong in evaluator_fiber_mutation).
         reg("aura_jit_poll_hold_budget_safepoint", (void*)aura_jit_poll_hold_budget_safepoint);
         reg("aura_get_defuse_version", (void*)aura_get_defuse_version);
+        // Issue #4600 §4: car/cdr guard slow-path deopt attribution.
+        reg("aura_jit_note_guard_deopt", (void*)aura_jit_note_guard_deopt);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_cast_op", (void*)aura_cast_op);
@@ -4806,11 +4902,61 @@ struct AuraJIT::Impl {
                 name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
             llvm::Value* is_unsafe = nullptr;
             if (can_epoch) {
-                auto* cur_epoch = builder.irb->CreateCall(
-                    llvm::FunctionCallee(builder.fn_get_current_bridge_epoch), {});
-                auto* stale_i =
-                    builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
-                                            llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
+                // Issue #4600 §7: gate the dual-epoch C calls behind one
+                // acquire load of the fn's DefineVersion word. In assumption
+                // mode (#4569) every path that makes this fn stale bumps
+                // its word (invalidate_function → DefineVersion bump), and
+                // validated cache hits restamp the captured epoch the same
+                // way — word unchanged ⇒ not stale. The epoch calls run only
+                // on the cold moved path (whose locked lookup may still
+                // answer not-stale). Global-epoch mode and
+                // AURA_JIT_PROLOGUE_WORD=0 keep the unconditional prologue.
+                const bool word_gate =
+                    jit_prologue_word_enabled() && !aura::compiler::jit_assume::global_epoch_mode();
+                llvm::Value* stale_i = nullptr;
+                if (word_gate) {
+                    auto* word =
+                        aura::compiler::jit_assume::DefineVersions::instance().word(fn.name);
+                    const auto expected = word->v.load(std::memory_order_acquire);
+                    aura::compiler::jit_assume::stats().prologue_word_armed.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto* wptr = builder.irb->CreateIntToPtr(
+                        builder.c64(reinterpret_cast<std::uintptr_t>(&word->v)),
+                        llvm::PointerType::getUnqual(ctx));
+                    auto* wv = builder.irb->CreateLoad(llvm::Type::getInt64Ty(ctx), wptr);
+                    wv->setAtomic(llvm::AtomicOrdering::Acquire);
+                    wv->setAlignment(llvm::Align(8));
+                    auto* moved = builder.irb->CreateICmpNE(wv, builder.c64(expected));
+                    auto* parent_f = builder.func;
+                    auto* bb_word_ok = llvm::BasicBlock::Create(ctx, "prologue_word_ok", parent_f);
+                    auto* bb_epoch_chk =
+                        llvm::BasicBlock::Create(ctx, "prologue_epoch_chk", parent_f);
+                    auto* bb_stale_join =
+                        llvm::BasicBlock::Create(ctx, "prologue_stale_join", parent_f);
+                    builder.br_likely(builder.irb->CreateNot(moved), bb_word_ok, bb_epoch_chk);
+                    builder.irb->SetInsertPoint(bb_word_ok);
+                    builder.irb->CreateBr(bb_stale_join);
+                    builder.irb->SetInsertPoint(bb_epoch_chk);
+                    auto* cur_epoch = builder.irb->CreateCall(
+                        llvm::FunctionCallee(builder.fn_get_current_bridge_epoch), {});
+                    auto* stale_call =
+                        builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
+                                                llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
+                    builder.irb->CreateBr(bb_stale_join);
+                    builder.irb->SetInsertPoint(bb_stale_join);
+                    auto* stale_phi =
+                        builder.irb->CreatePHI(llvm::Type::getInt32Ty(ctx), 2, "prologue_stale_i");
+                    stale_phi->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
+                                           bb_word_ok);
+                    stale_phi->addIncoming(stale_call, bb_epoch_chk);
+                    stale_i = stale_phi;
+                } else {
+                    auto* cur_epoch = builder.irb->CreateCall(
+                        llvm::FunctionCallee(builder.fn_get_current_bridge_epoch), {});
+                    stale_i =
+                        builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
+                                                llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
+                }
                 // UINT32_MAX → use g_linear_env_id (host sets context before Apply).
                 auto* env_max = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0xFFFFFFFFu);
                 llvm::Value* lin_i = zero32;

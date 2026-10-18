@@ -6557,6 +6557,13 @@ public:
     [[nodiscard]] std::uint64_t defuse_version() const noexcept {
         return defuse_version_.load(std::memory_order_acquire);
     }
+    // Issue #4600 §5: address of the defuse counter for JIT direct loads.
+    // The atomic is a stable member; CompilerService publishes it to the
+    // JIT bridge (aura_jit_set_defuse_word) so car/cdr guards acquire-load
+    // the version without the per-access get_version hook call.
+    [[nodiscard]] const std::atomic<std::uint64_t>* defuse_version_word() const noexcept {
+        return &defuse_version_;
+    }
     // Test-only aliases (stable name for existing tests).
     std::uint64_t defuse_version_for_test() const { return defuse_version(); }
     void bump_defuse_version_for_test() { defuse_version_.fetch_add(1, std::memory_order_acq_rel); }

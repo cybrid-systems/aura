@@ -106,6 +106,7 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
 // Issue #4388: cache-hit republish samples epoch + define-drop generation.
 // Strong defs in aura_jit_runtime.cpp.
 extern "C" void aura_jit_cache_hit_republish_arm(std::uint64_t epoch, std::uint64_t drop_gen);
+extern "C" void aura_jit_set_defuse_word(const std::atomic<std::uint64_t>* w); // #4600
 extern "C" void aura_jit_cache_hit_republish_disarm(void);
 extern "C" int aura_jit_cache_hit_republish_refused(void);
 extern "C" std::uint64_t aura_jit_define_drop_gen(void);
@@ -267,6 +268,9 @@ static void install_lock_and_topcell_hooks_for_eval(aura::compiler::Evaluator* e
         },
         [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->yield_mutation_boundary(); },
         static_cast<void*>(ev));
+    // Issue #4600 §5: publish the defuse atomic's address so JIT car/cdr
+    // guards acquire-load the word directly (no per-access hook call).
+    aura_jit_set_defuse_word(ev->defuse_version_word());
     aura_set_top_cell_getter(
         [](void* e, int64_t idx) -> int64_t {
             auto* evp = static_cast<aura::compiler::Evaluator*>(e);
@@ -4261,6 +4265,16 @@ public:
                             // function but cache entry was compiled without shape_map,
                             // evict and recompile with shape specialization.
                             auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                            // Issue #4600 §4: deopt-storm policy — a fn whose
+                            // guards/prologue deopted N times (AURA_JIT_DEOPT_STORM_N,
+                            // default 3) drops shape speculation for the session:
+                            // megamorphic mark clears stability + bumps the profile
+                            // version, so shape-specialized cache entries miss and
+                            // the next compile is generic.
+                            if (aura::compiler::jit_assume::DeoptStorms::instance().stormed(
+                                    ir_fn.name)) {
+                                shape_profiler_.mark_megamorphic(fn_key);
+                            }
                             if (!cache_it->second.has_shape_map &&
                                 !cache_it->second.spec_declined &&
                                 shape_profiler_.is_stable(fn_key)) {

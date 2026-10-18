@@ -866,6 +866,65 @@ def test_jit_assumption_invalidation_4569():
     print("  ✅ test_jit_assumption_invalidation_4569")
 
 
+def test_jit_prologue_word_and_storm_4600():
+    """Issue #4600 §4/§5/§7: prologue assumption-word gate, direct defuse
+    word on car/cdr guards, and the deopt-storm policy.
+
+    Each `aura --jit-session` run must produce identical values under
+    every gate combination. The word gate arms on named compiles
+    (prologue_word_armed > 0) and stays disarmed under
+    AURA_JIT_PROLOGUE_WORD=0 and in global-epoch mode. ;;storm drives the
+    deopt-storm policy (stormed fn + storm_marks counter) without changing
+    results.
+    """
+    n = 6
+    defs = " ".join(f"(define (f{i} x) (+ x {i}))" for i in range(n))
+    p = f"{defs} (define (g4600 a) (+ (car a) (cdr a))) (g4600 (cons 7 8)) (+ (f0 1) (f5 1))"
+    expected = 7 + 8 + 1 + 6
+
+    def session(env, lines):
+        e = os.environ.copy()
+        e.update(env)
+        r = subprocess.run(
+            [AURA, "--jit-session"],
+            input="\n".join(lines) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=e,
+        )
+        out = r.stdout.splitlines()
+        vals = [x for x in out if re.fullmatch(r"-?\d+", x)]
+        stats = [x for x in out if x.startswith("compiles=")]
+        armed = [int(m.group(1)) for x in stats if (m := re.search(r"prologue_word_armed=(\d+)", x))]
+        marks = [int(m.group(1)) for x in stats if (m := re.search(r"storm_marks=(\d+)", x))]
+        return r, out, vals, armed, marks
+
+    r, out, vals, armed, marks = session(
+        {"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "0"},
+        [p, ";;stats", ";;storm f3", ";;stats", p, ";;stats"],
+    )
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-800:]}"
+    assert vals == [str(expected)] * 2, f"results differ: {vals}"
+    assert armed and armed[0] > 0, f"prologue word gate not armed: {out[-6:]}"
+    assert any("stormed=true" in x for x in out), ";;storm did not storm f3"
+    assert marks and marks[-1] >= 1, f"storm_marks missing: {out[-6:]}"
+
+    for env in (
+        {"AURA_JIT_PROLOGUE_WORD": "0"},
+        {"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "1"},
+    ):
+        r, out, vals, armed, marks = session(env, [p, ";;stats"])
+        assert r.returncode == 0 and vals == [str(expected)], (vals, r.stderr[-400:])
+        assert armed == [0], f"gate armed under {env}: {armed}"
+
+    for env in ({"AURA_JIT_L2": "0"}, {"AURA_JIT_L2": "0", "AURA_JIT_DEFUSE_WORD": "0"}):
+        r, out, vals, armed, marks = session(env, [p, ";;stats"])
+        assert r.returncode == 0 and vals == [str(expected)], (vals, r.stderr[-400:])
+        assert armed and armed[0] > 0
+    print("  ✅ test_jit_prologue_word_and_storm_4600")
+
+
 def test_jit_l1_4570():
     """Issue #4570: L1 lowering (cell scalar replacement, both-fixnum fast
     path, compare+branch fusion, static float slots) keeps --jit output
@@ -1622,6 +1681,7 @@ for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
     test_jit_assumption_invalidation_4569,
+    test_jit_prologue_word_and_storm_4600,
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
     test_jit_l2_4571,
