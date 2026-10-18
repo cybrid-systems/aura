@@ -151,7 +151,7 @@ export inline std::string closest_match_pure(std::string_view name,
 
 // Tagged arg type codes — match the int constants used
 // elsewhere in FFIRuntime for the arg_types array.
-//   1 = Int, 2 = Float, 3 = String, 4 = Opaque
+//   1 = Int, 2 = Float, 3 = String, 4 = Opaque, 5 = Handle:<tag>
 //
 // Issue #4553: slot limits. The old marshaler stopped at 6 arguments in
 // total and silently dropped the rest. ffi_call_by_class now passes up to
@@ -189,6 +189,10 @@ struct FFIMarshalled {
     int bad_arg = -1;
     int bad_kind = 0;
     bool arity_mismatch = false;
+    // Issue #4597: an Opaque whose generation does not match the slot, and
+    // the tag a Handle:<tag> argument required.
+    bool bad_stale = false;
+    std::string bad_tag;
     [[nodiscard]] bool ok() const noexcept { return bad_arg < 0 && !arity_mismatch; }
 };
 
@@ -201,6 +205,8 @@ export inline const char* ffi_kind_name(int kind) noexcept {
             return "String";
         case 4:
             return "Opaque";
+        case 5:
+            return "Handle";
         default:
             return "Int";
     }
@@ -237,7 +243,8 @@ export inline const char* ffi_value_kind_name(const types::EvalValue& v) noexcep
 //
 // arg_type codes: 1 = Int (also any unknown code), 2 = Float,
 // 3 = String (looks up idx in string_heap, copies into str_bufs),
-// 4 = Opaque (looks up idx in opaque_heap, passes the void*).
+// 4 = Opaque (looks up the slot in opaque_heap, passes the void*).
+// 5 = Handle:<tag> (a live native handle whose tag matches).
 //
 // Issue #4551: each argument is checked against its declared kind
 // before anything is passed: Int takes an Int; Float takes a Float or
@@ -247,10 +254,25 @@ export inline const char* ffi_value_kind_name(const types::EvalValue& v) noexcep
 // type error). The argument count must equal the declared count.
 //
 // All inputs are read-only spans. No `this` access.
-export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalValue> args,
-                                                  std::span<const int> arg_types,
-                                                  std::span<const std::string> string_heap,
-                                                  std::span<void* const> opaque_heap) {
+//
+// Issue #4597: opaque_generation, when non-empty, rejects an Opaque whose
+// generation does not match (bad_stale) instead of passing the new tenant.
+// An empty span skips that check so unit tests with no generation table
+// keep today's behavior. The slot is always the low 32 bits. A slot past
+// the heap still passes 0. handle_tags is parallel to arg_types for kind 5.
+// handle_probe->match reports whether a packed index is a live handle of
+// that tag and writes its pointer.
+export struct FfiHandleProbe {
+    void* ctx = nullptr;
+    bool (*match)(void* ctx, std::uint64_t packed, std::string_view tag, void*& ptr) = nullptr;
+};
+
+export inline FFIMarshalled
+ffi_marshal_args_pure(std::span<const types::EvalValue> args, std::span<const int> arg_types,
+                      std::span<const std::string> string_heap, std::span<void* const> opaque_heap,
+                      std::span<const std::uint32_t> opaque_generation = {},
+                      std::span<const std::string> handle_tags = {},
+                      FfiHandleProbe handle_probe = {}) {
     FFIMarshalled out{};
     if (args.size() != arg_types.size() || args.size() > kFfiMaxArgs) {
         out.arity_mismatch = true;
@@ -293,9 +315,22 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
             out.i_vals[i] = reinterpret_cast<std::int64_t>(out.s_vals[i]);
         } else if (atype == 4) { // Opaque (void*)
             if (types::is_opaque(a)) {
-                auto oi = types::as_opaque_idx(a);
-                out.i_vals[i] =
-                    oi < opaque_heap.size() ? reinterpret_cast<std::int64_t>(opaque_heap[oi]) : 0;
+                const auto packed = types::as_opaque_idx(a);
+                const auto slot = types::opaque_slot_index(packed);
+                const auto gen = types::opaque_generation_of(packed);
+                // Slot past the heap stays a 0 pointer (today's out-of-range).
+                // A generation mismatch on a live slot must not pass the new
+                // tenant. An empty generation span skips the check.
+                if (!opaque_generation.empty() && slot < opaque_heap.size() &&
+                    (slot >= opaque_generation.size() || opaque_generation[slot] != gen)) {
+                    out.bad_arg = static_cast<int>(i);
+                    out.bad_kind = atype;
+                    out.bad_stale = true;
+                    return out;
+                }
+                out.i_vals[i] = slot < opaque_heap.size()
+                                    ? reinterpret_cast<std::int64_t>(opaque_heap[slot])
+                                    : 0;
             } else if (types::is_int(a)) {
                 out.i_vals[i] = types::as_int(a);
             } else {
@@ -303,6 +338,19 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
                 out.bad_kind = atype;
                 return out;
             }
+        } else if (atype == 5) { // Handle:<tag>
+            const std::string tag = i < handle_tags.size() ? handle_tags[i] : std::string{};
+            void* ptr = nullptr;
+            const bool matched =
+                types::is_opaque(a) && !tag.empty() && handle_probe.match != nullptr &&
+                handle_probe.match(handle_probe.ctx, types::as_opaque_idx(a), tag, ptr);
+            if (!matched) {
+                out.bad_arg = static_cast<int>(i);
+                out.bad_kind = 5;
+                out.bad_tag = tag.empty() ? std::string{"handle"} : tag;
+                return out;
+            }
+            out.i_vals[i] = reinterpret_cast<std::int64_t>(ptr);
         } else { // Int (atype 1 or unknown)
             if (!types::is_int(a)) {
                 out.bad_arg = static_cast<int>(i);

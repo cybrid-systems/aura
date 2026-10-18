@@ -168,14 +168,16 @@ void FFIRuntime::register_primitives(RegisterFn add,
         auto name = (*sh)[types::as_string_idx(a[1])];
         int ret_type = 1;
         std::vector<int> arg_types;
+        std::vector<std::string> handle_tags;
         if (types::is_string(a[2])) {
             auto sig = (*sh)[types::as_string_idx(a[2])];
             std::string sig_err;
-            if (!parse_ffi_sig(sig, ret_type, arg_types, &sig_err)) {
+            if (!parse_ffi_sig(sig, ret_type, arg_types, &sig_err, &handle_tags)) {
                 std::println(std::cerr, "c-func: invalid signature '{}'", sig);
                 std::println(std::cerr, "  reason: {}", sig_err);
                 std::println(std::cerr, "  expected: \"(ArgType) -> RetType\"");
-                std::println(std::cerr, "  valid types: Int, Float, String, Opaque, Void");
+                std::println(std::cerr,
+                             "  valid types: Int, Float, String, Opaque, Handle:<tag>, Void");
                 return make_int(0);
             }
         } else if (types::is_int(a[2])) {
@@ -191,11 +193,14 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // Issue #4553: reject a signature the call path cannot pass. The
         // old marshaler accepted any arity and silently dropped arguments
         // past the 6th; apply_closure now passes up to 16 integer-class
-        // (Int / String / Opaque) and 8 Float slots (evaluator_pure.ixx
-        // kFfiMaxIntSlots / kFfiMaxSseSlots). Void is only valid as the
-        // whole argument list ("(Void) -> Int" is a nullary function).
-        if (arg_types.size() == 1 && arg_types[0] == 0)
+        // (Int / String / Opaque / Handle:tag) and 8 Float slots
+        // (evaluator_pure.ixx kFfiMaxIntSlots / kFfiMaxSseSlots). Void is
+        // only valid as the whole argument list ("(Void) -> Int" is a
+        // nullary function). Kind 5 counts as integer-class.
+        if (arg_types.size() == 1 && arg_types[0] == 0) {
             arg_types.clear();
+            handle_tags.clear();
+        }
         {
             std::size_t n_int = 0, n_sse = 0;
             bool void_arg = false;
@@ -214,7 +219,8 @@ void FFIRuntime::register_primitives(RegisterFn add,
                 else
                     std::println(std::cerr,
                                  "  reason: {} integer-class and {} Float arguments; at most {} "
-                                 "integer-class (Int, String, Opaque) and {} Float are supported",
+                                 "integer-class (Int, String, Opaque, Handle:tag) and {} Float are "
+                                 "supported",
                                  n_int, n_sse, kFfiSigMaxIntSlots, kFfiSigMaxSseSlots);
                 return make_int(0);
             }
@@ -231,7 +237,13 @@ void FFIRuntime::register_primitives(RegisterFn add,
             return make_int(0);
         }
         auto fidx = funcs_.size();
-        funcs_.push_back({fn_ptr, name, ret_type, std::move(arg_types)});
+        FFIFunc rec;
+        rec.fn_ptr = fn_ptr;
+        rec.name = name;
+        rec.ret_type = ret_type;
+        rec.arg_types = std::move(arg_types);
+        rec.arg_handle_tags = std::move(handle_tags);
+        funcs_.push_back(std::move(rec));
         // Issue #4532: FFI ids carry their own namespace bit. The old
         // (1ULL << 63) tag died in the closure payload's pool shift — the
         // raw index then collided with TW closure ids in apply_closure.
@@ -252,15 +264,14 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // the match) instead of growing opaque_heap_ by one per call.
         if (auto reuse = reuse_opaque_alias(oh, p))
             return types::make_opaque(*reuse);
-        auto idx = oh->size();
-        oh->push_back(p);
+        const auto packed = mint_opaque_slot(*oh, p);
         if (p != nullptr)
-            opaque_alias_slot_[p] = idx;
+            opaque_alias_slot_[p] = packed;
         // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
         // Not an arena create. Densify-tracked aliases in opaque_heap_
         // are slot-covered at known-root walk (#3057).
         aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
-        return types::make_opaque(idx);
+        return types::make_opaque(packed);
     });
 
     add("c-opaque?", [this](std::span<const EvalValue> a) -> EvalValue {
@@ -272,10 +283,16 @@ void FFIRuntime::register_primitives(RegisterFn add,
         FfiRenderHotpathGuard hp;
         if (a.empty() || !types::is_opaque(a[0]))
             return make_int(0);
-        auto idx = types::as_opaque_idx(a[0]);
-        if (idx >= oh->size())
+        const auto packed = types::as_opaque_idx(a[0]);
+        // An index past the heap is not a recycled slot (unit tests and a
+        // cleared heap). A generation mismatch must not return the new
+        // tenant's pointer.
+        if (types::opaque_slot_index(packed) >= oh->size())
             return make_int(0);
-        return make_int(reinterpret_cast<std::int64_t>((*oh)[idx]));
+        std::uint32_t slot = 0;
+        if (!locate_opaque(*oh, packed, slot))
+            return raise_stale_opaque("c-opaque->int: stale opaque (the slot was recycled)");
+        return make_int(reinterpret_cast<std::int64_t>((*oh)[slot]));
     });
 
     add("c-alloc", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
@@ -288,25 +305,31 @@ void FFIRuntime::register_primitives(RegisterFn add,
         if (size == 0)
             return make_int(0);
         auto* ptr = std::calloc(1, size);
-        auto idx = oh->size();
-        oh->push_back(ptr);
-        // Issue #980: track allocation size for bounds checks.
+        // Issue #980: track allocation size for bounds checks. Record it
+        // before the slot is published.
         opaque_sizes_[ptr] = size;
+        const auto packed = mint_opaque_slot(*oh, ptr);
         // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: libc-heap
         // calloc is not densify-tracked. Survive densify as-is.
         aura::core::lifetime::note_ffi_opaque_create_exempt("libc-heap");
-        return types::make_opaque(idx);
+        return types::make_opaque(packed);
     });
 
     add("c-free", [this, oh](std::span<const EvalValue> a) -> EvalValue {
         FfiRenderHotpathGuard hp;
         if (a.empty() || !types::is_opaque(a[0]))
             return make_void();
-        auto idx = types::as_opaque_idx(a[0]);
-        if (idx >= oh->size())
+        const auto packed = types::as_opaque_idx(a[0]);
+        // Past the heap: nothing to free. A generation mismatch is a stale
+        // value — do not free, take, or count a double-free of the new tenant.
+        if (types::opaque_slot_index(packed) >= oh->size())
             return make_void();
-        void* ptr = (*oh)[idx];
-        // Issue #1230: double-free / free-unknown detection.
+        std::uint32_t slot = 0;
+        if (!locate_opaque(*oh, packed, slot))
+            return make_void();
+        void* ptr = (*oh)[slot];
+        // Issue #1230: double-free of a still-generation-matching null slot.
+        // A recycled slot's second c-free misses above (generation bump).
         if (ptr == nullptr) {
             ++double_free_total_;
             return make_void();
@@ -314,7 +337,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // Issue #4556: c-free of a handle closes it (finalizer once, no
         // libc free of a foreign pointer); c-free of a view only retires
         // the view — the owner's memory is not the view's to free.
-        if (is_native_handle(idx)) {
+        if (is_native_handle(packed)) {
             void* fin = nullptr;
             void* hp = nullptr;
             bool closed = false;
@@ -322,17 +345,17 @@ void FFIRuntime::register_primitives(RegisterFn add,
                 std::unique_lock<std::recursive_mutex> lk;
                 if (opaque_alloc_mu_ != nullptr)
                     lk = std::unique_lock<std::recursive_mutex>(*opaque_alloc_mu_);
-                closed = take_native_handle(*oh, idx, fin, hp);
+                closed = take_native_handle(*oh, packed, fin, hp);
             }
             if (closed)
                 run_native_finalizer(fin, hp);
             return make_void();
         }
-        if (is_native_view(idx)) {
+        if (is_native_view(packed)) {
             std::unique_lock<std::recursive_mutex> lk;
             if (opaque_alloc_mu_ != nullptr)
                 lk = std::unique_lock<std::recursive_mutex>(*opaque_alloc_mu_);
-            retire_native_view(*oh, idx);
+            retire_native_view(*oh, packed);
             return make_void();
         }
         auto it = opaque_sizes_.find(ptr);
@@ -346,7 +369,9 @@ void FFIRuntime::register_primitives(RegisterFn add,
             opaque_sizes_.erase(it);
         }
         std::free(ptr);
-        (*oh)[idx] = nullptr;
+        // recycle drops the alias from the pointer still stored in the slot,
+        // then nulls it and bumps the generation.
+        recycle_opaque_slot(*oh, packed);
         return make_void();
     });
 
@@ -377,8 +402,12 @@ void FFIRuntime::register_primitives(RegisterFn add,
             (*coverage_counters)[8]++;
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
             return make_void();
-        auto oi = types::as_opaque_idx(a[0]);
+        const auto base_packed = types::as_opaque_idx(a[0]);
         if (types::as_int(a[1]) < 0)
+            return make_void();
+        // A stale base must not memcpy through the new tenant.
+        std::uint32_t oi = 0;
+        if (!locate_opaque(*oh, base_packed, oi))
             return make_void();
         // Issue #4396: production_defaults_active and
         // densify_in_flight_for(densify_eval_id_) or !window_would_allow_mutate
@@ -389,6 +418,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // Issue #4416: copy (*oh)[oi] under opaque_alloc_mu_, drop it, then
         // bind_temporary_moving_live_ptr_any_arena + own_noted across memcpy.
         // A later production_c_struct_densify_old_refuse fail-closes.
+        // oi is the raw slot, not the packed index.
         aura::ast::TemporaryMovingLivePtrCanary base_canary;
         char* base = nullptr;
         if (!production_c_struct_hold_base(oh, oi, opaque_alloc_mu_, densify_eval_id_, base,
@@ -432,8 +462,18 @@ void FFIRuntime::register_primitives(RegisterFn add,
                     reinterpret_cast<void**>(base + offset), pattern);
             }
         } else if (types::is_opaque(val)) {
-            auto vi = types::as_opaque_idx(val);
-            auto* ptr = vi < oh->size() ? (*oh)[vi] : nullptr;
+            const auto vpacked = types::as_opaque_idx(val);
+            const auto vslot = types::opaque_slot_index(vpacked);
+            void* ptr = nullptr;
+            std::uint32_t vi = 0;
+            if (vslot >= oh->size()) {
+                ptr = nullptr; // out of range: write a null, as before
+            } else if (!locate_opaque(*oh, vpacked, vi)) {
+                // Stale: do not store the new tenant's pointer.
+                return make_void();
+            } else {
+                ptr = (*oh)[vi];
+            }
             if (!need(sizeof(ptr)))
                 return make_void();
             std::memcpy(base + offset, &ptr, sizeof(ptr));
@@ -465,8 +505,12 @@ void FFIRuntime::register_primitives(RegisterFn add,
             (*coverage_counters)[8]++;
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) || !types::is_int(a[2]))
             return make_int(0);
-        auto oi = types::as_opaque_idx(a[0]);
+        const auto base_packed = types::as_opaque_idx(a[0]);
         if (types::as_int(a[1]) < 0)
+            return make_int(0);
+        // A stale base must not memcpy through the new tenant.
+        std::uint32_t oi = 0;
+        if (!locate_opaque(*oh, base_packed, oi))
             return make_int(0);
         // Issue #4396: production_defaults_active and
         // densify_in_flight_for(densify_eval_id_) or !window_would_allow_mutate
@@ -478,6 +522,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // Issue #4416: copy (*oh)[oi] under opaque_alloc_mu_, drop it, then
         // bind_temporary_moving_live_ptr_any_arena + own_noted across memcpy.
         // A later production_c_struct_densify_old_refuse fail-closes.
+        // oi is the raw slot, not the packed index.
         aura::ast::TemporaryMovingLivePtrCanary base_canary;
         char* base = nullptr;
         if (!production_c_struct_hold_base(oh, oi, opaque_alloc_mu_, densify_eval_id_, base,
@@ -527,8 +572,8 @@ void FFIRuntime::register_primitives(RegisterFn add,
             // native struct) reuses the slot minted for the same address.
             if (auto reuse = reuse_opaque_alias(oh, ptr))
                 return types::make_opaque(*reuse);
-            auto ni = oh->size();
-            oh->push_back(ptr);
+            const auto ni = mint_opaque_slot(*oh, ptr);
+            const auto ni_slot = types::opaque_slot_index(ni);
             // Issue #3022 / #3057 / #3274 / #3533: opaque-struct-copy may alias
             // an arena-tracked object (densify-tracked). Under production Moving
             // the alias joins the pin/slot/EXEMPT triad via slot-rewrite cover
@@ -537,10 +582,11 @@ void FFIRuntime::register_primitives(RegisterFn add,
             // Required + no slot fail-closes at create (no live untracked ptr).
             // GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
             // note_ffi_opaque_alias_densify_cover (via required helper)
-            void** slot = ni < oh->size() ? &(*oh)[ni] : nullptr;
+            void** slot = ni_slot < oh->size() ? &(*oh)[ni_slot] : nullptr;
             if (!aura::ast::opaque_heap_element_cover_or_required_fail(
                     ptr, slot, "opaque-struct-copy", /*enqueue_slot=*/!moving_gate)) {
-                oh->pop_back();
+                // A freelist mint must not pop_back the heap's tail.
+                abandon_opaque_slot(*oh, ni);
                 return make_int(0);
             }
             if (ptr != nullptr)
@@ -606,6 +652,124 @@ void FFIRuntime::register_primitives(RegisterFn add,
             return make_int(n);
         });
     }
+}
+
+std::uint64_t FFIRuntime::mint_opaque_slot(std::vector<void*>& oh, void* p) {
+    sync_opaque_generation(oh.size());
+    while (!opaque_freelist_.empty()) {
+        const auto slot = opaque_freelist_.back();
+        opaque_freelist_.pop_back();
+        if (static_cast<std::size_t>(slot) >= oh.size())
+            continue;
+        if (slot < opaque_on_freelist_.size())
+            opaque_on_freelist_[slot] = 0;
+        oh[slot] = p;
+        const auto gen = slot < opaque_generation_.size() ? opaque_generation_[slot] : 0u;
+        return types::pack_opaque_index(slot, gen);
+    }
+    const auto slot = static_cast<std::uint32_t>(oh.size());
+    oh.push_back(p);
+    opaque_generation_.push_back(0);
+    opaque_on_freelist_.push_back(0);
+    return types::pack_opaque_index(slot, 0);
+}
+
+void FFIRuntime::abandon_opaque_slot(std::vector<void*>& oh, std::uint64_t packed) {
+    const auto slot = types::opaque_slot_index(packed);
+    const auto gen = types::opaque_generation_of(packed);
+    const bool on_list = slot < opaque_on_freelist_.size() && opaque_on_freelist_[slot] != 0;
+    const bool fresh_tail = static_cast<std::size_t>(slot) + 1 == oh.size() && gen == 0 && !on_list;
+    if (fresh_tail) {
+        if (oh[slot] != nullptr)
+            drop_alias_for_slot(oh[slot], slot);
+        oh.pop_back();
+        if (opaque_generation_.size() > oh.size())
+            opaque_generation_.resize(oh.size());
+        if (opaque_on_freelist_.size() > oh.size())
+            opaque_on_freelist_.resize(oh.size());
+        return;
+    }
+    recycle_opaque_slot(oh, packed);
+}
+
+void FFIRuntime::recycle_opaque_slot(std::vector<void*>& oh, std::uint64_t packed) {
+    const auto slot = types::opaque_slot_index(packed);
+    if (static_cast<std::size_t>(slot) >= oh.size())
+        return;
+    if (!generation_matches(slot, types::opaque_generation_of(packed)))
+        return;
+    sync_opaque_generation(oh.size());
+    if (opaque_on_freelist_[slot] != 0)
+        return;
+    drop_alias_for_slot(oh[slot], slot);
+    oh[slot] = nullptr;
+    auto& g = opaque_generation_[slot];
+    if (g >= kOpaqueGenMax)
+        return;
+    ++g;
+    opaque_freelist_.push_back(slot);
+    opaque_on_freelist_[slot] = 1;
+}
+
+std::vector<std::pair<void*, void*>>
+FFIRuntime::drain_native_finalizers(const std::vector<void*>& oh) {
+    std::vector<std::pair<void*, void*>> out;
+    for (const auto& [slot, h] : native_handles_) {
+        if (h.finalizer == nullptr || slot >= oh.size() || oh[slot] == nullptr)
+            continue;
+        out.emplace_back(h.finalizer, oh[slot]);
+        ++native_finalizers_run_;
+    }
+    native_views_.clear();
+    native_handles_.clear();
+    opaque_alias_slot_.clear();
+    opaque_generation_.clear();
+    opaque_freelist_.clear();
+    opaque_on_freelist_.clear();
+    return out;
+}
+
+void FFIRuntime::mark_live_view_owners(std::vector<std::uint8_t>& seen) const {
+    for (const auto& [slot, v] : native_views_) {
+        if (slot >= seen.size() || seen[slot] == 0)
+            continue;
+        if (v.owner >= seen.size())
+            continue;
+        if (opaque_generation_at(v.owner) != v.owner_gen)
+            continue;
+        seen[v.owner] = 1;
+    }
+}
+
+std::vector<std::pair<void*, void*>>
+FFIRuntime::take_unreachable_handles(std::vector<void*>& oh,
+                                     const std::vector<std::uint8_t>& seen) {
+    std::vector<std::size_t> doomed;
+    doomed.reserve(native_handles_.size());
+    for (const auto& [slot, h] : native_handles_) {
+        (void)h;
+        if (slot >= seen.size() || seen[slot] != 0)
+            continue;
+        doomed.push_back(slot);
+    }
+    std::vector<std::pair<void*, void*>> out;
+    for (const auto slot : doomed) {
+        if (slot >= oh.size()) {
+            native_handles_.erase(slot);
+            continue;
+        }
+        const auto gen = opaque_generation_at(slot);
+        const auto packed = types::pack_opaque_index(static_cast<std::uint32_t>(slot), gen);
+        void* fin = nullptr;
+        void* ptr = nullptr;
+        if (!take_native_handle(oh, packed, fin, ptr)) {
+            native_handles_.erase(slot);
+            continue;
+        }
+        if (fin != nullptr && ptr != nullptr)
+            out.emplace_back(fin, ptr);
+    }
+    return out;
 }
 
 } // namespace aura::compiler

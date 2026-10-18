@@ -1018,19 +1018,46 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // from ffi_runtime_.
             std::span<const std::string> string_heap_view(string_heap_.data(), string_heap_.size());
             std::span<void* const> opaque_heap_view(opaque_heap_.data(), opaque_heap_.size());
+            // Issue #4597: Handle:<tag> asks FFIRuntime whether the packed
+            // index is a live handle of that tag. The probe is a stack
+            // context; the call does not outlive it.
+            struct HandleProbeCtx {
+                FFIRuntime* rt = nullptr;
+                const std::vector<void*>* oh = nullptr;
+            };
+            HandleProbeCtx handle_probe_ctx{&ffi_runtime_, &opaque_heap_};
             auto marshalled = aura::compiler::pure::ffi_marshal_args_pure(
-                args, arg_types, string_heap_view, opaque_heap_view);
+                args, arg_types, string_heap_view, opaque_heap_view,
+                ffi_runtime_.opaque_generations(), ff.arg_handle_tags,
+                aura::compiler::pure::FfiHandleProbe{
+                    &handle_probe_ctx,
+                    [](void* ctx, std::uint64_t packed, std::string_view tag, void*& ptr) -> bool {
+                        auto* c = static_cast<HandleProbeCtx*>(ctx);
+                        return c->rt->live_tagged_handle(*c->oh, packed, tag, ptr);
+                    }});
             // Issue #4551: a tag that does not match the declared kind (or
             // a wrong argument count) is a catchable type error; nothing is
             // passed to native code. An Int used to reach a String slot as
             // a raw pointer (SIGSEGV) and a String an Int slot as its heap
-            // index.
+            // index. Issue #4597: a stale Opaque and a Handle:<tag> mismatch
+            // take the same path, with their own sentences.
             if (!marshalled.ok()) {
                 std::string msg;
                 if (marshalled.arity_mismatch) {
                     msg = std::format("c-func {}: expected {} argument{}, got {}", ff.name,
                                       arg_types.size(), arg_types.size() == 1 ? "" : "s",
                                       args.size());
+                } else if (marshalled.bad_stale) {
+                    const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
+                    msg =
+                        std::format("c-func {}: argument {}: stale opaque (the slot was recycled)",
+                                    ff.name, bi + 1);
+                } else if (marshalled.bad_kind == 5) {
+                    const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
+                    msg = std::format(
+                        "c-func {}: argument {}: This argument must be an `{}` handle, got {}",
+                        ff.name, bi + 1, marshalled.bad_tag,
+                        aura::compiler::pure::ffi_value_kind_name(args[bi]));
                 } else {
                     const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
                     msg =
@@ -1092,7 +1119,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     auto* raw = reinterpret_cast<void*>(result_i);
                     const bool moving_gate = aura::ast::moving_compact_feature_enabled() != 0;
                     bool cover_ok = false;
-                    std::size_t oi = 0;
+                    std::uint64_t oi = 0;
                     {
                         std::unique_lock<std::recursive_mutex> moving_alloc(alloc_storage_lock_,
                                                                             std::defer_lock);
@@ -1103,8 +1130,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             moving_rewrite.lock();
                             raw = densify_rewrite_lookup_locked_(raw);
                         }
-                        oi = opaque_heap_.size();
-                        opaque_heap_.push_back(raw);
+                        oi = ffi_runtime_.mint_opaque_slot(opaque_heap_, raw);
                         // Issue #3022 / #3057 / #3274 / #3533: FFI return may alias
                         // an arena-tracked object (densify-tracked). Under production
                         // Moving the alias joins the pin/slot/EXEMPT triad via
@@ -1114,11 +1140,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         // at create (no live untracked ptr).
                         // GENERAL_OBJECT_PIN_EXEMPT: ffi-return-external
                         // note_ffi_opaque_alias_densify_cover (via required helper)
-                        void** slot = oi < opaque_heap_.size() ? &opaque_heap_[oi] : nullptr;
+                        const auto si = types::opaque_slot_index(oi);
+                        void** slot = si < opaque_heap_.size() ? &opaque_heap_[si] : nullptr;
                         cover_ok = aura::ast::opaque_heap_element_cover_or_required_fail(
                             raw, slot, "ffi-return-external", /*enqueue_slot=*/!moving_gate);
                         if (!cover_ok)
-                            opaque_heap_.pop_back();
+                            ffi_runtime_.abandon_opaque_slot(opaque_heap_, oi);
                     }
                     if (!cover_ok) {
                         auto es = push_string_heap("opaque-heap-pin-required");
