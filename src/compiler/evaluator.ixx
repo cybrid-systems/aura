@@ -354,6 +354,13 @@ public:
         }
         const std::size_t slot = ordered_names_.size();
         ordered_names_.push_back(name);
+        // Issue #4599: after finalize_hot_table the effect-mask vectors are
+        // dense. A later add() appends one unknown slot. The initial
+        // registration leaves them empty so finalize sizes them once.
+        if (!effect_known_.empty() && slot == effect_known_.size()) {
+            effect_known_.push_back(0);
+            effect_mask_.push_back(0);
+        }
         const bool is_hot = (meta.perf_tier == kPrimPerfHot);
         meta_.push_back(std::move(meta));
         fn_slots_.push_back(fn);
@@ -420,6 +427,9 @@ public:
         const auto slot = slot_for_name(name);
         if (slot < meta_.size())
             meta_[slot] = std::move(meta);
+        // Issue #4599: meta backfill changes the mask. Drop the cached bit.
+        if (slot < effect_known_.size())
+            effect_known_[slot] = 0;
         // Keep hot map coherent when tier is backfilled later.
         if (slot < meta_.size() && slot < ordered_names_.size() && slot < fn_slots_.size()) {
             if (meta_[slot].perf_tier == kPrimPerfHot)
@@ -431,6 +441,10 @@ public:
     // Issue #1356: rebuild HotTierTable from meta_ after full registration.
     // Issue #1357: wrap hot PrimFn so IR + tree-walker paths both record latency.
     void finalize_hot_table() {
+        // Issue #4599: size once so hot fills are in-place stores, including
+        // a cached 0 (pure prims). Known bits start clear.
+        effect_known_.assign(ordered_names_.size(), 0);
+        effect_mask_.assign(ordered_names_.size(), 0);
         hot_map_.clear();
         hot_entries_.clear();
         hot_timing_held_.clear();
@@ -523,6 +537,23 @@ public:
             return false;
         return is_render_critical_meta(meta_[slot]);
     }
+    // Issue #4599: effective_required_effects per slot, including 0.
+    // A 0 meta used to re-infer (~40 prefix tests) on every dispatch.
+    // Non-const: the first miss fills the slot. Past the sized table,
+    // compute and do not store (registration race / unknown slot).
+    std::uint16_t cached_required_effects(std::size_t slot) {
+        if (slot >= meta_.size() || slot >= ordered_names_.size())
+            return 0;
+        if (slot < effect_known_.size() && effect_known_[slot])
+            return effect_mask_[slot];
+        const auto req = effective_required_effects(
+            ordered_names_[slot], meta_[slot].required_effects, meta_[slot].security_exempt);
+        if (slot < effect_known_.size()) {
+            effect_mask_[slot] = req;
+            effect_known_[slot] = 1;
+        }
+        return req;
+    }
 
 public:
     // Transparent hash so lookup_cstr / slot_for_name / Env avoid temporary std::string
@@ -554,6 +585,9 @@ private:
     std::vector<std::string> ordered_names_;
     std::vector<PrimMeta> meta_;
     std::vector<PrimFn> fn_slots_;
+    // Issue #4599: parallel to ordered_names_. effect_known_ 0 = uncached.
+    std::vector<std::uint8_t> effect_known_;
+    std::vector<std::uint16_t> effect_mask_;
     // Issue #4261: owns original hot PrimFn bodies for SBO timing wraps.
     std::vector<std::unique_ptr<PrimFn>> hot_timing_held_;
 };
@@ -846,6 +880,18 @@ public:
         for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
             symid_index_[bindings_symid_[i].first] = i;
     }
+    // Issue #4599: newest local binding for s, copied. ≤8 bindings scan
+    // backwards (no hash). A void cell is still a hit — the caller decides.
+    [[nodiscard]] std::optional<types::EvalValue> local_symid_last(aura::ast::SymId s) const;
+    // Issue #4599: string mirror and symid array stayed the same length, so
+    // a symid hit agrees with Env::lookup's string-first probe.
+    [[nodiscard]] bool binding_mirrors_aligned() const noexcept {
+        return bindings_.empty() || bindings_.size() == bindings_symid_.size();
+    }
+    // Issue #4599: overwrite param slots of a reused self-TCO frame.
+    // Refuses a length, symbol, or linear-state mismatch.
+    bool overwrite_param_slots(std::span<const aura::ast::SymId> syms,
+                               std::span<const types::EvalValue> vals);
     // Issue #1539: mutable linear ownership SoA (materialize_call_env copy).
     std::vector<std::uint8_t>& bindings_linear_ownership_state_mut() {
         return bindings_linear_ownership_state_;
@@ -2048,6 +2094,12 @@ public:
     Primitives& primitives() { return primitives_; }
     const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
+    // Issue #4599: a bind or unbind on top_ invalidates cached prim/global
+    // resolutions. set! does not (cells are re-read; non-cells are not cached).
+    void note_top_binding_changed() noexcept {
+        if (++top_bind_gen_ == 0)
+            top_bind_gen_ = 1;
+    }
     // Issue #128: span-friendly read-only view of cells.
     // Replaces `const std::vector<types::EvalValue>&` with
     // `std::span<const types::EvalValue>` for zero-overhead
@@ -7302,6 +7354,7 @@ private:
             return;
         float_intern_by_node_.clear();
         float_intern_flat_ = f;
+        clear_name_res_cache();
     }
     const ast::StringPool* sym_intern_pool_ = nullptr;
     std::uint64_t intern_pool_gen_ = 0;
@@ -7311,6 +7364,7 @@ private:
             return;
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
+        clear_name_res_cache();
         sym_intern_pool_ = p;
         intern_pool_gen_ = gen;
     }
@@ -7318,10 +7372,85 @@ private:
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
         float_intern_by_node_.clear(); // Issue #4524: flat-scoped float literal intern
+        clear_name_res_cache();
         sym_intern_pool_ = nullptr;
         intern_pool_gen_ = 0;
         float_intern_flat_ = nullptr;
     }
+    // Issue #4599: host-only name resolution, keyed by node id. Not a FlatAST
+    // column. Misses are not stored. Cell ids are re-read; values are not
+    // cached. Fibers keep the full Env::lookup (#4595).
+    struct NameResEntry {
+        enum class Kind : std::uint8_t { Empty = 0, Prim = 1, Cell = 2, PrimCall = 3 };
+        Kind kind = Kind::Empty;
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        std::uint32_t aux = 0;
+        std::uint64_t top_gen = 0;
+        const CapSnapshot* cap = nullptr;
+        std::uint8_t nchild = 0;
+        std::array<aura::ast::NodeId, 8> child{};
+    };
+    std::vector<NameResEntry> name_res_by_node_;
+    // 0 unknown, 1 raw value, 2 cell. Flat-scoped, cleared with the name cache.
+    std::vector<std::uint8_t> let_bind_kind_;
+    std::uint64_t top_bind_gen_ = 1;
+    void clear_name_res_cache() noexcept {
+        name_res_by_node_.clear();
+        let_bind_kind_.clear();
+    }
+    [[nodiscard]] std::optional<EvalResult> try_eval_flat_hot(aura::ast::FlatAST& flat,
+                                                              aura::ast::StringPool& pool,
+                                                              aura::ast::NodeId id, const Env& env);
+    void remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym, const Env& env,
+                               const types::EvalValue& bound);
+    void remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId callee_id,
+                            aura::ast::SymId sym, std::uint32_t slot, const Env& env,
+                            std::span<const aura::ast::NodeId> children);
+    [[nodiscard]] std::uint8_t let_bind_kind_cached(aura::ast::FlatAST& flat, aura::ast::NodeId id,
+                                                    aura::ast::SymId name, aura::ast::NodeId body);
+    // Issue #4599: self-TCO reuses the call frame. ClosureId 0 is a live id,
+    // so the bool is the sentinel. Nested eval_flat saves and restores it.
+    bool tco_reuse_live_ = false;
+    ClosureId tco_reuse_cid_ = 0;
+    const Env* tco_reuse_env_ = nullptr;
+    std::uint32_t tco_reuse_n_ = 0;
+    std::uint64_t tco_reuse_bridge_ = 0;
+    std::uint64_t tco_reuse_defuse_ = 0;
+    std::uint64_t tco_reuse_env_gen_ = 0;
+    std::array<aura::ast::SymId, 8> tco_reuse_syms_{};
+    struct TcoReuseGuard {
+        Evaluator* ev;
+        bool live;
+        ClosureId cid;
+        const Env* envp;
+        std::uint32_t n;
+        std::uint64_t bridge;
+        std::uint64_t defuse;
+        std::uint64_t env_gen;
+        std::array<aura::ast::SymId, 8> syms;
+        explicit TcoReuseGuard(Evaluator* e) noexcept
+            : ev(e)
+            , live(e->tco_reuse_live_)
+            , cid(e->tco_reuse_cid_)
+            , envp(e->tco_reuse_env_)
+            , n(e->tco_reuse_n_)
+            , bridge(e->tco_reuse_bridge_)
+            , defuse(e->tco_reuse_defuse_)
+            , env_gen(e->tco_reuse_env_gen_)
+            , syms(e->tco_reuse_syms_) {}
+        ~TcoReuseGuard() {
+            ev->tco_reuse_live_ = live;
+            ev->tco_reuse_cid_ = cid;
+            ev->tco_reuse_env_ = envp;
+            ev->tco_reuse_n_ = n;
+            ev->tco_reuse_bridge_ = bridge;
+            ev->tco_reuse_defuse_ = defuse;
+            ev->tco_reuse_env_gen_ = env_gen;
+            ev->tco_reuse_syms_ = syms;
+        }
+        TcoReuseGuard(const TcoReuseGuard&) = delete;
+        TcoReuseGuard& operator=(const TcoReuseGuard&) = delete;
+    };
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
     // Issue #4456 vs try-catch contract (#try-catch-error regression net):
@@ -8519,143 +8648,53 @@ public:
     // ok=false. Impl: evaluator_mutation_boundary.cpp
     [[nodiscard]] HeapMutateGuardHandle maybe_auto_guard_heap_mutate(bool& ok) noexcept;
     template <typename Call>
-    inline types::EvalValue invoke_prim_with_telemetry(std::string_view name, Call&& call) {
+    inline types::EvalValue invoke_prim_with_telemetry_at(std::string_view name, std::size_t slot,
+                                                          Call&& call) {
         bump_primitive_call_count();
 
         HeapMutateGuardHandle heap_guard;
-        if (!name.empty()) {
-            const auto slot = primitives_.slot_for_name(name);
-            if (slot < primitives_.slot_count()) {
-                const auto& meta = primitives_.meta_for_slot(slot);
-                // Issue #3235: unify classic container mutators with mutate:*
-                // under MutationBoundaryGuard. add_mutate bodies already
-                // acquire (effect_enforced_in_body) — skip double wrap.
-                const bool heap_mutate = meta.requires_mutation_guard && !meta.guard_exempt &&
-                                         !meta.effect_enforced_in_body;
-                if (heap_mutate) {
-                    bool ok = true;
-                    heap_guard = maybe_auto_guard_heap_mutate(ok);
-                    if (!ok) {
-                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                            m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
-                            if (typed_audit::production_defaults_active()) {
-                                m->naked_mutate_fail_closed_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                mark_outermost_mutation_failed();
-                            }
-                        }
-                        return primitives_detail::make_primitive_error(
-                            string_heap_, error_values_,
-                            std::string("naked mutate: ") + std::string(name) +
-                                " requires MutationBoundaryGuard",
-                            primitive_error_counter_ptr());
-                    }
-                }
-                // Issue #1676: render-critical / rendering+hot fast path —
-                // trusted tier skips string capability / deprecation tax.
-                // Issue #2136 / #2152: still enforce required_effects (explicit
-                // or name-inferred) when capability checking is enabled —
-                // Off sandbox keeps zero-cost present.
-                if (is_render_critical_meta(meta)) {
-                    if (!meta.security_exempt && !meta.effect_enforced_in_body &&
-                        effect_sandbox_mode() != 0) {
-                        const auto req = effective_required_effects(name, meta.required_effects,
-                                                                    meta.security_exempt);
-                        if (req != 0) {
-                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                                m->dispatch_required_effects_check_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                // Issue #2583: parallel Agent-dashboard surface
-                                // (complement to #2152 counters).
-                                m->dispatch_effect_auto_check_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                if (meta.required_effects == 0)
-                                    m->dispatch_required_effects_inferred_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                            }
-                            if (!require_effect(req, name)) {
-                                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                                    m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
-                                    m->dispatch_required_effects_deny_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                    // Issue #2583: parallel deny counter.
-                                    m->dispatch_effect_auto_deny_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                }
-                                return primitives_detail::make_primitive_error(
-                                    string_heap_, error_values_,
-                                    security::format_deny_reason(req, capability_tenant_id_, name),
-                                    primitive_error_counter_ptr());
-                            }
-                        }
-                    }
+        // Issue #4599: effective_required_effects is cached per slot (including 0).
+        if (!name.empty() && slot < primitives_.slot_count()) {
+            const auto& meta = primitives_.meta_for_slot(slot);
+            // Issue #3235: unify classic container mutators with mutate:*
+            // under MutationBoundaryGuard. add_mutate bodies already
+            // acquire (effect_enforced_in_body) — skip double wrap.
+            const bool heap_mutate =
+                meta.requires_mutation_guard && !meta.guard_exempt && !meta.effect_enforced_in_body;
+            if (heap_mutate) {
+                bool ok = true;
+                heap_guard = maybe_auto_guard_heap_mutate(ok);
+                if (!ok) {
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->render_hotpath_dispatch_fast_total.fetch_add(1,
+                        m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                        if (typed_audit::production_defaults_active()) {
+                            m->naked_mutate_fail_closed_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-                    }
-                    return call();
-                }
-                // Issue #1448: PrimMeta.deprecated → dispatch-site warning.
-                // Still executes (compat), but bumps a counter so agents
-                // and (engine:metrics) can see remaining debt. Prefer
-                // op-dispatch / engine:metrics / stdlib over deprecated names.
-                if (meta.deprecated) {
-                    deprecated_prim_dispatch_total_.fetch_add(1, std::memory_order_relaxed);
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->prim_write_side_deprecation_hits.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
-                if (meta.security_level == kPrimSecPrivileged &&
-                    !has_capability(security::kCapWildcard)) {
-                    bump_capability_denial();
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
-                        m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                            mark_outermost_mutation_failed();
+                        }
                     }
                     return primitives_detail::make_primitive_error(
                         string_heap_, error_values_,
-                        "capability denied: privileged primitive requires kCapWildcard",
+                        std::string("naked mutate: ") + std::string(name) +
+                            " requires MutationBoundaryGuard",
                         primitive_error_counter_ptr());
                 }
-                // Issue #3235: heap mutators are Guard-gated (language
-                // vector-set! / hash-set! / set-car!). Skip kCapSandbox so
-                // production Restricted CLI can mutate containers.
-                // Issue #4322: the single-tenant Restricted kernel (tenant 0)
-                // editing its own workspace. Strict, multi-tenant, and a
-                // non-zero principal keep the kCapSandbox error. GUARD_EXEMPT
-                // metadata and mutation-log-compact keep the gate.
-                const bool own_workspace_mutate =
-                    meta.requires_mutation_guard && !meta.guard_exempt &&
-                    meta.effect_enforced_in_body && kernel_self_workspace_mutate(name, 0);
-                if (meta.security_level == kPrimSecSandboxed && !heap_mutate &&
-                    !own_workspace_mutate && !has_capability(security::kCapSandbox)) {
-                    bump_capability_denial();
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    return primitives_detail::make_primitive_error(
-                        string_heap_, error_values_,
-                        "capability denied: sandboxed primitive requires kCapSandbox",
-                        primitive_error_counter_ptr());
-                }
-                // Issue #2057 / #2152 / #2583: non-bypassable required_effects at dispatch.
-                // Uses explicit PrimMeta bits, or name-inferred bits when unset
-                // (#2152 last line of defense). Skipped only when body already
-                // enforces (add_mutate) or security_exempt is documented.
-                // #2583 hard path: every non-zero required_effects call goes
-                // through require_effect at the dispatch boundary, so prims
-                // that forget body check still fail-closed under
-                // Restricted/Strict even when the static gate passes.
-                // require_effect itself is a no-op under Off sandbox.
-                if (!meta.security_exempt && !meta.effect_enforced_in_body) {
-                    const auto req = effective_required_effects(name, meta.required_effects,
-                                                                meta.security_exempt);
+            }
+            // Issue #1676: render-critical / rendering+hot fast path —
+            // trusted tier skips string capability / deprecation tax.
+            // Issue #2136 / #2152: still enforce required_effects (explicit
+            // or name-inferred) when capability checking is enabled —
+            // Off sandbox keeps zero-cost present.
+            if (is_render_critical_meta(meta)) {
+                if (!meta.security_exempt && !meta.effect_enforced_in_body &&
+                    effect_sandbox_mode() != 0) {
+                    const auto req = primitives_.cached_required_effects(slot);
                     if (req != 0) {
                         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                             m->dispatch_required_effects_check_total.fetch_add(
                                 1, std::memory_order_relaxed);
-                            // Issue #2583: parallel Agent-dashboard surface for
-                            // the same dispatch gate (complement to #2152 counters).
+                            // Issue #2583: parallel Agent-dashboard surface
+                            // (complement to #2152 counters).
                             m->dispatch_effect_auto_check_total.fetch_add(
                                 1, std::memory_order_relaxed);
                             if (meta.required_effects == 0)
@@ -8678,17 +8717,110 @@ public:
                         }
                     }
                 }
-                // Cold / non-render-critical while a frame is in flight.
-                if (aura::core::arena_policy::in_render_hotpath()) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->render_hotpath_dispatch_fast_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return call();
+            }
+            // Issue #1448: PrimMeta.deprecated → dispatch-site warning.
+            // Still executes (compat), but bumps a counter so agents
+            // and (engine:metrics) can see remaining debt. Prefer
+            // op-dispatch / engine:metrics / stdlib over deprecated names.
+            if (meta.deprecated) {
+                deprecated_prim_dispatch_total_.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->prim_write_side_deprecation_hits.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (meta.security_level == kPrimSecPrivileged &&
+                !has_capability(security::kCapWildcard)) {
+                bump_capability_denial();
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+                    m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return primitives_detail::make_primitive_error(
+                    string_heap_, error_values_,
+                    "capability denied: privileged primitive requires kCapWildcard",
+                    primitive_error_counter_ptr());
+            }
+            // Issue #3235: heap mutators are Guard-gated (language
+            // vector-set! / hash-set! / set-car!). Skip kCapSandbox so
+            // production Restricted CLI can mutate containers.
+            // Issue #4322: the single-tenant Restricted kernel (tenant 0)
+            // editing its own workspace. Strict, multi-tenant, and a
+            // non-zero principal keep the kCapSandbox error. GUARD_EXEMPT
+            // metadata and mutation-log-compact keep the gate.
+            const bool own_workspace_mutate = meta.requires_mutation_guard && !meta.guard_exempt &&
+                                              meta.effect_enforced_in_body &&
+                                              kernel_self_workspace_mutate(name, 0);
+            if (meta.security_level == kPrimSecSandboxed && !heap_mutate && !own_workspace_mutate &&
+                !has_capability(security::kCapSandbox)) {
+                bump_capability_denial();
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return primitives_detail::make_primitive_error(
+                    string_heap_, error_values_,
+                    "capability denied: sandboxed primitive requires kCapSandbox",
+                    primitive_error_counter_ptr());
+            }
+            // Issue #2057 / #2152 / #2583: non-bypassable required_effects at dispatch.
+            // Uses explicit PrimMeta bits, or name-inferred bits when unset
+            // (#2152 last line of defense). Skipped only when body already
+            // enforces (add_mutate) or security_exempt is documented.
+            // #2583 hard path: every non-zero required_effects call goes
+            // through require_effect at the dispatch boundary, so prims
+            // that forget body check still fail-closed under
+            // Restricted/Strict even when the static gate passes.
+            // require_effect itself is a no-op under Off sandbox.
+            if (!meta.security_exempt && !meta.effect_enforced_in_body) {
+                const auto req = primitives_.cached_required_effects(slot);
+                if (req != 0) {
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->render_hotpath_dispatch_full_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
+                        m->dispatch_required_effects_check_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // Issue #2583: parallel Agent-dashboard surface for
+                        // the same dispatch gate (complement to #2152 counters).
+                        m->dispatch_effect_auto_check_total.fetch_add(1, std::memory_order_relaxed);
+                        if (meta.required_effects == 0)
+                            m->dispatch_required_effects_inferred_total.fetch_add(
+                                1, std::memory_order_relaxed);
                     }
+                    if (!require_effect(req, name)) {
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                            m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                            m->dispatch_required_effects_deny_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Issue #2583: parallel deny counter.
+                            m->dispatch_effect_auto_deny_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        }
+                        return primitives_detail::make_primitive_error(
+                            string_heap_, error_values_,
+                            security::format_deny_reason(req, capability_tenant_id_, name),
+                            primitive_error_counter_ptr());
+                    }
+                }
+            }
+            // Cold / non-render-critical while a frame is in flight.
+            if (aura::core::arena_policy::in_render_hotpath()) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->render_hotpath_dispatch_full_total.fetch_add(1, std::memory_order_relaxed);
                 }
             }
         }
 
         return call();
+    }
+
+    // Issue #4599: name entry. Unknown and empty names still call() and still
+    // bump the primitive counter. Hot call sites pass a cached slot to _at.
+    template <typename Call>
+    inline types::EvalValue invoke_prim_with_telemetry(std::string_view name, Call&& call) {
+        const std::size_t slot =
+            name.empty() ? static_cast<std::size_t>(-1) : primitives_.slot_for_name(name);
+        return invoke_prim_with_telemetry_at(name, slot, std::forward<Call>(call));
     }
 
     // Issue #1676: dual-epoch + linear fence at TUI/render primitive entry

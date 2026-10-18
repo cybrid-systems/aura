@@ -1,0 +1,100 @@
+;; expect: OK-4599 f1 stays within 1.2x as defines grow
+; Issue #4599: file-mode defines stay on the tree walker (--load is one
+; eval, not set-code + eval-current). Measure (f1 1) before any fillers,
+; eval define chunks onto the same top, then measure again. A binding
+; cache must not bring define-count scaling back (#4343, #4350, #4474).
+(define *fails* 0)
+(define *passes* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+
+(define (g x) (let ((r 1)) r))
+(check "uncaptured let" (g 1) 1)
+
+(define (gset x) (let ((r 1)) (begin (set! r 2) r)))
+(check "set! let" (gset 1) 2)
+
+(define (gcap x) (let ((r 1)) ((lambda () r))))
+(check "captured let" (gcap 1) 1)
+
+(define (gshadow x) (let ((+ (lambda (a b) (* a b)))) (+ 3 4)))
+(check "shadowed +" (gshadow 1) 12)
+(check "plus still adds" (+ 3 4) 7)
+
+(define (gcell x)
+  (let ((r 1))
+    (let ((bump (lambda () (set! r 2))))
+      (begin (bump) r))))
+(check "set! through closure" (gcell 1) 2)
+
+(define (fresh-name-user) zz-defined-late-4599)
+(define zz-defined-late-4599 42)
+(check "late define" (fresh-name-user) 42)
+
+(if (> *fails* 0)
+    (begin (display "FAIL-4599 semantic\n") (exit 1)))
+
+(define (f1 x) x)
+(define (time-ms th) (let ((t0 (current-time-ms))) (th) (- (current-time-ms) t0)))
+(define (run-f1 iters)
+  (let loop ((i 0))
+    (if (< i iters) (begin (f1 1) (loop (+ i 1))) 0)))
+(define (run-g iters)
+  (let loop ((i 0))
+    (if (< i iters) (begin (g 1) (loop (+ i 1))) 0)))
+(define (best2 th)
+  (let ((a (time-ms th)))
+    (let ((b (time-ms th)))
+      (if (< a b) a b))))
+
+(define n 20000)
+(let pick ((cur 20000))
+  (let ((t (time-ms (lambda () (run-f1 cur)))))
+    (if (or (>= t 20) (>= cur 200000))
+        (set! n cur)
+        (pick (* cur 2)))))
+
+(define t-small (best2 (lambda () (run-f1 n))))
+(define tg-small (best2 (lambda () (run-g n))))
+
+(define (one-def k)
+  (string-append "(define (p4599x" (number->string k) " x) (+ x " (number->string k) "))"))
+(define (chunk base count)
+  (let loop ((i 0) (s "(begin "))
+    (if (< i count)
+        (loop (+ i 1) (string-append s (one-def (+ base i))))
+        (string-append s ")"))))
+(define (load-fillers)
+  (let loop ((base 0))
+    (if (< base 4000)
+        (begin (eval (chunk base 100)) (loop (+ base 100)))
+        0)))
+(load-fillers)
+(check "filler" (p4599x3999 0) 3999)
+(check "g after fillers" (g 1) 1)
+(if (> *fails* 0)
+    (begin (display "FAIL-4599 filler\n") (exit 1)))
+
+(run-f1 n)
+(run-g n)
+(define t-big (best2 (lambda () (run-f1 n))))
+(define tg-big (best2 (lambda () (run-g n))))
+(check "f1 ratio" (<= (* t-big 10) (+ (* t-small 12) 30)) #t)
+(check "g ratio" (<= (* tg-big 10) (+ (* tg-small 20) 80)) #t)
+
+(if (and (= *fails* 0) (= *passes* 11))
+    (display "OK-4599 f1 stays within 1.2x as defines grow\n")
+    (begin
+      (display "FAIL-4599 fails=") (display *fails*)
+      (display " passes=") (display *passes*)
+      (display " n=") (display n)
+      (display " t-small=") (display t-small)
+      (display " t-big=") (display t-big)
+      (display " tg-small=") (display tg-small)
+      (display " tg-big=") (display tg-big)
+      (newline)
+      (exit 1)))
