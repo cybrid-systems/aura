@@ -1293,6 +1293,90 @@ def test_type_feedback_4568():
     print("  ✅ type-feedback-4568")
 
 
+def test_jit_call_path_4572():
+    """Issue #4572 (partial): the JIT call path no longer takes AuraJIT's
+    compile_mtx_ per call. is_fn_epoch_stale (every named prologue),
+    is_deopt_pending and deopt_pending_count (every closure dispatch) answer
+    from lock-free counters while nothing is pending or stale and fall back to
+    the locked lookup otherwise. Output of recursive, mutual, higher-order
+    and multi-arg call paths must match the IR interpreter and eval.
+    (Redefining a callee inside one `--jit` program still reaches the first
+    definition on main, before and after this change: the callee is baked as
+    a constant closure id. Tracked in the #4572 follow-up, not tested here.) A --jit-session checks
+    fib's prologue no longer calls aura_get_defuse_version (only car/cdr
+    functions without the L2 path read it).
+    """
+    fib = "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) "
+    programs = [
+        ("fib-20", fib + "(display (fib 20))", "6765"),
+        ("fib-0", fib + "(display (fib 0))", "0"),
+        (
+            "mutual",
+            "(define (ev? n) (if (= n 0) 1 (od? (- n 1)))) (define (od? n) (if (= n 0) 0 (ev? (- n 1)))) "
+            "(display (+ (ev? 100) (od? 7)))",
+            "2",
+        ),
+        (
+            "higher-order",
+            "(define (twice h x) (h (h x))) (define (inc x) (+ x 1)) (define (run n) (if (= n 0) 0 "
+            "(+ (twice inc 0) (run (- n 1))))) (display (run 50))",
+            "100",
+        ),
+        (
+            "five-args",
+            "(define (s5 a b c d e) (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e))) (define (r n) (if (= n 0) 0 "
+            "(+ (s5 1 1 1 1 1) (r (- n 1))))) (display (r 10))",
+            "150",
+        ),
+        ("deep", "(define (d n) (if (= n 0) 0 (+ 1 (d (- n 1))))) (display (d 2000))", "2000"),
+    ]
+
+    def run_mode(code, mode):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, (r.stdout or "").strip()
+
+    quirk = 0
+    for name, code, expect in programs:
+        outs = {mode: run_mode(code, mode) for mode in ("ir", "eval", "jit")}
+        # Same pre-existing `--jit` top-level print quirk test_jit_l2_4571
+        # tolerates (#4601 §7): a trailing "#f" / "<cell[N]>" after the value.
+        rc_j, out_j = outs["jit"]
+        ir_out = outs["ir"][1]
+        if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>)", out_j):
+            outs["jit"] = (rc_j, ir_out)
+            quirk += 1
+        if not (outs["ir"] == outs["eval"] == outs["jit"]):
+            raise Exception(f"{name}: ir={outs['ir']!r} eval={outs['eval']!r} jit={outs['jit']!r}")
+        if expect is not None and outs["jit"] != (0, expect):
+            raise Exception(f"{name}: expected {expect!r}, got {outs['jit']!r}")
+
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    lines = [fib + "(fib 12)", ";;ir fib"]
+    r = subprocess.run(
+        [AURA, "--jit-session"], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=60, env=env
+    )
+    out = r.stdout or ""
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+    assert "define i64 @fib" in out, out[:400]
+    ir = out[out.index("define i64 @fib") :]
+    ir = ir[: ir.index("\n}")]
+    assert "@aura_get_defuse_version" not in ir, "fib prologue still reads the defuse version"
+    assert "@aura_jit_is_fn_epoch_stale" in ir, "named prologue epoch probe missing"
+    print(f"  ✅ test_jit_call_path_4572 ({len(programs)} programs, {quirk} display-quirk; fib IR has no defuse call)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -1300,6 +1384,7 @@ for tf in [
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
     test_jit_l2_4571,
+    test_jit_call_path_4572,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

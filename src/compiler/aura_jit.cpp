@@ -4034,6 +4034,8 @@ struct AuraJIT::Impl {
             entry.source_marker = it->second.source_marker;
             entry.provenance = it->second.provenance;
         }
+        if (it != fn_trackers_.end())
+            note_tracker_dropped_locked(it->second);
         fn_trackers_[name] = std::move(entry);
         return rt;
     }
@@ -4053,6 +4055,56 @@ struct AuraJIT::Impl {
     std::unordered_map<std::string, std::atomic<std::uint64_t>, aura::core::TransparentStringHash,
                        std::equal_to<>>
         fn_captured_epochs_{};
+    // Issue #4572: lock-free quiescent fast paths for the per-call probes
+    // (is_fn_epoch_stale in every JIT prologue, is_deopt_pending /
+    // deopt_pending_count in every closure dispatch). Both were
+    // compile_mtx_ + map lookup (count: O(T) walk) on the hot path.
+    // Writers update these under compile_mtx_ at every mutation site.
+    //  - deopt_pending_live_: exact number of fn_trackers_ entries with
+    //    deopt_pending == true. 0 => no name is pending.
+    //  - epochs_uniform_: (E << 2) | kEpochsUniform when every captured
+    //    entry equals E; kEpochsEmpty when none captured; kEpochsMixed
+    //    otherwise. Recomputed (O(C)) on each capture store (rare).
+    static constexpr std::uint64_t kEpochsEmpty = 0;
+    static constexpr std::uint64_t kEpochsUniform = 1;
+    static constexpr std::uint64_t kEpochsMixed = 2;
+    std::atomic<std::uint64_t> deopt_pending_live_{0};
+    std::atomic<std::uint64_t> epochs_uniform_{kEpochsEmpty};
+    void set_deopt_pending_locked(FnTrackerEntry& e, bool v) noexcept {
+        if (e.deopt_pending == v)
+            return;
+        e.deopt_pending = v;
+        if (v)
+            deopt_pending_live_.fetch_add(1, std::memory_order_acq_rel);
+        else
+            deopt_pending_live_.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    void note_tracker_dropped_locked(const FnTrackerEntry& e) noexcept {
+        if (e.deopt_pending)
+            deopt_pending_live_.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    // Erase one tracker (caller holds compile_mtx_), keeping the count.
+    template <class It> It erase_tracker_locked(It it) {
+        note_tracker_dropped_locked(it->second);
+        return fn_trackers_.erase(it);
+    }
+    void recompute_epochs_uniform_locked() noexcept {
+        std::uint64_t word = kEpochsEmpty;
+        bool first = true;
+        std::uint64_t v0 = 0;
+        for (const auto& [_, ep] : fn_captured_epochs_) {
+            const auto v = ep.load(std::memory_order_relaxed);
+            if (first) {
+                v0 = v;
+                first = false;
+                word = (v >> 62) != 0 ? kEpochsMixed : ((v << 2) | kEpochsUniform);
+            } else if (v != v0) {
+                word = kEpochsMixed;
+                break;
+            }
+        }
+        epochs_uniform_.store(word, std::memory_order_release);
+    }
     // Tracks the most recent function being compiled (set by
     // compile() before calling lower()).
     std::string current_compile_fn_{};
@@ -4388,32 +4440,33 @@ struct AuraJIT::Impl {
         // lock). On match, take the fast path (aura_pair_car_unchecked
         // / aura_pair_cdr_unchecked, no bounds, no lock).
         builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
-        {
-            auto* ver = builder.irb->CreateCall(builder.fn_get_defuse_version, {});
-            builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
+        // Issue #4572: the captured version is only read by the SHAPE_PAIR
+        // car/cdr lowering below; functions without car/cdr (fib, loops)
+        // and L2 functions (pair_ok path) skip the per-activation call.
+        bool reads_pairs = false;
+        for (uint32_t bi = 0; bi < fn.num_blocks && !reads_pairs; ++bi) {
+            const auto& blk = fn.blocks[bi];
+            for (uint32_t ii = 0; ii < blk.num_instructions; ++ii) {
+                const auto op = blk.instructions[ii].opcode;
+                if (op == OpCar || op == OpCdr) {
+                    reads_pairs = true;
+                    break;
+                }
+            }
         }
         // Issue #4571 (L2): functions that read pairs evaluate the tenant
         // gate once per activation and bake the segment directory address
         // (in-process JIT only; the AOT path keeps the call lowering).
-        if (jit_l2_enabled() && builder.fn_pair_inline_ok) {
-            bool reads_pairs = false;
-            for (uint32_t bi = 0; bi < fn.num_blocks && !reads_pairs; ++bi) {
-                const auto& blk = fn.blocks[bi];
-                for (uint32_t ii = 0; ii < blk.num_instructions; ++ii) {
-                    const auto op = blk.instructions[ii].opcode;
-                    if (op == OpCar || op == OpCdr) {
-                        reads_pairs = true;
-                        break;
-                    }
-                }
-            }
-            if (reads_pairs) {
-                auto* ok = builder.irb->CreateCall(builder.fn_pair_inline_ok, {});
-                builder.pair_ok = builder.irb->CreateICmpNE(ok, builder.c64(0));
-                builder.pair_dir = builder.irb->CreateIntToPtr(
-                    builder.c64(reinterpret_cast<std::uintptr_t>(aura_pair_seg_dir_base())),
-                    llvm::PointerType::getUnqual(ctx));
-            }
+        if (jit_l2_enabled() && builder.fn_pair_inline_ok && reads_pairs) {
+            auto* ok = builder.irb->CreateCall(builder.fn_pair_inline_ok, {});
+            builder.pair_ok = builder.irb->CreateICmpNE(ok, builder.c64(0));
+            builder.pair_dir = builder.irb->CreateIntToPtr(
+                builder.c64(reinterpret_cast<std::uintptr_t>(aura_pair_seg_dir_base())),
+                llvm::PointerType::getUnqual(ctx));
+        }
+        if (reads_pairs && !builder.pair_ok) {
+            auto* ver = builder.irb->CreateCall(builder.fn_get_defuse_version, {});
+            builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
         }
 
         // Issue #1537 + #1540: Apply prologue — dual-epoch + linear_post_mutate.
@@ -5268,6 +5321,7 @@ void AuraJIT::invalidate(const char* name) {
             if (auto err = it->second.tracker->remove())
                 llvm::consumeError(std::move(err));
         }
+        impl_->note_tracker_dropped_locked(it->second);
         impl_->fn_trackers_.erase(it);
     }
     // Issue #993: also drop unhandled-opcode counters so hot-swap
@@ -5336,7 +5390,7 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
                 if (auto err = it->second.tracker->remove())
                     llvm::consumeError(std::move(err));
             }
-            it = impl_->fn_trackers_.erase(it);
+            it = impl_->erase_tracker_locked(it);
         } else {
             ++it;
         }
@@ -5384,6 +5438,7 @@ std::size_t AuraJIT::invalidate_all() noexcept {
         ++n;
     }
     impl_->fn_trackers_.clear();
+    impl_->deopt_pending_live_.store(0, std::memory_order_release);
     impl_->fn_unhandled_counts_.clear();
     impl_->fn_aot_modules_.clear();
     {
@@ -5401,12 +5456,24 @@ void AuraJIT::capture_fn_epoch(const char* name, std::uint64_t current_bridge_ep
         return;
     std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     impl_->fn_captured_epochs_[name].store(current_bridge_epoch, std::memory_order_release);
+    impl_->recompute_epochs_uniform_locked();
     metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool AuraJIT::is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch) const {
     if (!impl_ || !name)
         return false;
+    // Issue #4572: lock-free fast path. Empty map => never captured =>
+    // pass-through; all entries == current => not stale. Same answer
+    // as the locked lookup below.
+    {
+        const auto w = impl_->epochs_uniform_.load(std::memory_order_acquire);
+        if (w == Impl::kEpochsEmpty)
+            return false;
+        if ((w & 3u) == Impl::kEpochsUniform && (current_bridge_epoch >> 62) == 0 &&
+            (w >> 2) == current_bridge_epoch)
+            return false;
+    }
     std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     auto it = impl_->fn_captured_epochs_.find(name);
     if (it == impl_->fn_captured_epochs_.end())
@@ -5455,7 +5522,7 @@ std::size_t AuraJIT::walk_active_closures(std::uint64_t current_bridge_epoch) no
         if (!stale_names.count(key) && !stale_names.count(base_name(key)))
             continue;
         if (!entry.deopt_pending) {
-            entry.deopt_pending = true;
+            impl_->set_deopt_pending_locked(entry, true);
             entry.compile_epoch = current_bridge_epoch;
             metrics_.batch_deopt_entries_marked.fetch_add(1, std::memory_order_relaxed);
         }
@@ -5495,7 +5562,7 @@ std::size_t AuraJIT::batch_deopt_for(const char* name, std::uint64_t current_epo
         if (key != n && key.rfind(n_hash, 0) != 0)
             continue;
         if (!entry.deopt_pending) {
-            entry.deopt_pending = true;
+            impl_->set_deopt_pending_locked(entry, true);
             entry.compile_epoch = current_epoch;
             ++marked;
             metrics_.batch_deopt_entries_marked.fetch_add(1, std::memory_order_relaxed);
@@ -5520,6 +5587,9 @@ std::size_t AuraJIT::batch_deopt_prefix(const char* prefix, std::uint64_t curren
 bool AuraJIT::is_deopt_pending(const char* name) const noexcept {
     if (!impl_ || !name)
         return false;
+    // Issue #4572: no tracker pending => no name pending (lock-free).
+    if (impl_->deopt_pending_live_.load(std::memory_order_acquire) == 0)
+        return false;
     std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
     auto it = impl_->fn_trackers_.find(name);
     return it != impl_->fn_trackers_.end() && it->second.deopt_pending;
@@ -5527,6 +5597,9 @@ bool AuraJIT::is_deopt_pending(const char* name) const noexcept {
 
 std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
     if (!impl_)
+        return 0;
+    // Issue #4572: exact live counter maintained under compile_mtx_.
+    if (impl_->deopt_pending_live_.load(std::memory_order_acquire) == 0)
         return 0;
     std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
     std::uint64_t n = 0;
@@ -5552,13 +5625,14 @@ std::size_t AuraJIT::clear_deopt_pending_keep_native(const char* name,
     for (auto& [key, entry] : impl_->fn_trackers_) {
         if (key == base || key.rfind(prefix, 0) == 0) {
             if (entry.deopt_pending) {
-                entry.deopt_pending = false;
+                impl_->set_deopt_pending_locked(entry, false);
                 ++cleared;
             }
         }
     }
     // Re-stamp epoch under the same lock as capture_fn_epoch would.
     impl_->fn_captured_epochs_[base].store(current_epoch, std::memory_order_release);
+    impl_->recompute_epochs_uniform_locked();
     metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
     return cleared;
 }
