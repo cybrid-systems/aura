@@ -906,15 +906,14 @@ extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
 // libaura_test_objects.so resolves them when the JIT SOs are mold
 // --as-needed stripped (CI issues suite rc=127).
 
-void FlatHashTable::rebuild(uint64_t new_cap) {
-    auto old_cap = capacity;
-    // Save old data before we potentially overwrite this
-    auto old_meta = metadata();
-    auto old_keys = keys();
-    auto old_vals = values();
+FlatHashTable* FlatHashTable::rebuild(uint64_t new_cap) const {
+    const auto old_cap = capacity;
+    const auto* old_meta = metadata();
+    const auto* old_keys = keys();
+    const auto* old_vals = values();
     auto* new_ht = create(new_cap);
     if (!new_ht)
-        return;
+        return nullptr;
     auto new_meta = new_ht->metadata();
     auto new_keys = new_ht->keys();
     auto new_vals = new_ht->values();
@@ -938,15 +937,9 @@ void FlatHashTable::rebuild(uint64_t new_cap) {
             }
         }
     }
-    // Copy header (capacity, size) from new block
-    std::memcpy(this, new_ht, sizeof(FlatHashTable));
-    // Copy data arrays (this->metadata() now uses new capacity)
-    auto new_mem_meta = metadata(); // uses this->capacity (just set from new_ht)
-    uint64_t cp = capacity;
-    std::memcpy(new_mem_meta, new_meta, cp);
-    std::memcpy(keys(), new_keys, cp * 8);
-    std::memcpy(values(), new_vals, cp * 8);
-    std::free(new_ht);
+    // Issue #4571: return the new block. The old code copied the grown
+    // header and arrays back into `this` — a block sized for old_cap.
+    return new_ht;
 }
 
 // ── Runtime state (shared between all JIT functions) ──────────
@@ -6441,6 +6434,16 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
     return want_car ? g_pair_slots[id]->car : g_pair_slots[id]->cdr;
 }
 
+// Issue #4571 (L2): once per JIT activation of a function that reads
+// pairs. Nonzero when the #4093 tenant gate is not armed for the current
+// owner, so the inline car/cdr may read the slot without the stamp
+// compare (the Soft/Off zero-cost contract). Armed (production face /
+// Strict / multi-tenant) → 0 and every access keeps the aura_pair_car
+// call with its gate.
+extern "C" int64_t aura_jit_pair_inline_ok() {
+    return jit_tenant_gate_armed(aura_jit_owner_sandbox_mode()) ? 0 : 1;
+}
+
 // Issue #4441: explicit-context slow-path pair field read (#4036 seam
 // shape — light-link binaries shadow the owner hooks; tests pass
 // caller/face). aura_pair_car / aura_pair_cdr delegate here with the
@@ -6704,7 +6707,15 @@ extern "C" int64_t aura_hash_set_checked(int64_t hash_val, int64_t pair_val,
                 uint64_t new_cap = ht->capacity * 2;
                 if (new_cap < 8)
                     new_cap = 8;
-                ht->rebuild(new_cap);
+                // Issue #4571: publish the rebuilt block (write lock held);
+                // no in-place overwrite. The old block is not freed — same
+                // policy as the evaluator hash-set! grow
+                // (destroy_old_on_grow=false): OpHashRef drops the read
+                // lock around aura_hash_key_eq while holding the pointer.
+                if (auto* grown = ht->rebuild(new_cap)) {
+                    g_hash_tables[hidx] = grown;
+                    ht = grown;
+                }
             }
             auto meta = ht->metadata();
             auto keys = ht->keys();

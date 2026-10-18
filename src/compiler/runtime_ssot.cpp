@@ -15,6 +15,7 @@
 #include "runtime_shared.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <new>
@@ -113,6 +114,24 @@ thread_local TlsPairIds tls_pair_ids{};
 } // namespace
 
 PairSlotTable g_pair_slots;
+
+// Issue #4571 (L2): inline car/cdr reads dir[id >> 10]->slots[id & 1023]
+// with two acquire loads (aura_jit.cpp emit_l2_pair_field). These asserts
+// pin the layout that lowering hard-codes (kL2PairSegSlots/kL2PairMaxSegs).
+static_assert(kPairSegSlots == 1024 && kPairMaxSegs == (1u << 16),
+              "#4571: aura_jit.cpp kL2PairSegSlots / kL2PairMaxSegs drift");
+static_assert(offsetof(PairSegment, slots) == 0, "#4571: PairSegment::slots must lead");
+static_assert(sizeof(std::atomic<PairSlot*>) == sizeof(PairSlot*) &&
+                  std::atomic<PairSlot*>::is_always_lock_free,
+              "#4571: inline load needs a plain-pointer atomic cell");
+static_assert(sizeof(std::atomic<PairSegment*>) == sizeof(PairSegment*),
+              "#4571: directory cell is a plain pointer");
+static_assert(offsetof(PairSlot, car) == 0 && offsetof(PairSlot, cdr) == 8,
+              "#4571: inline car/cdr field offsets");
+
+extern "C" void* aura_pair_seg_dir_base() {
+    return static_cast<void*>(pair_seg_dir());
+}
 
 // IR MakePair mirror still records one malloc per interpreter cons.
 // Arena slots and JIT slabs are not listed here.

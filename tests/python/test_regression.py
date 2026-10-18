@@ -1020,6 +1020,115 @@ def test_jit_l1_4570():
     )
 
 
+def test_jit_l2_4571():
+    """Issue #4571: L2 inline car/cdr (guard + segment directory load, no
+    call on the hit path) and the JIT hash path keep --jit output identical
+    to the IR interpreter and the eval path. The hash cases also pin three
+    fixes: OpIsError used mask 0x1F/0x11, which matched RefHash, so every
+    hash value escaped as an error (hash-ref returned the table); the
+    hash-set! grow memcpy'd the doubled table over the old block (heap
+    overflow from capacity 8 up); and a hash value must not satisfy
+    error?. A --jit-session then checks a list walk's IR has the inline
+    cdr hit block with no call in it.
+    """
+    programs = []
+
+    def add(name, code, expect=None):
+        programs.append((name, code, expect))
+
+    build = (
+        "(define (build n) (let ((i 0) (xs (quote ()))) (while (< i n) (set! xs (cons i xs)) (set! i (+ i 1))) xs)) "
+    )
+    walk = (
+        "(define (len xs) (let ((n 0)) (while (pair? xs) (set! n (+ n 1)) (set! xs (cdr xs))) n)) "
+        "(define (sumcar xs) (let ((s 0)) (while (pair? xs) (set! s (+ s (car xs))) (set! xs (cdr xs))) s)) "
+    )
+    for n in (0, 1, 2, 1000, 5000):
+        add(
+            f"walk-{n}", f"{build}{walk}(display (+ (len (build {n})) (sumcar (build {n}))))", str(n + n * (n - 1) // 2)
+        )
+    add("walk-literal-list", f"{walk}(display (+ (len (list 4 5 6)) (sumcar (list 4 5 6))))", "18")
+    add("cadr", "(define (g xs) (car (cdr xs))) (display (g (list 1 2 3)))", "2")
+    add(
+        "nested-cons", "(define (g n) (let ((p (cons n (cons 2 3)))) (+ (car p) (cdr (cdr p))))) (display (g 10))", "13"
+    )
+    add("car-float", "(define (g p) (+ (car p) 1)) (display (g (cons 1.5 2)))")
+    add("cdr-string", '(define (g p) (cdr p)) (display (g (cons 1 "ab")))')
+    kv = (
+        "(define (kv n) (let ((h (hash)) (i 0) (s 0)) (while (< i n) (hash-set! h i (* i 3)) (set! i (+ i 1))) "
+        "(set! i 0) (while (< i n) (set! s (+ s (hash-ref h i))) (set! i (+ i 1))) s)) "
+    )
+    for n in (1, 5, 6, 7, 50, 2000):
+        add(f"hash-kv-{n}", f"{kv}(display (kv {n}))", str(3 * n * (n - 1) // 2))
+    add("hash-miss", "(define (g n) (let ((h (hash))) (hash-set! h 1 5) (hash-ref h 2))) (display (g 1))")
+    add(
+        "hash-string-keys",
+        '(define (g n) (let ((h (hash))) (hash-set! h "ab" 5) (hash-set! h (string-append "c" "d") 6) '
+        '(+ (hash-ref h (string-append "a" "b")) (hash-ref h "cd")))) (display (g 1))',
+        "11",
+    )
+    add(
+        "hash-update",
+        "(define (g n) (let ((h (hash))) (hash-set! h 1 5) (hash-set! h 1 7) (hash-ref h 1))) (display (g 1))",
+        "7",
+    )
+    add(
+        "hash-remove",
+        "(define (g n) (let ((h (hash))) (hash-set! h 1 5) (hash-remove! h 1) (hash-ref h 1))) (display (g 1))",
+    )
+    add("hash-not-error", "(define (g n) (let ((h (hash))) (if (error? h) 1 2))) (display (g 1))", "2")
+    add("hash-arg", "(define (g h) (hash-ref h 1)) (define hh (hash)) (hash-set! hh 1 5) (display (g hh))", "5")
+    add("hash-length", "(define (g x) (hash-length x)) (define hh (hash)) (hash-set! hh 1 5) (display (g hh))", "1")
+
+    def run_mode(code, mode):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, (r.stdout or "").strip()
+
+    quirk = 0
+    for name, code, expect in programs:
+        outs = {mode: run_mode(code, mode) for mode in ("ir", "eval", "jit")}
+        # Same pre-existing `--jit` top-level print quirk test_jit_l1_4570
+        # tolerates (#4601 §7): a trailing "#f" / "<cell[N]>" after the value.
+        rc_j, out_j = outs["jit"]
+        ir_out = outs["ir"][1]
+        if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>)", out_j):
+            outs["jit"] = (rc_j, ir_out)
+            quirk += 1
+        if not (outs["ir"] == outs["eval"] == outs["jit"]):
+            raise Exception(f"{name}: ir={outs['ir']!r} eval={outs['eval']!r} jit={outs['jit']!r}")
+        if expect is not None and outs["jit"] != (0, expect):
+            raise Exception(f"{name}: expected {expect!r}, got {outs['jit']!r}")
+
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    lines = [build + walk + "(len (build 3))", ";;ir len"]
+    r = subprocess.run(
+        [AURA, "--jit-session"], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=60, env=env
+    )
+    out = r.stdout or ""
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+    assert "define i64 @len" in out, out[:400]
+    ir = out[out.index("define i64 @len") :]
+    ir = ir[: ir.index("\n}")]
+    assert "cdr_l2_hit:" in ir, "inline cdr hit block missing from len"
+    hit = ir[ir.index("cdr_l2_hit:") :]
+    hit = hit[: hit.index("\n\n")] if "\n\n" in hit else hit
+    assert " call " not in hit, f"cdr hit path still calls: {hit}"
+    assert ir.count("@aura_get_defuse_version") <= 1, "per-access defuse_version check still emitted"
+    print(f"  ✅ test_jit_l2_4571 ({len(programs)} programs, {quirk} display-quirk; len IR inline cdr hit has no call)")
+
+
 def test_jit_mixed_compare_4570():
     """Issue #4570: `--jit` numeric compares with one float operand compare
     by value, like the interpreter. Before #4570 the JIT compared raw tags:
@@ -1190,6 +1299,7 @@ for tf in [
     test_jit_assumption_invalidation_4569,
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
+    test_jit_l2_4571,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,
