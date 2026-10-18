@@ -260,3 +260,4 @@ check_dep_closure_miss_4251.py
 check_relocate_identity_4243.py
 check_tenant_string_sink_4559.py
 check_top_letrec_no_selfcopy_frame_4595.py
+check_jit_assumption_gate_4600.py

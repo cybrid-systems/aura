@@ -16,6 +16,7 @@
 #include "observability_metrics.h"            // Issue #452: CompilerMetrics for AOT counter hooks
 #include "runtime_shared.h"                   // Issue #2013: aura_remap_live_closures_after_reemit
 #include "typed_mutation_audit.h"             // Issue #1882: TypedMutationAudit on hot-update
+#include "jit_assumptions.hh"                 // Issue #4600: DeoptStorms prologue-deopt attribution
 #include "core/workspace_epoch.hh"            // Issue #2039: dual-write WorkspaceEpoch::Bridge
 #include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
 
@@ -3633,6 +3634,11 @@ extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
     // so subsequent get_function_ptr refuses native. Return fixnum 0 sentinel.
     // Issue #4084: mark the 0 so the host does not decode it as success.
     g_jit_prologue_deopt_sentinel = 1;
+    // Issue #4600 §4: prologue deopt counts toward the deopt-storm policy
+    // (after AURA_JIT_DEOPT_STORM_N attributed deopts the fn drops shape
+    // speculation — ShapeProfiler megamorphic mark on the next compile probe).
+    if (name && name[0])
+        aura::compiler::jit_assume::DeoptStorms::instance().note(name);
     if (g_batch_deopt_jit) {
         g_batch_deopt_jit->mutable_metrics().prologue_epoch_stale_deopt_total.fetch_add(
             1, std::memory_order_relaxed);

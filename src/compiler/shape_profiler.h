@@ -276,6 +276,12 @@ public:
 
     // ── Check stability ────────────────────────────────────────
     bool is_stable(FnKey fn) const;
+
+    // Issue #4600 §4: JIT deopt-storm megamorphic mark — sticky for the
+    // session: clears stability, bumps the profile version (shape-specialized
+    // cache entries stamped with the old version miss on the next probe), and
+    // blocks record_shape from re-stabilizing the profile.
+    void mark_megamorphic(FnKey fn);
     ShapeID dominant_shape(FnKey fn) const;
 
     // ── Snapshot for guard comparison ──────────────────────────
@@ -612,6 +618,7 @@ private:
         std::uint64_t deopt_count = 0;
         bool is_stable = false;
         ShapeID stable_shape = SHAPE_UNKNOWN;
+        bool mega = false; // Issue #4600 §4: deopt-storm megamorphic mark (sticky)
         std::uint64_t last_metric_time = 0;
         std::uint64_t last_used = 0; // Issue #992
 

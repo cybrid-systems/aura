@@ -13,6 +13,7 @@
 #include "core/sandbox.hh"            // Issue #4036: is_strict for closure free arm
 #include "core/workspace_epoch.hh"    // Issue #4388: cache-hit republish re-samples mutation epoch
 #include "observability_metrics.h"    // CompilerMetrics full def (aura_get_aot_metrics returns it)
+#include "jit_assumptions.hh"         // Issue #4600: DeoptStorms + stats for guard-deopt notes
 
 // Forward decls for symbols defined in aura_jit_bridge.cpp (extern "C").
 // Issue #2637 anon / residual sync remount counters.
@@ -823,6 +824,38 @@ extern "C" std::uint64_t aura_get_defuse_version() {
     if (g_lock_hooks.get_version)
         return g_lock_hooks.get_version(g_lock_hooks.user_data);
     return 0;
+}
+
+// Issue #4600 §5: stable slot holding the address of the Evaluator's
+// defuse_version_ atomic (published by the host when lock hooks are
+// installed; CompilerService::install_lock_and_topcell_hooks_for_eval).
+// The slot itself never moves, so car/cdr guards lower to two direct
+// acquire loads (slot -> word) instead of one get_version hook call per
+// access. Unset (hookless unit tests) the fallback word reads 0 forever,
+// matching aura_get_defuse_version's hookless answer so the 0==0 fast
+// path is preserved.
+static std::atomic<std::uint64_t> g_jit_defuse_word_fallback{0};
+static std::atomic<const std::atomic<std::uint64_t>*> g_jit_defuse_word{
+    &g_jit_defuse_word_fallback};
+
+extern "C" void aura_jit_set_defuse_word(const std::atomic<std::uint64_t>* w) {
+    g_jit_defuse_word.store(w ? w : &g_jit_defuse_word_fallback, std::memory_order_release);
+}
+
+// Compile-time helper for the JIT lowering: the slot's stable address,
+// baked into car/cdr guards as a constant (same pattern as the #4571
+// pair segment directory base).
+extern "C" std::uintptr_t aura_jit_defuse_word_slot_addr(void) {
+    return reinterpret_cast<std::uintptr_t>(&g_jit_defuse_word);
+}
+
+// Issue #4600 §4: cold-path note from a JIT car/cdr guard slow path (the
+// defuse compare missed). Counts toward the per-fn deopt-storm policy.
+extern "C" void aura_jit_note_guard_deopt(const char* name) {
+    auto& s = aura::compiler::jit_assume::stats();
+    s.guard_deopt_notes.fetch_add(1, std::memory_order_relaxed);
+    if (name && name[0])
+        aura::compiler::jit_assume::DeoptStorms::instance().note(name);
 }
 
 extern "C" void aura_yield_mutation_boundary() {

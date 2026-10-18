@@ -2079,6 +2079,8 @@ int main(int argc, char* argv[]) {
     // `--jit` runs one. Each stdin line is one program (exec_jit);
     // lines starting with ";;" are directives:
     //   ;;invalidate NAME  — rebind cascade entry (invalidate_function)
+    //   ;;storm NAME [N]   — deopt-storm policy notes, N defaults to the
+    //                        threshold (#4600; next compile drops speculation)
     //   ;;stats            — "compiles=N <jit-assume stats>"
     //   ;;events           — assumption invalidation events
     //   ;;ir NAME          — optimized LLVM IR of NAME (#4570)
@@ -2094,6 +2096,25 @@ int main(int argc, char* argv[]) {
                 continue;
             if (line.starts_with(";;invalidate ")) {
                 cs.public_invalidate_function(line.substr(13));
+                continue;
+            }
+            if (line.starts_with(";;storm ")) {
+                // Issue #4600 §4: drive the deopt-storm policy directly —
+                // note NAME N times (default: the threshold) so the next
+                // compile probe of NAME drops shape speculation.
+                const auto rest = std::string(line.substr(8));
+                std::string name = rest;
+                std::uint32_t n = aura::compiler::jit_assume::DeoptStorms::threshold();
+                if (const auto sp = rest.find(' '); sp != std::string::npos) {
+                    name = rest.substr(0, sp);
+                    const long v = std::strtol(rest.c_str() + sp + 1, nullptr, 10);
+                    n = v > 0 ? static_cast<std::uint32_t>(v) : n;
+                }
+                for (std::uint32_t i = 0; i < n; ++i)
+                    aura::compiler::jit_assume::DeoptStorms::instance().note(name);
+                std::println("stormed={} count={}",
+                             aura::compiler::jit_assume::DeoptStorms::instance().stormed(name),
+                             aura::compiler::jit_assume::DeoptStorms::instance().count(name));
                 continue;
             }
             if (line == ";;stats") {

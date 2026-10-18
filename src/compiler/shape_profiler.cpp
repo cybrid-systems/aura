@@ -596,6 +596,10 @@ bool ShapeProfiler::record_shape_apply_locked_(FnKey fn, ShapeID shape_id, std::
         }
 
         if (ratio >= stab) {
+            // Issue #4600 §4: storm-marked (megamorphic) profiles never
+            // re-stabilize — speculation for this fn stays dropped.
+            if (profile.mega)
+                return false;
             if (!profile.is_stable) {
                 shape_stability_hit_count.fetch_add(1, std::memory_order_relaxed);
             }
@@ -778,10 +782,34 @@ bool ShapeProfiler::tls_pending_stable_read_(FnKey fn, std::size_t si) const {
         if (s.fn != fn || s.count == 0 || s.count >= kShapeTlsMergeBatch)
             continue;
         const auto it = shards_[si].profiles.find(fn);
-        return it != shards_[si].profiles.end() && it->second.is_stable &&
+        return it != shards_[si].profiles.end() && it->second.is_stable && !it->second.mega &&
                it->second.stable_shape == s.shape;
     }
     return false;
+}
+
+// Issue #4600 §4: megamorphic mark from the JIT deopt-storm policy.
+// Sticky for the session: stability cleared, version bumped (cache entries
+// stamped with the old version miss on the next probe), and record_shape
+// can no longer re-stabilize this profile.
+void ShapeProfiler::mark_megamorphic(FnKey fn) {
+    const std::size_t si = shard_index(fn);
+    auto lock = unique_lock_shard_(si);
+    auto& profiles = shards_[si].profiles;
+    if (profiles.find(fn) == profiles.end())
+        maybe_evict_profiles_(si);
+    auto& profile = profiles[fn];
+    if (profile.mega)
+        return;
+    profile.mega = true;
+    if (profile.is_stable) {
+        profile.is_stable = false;
+        profile.stable_shape = SHAPE_UNKNOWN;
+        const std::uint64_t epoch = aura::core::current_mutation_epoch();
+        profile.version = epoch > profile.version ? epoch : profile.version + 1;
+        shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+        mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool ShapeProfiler::is_stable(FnKey fn) const {
@@ -796,7 +824,7 @@ bool ShapeProfiler::is_stable(FnKey fn) const {
     const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto lock = shared_lock_shard_(si);
     auto it = shards_[si].profiles.find(fn);
-    return it != shards_[si].profiles.end() && it->second.is_stable;
+    return it != shards_[si].profiles.end() && it->second.is_stable && !it->second.mega;
 }
 
 ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {

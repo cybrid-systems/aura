@@ -29,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -56,6 +57,14 @@ struct Stats {
     std::atomic<std::uint64_t> fingerprint_misses{0};
     std::atomic<std::uint64_t> epoch_misses{0};
     std::atomic<std::uint64_t> torn_publishes{0};
+    // Issue #4600 §7: JIT Apply prologues compiled with the assumption-word
+    // gate (one acquire load; epoch C calls only on the cold moved path).
+    std::atomic<std::uint64_t> prologue_word_armed{0};
+    // Issue #4600 §4/§5: car/cdr guard slow-path deopt notes (per access that
+    // fell back to the locked generic call) + prologue deopt attributions.
+    std::atomic<std::uint64_t> guard_deopt_notes{0};
+    // Issue #4600 §4: fns marked stormed (deopt count reached the threshold).
+    std::atomic<std::uint64_t> storm_marks{0};
 };
 
 inline Stats& stats() noexcept {
@@ -171,6 +180,54 @@ private:
     std::uint64_t total_ = 0;
 };
 
+// Issue #4600 §4: deopt-storm policy state. Prologue deopts
+// (aura_jit_deopt_to_interpreter) and car/cdr guard slow-path deopts
+// (aura_jit_note_guard_deopt) count per function name; once the count
+// reaches the threshold the fn is "stormed" for the session and the
+// service side drops its shape speculation (ShapeProfiler megamorphic
+// mark → version bump → shape-specialized cache entries miss → generic
+// recompile). Threshold: AURA_JIT_DEOPT_STORM_N (default 3, min 1).
+class DeoptStorms {
+public:
+    static DeoptStorms& instance() noexcept {
+        static DeoptStorms d;
+        return d;
+    }
+    void note(std::string_view fn) {
+        std::lock_guard g(mu_);
+        const auto n = ++counts_[std::string(fn)];
+        if (n >= threshold() && stormed_.insert(std::string(fn)).second)
+            stats().storm_marks.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool stormed(std::string_view fn) const {
+        std::lock_guard g(mu_);
+        return stormed_.count(std::string(fn)) != 0;
+    }
+    [[nodiscard]] std::uint64_t count(std::string_view fn) const {
+        std::lock_guard g(mu_);
+        const auto it = counts_.find(std::string(fn));
+        return it == counts_.end() ? 0 : it->second;
+    }
+    void clear_for_test() {
+        std::lock_guard g(mu_);
+        counts_.clear();
+        stormed_.clear();
+    }
+    static std::uint32_t threshold() noexcept {
+        static const std::uint32_t t = [] {
+            const char* e = std::getenv("AURA_JIT_DEOPT_STORM_N");
+            const long v = e && *e ? std::strtol(e, nullptr, 10) : 3;
+            return v > 0 ? static_cast<std::uint32_t>(v) : 3u;
+        }();
+        return t;
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::unordered_map<std::string, std::uint64_t> counts_;
+    std::unordered_set<std::string> stormed_;
+};
+
 // One recorded dependency: the stable word plus the version observed when
 // the IR was sampled. version 0 never matches (fail-closed publish).
 struct Dep {
@@ -221,6 +278,9 @@ struct Fnv {
     kv("fingerprint_misses", s.fingerprint_misses.load(std::memory_order_relaxed));
     kv("epoch_misses", s.epoch_misses.load(std::memory_order_relaxed));
     kv("torn_publishes", s.torn_publishes.load(std::memory_order_relaxed));
+    kv("prologue_word_armed", s.prologue_word_armed.load(std::memory_order_relaxed));
+    kv("guard_deopt_notes", s.guard_deopt_notes.load(std::memory_order_relaxed));
+    kv("storm_marks", s.storm_marks.load(std::memory_order_relaxed));
     kv("events", EventLog::instance().total());
     return out;
 }

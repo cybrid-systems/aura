@@ -9755,6 +9755,24 @@ def cmd_lint():
             "Issue #4595 top-letrec live-top linter failed — run python3 scripts/check_top_letrec_no_selfcopy_frame_4595.py"
         )
         return r
+    # Issue #4600 (speculative JIT follow-up, phase 1 — §4/§5/§7): the
+    # Apply prologue gates the dual-epoch C calls behind one acquire load
+    # of the fn's DefineVersion word; OpCar/OpCdr defuse guards read the
+    # bridge-published defuse atomic directly (no per-access hook call);
+    # a deopt-storm policy (AURA_JIT_DEOPT_STORM_N) marks stormed fns
+    # megamorphic in the ShapeProfiler so the next compile drops that
+    # speculation. Runtime doors: test_mutate_type_gate.cpp
+    # jit_word_and_storm_4600 + python test_jit_prologue_word_and_storm_4600.
+    gate4600_script = ROOT / "scripts" / "check_jit_assumption_gate_4600.py"
+    if not gate4600_script.exists():
+        fail(f"missing {gate4600_script}")
+        return 1
+    r = run([sys.executable, str(gate4600_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4600 JIT prologue word gate + storm policy linter failed — run python3 scripts/check_jit_assumption_gate_4600.py"
+        )
+        return r
     # Issue #4240 (WAL segment prune after ring wrap): after the typed
     # (256) + SE (1024) rings wrap AND AURA_WAL_MAX_SEGMENTS retention
     # prunes the only durable segment holding the mid (#3338), every

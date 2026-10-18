@@ -18,7 +18,10 @@
 
 #include "compiler/mutate_type_gate.hh"
 #include "compiler/jit_assumptions.hh"
+#include "compiler/shape_profiler.h" // Issue #4600: mark_megamorphic storm mark
 
+#include <atomic>
+#include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
@@ -106,6 +109,72 @@ static void jit_assumptions_4569() {
           "4569: event ring keeps the newest 64");
     CHECK(ja::format_stats().find("events=70") != std::string::npos, "4569: stats line");
     ja::EventLog::instance().clear_for_test();
+}
+
+// Issue #4600 §4/§5/§7: prologue assumption-word gate, direct defuse-word
+// loads on car/cdr guards, and the deopt-storm policy pieces the exec_jit
+// compile probe consumes (end-to-end `aura --jit-session` behavior is
+// covered by test_regression.py test_jit_prologue_word_and_storm_4600).
+extern "C" void aura_jit_set_defuse_word(const std::atomic<std::uint64_t>* w);
+extern "C" std::uintptr_t aura_jit_defuse_word_slot_addr(void);
+static void jit_word_and_storm_4600() {
+    namespace ja = aura::compiler::jit_assume;
+
+    // §4: DeoptStorms — threshold attribution, stickiness, reset.
+    auto& storms = ja::DeoptStorms::instance();
+    storms.clear_for_test();
+    const auto marks0 = ja::stats().storm_marks.load(std::memory_order_relaxed);
+    CHECK(ja::DeoptStorms::threshold() >= 1, "4600: storm threshold positive");
+    for (std::uint32_t i = 0; i < ja::DeoptStorms::threshold() - 1; ++i)
+        storms.note("fn4600");
+    CHECK(!storms.stormed("fn4600"), "4600: below threshold not stormed");
+    CHECK(storms.count("fn4600") == ja::DeoptStorms::threshold() - 1,
+          "4600: deopt notes counted per fn");
+    storms.note("fn4600");
+    CHECK(storms.stormed("fn4600"), "4600: threshold reached storms");
+    CHECK(ja::stats().storm_marks.load(std::memory_order_relaxed) == marks0 + 1,
+          "4600: storm mark counted once");
+    storms.note("fn4600");
+    CHECK(storms.stormed("fn4600") &&
+              ja::stats().storm_marks.load(std::memory_order_relaxed) == marks0 + 1,
+          "4600: storm mark is not re-counted");
+    CHECK(!storms.stormed("other4600"), "4600: unrelated fn not stormed");
+    CHECK(ja::format_stats().find("storm_marks=") != std::string::npos,
+          "4600: stats line carries storm fields");
+
+    // §5: defuse word slot — publish / republish roundtrip. The slot's
+    // pointee is read exactly the way the JIT lowering reads it (two
+    // acquire loads: slot -> word).
+    static std::atomic<std::uint64_t> probe{4600};
+    static std::atomic<std::uint64_t> stable_word{0};
+    aura_jit_set_defuse_word(&probe);
+    auto* slot = reinterpret_cast<const std::atomic<const std::atomic<std::uint64_t>*>*>(
+        aura_jit_defuse_word_slot_addr());
+    CHECK(slot != nullptr, "4600: defuse word slot addressable");
+    const std::atomic<std::uint64_t>* w = slot->load(std::memory_order_acquire);
+    CHECK(w == &probe, "4600: slot returns published word");
+    CHECK(w && w->load(std::memory_order_acquire) == 4600, "4600: word value readable");
+    aura_jit_set_defuse_word(&stable_word);
+    CHECK(slot->load(std::memory_order_acquire) == &stable_word,
+          "4600: republish switches the slot (JIT picks up next guard load)");
+
+    // §4: ShapeProfiler megamorphic mark — sticky stability drop.
+    {
+        aura::compiler::shape::ShapeProfiler prof;
+        const auto key = aura::compiler::shape::make_fn_key("s4600", "fn4600");
+        // kStableThreshold is 100 — record past it so the profile actually
+        // stabilizes and the mark/re-stabilize checks below are non-vacuous.
+        for (int i = 0; i < 128; ++i)
+            (void)prof.record_shape(key, aura::compiler::shape::SHAPE_INT);
+        CHECK(prof.is_stable(key), "4600: profile stabilizes before mark");
+        prof.mark_megamorphic(key);
+        CHECK(!prof.is_stable(key), "4600: megamorphic mark clears stability");
+        for (int i = 0; i < 128; ++i)
+            (void)prof.record_shape(key, aura::compiler::shape::SHAPE_INT);
+        CHECK(!prof.is_stable(key), "4600: storm mark blocks re-stabilization");
+    }
+
+    storms.clear_for_test();
 }
 
 static void stringpool_intern_fastpath_4558() {
@@ -925,6 +994,7 @@ int run_test_mutate_type_gate() {
     registry_intern_4557();
     stringpool_intern_fastpath_4558();
     jit_assumptions_4569();
+    jit_word_and_storm_4600();
     return g_failed ? 1 : 0;
 }
 
