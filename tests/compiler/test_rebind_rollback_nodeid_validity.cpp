@@ -77,8 +77,9 @@ int run_test_rebind_rollback_nodeid_validity() {
         if (pos == std::string::npos)
             pos = mut.find("mutate:rebind");
         CHECK(pos != std::string::npos, "AC1: rebind present");
-        // Existing path is long (hygiene + add-path); window to body capture.
-        auto win = mut.substr(pos, 20000);
+        // #4579's procedure gate pushed the capture past 20000. Same bound as
+        // check_rebind_rollback_nodeid_validity_2795.py.
+        auto win = mut.substr(pos, 28000);
         CHECK(win.find("Issue #2795") != std::string::npos, "AC1: rebind cites #2795");
         CHECK(win.find("old_value_node") != std::string::npos, "AC1: old_value_node");
         // Capture must be after parse_to_flat in the same window.

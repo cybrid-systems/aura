@@ -1336,7 +1336,10 @@ void CompilerService::invalidate_function(const std::string& name) {
             invalidate_bridge_for(affected_name);
             return;
         }
-        auto alloc = arena_.allocator();
+        // Issue #4583: impact / re-lower parses die with this call.
+        // arena_ is monotonic, so one FlatAST per mutate:rebind never returned.
+        std::pmr::monotonic_buffer_resource scratch;
+        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
@@ -1571,7 +1574,10 @@ void CompilerService::invalidate_function(const std::string& name) {
             note_fb(RelowerFallbackReason::Threshold);
             return false;
         }
-        auto alloc = arena_.allocator();
+        // Issue #4583: impact / re-lower parses die with this call.
+        // arena_ is monotonic, so one FlatAST per mutate:rebind never returned.
+        std::pmr::monotonic_buffer_resource scratch;
+        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
@@ -1724,7 +1730,10 @@ void CompilerService::invalidate_function(const std::string& name) {
         // Full cascade re-lower (large dirty mask or partial failed).
         metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.relower_full_called_count.fetch_add(1, std::memory_order_relaxed);
-        auto alloc = arena_.allocator();
+        // Issue #4583: impact / re-lower parses die with this call.
+        // arena_ is monotonic, so one FlatAST per mutate:rebind never returned.
+        std::pmr::monotonic_buffer_resource scratch;
+        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);

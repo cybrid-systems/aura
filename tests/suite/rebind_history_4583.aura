@@ -1,0 +1,59 @@
+;; expect: OK-4583 rebind history stays bounded
+;; mode: load
+;; timeout: 120
+
+(set-code "(define f (lambda (x) (cond ((equal? x \"a\") 1) (else 0))))\n(define g (lambda (x) (f x)))")
+(eval-current)
+
+(define body-a "(lambda (x) (cond ((equal? x \"a\") 1) (else 0)))")
+(define *passes* 0)
+(define *fails* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "FAIL ") (display name)
+        (display " got=") (display got)
+        (display " want=") (display want)
+        (newline))))
+
+(define n0 (stats:get "ast:node-count"))
+(let loop ((i 1))
+  (if (<= i 40)
+      (begin
+        (mutate:rebind "f" body-a "m")
+        (loop (+ i 1)))))
+(define n1 (stats:get "ast:node-count"))
+;; One extra body, not one body per rebind (40 * ~9 nodes would be +360).
+(check "node bound" (<= n1 (+ n0 48)) #t)
+(eval-current)
+(check "f a" (f "a") 1)
+(check "g b" (g "b") 0)
+
+;; The original 4× face: 8-clause cond beside a self-recursive define.
+(set-code "(define f (lambda (x) 0))\n(define g (lambda (xs ys) (if (null? ys) (list) (if (member (car ys) xs) (g xs (cdr ys)) (cons (car ys) (g xs (cdr ys)))))))")
+(eval-current)
+(define body-k "(lambda (x) (cond ((equal? x \"k0\") 0) ((equal? x \"k1\") 1) ((equal? x \"k2\") 2) ((equal? x \"k3\") 3) ((equal? x \"k4\") 4) ((equal? x \"k5\") 5) ((equal? x \"k6\") 6) ((equal? x \"k7\") 7) (else 0)))")
+(define n2 (stats:get "ast:node-count"))
+(let loop ((i 1))
+  (if (<= i 8)
+      (begin
+        (mutate:rebind "f" body-k "m")
+        (loop (+ i 1)))))
+(define n3 (stats:get "ast:node-count"))
+(check "wide node bound" (<= n3 (+ n2 160)) #t)
+(eval-current)
+(check "wide f" (f "k3") 3)
+(check "wide g" (g (list "a") (list "a" "b")) (list "b"))
+
+(if (and (= *fails* 0) (= *passes* 6))
+    (display "OK-4583 rebind history stays bounded\n")
+    (begin
+      (display "FAIL-4583 fails=") (display *fails*)
+      (display " passes=") (display *passes*)
+      (display " n0=") (display n0)
+      (display " n1=") (display n1)
+      (display " n2=") (display n2)
+      (display " n3=") (display n3)
+      (newline)))

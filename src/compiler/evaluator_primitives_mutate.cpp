@@ -3959,6 +3959,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Phase 2.5.0: route via ev.canonical_pool() (== workspace_pool, explicit).
         auto sym = ev.canonical_pool()->intern(name);
 
+        // Issue #4583: drop unlinked lambda region roots, then recycle so
+        // parse reuses those slots. The linked body stays this guard's
+        // rollback image. Skip a null root (#3618).
+        if (flat.root != aura::ast::NULL_NODE && flat.is_live_node(flat.root)) {
+            (void)flat.drop_unreachable_lambda_region_roots();
+            (void)flat.recycle_dead_nodes();
+        }
+
         // ── 安全点：panic checkpoint 现在由 MutationBoundaryGuard 自动管理 ────
         // Issue #241: Guard 在 ctor 调 ev.save_panic_checkpoint()，dtor 根据 ok +
         // ev.panic_auto_rollback_ 决定 commit 或 restore。Body 不再需要手动 save / commit /
@@ -4558,7 +4566,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ci = ev.alloc_cell(*refreshed);
                 else if (ci < ev.cells().size())
                     ev.cells()[ci] = *refreshed;
-                tenv.bind(name, types::make_cell(ci));
+                // Issue #4583: eval_flat already updated this cell. Another
+                // top_ bind appends a shadow, and the next set_pool re-interns
+                // every shadow. Skip the append when the name is already bound.
+                if (!have)
+                    tenv.bind(name, types::make_cell(ci));
                 // Do not bind_symid with the workspace intern onto
                 // stdin top_env — intern ids are pool-local and steal
                 // sibling stdin bindings (*h* / hbump) after rebind.

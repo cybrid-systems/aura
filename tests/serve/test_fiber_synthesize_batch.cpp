@@ -802,10 +802,14 @@ int run_optimize_score_4267() {
                 auto end = wt.find("bool Evaluator::restore_panic_checkpoint()", pos);
                 auto win = wt.substr(pos, end == std::string::npos ? 4000 : end - pos);
                 auto code = strip_line_comments(win);
-                CHECK(code.find("make_keyword") != std::string::npos,
-                      "checkpoint passes a keyword to (current-source)");
-                CHECK(code.find("\":workspace\"") != std::string::npos,
-                      "checkpoint requests the :workspace face");
+                // #4267: the checkpoint is the persistent workspace, not the
+                // bare per-eval (current-source) face. #4583 unparses
+                // workspace_flat_ directly so the text is not minted onto
+                // the monotonic string heap on every boundary enter.
+                CHECK(code.find("unparse_to_string") != std::string::npos,
+                      "checkpoint unparses the workspace flat");
+                CHECK(code.find("workspace_flat_") != std::string::npos,
+                      "checkpoint reads the persistent workspace");
                 CHECK(code.find("(*src_fn)({})") == std::string::npos,
                       "checkpoint no longer uses the bare (current-source) face");
             }
