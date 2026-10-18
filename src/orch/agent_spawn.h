@@ -1847,6 +1847,14 @@ struct AgentHandle {
     // admit gate can see keys already admitted (0 = Serialized). Scope
     // admit reads specs_, not this field. Appended at END (#3461).
     std::uint64_t region_key = 0;
+    // Issue #4590: true on value copies handed out by AgentScope::spawn.
+    // Reads stay faithful (every field is copied); ownership actions are
+    // inert — dtor / move-assign helper parking /
+    // finish_reclaimed_cleanup_on_dtor / release_reservation_if_any
+    // no-op — because the scope's handles_ row remains the sole owner.
+    // Row mutation goes through AgentScope::handles_mut() / find().
+    // Appended at END (#3461).
+    bool value_snapshot = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1888,7 +1896,8 @@ struct AgentHandle {
         , import_proxy(o.import_proxy)
         , source_live(std::move(o.source_live))
         , agents_active_held(o.agents_active_held)
-        , region_key(o.region_key) {
+        , region_key(o.region_key)
+        , value_snapshot(o.value_snapshot) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1929,6 +1938,7 @@ struct AgentHandle {
         o.source_live.reset();            // #4004 / #3461 END field
         o.agents_active_held = false;     // #4097 / #3461 END field
         o.region_key = 0;                 // #4280 / #3461 END field
+        o.value_snapshot = false;         // #4590 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1938,7 +1948,8 @@ struct AgentHandle {
             finish_reclaimed_cleanup_on_dtor();
             // Issue #4562: overwriting a proxy releases the proxy, not the
             // source. The shared AgentLiveness stays under the source handle.
-            if (liveness && !import_proxy)
+            // Issue #4590: value snapshots never park the shared helper.
+            if (!value_snapshot && liveness && !import_proxy)
                 liveness->helper_stop.store(true, std::memory_order_release);
             id = o.id;
             name = std::move(o.name);
@@ -1977,7 +1988,8 @@ struct AgentHandle {
             import_proxy = o.import_proxy;
             source_live = std::move(o.source_live);
             agents_active_held = o.agents_active_held;
-            region_key = o.region_key; // #4280 / #3461 END field
+            region_key = o.region_key;         // #4280 / #3461 END field
+            value_snapshot = o.value_snapshot; // #4590 / #3461 END field
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -2010,11 +2022,18 @@ struct AgentHandle {
             o.source_live.reset();            // #4004 / #3461 END field
             o.agents_active_held = false;     // #4097 / #3461 END field
             o.region_key = 0;                 // #4280 / #3461 END field
+            o.value_snapshot = false;         // #4590 / #3461 END field
         }
         return *this;
     }
 
     ~AgentHandle() {
+        // Issue #4590: value snapshots are inert — the handles_ row is the
+        // sole owner, so helper parking / reservation release / gauge-ref
+        // release must run at most once (on the row).
+        if (value_snapshot) {
+            return;
+        }
         // Best-effort cooperative stop of keepalive helper; body_done not set
         // here so a still-running body is not misreported as Done by
         // watch_agent_liveness. No join in dtor (same as body fiber) —
@@ -2033,12 +2052,60 @@ struct AgentHandle {
 
     // Issue #2009 / #1880: idempotent reservation release (also used by join).
     void release_reservation_if_any() noexcept {
-        if (reserved_memory_bytes == 0)
+        if (value_snapshot || reserved_memory_bytes == 0)
             return;
         aura::core::resource_quota::process_resource_quota().release_agent_arena(
             reserved_memory_bytes, reserved_quota_tenant);
         reserved_memory_bytes = 0;
         reserved_quota_tenant = 0;
+    }
+
+    // Issue #4590: member-wise value copy backing AgentScope::spawn's
+    // return-by-value contract. Unlike move, the source row is untouched
+    // and the copy is flagged value_snapshot so its dtor / implicit
+    // release paths are inert — the handles_ row remains the sole owner.
+    // Checklist (move ctor #3461): any field appended at END of
+    // AgentHandle must appear here too.
+    [[nodiscard]] AgentHandle snapshot() const {
+        AgentHandle s;
+        s.id = id;
+        s.name = name;
+        s.fiber = fiber;
+        s.mailbox = mailbox;
+        s.ok = ok;
+        s.quota_exceeded = quota_exceeded;
+        s.error = error;
+        s.quota_dimension = quota_dimension;
+        s.quota_used = quota_used;
+        s.quota_limit = quota_limit;
+        s.retry_after_ms = retry_after_ms;
+        s.reserved_memory_bytes = reserved_memory_bytes;
+        s.reserved_quota_tenant = reserved_quota_tenant;
+        s.keepalive_interval_ms = keepalive_interval_ms;
+        s.liveness = liveness;
+        s.keepalive_active = keepalive_active;
+        s.keepalive_helper = keepalive_helper;
+        s.max_no_yield_ms = max_no_yield_ms;
+        s.coop = coop;
+        s.reclaimed_deferred_cleanup = reclaimed_deferred_cleanup;
+        s.producer_bp_budget = producer_bp_budget;
+        s.consecutive_bp_count = consecutive_bp_count;
+        s.producer_throttled = producer_throttled;
+        s.last_producer_bp_us = last_producer_bp_us;
+        s.wait_reclaimed_used = wait_reclaimed_used;
+        s.wait_reclaimed_timeout = wait_reclaimed_timeout;
+        s.must_wait_reclaimed = must_wait_reclaimed;
+        s.last_join_status = last_join_status;
+        s.body_acquire_rejected_slot = body_acquire_rejected_slot;
+        s.deny_class = deny_class;
+        s.bp_scope_id = bp_scope_id;
+        s.quota_recycled_pending = quota_recycled_pending;
+        s.import_proxy = import_proxy;
+        s.source_live = source_live;
+        s.agents_active_held = agents_active_held;
+        s.region_key = region_key;
+        s.value_snapshot = true;
+        return s;
     }
 
     // Issue #3012: dtor / move-assign finish after Reclaimed. Defined
@@ -3453,6 +3520,11 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
 // waited cannot leak quota. Does not free body-stack while the
 // fiber is still running (#2661).
 inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
+    // Issue #4590: value snapshots are inert (the handles_ row owns
+    // cleanup; see ~AgentHandle).
+    if (value_snapshot) {
+        return;
+    }
     if (reclaimed_deferred_cleanup && fiber && fiber->is_done()) {
         serve::JoinResult done_jr;
         done_jr.status = serve::JoinStatus::Ok;

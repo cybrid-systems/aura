@@ -597,7 +597,7 @@ int run_test_orch_scope() {
                 sa.body = [] {};
                 sa.attach_mailbox = true;
                 sa.mailbox_high_water = 16;
-                auto& ha = root.spawn(std::move(sa));
+                auto ha = root.spawn(std::move(sa));
                 CHECK(ha.ok, "2926 AC1: C++ spawn ok");
                 auto* found = root.find("cpp-find-a");
                 CHECK(found != nullptr && found->id == ha.id, "2926 AC1: C++ find matching id");

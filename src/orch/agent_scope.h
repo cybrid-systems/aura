@@ -463,10 +463,13 @@ public:
     // Spawn a new agent under this scope. Pushes the handle to the back
     // (Issue #3842: registers the raw AgentHandle with this Scope's
     // lifetime — handles_ is the only ownership plane; no AgentRegistry).
-    // Soft/Off: reference remains valid until the scope is destroyed.
-    // Production (#3776): compact may erase Done husks and reshuffle live
-    // slots on a later spawn / join_all / watch_all — do not hold AgentHandle&
-    // across those calls after a Done-path join (resolve by name instead).
+    // Issue #4590: returns AgentHandle BY VALUE — a value_snapshot copy of
+    // the row (all reads faithful; dtor / implicit-release paths inert).
+    // The old AgentHandle& return dangled once a later spawn reallocated
+    // handles_ (ASan heap-use-after-free, #3497 arm of
+    // test_mailbox_fiber_batch). Join / row mutation goes through
+    // handles_mut() / find() — re-fetch (Production #3776 compact may also
+    // reshuffle live slots on a later spawn / join_all / watch_all).
     //
     // Issue #2229: also stores a copy of the spec in specs_ so
     // watch_all(stall_timeout_ms, AgentFailurePolicy) with
@@ -475,10 +478,10 @@ public:
     // are parallel vectors for per-handle supervision state.
     // Issue #2782: if Scheduler was destroyed, pushes a failed handle
     // (ok=false, error set) and bumps agent_scope_scheduler_dangling_total.
-    AgentHandle& spawn(AgentSpec spec) {
+    AgentHandle spawn(AgentSpec spec) {
         ScopeEnterGuard g(this, "spawn");
         // Issue #2946: production concurrent hard deny — do not mutate
-        // handles_ (return thread-local failed handle).
+        // handles_ (return a failed handle by value).
         // 2026-09-02: Soft-mode collision (metric-only, #2399) now ALSO
         // skips handles_ mutation. The old Soft behavior ("method body
         // continues") let a concurrent spawn push_back while join_all was
@@ -494,14 +497,13 @@ public:
             // check handle.ok before any operation; orch:scope-spawn now
             // mirrors the orch:spawn-agent typed reject hash on this path
             // (ok=#f + quota_exceeded + quota_dimension + deny-class + error).
-            // Returning a reference (not a copy) is intentional — matches
-            // the live-handle arm below so callers can read .ok / .id /
-            // .error / .quota_dimension uniformly. Callers that mistakenly
+            // Issue #4590: returned by value — callers read .ok / .id /
+            // .error / .quota_dimension uniformly with the live-handle arm
+            // below. Callers that mistakenly
             // try to join / index this handle will see id=0 and
             // join_one(0) / cancel_one(0) would no-op against the empty
             // handles_ vector.
-            thread_local AgentHandle failed;
-            failed = AgentHandle{};
+            AgentHandle failed;
             failed.ok = false;
             failed.error = "AgentScope concurrent hard deny (#2946)";
             failed.name = spec.name;
@@ -518,7 +520,7 @@ public:
             specs_.push_back(std::move(spec));
             restart_counts_.push_back(0);
             consecutive_stall_counts_.push_back(0);
-            return handles_.back();
+            return handles_.back().snapshot();
         }
         // Issue #3015: production multi-Scope — fill empty bp_scope_id
         // from this scope's session-local key so a storm in A cannot
@@ -540,8 +542,7 @@ public:
             for (const auto& hp : handles_) {
                 if (hp.name == spec.name &&
                     (hp.must_wait_reclaimed || hp.reclaimed_deferred_cleanup)) {
-                    thread_local AgentHandle failed;
-                    failed = AgentHandle{};
+                    AgentHandle failed;
                     failed.ok = false;
                     failed.error = "AgentScope: name-reuse-while-reclaimed-pending (#3497)";
                     failed.name = spec.name;
@@ -554,8 +555,7 @@ public:
                 if (hp.name == spec.name && aura::orch::slot_is_live_running(hp)) {
                     g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    thread_local AgentHandle failed;
-                    failed = AgentHandle{};
+                    AgentHandle failed;
                     failed.ok = false;
                     failed.error = "AgentScope: name-reuse-while-live (#4393)";
                     failed.name = spec.name;
@@ -578,8 +578,7 @@ public:
         if (region_key_missing_admit_deny_unlocked_(spec)) {
             serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
                 .fetch_add(1, std::memory_order_relaxed);
-            thread_local AgentHandle failed;
-            failed = AgentHandle{};
+            AgentHandle failed;
             failed.ok = false;
             failed.error = "AgentScope: region-key-missing spawn deny (#4238)";
             failed.name = spec.name;
@@ -596,18 +595,17 @@ public:
         specs_.push_back(spec);
         restart_counts_.push_back(0);
         consecutive_stall_counts_.push_back(0);
-        return handles_.back();
+        return handles_.back().snapshot();
     }
 
     // Issue #3250: adopt a bare (name-table) handle without restart
     // fuel. RestartN on this slot is skipped (observable); production
     // degrades to Cancel. Prefer spawn(spec) when RestartN must replay.
     // Tests only — not a second registry / cross-scope restart map.
-    AgentHandle& adopt_handle_without_spec_for_test(AgentHandle h) {
+    AgentHandle adopt_handle_without_spec_for_test(AgentHandle h) {
         ScopeEnterGuard g(this, "adopt_handle_without_spec_for_test");
         if (g.denied_hard()) {
-            thread_local AgentHandle failed;
-            failed = AgentHandle{};
+            AgentHandle failed;
             failed.ok = false;
             failed.error = "AgentScope concurrent hard deny (#2946)";
             failed.name = h.name;
@@ -617,7 +615,9 @@ public:
         specs_.push_back(AgentSpec{}); // empty body — not restartable
         restart_counts_.push_back(0);
         consecutive_stall_counts_.push_back(0);
-        return handles_.back();
+        // Issue #4590: by-value snapshot — same dangling-reference fix as
+        // spawn (test callers re-fetch rows via handles_mut()).
+        return handles_.back().snapshot();
     }
 
     // Issue #2537: create a child AgentScope owned by this scope.

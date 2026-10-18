@@ -365,10 +365,10 @@ static void ac2161_watch_all_batch() {
     // (c) Done agent: empty body completes as soon as scheduled (no yield
     // loop — avoids starvation under hold+ProgressClock workers).
     {
-        AgentHandle& done_h = scope.spawn({.name = "done-soon",
-                                           .body = [] {},
-                                           .attach_mailbox = false,
-                                           .keepalive_interval_ms = 0});
+        AgentHandle done_h = scope.spawn({.name = "done-soon",
+                                          .body = [] {},
+                                          .attach_mailbox = false,
+                                          .keepalive_interval_ms = 0});
         CHECK(done_h.ok, "done-soon spawn ok");
         CHECK(done_h.fiber != nullptr, "done-soon fiber non-null");
     }
@@ -722,7 +722,7 @@ static void ac2946_production_hard_deny() {
             spec.body = [] {};
             spec.attach_mailbox = false;
             spec.keepalive_interval_ms = 0;
-            auto& h = scope.spawn(std::move(spec));
+            auto h = scope.spawn(std::move(spec));
             // Hard deny: failed handle, not ok; handles_ size unchanged.
             spawn_ok.store(h.ok, std::memory_order_release);
         });
@@ -1008,7 +1008,7 @@ static void ac3216_handoff_directory_hard_deny() {
         };
         hang.attach_mailbox = true;
         hang.keepalive_interval_ms = 0;
-        auto& src = scope.spawn(std::move(hang));
+        auto src = scope.spawn(std::move(hang));
         CHECK(src.ok, "ac3216: spawn ok");
         const auto reserved_before = src.reserved_memory_bytes;
         auto tok = aura::orch::agent_export_handoff(src);
@@ -1101,14 +1101,14 @@ static void ac2782_scheduler_destroyed_before_scope() {
     CHECK(scope.scheduler_alive(), "ac2782: scheduler_alive after construct");
 
     std::atomic<bool> hold{true};
-    auto& h = scope.spawn({.name = "2782-hold", .body = [&] {
-                               while (hold.load(std::memory_order_relaxed)) {
-                                   if (aura::serve::g_current_fiber &&
-                                       aura::serve::g_current_fiber->is_cancel_requested())
-                                       break;
-                                   Fiber::yield(YieldReason::Explicit);
-                               }
-                           }});
+    auto h = scope.spawn({.name = "2782-hold", .body = [&] {
+                              while (hold.load(std::memory_order_relaxed)) {
+                                  if (aura::serve::g_current_fiber &&
+                                      aura::serve::g_current_fiber->is_cancel_requested())
+                                      break;
+                                  Fiber::yield(YieldReason::Explicit);
+                              }
+                          }});
     CHECK(h.ok, "ac2782: spawn ok while sched alive");
     std::this_thread::sleep_for(std::chrono::milliseconds(15));
 
@@ -1127,7 +1127,7 @@ static void ac2782_scheduler_destroyed_before_scope() {
     scope.cancel_all();
     auto snap = scope.directory_snapshot();
     CHECK(snap.scopes_visited >= 1, "ac2782: directory_snapshot after dangle");
-    auto& failed = scope.spawn({.name = "2782-after", .body = [] {}});
+    auto failed = scope.spawn({.name = "2782-after", .body = [] {}});
     CHECK(!failed.ok, "ac2782: spawn after dangle → ok=false");
     CHECK(failed.error.find("2782") != std::string::npos ||
               failed.error.find("Scheduler destroyed") != std::string::npos,
@@ -1555,7 +1555,7 @@ static void ac3366_1_bp_deny_failed_handle_has_typed_reject_fields() {
     spec.mailbox_high_water = 16;
     spec.body = [] { /* never runs */ };
 
-    AgentHandle& handle = scope.spawn(std::move(spec));
+    AgentHandle handle = scope.spawn(std::move(spec));
     CHECK(!handle.ok, "AC1: handle.ok == false on BP-deny");
     CHECK(handle.deny_class == aura::orch::AgentDenyClass::BpAdmit,
           "AC1: handle.deny_class == BpAdmit");
@@ -1601,7 +1601,7 @@ static void ac3442_scope_message_resolve() {
     spec.attach_mailbox = true;
     spec.mailbox_high_water = 16;
     spec.body = [] {};
-    AgentHandle& handle = scope.spawn(std::move(spec));
+    AgentHandle handle = scope.spawn(std::move(spec));
     CHECK(handle.ok, "3442 AC1: C++ scope spawn ok");
     auto* found = scope.find("scope-send-3442");
     CHECK(found != nullptr && found->id == handle.id, "3442 AC1: scope find by name");
@@ -1701,7 +1701,7 @@ static void ac4238_region_key_admit_deny() {
             spec.name = std::format("4238-soft-{}", i);
             spec.body = [] {};
             spec.attach_mailbox = false;
-            auto& h = scope.spawn(std::move(spec));
+            auto h = scope.spawn(std::move(spec));
             CHECK(h.ok, std::format("4238 AC1: Soft spawn {} admits", i));
         }
         CHECK(scope.handles().size() == 3, "4238 AC1: all three emplaced");
@@ -1727,7 +1727,7 @@ static void ac4238_region_key_admit_deny() {
         first.body = hold_body(stop);
         first.attach_mailbox = false;
         first.keepalive_interval_ms = 0;
-        auto& h1 = scope.spawn(std::move(first));
+        auto h1 = scope.spawn(std::move(first));
         CHECK(h1.ok, "4238 AC2: first keyless spawn admits");
         const auto m0 = miss_total();
         AgentSpec second;
@@ -1735,7 +1735,7 @@ static void ac4238_region_key_admit_deny() {
         second.body = hold_body(stop);
         second.attach_mailbox = false;
         second.keepalive_interval_ms = 0;
-        auto& h2 = scope.spawn(std::move(second));
+        auto h2 = scope.spawn(std::move(second));
         CHECK(!h2.ok, "4238 AC2: second keyless spawn denied");
         CHECK(h2.id == 0, "4238 AC2: denied handle id=0");
         CHECK(h2.error.find("#4238") != std::string::npos, "4238 AC2: error cites #4238");
@@ -1767,14 +1767,14 @@ static void ac4238_region_key_admit_deny() {
         first.body = hold_body(stop);
         first.attach_mailbox = false;
         first.keepalive_interval_ms = 0;
-        auto& h1 = scope.spawn(std::move(first));
+        auto h1 = scope.spawn(std::move(first));
         CHECK(h1.ok, "4238 AC3: first spawn admits");
         AgentSpec second;
         second.name = "4238-escape-b";
         second.body = hold_body(stop);
         second.attach_mailbox = false;
         second.keepalive_interval_ms = 0;
-        auto& h2 = scope.spawn(std::move(second));
+        auto h2 = scope.spawn(std::move(second));
         CHECK(h2.ok, "4238 AC3: env=0 explicit off admits the second spawn");
         const auto obs = scope.observe_isolation();
         CHECK(obs.region_key_missing,
@@ -1800,7 +1800,7 @@ static void ac4238_region_key_admit_deny() {
         a.attach_mailbox = false;
         a.keepalive_interval_ms = 0;
         a.region_key = 1;
-        auto& h1 = scope.spawn(std::move(a));
+        auto h1 = scope.spawn(std::move(a));
         CHECK(h1.ok, "4238 AC4: key=1 spawn admits");
         AgentSpec b;
         b.name = "4238-keys-b";
@@ -1808,7 +1808,7 @@ static void ac4238_region_key_admit_deny() {
         b.attach_mailbox = false;
         b.keepalive_interval_ms = 0;
         b.region_key = 2;
-        auto& h2 = scope.spawn(std::move(b));
+        auto h2 = scope.spawn(std::move(b));
         CHECK(h2.ok, "4238 AC4: key=2 spawn admits (distinct keys)");
         const auto obs = scope.observe_isolation();
         CHECK(obs.decision.distinct_nonzero_region_keys == 2,
@@ -1833,7 +1833,7 @@ static void ac4238_region_key_admit_deny() {
         first.body = hold_body(stop);
         first.attach_mailbox = false;
         first.keepalive_interval_ms = 0;
-        auto& h1 = scope.spawn(std::move(first));
+        auto h1 = scope.spawn(std::move(first));
         CHECK(h1.ok, "4238 AC5: mutate agent admits");
         AgentSpec pure;
         pure.name = "4238-pure-b";
@@ -1841,7 +1841,7 @@ static void ac4238_region_key_admit_deny() {
         pure.attach_mailbox = false;
         pure.keepalive_interval_ms = 0;
         pure.mutation_boundary = false;
-        auto& h2 = scope.spawn(std::move(pure));
+        auto h2 = scope.spawn(std::move(pure));
         CHECK(h2.ok, "4238 AC5: single mutate + pure agent admits (floor not met)");
         const auto obs = scope.observe_isolation();
         CHECK(obs.mutate_agent_count == 1, "4238 AC5: mutate_agent_count=1");
@@ -1864,7 +1864,7 @@ static void ac4238_region_key_admit_deny() {
             spec.name = std::format("4238-softenv-{}", i);
             spec.body = [] {};
             spec.attach_mailbox = false;
-            auto& h = scope.spawn(std::move(spec));
+            auto h = scope.spawn(std::move(spec));
             CHECK(h.ok, std::format("4238 AC6: Soft env=1 spawn {} admits", i));
         }
         CHECK(miss_total() == m0, "4238 AC6: no deny counter bump in Soft");

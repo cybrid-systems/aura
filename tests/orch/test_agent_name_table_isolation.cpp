@@ -1155,13 +1155,13 @@ static void ac4393_live_name_reuse() {
         Scheduler sched(2);
         SchedRunner runner(sched);
         AgentScope scope(sched);
-        auto& h1 = scope.spawn(sleeping("scope-4393"));
+        auto h1 = scope.spawn(sleeping("scope-4393"));
         CHECK(h1.ok && h1.fiber && !h1.fiber->is_done(), "4393 AC2: scope spawn live");
         const auto id0 = h1.id;
         const auto res0 = h1.reserved_memory_bytes;
         const auto n0 = scope.size();
         const auto n_active = active();
-        auto& h2 = scope.spawn(sleeping("scope-4393"));
+        auto h2 = scope.spawn(sleeping("scope-4393"));
         CHECK(!h2.ok && h2.id == 0, "4393 AC2: second spawn ok=#f id=0");
         CHECK(h2.deny_class == AgentDenyClass::Other, "4393 AC2: deny-class other");
         CHECK(h2.quota_dimension == "name-reuse-while-live", "4393 AC2: deny detail");
@@ -1184,10 +1184,10 @@ static void ac4393_live_name_reuse() {
         Scheduler sched(2);
         SchedRunner runner(sched);
         AgentScope scope(sched);
-        auto& h1 = scope.spawn(sleeping("soft-4393"));
+        auto h1 = scope.spawn(sleeping("soft-4393"));
         CHECK(h1.ok, "4393 AC3: soft first ok");
         const auto id1 = h1.id;
-        auto& h2 = scope.spawn(sleeping("soft-4393"));
+        auto h2 = scope.spawn(sleeping("soft-4393"));
         CHECK(h2.ok && h2.id != id1, "4393 AC3: soft still appends");
         CHECK(scope.size() == 2, "4393 AC3: soft size 2");
         auto hs = scope.handles_mut();
@@ -1224,7 +1224,7 @@ static void ac4393_live_name_reuse() {
 
         auto& scope =
             aura::orch::get_or_create_agent_scope(static_cast<void*>(&cs.evaluator()), sched);
-        auto& sh = scope.spawn(sleeping("s4393"));
+        auto sh = scope.spawn(sleeping("s4393"));
         CHECK(sh.ok && sh.fiber && !sh.fiber->is_done(), "4393 AC4: scope seed live");
         const auto sid = sh.id;
         const auto scope_active = active();
