@@ -627,6 +627,27 @@ export class ConstraintSystem {
     std::vector<std::int64_t> parent_;        // Union-Find parent (self=root, -1=uninitialized)
     std::vector<std::uint32_t> rank_;         // Union-Find rank (for union-by-rank)
     std::vector<aura::core::TypeId> binding_; // binding[rep] = concrete type for var rep
+    // Issue #4598: the solver union-find is sparse in the global TypeId
+    // index. parent_/rank_/binding_ stay the #4310 test mirror
+    // (grow_union_find_for_test / union_find_size / abort size). fresh_var
+    // and unify do not resize those vectors to the registry high-water,
+    // so clear()'s assign is not O(registry). UfSlot is public so
+    // AbortCsHighWater (copied into MutationCheckpoint) can name it.
+public:
+    struct UfSlot {
+        std::int64_t parent = -1;
+        std::uint32_t rank = 0;
+        aura::core::TypeId binding{};
+    };
+
+private:
+    std::unordered_map<std::uint32_t, UfSlot> uf_sparse_;
+    UfSlot& uf_touch(std::uint32_t idx) {
+        auto& slot = uf_sparse_[idx];
+        if (slot.parent < 0)
+            slot.parent = static_cast<std::int64_t>(idx);
+        return slot;
+    }
     uint64_t fresh_counter_ = 0;
     uint64_t first_free_var_ = 0; // first var index that belongs to this CS
 
@@ -1330,6 +1351,8 @@ public:
         std::vector<std::int64_t> parent;
         std::vector<std::uint32_t> rank;
         std::vector<aura::core::TypeId> binding;
+        // Issue #4598: solver state. Restored with the test-mirror vectors.
+        std::unordered_map<std::uint32_t, UfSlot> uf_sparse;
         std::size_t adt_match_goals_size = 0;
         std::unordered_set<std::uint32_t> touched_roots;
         std::unordered_set<std::uint32_t> occurrence_priority_roots;
@@ -1343,6 +1366,7 @@ public:
         h.parent = parent_;
         h.rank = rank_;
         h.binding = binding_;
+        h.uf_sparse = uf_sparse_;
         h.adt_match_goals_size = adt_match_goals_.size();
         h.touched_roots = touched_roots_;
         h.occurrence_priority_roots = occurrence_priority_roots_;
@@ -1374,6 +1398,7 @@ public:
         parent_ = std::move(h.parent);
         rank_ = std::move(h.rank);
         binding_ = std::move(h.binding);
+        uf_sparse_ = std::move(h.uf_sparse);
         if (adt_match_goals_.size() > h.adt_match_goals_size)
             adt_match_goals_.resize(h.adt_match_goals_size);
         touched_roots_ = std::move(h.touched_roots);

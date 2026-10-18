@@ -501,6 +501,48 @@ namespace {
         if (!body_closed)
             return false;
 
+        // Issue #4598: the define-arity map below is O(workspace). A body
+        // whose calls are all primitives or parameters cannot miss a
+        // workspace-define arity (#4362), so a closed `(lambda () …)`
+        // rebind does not scan every define. The map stays when a call
+        // names something else.
+        bool needs_define_arity = false;
+        {
+            auto probe = [&](auto self, aura::ast::NodeId id,
+                             const std::unordered_set<aura::ast::SymId>& scope) -> void {
+                if (needs_define_arity || id == aura::ast::NULL_NODE || id >= flat.size())
+                    return;
+                const auto nv = flat.get(id);
+                if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                    const auto callee_id = nv.child(0);
+                    if (callee_id != aura::ast::NULL_NODE && callee_id < flat.size()) {
+                        const auto cv = flat.get(callee_id);
+                        if (cv.tag == aura::ast::NodeTag::Variable &&
+                            cv.sym_id != aura::ast::INVALID_SYM && scope.count(cv.sym_id) == 0) {
+                            const auto nm = pool->resolve(cv.sym_id);
+                            if (prims.slot_for_name(nm) >= prims.slot_count())
+                                needs_define_arity = true;
+                        }
+                    }
+                }
+                if (needs_define_arity)
+                    return;
+                if (nv.tag == aura::ast::NodeTag::Lambda) {
+                    auto inner = scope;
+                    for (auto p : nv.params)
+                        inner.insert(p);
+                    for (auto c : nv.children)
+                        self(self, c, inner);
+                    return;
+                }
+                for (auto c : nv.children)
+                    self(self, c, scope);
+            };
+            probe(probe, new_value, {});
+        }
+        if (!needs_define_arity)
+            return true;
+
         // Issue #4362: fixed lambdas need an exact arg count. A dotted rest
         // (int_value != 0) has no upper bound; min arity is params.size()-1,
         // matching selective typecheck. The name being rebound uses the new

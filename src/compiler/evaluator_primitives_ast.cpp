@@ -9,6 +9,7 @@ module;
 #include "security_capabilities.h" // Issue #4400: format_deny_reason on direct restore
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: restore clears IR owners
+#include "typed_mutation_audit.h"           // Issue #4598: production restore stays on mark-all
 
 module aura.compiler.evaluator;
 
@@ -25,6 +26,41 @@ using WorkspaceTree = aura::compiler::WorkspaceTree;
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using DefUseSummaryStats = std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>;
+
+// Issue #4598: reachable Define unparses, same walk ast:restore used to
+// publish every row. Compared live-vs-snapshot so a one-define restore
+// does not republish (or re-lower) the fillers. Not function_sources_:
+// #2730 stores the whole workspace text in every row.
+[[nodiscard]] std::unordered_map<std::string, std::string>
+collect_reachable_define_sources(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
+    std::unordered_map<std::string, std::string> out;
+    const auto root = flat.root;
+    if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+        return out;
+    std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+    std::vector<aura::ast::NodeId> pending;
+    pending.push_back(root);
+    while (!pending.empty()) {
+        const auto cur = pending.back();
+        pending.pop_back();
+        if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+            seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+            continue;
+        seen[static_cast<std::size_t>(cur)] = 1;
+        const auto v = flat.get(cur);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+            auto nm = std::string(pool.resolve(v.sym_id));
+            if (!nm.empty()) {
+                auto src = aura::ast::unparse_to_string(flat, pool, cur);
+                if (!src.empty())
+                    out.insert_or_assign(std::move(nm), std::move(src));
+            }
+        }
+        for (auto child : v.children)
+            pending.push_back(child);
+    }
+    return out;
+}
 
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
@@ -75,6 +111,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     auto workspace_source_string = [&ev]() -> std::optional<std::string> {
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return std::nullopt;
+        // Issue #4598: set-code / restore stamp the full workspace text.
+        // A generation match is the snapshot string. Do not call
+        // authoritative_workspace_source() — that prefers the unparse hook.
+        // unparse_to_string stays on the miss so a stale stamp cannot hide
+        // a structural edit (#2920).
+        if (ev.workspace_source_text_valid_ && !ev.workspace_source_text_.empty() &&
+            ev.workspace_source_text_generation_ == ev.workspace_flat_->generation()) {
+            return ev.workspace_source_text_;
+        }
         return aura::ast::unparse_to_string(*ev.workspace_flat_, *ev.workspace_pool_,
                                             ev.workspace_flat_->root, {});
     };
@@ -608,6 +653,16 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             }
             if (can_direct) {
                 try {
+                    // Issue #4598: diff reachable defines before the flat
+                    // assign (live) and after it (snapshot). A small cone
+                    // republishes only the rows that changed and drops IR
+                    // owners of those names plus called_by (#4349 / #4360).
+                    // Production and a large replace keep mark-all + pre-cache
+                    // so #4577 bundle-erase and the IR warm still run.
+                    std::unordered_map<std::string, std::string> live_defs;
+                    if (ev.workspace_flat_ && ev.workspace_pool_)
+                        live_defs = collect_reachable_define_sources(*ev.workspace_flat_,
+                                                                     *ev.workspace_pool_);
                     *ev.workspace_flat_ = *ev.snapshot_flats_[id].flat;
                     *ev.workspace_pool_ = *ev.snapshot_flats_[id].pool;
                     // Issue #261: recycle any slots that became
@@ -621,35 +676,46 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // for the new body and does not roll that table back.
                     // eval-current specialises from it, so a restore that only
                     // swaps the tree reinstalls the mutated lambda.
+                    std::vector<std::string> changed;
+                    std::vector<std::string> added;
+                    std::vector<std::string> removed;
+                    const auto snap_defs =
+                        collect_reachable_define_sources(*ev.workspace_flat_, *ev.workspace_pool_);
+                    changed.reserve(4);
+                    for (const auto& [nm, src] : snap_defs) {
+                        auto it = live_defs.find(nm);
+                        if (it == live_defs.end())
+                            added.push_back(nm);
+                        else if (it->second != src)
+                            changed.push_back(nm);
+                    }
+                    for (const auto& [nm, _] : live_defs) {
+                        if (!snap_defs.contains(nm))
+                            removed.push_back(nm);
+                    }
+                    constexpr std::size_t kRestoreDiffCap = 48;
+                    const std::size_t diff_n = changed.size() + added.size() + removed.size();
+                    const bool small_diff =
+                        !aura::compiler::typed_audit::production_defaults_active() &&
+                        diff_n <= kRestoreDiffCap;
                     if (ev.update_function_source_fn_) {
-                        auto& flat = *ev.workspace_flat_;
-                        auto* pool = ev.workspace_pool_;
-                        const auto root = flat.root;
-                        if (root != aura::ast::NULL_NODE && root < flat.size() &&
-                            !flat.is_free_slot(root)) {
-                            std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()),
-                                                            0);
-                            std::vector<aura::ast::NodeId> pending;
-                            pending.push_back(root);
-                            while (!pending.empty()) {
-                                const auto cur = pending.back();
-                                pending.pop_back();
-                                if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
-                                    seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
-                                    continue;
-                                seen[static_cast<std::size_t>(cur)] = 1;
-                                const auto v = flat.get(cur);
-                                if (v.tag == aura::ast::NodeTag::Define &&
-                                    v.sym_id != aura::ast::INVALID_SYM) {
-                                    auto nm = std::string(pool->resolve(v.sym_id));
-                                    if (!nm.empty()) {
-                                        auto src = aura::ast::unparse_to_string(flat, *pool, cur);
-                                        if (!src.empty())
-                                            ev.update_function_source_fn_(nm, src);
-                                    }
-                                }
-                                for (auto child : v.children)
-                                    pending.push_back(child);
+                        if (small_diff) {
+                            auto publish = [&](const std::string& nm) {
+                                auto it = snap_defs.find(nm);
+                                if (it != snap_defs.end() && !it->second.empty())
+                                    ev.update_function_source_fn_(nm, it->second);
+                            };
+                            for (const auto& nm : changed)
+                                publish(nm);
+                            for (const auto& nm : added)
+                                publish(nm);
+                            // Empty source erases the row (removed define).
+                            for (const auto& nm : removed)
+                                ev.update_function_source_fn_(nm, "");
+                        } else {
+                            for (const auto& [nm, src] : snap_defs) {
+                                if (!src.empty())
+                                    ev.update_function_source_fn_(nm, src);
                             }
                         }
                     }
@@ -657,13 +723,49 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // (ASAN fix #107 leak) delete the old index.
                     destroy_defuse_index();
                     ev.defuse_affected_syms_.clear();
-                    {
+                    if (small_diff && diff_n > 0) {
+                        // Drop owners of the replaced names and every
+                        // transitive caller. mark_define_dirty cascades
+                        // the dirty bit but does not clear owners, so a
+                        // pre-eval-current call of the caller would still
+                        // return the inlined post-rebind value (#4349).
+                        std::unordered_set<std::string> drop;
+                        std::vector<std::string> q;
+                        q.insert(q.end(), changed.begin(), changed.end());
+                        q.insert(q.end(), removed.begin(), removed.end());
+                        q.insert(q.end(), added.begin(), added.end());
+                        for (std::size_t qi = 0; qi < q.size(); ++qi) {
+                            if (!drop.insert(q[qi]).second)
+                                continue;
+                            if (!ev.get_dependents_fn_)
+                                continue;
+                            for (const auto& c : ev.get_dependents_fn_(q[qi])) {
+                                if (!c.empty())
+                                    q.push_back(c);
+                            }
+                        }
+                        if (ev.drop_ir_define_binding_fn_) {
+                            for (const auto& nm : drop)
+                                ev.drop_ir_define_binding_fn_(nm);
+                        }
+                        if (ev.mark_define_dirty_fn_) {
+                            for (const auto& nm : changed)
+                                ev.mark_define_dirty_fn_(nm);
+                            for (const auto& nm : removed)
+                                ev.mark_define_dirty_fn_(nm);
+                            for (const auto& nm : added)
+                                ev.mark_define_dirty_fn_(nm);
+                        }
+                        if ((!added.empty() || !removed.empty() || !changed.empty()) &&
+                            ev.repopulate_workspace_dep_graph_fn_)
+                            ev.repopulate_workspace_dep_graph_fn_();
+                    } else if (!small_diff) {
                         aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
                         if (ev.mark_all_defines_dirty_fn_)
                             ev.mark_all_defines_dirty_fn_();
+                        if (ev.pre_cache_workspace_defines_fn_)
+                            ev.pre_cache_workspace_defines_fn_();
                     }
-                    if (ev.pre_cache_workspace_defines_fn_)
-                        ev.pre_cache_workspace_defines_fn_();
                     did_direct = true;
                 } catch (...) {
                     // [SILENCE-PRIM-#615] Fall through to

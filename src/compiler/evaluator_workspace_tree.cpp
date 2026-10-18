@@ -267,6 +267,30 @@ bool Evaluator::refresh_active_flat_pool(void* wt, void** out_flat, void** out_p
 bool Evaluator::save_panic_checkpoint() {
     if (!workspace_flat_ || !workspace_pool_)
         return false;
+    // Issue #4598: set-code / restore already stamped the full workspace
+    // text. Copy that when the generation still matches so a boundary
+    // enter does not unparse. A miss (the stamp was invalidated, or
+    // nothing was stamped) still asks (current-source :workspace): panic
+    // restore set-codes this string as the whole workspace (#4267).
+    if (workspace_source_text_valid_ && !workspace_source_text_.empty() &&
+        workspace_source_text_generation_ == workspace_flat_->generation()) {
+        bool newly_live = false;
+        {
+            std::lock_guard alloc_lock(alloc_storage_lock_);
+            newly_live = panic_safe_source_.empty();
+            panic_safe_source_ = workspace_source_text_;
+            panic_safe_string_heap_size_ = string_heap_.size();
+        }
+        if (newly_live)
+            aura::gc_hooks::note_panic_checkpoint_live();
+        panic_safe_cells_size_ = cells_.size();
+        panic_safe_pairs_size_ = pairs_.size();
+        panic_safe_env_frames_size_ = env_frames_.size();
+        arm_gc_defer_for_pending_panic();
+        bump_panic_checkpoint_save_count();
+        bump_longrunning_checkpoint_success();
+        return true;
+    }
     auto src_fn = primitives_.lookup("current-source");
     if (!src_fn)
         return false;

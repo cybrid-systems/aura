@@ -5172,10 +5172,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // ops in a subtree. This is broader than the audit path's
             // audit_op string heuristic (which only checks for op-name
             // substrings) but the wider net is the fail-closed default.
-            const auto v = ws->get(id);
-            if (v.tag == aura::ast::NodeTag::Linear || v.tag == aura::ast::NodeTag::Move ||
-                v.tag == aura::ast::NodeTag::Borrow || v.tag == aura::ast::NodeTag::MutBorrow ||
-                v.tag == aura::ast::NodeTag::Drop) {
+            // Issue #4598: tag() is the column. FlatAST::get assembled a
+            // node view per live id on every boundary exit.
+            const auto tg = ws->tag(id);
+            if (tg == aura::ast::NodeTag::Linear || tg == aura::ast::NodeTag::Move ||
+                tg == aura::ast::NodeTag::Borrow || tg == aura::ast::NodeTag::MutBorrow ||
+                tg == aura::ast::NodeTag::Drop) {
                 linear_ops_present_local = true;
             }
             if (linear_ops_present_local && match_sites_present_local)

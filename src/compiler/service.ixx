@@ -1276,7 +1276,12 @@ public:
         // Issue #2730: rebind/set-body publish new source before dirty cascade.
         evaluator_.set_update_function_source_fn(
             [this](const std::string& name, const std::string& src) {
-                this->function_sources_[name] = src;
+                // Issue #4598: ast:restore passes "" for a define the
+                // snapshot dropped. Assigning that kept a stale row.
+                if (src.empty())
+                    this->function_sources_.erase(name);
+                else
+                    this->function_sources_[name] = src;
             });
         // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
         evaluator_.set_invalidate_function_fn(
@@ -11056,20 +11061,32 @@ public:
             if (!is_ws_lambda(focus))
                 return;
             names.push_back(focus);
-            std::vector<std::string> callers;
-            {
-                std::shared_lock dep_read(dep_graph_mtx_);
-                if (auto it = dep_graph_.find(focus); it != dep_graph_.end())
-                    callers = it->second.called_by;
-            }
-            for (const auto& c : callers) {
-                if (c.empty() || c == focus)
-                    continue;
-                if (names.size() >= 5)
-                    break;
-                if (!is_ws_lambda(c))
-                    continue;
-                names.push_back(c);
+            // Issue #4598: transitive called_by, callee first. One hop
+            // leaves a caller of the direct caller (chain2 of user of
+            // base) holding the inlined pre-rebind body. Cap the cone so
+            // a popular define does not re-lower the whole graph.
+            constexpr std::size_t kFocusCallerCap = 16;
+            std::unordered_set<std::string> seen;
+            seen.insert(focus);
+            std::vector<std::string> queue;
+            queue.push_back(focus);
+            for (std::size_t qi = 0; qi < queue.size() && names.size() < kFocusCallerCap; ++qi) {
+                std::vector<std::string> callers;
+                {
+                    std::shared_lock dep_read(dep_graph_mtx_);
+                    if (auto it = dep_graph_.find(queue[qi]); it != dep_graph_.end())
+                        callers = it->second.called_by;
+                }
+                for (const auto& c : callers) {
+                    if (c.empty() || !seen.insert(c).second)
+                        continue;
+                    if (names.size() >= kFocusCallerCap)
+                        break;
+                    if (!is_ws_lambda(c))
+                        continue;
+                    names.push_back(c);
+                    queue.push_back(c);
+                }
             }
         }
         // Value-cell erase happens inside specialize_one_lambda_via_ir,
@@ -11258,16 +11275,25 @@ public:
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool || name.empty())
             return false;
+        // Issue #4598: tag/sym_id are column reads. get() only the define
+        // whose name matches, then the lambda child.
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             if (ws_flat->is_free_slot(id))
                 continue;
+            if (ws_flat->tag(id) != aura::ast::NodeTag::Define)
+                continue;
+            const auto sym = ws_flat->sym_id(id);
+            if (sym == aura::ast::INVALID_SYM)
+                continue;
+            if (ws_pool->resolve(sym) != name)
+                continue;
             auto v = ws_flat->get(id);
-            if (v.tag != aura::ast::NodeTag::Define || v.children.empty() ||
-                v.sym_id == aura::ast::INVALID_SYM)
-                continue;
-            if (ws_pool->resolve(v.sym_id) != name)
-                continue;
-            return ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda;
+            if (v.children.empty())
+                return false;
+            const auto body = v.child(0);
+            if (body >= ws_flat->size() || ws_flat->is_free_slot(body))
+                return false;
+            return ws_flat->tag(body) == aura::ast::NodeTag::Lambda;
         }
         return false;
     }
