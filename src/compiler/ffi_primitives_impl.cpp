@@ -264,7 +264,13 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // the match) instead of growing opaque_heap_ by one per call.
         if (auto reuse = reuse_opaque_alias(oh, p))
             return types::make_opaque(*reuse);
-        const auto packed = mint_opaque_slot(*oh, p);
+        auto packed = mint_opaque_slot(*oh, p);
+        if (packed == ~std::uint64_t{0}) {
+            const auto slot = static_cast<std::uint32_t>(oh->size());
+            oh->push_back(p);
+            note_appended_opaque(*oh);
+            packed = types::pack_opaque_index(slot, 0);
+        }
         if (p != nullptr)
             opaque_alias_slot_[p] = packed;
         // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
@@ -308,7 +314,13 @@ void FFIRuntime::register_primitives(RegisterFn add,
         // Issue #980: track allocation size for bounds checks. Record it
         // before the slot is published.
         opaque_sizes_[ptr] = size;
-        const auto packed = mint_opaque_slot(*oh, ptr);
+        auto packed = mint_opaque_slot(*oh, ptr);
+        if (packed == ~std::uint64_t{0}) {
+            const auto slot = static_cast<std::uint32_t>(oh->size());
+            oh->push_back(ptr);
+            note_appended_opaque(*oh);
+            packed = types::pack_opaque_index(slot, 0);
+        }
         // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: libc-heap
         // calloc is not densify-tracked. Survive densify as-is.
         aura::core::lifetime::note_ffi_opaque_create_exempt("libc-heap");
@@ -572,7 +584,13 @@ void FFIRuntime::register_primitives(RegisterFn add,
             // native struct) reuses the slot minted for the same address.
             if (auto reuse = reuse_opaque_alias(oh, ptr))
                 return types::make_opaque(*reuse);
-            const auto ni = mint_opaque_slot(*oh, ptr);
+            auto ni = mint_opaque_slot(*oh, ptr);
+            if (ni == ~std::uint64_t{0}) {
+                const auto slot = static_cast<std::uint32_t>(oh->size());
+                oh->push_back(ptr);
+                note_appended_opaque(*oh);
+                ni = types::pack_opaque_index(slot, 0);
+            }
             const auto ni_slot = types::opaque_slot_index(ni);
             // Issue #3022 / #3057 / #3274 / #3533: opaque-struct-copy may alias
             // an arena-tracked object (densify-tracked). Under production Moving
@@ -667,11 +685,8 @@ std::uint64_t FFIRuntime::mint_opaque_slot(std::vector<void*>& oh, void* p) {
         const auto gen = slot < opaque_generation_.size() ? opaque_generation_[slot] : 0u;
         return types::pack_opaque_index(slot, gen);
     }
-    const auto slot = static_cast<std::uint32_t>(oh.size());
-    oh.push_back(p);
-    opaque_generation_.push_back(0);
-    opaque_on_freelist_.push_back(0);
-    return types::pack_opaque_index(slot, 0);
+    // Caller appends. ~0 is not a packed index (see the declaration).
+    return ~std::uint64_t{0};
 }
 
 void FFIRuntime::abandon_opaque_slot(std::vector<void*>& oh, std::uint64_t packed) {

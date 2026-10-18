@@ -959,6 +959,43 @@ static void feedback_enter_call(std::uint64_t cid, std::string_view name, const 
     }
 }
 
+namespace {
+
+    struct FfiApplyHandleProbe {
+        FFIRuntime* rt = nullptr;
+        const std::vector<void*>* oh = nullptr;
+    };
+
+    bool ffi_apply_handle_probe(void* ctx, std::uint64_t packed, std::string_view tag, void*& ptr) {
+        auto* c = static_cast<FfiApplyHandleProbe*>(ctx);
+        return c->rt->live_tagged_handle(*c->oh, packed, tag, ptr);
+    }
+
+    // Issue #4551 / #4597. Sentences stay exact: arity, stale opaque, Handle:<tag>.
+    std::string ffi_marshal_reject_message(std::string_view name, const auto& marshalled,
+                                           std::span<const int> arg_types,
+                                           std::span<const EvalValue> args) {
+        if (marshalled.arity_mismatch) {
+            return std::format("c-func {}: expected {} argument{}, got {}", name, arg_types.size(),
+                               arg_types.size() == 1 ? "" : "s", args.size());
+        }
+        const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
+        if (marshalled.bad_stale) {
+            return std::format("c-func {}: argument {}: stale opaque (the slot was recycled)", name,
+                               bi + 1);
+        }
+        if (marshalled.bad_kind == 5) {
+            return std::format(
+                "c-func {}: argument {}: This argument must be an `{}` handle, got {}", name,
+                bi + 1, marshalled.bad_tag, aura::compiler::pure::ffi_value_kind_name(args[bi]));
+        }
+        return std::format("c-func {}: argument {}: expected {}, got {}", name, bi + 1,
+                           aura::compiler::pure::ffi_kind_name(marshalled.bad_kind),
+                           aura::compiler::pure::ffi_value_kind_name(args[bi]));
+    }
+
+} // namespace
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #4467: drop a message left by a caller that did not take it.
@@ -1018,55 +1055,16 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // from ffi_runtime_.
             std::span<const std::string> string_heap_view(string_heap_.data(), string_heap_.size());
             std::span<void* const> opaque_heap_view(opaque_heap_.data(), opaque_heap_.size());
-            // Issue #4597: Handle:<tag> asks FFIRuntime whether the packed
-            // index is a live handle of that tag. The probe is a stack
-            // context; the call does not outlive it.
-            struct HandleProbeCtx {
-                FFIRuntime* rt = nullptr;
-                const std::vector<void*>* oh = nullptr;
-            };
-            HandleProbeCtx handle_probe_ctx{&ffi_runtime_, &opaque_heap_};
+            // Issue #4597: Handle:<tag> probe. The context dies with this call.
+            FfiApplyHandleProbe handle_probe_ctx{&ffi_runtime_, &opaque_heap_};
             auto marshalled = aura::compiler::pure::ffi_marshal_args_pure(
                 args, arg_types, string_heap_view, opaque_heap_view,
                 ffi_runtime_.opaque_generations(), ff.arg_handle_tags,
-                aura::compiler::pure::FfiHandleProbe{
-                    &handle_probe_ctx,
-                    [](void* ctx, std::uint64_t packed, std::string_view tag, void*& ptr) -> bool {
-                        auto* c = static_cast<HandleProbeCtx*>(ctx);
-                        return c->rt->live_tagged_handle(*c->oh, packed, tag, ptr);
-                    }});
-            // Issue #4551: a tag that does not match the declared kind (or
-            // a wrong argument count) is a catchable type error; nothing is
-            // passed to native code. An Int used to reach a String slot as
-            // a raw pointer (SIGSEGV) and a String an Int slot as its heap
-            // index. Issue #4597: a stale Opaque and a Handle:<tag> mismatch
-            // take the same path, with their own sentences.
-            if (!marshalled.ok()) {
-                std::string msg;
-                if (marshalled.arity_mismatch) {
-                    msg = std::format("c-func {}: expected {} argument{}, got {}", ff.name,
-                                      arg_types.size(), arg_types.size() == 1 ? "" : "s",
-                                      args.size());
-                } else if (marshalled.bad_stale) {
-                    const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
-                    msg =
-                        std::format("c-func {}: argument {}: stale opaque (the slot was recycled)",
-                                    ff.name, bi + 1);
-                } else if (marshalled.bad_kind == 5) {
-                    const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
-                    msg = std::format(
-                        "c-func {}: argument {}: This argument must be an `{}` handle, got {}",
-                        ff.name, bi + 1, marshalled.bad_tag,
-                        aura::compiler::pure::ffi_value_kind_name(args[bi]));
-                } else {
-                    const auto bi = static_cast<std::size_t>(marshalled.bad_arg);
-                    msg =
-                        std::format("c-func {}: argument {}: expected {}, got {}", ff.name, bi + 1,
-                                    aura::compiler::pure::ffi_kind_name(marshalled.bad_kind),
-                                    aura::compiler::pure::ffi_value_kind_name(args[bi]));
-                }
-                return make_arith_type_error(msg);
-            }
+                aura::compiler::pure::FfiHandleProbe{&handle_probe_ctx, ffi_apply_handle_probe});
+            // Issue #4551 / #4597: kind, arity, stale opaque, Handle:<tag>.
+            if (!marshalled.ok())
+                return make_arith_type_error(
+                    ffi_marshal_reject_message(ff.name, marshalled, arg_types, args));
 
             // Issue #3602: FFI arm shares the #3421 densify-stale refuse.
             // The TW/IR arms hard-refuse; this return path marshaled +
@@ -1131,6 +1129,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             raw = densify_rewrite_lookup_locked_(raw);
                         }
                         oi = ffi_runtime_.mint_opaque_slot(opaque_heap_, raw);
+                        if (oi == ~std::uint64_t{0}) {
+                            const auto slot = static_cast<std::uint32_t>(opaque_heap_.size());
+                            opaque_heap_.push_back(raw);
+                            ffi_runtime_.note_appended_opaque(opaque_heap_);
+                            oi = types::pack_opaque_index(slot, 0);
+                        }
                         // Issue #3022 / #3057 / #3274 / #3533: FFI return may alias
                         // an arena-tracked object (densify-tracked). Under production
                         // Moving the alias joins the pin/slot/EXEMPT triad via
