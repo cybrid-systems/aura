@@ -1377,6 +1377,116 @@ def test_jit_call_path_4572():
     print(f"  ✅ test_jit_call_path_4572 ({len(programs)} programs, {quirk} display-quirk; fib IR has no defuse call)")
 
 
+def test_jit_scalar_pairs_4573():
+    """Issue #4573 (partial): a pair that provably never leaves its JIT
+    activation (only car/cdr/error-check reads, copies between slots and
+    promoted cells) is scalar-replaced: its fields stay in allocas (SSA), no
+    aura_alloc_pair. A pair reaching a return is materialized there; one
+    passed to a callee / primitive (set-car!, display, eq?) or captured keeps
+    the heap allocation. Output must match the IR interpreter and eval, with
+    and without AURA_JIT_SR=0 (kill switch). A --jit-session checks the
+    let-bound pair loop has no aura_alloc_pair left.
+    """
+    loop = (
+        "(define (g n) (let ((i 0) (s 0)) (while (< i n) (let ((p (cons i (+ i 1)))) "
+        "(set! s (+ s (+ (car p) (cdr p))))) (set! i (+ i 1))) s)) "
+    )
+    programs = [
+        ("let-loop", loop + "(display (g 1000))", "1000000"),
+        (
+            "car-cons",
+            "(define (h n) (let ((i 0) (s 0)) (while (< i n) (set! s (+ s (car (cons i 7)))) (set! i (+ i 1))) s)) "
+            "(display (h 100))",
+            "4950",
+        ),
+        ("returned-let", "(define (mk a) (let ((p (cons a 2))) p)) (display (+ (car (mk 5)) (cdr (mk 5))))", "7"),
+        ("returned-cons", "(define (mk a) (cons a (+ a 1))) (display (cdr (mk 4)))", "5"),
+        (
+            "rebind-copy",
+            "(define (rb x) (let ((p (cons x 2)) (q (cons 0 0))) (set! q p) (set! p (cons 3 4)) "
+            "(+ (* 10 (car q)) (car p) (cdr q)))) (display (rb 1))",
+            "15",
+        ),
+        (
+            "set-car-escape",
+            "(define (sc x) (let ((p (cons x 2))) (set-car! p 9) (+ (car p) (cdr p)))) (display (sc 1))",
+            None,
+        ),
+        ("callee-escape", "(define (f p) (car p)) (define (k x) (let ((p (cons x 1))) (f p))) (display (k 6))", "6"),
+        (
+            "capture-escape",
+            "(define (cl x) (let ((p (cons x 3))) ((lambda () (cdr p))))) (display (cl 1))",
+            "3",
+        ),
+        ("float-pair", "(define (fp x) (let ((p (cons x 0.5))) (+ (car p) (cdr p)))) (display (fp 1.5))", None),
+        (
+            "branchy",
+            "(define (br x) (let ((p (if (< x 0) (cons 1 2) (cons 3 4)))) (- (cdr p) (car p)))) "
+            "(display (+ (br -1) (br 1)))",
+            "2",
+        ),
+    ]
+
+    def run_mode(code, mode, sr=True):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        env.pop("AURA_JIT_SR", None)
+        if not sr:
+            env["AURA_JIT_SR"] = "0"
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, (r.stdout or "").strip()
+
+    quirk = 0
+    for name, code, expect in programs:
+        outs = {mode: run_mode(code, mode) for mode in ("ir", "eval", "jit")}
+        outs["jit-nosr"] = run_mode(code, "jit", sr=False)
+        ir_out = outs["ir"][1]
+        # Same pre-existing `--jit` top-level print quirk as test_jit_l2_4571
+        # (#4601 §7): a trailing "#f" / "<cell[N]>" after the value.
+        for m in ("jit", "jit-nosr"):
+            rc_j, out_j = outs[m]
+            if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>)", out_j):
+                outs[m] = (rc_j, ir_out)
+                quirk += 1
+        if name == "set-car-escape":
+            # Pre-existing `--jit` set-car! mismatch (#4602, also on
+            # AURA_JIT_SR=0): only require SR to leave the result unchanged.
+            if outs["jit"] != outs["jit-nosr"]:
+                raise Exception(f"{name}: SR changed the result: {outs!r}")
+            continue
+        if not (outs["ir"] == outs["eval"] == outs["jit"] == outs["jit-nosr"]):
+            raise Exception(f"{name}: {outs!r}")
+        if expect is not None and outs["jit"] != (0, expect):
+            raise Exception(f"{name}: expected {expect!r}, got {outs['jit']!r}")
+
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_JIT_SR", None)
+    lines = [loop + "(g 10)", ";;ir g"]
+    r = subprocess.run(
+        [AURA, "--jit-session"], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=60, env=env
+    )
+    out = r.stdout or ""
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+    assert "define i64 @g" in out, out[:400]
+    ir = out[out.index("define i64 @g") :]
+    ir = ir[: ir.index("\n}")]
+    assert "@aura_alloc_pair" not in ir, "let-bound pair in g still allocates"
+    assert "@aura_pair_car" not in ir and "@aura_pair_cdr" not in ir, "g still reads a heap pair"
+    print(
+        f"  ✅ test_jit_scalar_pairs_4573 ({len(programs)} programs x ir/eval/jit/jit-SR=0, {quirk} display-quirk; g IR alloc-free)"
+    )
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -1385,6 +1495,7 @@ for tf in [
     test_jit_mixed_compare_4570,
     test_jit_l2_4571,
     test_jit_call_path_4572,
+    test_jit_scalar_pairs_4573,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

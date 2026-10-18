@@ -430,6 +430,194 @@ static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
     return ok;
 }
 
+// Issue #4573: scalar replacement kill switch for A/B and triage —
+// AURA_JIT_SR=0 keeps every MakePair as a runtime allocation.
+static bool jit_sr_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_JIT_SR");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// Issue #4573: which pair slots of fn can be scalar-replaced.
+//
+// Nodes are the n local slots plus, at index n + c, the CONTENT of each
+// promotable cell c (#4570: a cell whose id never leaves NewCell /
+// CellGet / CellSet, already held in an alloca). A node is a pair
+// candidate when every write to it is an OpMakePair or a copy from
+// another candidate (OpLocal dst <- src, CellSet content <- val, CellGet
+// dst <- content), and every other mention of it in a SLOT operand of any
+// instruction (including the arg ranges of Call/Apply/PrimCall) is
+//   - the pair operand (ops[1]) of OpCar / OpCdr, or
+//   - the value operand (ops[1]) of OpIsError (a pair is never an error),
+//   - the operand of OpReturn (the pair is materialized there; in a let
+//     body that is typically the dead IsError-true error exit).
+// Then the pair reference never reaches a closure, callee, primitive,
+// structure or heap cell: nothing outside this activation
+// can observe its identity or mutate it (set-car! is a primitive call,
+// which disqualifies). Its fields live in allocas (mem2reg -> SSA): no
+// aura_alloc_pair, no publish, no tenant stamp. Each node owns its field
+// allocas and every copy copies both fields (value semantics, so a later
+// rebinding of one slot does not change another).
+//
+// Same conservative operand table as promotable_cells: an opcode outside
+// the list disables the analysis for the whole function, and
+// linear-ownership functions or instructions are left alone (#2293 pins
+// need a materialized object). Returns 2n flags (slots, then contents).
+static std::vector<std::uint8_t> scalar_pairs(const FlatFunction& fn,
+                                              const std::vector<std::uint8_t>& promo) {
+    const uint32_t n = fn.local_count;
+    std::vector<std::uint8_t> ok(2ull * n, 0);
+    if (n == 0 || fn.linear_ownership_state != 0 || !fn.blocks || promo.size() < n)
+        return ok;
+    std::vector<std::uint8_t> bad(2ull * n, 0);
+    std::vector<std::uint8_t> has_make(2ull * n, 0);
+    std::vector<std::pair<uint32_t, uint32_t>> copies; // (dst node, src node)
+    auto use = [&](uint32_t slot) {
+        if (slot < n)
+            bad[slot] = 1;
+    };
+    auto use_range = [&](uint64_t base, uint64_t count) {
+        for (uint64_t i = 0; i < count && base + i < n; ++i)
+            bad[base + i] = 1;
+    };
+    auto copy = [&](uint32_t dst, uint32_t src) {
+        ok[dst] = 1;
+        copies.emplace_back(dst, src);
+    };
+    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+        const auto& fb = fn.blocks[bi];
+        for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            const auto& in = fb.instructions[ii];
+            if (in.linear_ownership_state != 0)
+                return std::vector<std::uint8_t>(2ull * n, 0);
+            switch (in.opcode) {
+                case Op::OpMakePair: // dst (the pair), car, cdr
+                    if (in.ops[0] < n) {
+                        ok[in.ops[0]] = 1;
+                        has_make[in.ops[0]] = 1;
+                    }
+                    use(in.ops[1]);
+                    use(in.ops[2]);
+                    break;
+                case Op::OpCar: // dst, pair — the pair operand is allowed
+                case Op::OpCdr:
+                case Op::OpIsError: // dst, value — never an error for a pair
+                    use(in.ops[0]);
+                    break;
+                case Op::OpLocal: // dst, src
+                    if (in.ops[0] < n && in.ops[1] < n) {
+                        copy(in.ops[0], in.ops[1]);
+                    } else {
+                        use(in.ops[0]);
+                        use(in.ops[1]);
+                    }
+                    break;
+                case Op::OpCellGet: // dst, cell
+                    if (in.ops[0] < n && in.ops[1] < n && promo[in.ops[1]]) {
+                        copy(in.ops[0], n + in.ops[1]);
+                    } else {
+                        use(in.ops[0]);
+                        use(in.ops[1]);
+                    }
+                    break;
+                case Op::OpCellSet: // cell, val
+                    if (in.ops[0] < n && in.ops[1] < n && promo[in.ops[0]]) {
+                        copy(n + in.ops[0], in.ops[1]);
+                    } else {
+                        use(in.ops[0]);
+                        use(in.ops[1]);
+                    }
+                    break;
+                case Op::OpCall: // callee, arg_base, arg_count, result
+                    use(in.ops[0]);
+                    use_range(in.ops[1], in.ops[2]);
+                    use(in.ops[3]);
+                    break;
+                case Op::OpPrimCall: // prim_id, arg_base, arg_count, result
+                    use_range(in.ops[1], in.ops[2]);
+                    use(in.ops[3]);
+                    break;
+                case Op::OpApply: // closure, arg_count, result; args at closure+1..
+                    use(in.ops[0]);
+                    use_range(static_cast<uint64_t>(in.ops[0]) + 1, in.ops[1]);
+                    use(in.ops[2]);
+                    break;
+                case Op::OpAdd: // dst, a, b
+                case Op::OpSub:
+                case Op::OpMul:
+                case Op::OpDiv:
+                case Op::OpEq:
+                case Op::OpLt:
+                case Op::OpGt:
+                case Op::OpLe:
+                case Op::OpGe:
+                case Op::OpAnd:
+                case Op::OpOr:
+                case Op::OpHashRef:
+                case Op::OpHashSet:
+                case Op::OpHashRemove:
+                    use(in.ops[0]);
+                    use(in.ops[1]);
+                    use(in.ops[2]);
+                    break;
+                case Op::OpNot:
+                case Op::OpCastOp:
+                case Op::OpGuardShape:
+                case Op::OpPrimitive:
+                    use(in.ops[0]);
+                    use(in.ops[1]);
+                    break;
+                case Op::OpNewCell: // the id slot; content node starts as 0
+                case Op::OpConstI64:
+                case Op::OpConstF64:
+                case Op::OpConstString:
+                case Op::OpConstBool:
+                case Op::OpConstVoid:
+                case Op::OpArg:
+                case Op::OpTopCellLoad:
+                case Op::OpBranch:
+                    use(in.ops[0]);
+                    break;
+                case Op::OpReturn: // materialized at the return (see lowering)
+                case Op::OpNop:
+                case Op::OpJump:
+                    break;
+                default:
+                    return std::vector<std::uint8_t>(2ull * n, 0);
+            }
+        }
+    }
+    for (std::size_t i = 0; i < ok.size(); ++i)
+        ok[i] = ok[i] && !bad[i];
+    // Every node of a copy-connected group carries a pair from some
+    // MakePair of the group.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& [dst, src] : copies) {
+            if (has_make[src] && !has_make[dst]) {
+                has_make[dst] = 1;
+                changed = true;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < ok.size(); ++i)
+        ok[i] = ok[i] && has_make[i];
+    // Optimistic fixed point: both ends of every copy stay candidates (a
+    // copy from or into a non-pair node needs a real pair value).
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& [dst, src] : copies) {
+            if (ok[dst] != ok[src]) {
+                ok[dst] = ok[src] = 0;
+                changed = true;
+            }
+        }
+    }
+    return ok;
+}
+
 // Issue #4570 (L1 float): slots and promoted cells whose value is a
 // float on every path, proven from the IR alone (no profile needed).
 // Optimistic fixed point: start from "every defined slot / promoted cell
@@ -633,6 +821,48 @@ struct LLVMBuilder {
     // Issue #4570: 1 = pcells[slot] is a double alloca (a statically-float
     // cell, see static_float_slots); 0 = tagged i64 content.
     std::vector<std::uint8_t> pcell_f{};
+    // Issue #4573: scalar-replaced pairs. spair_car/spair_cdr[slot] are i64
+    // allocas holding the fields of a pair that never leaves the function
+    // (see scalar_pairs); nullptr = a real runtime pair.
+    std::vector<llvm::Value*> spair_car{};
+    std::vector<llvm::Value*> spair_cdr{};
+    inline bool is_spair(uint32_t slot) const {
+        return slot < spair_car.size() && spair_car[slot] != nullptr;
+    }
+    // Issue #4573: nodes 0..n-1 are slots, n + c is promoted cell c's
+    // content (see scalar_pairs). Run after setup_l1_slots (pcells).
+    void setup_scalar_pairs(const FlatFunction& fn) {
+        const uint32_t n = fn.local_count;
+        spair_car.assign(2ull * n, nullptr);
+        spair_cdr.assign(2ull * n, nullptr);
+        if (!jit_sr_enabled() || !jit_l1_enabled())
+            return;
+        std::vector<std::uint8_t> promo(n, 0);
+        for (uint32_t i = 0; i < n; ++i)
+            promo[i] = (is_pcell(i) && !pcell_f[i]) ? 1 : 0; // float cells hold no pair
+        const auto sr = scalar_pairs(fn, promo);
+        std::uint64_t replaced = 0;
+        for (std::size_t i = 0; i < sr.size(); ++i) {
+            if (!sr[i])
+                continue;
+            spair_car[i] = irb->CreateAlloca(llvm::Type::getInt64Ty(ctx));
+            spair_cdr[i] = irb->CreateAlloca(llvm::Type::getInt64Ty(ctx));
+            irb->CreateStore(c64(0), spair_car[i]);
+            irb->CreateStore(c64(0), spair_cdr[i]);
+            if (i < n)
+                ++replaced;
+        }
+        if (metrics && replaced)
+            metrics->l3_pairs_scalar_replaced_total.fetch_add(replaced, std::memory_order_relaxed);
+    }
+    // Copy both fields of scalar node src into node dst.
+    void copy_spair(std::size_t dst, std::size_t src) {
+        auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+        auto* a = irb->CreateLoad(i64_ty, spair_car[src]);
+        auto* d = irb->CreateLoad(i64_ty, spair_cdr[src]);
+        irb->CreateStore(a, spair_car[dst]);
+        irb->CreateStore(d, spair_cdr[dst]);
+    }
     inline bool is_pcell(uint32_t slot) const {
         return slot < pcells.size() && pcells[slot] != nullptr;
     }
@@ -1827,6 +2057,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpLocal:
+                // Issue #4573: copy between scalar-replaced pairs copies
+                // both fields (each slot owns its allocas: value semantics).
+                if (is_spair(inst.ops[0]) && is_spair(inst.ops[1])) {
+                    copy_spair(inst.ops[0], inst.ops[1]);
+                    return true;
+                }
                 // Issue #4522: float→float slot copy moves the raw double
                 // (TCO arg shuffle, loop-carried named-let bindings) — no
                 // rebox on the loop back-edge.
@@ -2172,6 +2408,18 @@ struct LLVMBuilder {
                 irb->CreateBr(block_map[inst.ops[0]]);
                 return true;
             case OpReturn:
+                // Issue #4573: a returned scalar pair is materialized here
+                // (global heap, as an escaping MakePair). Its identity was
+                // never observable, so a fresh pair with the same fields
+                // is equivalent, and at most one allocation per call.
+                if (is_spair(inst.ops[0])) {
+                    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                    auto* a = irb->CreateLoad(i64_ty, spair_car[inst.ops[0]]);
+                    auto* d = irb->CreateLoad(i64_ty, spair_cdr[inst.ops[0]]);
+                    irb->CreateRet(irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair),
+                                                   llvm::ArrayRef<llvm::Value*>{a, d}));
+                    return true;
+                }
                 irb->CreateRet(load(inst.ops[0]));
                 return true;
             case OpConstBool: {
@@ -2459,6 +2707,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCellGet: {
+                // Issue #4573: read of a promoted cell's scalar-replaced pair.
+                if (is_pcell(inst.ops[1]) && is_spair(fn.local_count + inst.ops[1]) &&
+                    is_spair(inst.ops[0])) {
+                    copy_spair(inst.ops[0], fn.local_count + inst.ops[1]);
+                    return true;
+                }
                 if (is_pcell(inst.ops[1])) {
                     if (pcell_f[inst.ops[1]]) {
                         auto* d = irb->CreateLoad(double_ty, pcells[inst.ops[1]]);
@@ -2478,6 +2732,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCellSet: {
+                // Issue #4573: promoted cell holding a scalar-replaced pair.
+                if (is_pcell(inst.ops[0]) && is_spair(fn.local_count + inst.ops[0]) &&
+                    is_spair(inst.ops[1])) {
+                    copy_spair(fn.local_count + inst.ops[0], inst.ops[1]);
+                    return true;
+                }
                 if (is_pcell(inst.ops[0])) {
                     if (pcell_f[inst.ops[0]]) {
                         // Static proof: the stored slot is a float slot, so it
@@ -2638,6 +2898,11 @@ struct LLVMBuilder {
                     metrics->exception_opcode_mask.fetch_or(1ull << 0, std::memory_order_relaxed);
                 }
                 // ops[0] = result_slot, ops[1] = value_slot
+                // Issue #4573: a scalar-replaced pair is never an error.
+                if (is_spair(inst.ops[1])) {
+                    store(inst.ops[0], c64(KWD_FALSE_VAL));
+                    return true;
+                }
                 constexpr std::uint64_t REF_ERROR_MASK = 0x3F;
                 constexpr std::uint64_t REF_ERROR_TAG = (types::RefError << 2) | 1ull;
                 static_assert(REF_ERROR_TAG == 0x21, "RefError tag drift (#4571)");
@@ -2845,6 +3110,12 @@ struct LLVMBuilder {
                 auto car = load(inst.ops[1]);
                 auto cdr = load(inst.ops[2]);
                 auto result_slot = inst.ops[0];
+                // Issue #4573: non-escaping pair -> fields stay in registers.
+                if (is_spair(result_slot)) {
+                    irb->CreateStore(car, spair_car[result_slot]);
+                    irb->CreateStore(cdr, spair_cdr[result_slot]);
+                    return true;
+                }
                 // Issue #60 Iter 4: L2 layout specialization on shape_id.
                 // If we KNOW the result is a Pair AND it doesn't escape
                 // (escape analysis), we can stack-allocate the pair layout
@@ -2911,6 +3182,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCar: {
+                // Issue #4573: field of a scalar-replaced pair.
+                if (is_spair(inst.ops[1])) {
+                    store(inst.ops[0],
+                          irb->CreateLoad(llvm::Type::getInt64Ty(ctx), spair_car[inst.ops[1]]));
+                    return true;
+                }
                 // Issue #157 Phase 1b: L2 SHAPE_PAIR version check + deopt.
                 //
                 // Single-threaded code takes the fast path
@@ -3000,6 +3277,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCdr: {
+                // Issue #4573: field of a scalar-replaced pair.
+                if (is_spair(inst.ops[1])) {
+                    store(inst.ops[0],
+                          irb->CreateLoad(llvm::Type::getInt64Ty(ctx), spair_cdr[inst.ops[1]]));
+                    return true;
+                }
                 // Issue #157 Phase 1b: same as OpCar but for cdr.
                 auto pair_val = load(inst.ops[1]);
                 if (pair_ok) {
@@ -4430,6 +4713,8 @@ struct AuraJIT::Impl {
         // alloca that mem2reg turns into SSA — no aura_new_cell /
         // aura_cell_get / aura_cell_set (workspace lock) in the loop.
         builder.setup_l1_slots(fn);
+        // Issue #4573: scalar-replaced pair fields (entry-block allocas).
+        builder.setup_scalar_pairs(fn);
 
         // Issue #157 Phase 1b: reserve an extra local slot (at index
         // fn.local_count) for the captured defuse_version_. At function

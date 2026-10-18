@@ -238,6 +238,8 @@ public:
         // Issue #4571 (L2): car/cdr sites lowered to the inline
         // segment-directory read (no call, no lock on the hit path).
         std::atomic<std::uint64_t> l2_pair_inline_total{0};
+        // Issue #4573: MakePair slots scalar-replaced (fields in registers).
+        std::atomic<std::uint64_t> l3_pairs_scalar_replaced_total{0};
         // Issue #461: explicit IRInterpreter fallback counter.
         // Bumped by the runtime stub `aura_jit_fallback_to_interpreter`
         // each time the JIT lower() default case routes through
