@@ -2206,13 +2206,16 @@ struct LLVMBuilder {
                                     eq_slow);
                     return true;
                 }
-                auto c = irb->CreateICmpEQ(a, b);
-                auto boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
+                // Non-L1 path (AURA_JIT_L1=0, MacroIntroduced compares):
+                // numeric `=` compares values like the L1 slow arm (#4574:
+                // the raw-tag compare made (= 2 2.0) #f here); eq?/eqv?
+                // stays the raw identity compare.
                 if (inst.ops[3] != 0) {
-                    auto both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
-                    store(inst.ops[0], irb->CreateSelect(both, boolv, num_err));
+                    store(inst.ops[0],
+                          num_compare_slow(a, b, llvm::CmpInst::ICMP_EQ, llvm::CmpInst::FCMP_OEQ));
                 } else {
-                    store(inst.ops[0], boolv);
+                    store(inst.ops[0], irb->CreateSelect(irb->CreateICmpEQ(a, b), c64(KWD_TRUE_VAL),
+                                                         c64(KWD_FALSE_VAL)));
                 }
                 return true;
             }
@@ -2241,8 +2244,8 @@ struct LLVMBuilder {
                                                         : llvm::CmpInst::ICMP_SGE;
                 if (jit_l1_enabled() && inst.source_marker != 1) {
                     // Issue #4570 (L1): two fixnums compare as their tagged
-                    // words (v << 1 preserves order). The generic arm is the
-                    // pre-#4570 lowering, byte for byte.
+                    // words (v << 1 preserves order). The generic arm compares
+                    // a float operand by value (num_compare_slow).
                     auto lt_fast = [&]() -> llvm::Value* { return irb->CreateICmp(pred, a, b); };
                     const auto fpred = inst.opcode == OpLt   ? llvm::CmpInst::FCMP_OLT
                                        : inst.opcode == OpGt ? llvm::CmpInst::FCMP_OGT
@@ -2254,10 +2257,14 @@ struct LLVMBuilder {
                     emit_l1_compare(jit_both_fixnum(a, b), lt_fast, lt_slow);
                     return true;
                 }
-                auto c = irb->CreateICmp(pred, a, b);
-                auto boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
-                auto both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
-                store(inst.ops[0], irb->CreateSelect(both, boolv, num_err));
+                // Non-L1 path (AURA_JIT_L1=0, MacroIntroduced compares): the
+                // same value compare as the L1 slow arm, unfused (#4574: the
+                // raw-tag compare made (< 3 2.5) #t here).
+                const auto fpred_g = inst.opcode == OpLt   ? llvm::CmpInst::FCMP_OLT
+                                     : inst.opcode == OpGt ? llvm::CmpInst::FCMP_OGT
+                                     : inst.opcode == OpLe ? llvm::CmpInst::FCMP_OLE
+                                                           : llvm::CmpInst::FCMP_OGE;
+                store(inst.ops[0], num_compare_slow(a, b, pred, fpred_g));
                 return true;
             }
             case OpAnd: {

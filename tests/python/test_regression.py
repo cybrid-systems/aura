@@ -1487,6 +1487,95 @@ def test_jit_scalar_pairs_4573():
     )
 
 
+def test_jit_tier_differential_4574():
+    """Issue #4574 (correctness metric): differential corpus across the
+    speculative JIT tiers. Every program must print the same under the IR
+    interpreter, the eval path, full `--jit`, and `--jit` with every
+    speculative tier switched off (AURA_JIT_L1=0 AURA_JIT_L2=0 AURA_JIT_SR=0,
+    the baseline lowering). Templates cover L1 (fixnum/float/bool, mixed
+    compares, compare+branch fusion, promoted cells), L2 (inline car/cdr,
+    lists, hash), L3 (recursion, mutual/higher-order/multi-arg calls,
+    closures) and #4573 scalar pairs, each over several input sizes.
+    Forced-deopt-everywhere is not a mode yet (#4600 §2 / #4601 §4).
+    Pre-existing `--jit` bugs are excluded by construction and tracked:
+    set-car! visibility (#4602), stale callee after redefine (#4604),
+    predicate/eqv? primitive results (#4606), unbound variables (#4607).
+    The trailing top-level print
+    artifact (#4601 §7: a trailing "#f", "<cell[N]>" or "<unknown>") is
+    tolerated as in test_jit_l2_4571.
+    """
+    templates = {
+        "int-while": "(define (f n) (let ((i 0) (s 0)) (while (< i n) (set! s (+ s (* i 3))) (set! i (+ i 1))) s)) "
+        "(display (f {n}))",
+        "int-named-let": "(define (f n) (let loop ((i 0) (acc 0)) (if (< i n) (loop (+ i 1) (+ acc (- (* 2 i) 1))) acc))) "
+        "(display (f {n}))",
+        "float-acc": "(define (f n) (let ((i 0) (a 0.0)) (while (< i n) (set! a (+ a 0.25)) (set! i (+ i 1))) a)) "
+        "(display (f {n}))",
+        "mixed-compare": "(define (f n) (let ((i 0) (c 0)) (while (< i n) (if (< i 2.5) (set! c (+ c 1)) (set! c c)) "
+        "(set! i (+ i 1))) c)) (display (f {n}))",
+        "mixed-eq": "(define (f n) (let ((i 0) (c 0)) (while (< i n) (if (= i 2.0) (set! c (+ c 10)) (set! c (+ c 1))) "
+        "(set! i (+ i 1))) (+ c (if (>= n 1.5) 100 0)))) (display (f {n}))",
+        "bool-logic": "(define (f a b) (if (and (< a b) (not (= a 0))) 1 (if (or (= a b) (> a 5)) 2 3))) "
+        "(display (+ (f {n} 3) (f 1 {n}) (f {n} {n})))",
+        "pair-temp": "(define (f n) (let ((i 0) (s 0)) (while (< i n) (set! s (+ s (car (cons i 7)))) (set! i (+ i 1))) s)) "
+        "(display (f {n}))",
+        "pair-let": "(define (f n) (let ((i 0) (s 0)) (while (< i n) (let ((p (cons i (+ i 1)))) "
+        "(set! s (+ s (- (cdr p) (car p))))) (set! i (+ i 1))) s)) (display (f {n}))",
+        "pair-return": "(define (mk a) (let ((p (cons a (* a 2)))) p)) (define (f n) (let ((q (mk n))) (+ (car q) (cdr q)))) "
+        "(display (f {n}))",
+        "pair-branchy": "(define (f x) (let ((p (if (< x 3) (cons 1 2) (cons x 4)))) (- (cdr p) (car p)))) (display (f {n}))",
+        "list-walk": "(define (build n) (let ((i 0) (xs (quote ()))) (while (< i n) (set! xs (cons i xs)) (set! i (+ i 1))) xs)) "
+        "(define (sumcar xs) (let ((s 0)) (while (pair? xs) (set! s (+ s (car xs))) (set! xs (cdr xs))) s)) "
+        "(display (+ (length (build {n})) (sumcar (build {n}))))",
+        "hash-kv": "(define (kv n) (let ((h (hash)) (i 0) (s 0)) (while (< i n) (hash-set! h i (* i 3)) (set! i (+ i 1))) "
+        "(set! i 0) (while (< i n) (set! s (+ s (hash-ref h i))) (set! i (+ i 1))) s)) (display (kv {n}))",
+        "fib": "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) (display (fib (if (< {n} 20) {n} 20)))",
+        "mutual": "(define (ev? n) (if (= n 0) 1 (od? (- n 1)))) (define (od? n) (if (= n 0) 0 (ev? (- n 1)))) "
+        "(display (ev? {n}))",
+        "higher-order": "(define (twice h x) (h (h x))) (define (inc x) (+ x 3)) (display (twice inc {n}))",
+        "five-args": "(define (s5 a b c d e) (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e))) (display (s5 {n} 1 {n} 2 {n}))",
+        "closure-counter": "(define (mk) (let ((c 0)) (lambda () (set! c (+ c 1)) c))) "
+        "(define (f n) (let ((k (mk)) (i 0)) (while (< i n) (k) (set! i (+ i 1))) (k))) (display (f {n}))",
+        "error-check": "(define (f n) (let ((p (cons n 1))) (if (error? p) 0 (+ (car p) (if (error? n) 0 1))))) "
+        "(display (f {n}))",
+    }
+    sizes = (0, 1, 2, 7, 31, 100)
+    programs = [(f"{t}-{n}", code.format(n=n)) for t, code in templates.items() for n in sizes]
+
+    modes = {
+        "ir": ([], {"AURA_FORCE_IR": "1"}),
+        "eval": ([], {}),
+        "jit": (["--jit"], {}),
+        "jit-base": (["--jit"], {"AURA_JIT_L1": "0", "AURA_JIT_L2": "0", "AURA_JIT_SR": "0"}),
+    }
+
+    def run_mode(code, mode):
+        args, extra = modes[mode]
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        for k in ("AURA_SOFT", "AURA_FORCE_IR", "AURA_JIT_L1", "AURA_JIT_L2", "AURA_JIT_SR"):
+            env.pop(k, None)
+        env.update(extra)
+        r = subprocess.run([AURA, *args], input=code, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, (r.stdout or "").strip()
+
+    quirk = 0
+    for name, code in programs:
+        outs = {mode: run_mode(code, mode) for mode in modes}
+        ir_out = outs["ir"][1]
+        for m in ("jit", "jit-base"):
+            rc_j, out_j = outs[m]
+            if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>|<unknown>)", out_j):
+                outs[m] = (rc_j, ir_out)
+                quirk += 1
+        if len(set(outs.values())) != 1:
+            raise Exception(f"{name}: {outs!r}\n  program: {code}")
+    print(
+        f"  ✅ test_jit_tier_differential_4574 ({len(programs)} programs x {len(modes)} modes, {quirk} display-quirk)"
+    )
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -1496,6 +1585,7 @@ for tf in [
     test_jit_l2_4571,
     test_jit_call_path_4572,
     test_jit_scalar_pairs_4573,
+    test_jit_tier_differential_4574,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,
