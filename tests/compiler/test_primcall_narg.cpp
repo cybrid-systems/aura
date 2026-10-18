@@ -432,6 +432,29 @@ static void ac15_take_drop_errors() {
         (void)cs4.eval(R"((begin (display (if (error? (drop (list 1 2) -1)) 1 0)) (newline)))");
     });
     CHECK(trim_nl(drop_neg) == "1", "AC15: (drop (list 1 2) -1) -> error");
+    // Issue #4596: error? observes a direct error value. A let initializer
+    // still propagates (#4588), so the catch message is the cause, not #t.
+    CompilerService cs_obs;
+    auto observed = with_stdout_capture(
+        [&] { (void)cs_obs.eval(R"((begin (display (if (error? (error "z")) 1 0)) (newline)))"); });
+    CHECK(trim_nl(observed) == "1", "AC15: (error? (error \"z\")) -> #t");
+    CompilerService cs_nof;
+    auto not_err = with_stdout_capture(
+        [&] { (void)cs_nof.eval(R"((begin (display (if (error? 1) 1 0)) (newline)))"); });
+    CHECK(trim_nl(not_err) == "0", "AC15: (error? 1) -> #f");
+    CompilerService cs_let;
+    auto let_esc = with_stdout_capture([&] {
+        (void)cs_let.eval(
+            R"((begin (display (try (let ((r (error "x"))) (error? r)) (catch (e) e))) (newline)))");
+    });
+    CHECK(trim_nl(let_esc) == "x", "AC15: let init still raises past error?");
+    // query: forces the tree walker. The #f arm is not evaluated.
+    CompilerService cs_walk;
+    auto walked = with_stdout_capture([&] {
+        (void)cs_walk.eval(
+            R"((begin (display (if #f (query:root) (if (error? (drop 42 1)) 1 0))) (newline)))");
+    });
+    CHECK(trim_nl(walked) == "1", "AC15: walker error? sees (drop 42 1)");
     // `and` is tree-walker-only (strict pipeline fallback-forbidden), so the
     // conjunctive face is expressed as nested ifs.
     CompilerService cs5;

@@ -1009,7 +1009,11 @@ static std::uint32_t lower_flat_expr(
                     // Issue #4588: display outside an IR try still runs, so a
                     // host try can see the error (#4456) and a bare display
                     // still prints. Every other prim propagates first.
-                    const bool escape_arg = callee_name != "display" || !state.err_escapes.empty();
+                    // Issue #4596: error? is the observer. The argument
+                    // reaches the prim, including inside a try. A let
+                    // init, list element, or other prim still escapes.
+                    const bool escape_arg = callee_name != "error?" && (callee_name != "display" ||
+                                                                        !state.err_escapes.empty());
                     for (std::size_t i = 1; i < v.children.size(); ++i) {
                         auto val_slot = lower_data_operand(state, flat, pool, v.child(i), cache,
                                                            cache_hits, escape_arg);
