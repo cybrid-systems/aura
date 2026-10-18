@@ -408,6 +408,30 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                 return snap->bindings_[it->second].second;
         }
     }
+    // Issue #4595: a live-safe EMPTY capture (#4350/#4474 — lambda created
+    // directly in top_) resolves free vars against the LIVE top_ BEFORE its
+    // SoA walk: top_.parent_id() aliases a letrec #232 registration frame —
+    // a frozen copy of top_'s bindings — whose stale cells otherwise shadow
+    // every later top-level let/define rebind of the same name (the #4595
+    // repro resolved a let-shadowed x to the global cell frozen at
+    // named-let time). Empty local arrays + empty/no snapshot is exactly
+    // the live-safe capture shape; anything with content keeps the normal
+    // capture-first order.
+    // Fiber-gated (#4595): under concurrent fibers a live-top_ consult can
+    // switch the resolved cell mid-flight (a loop's reads jump to another
+    // fiber's rebind — the chaos release blocker hung with fibers_done=0);
+    // host-thread lookups are single-fiber and stable-by-construction.
+    if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
+        (!cap_snap_ || cap_snap_->bindings_.empty())) {
+        if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
+            if (is_cell(*b)) {
+                auto ci = as_cell_id(*b);
+                if (ci < owner_->cells().size())
+                    return owner_->cells()[ci];
+            }
+            return *b;
+        }
+    }
     // 2. parent_ pointer chain — Wave2: iterative (no recursive C++ stack
     //    per hop). Same hop budget as SoA walk / env_lookup_enter.
     // Issue #2735 / #2739: do NOT return nullopt when parent_ walk misses —
@@ -480,6 +504,27 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             if (static_cast<std::size_t>(cur) >= owner_->env_frames_size())
                 break;
             const EnvFrame& pfr = owner_->env_frame(cur);
+            // Issue #4595: consult the LIVE top_ BEFORE scanning the root
+            // frame's own bindings. Frame 0 is a frozen snapshot by design
+            // (#2566: module-load start; a top-level letrec's #232
+            // registration can also land there as a frozen copy of top_),
+            // and live top_ is the authoritative newest state for any name
+            // bound in both — require-injected defines and later top-level
+            // let/define rebinds. Scanning frame 0 first resolved a later
+            // top-level (let ((x "local")) (call (lambda () x))) to the
+            // stale cell frozen at named-let time (#4595).
+            if (cur == 0 && owner_) {
+                // Issue #4350: O(1) via top_'s authoritative name index
+                // (newest binding wins — same answer as the reverse scan).
+                if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
+                    if (is_cell(*b)) {
+                        auto ci = as_cell_id(*b);
+                        if (ci < owner_->cells().size())
+                            return owner_->cells()[ci];
+                    }
+                    return *b;
+                }
+            }
             // Walk the frame's bindings (string-keyed). REVERSE match:
             // a TCO call frame accumulates copied ancestor bindings (via
             // materialize of a cap frame that snapshotted outer scopes)
@@ -516,24 +561,6 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                         }
                         return it->second;
                     }
-                }
-            }
-            // Issue #2566: when the SoA walk reaches the root frame (0), also
-            // consult live top_ bindings. Frame 0 is a snapshot taken at
-            // module-load start; nested (require) injects into live top_
-            // after that snapshot. Without this, free-vars introduced by
-            // require are invisible to materialize_call_env SoA walks that
-            // start from a module capture frame (parent chain ends at 0).
-            if (cur == 0 && owner_) {
-                // Issue #4350: O(1) via top_'s authoritative name index
-                // (newest binding wins — same answer as the reverse scan).
-                if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
-                    if (is_cell(*b)) {
-                        auto ci = as_cell_id(*b);
-                        if (ci < owner_->cells().size())
-                            return owner_->cells()[ci];
-                    }
-                    return *b;
                 }
             }
             cur = pfr.parent_id;
@@ -4215,6 +4242,25 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
             return &(*cells)[*snap_cell];
         }
     }
+    // Issue #4595: live top_ BEFORE the SoA walk for live-safe EMPTY
+    // captures (see Env::lookup) — keeps set! writing the same (newest)
+    // cell the read path returns.
+    // Fiber-gated (#4595): see Env::lookup — host-thread only.
+    if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
+        (!cap_snap_ || cap_snap_->bindings_.empty())) {
+        auto tb4595 = owner_->top_env().bindings();
+        for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
+            auto& b = *it;
+            if (b.first == n) {
+                if (is_cell(b.second)) {
+                    auto ci = as_cell_id(b.second);
+                    if (ci < cells->size())
+                        return &(*cells)[ci];
+                }
+                return nullptr;
+            }
+        }
+    }
     // 2. Walk parent chain — prefer SoA walk via env_frames_
     //    when owner_ + parent_id_ are both set. Canonical path
     //    for registered Envs (top_, modules_, arena-allocated
@@ -4243,6 +4289,24 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
         // Issue #4529: locked-caller face — the full shard array is held
         // above; per-hop re-locking would deadlock under a waiting writer.
         owner_->walk_env_frames_locked_caller(parent_id_, [&](EnvId cur, const EnvFrame& f) {
+            // Issue #4595: consult the LIVE top_ BEFORE the root frame's own
+            // (frozen-snapshot) bindings — see Env::lookup's SoA walk for
+            // the rationale; keeps set! writing the same (newest) cell the
+            // read path returns.
+            if (cur == 0 && owner_) {
+                auto tb0 = owner_->top_env().bindings();
+                for (auto it = tb0.rbegin(); it != tb0.rend(); ++it) {
+                    auto& b = *it;
+                    if (b.first == n) {
+                        if (is_cell(b.second)) {
+                            auto ci = as_cell_id(b.second);
+                            if (ci < cells->size())
+                                result = &(*cells)[ci];
+                        }
+                        return false;
+                    }
+                }
+            }
             // Skip frames stamped before the current mutation epoch.
             if (f.version_ < version_snap) {
                 // Issue #355: refresh the stale frame (bump
@@ -4253,7 +4317,15 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
                 owner_->refresh_stale_frame_in_walk(cur, "Env::lookup_cell_ptr");
                 return true; // continue walking past the stale frame
             }
-            for (auto& b : f.bindings_) {
+            // Issue #4595: REVERSE match — the live top_ (and any
+            // registered frame) can hold the same name twice after a
+            // top-level let/define rebind appends a fresh binding (the
+            // older entry stays). A forward scan set!-writes the STALE
+            // cell while the read path (binding_index_, newest-wins)
+            // returns the fresh one — split resolution. Mirrors #4353's
+            // Env::lookup fix and the symid scans (rbegin).
+            for (auto it = f.bindings_.rbegin(); it != f.bindings_.rend(); ++it) {
+                auto& b = *it;
                 if (b.first == n) {
                     if (is_cell(b.second)) {
                         auto ci = as_cell_id(b.second);
@@ -4273,7 +4345,10 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     // 3. Legacy pointer walk (preserved for unregistered Envs).
     //    Same shadowing semantics: closest frame wins.
     for (auto* p = parent_; p; p = p->parent_) {
-        for (auto& b : p->bindings_) {
+        // Issue #4595: reverse per-env match — newest binding wins
+        // (same-env duplicate names after let/define rebind).
+        for (auto it = p->bindings_.rbegin(); it != p->bindings_.rend(); ++it) {
+            auto& b = *it;
             if (b.first == n) {
                 if (is_cell(b.second)) {
                     auto ci = as_cell_id(b.second);
@@ -4287,7 +4362,13 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     // 4. Issue #2870 / #2566: live top_ free-var cells after parent miss
     //    (named-let free-var set! of top-level define; empty materialize).
     if (owner_) {
-        for (auto& b : owner_->top_env().bindings()) {
+        // Issue #4595: reverse match against live top_ — a top-level
+        // let/define rebind leaves [old binding, fresh binding] in top_;
+        // forward scans resolved set! to the STALE cell (split against
+        // the read path's O(1) index, newest-wins).
+        auto tb = owner_->top_env().bindings();
+        for (auto it = tb.rbegin(); it != tb.rend(); ++it) {
+            auto& b = *it;
             if (b.first == n) {
                 if (is_cell(b.second)) {
                     auto ci = as_cell_id(b.second);
@@ -4345,6 +4426,22 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
         if (cap_snap_cell(cap_snap_, n, snap_cell))
             return snap_cell;
     }
+    // Issue #4595: live top_ BEFORE the SoA walk for live-safe EMPTY
+    // captures (see Env::lookup) — keeps set! writing the same (newest)
+    // cell the read path returns.
+    // Fiber-gated (#4595): see Env::lookup — host-thread only.
+    if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
+        (!cap_snap_ || cap_snap_->bindings_.empty())) {
+        auto tb4595 = owner_->top_env().bindings();
+        for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
+            auto& b = *it;
+            if (b.first == n) {
+                if (is_cell(b.second))
+                    return as_cell_id(b.second);
+                return std::nullopt;
+            }
+        }
+    }
     // 2. SoA walk via env_frames_ when registered
     if (owner_ && parent_id_ != NULL_ENV_ID) {
         const auto version_snap = owner_->get_defuse_version();
@@ -4359,6 +4456,22 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
         // Issue #4529: locked-caller face — the full shard array is held
         // above; per-hop re-locking would deadlock under a waiting writer.
         owner_->walk_env_frames_locked_caller(parent_id_, [&](EnvId cur, const EnvFrame& f) {
+            // Issue #4595: consult the LIVE top_ BEFORE the root frame's own
+            // (frozen-snapshot) bindings — see Env::lookup's SoA walk for
+            // the rationale; keeps set! writing the same (newest) cell the
+            // read path returns.
+            if (cur == 0 && owner_) {
+                auto tb0 = owner_->top_env().bindings();
+                for (auto it = tb0.rbegin(); it != tb0.rend(); ++it) {
+                    auto& b = *it;
+                    if (b.first == n) {
+                        if (is_cell(b.second)) {
+                            result = as_cell_id(b.second);
+                        }
+                        return false;
+                    }
+                }
+            }
             // Issue #355: record a behind frame. lookup_by_symid_chain
             // still skips it (#4099). This walk must not.
             // Issue #4122: set-car! / vector-set! / hash-set! bump
@@ -4371,7 +4484,13 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
             const bool behind = f.version_ < version_snap;
             if (behind)
                 owner_->refresh_stale_frame_in_walk(cur, "Env::lookup_cell_index");
-            for (auto& b : f.bindings_) {
+            // Issue #4595: REVERSE match — mirrors Env::lookup's #4353
+            // reverse SoA walk: a frame can hold [copied ancestor
+            // binding, fresh local bind] of one name; set! must write
+            // the newest (shadowing) cell, matching what the read path
+            // returns.
+            for (auto it = f.bindings_.rbegin(); it != f.bindings_.rend(); ++it) {
+                auto& b = *it;
                 if (b.first == n) {
                     if (is_cell(b.second)) {
                         result = as_cell_id(b.second);
@@ -4404,7 +4523,9 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     }
     // 3. Legacy pointer walk (let*/named-let free-var cells often here)
     for (auto* p = parent_; p; p = p->parent_) {
-        for (auto& b : p->bindings_) {
+        // Issue #4595: reverse per-env match — newest binding wins.
+        for (auto it = p->bindings_.rbegin(); it != p->bindings_.rend(); ++it) {
+            auto& b = *it;
             if (b.first == n) {
                 if (is_cell(b.second))
                     return as_cell_id(b.second);
@@ -4418,7 +4539,12 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     //    (Env::lookup hits live top_ at cur==0). Prefer parent_ above so
     //    let* locals shadow same-named top_ defines.
     if (owner_) {
-        for (auto& b : owner_->top_env().bindings()) {
+        // Issue #4595: reverse match against live top_ — forward scans
+        // picked the OLDEST cell after a top-level let/define rebind,
+        // splitting set! (stale cell) from the read path (newest).
+        auto tb = owner_->top_env().bindings();
+        for (auto it = tb.rbegin(); it != tb.rend(); ++it) {
+            auto& b = *it;
             if (b.first == n) {
                 if (is_cell(b.second))
                     return as_cell_id(b.second);

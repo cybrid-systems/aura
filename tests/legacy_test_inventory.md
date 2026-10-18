@@ -1827,7 +1827,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
 - `tests/compiler/test_dead_coercion_columnar.cpp` (—) [domain_suite, theme_compiler] — AC1: residual_aos_bridge_total unchanged by DCE SoA path; columnar_total bumps
 - `tests/compiler/test_enable_soa_dual_emit_no_reset.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2821; skip-reset; force_reset param
-- `tests/compiler/test_env_lookup_soa_shadow_reverse.cpp` (—) [small, domain_suite, theme_compiler] — AC1: named-let body reads let-shadowed global (11, not 7)
+- `tests/compiler/test_env_lookup_soa_shadow_reverse.cpp` (—) [domain_suite, theme_compiler] — AC1: named-let body reads let-shadowed global (11, not 7)
 - `tests/core/test_fixup_deltas.cpp` (—) [domain_suite, theme_core] — AC1: valid deltas → absolute children restored correctly
 - `tests/core/test_flatast_add_node_lock.cpp` (—) [domain_suite, theme_core] — AC1: class contract documents flatast_mutex_ reader invariant
 - `tests/core/test_flatast_atomic_lock_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_flatast_atomic_lock_batch.cpp — thematic multi-TU batch
