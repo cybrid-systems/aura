@@ -10852,6 +10852,12 @@ public:
                         return;
                     }
                     if (cname == "catch" && in_try) {
+                        // Issue #4594: (catch EXPR) is the handler expression,
+                        // not a binder. A free name in EXPR must be noted.
+                        if (nv.children.size() == 2) {
+                            walk(nv.child(1));
+                            return;
+                        }
                         std::string var_name;
                         if (nv.children.size() >= 2) {
                             const auto binder_id = nv.child(1);

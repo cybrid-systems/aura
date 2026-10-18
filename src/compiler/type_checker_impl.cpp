@@ -6407,12 +6407,20 @@ TypeId InferenceEngine::synthesize_flat_try_form(FlatAST& flat, StringPool& pool
         bool catch_form = false;
         std::string var_name;
         NodeId handler_id = NULL_NODE;
-        if (cv.tag == NodeTag::Call && cv.children.size() >= 3) {
+        if (cv.tag == NodeTag::Call && cv.children.size() >= 2) {
             auto fn_id = cv.child(0);
             if (fn_id != NULL_NODE && fn_id < flat.size()) {
                 auto fn = flat.get(fn_id);
                 if (fn.tag == NodeTag::Variable && fn.sym_id != INVALID_SYM &&
                     pool.resolve(fn.sym_id) == "catch") {
+                    // Issue #4594: (catch EXPR) — synthesize EXPR only.
+                    // Do not type the catch callee (UnboundVariable).
+                    if (cv.children.size() == 2) {
+                        auto expr_id = cv.child(1);
+                        if (expr_id != NULL_NODE && expr_id < flat.size())
+                            take(synthesize_flat(flat, pool, expr_id, flat.get(expr_id)));
+                        continue;
+                    }
                     auto var_id = cv.child(1);
                     if (var_id != NULL_NODE && var_id < flat.size()) {
                         auto var_form = flat.get(var_id);
