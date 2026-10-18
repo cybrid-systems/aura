@@ -7,7 +7,9 @@ Also invoked from ./build.py gate via cmd_primitive_surface.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import subprocess
 import sys
 import unittest
@@ -23,6 +25,24 @@ def _load_module():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _run_strict_captured(mod, names: list[str]) -> tuple[int, str]:
+    """Issue #4593: run_strict_checks on synthetic names, output captured.
+
+    The synthetic-overrun cases legitimately make run_strict_checks print
+    its FAIL narrative (budget/ceiling violations). Emitted raw, those
+    lines are byte-identical to real gate failures — 'git- has 43
+    primitives, budget is 42' / 'public primitive count 548 exceeds
+    interim hard ceiling 547' — and interleaved unattributed with the
+    unittest progress dots on stderr, they read as the cause of any
+    unrelated gate failure (the #4593 triage trap). Keep them inside the
+    test and assert on their content instead.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = mod.run_strict_checks(names, stats_names=[])
+    return rc, out.getvalue() + err.getvalue()
 
 
 class TestBlockedPatterns(unittest.TestCase):
@@ -199,9 +219,10 @@ class TestBlockedPatterns(unittest.TestCase):
         # Synthetic list with one extra git- name past the frozen budget.
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"]
         fake = [f"git-synthetic-{i}" for i in range(budget + 1)]
-        # run_strict_checks prints + returns 1 on overrun.
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        # run_strict_checks prints + returns 1 on overrun (#4593: captured).
+        rc, captured = _run_strict_captured(self.m, fake + ["query:root"])
         self.assertEqual(rc, 1)
+        self.assertIn(f"has {budget + 1} primitives, budget is {budget}", captured)
 
     def test_eda_no_longer_budgeted_2629(self):
         self.assertNotIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
@@ -212,8 +233,9 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_git_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"]
         fake = [f"git-synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        rc, captured = _run_strict_captured(self.m, fake + ["query:root"])
         self.assertEqual(rc, 1)
+        self.assertIn(f"has {budget + 1} primitives, budget is {budget}", captured)
 
     def test_removed_tui_terminal_prefixes_not_budgeted(self):
         # #2626: no commercial budget keys for deleted surfaces.
@@ -227,26 +249,30 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_synthesize_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"]
         fake = [f"synthesize:synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        rc, captured = _run_strict_captured(self.m, fake + ["query:root"])
         self.assertEqual(rc, 1)
+        self.assertIn(f"has {budget + 1} primitives, budget is {budget}", captured)
 
     def test_tcp_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"]
         fake = [f"tcp-synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        rc, captured = _run_strict_captured(self.m, fake + ["query:root"])
         self.assertEqual(rc, 1)
+        self.assertIn(f"has {budget + 1} primitives, budget is {budget}", captured)
 
     def test_strategy_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"]
         fake = [f"strategy:synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        rc, captured = _run_strict_captured(self.m, fake + ["query:root"])
         self.assertEqual(rc, 1)
+        self.assertIn(f"has {budget + 1} primitives, budget is {budget}", captured)
 
     def test_m4_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"]
         fake = [f"m4-synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        rc, captured = _run_strict_captured(self.m, fake + ["query:root"])
         self.assertEqual(rc, 1)
+        self.assertIn(f"has {budget + 1} primitives, budget is {budget}", captured)
 
 
 class TestSyntheticInjection(unittest.TestCase):
@@ -299,8 +325,12 @@ class TestSyntheticInjection(unittest.TestCase):
         m = self.m
         # Fabricate a huge name list above the ceiling.
         fake = [f"core-fake-{i}" for i in range(m.INTERIM_HARD_CEILING + 1)]
-        rc = m.run_strict_checks(fake, stats_names=[])
+        rc, captured = _run_strict_captured(m, fake)
         self.assertEqual(rc, 1)
+        self.assertIn(
+            f"count {m.INTERIM_HARD_CEILING + 1} exceeds interim hard ceiling {m.INTERIM_HARD_CEILING}",
+            captured,
+        )
 
 
 def main() -> int:
