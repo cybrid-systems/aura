@@ -441,6 +441,7 @@ extern "C" __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok
 // wins). #3343 probe-linear follows the same split.
 extern "C" __attribute__((weak)) void
 aura_jit_set_linear_env_context(std::uint32_t /*env_id*/, std::uint64_t /*frame_version*/) {}
+extern "C" __attribute__((weak)) void aura_jit_set_linear_env_none(void) {} // #4600
 extern "C" __attribute__((weak)) void aura_jit_clear_linear_env_context(void) {}
 extern "C" __attribute__((weak)) void
 aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t /*fn*/,

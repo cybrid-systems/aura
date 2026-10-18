@@ -4507,6 +4507,12 @@ public:
         }
 
         (void)aura_jit_take_prologue_deopt_sentinel();
+        // Issue #4600: exec_jit owns no linear env by construction — the
+        // top-level entry has no captures for the prologue's linear probe.
+        // Declare it so the #3654 fail-closed (unset context under the
+        // production face) consults the callback as an audited no-op
+        // (#1731) instead of deopting every entry.
+        aura_jit_set_linear_env_none();
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
         // Issue #4084: prologue deopt's fixnum 0 is not a successful value.
