@@ -7204,6 +7204,14 @@ double aura_float_ref(std::int64_t val) {
     return 0.0;
 }
 
+// Issue #4570: JIT float-pool size (append-only, never reclaimed) so
+// `aura --jit-session` ";;floatpool" and the L1 test can assert that a
+// float accumulator loop does not box per iteration.
+extern "C" std::uint64_t aura_jit_float_pool_size() {
+    std::lock_guard<std::mutex> lock(g_float_pool_mtx);
+    return static_cast<std::uint64_t>(g_float_pool.size());
+}
+
 // ── String pool ────────────────────────────────────────────
 // Uses EvalValue-compatible encoding: STRING_BIAS_VAL - idx
 // Issue #1306 (P0): mutex — concurrent push_back + index read was UB.

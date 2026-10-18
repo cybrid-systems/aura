@@ -31,6 +31,7 @@ static_assert(jit_fits_fixnum(INT64_MIN >> 1)); // #4482: symmetric
 static_assert(jit_fits_fixnum(-5000000000000000LL));
 } // namespace
 
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Transforms/Utils/Cloning.h> // Issue #170: CloneModule for AOT snapshot
@@ -287,6 +288,270 @@ enum Op : uint32_t {
     OpTopCellLoad = 53,
 };
 
+// Issue #4570: L1 lowering kill switch for A/B and triage —
+// AURA_JIT_L1=0 restores the pre-#4570 lowering (no cell promotion, no
+// static float slots, no fixnum fast path / compare fusion).
+static bool jit_l1_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_JIT_L1");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// Issue #4570: which cell slots of fn can be scalar-replaced.
+//
+// A slot qualifies when it is written by at least one OpNewCell and every
+// other mention of it in a SLOT operand of any instruction (including the
+// arg ranges of Call/Apply/PrimCall) is the cell operand of OpCellGet
+// (ops[1]) or OpCellSet (ops[0]). Then the cell id never reaches a
+// closure, callee, primitive, return value, or another local, so nothing
+// outside this activation can read or write the cell and its content can
+// live in an alloca. Conservative by construction:
+//   - the slot-operand positions are listed per opcode; any opcode outside
+//     the list disables promotion for the whole function (an unknown
+//     operand layout could hide a use);
+//   - an operand listed as a slot that is really a small constant can only
+//     refuse a promotion;
+//   - linear-ownership functions/instructions are left alone (their cell
+//     ops carry fences, #3759).
+static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
+    const uint32_t n = fn.local_count;
+    std::vector<std::uint8_t> ok(n, 0);
+    if (n == 0 || fn.linear_ownership_state != 0 || !fn.blocks)
+        return ok;
+    std::vector<std::uint8_t> bad(n, 0);
+    auto use = [&](uint32_t slot) {
+        if (slot < n)
+            bad[slot] = 1;
+    };
+    auto use_range = [&](uint64_t base, uint64_t count) {
+        for (uint64_t i = 0; i < count && base + i < n; ++i)
+            bad[base + i] = 1;
+    };
+    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+        const auto& fb = fn.blocks[bi];
+        for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            const auto& in = fb.instructions[ii];
+            if (in.linear_ownership_state != 0)
+                return std::vector<std::uint8_t>(n, 0);
+            switch (in.opcode) {
+                case Op::OpNewCell: // cell
+                    if (in.ops[0] < n)
+                        ok[in.ops[0]] = 1;
+                    break;
+                case Op::OpCellGet: // dst, cell
+                    use(in.ops[0]);
+                    break;
+                case Op::OpCellSet: // cell, val
+                    use(in.ops[1]);
+                    break;
+                case Op::OpCall: // callee, arg_base, arg_count, result
+                    use(in.ops[0]);
+                    use_range(in.ops[1], in.ops[2]);
+                    use(in.ops[3]);
+                    break;
+                case Op::OpPrimCall: // prim_id, arg_base, arg_count, result
+                    use_range(in.ops[1], in.ops[2]);
+                    use(in.ops[3]);
+                    break;
+                case Op::OpApply: // closure, arg_count, result; args at closure+1..
+                    use(in.ops[0]);
+                    use_range(static_cast<uint64_t>(in.ops[0]) + 1, in.ops[1]);
+                    use(in.ops[2]);
+                    break;
+                case Op::OpAdd: // dst, a, b (ops[3]: Eq numeric flag)
+                case Op::OpSub:
+                case Op::OpMul:
+                case Op::OpDiv:
+                case Op::OpEq:
+                case Op::OpLt:
+                case Op::OpGt:
+                case Op::OpLe:
+                case Op::OpGe:
+                case Op::OpAnd:
+                case Op::OpOr:
+                case Op::OpMakePair:
+                    use(in.ops[0]);
+                    use(in.ops[1]);
+                    use(in.ops[2]);
+                    break;
+                case Op::OpLocal: // dst, src
+                case Op::OpNot:
+                case Op::OpCar:
+                case Op::OpCdr:
+                case Op::OpIsError:
+                case Op::OpCastOp:     // dst, src, type-const
+                case Op::OpGuardShape: // dst, slot, shape-const (qualified: #3270 lint anchors
+                                       // lower())
+                case Op::OpPrimitive:  // dst, prim
+                    use(in.ops[0]);
+                    use(in.ops[1]);
+                    break;
+                case Op::OpConstI64: // dst, const lo/hi
+                case Op::OpConstF64:
+                case Op::OpConstString:
+                case Op::OpConstBool:
+                case Op::OpConstVoid:
+                case Op::OpArg:
+                case Op::OpTopCellLoad:
+                case Op::OpBranch: // cond, then-block, else-block
+                case Op::OpReturn: // value
+                    use(in.ops[0]);
+                    break;
+                case Op::OpNop:
+                case Op::OpJump: // block
+                    break;
+                default:
+                    return std::vector<std::uint8_t>(n, 0);
+            }
+        }
+    }
+    for (uint32_t i = 0; i < n; ++i)
+        ok[i] = ok[i] && !bad[i];
+    return ok;
+}
+
+// Issue #4570 (L1 float): slots and promoted cells whose value is a
+// float on every path, proven from the IR alone (no profile needed).
+// Optimistic fixed point: start from "every defined slot / promoted cell
+// is float" and drop any slot with a non-float definition, and any cell
+// with a non-float CellSet, until stable. A slot is float when each of
+// its definitions is
+//   ConstF64 | Add/Sub/Mul/Div of two float slots | Local of a float slot
+//   | CellGet of a float cell.
+// Float slots get the #4522 raw-double shadow (flocals) and float cells a
+// double alloca, so a float accumulator loop does no aura_alloc_float /
+// aura_float_ref per iteration; values are reboxed only where a generic
+// reader (call arg, return, structure store) loads them. Unlike the
+// profile-driven #4522 shadows this needs no guard: the proof is static.
+// Any opcode without a known result slot disables the analysis.
+struct StaticFloats {
+    std::vector<std::uint8_t> slot;
+    std::vector<std::uint8_t> cell;
+};
+static StaticFloats static_float_slots(const FlatFunction& fn,
+                                       const std::vector<std::uint8_t>& promo) {
+    const uint32_t n = fn.local_count;
+    StaticFloats out{std::vector<std::uint8_t>(n, 0), std::vector<std::uint8_t>(n, 0)};
+    if (n == 0 || !fn.blocks || fn.source_marker == 1)
+        return out;
+    auto& fs = out.slot;
+    auto& fc = out.cell;
+    // Result slot of an instruction (UINT32_MAX = none); false = unknown op.
+    auto result_slot = [](const FlatInstruction& in, uint32_t& r) -> bool {
+        r = UINT32_MAX;
+        switch (in.opcode) {
+            case Op::OpCall:
+            case Op::OpPrimCall:
+                r = in.ops[3];
+                return true;
+            case Op::OpApply:
+                r = in.ops[2];
+                return true;
+            case Op::OpCellSet:
+            case Op::OpBranch:
+            case Op::OpReturn:
+            case Op::OpJump:
+            case Op::OpNop:
+                return true;
+            case Op::OpNewCell:
+            case Op::OpCellGet:
+            case Op::OpAdd:
+            case Op::OpSub:
+            case Op::OpMul:
+            case Op::OpDiv:
+            case Op::OpEq:
+            case Op::OpLt:
+            case Op::OpGt:
+            case Op::OpLe:
+            case Op::OpGe:
+            case Op::OpAnd:
+            case Op::OpOr:
+            case Op::OpMakePair:
+            case Op::OpLocal:
+            case Op::OpNot:
+            case Op::OpCar:
+            case Op::OpCdr:
+            case Op::OpIsError:
+            case Op::OpCastOp:
+            case Op::OpGuardShape:
+            case Op::OpPrimitive:
+            case Op::OpConstI64:
+            case Op::OpConstF64:
+            case Op::OpConstString:
+            case Op::OpConstBool:
+            case Op::OpConstVoid:
+            case Op::OpArg:
+            case Op::OpTopCellLoad:
+                r = in.ops[0];
+                return true;
+            default:
+                return false;
+        }
+    };
+    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+        const auto& fb = fn.blocks[bi];
+        for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            uint32_t r = 0;
+            if (!result_slot(fb.instructions[ii], r))
+                return StaticFloats{std::vector<std::uint8_t>(n, 0),
+                                    std::vector<std::uint8_t>(n, 0)}; // unknown op: none
+            if (r < n)
+                fs[r] = 1;
+        }
+    }
+    for (uint32_t i = 0; i < n && i < promo.size(); ++i)
+        fc[i] = promo[i];
+    auto f = [&](uint32_t s) { return s < n && fs[s] != 0; };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+            const auto& fb = fn.blocks[bi];
+            for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                const auto& in = fb.instructions[ii];
+                if (in.opcode == OpCellSet) {
+                    const uint32_t c = in.ops[0];
+                    if (c < n && fc[c] && !f(in.ops[1])) {
+                        fc[c] = 0;
+                        changed = true;
+                    }
+                    continue;
+                }
+                uint32_t r = 0;
+                (void)result_slot(in, r);
+                if (r >= n || !fs[r])
+                    continue;
+                bool is_float = false;
+                switch (in.opcode) {
+                    case Op::OpConstF64:
+                        is_float = true;
+                        break;
+                    case Op::OpAdd:
+                    case Op::OpSub:
+                    case Op::OpMul:
+                    case Op::OpDiv:
+                        is_float = in.source_marker != 1 && f(in.ops[1]) && f(in.ops[2]);
+                        break;
+                    case Op::OpLocal:
+                        is_float = in.source_marker != 1 && f(in.ops[1]);
+                        break;
+                    case Op::OpCellGet:
+                        is_float = in.ops[1] < n && fc[in.ops[1]] != 0;
+                        break;
+                    default:
+                        break;
+                }
+                if (!is_float) {
+                    fs[r] = 0;
+                    changed = true;
+                }
+            }
+        }
+    }
+    return out;
+}
+
 // LLVM IR Builder
 struct LLVMBuilder {
     llvm::LLVMContext& ctx;
@@ -336,6 +601,65 @@ struct LLVMBuilder {
     // lowers fully boxed again.
     std::vector<llvm::Value*> flocals{};
     std::vector<llvm::Value*> funboxed{};
+    // Issue #4570: promoted (scalar-replaced) cells. pcells[slot] is an
+    // i64 alloca holding the cell's CONTENT when slot is a function-local
+    // cell that never leaves the function (see promotable_cells): its id
+    // is only ever the cell operand of NewCell/CellGet/CellSet, so no
+    // closure, callee, primitive or other thread can observe it, and the
+    // value can live in a register (mem2reg) instead of g_cell_heap
+    // behind the workspace lock. nullptr = a real heap cell.
+    std::vector<llvm::Value*> pcells{};
+    // Issue #4570: 1 = pcells[slot] is a double alloca (a statically-float
+    // cell, see static_float_slots); 0 = tagged i64 content.
+    std::vector<std::uint8_t> pcell_f{};
+    inline bool is_pcell(uint32_t slot) const {
+        return slot < pcells.size() && pcells[slot] != nullptr;
+    }
+    // Issue #4570: entry-block allocas for promoted cells and for the
+    // statically-float slots (raw-double shadows, the #4522 machinery).
+    // Call after llvm_locals / flocals exist, with irb in the entry block.
+    void setup_l1_slots(const FlatFunction& fn) {
+        pcells.assign(fn.local_count, nullptr);
+        pcell_f.assign(fn.local_count, 0);
+        if (!jit_l1_enabled())
+            return;
+        const auto promo = promotable_cells(fn);
+        const auto sf = static_float_slots(fn, promo);
+        pcells.assign(fn.local_count, nullptr);
+        pcell_f.assign(fn.local_count, 0);
+        std::uint64_t promoted = 0;
+        for (uint32_t i = 0; i < fn.local_count; ++i) {
+            if (!promo[i])
+                continue;
+            pcell_f[i] = sf.cell[i];
+            if (pcell_f[i]) {
+                pcells[i] = irb->CreateAlloca(double_ty);
+                irb->CreateStore(llvm::ConstantFP::get(double_ty, 0.0), pcells[i]);
+            } else {
+                pcells[i] = irb->CreateAlloca(llvm::Type::getInt64Ty(ctx));
+                irb->CreateStore(c64(0), pcells[i]);
+            }
+            ++promoted;
+        }
+        if (flocals.size() < fn.local_count) {
+            flocals.resize(fn.local_count, nullptr);
+            funboxed.resize(fn.local_count, nullptr);
+        }
+        for (uint32_t i = 0; i < fn.local_count; ++i) {
+            if (!sf.slot[i] || flocals[i])
+                continue;
+            flocals[i] = irb->CreateAlloca(double_ty);
+            funboxed[i] = irb->CreateAlloca(llvm::Type::getInt8Ty(ctx));
+            irb->CreateStore(irb->getInt8(0), funboxed[i]);
+        }
+        if (metrics && promoted)
+            metrics->l1_cells_promoted_total.fetch_add(promoted, std::memory_order_relaxed);
+    }
+    // Issue #4570: compare+branch fusion. The block loop publishes the
+    // next instruction; a compare that is immediately consumed by the
+    // block's OpBranch lowers both and sets consumed_next.
+    const FlatInstruction* next_inst = nullptr;
+    bool consumed_next = false;
 
     // Issue #60 Iter 3: per-instruction shape_id. Set during the build
     // loop in AuraJIT::compile, this is the shape of the instruction's
@@ -883,6 +1207,16 @@ struct LLVMBuilder {
             return not_false;
         return irb->CreateAnd(not_false, irb->CreateICmpNE(v, c64(0)));
     }
+    // Issue #4570 (L1): one test for "both operands are fixnums" — the
+    // ABI 4 fixnum tag is bit 0 clear, so (a | b) & 1 == 0.
+    llvm::Value* jit_both_fixnum(llvm::Value* a, llvm::Value* b) {
+        return irb->CreateICmpEQ(irb->CreateAnd(irb->CreateOr(a, b), c64(1)), c64(0));
+    }
+    // Conditional branch whose true edge is the expected (hot) one; the
+    // false edge is laid out cold.
+    void br_likely(llvm::Value* cond, llvm::BasicBlock* hot, llvm::BasicBlock* cold) {
+        irb->CreateCondBr(cond, hot, cold, llvm::MDBuilder(ctx).createBranchWeights(2000, 1));
+    }
 
     // Lower one FlatInstruction into the current LLVM IR builder.
     // Contract: inst.opcode must be a valid IROpcode value (< MaxIROpcode);
@@ -1220,6 +1554,42 @@ struct LLVMBuilder {
         // the existing fixnum/float body, and the next opcode continues
         // at the join.
         auto guard_numeric_arith = [&](int kind) {
+            // Issue #4570 (L1): both-fixnum fast path. One tag test for
+            // both operands, then the overflow intrinsic straight on the
+            // tagged values — add/sub of tags is the tag of the sum, and
+            // (a>>1) * b is the tagged product, so the intrinsic's flag is
+            // exactly "result leaves the 62-bit domain". Overflow stores
+            // the same RefError the generic path does for fixnum operands
+            // (#4482), so the fast path has no call and no promote block.
+            // Anything else (float, non-number) takes the unchanged
+            // generic path below, laid out cold. Operands already known
+            // float (#4523) and macro-introduced code (#1610) skip it.
+            llvm::BasicBlock* l1_join = nullptr;
+            if (jit_l1_enabled() && inst.source_marker != 1 && !operand_known_float(inst.ops[1]) &&
+                !operand_known_float(inst.ops[2])) {
+                auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                auto* l1a = load(inst.ops[1]);
+                auto* l1b = load(inst.ops[2]);
+                auto* parent = irb->GetInsertBlock()->getParent();
+                auto* bb_fast = llvm::BasicBlock::Create(ctx, "l1_fixnum", parent);
+                auto* bb_gen = llvm::BasicBlock::Create(ctx, "l1_generic", parent);
+                l1_join = llvm::BasicBlock::Create(ctx, "l1_join", parent);
+                br_likely(jit_both_fixnum(l1a, l1b), bb_fast, bb_gen);
+                irb->SetInsertPoint(bb_fast);
+                const auto id = kind == 1   ? llvm::Intrinsic::ssub_with_overflow
+                                : kind == 2 ? llvm::Intrinsic::smul_with_overflow
+                                            : llvm::Intrinsic::sadd_with_overflow;
+                auto* decl = llvm::Intrinsic::getOrInsertDeclaration(mod, id, {i64_ty});
+                auto* lhs = kind == 2 ? irb->CreateAShr(l1a, c64(1)) : l1a;
+                auto* ovf = irb->CreateCall(decl, {lhs, l1b});
+                auto* tagged = irb->CreateExtractValue(ovf, 0);
+                auto* overflow = irb->CreateExtractValue(ovf, 1);
+                store(inst.ops[0], irb->CreateSelect(overflow, num_err, tagged));
+                irb->CreateBr(l1_join);
+                irb->SetInsertPoint(bb_gen);
+                if (metrics)
+                    metrics->l1_fixnum_fast_total.fetch_add(1, std::memory_order_relaxed);
+            }
             // Issue #4523: a profiled-SHAPE_FLOAT operand is numeric
             // without a tag test and reads its raw-double shadow directly
             // (the emit_flocal_arith trust — no rebox, no flag check, no
@@ -1261,6 +1631,78 @@ struct LLVMBuilder {
             }
             irb->CreateBr(bb_join);
             irb->SetInsertPoint(bb_join);
+            if (l1_join) {
+                irb->CreateBr(l1_join);
+                irb->SetInsertPoint(l1_join);
+            }
+        };
+        // Issue #4570 (L1): compare+branch fusion. When the next
+        // instruction is the block's OpBranch on this compare's result,
+        // the hot arm branches on the i1 directly (no #t/#f select and
+        // re-test); both arms still publish the boolean to the result slot
+        // so any other reader sees the same value (dead stores fold away).
+        // Issue #4570: generic (cold) arm of a numeric compare. A float
+        // operand compares by value as doubles; two fixnums keep the tagged
+        // compare; a non-number is the #4482 RefError. The pre-#4570 lowering
+        // compared raw tags for mixed int/float ((< 2 2.0) was #t, (= 2 2.0)
+        // was #f, unlike the interpreter).
+        auto num_compare_slow = [&](llvm::Value* a, llvm::Value* b, llvm::CmpInst::Predicate ipred,
+                                    llvm::CmpInst::Predicate fpred) -> llvm::Value* {
+            auto* any_f = irb->CreateOr(jit_is_float(a), jit_is_float(b));
+            auto* fc = irb->CreateFCmp(fpred, emit_float_side(a, false), emit_float_side(b, false));
+            auto* c = irb->CreateSelect(any_f, fc, irb->CreateICmp(ipred, a, b));
+            auto* boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
+            auto* both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
+            return irb->CreateSelect(both, boolv, num_err);
+        };
+        auto fused_branch = [&]() -> const FlatInstruction* {
+            if (next_inst && next_inst->opcode == OpBranch && next_inst->ops[0] == inst.ops[0])
+                return next_inst;
+            return nullptr;
+        };
+        // Lower a compare whose fast arm is `fast_cond` (an i1 valid only
+        // when `guard` holds; guard == nullptr means always valid) and
+        // whose slow arm publishes `slow_val()` (the existing generic
+        // lowering). Ends either at a join (no fusion) or with both arms
+        // terminated by the fused branch.
+        auto emit_l1_compare = [&](llvm::Value* guard,
+                                   const std::function<llvm::Value*()>& fast_cond,
+                                   const std::function<llvm::Value*()>& slow_val) {
+            const auto* br = fused_branch();
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto finish = [&](llvm::Value* cond_or_null, llvm::Value* val, llvm::BasicBlock* join) {
+                store(inst.ops[0], val);
+                if (br) {
+                    auto* c = cond_or_null ? cond_or_null : jit_truthy(val);
+                    irb->CreateCondBr(c, block_map[br->ops[1]], block_map[br->ops[2]]);
+                } else {
+                    irb->CreateBr(join);
+                }
+            };
+            llvm::BasicBlock* join =
+                br ? nullptr : llvm::BasicBlock::Create(ctx, "l1_cmp_join", parent);
+            if (guard) {
+                auto* bb_fast = llvm::BasicBlock::Create(ctx, "l1_cmp_fixnum", parent);
+                auto* bb_gen = llvm::BasicBlock::Create(ctx, "l1_cmp_generic", parent);
+                br_likely(guard, bb_fast, bb_gen);
+                irb->SetInsertPoint(bb_fast);
+                auto* c = fast_cond();
+                finish(c, irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)), join);
+                irb->SetInsertPoint(bb_gen);
+                finish(nullptr, slow_val(), join);
+            } else {
+                auto* c = fast_cond();
+                finish(c, irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)), join);
+            }
+            if (br) {
+                consumed_next = true;
+                if (metrics)
+                    metrics->l1_cmp_branch_fused_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                irb->SetInsertPoint(join);
+            }
+            if (guard && metrics)
+                metrics->l1_fixnum_fast_total.fetch_add(1, std::memory_order_relaxed);
         };
         switch (inst.opcode) {
             case OpNop:
@@ -1420,6 +1862,25 @@ struct LLVMBuilder {
                 // a non-number. Float identity stays the raw compare.
                 auto a = load(inst.ops[1]);
                 auto b = load(inst.ops[2]);
+                if (jit_l1_enabled() && inst.source_marker != 1) {
+                    // Issue #4570 (L1): eq?/eqv? is a raw-tag compare (always
+                    // valid, no guard); numeric `=` on two fixnums is the
+                    // same compare. Floats and non-numbers keep the generic
+                    // arm (RefError surface unchanged).
+                    auto eq_fast = [&]() -> llvm::Value* { return irb->CreateICmpEQ(a, b); };
+                    auto eq_slow = [&]() -> llvm::Value* {
+                        if (inst.ops[3] == 0) // eq?: raw identity, never reached (no guard)
+                            return irb->CreateSelect(irb->CreateICmpEQ(a, b), c64(KWD_TRUE_VAL),
+                                                     c64(KWD_FALSE_VAL));
+                        // Issue #4570: numeric `=` with a float operand compares
+                        // values (2 = 2.0 is #t), not raw tags.
+                        return num_compare_slow(a, b, llvm::CmpInst::ICMP_EQ,
+                                                llvm::CmpInst::FCMP_OEQ);
+                    };
+                    emit_l1_compare(inst.ops[3] != 0 ? jit_both_fixnum(a, b) : nullptr, eq_fast,
+                                    eq_slow);
+                    return true;
+                }
                 auto c = irb->CreateICmpEQ(a, b);
                 auto boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
                 if (inst.ops[3] != 0) {
@@ -1453,6 +1914,21 @@ struct LLVMBuilder {
                                   : inst.opcode == OpGt ? llvm::CmpInst::ICMP_SGT
                                   : inst.opcode == OpLe ? llvm::CmpInst::ICMP_SLE
                                                         : llvm::CmpInst::ICMP_SGE;
+                if (jit_l1_enabled() && inst.source_marker != 1) {
+                    // Issue #4570 (L1): two fixnums compare as their tagged
+                    // words (v << 1 preserves order). The generic arm is the
+                    // pre-#4570 lowering, byte for byte.
+                    auto lt_fast = [&]() -> llvm::Value* { return irb->CreateICmp(pred, a, b); };
+                    const auto fpred = inst.opcode == OpLt   ? llvm::CmpInst::FCMP_OLT
+                                       : inst.opcode == OpGt ? llvm::CmpInst::FCMP_OGT
+                                       : inst.opcode == OpLe ? llvm::CmpInst::FCMP_OLE
+                                                             : llvm::CmpInst::FCMP_OGE;
+                    auto lt_slow = [&]() -> llvm::Value* {
+                        return num_compare_slow(a, b, pred, fpred);
+                    };
+                    emit_l1_compare(jit_both_fixnum(a, b), lt_fast, lt_slow);
+                    return true;
+                }
                 auto c = irb->CreateICmp(pred, a, b);
                 auto boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
                 auto both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
@@ -1878,17 +2354,51 @@ struct LLVMBuilder {
 
             // Cells
             case OpNewCell: {
+                if (is_pcell(inst.ops[0])) {
+                    // Issue #4570: fresh promoted cell — content starts at
+                    // fixnum 0 like aura_new_cell's g_cell_heap.push_back(0)
+                    // (a float cell is always set before it is read).
+                    if (pcell_f[inst.ops[0]])
+                        irb->CreateStore(llvm::ConstantFP::get(double_ty, 0.0),
+                                         pcells[inst.ops[0]]);
+                    else
+                        irb->CreateStore(c64(0), pcells[inst.ops[0]]);
+                    return true;
+                }
                 auto call = irb->CreateCall(llvm::FunctionCallee(fn_new_cell));
                 store(inst.ops[0], call);
                 return true;
             }
             case OpCellGet: {
+                if (is_pcell(inst.ops[1])) {
+                    if (pcell_f[inst.ops[1]]) {
+                        auto* d = irb->CreateLoad(double_ty, pcells[inst.ops[1]]);
+                        if (is_flocal(inst.ops[0]))
+                            storef(inst.ops[0], d);
+                        else
+                            store(inst.ops[0], box_double(d));
+                        return true;
+                    }
+                    store(inst.ops[0],
+                          irb->CreateLoad(llvm::Type::getInt64Ty(ctx), pcells[inst.ops[1]]));
+                    return true;
+                }
                 auto call = irb->CreateCall(llvm::FunctionCallee(fn_cell_get),
                                             llvm::ArrayRef<llvm::Value*>{load(inst.ops[1])});
                 store(inst.ops[0], call);
                 return true;
             }
             case OpCellSet: {
+                if (is_pcell(inst.ops[0])) {
+                    if (pcell_f[inst.ops[0]]) {
+                        // Static proof: the stored slot is a float slot, so it
+                        // has a raw-double shadow (flocal) holding the value.
+                        irb->CreateStore(loadf(inst.ops[1]), pcells[inst.ops[0]]);
+                        return true;
+                    }
+                    irb->CreateStore(load(inst.ops[1]), pcells[inst.ops[0]]);
+                    return true;
+                }
                 irb->CreateCall(llvm::FunctionCallee(fn_cell_set),
                                 llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
                 return true;
@@ -2038,10 +2548,27 @@ struct LLVMBuilder {
                     metrics->exception_opcode_mask.fetch_or(1ull << 0, std::memory_order_relaxed);
                 }
                 // ops[0] = result_slot, ops[1] = value_slot
-                auto val = load(inst.ops[1]);
-                // Tag check: (val & 0x1F) == 0x11 (RefError encoded)
                 constexpr std::uint64_t REF_ERROR_MASK = 0x1F;
                 constexpr std::uint64_t REF_ERROR_TAG = 0x11;
+                if (is_flocal(inst.ops[1])) {
+                    // Issue #4570: a raw-double local whose shadow is
+                    // authoritative holds a number, never an error — test
+                    // the flag and the tagged slot instead of reboxing the
+                    // double (a load() here allocated a float-pool box on
+                    // every #4552 error check in a float loop).
+                    auto* flag = irb->CreateLoad(llvm::Type::getInt8Ty(ctx), funboxed[inst.ops[1]]);
+                    auto* tagged =
+                        irb->CreateLoad(llvm::Type::getInt64Ty(ctx), llvm_locals[inst.ops[1]]);
+                    auto* tag_err = irb->CreateICmpEQ(irb->CreateAnd(tagged, c64(REF_ERROR_MASK)),
+                                                      c64(REF_ERROR_TAG));
+                    auto* is_err =
+                        irb->CreateAnd(irb->CreateICmpEQ(flag, irb->getInt8(0)), tag_err);
+                    store(inst.ops[0],
+                          irb->CreateSelect(is_err, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                    return true;
+                }
+                auto val = load(inst.ops[1]);
+                // Tag check: (val & 0x1F) == 0x11 (RefError encoded)
                 auto masked = irb->CreateAnd(val, c64(REF_ERROR_MASK));
                 auto is_err = irb->CreateICmpEQ(masked, c64(REF_ERROR_TAG));
                 store(inst.ops[0],
@@ -3205,16 +3732,22 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
             builder.irb->CreateStore(i8_zero, builder.funboxed[i]);
         }
     }
+    // Issue #4570: scalar-replace function-local cells (same as the JIT path).
+    builder.setup_l1_slots(fn);
 
     // Lower each block
     for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
         auto& fb = fn.blocks[bi];
         builder.irb->SetInsertPoint(builder.block_map[fb.id]);
         for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            builder.next_inst = ii + 1 < fb.num_instructions ? &fb.instructions[ii + 1] : nullptr;
+            builder.consumed_next = false;
             if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
                 delete builder.irb;
                 return false;
             }
+            if (builder.consumed_next)
+                ++ii; // #4570: fused compare+branch lowered both
         }
     }
     delete builder.irb;
@@ -3711,6 +4244,11 @@ struct AuraJIT::Impl {
                 builder.irb->CreateStore(i8_zero, builder.funboxed[i]);
             }
         }
+        // Issue #4570: scalar-replace function-local cells (let + set!,
+        // while counters). Each promoted cell's content lives in an i64
+        // alloca that mem2reg turns into SSA — no aura_new_cell /
+        // aura_cell_get / aura_cell_set (workspace lock) in the loop.
+        builder.setup_l1_slots(fn);
 
         // Issue #157 Phase 1b: reserve an extra local slot (at index
         // fn.local_count) for the captured defuse_version_. At function
@@ -3896,10 +4434,15 @@ struct AuraJIT::Impl {
             else
                 builder.irb->SetInsertPoint(builder.block_map[fb.id]);
             for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                builder.next_inst =
+                    ii + 1 < fb.num_instructions ? &fb.instructions[ii + 1] : nullptr;
+                builder.consumed_next = false;
                 if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
                     delete builder.irb;
                     return nullptr;
                 }
+                if (builder.consumed_next)
+                    ++ii; // #4570: fused compare+branch lowered both
             }
         }
         delete builder.irb;

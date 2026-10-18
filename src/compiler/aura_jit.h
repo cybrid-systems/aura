@@ -228,6 +228,13 @@ public:
         // function). Provides a single number for observability +
         // perf regression detection.
         std::atomic<std::uint64_t> intrinsic_count{0};
+        // Issue #4570 (L1): compile-time counts of the L1 lowerings —
+        // function-local cells scalar-replaced, add/sub/mul and compare
+        // sites given the both-fixnum fast path, and compares fused with
+        // their consuming branch (icmp + br, no #t/#f materialization).
+        std::atomic<std::uint64_t> l1_cells_promoted_total{0};
+        std::atomic<std::uint64_t> l1_fixnum_fast_total{0};
+        std::atomic<std::uint64_t> l1_cmp_branch_fused_total{0};
         // Issue #461: explicit IRInterpreter fallback counter.
         // Bumped by the runtime stub `aura_jit_fallback_to_interpreter`
         // each time the JIT lower() default case routes through
