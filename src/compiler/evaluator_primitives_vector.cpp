@@ -65,6 +65,9 @@ namespace {
 
     // Issue #2654: language hash key hash (FNV for strings, mix for ints).
     // Keep in sync with hash / hash-set! / grow rehash placement.
+    // Issue #4612: "no slot" sentinel for the probe result.
+    constexpr std::size_t kNoHashSlot = static_cast<std::size_t>(-1);
+
     [[nodiscard]] std::uint64_t
     eval_hash_key_hash(const EvalValue& k, const std::pmr::vector<std::string>& sh) noexcept {
         if (is_int(k))
@@ -72,11 +75,10 @@ namespace {
         if (is_string(k)) {
             auto i = as_string_idx(k);
             if (i < sh.size()) {
-                auto& s = sh[i];
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : s)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                return h;
+                // Issue #4612: the SAME hash the native string-hash
+                // primitive returns (#4614) -- hash_meta.h fnv1a_bytes.
+                // One string hash in the tree, not two.
+                return ::aura::compiler::hash::fnv1a_bytes(std::string_view(sh[i]));
             }
         }
         return 0x9e3779b97f4a7c15ull;
@@ -118,6 +120,10 @@ namespace {
         auto new_vals = new_ht->values();
         for (std::uint64_t i = 0; i < old_cap; ++i) {
             if (old_meta[i] == 0xFF)
+                continue;
+            // Issue #4612: a deleted slot (tombstone) must NOT be
+            // resurrected by the rehash -- the key is gone.
+            if (old_meta[i] == ::aura::compiler::hash::kTombstoneSlot)
                 continue;
             EvalValue kv{old_keys[i]};
             auto kh = eval_hash_key_hash(kv, sh);
@@ -161,15 +167,23 @@ namespace {
             auto keys = htp->keys();
             auto vals = htp->values();
             auto cap = htp->capacity;
+            // Issue #4612: reuse the first deleted slot of the chain
+            // (the JIT runtime does the same) so a remove/insert cycle
+            // does not grow the probe chain without bound.
+            std::size_t first_tombstone = cap;
             for (std::uint64_t at = 0; at < cap; ++at) {
                 auto idx = ((kh >> 1) + at) & (cap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key.val;
-                    vals[idx] = val.val;
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                    auto use =
+                        (first_tombstone < cap) ? first_tombstone : static_cast<std::size_t>(idx);
+                    meta[use] = fp;
+                    keys[use] = key.val;
+                    vals[use] = val.val;
                     htp->size++;
                     return true;
                 }
+                if (meta[idx] == ::aura::compiler::hash::kTombstoneSlot && first_tombstone >= cap)
+                    first_tombstone = static_cast<std::size_t>(idx);
             }
             return false;
         };
@@ -259,6 +273,46 @@ namespace {
             return true;
         }
         return false;
+    }
+
+    // Issue #4612: the open-addressed probe. A key whose hash is kh
+    // lives at ((kh >> 1) + at) & (cap - 1) -- the first free slot at
+    // or after its home slot (linear probing) -- so a lookup walks THAT
+    // chain instead of every slot of the table. The miss used to cost
+    // O(capacity): hash-ref / hash-has-key? / hash-set! / hash-remove!
+    // each scanned the whole table and compared every key.
+    //
+    // The chain ends at the first empty slot. A deleted slot
+    // (kTombstoneSlot) is skipped, NOT treated as the end of the chain:
+    // a removal used to punch a hole (0xFF) into the middle of a chain
+    // and the key that had been displaced past the hole became
+    // unreachable. hash-remove! now writes a tombstone instead.
+    //
+    // The key comparison is still eval_hash_keys_eq, so the equal?
+    // semantics for list / vector keys (#4489) and the in-range tenant
+    // stamp compare (#4505) are unchanged.
+    //
+    // Returns the slot index of the match, or kNoHashSlot for a miss.
+    [[nodiscard]] std::size_t
+    eval_hash_probe(const FlatHashTable* ht, std::uint64_t kh, const EvalValue& key,
+                    const std::pmr::vector<std::string>& sh, const std::pmr::vector<Pair>* pairs,
+                    const std::vector<std::vector<EvalValue>>* vh, Evaluator* tenant_ev,
+                    std::string_view tenant_op) noexcept {
+        const auto* meta = ht->metadata();
+        const auto* keys = ht->keys();
+        const auto cap = ht->capacity;
+        for (std::uint64_t at = 0; at < cap; ++at) {
+            const auto idx = ((kh >> 1) + at) & (cap - 1);
+            const auto m = meta[idx];
+            if (m == ::aura::compiler::hash::kEmptySlot)
+                return kNoHashSlot; // empty slot: the chain ends here
+            if (m == ::aura::compiler::hash::kTombstoneSlot)
+                continue; // deleted slot: keep probing
+            if (eval_hash_keys_eq(EvalValue{keys[idx]}, key, sh, pairs, vh, 0, tenant_ev,
+                                  tenant_op))
+                return static_cast<std::size_t>(idx);
+        }
+        return kNoHashSlot;
     }
 
 } // namespace
@@ -749,19 +803,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                        "hash-ref"))
                 return a.size() >= 3 ? a[2] : make_void();
             auto* ht = g_hash_tables[hidx];
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto sh = &string_heap;
-            for (std::size_t i = 0; i < ht->capacity; ++i) {
-                if (meta[i] == 0xFF)
-                    continue;
-                auto k = EvalValue{keys[i]};
-                const bool eq =
-                    eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap, 0, &ev, "hash-ref");
-                if (eq)
-                    return EvalValue{vals[i]};
-            }
+            // Issue #4612: probe by hash (open addressing) instead of
+            // scanning every slot -- a miss used to cost O(capacity).
+            const auto kh = eval_hash_key_hash(a[1], string_heap);
+            const auto slot =
+                eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev, "hash-ref");
+            if (slot != kNoHashSlot)
+                return EvalValue{ht->values()[slot]};
             return a.size() >= 3 ? a[2] : make_void();
         },
         pure_general(2, "(hash any) -> any", "Lookup a key in a hash."));
@@ -781,19 +829,12 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                        "hash-has-key?"))
                 return make_bool(false);
             auto* ht = g_hash_tables[hidx];
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto sh = &string_heap;
-            for (std::size_t i = 0; i < ht->capacity; ++i) {
-                if (meta[i] == 0xFF)
-                    continue;
-                auto k = EvalValue{keys[i]};
-                const bool eq =
-                    eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap, 0, &ev, "hash-has-key?");
-                if (eq)
-                    return make_bool(true);
-            }
-            return make_bool(false);
+            // Issue #4612: probe by hash (open addressing) -- the miss
+            // used to scan every slot of the table.
+            const auto kh = eval_hash_key_hash(a[1], string_heap);
+            const auto slot = eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev,
+                                              "hash-has-key?");
+            return make_bool(slot != kNoHashSlot);
         },
         pure_general(2, "(hash any) -> bool", "True if hash contains the key."));
     register_prim(
@@ -817,24 +858,20 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                        "hash-set!"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
             // Issue #2652: refuse empty string keys (corruption / sentinel make_string(0)).
             if (is_string(a[1])) {
                 auto bi = as_string_idx(a[1]);
                 if (bi >= string_heap.size() || string_heap[bi].empty())
                     return make_void();
             }
-            for (std::size_t i = 0; i < ht->capacity; ++i) {
-                if (meta[i] == 0xFF)
-                    continue;
-                auto k = EvalValue{keys[i]};
-                if (eval_hash_keys_eq(k, a[1], string_heap, &pairs, &vector_heap, 0, &ev,
-                                      "hash-set!")) {
-                    vals[i] = a[2].val;
-                    return make_void();
-                }
+            // Issue #4612: probe by hash (open addressing) -- finding the
+            // existing key used to scan every slot of the table.
+            const auto kh = eval_hash_key_hash(a[1], string_heap);
+            const auto slot =
+                eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev, "hash-set!");
+            if (slot != kNoHashSlot) {
+                ht->values()[slot] = a[2].val;
+                return make_void();
             }
             // New key: insert with grow. Published table — do NOT free old
             // blocks (JIT / concurrent readers may still hold the prior
@@ -891,7 +928,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // list. Verified by tests/test_hash_iter_invalidation.cpp.
             EvalValue result = make_void();
             for (std::size_t i = ht->capacity; i > 0; --i) {
-                if (meta[i - 1] != 0xFF) {
+                // Issue #4612: a deleted slot (tombstone) is not a key.
+                if (::aura::compiler::hash::hash_slot_is_live(meta[i - 1])) {
                     auto pid = pairs.size();
                     pairs.push_back({EvalValue{keys[i - 1]}, result});
                     ev.note_inrange_pair_mint(pid); // Issue #4431
@@ -925,7 +963,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // Verified by tests/test_hash_iter_invalidation.cpp.
             EvalValue result = make_void();
             for (std::size_t i = ht->capacity; i > 0; --i) {
-                if (meta[i - 1] != 0xFF) {
+                // Issue #4612: a deleted slot (tombstone) is not a value.
+                if (::aura::compiler::hash::hash_slot_is_live(meta[i - 1])) {
                     auto pid = pairs.size();
                     pairs.push_back({EvalValue{vals[i - 1]}, result});
                     ev.note_inrange_pair_mint(pid); // Issue #4431
@@ -976,7 +1015,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // hash table's internal storage. Safe to mutate the hash
             // afterward. Verified by tests/test_hash_iter_invalidation.cpp.
             for (std::size_t i = ht->capacity; i > 0; --i) {
-                if (meta[i - 1] != 0xFF) {
+                // Issue #4612: a deleted slot (tombstone) is not a key.
+                if (::aura::compiler::hash::hash_slot_is_live(meta[i - 1])) {
                     // Build (key . value) cons cell.
                     auto kv_pid = pairs.size();
                     pairs.push_back({EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]}});
@@ -1005,22 +1045,19 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                        "hash-remove!"))
                 return make_bool(false);
             auto* ht = g_hash_tables[hidx];
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto sh = &string_heap;
-            for (std::size_t i = 0; i < ht->capacity; ++i) {
-                if (meta[i] == 0xFF)
-                    continue;
-                auto k = EvalValue{keys[i]};
-                const bool eq =
-                    eval_hash_keys_eq(k, a[1], *sh, &pairs, &vector_heap, 0, &ev, "hash-remove!");
-                if (eq) {
-                    meta[i] = 0xFF;
-                    ht->size--;
-                    return make_bool(true);
-                }
-            }
-            return make_bool(false);
+            // Issue #4612: probe by hash (open addressing) -- finding the
+            // key used to scan every slot of the table.
+            const auto kh = eval_hash_key_hash(a[1], string_heap);
+            const auto slot = eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev,
+                                              "hash-remove!");
+            if (slot == kNoHashSlot)
+                return make_bool(false);
+            // Issue #4612: tombstone, NOT an empty slot. An empty slot
+            // ends the probe chain and would hide the keys that were
+            // displaced past the hole.
+            ht->metadata()[slot] = ::aura::compiler::hash::kTombstoneSlot;
+            ht->size--;
+            return make_bool(true);
         },
         mutate_general(2, "(hash any) -> bool", "Remove a key from a hash."));
 }

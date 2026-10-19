@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "hash_meta.h"        // Issue #4612: kTombstoneSlot (deleted hash slot)
 #include "prim_heap_quota.hh" // Issue #4459: mint_pair / mint_vector grow-path quota
 #include <array>
 #include "observability_metrics.h"
@@ -1439,7 +1440,9 @@ static void file_reclaim_mark_value(
         const auto* keys = ht->keys();
         const auto* vals = ht->values();
         for (std::uint64_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
+            // Issue #4612: a deleted slot (tombstone) holds a stale key /
+            // value pair -- it is not part of the live graph.
+            if (!::aura::compiler::hash::hash_slot_is_live(meta[i]))
                 continue;
             work.push_back(EvalValue{keys[i]});
             work.push_back(EvalValue{vals[i]});

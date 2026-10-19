@@ -17,6 +17,22 @@ inline constexpr std::uint8_t kEmptySlot = 0xFF;
 inline constexpr std::uint8_t kFingerprintEmpty = 0xFE;
 // Occupied fingerprints have the high bit set.
 inline constexpr std::uint8_t kFingerprintHighBit = 0x80;
+// Issue #4612: tombstone for a DELETED slot of an open-addressed table.
+// The probe keeps walking past it (the chain is still live), so a
+// removal never truncates the chain of a key that was displaced past
+// the hole. 0x7F sits below the occupied-fingerprint range
+// (0x80..0xFE) so it can never collide with a fingerprint, and the JIT
+// runtime already used 0x7F for the same role (HASH_TOMBSTONE).
+inline constexpr std::uint8_t kTombstoneSlot = 0x7F;
+
+// Issue #4612: a slot is LIVE when it carries an occupied fingerprint
+// (0x80..0xFE) -- i.e. it is neither the empty slot nor the tombstone of
+// a deleted key. Every reader of a hash table must use this test: a
+// deleted slot keeps its (stale) key / value bytes, so a reader that
+// only tests "!= 0xFF" would resurrect a removed key.
+[[nodiscard]] inline constexpr bool hash_slot_is_live(std::uint8_t meta) noexcept {
+    return meta != kEmptySlot && meta != kTombstoneSlot;
+}
 
 // ── FNV-1a 64-bit (#901) ───────────────────────────────────────────
 inline constexpr std::uint64_t kFnvOffsetBasis = 0xcbf29ce484222325ull;

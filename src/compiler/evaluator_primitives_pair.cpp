@@ -406,7 +406,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                     auto vals = ht->values();
                     auto lookup = [&](std::string_view want) -> EvalValue {
                         for (std::size_t i = 0; i < ht->capacity; ++i) {
-                            if (meta[i] == 0xFF)
+                            // Issue #4612: a deleted slot (tombstone) is not a live key.
+                            if (!::aura::compiler::hash::hash_slot_is_live(meta[i]))
                                 continue;
                             auto k = EvalValue{keys[i]};
                             if (!is_string(k))

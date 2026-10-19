@@ -273,3 +273,4 @@ check_jit_prim_callee_refuse_4606.py
 check_vector_hash_cow_4614.py
 check_jit_unbound_callee_4607.py
 check_jit_pair_mutation_4602.py
+check_hash_probe_4612.py

@@ -890,7 +890,11 @@ extern "C" void aura_yield_mutation_boundary() {
 // Issue #908: alias canonical empty-slot sentinel.
 static constexpr uint8_t HASH_EMPTY = aura::compiler::hash::kEmptySlot;
 static constexpr uint8_t HASH_OCCUPIED = 0x80;
-static constexpr uint8_t HASH_TOMBSTONE = 0x7F;
+// Issue #4612: the shared tombstone marker (hash_meta.h kTombstoneSlot) --
+// the tree-walker's hash-remove! writes the same byte, so a slot the
+// interpreter deleted stays a tombstone for the JIT probe too (the JIT
+// probe keeps walking past it instead of ending the chain there).
+static constexpr uint8_t HASH_TOMBSTONE = aura::compiler::hash::kTombstoneSlot;
 
 // Splitmix64 hash for int64_t keys. Fast, well-distributed,
 // stable across compile/runtime boundaries.

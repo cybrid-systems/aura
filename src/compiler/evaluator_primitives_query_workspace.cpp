@@ -4546,7 +4546,8 @@ void register_workspace_query_primitives(
         auto keys = ht->keys();
         auto vals = ht->values();
         for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
+            // Issue #4612: a deleted slot (tombstone) is not a live key.
+            if (!::aura::compiler::hash::hash_slot_is_live(meta[i]))
                 continue;
             EvalValue k{keys[i]};
             if (!is_string(k))

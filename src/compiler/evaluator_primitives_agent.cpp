@@ -2695,7 +2695,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             return {};
                         };
                         for (std::size_t si = 0; si < hcap; ++si) {
-                            if (meta[si] == 0xFF)
+                            // Issue #4612: a deleted slot (tombstone) is not a live key.
+                            if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
                                 continue;
                             EvalValue ke{};
                             ke.val = keys[si];
@@ -4852,7 +4853,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         auto vals = ht->values();
                         auto hcap = ht->capacity;
                         for (std::size_t si = 0; si < hcap; ++si) {
-                            if (meta[si] == 0xFF)
+                            // Issue #4612: a deleted slot (tombstone) is not a live key.
+                            if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
                                 continue;
                             EvalValue ke{};
                             ke.val = keys[si];
@@ -6323,7 +6325,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (std::size_t si = 0; si < hcap; ++si) {
-                    if (meta[si] == 0xFF)
+                    // Issue #4612: a deleted slot (tombstone) is not a live key.
+                    if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
                         continue;
                     EvalValue ke{};
                     ke.val = keys[si];
@@ -6771,7 +6774,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (std::size_t si = 0; si < hcap; ++si) {
-                    if (meta[si] == 0xFF)
+                    // Issue #4612: a deleted slot (tombstone) is not a live key.
+                    if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
                         continue;
                     EvalValue ke{};
                     ke.val = keys[si];
