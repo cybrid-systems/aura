@@ -359,6 +359,22 @@ inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
     // the self-healing reason so the re-prove flow can run.
     if (r.force_reason_code == aura::compiler::typed_audit::kRemountLastZeroForceReasonCode)
         return {true, false};
+    // Issue #2610/#3347-residual: auto_partial-from-cone (force 6) is the
+    // same self-healing wedge shape as reason 17 — the readiness consult's
+    // own remirror (aura_force_residual_castop_undermark_into_cone) arms
+    // the pending latch whenever residual CastOp persist sites were added
+    // (e.g. a set-code re-lower), and ONLY the next mutate's
+    // infer_flat_partial path can clear it. Feeding 6 into this ADMISSION
+    // signal wedges every production-mode mutate after a set-code
+    // (AdmissionRejected: security-schedule:commit-not-ready on the first
+    // rebind — the 4540 / CLI soft family): the admission rejects the very
+    // mutate whose post-mutate typecheck would have cleared the latch.
+    // The commit_readiness surface itself (proofs, evolution-snapshot,
+    // commit-health queries) still reports would_allow=false + 6 for
+    // Agent visibility; only this admit consumer exempts the self-healing
+    // reason so the re-infer flow can run (same scoping as #4011 above).
+    if (r.force_reason_code == aura::compiler::typed_audit::kAutoPartialFromConeForceReasonCode)
+        return {true, false};
     return {r.would_allow_commit, r.force_reason_code != 0};
 }
 
