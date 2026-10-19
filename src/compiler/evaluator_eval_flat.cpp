@@ -870,10 +870,11 @@ Evaluator::TwVecPin::~TwVecPin() {
 
 void Evaluator::maybe_reclaim_tw_unreachable() {
     // Issue #4474: dynamic triggers — after a mark, the next reclaim waits
-    // for allocations proportional to the live set found (live/32, clamped
-    // to [128, 32768]), so a large live heap amortizes the full-heap mark
-    // instead of paying it every 128 allocations. The floor keeps the
-    // #4459 small-heap cadence unchanged.
+    // for allocations proportional to the live set found (live/32, floored
+    // at 128, capped by the heap-scaled ceiling max(32768, live/4) — see
+    // note_live_set_for_reclaim_trigger), so a large live heap amortizes
+    // the full-heap mark instead of paying it every 128 allocations. The
+    // floor keeps the #4459 small-heap cadence unchanged.
     if (tw_closure_allocs_ < tw_closure_allocs_trigger_ &&
         file_heap_allocs_since_reclaim_ < file_heap_allocs_trigger_)
         return;

@@ -1676,8 +1676,15 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 // by the heap), so firing it every 128 allocations costs O(live) per
 // alloc on large heaps — the #4474 measurements showed 1.7–2.8x on
 // alloc-heavy loops. live/32 keeps the amortized mark cost ~3% of the
-// live set; the 128 floor preserves the #4459 small-heap cadence and
-// the 32768 cap bounds garbage between reclaims.
+// live set; the 128 floor preserves the #4459 small-heap cadence.
+// Issue #4474 third reopen: the old fixed 32768 cap froze the window
+// above ~1M live objects, so the mark amortized over at most 32768
+// allocations and per-alloc cost grew linearly with the live heap
+// again (~3x at 3M live cells). The clamp is now heap-proportional —
+// reclaim_trigger_ceiling_for = max(32768, live/4) — which the live/32
+// scaling itself never reaches; it only bounds the burst escalation
+// below, so garbage between reclaims grows with the heap (bounded at
+// ~live/4) while the amortized mark cost per allocation stays ~32.
 // Issue #4525 spike + burst rebalance: the #4525 measurements showed
 // pure-float loops fire ZERO marks (boxed floats are bump-allocated in
 // the runtime float pool, outside the mark heap, so boxed-scalar
@@ -1687,24 +1694,24 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 // loop (~0.38ms each, +15% wall). When the mark fired on the file-heap
 // window and less than half the window's mints survived (live*2 <
 // mints), the loop is allocation-burst-shaped: the next window doubles
-// so mark frequency decouples from the mint rate. The live/32 scaling
-// and the [128, 32768] clamp are unchanged — the ceiling still bounds
-// garbage between reclaims, so the #4474 window contract holds.
-void Evaluator::note_live_set_for_reclaim_trigger(std::size_t live_objects,
-                                                  std::uint64_t mints_since_mark) noexcept {
+// so mark frequency decouples from the mint rate. Small-heap bursts
+// still clamp at the fixed 32768 (the #4525 guarantee); a large-heap
+// burst escalates up to live/4 instead of breaking the amortization.
+void Evaluator::note_live_set_for_reclaim_trigger(const std::size_t live_objects,
+                                                  const std::uint64_t mints_since_mark) noexcept {
     const auto scaled =
         static_cast<std::uint64_t>(live_objects) / kReclaimTriggerDivisor + kReclaimTriggerFloor;
     auto next = scaled;
     if (mints_since_mark >= file_heap_allocs_trigger_ &&
         static_cast<std::uint64_t>(live_objects) * 2 < mints_since_mark)
         next = std::max(next, static_cast<std::uint64_t>(file_heap_allocs_trigger_) * 2);
-    const auto clamped =
-        static_cast<std::uint32_t>(std::min<std::uint64_t>(next, kReclaimTriggerCeiling));
+    const auto ceiling = reclaim_trigger_ceiling_for(live_objects);
+    const auto clamped = static_cast<std::uint32_t>(std::min<std::uint64_t>(next, ceiling));
     tw_closure_allocs_trigger_ = clamped;
     file_heap_allocs_trigger_ = clamped;
     // Issue #4474: window invariants (assertion face of the decl-site post).
     contract_assert(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
-                    tw_closure_allocs_trigger_ <= kReclaimTriggerCeiling);
+                    tw_closure_allocs_trigger_ <= ceiling);
     contract_assert(file_heap_allocs_trigger_ == tw_closure_allocs_trigger_);
 }
 

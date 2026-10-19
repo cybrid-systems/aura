@@ -9773,6 +9773,27 @@ def cmd_lint():
             "Issue #4600 JIT prologue word gate + storm policy linter failed — run python3 scripts/check_jit_assumption_gate_4600.py"
         )
         return r
+    # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
+    # froze the live/32 reclaim window above ~1M live objects, so each
+    # O(live) full-heap mark amortized over at most 32768 allocations and
+    # per-allocation cost regrew linearly with the live heap (aura-memory
+    # ~3x alloc overhead at 3M live cells). The clamp is now
+    # heap-proportional — reclaim_trigger_ceiling_for = max(32768,
+    # live/4) — which live/32 never reaches and which only bounds the
+    # #4525 burst-doubling escalation; the note_live_set post-condition
+    # pins the heap-scaled window and the accessors pin the floor.
+    # Runtime doors live in tests/compiler/test_pmr_alloc_fiber_safe.cpp
+    # (ac4474 AC4 + ac4474r3_large_heap_window).
+    largeheap4474_script = ROOT / "scripts" / "check_reclaim_trigger_large_heap_4474.py"
+    if not largeheap4474_script.exists():
+        fail(f"missing {largeheap4474_script}")
+        return 1
+    r = run([sys.executable, str(largeheap4474_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4474 large-heap reclaim window linter failed — run python3 scripts/check_reclaim_trigger_large_heap_4474.py"
+        )
+        return r
     # Issue #4240 (WAL segment prune after ring wrap): after the typed
     # (256) + SE (1024) rings wrap AND AURA_WAL_MAX_SEGMENTS retention
     # prunes the only durable segment holding the mid (#3338), every
