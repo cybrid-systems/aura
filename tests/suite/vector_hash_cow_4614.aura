@@ -1,0 +1,33 @@
+;; expect: #(1 2 3) #(2 3) #(0 0) 1 0 1 2 (a) (a b) 2 1 (b)
+;; #4614: native vector-copy (optional start/end) + native vector-fill!,
+;; the native string-hash, and the copy-on-write hash-set / hash-remove
+;; (the old stdlib wrappers silently mutated their argument).
+(require "std/list" all:)
+(require "std/hash" all:)
+
+(define (show x) (display x) (display " "))
+
+; native vector-copy: full copy, start+end slice
+(show (vector-copy (vector 1 2 3)))
+(show (vector-copy (vector 1 2 3 4) 1 3))
+; native vector-fill!: returns the vector
+(show (vector-fill! (vector 1 2) 0))
+
+; native string-hash: equal strings hash equal, different strings differ
+(show (if (= (string-hash "abc") (string-hash "abc")) 1 0))
+(show (if (= (string-hash "abc") (string-hash "abd")) 1 0))
+
+; hash-set is copy-on-write: the source table is untouched
+(define h (hash "a" 1))
+(define h2 (hash-set h "b" 2))
+(show (hash-length h))
+(show (hash-length h2))
+(show (hash-keys h))
+(show (hash-keys h2))
+
+; hash-remove is copy-on-write too
+(define h3 (hash-remove h2 "a"))
+(show (hash-length h2))
+(show (hash-length h3))
+(show (hash-keys h3))
+(newline)

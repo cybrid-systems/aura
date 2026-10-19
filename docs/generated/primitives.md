@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**462** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**466** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 55 primitives (12%)
-- **core**: 372 primitives (81%)
+- **core**: 376 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -140,7 +140,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (268)
+## Core builtins (272)
 
 - `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -250,6 +250,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `getenv` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `hash` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash->alist` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-copy` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-has-key?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-keys` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-length` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -365,6 +366,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string-append` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-copy` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fill!` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-hash` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-index` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-join` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
@@ -395,6 +397,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `use` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-copy` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-fill!` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-ref` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -668,7 +672,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (372)
+### Core builtins (must remain primitive) (376)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -807,6 +811,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `getenv` — `src/compiler/evaluator_primitives_io.cpp`
 - `hash` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash->alist` — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-copy` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-has-key?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-keys` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-length` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -980,6 +985,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string-append` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-copy` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fill!` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-hash` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-index` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-join` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -1022,6 +1028,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `use` — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-copy` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-fill!` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-ref` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` — `src/compiler/evaluator_primitives_vector.cpp`

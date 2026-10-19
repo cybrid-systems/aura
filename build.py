@@ -9895,6 +9895,24 @@ def cmd_lint():
             "run python3 scripts/check_prim_call_arg_rooting_4611.py"
         )
         return r
+    # Issue #4614: native vector-copy (optional start/end) + native
+    # vector-fill!, the native string-hash, and the copy-on-write
+    # hash-set / hash-remove (the stdlib wrappers used to mutate their
+    # argument in place -- the aliasing trap that broke checkpoint /
+    # replay / forked-worldline code). The linter pins the native
+    # registrations, the stdlib copy-on-write contract, the generated
+    # stdlib index wording and the test home.
+    gate4614_script = ROOT / "scripts" / "check_vector_hash_cow_4614.py"
+    if not gate4614_script.exists():
+        fail(f"missing {gate4614_script}")
+        return 1
+    r = run([sys.executable, str(gate4614_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4614 native vector ops / string hash / copy-on-write hash linter failed — "
+            "run python3 scripts/check_vector_hash_cow_4614.py"
+        )
+        return r
     # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
     # froze the live/32 reclaim window above ~1M live objects, so each
     # O(live) full-heap mark amortized over at most 32768 allocations and

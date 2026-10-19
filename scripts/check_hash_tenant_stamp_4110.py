@@ -169,8 +169,9 @@ def main() -> int:
         fails.append("AC4: aura_hash_alloc_tenant seam (#4093 pin) removed")
 
     # ── AC5: tree-walker prims gate before the probe ──
-    # The original four (#4110) plus the #4429 enumerators. Count stays
-    # exact so a dropped call fails closed.
+    # The original four (#4110) plus the #4429 enumerators, plus the #4614
+    # hash-copy clone (it reads an existing table, so it is gated the same
+    # way). Count stays exact so a dropped call fails closed.
     caller_needle = "aura_hash_gate_checked(hidx, ev.capability_tenant_id(),"
     jit_caller = "aura_hash_gate_checked(hidx, aura_jit_owner_capability_tenant(),"
     if jit_caller in vec:
@@ -200,6 +201,7 @@ def main() -> int:
         "hash-keys",
         "hash-values",
         "hash->alist",
+        "hash-copy",
     )
     for op in gated_ops:
         if caller_needle not in vec:
