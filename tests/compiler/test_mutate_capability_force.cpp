@@ -580,7 +580,9 @@ void run_issue_4575() {
                   "4575: off does not double-print the hatch");
 
             write_text("/tmp/aura-4575-plain.aura", "(display \"PLAIN\")\n(newline)\n");
-            auto hatch = run_aura(bin, "env -u AURA_SOFT AURA_SANDBOX=off AURA_PIPELINE_STRICT=0",
+            auto hatch = run_aura(bin,
+                                  "env -u AURA_SOFT AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 "
+                                  "AURA_FORCE_HATCH=1",
                                   "/tmp/aura-4575-plain.aura");
             CHECK(hatch.rc == 0, "4575: plain off still runs");
             CHECK(count_sub(hatch.err, "aura: sandbox=off (dev escape hatch)\n") == 1,
