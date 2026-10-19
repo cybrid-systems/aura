@@ -28,6 +28,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.ast;
 
 namespace {
 
@@ -907,6 +908,145 @@ static void ac4350_4474_top_level_capture() {
     }
 }
 
+// ── Issue #4599: call-path name-resolution cache (phase 2) ──
+// Phase 1 cached prim calls + cells per node. This phase finishes payoff
+// step 1 on the call path: a body-pool frame binding for the callee name
+// skips the resolve + string probes, the "not a prim" decision is cached
+// per call node (host, generation/snapshot guarded, prim-table names
+// refused), and and/or clause lists are cached. The load-robust oracle
+// is the StringPool shared-lock reader counter: a hot self-TCO loop must
+// perform zero pool resolves, and a loop with one materialized closure
+// call per iteration must show only the bind mirror's one resolve.
+static void ac4599_call_resolve_cache() {
+    std::println("\n--- #4599: call-path resolve cache (phase 2) ---");
+    // AC1: semantics preserved through every fast path (later calls of
+    // each shape ride the cache).
+    {
+        CompilerService cs;
+        auto r1 = cs.eval("(begin (define (gs4599 x) (let ((+ (lambda (a b) (* a b)))) (+ 3 4)))"
+                          " (gs4599 1) (gs4599 1))");
+        CHECK(r1 && is_int(*r1) && as_int(*r1) == 12,
+              "4599 AC1: prim-valued let shadow keeps calling the lambda (12)");
+        auto r2 = cs.eval("(begin (define (lp4599) (let loop ((i 0) (acc 0))"
+                          " (if (< i 5) (loop (+ i 1) (+ acc 1)) acc)))"
+                          " (lp4599) (lp4599))");
+        CHECK(r2 && is_int(*r2) && as_int(*r2) == 5,
+              "4599 AC1: self-TCO loop with local callee still iterates (5)");
+        auto r3 = cs.eval("(begin (define (a4599) (if (and #f (car ())) 1 0))"
+                          " (a4599) (a4599) (a4599))");
+        CHECK(r3 && is_int(*r3) && as_int(*r3) == 0,
+              "4599 AC1: cached and short-circuits before the error (0)");
+        auto r4 = cs.eval("(begin (define (o4599) (if (or 7 (car ())) 4 9))"
+                          " (o4599) (o4599) (o4599))");
+        CHECK(r4 && is_int(*r4) && as_int(*r4) == 4,
+              "4599 AC1: cached or short-circuits before the error (4)");
+        auto r5 = cs.eval("(begin (define (q4599) (w4599)) (define (w4599) 1)"
+                          " (q4599) (q4599))");
+        CHECK(r5 && is_int(*r5) && as_int(*r5) == 1,
+              "4599 AC1: top closure call through the cached decision (1)");
+        auto r6 = cs.eval("(begin (define (w4599) 99) (q4599))");
+        CHECK(r6 && is_int(*r6) && as_int(*r6) == 99,
+              "4599 AC1: re-define is visible through the cell (99)");
+    }
+
+    // AC2: a late define invalidates the stored not-prim decision (top
+    // bind generation bump) — the cached shape must not pin unbound.
+    {
+        CompilerService cs;
+        auto r1 = cs.eval("(define (u4599) zz4599late)");
+        CHECK(r1.has_value(), "4599 AC2: callee-first define lands");
+        auto r2 = cs.eval("(u4599)");
+        CHECK(!r2.has_value() || is_error(*r2), "4599 AC2: call before the late define fails");
+        auto r3 = cs.eval("(define zz4599late 42)");
+        CHECK(r3.has_value(), "4599 AC2: late define lands");
+        auto r4 = cs.eval("(u4599)");
+        CHECK(r4 && is_int(*r4) && as_int(*r4) == 42,
+              "4599 AC2: late define visible after invalidation (42)");
+    }
+
+    // AC3: the hot self-TCO loop's per-iteration pool-read budget. The
+    // call-path caches (cached and, local callee, cached prim args, the
+    // not-a-prim decision) remove the prelude resolves; the ceiling here
+    // covers the remaining per-visit machinery and is the number the
+    // next phases ratchet down. The reader counter is process-global;
+    // this thread is the only active evaluator here.
+    {
+        CompilerService cs;
+        (void)cs.eval("(begin (define (run4599z) (let loop ((i 0))"
+                      "   (if (and (<= 0 i) (< i 2000)) (loop (+ i 1)) i))))");
+        auto warm = cs.eval("(run4599z)");
+        CHECK(warm && is_int(*warm) && as_int(*warm) == 2000, "4599 AC3: warm loop runs");
+        const auto t0 = aura::ast::stringpool_intern_concurrent_readers_total();
+        auto hot = cs.eval("(run4599z)");
+        const auto t1 = aura::ast::stringpool_intern_concurrent_readers_total();
+        CHECK(hot && is_int(*hot) && as_int(*hot) == 2000, "4599 AC3: hot loop runs");
+        CHECK(t1 - t0 <= 8ULL * 2000,
+              "4599 AC3: hot loop pool reads stay within the 8/iter budget (got " +
+                  std::to_string(t1 - t0) + " for 2000 iterations)");
+    }
+
+    // AC4: a loop with one materialized closure call per iteration pays
+    // the materialize/bind path per call (payoff step 3, not this
+    // phase); the prelude resolve + probes are silent after the cache
+    // forms. 16 reads/iter is the measured ceiling, pinned so a
+    // reintroduced per-visit string prelude cannot pass silently.
+    {
+        CompilerService cs;
+        constexpr int kIters = 2000;
+        (void)cs.eval("(begin (define (f1_4599c x) x)"
+                      " (define (run4599c) (let loop ((i 0))"
+                      "   (if (< i 2000) (begin (f1_4599c 1) (loop (+ i 1))) i))))");
+        auto warm = cs.eval("(run4599c)");
+        CHECK(warm && is_int(*warm) && as_int(*warm) == kIters, "4599 AC4: warm call loop runs");
+        const auto t0 = aura::ast::stringpool_intern_concurrent_readers_total();
+        auto hot = cs.eval("(run4599c)");
+        const auto t1 = aura::ast::stringpool_intern_concurrent_readers_total();
+        CHECK(hot && is_int(*hot) && as_int(*hot) == kIters, "4599 AC4: hot call loop runs");
+        CHECK(t1 - t0 <= 16ULL * kIters,
+              "4599 AC4: call loop pool reads stay within the 16/iter budget (got " +
+                  std::to_string(t1 - t0) + " for " + std::to_string(kIters) + " calls)");
+    }
+
+    // AC5: relative budget — a 4000-define (f1 1) loop stays within 1.2x
+    // of the 0-define loop (min of 3 reps each; the per-call work is
+    // define-count independent after the cache). #4343/#4350/#4474.
+    {
+        using clock = std::chrono::steady_clock;
+        auto prog = [](int k) {
+            std::string s = "(begin (define (f1_4599d x) x)";
+            for (int i = 0; i < k; ++i)
+                s += "(define (fill4599_" + std::to_string(i) + " x) x)";
+            s += " (define (run4599d) (let loop ((i 0))"
+                 "   (if (< i 20000) (begin (f1_4599d 1) (loop (+ i 1))) i))) (run4599d))";
+            return s;
+        };
+        // Interleaved reps: concurrent CI load inflates both sides; the
+        // per-side min tracks the true ratio.
+        CompilerService c_small;
+        CompilerService c_big;
+        auto r0s = c_small.eval(prog(0));
+        auto r0b = c_big.eval(prog(4000));
+        CHECK(r0s && is_int(*r0s) && r0b && is_int(*r0b), "4599 AC5: define-count loops eval");
+        double small = 1e18, big = 1e18;
+        for (int rep = 0; rep < 5; ++rep) {
+            auto t0 = clock::now();
+            auto rs = c_small.eval("(run4599d)");
+            auto t1 = clock::now();
+            if (rs && is_int(*rs))
+                small = std::min(small, std::chrono::duration<double, std::milli>(t1 - t0).count());
+            t0 = clock::now();
+            auto rb = c_big.eval("(run4599d)");
+            t1 = clock::now();
+            if (rb && is_int(*rb))
+                big = std::min(big, std::chrono::duration<double, std::milli>(t1 - t0).count());
+        }
+        CHECK(small > 0 && big > 0, "4599 AC5: both define-count loops eval");
+        CHECK(big < 1.2 * small + 2.0, "4599 AC5: 4000-define loop within 1.2x of 0-define (" +
+                                           std::to_string(big) + " ms vs " + std::to_string(small) +
+                                           " ms)");
+    }
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -924,6 +1064,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4492_nested_map_filter_pinned();
     ac4525_burst_rebalance();
     ac4350_4474_top_level_capture();
+    ac4599_call_resolve_cache();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

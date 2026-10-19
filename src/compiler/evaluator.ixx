@@ -7447,7 +7447,26 @@ private:
     // column. Misses are not stored. Cell ids are re-read; values are not
     // cached. Fibers keep the full Env::lookup (#4595).
     struct NameResEntry {
-        enum class Kind : std::uint8_t { Empty = 0, Prim = 1, Cell = 2, PrimCall = 3 };
+        enum class Kind : std::uint8_t {
+            Empty = 0,
+            Prim = 1,
+            Cell = 2,
+            PrimCall = 3,
+            // Issue #4599: the call's callee name resolved to a non-prim
+            // binding (or nothing prim-table visible) under the guards —
+            // the next visit skips the pool resolve + string probes and
+            // goes straight to the closure branch. Never stored for names
+            // the prim table can answer.
+            CallNoPrim = 4,
+            // Issue #4599: cached and/or short-circuit shape. The eager
+            // PrimCall path must not run these; the dedicated
+            // short-circuit branch consults them instead of resolving the
+            // callee name on every visit. The decision belongs to the
+            // name table (pool), not the env, so the entry carries no
+            // generation / snapshot guards — pool and flat switches
+            // clear the whole cache.
+            ShortCircuit = 5
+        };
         Kind kind = Kind::Empty;
         aura::ast::SymId sym = aura::ast::INVALID_SYM;
         std::uint32_t aux = 0;
@@ -7472,6 +7491,19 @@ private:
     void remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId callee_id,
                             aura::ast::SymId sym, std::uint32_t slot, const Env& env,
                             std::span<const aura::ast::NodeId> children);
+    // Issue #4599: store the call-site "callee name is not a primitive"
+    // decision so the next visit skips pool resolve + the two string
+    // probes. Host only; top-gen / capture-snapshot guarded like the
+    // other entries. Refuses when the name is a prim-table name (an
+    // unbind could flip the decision to the prim), or when the top SymId
+    // scan collides cross-pool with a different value.
+    void remember_call_no_prim(aura::ast::NodeId id, aura::ast::SymId sym, const Env& env,
+                               const std::optional<types::EvalValue>& bound,
+                               std::string_view cname);
+    // Issue #4599: cache an and/or clause list so the short-circuit
+    // branch stops resolving the callee name per visit.
+    void remember_short_circuit(aura::ast::NodeId id, aura::ast::SymId sym, bool is_and,
+                                std::span<const aura::ast::NodeId> clauses);
     [[nodiscard]] std::uint8_t let_bind_kind_cached(aura::ast::FlatAST& flat, aura::ast::NodeId id,
                                                     aura::ast::SymId name, aura::ast::NodeId body);
     // Issue #4599: self-TCO reuses the call frame. ClosureId 0 is a live id,

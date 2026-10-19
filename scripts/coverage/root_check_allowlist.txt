@@ -264,3 +264,4 @@ check_top_letrec_no_selfcopy_frame_4595.py
 check_jit_assumption_gate_4600.py
 check_jit_frame_deopt_4600.py
 check_reclaim_trigger_large_heap_4474.py
+check_call_resolve_cache_4599.py

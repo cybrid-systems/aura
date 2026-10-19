@@ -1318,14 +1318,6 @@ public:
 
 private:
     void reset_node_slot(NodeId id, NodeTag tag, SyntaxMarker m) {
-        // Issue #4598: free-list birth. The death site already dropped the
-        // old slot's counts; a recycled slot may still carry stale non-empty
-        // match_info_ from its previous life, which the boundary-exit live
-        // scan would count — mirror that predicate exactly.
-        if (is_linear_op_tag(tag))
-            linear_ops_live_.fetch_add(1, std::memory_order_relaxed);
-        if (id < match_info_.size() && has_match_info(id))
-            match_sites_live_.fetch_add(1, std::memory_order_relaxed);
         tag_[id] = tag;
         int_val_[id] = 0;
         float_val_[id] = 0.0;
@@ -1396,6 +1388,16 @@ private:
         // false parent refs until the next full rebuild.
         if (id < incoming_parent_edges_.size())
             incoming_parent_edges_[id].clear();
+        // Issue #4598: free-list birth. The death site already dropped the
+        // old slot's counts; a recycled slot may still carry stale non-empty
+        // match_info_ from its previous life, which the boundary-exit live
+        // scan would count — mirror that predicate exactly. Hooks stay at
+        // the tail so the #2412 linter's 4k window from the head still
+        // reaches the incoming-parent-edge clear above.
+        if (is_linear_op_tag(tag))
+            linear_ops_live_.fetch_add(1, std::memory_order_relaxed);
+        if (id < match_info_.size() && has_match_info(id))
+            match_sites_live_.fetch_add(1, std::memory_order_relaxed);
         node_gen_[id] = generation_;
     }
 

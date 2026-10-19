@@ -26,6 +26,7 @@ module;
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
 
+
 module aura.compiler.evaluator;
 
 import std;
@@ -5477,6 +5478,74 @@ void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId 
     cv.nchild = 0;
 }
 
+void Evaluator::remember_call_no_prim(aura::ast::NodeId id, aura::ast::SymId sym, const Env& env,
+                                      const std::optional<types::EvalValue>& bound,
+                                      std::string_view cname) {
+    // Host only; the vector is not synchronized.
+    if (aura::serve::g_current_fiber != nullptr || sym == aura::ast::INVALID_SYM)
+        return;
+    // SymId hits must agree with the string probe (mirrors aligned), and
+    // the top decision needs the string probe's answer for the value
+    // check below.
+    if (!env.binding_mirrors_aligned())
+        return;
+    // Prim-table names are refused: an unbind between visits could flip
+    // the stored decision to the prim. A name the prim table cannot
+    // answer stays stable — a later binding is a cell/value (same
+    // not-prim decision), an unbind errors in both shapes, and top_
+    // binds bump the generation that invalidates the entry.
+    if (!cname.empty() &&
+        primitives_.slot_for_name(cname) != std::numeric_limits<std::size_t>::max())
+        return;
+    // top_ is not scanned by SymId safely across pools (#4599 prior
+    // phase): a hit only vouches when it agrees with the string probe's
+    // binding. A prim-valued hit means the prelude took the prim branch
+    // — never reaches the store anyway.
+    if (const auto tv = top_.local_symid_last(sym)) {
+        if (!bound || is_primitive(*tv) || !(*tv == *bound))
+            return;
+    }
+    const auto uid = static_cast<std::uint32_t>(id);
+    if (name_res_by_node_.size() <= uid)
+        name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
+    auto& e = name_res_by_node_[uid];
+    if (e.kind == NameResEntry::Kind::PrimCall)
+        return;
+    e.kind = NameResEntry::Kind::CallNoPrim;
+    e.sym = sym;
+    e.aux = 0;
+    e.top_gen = top_bind_gen_;
+    e.cap = env.cap_snapshot().get();
+    e.nchild = 0;
+}
+
+void Evaluator::remember_short_circuit(aura::ast::NodeId id, aura::ast::SymId sym, bool is_and,
+                                       std::span<const aura::ast::NodeId> clauses) {
+    // Host only. No env guards: the and/or decision is the name table's,
+    // not the env's (the short-circuit block runs before any binding
+    // probe today, so a later (define and …) does not change it either).
+    // Pool / flat switches clear the whole cache (bind_sym_intern_pool /
+    // bind_float_intern_flat), which re-keys the SymId.
+    if (aura::serve::g_current_fiber != nullptr || sym == aura::ast::INVALID_SYM)
+        return;
+    if (clauses.empty() || clauses.size() > 8)
+        return;
+    const auto uid = static_cast<std::uint32_t>(id);
+    if (name_res_by_node_.size() <= uid)
+        name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
+    auto& e = name_res_by_node_[uid];
+    if (e.kind == NameResEntry::Kind::PrimCall)
+        return;
+    e.kind = NameResEntry::Kind::ShortCircuit;
+    e.sym = sym;
+    e.aux = is_and ? 1u : 0u;
+    e.top_gen = 0;
+    e.cap = nullptr;
+    e.nchild = static_cast<std::uint8_t>(clauses.size());
+    for (std::size_t i = 0; i < clauses.size(); ++i)
+        e.child[i] = clauses[i];
+}
+
 std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
                                                        aura::ast::StringPool& pool,
                                                        aura::ast::NodeId id, const Env& env) {
@@ -6912,32 +6981,92 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
                     // and/or: short-circuit evaluation (not eager arg eval)
                     if (callee.tag == aura::ast::NodeTag::Variable) {
-                        auto cname = std::string(p->resolve(callee.sym_id));
-                        if (cname == "and" && v.children.size() >= 2) {
-                            // Issue #4454: short-circuit the prefix, tail-call
-                            // the last clause. (and) with no args does not
-                            // enter (children.size() < 2).
-                            for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
-                                auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!ar)
-                                    return ar;
-                                if (!is_truthy(*ar))
-                                    return *ar;
+                        // Issue #4599: set when the per-node cache already
+                        // vouches the callee is not and/or — the resolve and
+                        // the name compares below are skipped.
+                        bool sc_known_not = false;
+                        // Issue #4599: cached short-circuit shape — the hot
+                        // visit skips the pool resolve + std::string entirely.
+                        // The entry carries no env guards (see
+                        // remember_short_circuit); child validity is re-checked
+                        // against the live flat size.
+                        if (aura::serve::g_current_fiber == nullptr &&
+                            callee.sym_id != aura::ast::INVALID_SYM) {
+                            const auto sc_uid = static_cast<std::uint32_t>(current_id);
+                            if (sc_uid < name_res_by_node_.size()) {
+                                const auto& sc = name_res_by_node_[sc_uid];
+                                if (sc.kind == NameResEntry::Kind::CallNoPrim &&
+                                    sc.sym == callee.sym_id && sc.top_gen == top_bind_gen_ &&
+                                    sc.cap == eval_env.cap_snapshot().get()) {
+                                    // Issue #4599: the stored not-a-prim
+                                    // decision also vouches "not and/or" —
+                                    // skip this block's pool resolve; the prim
+                                    // prelude below consults the same entry.
+                                    sc_known_not = true;
+                                } else if (sc.kind == NameResEntry::Kind::ShortCircuit &&
+                                           sc.sym == callee.sym_id && sc.nchild >= 1) {
+                                    bool sc_ok = true;
+                                    for (std::uint8_t sci = 0; sci < sc.nchild; ++sci) {
+                                        if (sc.child[sci] >= f->size()) {
+                                            sc_ok = false;
+                                            break;
+                                        }
+                                    }
+                                    if (sc_ok) {
+                                        const bool sc_and = sc.aux != 0;
+                                        // ShortCircuit branch
+                                        for (std::uint8_t sci = 0; sci + 1 < sc.nchild; ++sci) {
+                                            auto ar = eval_flat(*f, *p, sc.child[sci], eval_env);
+                                            if (!ar)
+                                                return ar;
+                                            if (sc_and ? !is_truthy(*ar) : is_truthy(*ar))
+                                                return *ar;
+                                        }
+                                        current_id = sc.child[sc.nchild - 1];
+                                        continue;
+                                    }
+                                }
                             }
-                            current_id = v.child(v.children.size() - 1);
-                            continue;
                         }
-                        if (cname == "or" && v.children.size() >= 2) {
-                            // Issue #4454: same tail-call for the last clause.
-                            for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
-                                auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!ar)
-                                    return ar;
-                                if (is_truthy(*ar))
-                                    return *ar;
+                        // Issue #4599: a cached CallNoPrim decision for
+                        // this node answers the and/or question — no resolve.
+                        if (!sc_known_not) {
+                            auto cname = std::string(p->resolve(callee.sym_id));
+                            if (cname == "and" && v.children.size() >= 2) {
+                                // Issue #4599: record the clause ids so the next
+                                // visit resolves nothing.
+                                if (aura::serve::g_current_fiber == nullptr)
+                                    remember_short_circuit(current_id, callee.sym_id, true,
+                                                           v.children.subspan(1));
+                                // Issue #4454: short-circuit the prefix, tail-call
+                                // the last clause. (and) with no args does not
+                                // enter (children.size() < 2).
+                                for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
+                                    auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
+                                    if (!ar)
+                                        return ar;
+                                    if (!is_truthy(*ar))
+                                        return *ar;
+                                }
+                                current_id = v.child(v.children.size() - 1);
+                                continue;
                             }
-                            current_id = v.child(v.children.size() - 1);
-                            continue;
+                            if (cname == "or" && v.children.size() >= 2) {
+                                // Issue #4599: same clause caching as `and`.
+                                if (aura::serve::g_current_fiber == nullptr)
+                                    remember_short_circuit(current_id, callee.sym_id, false,
+                                                           v.children.subspan(1));
+                                // Issue #4454: same tail-call for the last clause.
+                                for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
+                                    auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
+                                    if (!ar)
+                                        return ar;
+                                    if (is_truthy(*ar))
+                                        return *ar;
+                                }
+                                current_id = v.child(v.children.size() - 1);
+                                continue;
+                            }
                         }
                     }
 
@@ -6951,20 +7080,75 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // prim. Multi-frame load-sim patterns used `let take` and
                     // silently returned empty instead of iterating.
                     if (callee.tag == aura::ast::NodeTag::Variable) {
-                        auto cname = std::string(p->resolve(callee.sym_id));
-                        // #223 follow-up: skip primitive lookup when
-                        // cname is empty (e.g. when sym_id was out of
-                        // bounds at the resolve() call). The
-                        // environment lookup below handles missing
-                        // names gracefully via nullopt.
+                        // Issue #4599: a body-pool frame binding for this name
+                        // answers Env::lookup before the prim table can
+                        // (shadowing ⇒ prim stays nullopt either way). SymIds
+                        // are pool-local: the frame pool must be the call-site
+                        // pool and the string mirror aligned for the SymId hit
+                        // to agree with the name probe. top_ is excluded — its
+                        // ids are cross-pool. A prim-VALUED local keeps the
+                        // string prelude: the name may be a prim-table name,
+                        // and today's path then invokes the prim with the
+                        // try-face error handling the value-apply fallback
+                        // lacks.
+                        std::optional<types::EvalValue> callee_local;
+                        if (callee.sym_id != aura::ast::INVALID_SYM && eval_env.pool() == p &&
+                            &eval_env != &top_ && eval_env.binding_mirrors_aligned())
+                            callee_local = eval_env.local_symid_last(callee.sym_id);
+                        const bool callee_locally_bound =
+                            callee_local.has_value() && !is_primitive(*callee_local);
                         std::optional<PrimFn> prim;
-                        if (!cname.empty()) {
-                            auto bound = eval_env.lookup(cname);
-                            // PrimitiveRef ⇒ unbound prim name (lookup fallback)
-                            // or explicit prim value — use fast path.
-                            // Cell / closure / other ⇒ user shadow — skip prim.
-                            if (!bound || is_primitive(*bound))
-                                prim = eval_env.lookup_primitive(cname);
+                        std::string cname;
+                        bool known_not_prim = false;
+                        if (!callee_locally_bound) {
+                            // Issue #4599: per-node decision cache (host
+                            // only). A stored CallNoPrim skips the resolve +
+                            // string probes; a stored Prim slot reconstructs
+                            // the prim without them. Guards mirror the other
+                            // entries: sym, top generation, capture snapshot.
+                            if (aura::serve::g_current_fiber == nullptr &&
+                                callee.sym_id != aura::ast::INVALID_SYM &&
+                                eval_env.binding_mirrors_aligned()) {
+                                const auto cc_uid = static_cast<std::uint32_t>(current_id);
+                                if (cc_uid < name_res_by_node_.size()) {
+                                    const auto& cc = name_res_by_node_[cc_uid];
+                                    if (cc.sym == callee.sym_id && cc.top_gen == top_bind_gen_ &&
+                                        cc.cap == eval_env.cap_snapshot().get()) {
+                                        if (cc.kind == NameResEntry::Kind::Prim &&
+                                            cc.aux < primitives_.slot_count()) {
+                                            cname = primitives_.name_for_slot(cc.aux);
+                                            prim = primitives_.slot_lookup_fast(cc.aux);
+                                        } else if (cc.kind == NameResEntry::Kind::CallNoPrim) {
+                                            known_not_prim = true;
+                                        }
+                                    }
+                                }
+                            }
+                            if (!prim && !known_not_prim) {
+                                // #223 follow-up: skip primitive lookup when
+                                // cname is empty (e.g. when sym_id was out of
+                                // bounds at the resolve() call). The
+                                // environment lookup below handles missing
+                                // names gracefully via nullopt.
+                                std::optional<types::EvalValue> bound;
+                                cname = std::string(p->resolve(callee.sym_id));
+                                if (!cname.empty()) {
+                                    bound = eval_env.lookup(cname);
+                                    // PrimitiveRef ⇒ unbound prim name (lookup fallback)
+                                    // or explicit prim value — use fast path.
+                                    // Cell / closure / other ⇒ user shadow — skip prim.
+                                    if (!bound || is_primitive(*bound))
+                                        prim = eval_env.lookup_primitive(cname);
+                                }
+                                // Issue #4599: record the not-a-prim decision
+                                // for the next visit. remember_call_no_prim
+                                // refuses prim-table names and top SymId
+                                // collisions.
+                                if (!prim) {
+                                    remember_call_no_prim(current_id, callee.sym_id, eval_env,
+                                                          bound, cname);
+                                }
+                            }
                         }
                         if (prim) {
                             std::vector<EvalValue> args;
