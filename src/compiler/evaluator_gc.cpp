@@ -1608,11 +1608,17 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         opaque_gen.assign(gens.begin(), gens.end());
         seen_opaque.assign(opaque_heap_.size(), 0);
     }
+    // Issue #4613: the hash-table slot snapshot (the table pointer per
+    // slot) taken under the mark's own hash lock. The release compares
+    // the slot's table against it, so a table re-minted (or grown)
+    // between the mark and the release is left alone.
+    std::vector<FlatHashTable*> hash_at_mark;
     {
         // hash_tables_mutex is the outer lock car uses before alloc. Trace
         // holds it alone, then drops it before the closures / alloc locks.
         std::lock_guard hash_lock(hash_tables_mtx_);
         seen_hash.assign(g_hash_tables.size(), 0);
+        hash_at_mark.assign(g_hash_tables.begin(), g_hash_tables.end());
         for (std::size_t wi = 0; wi < work.size(); ++wi) {
             file_reclaim_mark_value(work[wi], work, seen_pair, seen_vec, seen_hash, seen_ev_cell,
                                     seen_err, seen_ir, live_tw, view, pairs_, vector_heap_, cells_,
@@ -1646,6 +1652,13 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // and drops strings keeps a flat heap (and a flat RSS) instead of
     // one slot per minted string.
     const auto live_strings = release_unreachable_string_slots(seen_string, free_at_mark);
+    // Issue #4613: release the hash tables the mark found unreachable.
+    // The table's block is freed and the slot goes on the hash free
+    // list, so the next (hash) mint reuses the slot instead of leaking
+    // the block (a 32-slot table is ~560 bytes). A table this
+    // evaluator did not mint is left alone.
+    const auto live_hashes = release_unreachable_hash_tables(seen_hash, hash_at_mark);
+
 
     {
         std::lock_guard lock(alloc_storage_lock_);
@@ -1697,7 +1710,10 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // reclaim triggers from the reachable set (live/32, clamped).
         // Issue #4608: the live string slots count too — the string
         // heap is part of the walked heap now.
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings, mints_at_mark);
+        // Issue #4613: the live hash tables count too - the hash table
+        // walk is part of the mark.
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hashes,
+                                          mints_at_mark);
     }
     // Issue #4597: finalize unreachable handles once, after every lock is
     // dropped. file_reclaim_active_ stays set until this function returns,
@@ -1950,11 +1966,21 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     FileModeReclaimView view;
     std::unordered_set<std::uint64_t> expanded;
     std::size_t traced = 0;
+    // Issue #4613: the hash-table slot snapshot (the table pointer per
+    // slot) taken under the mark's own hash lock. The release compares
+    // the slot's table against it, so a table re-minted (or grown)
+    // between the mark and the release is left alone.
+    std::vector<FlatHashTable*> hash_at_mark;
+    bool hash_snapshot_taken = false;
     for (int guard = 0; guard < 1000000; ++guard) {
         {
             std::lock_guard hash_lock(hash_tables_mtx_);
             if (seen_hash.size() < g_hash_tables.size())
                 seen_hash.resize(g_hash_tables.size(), 0);
+            if (!hash_snapshot_taken) {
+                hash_at_mark.assign(g_hash_tables.begin(), g_hash_tables.end());
+                hash_snapshot_taken = true;
+            }
             while (traced < work.size()) {
                 file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
                                         seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
@@ -2053,6 +2079,12 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // and drops strings keeps a flat heap (and a flat RSS) instead of
     // one slot per minted string.
     const auto live_strings = release_unreachable_string_slots(seen_string, free_at_mark);
+    // Issue #4613: release the hash tables the mark found unreachable.
+    // The table's block is freed and the slot goes on the hash free
+    // list, so the next (hash) mint reuses the slot instead of leaking
+    // the block (a 32-slot table is ~560 bytes). A table this
+    // evaluator did not mint is left alone.
+    const auto live_hashes = release_unreachable_hash_tables(seen_hash, hash_at_mark);
 
     {
         std::lock_guard lock(alloc_storage_lock_);
@@ -2120,8 +2152,10 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         // reclaim triggers from the reachable set (live/32, clamped).
         // Issue #4608: the live string slots count too — the string
         // heap is part of the walked heap now.
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells + live_strings,
-                                          mints_at_mark);
+        // Issue #4613: the live hash tables count too - the hash table
+        // walk is part of the mark.
+        note_live_set_for_reclaim_trigger(
+            live_pairs + live_vecs + live_cells + live_strings + live_hashes, mints_at_mark);
     }
     tw_closure_allocs_ = 0;
     // Issue #4525: benchmark observability — a full whole-heap mark ran.

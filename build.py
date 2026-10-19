@@ -10035,6 +10035,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4608 string-heap reclaim linter failed — run python3 scripts/check_string_heap_reclaim_4608.py")
         return r
+    # Issue #4613: the file-mode reclaim recycled pairs, cells, closures
+    # and strings, but three primitives minted their objects OUTSIDE the
+    # evaluator mint path: vector->list pushed the pairs straight into
+    # pairs_, list->vector pushed the result vector straight into
+    # vector_heap_ and (hash) published a fresh FlatHashTable that
+    # nothing ever freed. The three now mint through mint_pair /
+    # mint_vector / mint_hash_table (the free-list paths) and the
+    # reclaim releases the hash tables it proved unreachable (the block
+    # is freed and the slot goes on the evaluator's hash free list).
+    # Runtime doors live in tests/compiler/test_pmr_alloc_fiber_safe.cpp
+    # (ac4613_pair_vector_hash_reclaim).
+    pairvectorhash4613_script = ROOT / "scripts" / "check_pair_vector_hash_reclaim_4613.py"
+    if not pairvectorhash4613_script.exists():
+        fail(f"missing {pairvectorhash4613_script}")
+        return 1
+    r = run([sys.executable, str(pairvectorhash4613_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4613 pair/vector/hash reclaim linter failed — "
+            "run python3 scripts/check_pair_vector_hash_reclaim_4613.py"
+        )
+        return r
     # Issue #4240 (WAL segment prune after ring wrap): after the typed
     # (256) + SE (1024) rings wrap AND AURA_WAL_MAX_SEGMENTS retention
     # prunes the only durable segment holding the mid (#3338), every

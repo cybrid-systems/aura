@@ -275,3 +275,4 @@ check_jit_unbound_callee_4607.py
 check_jit_pair_mutation_4602.py
 check_hash_probe_4612.py
 check_jit_reuse_lowering_4600.py
+check_pair_vector_hash_reclaim_4613.py

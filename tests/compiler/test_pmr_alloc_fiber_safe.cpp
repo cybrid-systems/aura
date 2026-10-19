@@ -733,6 +733,136 @@ static void ac4608_string_heap_reclaim() {
           "4608 AC3: a reused slot drops its cached code-point index");
 }
 
+// ── Issue #4613: the file-mode reclaim frees the vector->list pairs,
+// the list->vector results and the (hash) tables ──
+// The reclaim recycled pairs, cells and closures, but the three
+// primitives below minted their objects OUTSIDE the evaluator mint
+// path: vector->list pushed the pairs straight into pairs_, list->vector
+// pushed the result vector straight into vector_heap_, and (hash)
+// published a fresh FlatHashTable every call. None of them consulted the
+// reclaim free lists, and none of them counted toward the reclaim
+// window, so a loop that minted and dropped one of them grew the heap
+// (and the RSS) linearly:
+//   (vector->list v), 64 slots    ~3.2 KB per iteration
+//   (list->vector l), 64 elements ~0.55 KB per iteration
+//   (hash)                       ~0.57 KB per iteration
+// The mint now goes through mint_pair / mint_vector / mint_hash_table
+// (the free-list path) and the hash table the reclaim proved
+// unreachable is released onto the hash free list.
+static void ac4613_pair_vector_hash_reclaim() {
+    std::println("\n--- #4613: vector->list / list->vector / (hash) reclaim ---");
+
+    // AC1: a vector->list loop keeps the pair heap flat. Pre-fix the
+    // loop grew pairs_ by one slot per element (1.28M slots for 20k
+    // iterations of a 64-slot vector); post-fix the dead pairs go back
+    // on the free list and pairs_ stays at the live set.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto warm =
+            cs.eval("(begin (define v (make-vector 64 0))"
+                    " (define (run n) (if (< n 20000) (begin (vector->list v) (run (+ n 1))) #t))"
+                    " (run 0))");
+        CHECK(warm.has_value(), "4613 AC1: warm-up eval");
+        const auto before = ev.pairs_size();
+        auto r =
+            cs.eval("(begin (define v (make-vector 64 0))"
+                    " (define (run n) (if (< n 20000) (begin (vector->list v) (run (+ n 1))) #t))"
+                    " (run 20000))");
+        CHECK(r && is_bool(*r) && as_bool(*r), "4613 AC1: the vector->list loop evals");
+        const auto grown = ev.pairs_size() - before;
+        CHECK(grown <= 1024,
+              "4613 AC1: the pair heap stays flat across 20k vector->list calls (grew " +
+                  std::to_string(grown) + " pairs, want <= 1024)");
+        CHECK(ev.pair_heap_free_slots() > 0,
+              "4613 AC1: the reclaim put the dead pairs on the free list");
+    }
+
+    // AC2: a list->vector loop keeps the vector heap flat. Pre-fix the
+    // loop grew vector_heap_ by one slot (and one element buffer) per
+    // call; post-fix the dead vectors go back on the free list and the
+    // next conversion reuses the slot (and its buffer).
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto warm =
+            cs.eval("(begin (define l (list 1 2 3 4 5 6 7 8 9 10 11 12))"
+                    " (define (run n) (if (< n 20000) (begin (list->vector l) (run (+ n 1))) #t))"
+                    " (run 0))");
+        CHECK(warm.has_value(), "4613 AC2: warm-up eval");
+        const auto before = ev.vector_heap_size();
+        auto r =
+            cs.eval("(begin (define l (list 1 2 3 4 5 6 7 8 9 10 11 12))"
+                    " (define (run n) (if (< n 20000) (begin (list->vector l) (run (+ n 1))) #t))"
+                    " (run 20000))");
+        CHECK(r && is_bool(*r) && as_bool(*r), "4613 AC2: the list->vector loop evals");
+        const auto grown = ev.vector_heap_size() - before;
+        CHECK(grown <= 1024,
+              "4613 AC2: the vector heap stays flat across 20k list->vector calls (grew " +
+                  std::to_string(grown) + " vectors, want <= 1024)");
+        CHECK(ev.vector_heap_free_slots() > 0,
+              "4613 AC2: the reclaim put the dead vectors on the free list");
+    }
+
+    // AC3: an (hash) mint-and-drop loop keeps the hash table count
+    // flat. Pre-fix every (hash) published a fresh table block
+    // (~560 bytes) that nothing ever freed; post-fix the table the
+    // reclaim proved unreachable is released and its slot reused.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto warm =
+            cs.eval("(begin (define (run n) (if (< n 20000) (begin (hash) (run (+ n 1))) #t))"
+                    " (run 0))");
+        CHECK(warm.has_value(), "4613 AC3: warm-up eval");
+        const auto before = ev.hash_table_slots();
+        auto r = cs.eval("(begin (define (run n) (if (< n 20000) (begin (hash) (run (+ n 1))) #t))"
+                         " (run 20000))");
+        CHECK(r && is_bool(*r) && as_bool(*r), "4613 AC3: the (hash) loop evals");
+        const auto grown = ev.hash_table_slots() - before;
+        CHECK(grown <= 1024,
+              "4613 AC3: the hash table count stays flat across 20k (hash) calls (grew " +
+                  std::to_string(grown) + " tables, want <= 1024)");
+        CHECK(ev.hash_tables_released_total() > 0,
+              "4613 AC3: the reclaim released the dead hash tables");
+    }
+
+    // AC4: the objects that ARE reachable survive the reclaim: a live
+    // vector, a live list and a live (hash) table all keep their
+    // content across 20k mint-and-drop iterations (3 of 3).
+    {
+        CompilerService cs;
+        auto r = cs.eval(
+            "(begin"
+            " (define v (make-vector 4 7))"
+            " (define l (list 1 2 3 4))"
+            " (define h (hash \"k\" 9))"
+            " (define (run n) (if (< n 20000) (begin (vector->list v) (list->vector l) (hash)"
+            " (run (+ n 1))) #t))"
+            " (run 20000)"
+            " (+ (if (= (vector-ref v 0) 7) 1 0)"
+            "    (if (= (car l) 1) 1 0)"
+            "    (if (equal? (hash-ref h \"k\") 9) 1 0)))");
+        CHECK(r && is_int(*r), "4613 AC4: survival program evals");
+        CHECK(r && is_int(*r) && as_int(*r) == 3,
+              "4613 AC4: the live vector / list / hash survive the reclaim (3 of 3), got " +
+                  (r && is_int(*r) ? std::to_string(as_int(*r)) : std::string("no result")));
+    }
+
+    // AC5: the source cite - the three primitives mint through the
+    // evaluator heap and the reclaim releases the hash tables.
+    const auto prims = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    CHECK(prims.find("ev.mint_pair(*it, result") != std::string::npos,
+          "4613 AC5: vector->list mints the pairs through the evaluator heap");
+    CHECK(prims.find("ev.mint_vector(std::move(elems)") != std::string::npos,
+          "4613 AC5: list->vector mints the vector through the evaluator heap");
+    CHECK(prims.find("ev.mint_hash_table(ht)") != std::string::npos,
+          "4613 AC5: (hash) publishes the table through the evaluator heap");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    CHECK(gc.find("release_unreachable_hash_tables(seen_hash, hash_at_mark)") != std::string::npos,
+          "4613 AC5: the reclaim releases the unreachable hash tables");
+}
+
 // ── Issue #4525: float allocation pressure vs #4474 whole-heap reclaim ──
 // Spike verdict (see close comment): boxed floats are bump-allocated in
 // lib/runtime.c's float_pool — OUTSIDE the mark heap — so pure float loops
@@ -1273,6 +1403,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4474_dynamic_reclaim_trigger();
     ac4474r3_large_heap_window();
     ac4608_string_heap_reclaim();
+    ac4613_pair_vector_hash_reclaim();
     ac4480_map_accumulator_pinned();
     ac4492_nested_map_filter_pinned();
     ac4525_burst_rebalance();
