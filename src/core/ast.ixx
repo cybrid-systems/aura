@@ -1318,6 +1318,14 @@ public:
 
 private:
     void reset_node_slot(NodeId id, NodeTag tag, SyntaxMarker m) {
+        // Issue #4598: free-list birth. The death site already dropped the
+        // old slot's counts; a recycled slot may still carry stale non-empty
+        // match_info_ from its previous life, which the boundary-exit live
+        // scan would count — mirror that predicate exactly.
+        if (is_linear_op_tag(tag))
+            linear_ops_live_.fetch_add(1, std::memory_order_relaxed);
+        if (id < match_info_.size() && has_match_info(id))
+            match_sites_live_.fetch_add(1, std::memory_order_relaxed);
         tag_[id] = tag;
         int_val_[id] = 0;
         float_val_[id] = 0.0;
@@ -1449,6 +1457,13 @@ private:
         }
     }
 
+    // Issue #4598: the linear-op tag set the MutationBoundaryGuard exit
+    // scan looks for (mirrors subtree_has_linear_ops, type_checker_impl.cpp:64).
+    [[nodiscard]] static constexpr bool is_linear_op_tag(NodeTag tag) noexcept {
+        return tag == NodeTag::Linear || tag == NodeTag::Move || tag == NodeTag::Borrow ||
+               tag == NodeTag::MutBorrow || tag == NodeTag::Drop;
+    }
+
     // Issue #402: lazy bits set by set_int_value when the
     // value is non-zero (Lambda dotted / TypeAnnotation
     // var-form). Returns the bit(s) to OR-in, or 0 if the
@@ -1518,9 +1533,44 @@ public:
     }
     // Clear (used by reset() and the heavy recompute path).
     void summary_clear() noexcept { summary_flags_.store(0, std::memory_order_release); }
+    // Issue #4598: O(1) boundary-exit scan predicates. Exact live-node
+    // counters (not sticky bits — the exit feeds RenderFastExit + the
+    // production invariant hard gate, which must turn OFF when the last
+    // linear op / match site dies). Maintained at the single-node write
+    // sites and recomputed wholesale after column swaps.
+    [[nodiscard]] bool has_linear_ops_live() const noexcept {
+        return linear_ops_live_.load(std::memory_order_relaxed) != 0;
+    }
+    [[nodiscard]] bool has_match_sites_live() const noexcept {
+        return match_sites_live_.load(std::memory_order_relaxed) != 0;
+    }
+    // Raw counts for test parity checks against a brute-force live scan.
+    [[nodiscard]] std::uint64_t linear_ops_live_count() const noexcept {
+        return linear_ops_live_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t match_sites_live_count() const noexcept {
+        return match_sites_live_.load(std::memory_order_relaxed);
+    }
     // Issue #402 / #2414: rebuild the bit-set from scratch by
     // walking SoA columns. O(n) — only after heavy structural
     // mutation or tests. NEVER on the per-eval fast path.
+    //
+    // Issue #4598 companion: wholesale recount of the boundary-exit
+    // scan counters, run after the same class of heavy column swaps.
+    void recompute_live_counters_() const {
+        std::uint64_t linear = 0;
+        std::uint64_t match = 0;
+        for (std::size_t i = 0; i < tag_.size(); ++i) {
+            if (i < node_gen_.size() && node_gen_[i] == 0)
+                continue; // free slot, skip
+            if (is_linear_op_tag(tag_[i]))
+                ++linear;
+            if (has_match_info(static_cast<NodeId>(i)))
+                ++match;
+        }
+        linear_ops_live_.store(linear, std::memory_order_relaxed);
+        match_sites_live_.store(match, std::memory_order_relaxed);
+    }
     //
     // Issue #2414: pass `pool` so HasKeywordVar +
     // HasQueryOrMutateCall are restored. Without the pool those
@@ -1633,6 +1683,11 @@ public:
         }
         auto id = static_cast<NodeId>(tag_.size());
         tag_.push_back(tag);
+        // Issue #4598: fresh-slot birth — a fresh slot cannot carry stale
+        // match info (match_info_ is sized independently), so only the
+        // linear tag count can move.
+        if (is_linear_op_tag(tag))
+            linear_ops_live_.fetch_add(1, std::memory_order_relaxed);
         int_val_.push_back(0);
         float_val_.push_back(0.0);
         sym_id_.push_back(INVALID_SYM);
@@ -2149,6 +2204,20 @@ public:
     // revisiting test_ast_concurrency (#2463) and this annotation.
     // Mutable so const summary_flags()/summary_has() can load.
     mutable std::atomic<std::uint32_t> summary_flags_{0};
+    // Issue #4598: live-node existence counters for the MutationBoundaryGuard
+    // exit scan. linear_ops_live_ counts live nodes whose tag is one of
+    // Linear/Move/Borrow/MutBorrow/Drop; match_sites_live_ counts live nodes
+    // with a non-empty match_info_ entry (including stale info inherited by a
+    // recycled slot — the exit walk's is_live_node(id) && has_match_info(id)
+    // predicate exactly). Incremental at the single-node write sites
+    // (add_node fresh + free-list birth via reset_node_slot, node death at
+    // free_orphan_nodes_from / recycle_dead_nodes, set_match_info,
+    // set_tag_live_adjusted); recomputed wholesale after column swaps
+    // (compaction, truncate_to, wire load, copy/move assign). Relaxed
+    // atomics: writers hold the same exclusive sections as the columns; the
+    // exit reader runs under the workspace boundary lock.
+    mutable std::atomic<std::uint64_t> linear_ops_live_{0};
+    mutable std::atomic<std::uint64_t> match_sites_live_{0};
     std::pmr::vector<std::uint32_t> node_first_mutation_;
     // Issue #320: per-node epoch tracking. Records the
     // last mutation_epoch_ at which this node was
@@ -3392,7 +3461,17 @@ public:
         , region_by_lambda_dense_(std::move(other.region_by_lambda_dense_))
         , root(other.root)
         , bump_generation_suppressed_(other.bump_generation_suppressed_)
-        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
+        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {
+        // Issue #4598: the columns moved wholesale — mirror the counts and
+        // the summary bit-set (the destination previously kept its own
+        // stale value across the wholesale assign).
+        linear_ops_live_.store(other.linear_ops_live_.load(std::memory_order_relaxed),
+                               std::memory_order_relaxed);
+        match_sites_live_.store(other.match_sites_live_.load(std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+        summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
+                             std::memory_order_release);
+    }
     FlatAST& operator=(FlatAST&& other) noexcept {
         if (this != &other) {
             tag_ = std::move(other.tag_);
@@ -3485,6 +3564,14 @@ public:
             root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+            // Issue #4598: columns moved wholesale — mirror the counts and
+            // the summary bit-set.
+            linear_ops_live_.store(other.linear_ops_live_.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+            match_sites_live_.store(other.match_sites_live_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+            summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
+                                 std::memory_order_release);
             // Issue #3402: dest keeps its own runtime_resource_. Never
             // move pmr dense columns that alias the source arena.
             child_data_.clear();
@@ -3594,7 +3681,16 @@ public:
         , region_by_lambda_dense_(other.region_by_lambda_dense_)
         , root(other.root)
         , bump_generation_suppressed_(other.bump_generation_suppressed_)
-        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
+        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {
+        // Issue #4598: the columns were copied wholesale — mirror the counts
+        // and the summary bit-set.
+        linear_ops_live_.store(other.linear_ops_live_.load(std::memory_order_relaxed),
+                               std::memory_order_relaxed);
+        match_sites_live_.store(other.match_sites_live_.load(std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+        summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
+                             std::memory_order_release);
+    }
     FlatAST& operator=(const FlatAST& other) {
         if (this != &other) {
             tag_ = other.tag_;
@@ -3685,6 +3781,14 @@ public:
             root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+            // Issue #4598: columns were copied wholesale — mirror the counts
+            // and the summary bit-set.
+            linear_ops_live_.store(other.linear_ops_live_.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+            match_sites_live_.store(other.match_sites_live_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+            summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
+                                 std::memory_order_release);
             // Issue #3402: dest keeps its own runtime_resource_. Never
             // copy pmr dense columns that alias another arena; rebuild
             // from children_ on the next children_columnar call.
@@ -4671,6 +4775,20 @@ public:
 
     // Direct field access (for mutation)
     NodeTag& tag(NodeId id) { return tag_[id]; }
+    // Issue #4598: counted tag write for the mutation apply path
+    // (ast_impl set-tag). The raw accessor above serves read-only call
+    // sites; every live tag transition must go through here so the
+    // boundary-exit counter stays exact.
+    void set_tag_live_adjusted(NodeId id, NodeTag tag) {
+        const bool was_linear = id < tag_.size() && is_linear_op_tag(tag_[id]) &&
+                                id < node_gen_.size() && node_gen_[id] != 0;
+        tag_[id] = tag;
+        const bool now_linear = is_linear_op_tag(tag);
+        if (was_linear && !now_linear)
+            linear_ops_live_.fetch_sub(1, std::memory_order_relaxed);
+        else if (!was_linear && now_linear)
+            linear_ops_live_.fetch_add(1, std::memory_order_relaxed);
+    }
     std::int64_t& int_val(NodeId id) { return int_val_[id]; }
     SymId& sym_id(NodeId id) { return sym_id_[id]; }
 
@@ -6049,6 +6167,11 @@ public:
                 break;
             if (node_gen_[id] == 0)
                 continue; // already free
+            // Issue #4598: live slot dies — drop its scan counters.
+            if (is_linear_op_tag(tag_[id]))
+                linear_ops_live_.fetch_sub(1, std::memory_order_relaxed);
+            if (has_match_info(id))
+                match_sites_live_.fetch_sub(1, std::memory_order_relaxed);
             node_gen_[id] = 0;
             free_list_.push_back(id);
             ++freed;
@@ -6226,6 +6349,13 @@ public:
             if (is_free_slot(id))
                 continue;
             if (!live[id]) {
+                // Issue #4598: live slot dies — drop its scan counters.
+                if (id < node_gen_.size() && node_gen_[id] != 0) {
+                    if (is_linear_op_tag(tag_[id]))
+                        linear_ops_live_.fetch_sub(1, std::memory_order_relaxed);
+                    if (has_match_info(id))
+                        match_sites_live_.fetch_sub(1, std::memory_order_relaxed);
+                }
                 node_gen_[id] = 0;
                 free_list_.push_back(id);
                 ++recycled;
@@ -6536,6 +6666,8 @@ public:
 
         const auto reclaimed = old_size - live_count;
         node_compact_total_.fetch_add(reclaimed, std::memory_order_relaxed);
+        // Issue #4598: columns + node_gen_ were rebuilt wholesale.
+        recompute_live_counters_();
         return reclaimed;
     }
 
@@ -6639,6 +6771,9 @@ public:
         // summary_flags() sees 0 (not a torn mid-write) once
         // this call returns.
         summary_flags_.store(0, std::memory_order_release);
+        // Issue #4598: no live nodes after clear().
+        linear_ops_live_.store(0, std::memory_order_release);
+        match_sites_live_.store(0, std::memory_order_release);
         dirty_.clear();
         ppa_dirty_.clear();
         // Issue #437: clear verify_dirty_ alongside ppa_dirty_
@@ -7108,10 +7243,17 @@ public:
                 read_column(ast.macro_dirty_);
             }
         }
+        // Issue #4598: columns were built wholesale from the blob.
+        // Recompute the tag-class summary bits (HasMacroDef feeds the
+        // macro-free expand gate + needs_tree_walker_fallback's fast
+        // path); pool-less keeps sym-derived bits 0 as they were on the
+        // fresh object.
+        ast.summary_recompute();
+        ast.recompute_live_counters_();
         return ast;
     }
 
-    // ── Marker access ─────────────────────────────────────────
+    // ── Marker access ─────────────────────────────────────────────────
 
     // Issue #2418 / #1783: REQUIRES metadata write lock held by
     // caller (begin_metadata_mutation / CombinedStructuralMetadataWriteGuard).
@@ -7444,9 +7586,22 @@ public:
 
     // ── Match clause metadata ────────────────────────────────
     void set_match_info(NodeId id, MatchClauseInfo info) {
+        // Issue #4598: adjust the live match-site counter for the
+        // boundary-exit scan. A dead slot keeps no count now; a later
+        // free-list birth counts stale info via reset_node_slot.
+        const bool was = has_match_info(id);
         if (id >= match_info_.size())
             match_info_.resize(id + 1);
         match_info_[id] = std::move(info);
+        const bool now = has_match_info(id);
+        if (was == now)
+            return;
+        if (id < node_gen_.size() && node_gen_[id] != 0) {
+            if (now)
+                match_sites_live_.fetch_add(1, std::memory_order_relaxed);
+            else
+                match_sites_live_.fetch_sub(1, std::memory_order_relaxed);
+        }
     }
     bool has_match_info(NodeId id) const {
         if (id >= match_info_.size())
@@ -8086,6 +8241,8 @@ public:
             incoming_parent_edges_.size() > keep_size)
             incoming_parent_edges_.resize(keep_size);
         node_gen_.resize(keep_size);
+        // Issue #4598: the tail was cut wholesale.
+        recompute_live_counters_();
         restamp_all_node_generations();
     }
 

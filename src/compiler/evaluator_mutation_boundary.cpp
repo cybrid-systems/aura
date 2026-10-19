@@ -5199,29 +5199,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         nodes_changed_local = (cur_dirty_calls > dirty_upward_at_enter_)
                                   ? (cur_dirty_calls - dirty_upward_at_enter_)
                                   : 0;
-        const auto n = ws->size();
-        for (aura::ast::NodeId id = 0; id < n; ++id) {
-            if (!ws->is_live_node(id))
-                continue;
-            if (ws->has_match_info(id))
-                match_sites_present_local = true;
-            // Linear detection: mirror subtree_has_linear_ops (type_checker_impl.cpp:64)
-            // for any live node. Look for Linear/Move/Borrow/MutBorrow/Drop
-            // NodeTag — the same set the type-checker uses to detect linear
-            // ops in a subtree. This is broader than the audit path's
-            // audit_op string heuristic (which only checks for op-name
-            // substrings) but the wider net is the fail-closed default.
-            // Issue #4598: tag() is the column. FlatAST::get assembled a
-            // node view per live id on every boundary exit.
-            const auto tg = ws->tag(id);
-            if (tg == aura::ast::NodeTag::Linear || tg == aura::ast::NodeTag::Move ||
-                tg == aura::ast::NodeTag::Borrow || tg == aura::ast::NodeTag::MutBorrow ||
-                tg == aura::ast::NodeTag::Drop) {
-                linear_ops_present_local = true;
-            }
-            if (linear_ops_present_local && match_sites_present_local)
-                break;
-        }
+        // Issue #4598: the live linear-op / match-site existence scan is
+        // O(1). The counters are exact live-node counts maintained at the
+        // FlatAST write sites (add_node births, free/recycle deaths,
+        // set_tag_live_adjusted, set_match_info) and recomputed wholesale
+        // after column swaps — the same live-scan semantics the per-node
+        // walk below used to pay O(n) per boundary exit for.
+        match_sites_present_local = ws->has_match_sites_live();
+        linear_ops_present_local = ws->has_linear_ops_live();
     }
     const bool strict_sandbox_local = aura::core::sandbox::is_strict();
     const bool hard_gate_local = typed_audit::requires_invariant_hard_gate(

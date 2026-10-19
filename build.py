@@ -8596,6 +8596,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4177 R7RS list take/drop linter failed - run python3 scripts/check_list_take_drop_4177.py")
         return r
+    # Issue #4598 phase 2 (perf): hot-swap boundary-exit scan + macro gate
+    # O(1). The guard exit walked every live node per boundary (linear-op /
+    # match-site flags for RenderFastExit + the production hard gate);
+    # FlatAST now maintains exact live counters at the write sites and the
+    # exit reads two loads. macro_expand_all's macro-free probe scanned the
+    # whole flat per eval-current; it now reads the #402 sticky
+    # SummaryFlag::HasMacroDef bit (bit==0 is exact-absent). Runtime ACs
+    # live in tests/core/test_summary_recompute_sym.cpp (#4598 AC6..AC10;
+    # no test_issue_4598.cpp per #81934, no docs/design/4598-* per #1655).
+    bec4598_script = ROOT / "scripts" / "check_boundary_exit_counters_4598.py"
+    if not bec4598_script.exists():
+        fail(f"missing {bec4598_script}")
+        return 1
+    r = run([sys.executable, str(bec4598_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4598 boundary-exit counters linter failed - run python3 scripts/check_boundary_exit_counters_4598.py"
+        )
+        return r
     # Issue #4232 (Soft): "cannot call: car" in soft_worldline_pick (serve-async
     # Soft Ready denseness, soft_select.via=host_fallback). The tree-walker's
     # prim-value call handler re-resolved a registry-manufactured PrimitiveRef
@@ -9786,6 +9805,25 @@ def cmd_lint():
     r = run([sys.executable, str(gate4600b_script)], cwd=ROOT)
     if r != 0:
         fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
+        return r
+    # Issue #4599 (interpreter baseline follow-up, phase 2): the tree
+    # walker's call path performs no StringPool resolve and no string-keyed
+    # env / prim-table probes on hot iterations — a body-pool frame binding
+    # for the callee name skips the prim prelude, the not-a-prim decision
+    # is cached per call node (generation/snapshot guarded, prim-table
+    # names refused), and and/or clause lists are cached. The ACs cite the
+    # consult/store windows and the phase-1 top-generation invalidation
+    # contract; the runtime oracle is the StringPool reader counter in
+    # test_pmr_alloc_fiber_safe (zero resolves on a hot self-TCO loop,
+    # bind-mirror budget with one materialized call per iteration, 1.2x
+    # 4000-define relative budget).
+    gate4599b_script = ROOT / "scripts" / "check_call_resolve_cache_4599.py"
+    if not gate4599b_script.exists():
+        fail(f"missing {gate4599b_script}")
+        return 1
+    r = run([sys.executable, str(gate4599b_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4599 call-path resolve-cache linter failed — run python3 scripts/check_call_resolve_cache_4599.py")
         return r
     # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
     # froze the live/32 reclaim window above ~1M live objects, so each

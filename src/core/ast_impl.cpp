@@ -27,7 +27,9 @@ bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
             return false;
         switch (p.field_offset) {
             case 0:
-                ast.tag(p.node) = static_cast<NodeTag>(p.new_value);
+                // Issue #4598: counted write — the boundary-exit scan
+                // reads the maintained live linear-op counter.
+                ast.set_tag_live_adjusted(p.node, static_cast<NodeTag>(p.new_value));
                 break;
             case 1:
                 ast.int_val(p.node) = static_cast<std::int64_t>(p.new_value);
