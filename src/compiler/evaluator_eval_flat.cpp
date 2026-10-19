@@ -836,13 +836,27 @@ struct TwPinMany {
 // reclaim mark would miss it. Pin the span for the duration of the prim.
 struct TwSpanRoot {
     const types::EvalValue* data = nullptr;
-    std::size_t n = 0;
+    // Issue #4611: a live count lets a partially filled buffer stay a
+    // root. `n_live` points at the caller's counter; the reclaim reads
+    // the CURRENT value, so an argument that is already evaluated is
+    // rooted even while a later argument is still being evaluated.
+    // `n_fixed` is the fallback for a fixed-size pin.
+    const std::size_t* n_live = nullptr;
+    std::size_t n_fixed = 0;
+    [[nodiscard]] std::size_t count() const noexcept {
+        return n_live != nullptr ? *n_live : n_fixed;
+    }
 };
 thread_local std::vector<TwSpanRoot> g_tw_spans;
 
 struct TwPinSpan {
     explicit TwPinSpan(const types::EvalValue* data, std::size_t n) {
-        g_tw_spans.push_back(TwSpanRoot{data, n});
+        g_tw_spans.push_back(TwSpanRoot{data, nullptr, n});
+    }
+    // Live-count pin: the rooted prefix follows the caller's counter.
+    struct Live {};
+    TwPinSpan(Live, const types::EvalValue* data, const std::size_t* n_live) {
+        g_tw_spans.push_back(TwSpanRoot{data, n_live, 0});
     }
     ~TwPinSpan() {
         if (!g_tw_spans.empty())
@@ -910,7 +924,8 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     for (const auto& sp : g_tw_spans) {
         if (!sp.data)
             continue;
-        for (std::size_t i = 0; i < sp.n; ++i)
+        const auto n = sp.count();
+        for (std::size_t i = 0; i < n; ++i)
             held.push_back(sp.data[i]);
     }
     (void)reclaim_tw_unreachable(envs, held);
@@ -963,7 +978,8 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
     for (const auto& sp : g_tw_spans) {
         if (!sp.data)
             continue;
-        for (std::size_t i = 0; i < sp.n; ++i)
+        const auto n = sp.count();
+        for (std::size_t i = 0; i < n; ++i)
             out.push_back(sp.data[i]);
     }
 }
@@ -5649,6 +5665,18 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
         return std::nullopt;
     const auto nargs = static_cast<std::size_t>(e.nchild - 1);
     std::array<types::EvalValue, 8> buf{};
+    // Issue #4611: the argument buffer must be a ROOT from the first
+    // argument on. Pinning it after the loop left the already-evaluated
+    // arguments unrooted while a later argument was evaluated: the
+    // nested eval reaches the top of its own TCO loop, where the
+    // periodic reclaim (maybe_reclaim_tw_unreachable) marks and sweeps
+    // the file heap. An earlier argument's freshly minted pair was not
+    // reachable from any root (env frame / pinned vector / pinned
+    // result) and the sweep freed it, so the call continued with a
+    // dangling pair. The pin now carries a LIVE count so the rooted
+    // prefix grows with the buffer.
+    std::size_t buf_n = 0;
+    TwPinSpan pin(TwPinSpan::Live{}, buf.data(), &buf_n);
     for (std::size_t i = 0; i < nargs; ++i) {
         auto ar = eval_flat(flat, pool, e.child[i + 1], env);
         if (!ar)
@@ -5658,8 +5686,10 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
             (cname != "display" || try_body_depth_ > 0))
             return ar;
         buf[i] = std::move(*ar);
+        // Publish the freshly rooted argument before the next argument
+        // can trigger a reclaim.
+        buf_n = i + 1;
     }
-    TwPinSpan pin(buf.data(), nargs);
     // Issue #4524: the named-let step `(+ i 1)` is the armed node. Integer
     // arithmetic still goes through the prim (overflow promotes).
     if (nargs == 2 && g_float_local_arm.matches(id) &&
